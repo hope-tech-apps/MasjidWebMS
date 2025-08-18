@@ -1,0 +1,74 @@
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap:.25rem;
+}
+
+.input-group label, .label {
+    font-size: 1rem;
+    color: var(--cdark);
+    font-weight: 500;
+}
+
+.input {
+    border: 1px solid var(--lighted-gray) !important;
+    border-radius: .25rem;
+    padding: .35rem .5rem;
+}
+
+.dashboard-input {
+    border: 1px solid var(--input-border) !important;
+    border-radius: .5rem !important;
+    padding: .75rem .75rem !important;
+}
+
+input.input:focus {
+    border-color: var(--muted-gray) !important;
+    outline: 1px solid var(--lighted-gray) !important;
+}
+
+input.dashboard-input:focus, textarea.dashboard-input:focus, select.dashboard-input:focus {
+    border-color: 0 !important;
+    outline: none !important;
+}
+
+.dashboard-input .vti__dropdown {
+    padding: 0 !important;
+}
+
+.input::placeholder, .dashboard-input::placeholder {
+    font-size: smaller;
+    color: var(--muted-gray);
+}
+
+select.placeholder {
+    font-size: smaller;
+    color: var(--muted-gray);
+    background-color: #fff;
+    option {
+        color: black;
+    }
+    cursor: default;
+}
+
+.input-group .error-message {
+    font-size: .75rem;
+}
+
+.error-message {
+    font-size: .75rem;
+    color: red;
+}
+
+.sign-in-form {
+    width: 22rem;
+}
+
+.input:focus-within, .dashboard-input:focus-within, select:focus-within {
+    box-shadow:inset 0 1px 1px #00000013,0 0 8px #66afe999;
+    border-color:#66afe9;
+}
+
+textarea.dashboard-input {
+    height: 25rem;
+}

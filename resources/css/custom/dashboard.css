@@ -1,0 +1,185 @@
+:root {
+    --dash-header-l-padding: 2rem;
+    --dash-header-r-padding: 2rem;
+    --dash-header-t-padding: 1rem;
+    --dash-header-b-padding: 1rem;
+    --dash-header-overall-height: calc(var(--dash-header-t-padding) + var(--dash-header-b-padding) + 4rem);
+    --dash-aside-width: 16.25rem;
+    --dash-footer-l-padding: 2rem;
+    --dash-footer-r-padding: 2rem;
+    --dash-footer-t-padding: 1rem;
+    --dash-footer-b-padding: 1rem;
+    --dash-footer-height: 3rem;
+    --dash-footer-overall-heigh: calc(var(--dash-header-t-padding) + var(--dash-header-b-padding) + var(--dash-footer-height));
+}
+
+#dashboard_layout {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+}
+
+#dashboard_overall_layer {
+    width: 100%;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1049;
+    background-color: var(--gray-800);
+    opacity: .75;
+    display: none;
+}
+
+#dashboard_aside {
+    width: var(--dash-aside-width);
+    height: 100vh;
+    background-color: var(--cgreen);
+    color: var(--cgreen-light);
+    position: fixed;
+    top: 0;
+    left: 0;
+    transition: .75s all ease-in-out;
+    z-index: 1050;
+}
+
+#header_main_container {
+    width: calc(100% - (var(--dash-aside-width)));
+    margin-left: calc(var(--dash-aside-width));
+    position: relative;
+    transition: .75s all ease-in-out;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    justify-content: space-between;
+}
+
+#dashboard_layout.aside-hidden #header_main_container {
+    width: 100%;
+    margin-left: 0;
+}
+
+#dashboard_header {
+    width: calc(100% - var(--dash-aside-width));
+    background-color: var(--background-color);
+    box-shadow: 0px 4px 6px -4px var(--background-color);
+    position: fixed;
+    height: auto;
+    padding: var(--dash-header-t-padding) var(--dash-header-l-padding);
+    transition: .75s all ease-in-out;
+    z-index: 100;
+}
+
+#dashboard_layout.aside-hidden #header_main_container #dashboard_header {
+    width: 100%;
+}
+
+#dashboard_footer {
+    width: 100%;
+    /* background-color: var(--cgreen-light); */
+    /* position: fixed;
+    bottom: 0; */
+    height: var(--dash-footer-height);
+    padding: var(--dash-footer-t-padding) var(--dash-footer-l-padding);
+}
+
+#dashboard_main {
+    margin-top: 4rem;
+    padding: 2rem 2rem;
+    width: 100%;
+}
+
+#dashboard_layout.aside-hidden #dashboard_aside {
+    left: calc(-1 * var(--dash-aside-width));
+}
+
+#dashboard_layout #dashboard_aside .aside-contents-container {
+    padding: .75rem 1rem;
+}
+
+#dashboard_layout .aside-toggle-btn {
+    width: 2rem;
+    height: 2rem;
+    border: 0;
+    border-radius: .25rem;
+    padding: .2rem;
+}
+
+#dashboard_aside_close_btn {
+    background-color: var(--cgreen-light);
+    color: var(--cgreen);
+    display: none;
+}
+
+#dashboard_aside_toggle_btn {
+    background-color: var(--cgreen);
+    color: var(--cgreen-light);
+}
+
+#dashboard_aside .aside-toggle-btn .aside-toggle-icon {
+    width: 100%;
+    height: 100%;
+    transition: .75s all ease-in-out;
+}
+
+#dashboard_layout.aside-hidden #dashboard_aside_toggle_btn .aside-toggle-icon {
+    rotate: 90deg;
+}
+
+@media(max-width: 920px) {
+    
+    #dashboard_aside {
+        left: calc(-1 * var(--dash-aside-width));
+    }
+
+    #dashboard_layout.aside-hidden #dashboard_aside {
+        left: 0;
+    }
+
+    #header_main_container {
+        width: 100%;
+        margin-left: 0;
+    }
+
+    #dashboard_header {
+        width: 100%;
+    }
+
+    #dashboard_layout.aside-hidden #header_main_container {
+        margin-left: 0;
+    }
+
+    #dashboard_aside_close_btn {
+        display: block;
+    }
+
+    #dashboard_layout.aside-hidden #dashboard_overall_layer {
+        display: block;
+    }
+
+    /* #dashboard_layout .aside-toggle-btn .aside-toggle-icon {
+        rotate: 90deg;
+    }
+
+    #dashboard_layout.aside-hidden .aside-toggle-btn .aside-toggle-icon {
+        rotate: 0deg;
+    } */
+}
+
+@media(max-width: 576px) {
+
+    body {
+        font-size: 12px !important;
+    }
+
+    #dashboard_header {
+        position: relative;
+    }
+
+    #dashboard_main {
+        margin-top: 1rem !important;
+    }
+
+}

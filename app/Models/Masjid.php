@@ -1,0 +1,100 @@
+<?php
+
+namespace App\Models;
+
+use App\Traits\SearchableTrait;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
+
+class Masjid extends Model implements HasMedia
+{
+    use InteractsWithMedia, SoftDeletes, SearchableTrait;
+
+    protected $fillable = [
+        'user_id',
+        'name',
+        'email',
+        'email_verified_at',
+        'phone',
+        'phone_verified_at',
+        'country_id',
+        'city_id',
+        'address',
+        'latitude',
+        'longitude',
+        'created_by',
+        'updated_by',
+        'deleted_by'
+    ];
+
+    protected $searchableFields = ['name', 'email', 'address'];
+
+    public function admin() {
+        return $this->belongsTo(User::class, 'user_id', 'id');
+    }
+
+    public function country() {
+        return $this->belongsTo(Country::class, 'country_id', 'id');
+    }
+
+    public function city() {
+        return $this->belongsTo(City::class, 'city_id', 'id');
+    }
+    
+    public function donationLink() {
+        return $this->hasOne(DonationLink::class);
+    }
+
+    public function masjidAbout() {
+        return $this->hasOne(MasjidAbout::class);
+    }
+
+    public function iqamaTimeSettings() {
+        return $this->hasOne(IqamaTimeSetting::class);
+    }
+
+    public function logo() {
+        return $this->hasOne(Media::class, 'model_id')
+            ->where('collection_name', 'logos')
+            ->orderBy('created_at', 'desc')
+            ->latest();
+    }
+
+    public function socialMediaLinks() {
+        return $this->hasMany(MasjidSocialMediaLink::class);
+    }
+
+    public function announcements() {
+        return $this->hasMany(Announcement::class);
+    }
+
+    public function gallery() {
+        return $this->hasMany(Media::class, 'model_id')
+            ->where('collection_name', 'galleries');
+    }
+
+    public function services() {
+        return $this->hasMany(Service::class);
+    }
+
+    public function features() {
+        return $this->belongsToMany(MobileAppFeature::class, 'masjid_mobile_app_features', 'masjid_id', 'feature_id')
+            ->withPivot('is_available');
+    }
+
+    public function notifications() {
+        return $this->hasMany(Notification::class);
+    }
+
+    public function mobileAppUsers() {
+        return $this->hasMany(MobileAppUser::class);
+    }
+
+    public function jumaaSettings() {
+        return $this->hasOne(JumaaSetting::class);
+    }
+    
+}

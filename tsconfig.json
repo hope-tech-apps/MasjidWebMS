@@ -1,0 +1,31 @@
+{
+    "compilerOptions": {
+      "target": "ESNext",
+      "module": "ESNext",
+      "strict": true,
+      "jsx": "preserve",
+      "importHelpers": true,
+      "moduleResolution": "node",
+      "experimentalDecorators": true,
+      "esModuleInterop": true,
+      "skipLibCheck": true,
+      "forceConsistentCasingInFileNames": true,
+      "baseUrl": ".",
+      "paths": {
+        "@/*": ["resources/vue-app/*"]
+      },
+      "typeRoots": [
+        "./node_modules/@types"
+        // "./resources/vue-app/core/types/declarations"
+      ]
+    },
+    "include": [
+      "resources/vue-app/**/*.js",
+      "resources/vue-app/**/*.ts",
+      "resources/vue-app/**/*.d.ts",
+      "resources/vue-app/**/*.tsx",
+      "resources/vue-app/**/*.vue"
+],
+    "exclude": ["node_modules"]
+}
+  

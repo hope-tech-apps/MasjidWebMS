@@ -1,0 +1,175 @@
+/* 
+* c before variable name for custom
+*/
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
+@import url('./custom/form.css');
+@import url('./custom/dashboard.css');
+
+:root {
+    --cgreen: #01B151;
+    --cgreen-light: #EBFFF4;
+    --cgreen-active: #04C159;
+    --cgreen-dark: #018E40;
+    --gray-800: #424242;
+    --gray-900: #212121;
+    --cdark: #1B1B2E;
+    --lighted-gray: #d9d9d9;
+    --muted-gray: #A9A9A9;
+    --background-color: #F3F8FB;
+    --input-border: #EBF0F4;
+    --raisin-black: #1B1B2E;
+    --alice-blue: #F3F8FB;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: var(--background-color);
+    scroll-behavior: smooth;
+}
+
+.bg-cgreen {
+    background-color: var(--cgreen);
+}
+
+.text-cgreen {
+    color: var(--cgreen);
+}
+
+.bg-cgreen-light {
+    background-color: var(--cgreen-light);
+}
+
+.text-cgreen-light {
+    color: var(--cgreen-light);
+}
+
+.bg-cgreen-dark {
+    background-color: var(--cgreen-dark);
+}
+
+.text-cgreen-dark {
+    color: var(--cgreen-dark);
+}
+
+.text-gray-800 {
+    color: var(--gray-800);
+}
+
+.text-gray-900 {
+    color: var(--gray-900);
+}
+
+.bg-cdark {
+    background-color: var(--cdark);
+}
+
+.text-cdark {
+    color: var(--cdark);
+}
+
+.btn-success {
+    --bs-btn-color: var(--cgreen-light);
+    --bs-btn-bg: var(--cgreen);
+    --bs-btn-border-color: var(--cgreen);
+    --bs-btn-hover-color: var(--cgreen-light);
+    --bs-btn-hover-bg: var(--cgreen-dark);
+    --bs-btn-hover-border-color: var(--cgreen);
+    --bs-btn-focus-shadow-rgb: 60, 153, 110;
+    --bs-btn-active-color: var(--cgreen-light);
+    --bs-btn-active-bg: var(--cgreen-dark);
+    --bs-btn-active-border-color: var(--cgreen-dark);
+    --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+    --bs-btn-disabled-color: var(--cgreen-light);
+    --bs-btn-disabled-bg: var(--cgreen);
+    --bs-btn-disabled-border-color: var(--cgreen);
+}
+
+.btn-light-success {
+    --bs-btn-color: var(--cgreen);
+    --bs-btn-bg: var(--cgreen-light);
+    --bs-btn-border-color: var(--cgreen-light);
+    --bs-btn-hover-color: var(--cgreen-light);
+    --bs-btn-hover-bg: var(--cgreen-dark);
+    --bs-btn-hover-border-color: var(--cgreen-light);
+    --bs-btn-focus-shadow-rgb: 60, 153, 110;
+    --bs-btn-active-color: var(--cgreen-light);
+    --bs-btn-active-bg: var(--cgreen-dark);
+    --bs-btn-active-border-color: var(--cgreen-dark);
+    --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+    --bs-btn-disabled-color: var(--cgreen);
+    --bs-btn-disabled-bg: var(--cgreen-light);
+    --bs-btn-disabled-border-color: var(--cgreen-light);
+}
+
+.btn-alice-blue-success {
+    --bs-btn-color: var(--raisin-black);
+    --bs-btn-bg: var(--alice-blue);
+    --bs-btn-border-color: var(--alice-blue);
+    --bs-btn-hover-color: var(--alice-blue);
+    --bs-btn-hover-bg: var(--cgreen-dark);
+    --bs-btn-hover-border-color: var(--alice-blue);
+    --bs-btn-focus-shadow-rgb: 60, 153, 110;
+    --bs-btn-active-color: var(--alice-blue);
+    --bs-btn-active-bg: var(--cgreen-dark);
+    --bs-btn-active-border-color: var(--cgreen-dark);
+    --bs-btn-active-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.125);
+    --bs-btn-disabled-color: var(--raisin-black);
+    --bs-btn-disabled-bg: var(--alice-blue);
+    --bs-btn-disabled-border-color: var(--alice-blue);
+}
+
+.text-success {
+    color: var(--cgreen) !important;
+}
+
+.text-muted {
+    color: var(--muted-gray) !important;
+}
+
+.card {
+    --bs-card-border-color: var(--input-border);
+}
+
+.dropdown-toggle {
+    cursor: pointer;
+}
+
+.dropdown-menu,
+.dropdown-divider {
+    border-color: var(--lighted-gray);
+}
+.dropdown-item {
+    cursor: pointer;
+    --bs-dropdown-link-active-bg: var(--cgreen-active);
+}
+
+.dropdown-item:focus {
+    background-color: var(--cgreen-active);
+}
+
+.dropdown-menu .dropdown-item:focus svg path {
+    fill: white;
+}
+
+.dropdown-item.email-text {
+    cursor: text;
+    --bs-dropdown-link-active-bg: white;
+    --bs-dropdown-link-active-color: color: var(--muted-gray);
+}
+
+.menu-item-icon svg {
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+}
+
+@media (min-width: 1200px) {
+    html {
+        font-size: clamp(16px, 1vw, calc(16px + .25vw));
+    }
+}
