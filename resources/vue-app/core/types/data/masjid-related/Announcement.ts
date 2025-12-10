@@ -5,6 +5,7 @@ export type Announcement = {
     masjid_id: number;
     title: string;
     details: string;
+    text: string;
     start_date: string;
     end_date: string;
     link: string;

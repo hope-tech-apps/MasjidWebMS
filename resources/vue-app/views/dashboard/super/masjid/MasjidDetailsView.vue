@@ -62,8 +62,8 @@
                 <span class="fs-5 fw-semibold">
                     Admin Details
                 </span>
-                <div v-if="masjid.admin.avatar" class="admin-logo-container">
-                    <img :src="masjid.admin.avatar.original_url" alt="masjid-admin-avatar" class="admin-logo">
+                <div v-if="masjid?.admin?.avatar" class="admin-logo-container">
+                    <img :src="masjid?.admin?.avatar?.original_url" alt="masjid-admin-avatar" class="admin-logo">
                 </div>
                 <div v-for="key in ADMIN_ATTRIBUTES" class="d-flex flex-column flex-sm-row gap-1 w-100">
                     <span class="fs-6 text-capitalize info-attribute">

@@ -43,7 +43,7 @@ class Masjid extends Model implements HasMedia
     public function city() {
         return $this->belongsTo(City::class, 'city_id', 'id');
     }
-    
+
     public function donationLink() {
         return $this->hasOne(DonationLink::class);
     }
@@ -59,6 +59,13 @@ class Masjid extends Model implements HasMedia
     public function logo() {
         return $this->hasOne(Media::class, 'model_id')
             ->where('collection_name', 'logos')
+            ->orderBy('created_at', 'desc')
+            ->latest();
+    }
+
+    public function footer_logo() {
+        return $this->hasOne(Media::class, 'model_id')
+            ->where('collection_name', 'footer_logos')
             ->orderBy('created_at', 'desc')
             ->latest();
     }
@@ -96,5 +103,5 @@ class Masjid extends Model implements HasMedia
     public function jumaaSettings() {
         return $this->hasOne(JumaaSetting::class);
     }
-    
+
 }

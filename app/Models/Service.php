@@ -14,9 +14,9 @@ class Service extends Model implements HasMedia
 {
     use HasFactory, InteractsWithMedia, SoftDeletes, SearchableTrait;
 
-    protected $fillable = ['masjid_id', 'title', 'description'];
+    protected $fillable = ['masjid_id', 'title', 'description', 'text'];
 
-    protected $searchableFields = ['title', 'description'];
+    protected $searchableFields = ['title', 'description', 'text'];
 
     public function masjid()
     {
@@ -38,5 +38,6 @@ class Service extends Model implements HasMedia
             ->orderBy('created_at', 'desc')
             ->latest();
     }
+
 
 }

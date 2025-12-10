@@ -11,7 +11,7 @@ class MobileAppFeature extends Model implements HasMedia
 {
     use InteractsWithMedia;
 
-    protected $fillable = ['name', 'is_available'];
+    protected $fillable = ['name', 'key', 'is_available'];
 
     public function icon()
     {

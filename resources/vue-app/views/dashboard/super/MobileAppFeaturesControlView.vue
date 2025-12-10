@@ -21,7 +21,7 @@
                                 <template v-for="feature in features">
                                     <tr class="border-0">
                                         <td class="border-0">
-                                            <img :src="feature.icon.original_url" alt="icon" />
+                                            <img :src="feature?.icon?.original_url" alt="icon" />
                                         </td>
                                         <td class="border-0 fw-bold">
                                             {{ feature.name }}

@@ -19,7 +19,7 @@ class MasjidsController extends Controller
      */
     public function index()
     {
-        $masjids = Masjid::with('logo', 'admin.avatar', 'country', 'city')->get();
+        $masjids = Masjid::with('logo', 'footer_logo', 'admin.avatar', 'country', 'city')->get();
         return response()->json([
             'status' => 'success',
             'data' => $masjids
@@ -38,6 +38,7 @@ class MasjidsController extends Controller
                 'email' => 'required|email|unique:masjids,email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
+                'footer_logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
@@ -89,6 +90,9 @@ class MasjidsController extends Controller
                     // Store logo
                     $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
 
+                    // Store footer logo
+                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
+
                     // Assign masjid mobile app features
                     $features = MobileAppFeature::all();
                     foreach ($features as $feature) {
@@ -128,7 +132,7 @@ class MasjidsController extends Controller
      */
     public function show(string $id)
     {
-        $masjid = Masjid::with('admin.avatar', 'logo', 'country', 'city')->findOrFail($id);
+        $masjid = Masjid::with('admin.avatar', 'logo', 'footer_logo', 'country', 'city')->findOrFail($id);
         return response()->json([
             'status' => 'success',
             'data' => $masjid
@@ -158,6 +162,7 @@ class MasjidsController extends Controller
                 'email' => 'required|email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'footer_logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
@@ -210,6 +215,11 @@ class MasjidsController extends Controller
                 if ($masjid && $request['logo']) {
                     $masjid->clearMediaCollection('logos');
                     $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
+                }
+
+                if ($masjid && $request['footer_logo']) {
+                    $masjid->clearMediaCollection('footer_logos');
+                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
                 }
 
                 return response()->json([

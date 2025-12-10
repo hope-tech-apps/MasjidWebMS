@@ -36,6 +36,7 @@ class AnnouncementsController extends Controller
             $validator = Validator::make($request->all(), [
                 'title' => 'required|string',
                 'details' => 'required|string',
+                'text' => 'required|string',
                 'start_date' => 'required|date_format:Y-m-d',
                 'end_date' => 'required|date_format:Y-m-d|after:start_date',
                 'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg'
@@ -50,7 +51,7 @@ class AnnouncementsController extends Controller
 
             } else if ($validator->passes()) {
 
-                $announcementInputs = $request->only(['title', 'details', 'start_date', 'end_date']);
+                $announcementInputs = $request->only(['title', 'details', 'text', 'start_date', 'end_date']);
                 $announcementInputs['masjid_id'] = $masjid->id;
 
                 $announcement = Announcement::create($announcementInputs);
@@ -100,6 +101,7 @@ class AnnouncementsController extends Controller
             $validator = Validator::make($request->all(), [
                 'title' => 'required|string',
                 'details' => 'required|string',
+                'text' => 'required|string',
                 'start_date' => 'required|date_format:Y-m-d',
                 'end_date' => 'required|date_format:Y-m-d|after:start_date',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg'
@@ -114,7 +116,7 @@ class AnnouncementsController extends Controller
 
             } else if ($validator->passes()) {
 
-                $announcementInputs = $request->only(['title', 'details', 'start_date', 'end_date']);
+                $announcementInputs = $request->only(['title', 'details', 'text', 'start_date', 'end_date']);
 
                 $announcement->update($announcementInputs);
 

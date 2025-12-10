@@ -6,7 +6,7 @@
             <div class="service-title-icon-container">
                 <img v-if="service.icon" :src="service.icon.original_url" alt="" class="service-icon">
             </div>
-            
+
         </template>
         <div class="d-flex flex-column align-items-start justify-content-start gap-3 w-100 overflow-auto">
             <div class="service-image-container">
@@ -14,6 +14,9 @@
             </div>
             <p class="fs-6">
                 <span v-html="service.description" class=""></span>
+            </p>
+            <p class="fs-6">
+                <span v-html="service.text" class=""></span>
             </p>
         </div>
     </DataItemContainer>

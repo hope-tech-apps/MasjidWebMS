@@ -14,22 +14,23 @@ class MobileAppFeaturesSeeder extends Seeder
     public function run(): void
     {
         $features = [
-            ['name' => 'Qur’an', 'icon' => storage_path('app/public/icons/alqurann.svg')],
-            ['name' => 'Hadith', 'icon' => storage_path('app/public/icons/hadith.svg')],
-            ['name' => 'Adhkar', 'icon' => storage_path('app/public/icons/azkar.svg')],
-            ['name' => 'Qibla', 'icon' => storage_path('app/public/icons/qibla.svg')],
-            ['name' => 'Tasbih', 'icon' => storage_path('app/public/icons/tasbih.svg')],
-            ['name' => 'Donate', 'icon' => storage_path('app/public/icons/donate.svg')],
-            ['name' => 'About Us', 'icon' => storage_path('app/public/icons/about_us.svg')],
-            ['name' => 'Gallery', 'icon' => storage_path('app/public/icons/gallery.svg')],
-            ['name' => 'Services', 'icon' => storage_path('app/public/icons/services.svg')],
-            ['name' => 'Announcements', 'icon' => storage_path('app/public/icons/announcements.svg')],
-            ['name' => 'Contact Us', 'icon' => storage_path('app/public/icons/contact.svg')]
+            ['name' => 'Qur’an', 'key' => 'quran', 'icon' => storage_path('app/public/icons/alqurann.svg')],
+            ['name' => 'Hadith', 'key' => 'hadith', 'icon' => storage_path('app/public/icons/hadith.svg')],
+            ['name' => 'Adhkar', 'key' => 'adhkar', 'icon' => storage_path('app/public/icons/azkar.svg')],
+            ['name' => 'Qibla', 'key' => 'qibla', 'icon' => storage_path('app/public/icons/qibla.svg')],
+            ['name' => 'Tasbih', 'key' => 'tasbih', 'icon' => storage_path('app/public/icons/tasbih.svg')],
+            ['name' => 'Donate', 'key' => 'donate', 'icon' => storage_path('app/public/icons/donate.svg')],
+            ['name' => 'About Us', 'key' => 'about_us', 'icon' => storage_path('app/public/icons/about_us.svg')],
+            ['name' => 'Gallery', 'key' => 'gallery', 'icon' => storage_path('app/public/icons/gallery.svg')],
+            ['name' => 'Services', 'key' => 'services', 'icon' => storage_path('app/public/icons/services.svg')],
+            ['name' => 'Announcements', 'key' => 'announcements', 'icon' => storage_path('app/public/icons/announcements.svg')],
+            ['name' => 'Contact Us', 'key' => 'contact_us', 'icon' => storage_path('app/public/icons/contact.svg')]
         ];
 
         foreach ($features as $feature) {
             $featureFromDB = MobileAppFeature::create([
                 'name' => $feature['name'],
+                'key' => $feature['key'],
             ]);
             $featureFromDB->addMedia($feature['icon'])
                 ->preservingOriginal()

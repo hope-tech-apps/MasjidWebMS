@@ -22,6 +22,16 @@
                             <ErrorMessage name="logo_image" class="error-message" />
                         </div>
                     </div>
+                    <div class="d-flex flex-column w-100">
+                        <!-- Footer Logo -->
+                        <ImageDraggableInput label="Masjid Footer Logo"
+                            @imageChange="(data: UploadedImageInfo) => onFooterLogoInputChange(data)"
+                            :current-image-src="oldFooterLogoImage" type="photo" />
+                        <Field type="file" v-model="detailsModel.footerLogoSrc" name="footer_logo_image" class="d-none"></Field>
+                        <div class="error-message">
+                            <ErrorMessage name="footer_logo_image" class="error-message" />
+                        </div>
+                    </div>
                     <ColumnInputContainer label="Name" name="masjid_name" :show_error="true" class="w-100">
                         <Field name="masjid_name" type="text" v-model="detailsModel.name" class="dashboard-input"
                             placeholder="masjid name goes here"></Field>
@@ -126,7 +136,7 @@ onBeforeMount(async () => {
 const masjidStore = useMasjidStore();
 
 // Custom constants
-const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; }>({
+const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; footerLogoSrc: string | undefined; }>({
     name: '',
     email: '',
     phone: '',
@@ -135,13 +145,16 @@ const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; }>(
     instagram: '',
     wahtsapp: '',
     logoSrc: undefined,
+    footerLogoSrc: undefined,
     website_link: ''
 });
 const logoFile = ref<File | undefined>();
+const footerLogoFile = ref<File | undefined>();
 const phone = ref<string>('');
 
 const validationSchema = object().shape({
     logo_image: string().required(),
+    footer_logo_image: string().required(),
     masjid_email: string().email().required(),
     masjid_phone: string()
         .matches(/^$|^\+?[0-9 ]+$/, "must have the curruent format: '+[digits and spaces only]'")
@@ -173,6 +186,7 @@ const validationSchema = object().shape({
 });
 const { setFieldValue } = useForm({ validationSchema: validationSchema });
 const oldAvatarImage = computed(() => masjidStore.masjid?.logo?.original_url ?? undefined);
+const oldFooterLogoImage = computed(() => masjidStore.masjid?.footer_logo?.original_url ?? undefined);
 const updateDetailsLoading = ref<boolean>(false);
 
 async function fetchMasjidDetails() {
@@ -214,6 +228,7 @@ async function updateMasjidDetails() {
 
                 const formData = new FormData();
                 if (logoFile.value) formData.append('logo', logoFile.value);
+                if (footerLogoFile.value) formData.append('footer_logo', footerLogoFile.value);
                 formData.append('name', detailsModel.value.name);
                 formData.append('website_link', detailsModel.value.website_link);
                 formData.append('email', detailsModel.value.email);
@@ -265,6 +280,12 @@ const onImageInputChange = (data: UploadedImageInfo) => {
     setFieldValue('logo_image', data.src);
     detailsModel.value.logoSrc = data.src;
     logoFile.value = data.file;
+};
+
+const onFooterLogoInputChange = (data: UploadedImageInfo) => {
+    setFieldValue('footer_logo_image', data.src);
+    detailsModel.value.footerLogoSrc = data.src;
+    footerLogoFile.value = data.file;
 };
 
 </script>

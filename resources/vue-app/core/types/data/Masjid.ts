@@ -23,6 +23,7 @@ export type Masjid = {
     deleted_at: string | null;
     admin: Admin | null;
     logo: Media | null;
+    footer_logo: Media | null;
     country: Country | null;
     city: City | null;
     website_link: string;
@@ -49,6 +50,7 @@ export const masjid: Masjid = {
     deleted_at: null,
     admin: null,
     logo: null,
+    footer_logo: null,
     country: null,
     city: null,
     website_link: ''

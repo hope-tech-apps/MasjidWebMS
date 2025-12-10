@@ -14,7 +14,7 @@ class MasjidDetailsController extends Controller
 {
     public function getDetails($masjid_id)
     {
-        $masjid = Masjid::with('logo', 'socialMediaLinks')->findOrFail($masjid_id);
+        $masjid = Masjid::with('logo', 'footer_logo', 'socialMediaLinks')->findOrFail($masjid_id);
 
         return response()->json([
             'status' => 'success',
@@ -30,6 +30,7 @@ class MasjidDetailsController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'footer_logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
                 'name' => 'required|string',
                 'website_link' => 'nullable|string',
                 'email' => 'required|string|email',
@@ -58,11 +59,15 @@ class MasjidDetailsController extends Controller
                 if($request['website_link']) {
                     $masjid->website_link = $request['website_link'];
                 }
-                
+
                 $masjid->update();
 
                 if ($masjid && $request->hasFile('logo')) {
                     $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
+                }
+
+                if ($masjid && $request->hasFile('footer_logo')) {
+                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
                 }
 
                 // Update or Store masjid links
@@ -82,7 +87,7 @@ class MasjidDetailsController extends Controller
                     MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'WhatsApp_Number', $request['whatsapp_number']);
                 }
 
-                $masjid = Masjid::with('logo', 'socialMediaLinks')->findOrFail($masjid->id);
+                $masjid = Masjid::with('logo', 'footer_logo', 'socialMediaLinks')->findOrFail($masjid->id);
 
                 DB::commit();
                 return response()->json([

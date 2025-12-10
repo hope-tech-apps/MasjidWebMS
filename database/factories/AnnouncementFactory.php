@@ -23,6 +23,7 @@ class AnnouncementFactory extends Factory
             'masjid_id' => Masjid::first()->id,
             'title' => $this->faker->name() . ' Announcement',
             'details' => $this->faker->text(),
+            'text' => $this->faker->paragraph(),
             'start_date' => Carbon::now()->format('Y-m-d'),
             'end_date' => Carbon::now()->addDays(3)->format('Y-m-d'),
             'link' => 'masjidwebsite.test/announcements'

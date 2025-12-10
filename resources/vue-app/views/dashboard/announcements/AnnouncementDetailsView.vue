@@ -9,6 +9,9 @@
             <p class="fs-6">
                 <span v-html="announcement.details" class=""></span>
             </p>
+            <p class="fs-6">
+                <span v-html="announcement.text" class=""></span>
+            </p>
         </div>
     </DataItemContainer>
 </template>

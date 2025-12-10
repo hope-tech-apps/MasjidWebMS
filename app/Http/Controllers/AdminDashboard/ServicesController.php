@@ -36,6 +36,7 @@ class ServicesController extends Controller
             $validator = Validator::make($request->all(), [
                 'title' => 'required|string',
                 'description' => 'required|string',
+                'text' => 'required|string',
                 'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
                 'icon' => 'required|image|mimes:png,svg,ico,bmb'
             ]);
@@ -49,7 +50,7 @@ class ServicesController extends Controller
 
             } else if ($validator->passes()) {
 
-                $serviceInputs = $request->only(['title', 'description']);
+                $serviceInputs = $request->only(['title', 'description', 'text']);
                 $serviceInputs['masjid_id'] = $masjid->id;
 
                 $service = Service::create($serviceInputs);
@@ -64,7 +65,7 @@ class ServicesController extends Controller
                     'status' => 'success',
                     'data' => $service->load('image', 'icon')
                 ], Response::HTTP_OK);
-                
+
             }
         } catch (\Exception $e) {
             return response()->json([
@@ -99,6 +100,7 @@ class ServicesController extends Controller
             $validator = Validator::make($request->all(), [
                 'title' => 'required|string',
                 'description' => 'required|string',
+                'text' => 'required|string',
                 'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg',
                 'icon' => 'nullable|image|mimes:png,gif,svg,ico,icns,bmb'
             ]);
@@ -112,7 +114,7 @@ class ServicesController extends Controller
 
             } else if ($validator->passes()) {
 
-                $serviceInputs = $request->only(['title', 'description']);
+                $serviceInputs = $request->only(['title', 'description', 'text']);
                 $serviceInputs['masjid_id'] = $masjid->id;
 
                 $service->update($serviceInputs);
@@ -130,7 +132,7 @@ class ServicesController extends Controller
                     'status' => 'success',
                     'data' => $service->load('image', 'icon')
                 ], Response::HTTP_OK);
-                
+
             }
         } catch (\Exception $e) {
             return response()->json([
