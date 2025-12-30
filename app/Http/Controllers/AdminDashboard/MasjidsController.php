@@ -7,6 +7,7 @@ use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
+use App\Models\PrayerCalculationSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -42,6 +43,7 @@ class MasjidsController extends Controller
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
+                'timezone' => 'required|string|timezone',
                 'user_id' => ['nullable', 'exists:users,id', 'unique:masjids,user_id', function ($attribute, $value, $fail) {
                     $user = \App\Models\User::where('id', $value)
                         ->where('type', 'MasjidAdmin')
@@ -112,6 +114,14 @@ class MasjidsController extends Controller
                         'maghrib' => 10,
                         'isha' => 10
                     ]);
+
+                    // Assign masjid Prayer Calculation settings
+                    PrayerCalculationSetting::create([
+                        'masjid_id' => $masjid->id,
+                        'method' => 'MoonsightingCommittee',
+                        'madhab' => 'Shafi',
+                        'high_latitude_rule' => 'MiddleOfTheNight'
+                    ]);
                 }
 
                 return response()->json([
@@ -166,6 +176,7 @@ class MasjidsController extends Controller
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
+                'timezone' => 'nullable|string|timezone',
                 'user_id' => ['nullable', 'exists:users,id', function ($attribute, $value, $fail) {
                     $user = \App\Models\User::where('id', $value)
                         ->where('type', 'MasjidAdmin')

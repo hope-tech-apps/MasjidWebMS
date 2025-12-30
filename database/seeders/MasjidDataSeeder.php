@@ -40,26 +40,26 @@ class MasjidDataSeeder extends Seeder
         ]);
 
         // Masjid logo save
-        $masjid->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
-            ->preservingOriginal()
-            ->toMediaCollection('logos');
+        // $masjid->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
+        //     ->preservingOriginal()
+        //     ->toMediaCollection('logos');
 
         // Masjid gallery seed
-        $masjid->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
-            ->preservingOriginal()
-            ->toMediaCollection('galleries');
-        $masjid->addMedia(storage_path('app/public/images/shiekh.jpeg'))
-            ->preservingOriginal()
-            ->toMediaCollection('galleries');
-        $masjid->addMedia(storage_path('app/public/images/quruan-book.jpeg'))
-            ->preservingOriginal()
-            ->toMediaCollection('galleries');
-        $masjid->addMedia(storage_path('app/public/images/masjid_on_zokhrufa.png'))
-            ->preservingOriginal()
-            ->toMediaCollection('galleries');
-        $masjid->addMedia(storage_path('app/public/images/inside-mosque.png'))
-            ->preservingOriginal()
-            ->toMediaCollection('galleries');
+        // $masjid->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
+        //     ->preservingOriginal()
+        //     ->toMediaCollection('galleries');
+//        $masjid->addMedia(storage_path('app/public/images/shiekh.jpeg'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('galleries');
+//        $masjid->addMedia(storage_path('app/public/images/quruan-book.jpeg'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('galleries');
+//        $masjid->addMedia(storage_path('app/public/images/masjid_on_zokhrufa.png'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('galleries');
+//        $masjid->addMedia(storage_path('app/public/images/inside-mosque.png'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('galleries');
 
         $masjid->donationLink()->create([
             'masjid_id' => $masjid->id,
@@ -68,9 +68,9 @@ class MasjidDataSeeder extends Seeder
             'message' => 'Donate to support the mosque'
         ]);
 
-        $masjid->donationLink->addMedia(storage_path('app/public/images/shiekh.jpeg'))
-            ->preservingOriginal()
-            ->toMediaCollection('donationLink');
+//        $masjid->donationLink->addMedia(storage_path('app/public/images/shiekh.jpeg'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('donationLink');
 
         $masjid->masjidAbout()->create([
             'masjid_id' => $masjid->id,
@@ -79,17 +79,17 @@ class MasjidDataSeeder extends Seeder
             'vision' => 'We have our vission which is ... '
         ]);
 
-        $masjid->masjidAbout->addMedia(storage_path('app/public/images/al_fatih_logo.png'))
-            ->preservingOriginal()
-            ->toMediaCollection('aboutImages');
-
-        $masjid->masjidAbout->addMedia(storage_path('app/public/images/charity_icon.png'))
-            ->preservingOriginal()
-            ->toMediaCollection('missionIcons');
-
-        $masjid->masjidAbout->addMedia(storage_path('app/public/images/charity_icon.png'))
-            ->preservingOriginal()
-            ->toMediaCollection('visionIcons');
+//        $masjid->masjidAbout->addMedia(storage_path('app/public/images/al_fatih_logo.png'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('aboutImages');
+//
+//        $masjid->masjidAbout->addMedia(storage_path('app/public/images/charity_icon.png'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('missionIcons');
+//
+//        $masjid->masjidAbout->addMedia(storage_path('app/public/images/charity_icon.png'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('visionIcons');
 
         IqamaTimeSetting::create([
             'masjid_id' => $masjid->id,
@@ -106,9 +106,9 @@ class MasjidDataSeeder extends Seeder
             'user_agent' => 'test'
         ]);
 
-        Announcement::factory()->count(5)->create();
-        Event::factory()->count(5)->create();
-        Service::factory()->count(5)->create();
+//        Announcement::factory()->count(5)->create();
+//        Event::factory()->count(5)->create();
+//        Service::factory()->count(5)->create();
 
         // Seed to link masjid with mobile app features
         $features = MobileAppFeature::all();

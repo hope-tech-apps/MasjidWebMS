@@ -32,9 +32,9 @@ class MobileAppFeaturesSeeder extends Seeder
                 'name' => $feature['name'],
                 'key' => $feature['key'],
             ]);
-            $featureFromDB->addMedia($feature['icon'])
-                ->preservingOriginal()
-                ->toMediaCollection('featuresIcons');
+//            $featureFromDB->addMedia($feature['icon'])
+//                ->preservingOriginal()
+//                ->toMediaCollection('featuresIcons');
         }
     }
 }

@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
+use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\EventsController;
@@ -17,6 +18,10 @@ use App\Http\Controllers\AdminDashboard\MasjidGalleryController;
 use App\Http\Controllers\AdminDashboard\MasjidsController;
 use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
+use App\Http\Controllers\AdminDashboard\PagesController;
+use App\Http\Controllers\AdminDashboard\PageSectionsController;
+use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
+use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\UsersController;
@@ -46,6 +51,9 @@ Route::prefix('admin')->group(function () {
 
         Route::prefix('masjids')->group(function () {
 
+            // Get timezones list (must be before /{masjid_id} route)
+            Route::get('timezones', [MasjidDetailsController::class, 'getTimezones']);
+
             Route::controller(MasjidsController::class)->group(function () {
 
                 // Masjid account control
@@ -73,6 +81,12 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/details')->controller(MasjidDetailsController::class)->group(function () {
                 Route::get('/', 'getDetails');
                 Route::post('/', 'updateDetails');
+            });
+
+            // Masjid general settings (logos, copyright, app links, api keys)
+            Route::prefix('{masjid_id}/general-settings')->controller(MasjidDetailsController::class)->group(function () {
+                Route::get('/', 'getGeneralSettings');
+                Route::post('/', 'updateGeneralSettings');
             });
 
             // Masjid announcements
@@ -128,16 +142,64 @@ Route::prefix('admin')->group(function () {
                 Route::post('/', 'save');
             }));
 
-            // Masjid iqama time settings
+            // Masjid jumaa time settings
             Route::prefix('{masjid_id}/jumaa')->controller(JumaaSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
 
-            // Masjid iqama time settings
+            // Masjid prayer calculation settings
+            Route::prefix('{masjid_id}/prayer-calculation')->controller(PrayerCalculationSettingsController::class)->group((function () {
+                Route::get('/', 'index');
+                Route::post('/', 'save');
+            }));
+
+            // Get prayer calculation options (methods, madhabs, high latitude rules)
+            Route::get('prayer-calculation/options', [PrayerCalculationSettingsController::class, 'getOptions']);
+
+            // Masjid notifications
             Route::prefix('{masjid_id}/notifications')->controller(NotificationsController::class)->group((function () {
                 Route::post('/', 'save');
             }));
+
+            // Pages & Sections Management
+            Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::post('/reorder', 'reorder'); // Reorder pages
+                Route::get('/{page_id}', 'show');
+                Route::put('/{page_id}', 'update');
+                Route::delete('/{page_id}', 'destroy');
+            });
+
+            // Sections Library Management
+            Route::prefix('{masjid_id}/sections')->controller(SectionsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{section_id}', 'show');
+                Route::put('/{section_id}', 'update');
+                Route::delete('/{section_id}', 'destroy');
+            });
+
+            // Page Sections Management (attach/detach sections to pages)
+            Route::prefix('{masjid_id}/pages/{page_id}/sections')->controller(PageSectionsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store'); // Create new section and attach to page
+                Route::post('/attach', 'attach'); // Attach existing section to page
+                Route::get('/{section_id}', 'show');
+                Route::put('/{section_id}', 'update');
+                Route::delete('/{section_id}', 'destroy'); // Detach section from page
+            });
+
+            // Get available section types
+            Route::get('{masjid_id}/section-types', [PageSectionsController::class, 'sectionTypes']);
+
+            // Contact Requests Management
+            Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::get('/{message_id}', 'show');
+                Route::delete('/{message_id}', 'destroy');
+            });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);
         });

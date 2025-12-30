@@ -14,7 +14,7 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
 
-        // $this->call(CountriesCitiesSeeder::class);
+//         $this->call(CountriesCitiesSeeder::class);
 
         DB::statement("SET FOREIGN_KEY_CHECKS=0;");
         DB::table('masjid_mobile_app_features')->truncate();
@@ -38,6 +38,7 @@ class DatabaseSeeder extends Seeder
         $this->call(UsersSeeder::class);
         $this->call(MasjidDataSeeder::class);
         $this->call(AppLevelDataSeeder::class);
-    
+        $this->call(PagesSeeder::class);
+
     }
 }

@@ -25,6 +25,11 @@ class Masjid extends Model implements HasMedia
         'address',
         'latitude',
         'longitude',
+        'timezone',
+        'copyright_text',
+        'app_store_link',
+        'google_play_link',
+        'google_maps_key',
         'created_by',
         'updated_by',
         'deleted_by'
@@ -56,9 +61,20 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(IqamaTimeSetting::class);
     }
 
+    public function prayerCalculationSettings() {
+        return $this->hasOne(PrayerCalculationSetting::class);
+    }
+
     public function logo() {
         return $this->hasOne(Media::class, 'model_id')
             ->where('collection_name', 'logos')
+            ->orderBy('created_at', 'desc')
+            ->latest();
+    }
+
+    public function header_logo() {
+        return $this->hasOne(Media::class, 'model_id')
+            ->where('collection_name', 'header_logos')
             ->orderBy('created_at', 'desc')
             ->latest();
     }
@@ -102,6 +118,14 @@ class Masjid extends Model implements HasMedia
 
     public function jumaaSettings() {
         return $this->hasOne(JumaaSetting::class);
+    }
+
+    public function pages() {
+        return $this->hasMany(Page::class);
+    }
+
+    public function sections() {
+        return $this->hasMany(Section::class);
     }
 
 }

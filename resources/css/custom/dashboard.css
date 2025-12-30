@@ -42,6 +42,8 @@
     left: 0;
     transition: .75s all ease-in-out;
     z-index: 1050;
+    display: flex;
+    flex-direction: column;
 }
 
 #header_main_container {
@@ -97,6 +99,10 @@
 
 #dashboard_layout #dashboard_aside .aside-contents-container {
     padding: .75rem 1rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 #dashboard_layout .aside-toggle-btn {
@@ -129,7 +135,7 @@
 }
 
 @media(max-width: 920px) {
-    
+
     #dashboard_aside {
         left: calc(-1 * var(--dash-aside-width));
     }

@@ -61,18 +61,6 @@
                                                 </div>
                                             </td>
                                         </tr>
-                                        <tr class="border-0">
-                                            <td class="border-0 text-capitalize">
-                                                Iqama
-                                            </td>
-                                            <td class="border-0 fw-bold">
-                                                <div class="d-flex flex-column">
-                                                    <Field :name="`iqama_setting`" type="time"
-                                                        v-model="settingsModel.iqama" class="dashboard-input" />
-                                                    <ErrorMessage name="iqama_setting" class="error-message" />
-                                                </div>
-                                            </td>
-                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -112,7 +100,6 @@ onBeforeMount(async () => {
 
 // Types
 type SettingsModel = {
-    iqama: string;
     athans: string[];
 }
 
@@ -121,7 +108,6 @@ const masjidStore = useMasjidStore();
 
 // Custom constants
 const jumaaSetting = ref<JumaaSetting>();
-const SETTING_KEYS = ['iqama'];
 const isLoading = ref<boolean>(false);
 
 const numberOfAthans = ref<number>(0);
@@ -131,21 +117,7 @@ const athansFieldsNumber = computed(() => {
     return numberOfAthans.value;
 });
 
-// Convert HH:MM to total minutes for comparison
-const toMinutes = (time: string) => {
-    const [h, m] = time.split(':').map(Number);
-    return h * 60 + m;
-};
-
 // Form
-const primaryValidation = {
-    iqama_setting: string()
-        .test(
-            'is-valid-time',
-            'Invalid time format (use HH:MM)',
-            (value) => (!value) || /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value) // Validates HH:MM format
-        ).label('Jumaa Iqama')
-};
 const validationSchema = computed(() => {
     let additionalValidation: any = {};
     if (athans.value?.length > 0) {
@@ -155,23 +127,14 @@ const validationSchema = computed(() => {
                     'is-valid-time',
                     'Invalid time format (use HH:MM)',
                     (value) => (!value) || /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value) // Validates HH:MM format
-                ).test(
-                    'is-before-iqama',
-                    'Athan time must be before iqama time',
-                    function (value, context) { // Use function() to access parent values
-                        if (!value || !context.parent.iqama_setting) return true;
-                        return toMinutes(value) < toMinutes(context.parent.iqama_setting);
-                    }
                 ).label('Jumaa Athan')
         });
     }
     return object().shape({
-        ...primaryValidation,
         ...additionalValidation
     });
 });
 const settingsModel = ref<SettingsModel>({
-    iqama: "",
     athans: []
 });
 
@@ -180,7 +143,6 @@ const { athans } = toRefs(settingsModel.value);
 watch(() => jumaaSetting.value, () => {
     console.log(jumaaSetting.value);
     if (jumaaSetting.value) {
-        settingsModel.value.iqama = jumaaSetting.value.iqama.slice(0, 5);
         settingsModel.value.athans = jumaaSetting.value.athans?.length ? jumaaSetting.value.athans : [];
     }
     numberOfAthans.value = settingsModel.value.athans?.length || 0;
@@ -219,10 +181,6 @@ const onSubmit = async () => {
 
                 // Sed Request Sent Data
                 const apiRequestData = new FormData();
-
-                SETTING_KEYS.forEach(k => {
-                    apiRequestData.append(k, settingsModel.value[k as keyof SettingsModel] + '');
-                });
 
                 if (athans.value?.length > 0) {
                     athans.value.forEach((a, i) => {

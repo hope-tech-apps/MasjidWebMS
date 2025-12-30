@@ -4,6 +4,7 @@
 use App\Http\Controllers\Api\V1\AnnouncementsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\HomeController;
+use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
 use App\Http\Controllers\Api\V1\ServicesController;
 use App\Http\Controllers\Api\V1\SettingController;
@@ -35,5 +36,12 @@ Route::prefix('v1')->group(function () {
     Route::prefix('gallery')->controller(PhotoGalleryController::class)->group(function () {
         Route::get('/', 'index');
         Route::get('/{id}', 'show');
+    });
+
+    // Pages routes
+    Route::prefix('pages')->controller(PagesController::class)->group(function () {
+        Route::get('/', 'index'); // Get all pages
+        Route::get('/menu', 'menu'); // Get menu items
+        Route::get('/{slug}', 'show'); // Get page by slug with sections
     });
 });

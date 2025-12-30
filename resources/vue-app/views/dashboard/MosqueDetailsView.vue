@@ -12,26 +12,15 @@
             <div class="d-flex flex-column gap-3">
                 <span class="d-block fs-5 fw-semibold">Basic Info</span>
                 <div class="d-flex flex-column gap-3 w-100">
-                    <div class="d-flex flex-column w-100">
-                        <!-- Image -->
-                        <ImageDraggableInput label="Masjid Logo"
-                            @imageChange="(data: UploadedImageInfo) => onImageInputChange(data)"
-                            :current-image-src="oldAvatarImage" type="photo" />
-                        <Field type="file" v-model="detailsModel.logoSrc" name="logo_image" class="d-none"></Field>
-                        <div class="error-message">
-                            <ErrorMessage name="logo_image" class="error-message" />
-                        </div>
-                    </div>
-                    <div class="d-flex flex-column w-100">
-                        <!-- Footer Logo -->
-                        <ImageDraggableInput label="Masjid Footer Logo"
-                            @imageChange="(data: UploadedImageInfo) => onFooterLogoInputChange(data)"
-                            :current-image-src="oldFooterLogoImage" type="photo" />
-                        <Field type="file" v-model="detailsModel.footerLogoSrc" name="footer_logo_image" class="d-none"></Field>
-                        <div class="error-message">
-                            <ErrorMessage name="footer_logo_image" class="error-message" />
-                        </div>
-                    </div>
+                    <!-- Logo Image Input -->
+                    <Field name="logo_image" v-model="detailsModel.logoSrc" v-slot="{ field }">
+                        <ImageDraggableInput
+                            label="Logo"
+                            :current-image-src="oldAvatarImage"
+                            @image-change="onLogoChange"
+                        />
+                    </Field>
+
                     <ColumnInputContainer label="Name" name="masjid_name" :show_error="true" class="w-100">
                         <Field name="masjid_name" type="text" v-model="detailsModel.name" class="dashboard-input"
                             placeholder="masjid name goes here"></Field>
@@ -63,6 +52,46 @@
                             </vue-tel-input>
                         </Field>
                     </ColumnInputContainer>
+                </div>
+            </div>
+
+            <!-- Location Info Inputs Group -->
+            <div class="d-flex flex-column gap-3">
+                <span class="d-block fs-5 fw-semibold">Location Info</span>
+                <div class="d-flex flex-column gap-3 w-100">
+                    <ColumnInputContainer label="Timezone" name="masjid_timezone" :show_error="true" class="w-100">
+                        <Field name="masjid_timezone" v-model="detailsModel.timezone" v-slot="{ field }">
+                            <SearchableSelect
+                                v-if="timezones.length > 0"
+                                v-model="detailsModel.timezone"
+                                :options="timezones"
+                                placeholder="Select timezone..."
+                            />
+                            <input
+                                v-else
+                                type="text"
+                                class="dashboard-input"
+                                placeholder="Loading timezones..."
+                                disabled
+                            />
+                        </Field>
+                    </ColumnInputContainer>
+                    <div class="d-flex flex-column flex-md-row gap-3 justify-content-md-between w-100">
+                        <ColumnInputContainer label="Latitude" name="masjid_latitude" :show_error="true"
+                            class="w-100 w-md-50">
+                            <Field name="masjid_latitude" type="number" step="any" v-model="detailsModel.latitude"
+                                class="dashboard-input" placeholder="e.g., 25.2048"></Field>
+                        </ColumnInputContainer>
+                        <ColumnInputContainer label="Longitude" name="masjid_longitude" :show_error="true"
+                            class="w-100 w-md-50">
+                            <Field name="masjid_longitude" type="number" step="any" v-model="detailsModel.longitude"
+                                class="dashboard-input" placeholder="e.g., 55.2708"></Field>
+                        </ColumnInputContainer>
+                    </div>
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Latitude and longitude are used for accurate prayer time calculations. You can find these coordinates using Google Maps.
+                    </small>
                 </div>
             </div>
 
@@ -109,10 +138,11 @@
 
 <script setup lang="ts">
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
+import SearchableSelect from '@/components/form/SearchableSelect.vue';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { computed, onBeforeMount, ref } from 'vue';
 import { ErrorMessage, Field, Form, useForm } from 'vee-validate';
-import { object, string } from 'yup';
+import { object, string, number } from 'yup';
 import { VueTelInputCountry } from '@/core/types/elements/VueTelInput';
 import { MasjidDetails, MasjidDetailsModel } from '@/core/types/data/custom/MasjidDetails';
 import ApiService from '@/core/services/ApiService';
@@ -126,6 +156,7 @@ import { AxiosError } from 'axios';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 
 onBeforeMount(async () => {
+    await fetchTimezones();
     await masjidStore.fetchMasjid()
         .finally(async () => {
             await fetchMasjidDetails();
@@ -136,7 +167,7 @@ onBeforeMount(async () => {
 const masjidStore = useMasjidStore();
 
 // Custom constants
-const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; footerLogoSrc: string | undefined; }>({
+const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; }>({
     name: '',
     email: '',
     phone: '',
@@ -145,16 +176,17 @@ const detailsModel = ref<MasjidDetailsModel & { logoSrc: string | undefined; foo
     instagram: '',
     wahtsapp: '',
     logoSrc: undefined,
-    footerLogoSrc: undefined,
-    website_link: ''
+    website_link: '',
+    timezone: '',
+    latitude: '',
+    longitude: ''
 });
 const logoFile = ref<File | undefined>();
-const footerLogoFile = ref<File | undefined>();
 const phone = ref<string>('');
+const timezones = ref<string[]>([]);
 
 const validationSchema = object().shape({
     logo_image: string().required(),
-    footer_logo_image: string().required(),
     masjid_email: string().email().required(),
     masjid_phone: string()
         .matches(/^$|^\+?[0-9 ]+$/, "must have the curruent format: '+[digits and spaces only]'")
@@ -168,6 +200,9 @@ const validationSchema = object().shape({
                     return false;
                 }
             }).required(),
+    masjid_timezone: string().required().label('Timezone'),
+    masjid_latitude: number().required().min(-90).max(90).label('Latitude'),
+    masjid_longitude: number().required().min(-180).max(180).label('Longitude'),
     facebook_link: string().url().optional(),
     youtube_link: string().url().optional(),
     instagram_link: string().url().optional(),
@@ -186,8 +221,18 @@ const validationSchema = object().shape({
 });
 const { setFieldValue } = useForm({ validationSchema: validationSchema });
 const oldAvatarImage = computed(() => masjidStore.masjid?.logo?.original_url ?? undefined);
-const oldFooterLogoImage = computed(() => masjidStore.masjid?.footer_logo?.original_url ?? undefined);
 const updateDetailsLoading = ref<boolean>(false);
+
+async function fetchTimezones() {
+    try {
+        const response = await ApiService.get('/api/admin/masjids/timezones');
+        if (response.data.status === 'success' && Array.isArray(response.data.data)) {
+            timezones.value = response.data.data;
+        }
+    } catch (error) {
+        console.error('Error fetching timezones:', error);
+    }
+}
 
 async function fetchMasjidDetails() {
     if (masjidStore.masjid) {
@@ -200,6 +245,9 @@ async function fetchMasjidDetails() {
                     detailsModel.value.email = details.email;
                     detailsModel.value.phone = details.phone;
                     phone.value = details.phone;
+                    detailsModel.value.timezone = details.timezone || '';
+                    detailsModel.value.latitude = details.latitude?.toString() || '';
+                    detailsModel.value.longitude = details.longitude?.toString() || '';
                     if (details.social_media_links.length) {
                         detailsModel.value.facebook = details.social_media_links.find(elm => elm.type === 'Facebook')?.value ?? ""
                         detailsModel.value.youtube = details.social_media_links.find(elm => elm.type === 'YouTube')?.value ?? ""
@@ -228,11 +276,13 @@ async function updateMasjidDetails() {
 
                 const formData = new FormData();
                 if (logoFile.value) formData.append('logo', logoFile.value);
-                if (footerLogoFile.value) formData.append('footer_logo', footerLogoFile.value);
                 formData.append('name', detailsModel.value.name);
                 formData.append('website_link', detailsModel.value.website_link);
                 formData.append('email', detailsModel.value.email);
                 formData.append('phone', phone.value);
+                formData.append('timezone', detailsModel.value.timezone);
+                formData.append('latitude', detailsModel.value.latitude);
+                formData.append('longitude', detailsModel.value.longitude);
                 formData.append('facebook_url', detailsModel.value.facebook);
                 formData.append('youtube_url', detailsModel.value.youtube);
                 formData.append('instagram_url', detailsModel.value.instagram);
@@ -276,16 +326,10 @@ async function updateMasjidDetails() {
 
 }
 
-const onImageInputChange = (data: UploadedImageInfo) => {
+const onLogoChange = (data: UploadedImageInfo) => {
     setFieldValue('logo_image', data.src);
     detailsModel.value.logoSrc = data.src;
     logoFile.value = data.file;
-};
-
-const onFooterLogoInputChange = (data: UploadedImageInfo) => {
-    setFieldValue('footer_logo_image', data.src);
-    detailsModel.value.footerLogoSrc = data.src;
-    footerLogoFile.value = data.file;
 };
 
 </script>

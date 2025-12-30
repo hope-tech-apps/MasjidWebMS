@@ -4,8 +4,9 @@
             <div class="card-title fs-4 fw-semibold">
                 {{ title }}
             </div>
-            <div class="card-toolbar">
-                <button :type="buttonProps.type" @click.prevent="headerButtonClick" :class="buttonProps.class"
+            <div class="card-toolbar d-flex gap-2">
+                <slot name="headerButtons"></slot>
+                <button v-if="!hideButton" :type="buttonProps.type" @click.prevent="headerButtonClick" :class="buttonProps.class"
                     :disabled="buttonProps.disabled">
                     {{ buttonProps.title }}
                 </button>
@@ -34,6 +35,11 @@ const props = defineProps({
         type: String,
         required: true
     },
+    hideButton: {
+        type: Boolean,
+        required: false,
+        default: false
+    },
     buttonProps: {
         type: Object as PropType<ButtonProps>,
         required: false,
@@ -53,7 +59,7 @@ const props = defineProps({
 // Emits
 const emits = defineEmits(['headerButtonClick', 'pageChange']);
 
-const { title, paginationOptions, buttonProps } = toRefs(props);
+const { title, paginationOptions, buttonProps, hideButton } = toRefs(props);
 
 function headerButtonClick() {
     emits('headerButtonClick');
