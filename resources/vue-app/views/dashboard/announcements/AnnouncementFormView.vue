@@ -48,6 +48,12 @@
                     placeholder="description goes here"></Field>
             </ColumnInputContainer>
 
+            <ColumnInputContainer label="Announcement Text" name="announcement_text" :show_error="true"
+                class="w-100 w-md-50">
+                <Field name="announcement_text" as="textarea" v-model="announcementText" class="dashboard-input"
+                    placeholder="text goes here"></Field>
+            </ColumnInputContainer>
+
         </div>
 
         <!-- Form Footer -->
@@ -110,6 +116,7 @@ const announcementsStore = useAnnouncementsStore();
 type AnnouncementEntry = {
     title: string;
     description: string;
+    text: string;
     imageSrc: string | undefined;
     startDate: string;
     endDate: string;
@@ -119,13 +126,14 @@ type AnnouncementEntry = {
 const isEditForm = ref(false);
 const announcementId = ref<string>('');
 const announcement = ref<Announcement>();
-const entryModel = ref<AnnouncementEntry>({ title: "", description: "", imageSrc: "", startDate: "", endDate: "" });
+const entryModel = ref<AnnouncementEntry>({ title: "", description: "", text: "", imageSrc: "", startDate: "", endDate: "" });
 const isLoading = ref(false);
 
 // Form
 const formValidationSchema = object().shape({
     announcement_title: string().required(),
     announcement_description: string().required(),
+    announcement_text: string().required(),
     announcement_image: string().required(),
     announcement_start_date: string().required(),
     announcement_end_date: string().test('is-grater', 'end date must be after start date', (value, context) => {
@@ -138,7 +146,7 @@ const formValidationSchema = object().shape({
 });
 const { setFieldValue } = useForm({ validationSchema: formValidationSchema });
 const { errorMessage } = useField('announcement_image');
-const { title: announcementTitle, description: announcementDesc, imageSrc, startDate, endDate } = toRefs<AnnouncementEntry>(entryModel.value);
+const { title: announcementTitle, description: announcementDesc, text: announcementText, imageSrc, startDate, endDate } = toRefs<AnnouncementEntry>(entryModel.value);
 const imageFile = ref<File | undefined>(undefined);
 
 // Computed
@@ -151,6 +159,7 @@ watch(() => announcement.value, () => {
     if (announcement.value) {
         announcementTitle.value = announcement.value.title;
         announcementDesc.value = announcement.value.details;
+        announcementText.value = announcement.value.text;
         startDate.value = announcement.value.start_date;
         endDate.value = announcement.value.end_date;
         imageSrc.value = announcement.value.image?.original_url;
@@ -176,6 +185,7 @@ const onSubmit = async () => {
                 const apiRequestData = new FormData();
                 apiRequestData.append('title', announcementTitle.value);
                 apiRequestData.append('details', announcementDesc.value);
+                apiRequestData.append('text', announcementText.value);
                 apiRequestData.append('start_date', startDate.value);
                 apiRequestData.append('end_date', endDate.value);
                 if (imageFile.value) {

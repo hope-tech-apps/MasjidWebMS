@@ -9,10 +9,10 @@ class ContactUsMessage extends Model
     protected $fillable = ['contact_us_account_id', 'contact_us_reason_id', 'message'];
 
     public function contacter() {
-        return $this->belongsTo(ContactUsAccount::class);
+        return $this->belongsTo(ContactUsAccount::class, 'contact_us_account_id');
     }
 
     public function reason() {
-        return $this->belongsTo(ContactUsReason::class);
+        return $this->belongsTo(ContactUsReason::class, 'contact_us_reason_id');
     }
 }

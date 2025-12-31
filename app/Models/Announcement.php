@@ -14,9 +14,9 @@ class Announcement extends Model implements HasMedia
 {
     use HasFactory, InteractsWithMedia, SoftDeletes, SearchableTrait;
 
-    protected $fillable = ['masjid_id', 'title', 'details', 'start_date', 'end_date', 'link'];
+    protected $fillable = ['masjid_id', 'title', 'details', 'text', 'start_date', 'end_date', 'link'];
 
-    protected $searchableFields = ['title', 'details'];
+    protected $searchableFields = ['title', 'details', 'text'];
 
     public function masjid()
     {

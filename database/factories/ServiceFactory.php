@@ -21,7 +21,8 @@ class ServiceFactory extends Factory
         return [
             'masjid_id' => Masjid::first()->id,
             'title' => $this->faker->name(),
-            'description' => $this->faker->text()
+            'description' => $this->faker->text(),
+            'text' => $this->faker->paragraph()
         ];
     }
 

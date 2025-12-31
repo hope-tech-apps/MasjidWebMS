@@ -64,7 +64,7 @@ onMounted(() => {
         })
     }
 
-    // add click listner to aside menu items 
+    // add click listner to aside menu items
     asideMenuItems.value = document.querySelectorAll('.dashboard-aside-menu-item')
     if (asideMenuItems.value.length) {
         asideMenuItems.value.forEach(elm => {
@@ -97,6 +97,7 @@ const asideMenuItems = ref<NodeListOf<Element>>();
 #dashboard_aside_header {
     box-sizing: content-box;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 #dashboard_aside_header .logo {
@@ -122,6 +123,9 @@ const asideMenuItems = ref<NodeListOf<Element>>();
     display: flex;
     flex-direction: column;
     gap: .5rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 #dashboard_aside_menu .dashboard-aside-menu-item {

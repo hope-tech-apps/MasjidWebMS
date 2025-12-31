@@ -3,6 +3,7 @@ import announcementsManagementRoutes from "@/router/routes/announcementsManageme
 import servicesManagementRoutes from "@/router/routes/servicesManagementRoutes"
 import generalDataManagementRoutes from "@/router/routes/generalDataManagementRoutes"
 import eventsManagementRoutes from "@/router/routes/EventsManagementRoutes"
+import pagesManagementRoutes from "@/router/routes/pagesManagementRoutes"
 
 const dashboardRoutes: RouteRecordRaw[] = [
     {
@@ -28,13 +29,14 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Mosque Details'
+                    pageTitle: 'Mosque Settings'
                 },
-                component: () => import("@/views/dashboard/MosqueDetailsView.vue")
+                component: () => import("@/views/dashboard/MosqueDetailsTabsView.vue")
             },
             ...announcementsManagementRoutes,
             ...eventsManagementRoutes,
             ...servicesManagementRoutes,
+            ...pagesManagementRoutes,
             {
                 path: 'donation',
                 name: 'masjid.donation',
@@ -95,6 +97,16 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     pageTitle: 'Notifications'
                 },
                 component: () => import("@/views/dashboard/NotificationFormView.vue")
+            },
+            {
+                path: 'contact-requests',
+                name: 'masjid.contactRequests',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Contact Requests'
+                },
+                component: () => import("@/views/dashboard/ContactRequestsView.vue")
             },
             {
                 path: 'mobile-features',

@@ -5,6 +5,7 @@ export type Service = {
     masjid_id: number;
     title: string;
     description: string;
+    text: string;
     created_at: string;
     updated_at: string;
     deleted_at: string|null;

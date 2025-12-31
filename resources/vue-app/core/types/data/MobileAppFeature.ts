@@ -3,6 +3,7 @@ import { Media } from "@/core/types/data/Media"
 export type MobileAppFeature = {
     id: number;
     name: string;
+    key: string;
     created_at: string;
     updated_at: string;
     pivot: {

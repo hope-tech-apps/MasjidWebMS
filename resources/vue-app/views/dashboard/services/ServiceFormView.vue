@@ -47,6 +47,12 @@
                     placeholder="description goes here"></Field>
             </ColumnInputContainer>
 
+            <ColumnInputContainer label="Service Text" name="service_text" :show_error="true"
+                class="w-100 w-md-50">
+                <Field name="service_text" as="textarea" v-model="serviceText" class="dashboard-input"
+                    placeholder="text goes here"></Field>
+            </ColumnInputContainer>
+
         </div>
 
         <!-- Form Footer -->
@@ -109,6 +115,7 @@ const servicesStore = useServicesStore();
 type ServiceEntry = {
     title: string;
     description: string;
+    text: string;
     imageSrc: string | undefined;
     iconSrc: string | undefined;
 };
@@ -117,19 +124,20 @@ type ServiceEntry = {
 const isEditForm = ref(false);
 const serviceId = ref<string>('');
 const service = ref<Service>();
-const entryModel = ref<ServiceEntry>({ title: "", description: "", imageSrc: "", iconSrc: "" });
+const entryModel = ref<ServiceEntry>({ title: "", description: "", text: "", imageSrc: "", iconSrc: "" });
 const isLoading = ref(false);
 
 // Form
 const formValidationSchema = object().shape({
     service_title: string().required(),
     service_description: string().required(),
+    service_text: string().required(),
     service_image: string().required(),
     service_icon: string().required()
 });
 const { handleSubmit, setFieldValue, validate } = useForm({ validationSchema: formValidationSchema });
 const { value: service_image, errorMessage } = useField('service_image');
-const { title: serviceTitle, description: serviceDesc, imageSrc, iconSrc } = toRefs<ServiceEntry>(entryModel.value);
+const { title: serviceTitle, description: serviceDesc, text: serviceText, imageSrc, iconSrc } = toRefs<ServiceEntry>(entryModel.value);
 const imageFile = ref<File | undefined>(undefined);
 const iconFile = ref<File | undefined>(undefined);
 
@@ -145,6 +153,7 @@ watch(() => service.value, () => {
     if (service.value) {
         serviceTitle.value = service.value.title;
         serviceDesc.value = service.value.description;
+        serviceText.value = service.value.text;
         imageSrc.value = service.value.image?.original_url;
         iconSrc.value = service.value.icon?.original_url;
     }
@@ -174,6 +183,7 @@ const onSubmit = async () => {
                 const apiRequestData = new FormData();
                 apiRequestData.append('title', serviceTitle.value);
                 apiRequestData.append('description', serviceDesc.value);
+                apiRequestData.append('text', serviceText.value);
                 if (imageFile.value) {
                     apiRequestData.append('image', imageFile.value);
                 }

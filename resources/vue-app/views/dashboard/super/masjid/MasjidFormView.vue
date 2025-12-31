@@ -38,6 +38,17 @@
                 </div>
             </div>
 
+            <!-- Footer Logo -->
+            <div class="d-flex flex-column">
+                <ImageDraggableInput label="Masjid Footer Logo"
+                    @imageChange="(data: UploadedImageInfo) => onFooterLogoInputChange(data)"
+                    :current-image-src="oldFooterLogoImage" type="photo" />
+                <Field type="file" v-model="footerLogoSrc" name="footer_logo_image" class="d-none"></Field>
+                <div class="error-message">
+                    <ErrorMessage name="footer_logo_image" />
+                </div>
+            </div>
+
             <!-- Name Input -->
             <ColumnInputContainer label="Name" name="name_input" :show_error="true" class="w-100">
                 <Field name="name_input" type="text" v-model="name" class="dashboard-input"
@@ -220,7 +231,8 @@ export type MasjidEntry = {
     address: string,
     latitude: number,
     longitude: number,
-    logoSrc: string | undefined
+    logoSrc: string | undefined,
+    footerLogoSrc: string | undefined
 }
 
 // Custom constants
@@ -239,9 +251,11 @@ const entryModel = ref<MasjidEntry>({
     address: '',
     latitude: 0,
     longitude: 0,
-    logoSrc: undefined
+    logoSrc: undefined,
+    footerLogoSrc: undefined
 });
 const logoFile = ref<File | undefined>();
+const footerLogoFile = ref<File | undefined>();
 
 const {
     admin_id,
@@ -253,7 +267,8 @@ const {
     address,
     latitude,
     longitude,
-    logoSrc
+    logoSrc,
+    footerLogoSrc
 } = toRefs<MasjidEntry>(entryModel.value);
 
 const isLoading = ref(false);
@@ -261,6 +276,7 @@ const isLoading = ref(false);
 // Form
 const formValidationSchema = object().shape({
     logo_image: string().required(),
+    footer_logo_image: string().required(),
     admin_id_input: string().test('is_number', 'The selected value should be for a valid masjid admin.', (val) => {
         if (!val) return true;
         else {
@@ -285,6 +301,7 @@ const formValidationSchema = object().shape({
 });
 const { setFieldValue } = useForm({ validationSchema: formValidationSchema });
 const oldLogoImage = computed(() => masjid.value?.logo?.original_url ?? undefined);
+const oldFooterLogoImage = computed(() => masjid.value?.footer_logo?.original_url ?? undefined);
 
 // Fetched data
 const fetchedAdmins = ref<MasjidAdmin[]>();
@@ -356,6 +373,10 @@ const onSubmit = async () => {
 
                 if (logoFile.value) {
                     apiRequestData.append(`logo`, logoFile.value);
+                }
+
+                if (footerLogoFile.value) {
+                    apiRequestData.append(`footer_logo`, footerLogoFile.value);
                 }
 
                 // Send the request
@@ -436,6 +457,12 @@ const onImageInputChange = (data: UploadedImageInfo) => {
     setFieldValue('logo_image', data.src);
     logoSrc.value = data.src;
     logoFile.value = data.file;
+};
+
+const onFooterLogoInputChange = (data: UploadedImageInfo) => {
+    setFieldValue('footer_logo_image', data.src);
+    footerLogoSrc.value = data.src;
+    footerLogoFile.value = data.file;
 };
 
 </script>

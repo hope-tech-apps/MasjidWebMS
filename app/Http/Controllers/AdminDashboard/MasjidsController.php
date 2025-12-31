@@ -7,6 +7,7 @@ use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
+use App\Models\PrayerCalculationSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -19,7 +20,7 @@ class MasjidsController extends Controller
      */
     public function index()
     {
-        $masjids = Masjid::with('logo', 'admin.avatar', 'country', 'city')->get();
+        $masjids = Masjid::with('logo', 'footer_logo', 'admin.avatar', 'country', 'city')->get();
         return response()->json([
             'status' => 'success',
             'data' => $masjids
@@ -38,9 +39,11 @@ class MasjidsController extends Controller
                 'email' => 'required|email|unique:masjids,email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
+                'footer_logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
+                'timezone' => 'required|string|timezone',
                 'user_id' => ['nullable', 'exists:users,id', 'unique:masjids,user_id', function ($attribute, $value, $fail) {
                     $user = \App\Models\User::where('id', $value)
                         ->where('type', 'MasjidAdmin')
@@ -89,6 +92,9 @@ class MasjidsController extends Controller
                     // Store logo
                     $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
 
+                    // Store footer logo
+                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
+
                     // Assign masjid mobile app features
                     $features = MobileAppFeature::all();
                     foreach ($features as $feature) {
@@ -107,6 +113,14 @@ class MasjidsController extends Controller
                         'asr' => 10,
                         'maghrib' => 10,
                         'isha' => 10
+                    ]);
+
+                    // Assign masjid Prayer Calculation settings
+                    PrayerCalculationSetting::create([
+                        'masjid_id' => $masjid->id,
+                        'method' => 'MoonsightingCommittee',
+                        'madhab' => 'Shafi',
+                        'high_latitude_rule' => 'MiddleOfTheNight'
                     ]);
                 }
 
@@ -128,7 +142,7 @@ class MasjidsController extends Controller
      */
     public function show(string $id)
     {
-        $masjid = Masjid::with('admin.avatar', 'logo', 'country', 'city')->findOrFail($id);
+        $masjid = Masjid::with('admin.avatar', 'logo', 'footer_logo', 'country', 'city')->findOrFail($id);
         return response()->json([
             'status' => 'success',
             'data' => $masjid
@@ -158,9 +172,11 @@ class MasjidsController extends Controller
                 'email' => 'required|email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'footer_logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
                 'longitude' => 'required|numeric|min:-180|max:180',
                 'latitude' => 'required|numeric|min:-90|max:90',
                 'address' => 'required|string',
+                'timezone' => 'nullable|string|timezone',
                 'user_id' => ['nullable', 'exists:users,id', function ($attribute, $value, $fail) {
                     $user = \App\Models\User::where('id', $value)
                         ->where('type', 'MasjidAdmin')
@@ -210,6 +226,11 @@ class MasjidsController extends Controller
                 if ($masjid && $request['logo']) {
                     $masjid->clearMediaCollection('logos');
                     $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
+                }
+
+                if ($masjid && $request['footer_logo']) {
+                    $masjid->clearMediaCollection('footer_logos');
+                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
                 }
 
                 return response()->json([

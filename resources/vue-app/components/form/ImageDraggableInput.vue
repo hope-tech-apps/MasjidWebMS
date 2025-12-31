@@ -131,7 +131,7 @@ watch([() => uploadedImageFile.value, () => uploadedImageSrc.value], () => {
     let uploadedImageInfo: UploadedImageInfo = {
         file: uploadedImageFile.value,
         src: uploadedImageSrc.value
-    }    
+    }
     emits('imageChange', uploadedImageInfo);
 });
 watch(() => currentImageSrc.value, () => {
@@ -207,21 +207,34 @@ const checkAndLoadImage = (file: File) => {
         // Image load
         image.onload = () => {
 
-            // Check image and file rules
-            const isAllowed: boolean =
-                ALLOWED_IMAGE_TYPES.includes(file.type) &&
-                (image.naturalHeight < MAX_IMAGE_Y_DIMENSION_IN_PX) &&
-                (image.naturalWidth < MAX_IMAGE_X_DIMENSION_IN_PX) &&
-                (file.size < MAX_IMAGE_SIZE);
-
-            if (!isAllowed) {
-                uploadErrorMessages.value.allowed = "This file is not allowed.";
-            } else {
-                // Save image
-                uploadedImage.value = image;
-                uploadedImageSrc.value = image.src;
-                uploadedImageFile.value = file;
+            // Check if file type is allowed
+            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+                uploadErrorMessages.value.allowed = "This file type is not allowed.";
+                return;
             }
+
+            // Check file size
+            if (file.size >= MAX_IMAGE_SIZE) {
+                uploadErrorMessages.value.allowed = "File size is too large. Maximum size is 10MB.";
+                return;
+            }
+
+            // Skip dimension checks for SVG files (they don't have natural dimensions)
+            const isSvg = file.type === 'image/svg+xml' || file.type === 'image/svg';
+
+            // Check image dimensions for non-SVG files
+            if (!isSvg) {
+                if (image.naturalHeight >= MAX_IMAGE_Y_DIMENSION_IN_PX ||
+                    image.naturalWidth >= MAX_IMAGE_X_DIMENSION_IN_PX) {
+                    uploadErrorMessages.value.allowed = `Image dimensions are too large. Maximum dimensions are ${MAX_IMAGE_X_DIMENSION_IN_PX}x${MAX_IMAGE_Y_DIMENSION_IN_PX}px.`;
+                    return;
+                }
+            }
+
+            // Save image
+            uploadedImage.value = image;
+            uploadedImageSrc.value = image.src;
+            uploadedImageFile.value = file;
         };
 
         // Image loading errors

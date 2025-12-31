@@ -28,4 +28,10 @@ trait SearchableTrait
         });
 
     }
+
+    public function scopeFilterByMasjid($query)
+    {
+        $resourceId = request()->header('masjid-id');
+        if ($resourceId) $query->where('masjid_id', request()->header('masjid-id'));
+    }
 }

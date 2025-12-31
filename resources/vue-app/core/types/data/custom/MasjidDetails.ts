@@ -9,6 +9,9 @@ export type MasjidDetailsModel = {
     name: string;
     email: string;
     phone: string;
+    timezone: string;
+    latitude: string;
+    longitude: string;
     facebook: string;
     youtube: string;
     instagram: string;

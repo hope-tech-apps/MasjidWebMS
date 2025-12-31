@@ -11,4 +11,8 @@ class ContactUsAccount extends Model
     public function mobileAppUser() {
         return $this->belongsTo(MobileAppUser::class);
     }
+
+    public function messages() {
+        return $this->hasMany(ContactUsMessage::class);
+    }
 }

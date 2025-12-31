@@ -23,9 +23,9 @@ class UsersSeeder extends Seeder
             'type' => 'SuperAdmin'
         ]);
 
-        $superAdmin->addMedia(storage_path('app/public/images/person_avatar_ui_design.jpeg'))
-            ->preservingOriginal()
-            ->toMediaCollection('avatars');
+//        $superAdmin->addMedia(storage_path('app/public/images/person_avatar_ui_design.jpeg'))
+//            ->preservingOriginal()
+//            ->toMediaCollection('avatars');
 
         $masjidAdmin = User::factory()->create([
             'name' => 'Test User',
@@ -35,9 +35,9 @@ class UsersSeeder extends Seeder
             'type' => 'MasjidAdmin'
         ]);
 
-        $masjidAdmin->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
-            ->preservingOriginal()
-            ->toMediaCollection('avatars');
+        // $masjidAdmin->addMedia(storage_path('app/public/images/mosque-icon.jpg'))
+        //     ->preservingOriginal()
+        //     ->toMediaCollection('avatars');
 
         User::factory()->create([
             'name' => 'Test User',

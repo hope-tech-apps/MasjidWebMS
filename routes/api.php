@@ -81,3 +81,5 @@ Route::prefix('spa')->group(function () {
 Route::prefix('pusher')->group(function () {
     Route::post('notified', [PusherWebhookController::class, 'afterNotificationBroadcasted']);
 });
+
+require 'api_v1.php';

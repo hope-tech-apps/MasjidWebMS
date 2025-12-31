@@ -89,7 +89,7 @@
                         <div class="dropdown-toggle d-flex align-items-center gap-2" data-bs-toggle="dropdown"
                             aria-expanded="false">
                             <div class="account-dropdown-avatar">
-                                <img :src="authStore.user?.avatar.original_url" alt="user" class="avatar-img">
+                                <img :src="authStore.user?.avatar?.original_url" alt="user" class="avatar-img">
                             </div>
                         </div>
                         <ul class="dropdown-menu">
