@@ -140,17 +140,22 @@ const archiveAnnouncement = async () => {
 
 <style scoped>
 .announcement-image-container {
-    height: auto;
-    border-radius: .5rem;
+    width: 100%;
     max-width: 500px;
-    max-height: 500px;
+    height: 400px;
+    border-radius: .5rem;
     border: 1px solid var(--input-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background-color: #f8f9fa;
 }
 
 .announcement-image {
     width: 100%;
-    height: auto;
-    object-fit: cover;
+    height: 100%;
+    object-fit: contain;
     border-radius: .5rem;
 }
 </style>

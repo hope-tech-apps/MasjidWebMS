@@ -26,7 +26,10 @@
             <ColumnInputContainer label="About Us Description" name="about_description" :show_error="true"
                 class="w-100 w-md-50">
                 <Field name="about_description" as="textarea" v-model="about" class="dashboard-input"
-                    placeholder="description goes here"></Field>
+                    placeholder="description goes here" maxlength="5000"></Field>
+                <div class="text-end text-muted small mt-1">
+                    {{ about?.length || 0 }} / 5000 characters
+                </div>
             </ColumnInputContainer>
 
             <div class="light-top-border"></div>
@@ -47,7 +50,10 @@
                     <ColumnInputContainer label="Our Mission Description" name="mission_description" :show_error="true"
                         class="w-100 w-md-50">
                         <Field name="mission_description" as="textarea" v-model="mission" class="dashboard-input"
-                            placeholder="description goes here"></Field>
+                            placeholder="description goes here" maxlength="5000"></Field>
+                        <div class="text-end text-muted small mt-1">
+                            {{ mission?.length || 0 }} / 5000 characters
+                        </div>
                     </ColumnInputContainer>
                 </div>
 
@@ -69,7 +75,10 @@
                     <ColumnInputContainer label="Our Vision Description" name="vision_description" :show_error="true"
                         class="w-100 w-md-50">
                         <Field name="vision_description" as="textarea" v-model="vision" class="dashboard-input"
-                            placeholder="description goes here"></Field>
+                            placeholder="description goes here" maxlength="5000"></Field>
+                        <div class="text-end text-muted small mt-1">
+                            {{ vision?.length || 0 }} / 5000 characters
+                        </div>
                     </ColumnInputContainer>
                 </div>
             </div>
@@ -144,13 +153,19 @@ const entryModel = ref<AboutUsEntry>({
 const isLoading = ref(false);
 
 // Form
-const formValidationSchema = object().shape({
-    about_description: string().required(),
-    mission_description: string().required(),
-    vision_description: string().required(),
-    about_image: string().required(),
-    mission_icon: string().required(),
-    vision_icon: string().required()
+const formValidationSchema = computed(() => {
+    // If aboutUs exists (editing), images are optional
+    // If aboutUs doesn't exist (creating), images are required
+    const isEditing = !!aboutUs.value;
+
+    return object().shape({
+        about_description: string().required('About description is required').max(5000, 'About description must not exceed 5000 characters'),
+        mission_description: string().required('Mission description is required').max(5000, 'Mission description must not exceed 5000 characters'),
+        vision_description: string().required('Vision description is required').max(5000, 'Vision description must not exceed 5000 characters'),
+        about_image: isEditing ? string() : string().required('About image is required'),
+        mission_icon: isEditing ? string() : string().required('Mission icon is required'),
+        vision_icon: isEditing ? string() : string().required('Vision icon is required')
+    });
 });
 
 const { setFieldValue } = useForm({ validationSchema: formValidationSchema });
@@ -161,9 +176,9 @@ const missionIconFile = ref<File | undefined>(undefined);
 const visionIconFile = ref<File | undefined>(undefined);
 
 // Computed
-const oldAboutImage = computed(() => aboutUs.value?.about_image.original_url ?? undefined);
-const oldMissionIcon = computed(() => aboutUs.value?.mission_icon.original_url ?? undefined);
-const oldVisionIcon = computed(() => aboutUs.value?.vision_icon.original_url ?? undefined);
+const oldAboutImage = computed(() => aboutUs.value?.about_image?.original_url ?? undefined);
+const oldMissionIcon = computed(() => aboutUs.value?.mission_icon?.original_url ?? undefined);
+const oldVisionIcon = computed(() => aboutUs.value?.vision_icon?.original_url ?? undefined);
 
 // Watch
 watch(() => aboutUs.value, () => {
@@ -171,9 +186,20 @@ watch(() => aboutUs.value, () => {
         entryModel.value.about = aboutUs.value.about;
         entryModel.value.mission = aboutUs.value.mission;
         entryModel.value.vision = aboutUs.value.vision;
-        entryModel.value.aboutImageSrc = aboutUs.value?.about_image.original_url ?? undefined;
-        entryModel.value.missionIconSrc = aboutUs.value?.mission_icon.original_url ?? undefined;
-        entryModel.value.visionIconSrc = aboutUs.value?.vision_icon.original_url ?? undefined;
+        entryModel.value.aboutImageSrc = aboutUs.value?.about_image?.original_url ?? undefined;
+        entryModel.value.missionIconSrc = aboutUs.value?.mission_icon?.original_url ?? undefined;
+        entryModel.value.visionIconSrc = aboutUs.value?.vision_icon?.original_url ?? undefined;
+
+        // Set field values for validation when editing
+        if (aboutUs.value?.about_image?.original_url) {
+            setFieldValue('about_image', aboutUs.value.about_image.original_url);
+        }
+        if (aboutUs.value?.mission_icon?.original_url) {
+            setFieldValue('mission_icon', aboutUs.value.mission_icon.original_url);
+        }
+        if (aboutUs.value?.vision_icon?.original_url) {
+            setFieldValue('vision_icon', aboutUs.value.vision_icon.original_url);
+        }
     }
 });
 

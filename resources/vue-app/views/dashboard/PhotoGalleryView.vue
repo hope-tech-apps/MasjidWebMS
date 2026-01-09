@@ -231,11 +231,14 @@ const onSubmit = async () => {
     min-height: 100px;
 }
 
-.img-container.active-container:hover {
+.img-container.active-container {
     cursor: pointer;
+    transition: all 0.3s;
+}
+
+.img-container.active-container:hover {
     opacity: 0.8;
     transform: scale(0.975);
-    transition: all 0.3s;
 }
 
 .photo-gallery-img {

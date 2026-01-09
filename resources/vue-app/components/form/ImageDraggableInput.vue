@@ -52,13 +52,22 @@
 
         <!-- notes - 1 -->
         <span v-if="!imageUploaded" class="d-block text-success image-input-note">
-            {{ `Note/1: Accepted types (${allowedTypes.map(elm => {return elm.split('/')[1]}).join(', ')}, up to 10 MB, no more than 4000 px in any dimension)` }}
+            {{ `Note/1: Accepted types (${allowedTypes.map(elm => {return elm.split('/')[1]}).join(', ')}, up to 2 MB, no more than 4000 px in any dimension)` }}
         </span>
 
         <!-- notes - 2 -->
         <span v-if="!imageUploaded" class="d-block text-success image-input-note">
             Note/2: Only upload one image.
         </span>
+
+        <!-- Error Messages -->
+        <div v-if="hasErrors" class="alert alert-danger mt-3" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            <strong>Upload Error:</strong>
+            <div v-if="uploadErrorMessages.allowed">{{ uploadErrorMessages.allowed }}</div>
+            <div v-if="uploadErrorMessages.load">{{ uploadErrorMessages.load }}</div>
+            <div v-if="uploadErrorMessages.read">{{ uploadErrorMessages.read }}</div>
+        </div>
     </div>
 </template>
 
@@ -123,7 +132,10 @@ const allowedTypes = computed(() => {
     } else {
         return ['image/*'];
     }
-})
+});
+const hasErrors = computed(() => {
+    return !!(uploadErrorMessages.value.allowed || uploadErrorMessages.value.load || uploadErrorMessages.value.read);
+});
 
 // Watch
 // emit the image change with the image file and source (data)
@@ -196,6 +208,8 @@ function onDrop(event: DragEvent) {
 }
 
 const checkAndLoadImage = (file: File) => {
+    // Clear any previous error messages
+    uploadErrorMessages.value = { allowed: "", load: "", read: "" };
 
     const reader = new FileReader();
 
@@ -207,15 +221,18 @@ const checkAndLoadImage = (file: File) => {
         // Image load
         image.onload = () => {
 
-            // Check if file type is allowed
-            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+            // Check if file type is allowed (use computed allowedTypes based on type prop)
+            const currentAllowedTypes = allowedTypes.value;
+            const isAllowed = currentAllowedTypes.includes('image/*') || currentAllowedTypes.includes(file.type);
+
+            if (!isAllowed) {
                 uploadErrorMessages.value.allowed = "This file type is not allowed.";
                 return;
             }
 
             // Check file size
             if (file.size >= MAX_IMAGE_SIZE) {
-                uploadErrorMessages.value.allowed = "File size is too large. Maximum size is 10MB.";
+                uploadErrorMessages.value.allowed = "File size is too large. Maximum size is 2MB.";
                 return;
             }
 
@@ -230,6 +247,9 @@ const checkAndLoadImage = (file: File) => {
                     return;
                 }
             }
+
+            // Clear error messages on successful validation
+            uploadErrorMessages.value = { allowed: "", load: "", read: "" };
 
             // Save image
             uploadedImage.value = image;

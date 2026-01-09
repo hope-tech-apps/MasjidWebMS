@@ -54,7 +54,7 @@ class AppLevelDataSeeder extends Seeder
         ]);
 
         AzkarCategory::create([
-            'title' => 'Sabah Azkar',
+            'title' => 'Sabah Adhkar',
             'description' => 'For morning time'
         ]);
 

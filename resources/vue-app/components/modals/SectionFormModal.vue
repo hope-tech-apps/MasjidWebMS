@@ -375,6 +375,34 @@ const handleAttach = async () => {
     }
 };
 
+/**
+ * Strip base64 image data from content before sending to backend
+ * The backend will replace these with actual uploaded file URLs
+ */
+const stripBase64Images = (content: any): any => {
+    if (typeof content !== 'object' || content === null) {
+        return content;
+    }
+
+    if (Array.isArray(content)) {
+        return content.map(item => stripBase64Images(item));
+    }
+
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(content)) {
+        if (typeof value === 'string' && value.startsWith('data:image/')) {
+            // This is a base64 image - replace with null
+            // The backend will fill in the actual URL from the uploaded file
+            cleaned[key] = null;
+        } else if (typeof value === 'object' && value !== null) {
+            cleaned[key] = stripBase64Images(value);
+        } else {
+            cleaned[key] = value;
+        }
+    }
+    return cleaned;
+};
+
 const handleSubmit = async () => {
     loading.value = true;
 
@@ -382,10 +410,13 @@ const handleSubmit = async () => {
         // Prepare form data with images
         const formDataToSend = new FormData();
 
+        // Strip base64 images from content before sending
+        const cleanedContent = stripBase64Images(formData.value.content);
+
         // Add basic fields
         formDataToSend.append('section_type', formData.value.section_type);
         formDataToSend.append('title', formData.value.title || '');
-        formDataToSend.append('content', JSON.stringify(formData.value.content));
+        formDataToSend.append('content', JSON.stringify(cleanedContent));
         formDataToSend.append('order', formData.value.order.toString());
         formDataToSend.append('is_active', formData.value.is_active ? '1' : '0');
 

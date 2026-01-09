@@ -33,7 +33,7 @@ export const RESULT_TITLE_MAP = {
     socialMediaLinks: 'Social Media Links',
     announcements: 'Announcement',
     services: 'Service',
-    azkar: 'Azkar',
+    azkar: 'Adhkar',
     hadith: 'Hadith',
     tasbih: 'Tasbih',
     users: 'User',
@@ -102,7 +102,7 @@ export const GENERAL_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/azkar',
-        title: 'Azkar List - Page'
+        title: 'Adhkar List - Page'
     },
     {
         url: '/tasabih',
