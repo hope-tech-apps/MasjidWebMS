@@ -76,20 +76,33 @@ class PageSectionsController extends Controller
                 $requestData['settings'] = json_decode($request->input('settings'), true);
             }
 
-            $validator = Validator::make($requestData, [
+            // Build validation rules with dynamic image field validation
+            $validationRules = [
                 'section_type' => ['required', new Enum(SectionType::class)],
                 'title' => 'nullable|string|max:255',
                 'content' => 'required|array',
                 'order' => 'nullable|integer',
                 'settings' => 'nullable|array',
-                'image_url' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:10240', // 10MB max
-                'background_image_url' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:10240',
-            ]);
+            ];
+
+            // Add validation for all possible image fields (2MB max)
+            $this->addImageFieldValidation($validationRules, $request);
+
+            $validator = Validator::make($requestData, $validationRules);
 
             if ($validator->fails()) {
                 return response()->json([
                     'status' => 'failed',
                     'data' => $validator->errors()
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            // Validate that content doesn't contain base64 images
+            $base64ValidationError = $this->validateNoBase64Images($requestData['content']);
+            if ($base64ValidationError) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => $base64ValidationError
                 ], Response::HTTP_BAD_REQUEST);
             }
 
@@ -201,21 +214,36 @@ class PageSectionsController extends Controller
                 $requestData['settings'] = json_decode($request->input('settings'), true);
             }
 
-            $validator = Validator::make($requestData, [
+            // Build validation rules with dynamic image field validation
+            $validationRules = [
                 'section_type' => ['sometimes', new Enum(SectionType::class)],
                 'title' => 'nullable|string|max:255',
                 'content' => 'sometimes|array',
                 'order' => 'nullable|integer',
                 'settings' => 'nullable|array',
-                'image_url' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:10240', // 10MB max
-                'background_image_url' => 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:10240',
-            ]);
+            ];
+
+            // Add validation for all possible image fields (2MB max)
+            $this->addImageFieldValidation($validationRules, $request);
+
+            $validator = Validator::make($requestData, $validationRules);
 
             if ($validator->fails()) {
                 return response()->json([
                     'status' => 'failed',
                     'data' => $validator->errors()
                 ], Response::HTTP_BAD_REQUEST);
+            }
+
+            // Validate that content doesn't contain base64 images (if content is being updated)
+            if (isset($requestData['content'])) {
+                $base64ValidationError = $this->validateNoBase64Images($requestData['content']);
+                if ($base64ValidationError) {
+                    return response()->json([
+                        'status' => 'failed',
+                        'message' => $base64ValidationError
+                    ], Response::HTTP_BAD_REQUEST);
+                }
             }
 
             // Update section data
@@ -457,6 +485,46 @@ class PageSectionsController extends Controller
                 $this->setNestedValue($content, $actualFieldName, $media->getUrl());
             }
         }
+    }
+
+    /**
+     * Add validation rules for image fields
+     */
+    private function addImageFieldValidation(array &$validationRules, Request $request): void
+    {
+        // Get all file inputs from the request
+        $allFiles = $request->allFiles();
+
+        foreach ($allFiles as $fieldName => $file) {
+            // Add validation for each image field (2MB max)
+            $validationRules[$fieldName] = 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:2048';
+        }
+    }
+
+    /**
+     * Validate that content doesn't contain base64 encoded images
+     * Returns error message if base64 images found, null otherwise
+     */
+    private function validateNoBase64Images(array $content): ?string
+    {
+        // Recursively check all values in the content array
+        foreach ($content as $key => $value) {
+            if (is_array($value)) {
+                // Recursively check nested arrays
+                $error = $this->validateNoBase64Images($value);
+                if ($error) {
+                    return $error;
+                }
+            } elseif (is_string($value)) {
+                // Check if the value looks like a base64 encoded image
+                // Base64 images typically start with "data:image/"
+                if (preg_match('/^data:image\/[a-zA-Z]+;base64,/', $value)) {
+                    return 'Images must be uploaded as files, not base64 encoded strings. Please use the file upload feature.';
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

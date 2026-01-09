@@ -43,7 +43,7 @@ const generalDataManagementRoutes: RouteRecordRaw[] = [
     },
     {
         path: '/azkar',
-        name: 'azkar',
+        name: 'adhkar',
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],

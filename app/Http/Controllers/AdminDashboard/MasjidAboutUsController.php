@@ -35,9 +35,9 @@ class MasjidAboutUsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $about = $masjid->masjidAbout;
             $validationRules = [
-                'about' => 'required|string',
-                'mission' => 'required|string',
-                'vision' => 'required|string',
+                'about' => 'required|string|max:5000',
+                'mission' => 'required|string|max:5000',
+                'vision' => 'required|string|max:5000',
                 'about_image' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
                 'mission_icon' => 'required|image|mimes:png,svg,ico,bmb',
                 'vision_icon' => 'required|image|mimes:png,svg,ico,bmb'
@@ -45,9 +45,9 @@ class MasjidAboutUsController extends Controller
 
             if($about) {
                 $validationRules = [
-                    'about' => 'required|string',
-                    'mission' => 'required|string',
-                    'vision' => 'required|string',
+                    'about' => 'required|string|max:5000',
+                    'mission' => 'required|string|max:5000',
+                    'vision' => 'required|string|max:5000',
                     'about_image' => 'image|mimes:jpeg,png,jpg,gif,svg',
                     'mission_icon' => 'image|mimes:png,svg,ico,bmb',
                     'vision_icon' => 'image|mimes:png,svg,ico,bmb'
@@ -98,5 +98,5 @@ class MasjidAboutUsController extends Controller
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
-        
+
 }
