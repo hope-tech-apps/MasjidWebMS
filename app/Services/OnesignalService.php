@@ -29,7 +29,7 @@ class OnesignalService
     public function notifyAll(Masjid $masjid, Notification $notification)
     {
         $response = Http::withHeaders([
-            'Authorization' => 'Key ' . $this->app_key,
+            'Authorization' => 'Basic ' . $this->app_key,
             'Content-Type' => 'application/json'
         ])->post($this->api_url, [
             'app_id' => $this->app_id,
@@ -41,8 +41,8 @@ class OnesignalService
                 'en' => $notification->message,
             ],
             'data' => [
-                'masjid' => $masjid,
-                'notification' => $notification
+                'masjid_id' => $masjid->id,
+                'notification_id' => $notification->id,
             ]
         ]);
 
@@ -54,7 +54,7 @@ class OnesignalService
         try {
 
             $response = Http::withHeaders([
-                'Authorization' => 'Key ' . $this->app_key,
+                'Authorization' => 'Basic ' . $this->app_key,
                 'Content-Type' => 'application/json'
             ])->post($this->api_url, [
                 'app_id' => $this->app_id,
@@ -70,8 +70,8 @@ class OnesignalService
                 ],
                 'target_channel' => 'push',
                 'data' => [
-                    'masjid' => $masjid,
-                    'notification' => $notification
+                    'masjid_id' => $masjid->id,
+                    'notification_id' => $notification->id,
                 ]
             ]);
 
