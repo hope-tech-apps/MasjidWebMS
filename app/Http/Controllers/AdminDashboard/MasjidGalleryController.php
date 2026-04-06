@@ -32,7 +32,7 @@ class MasjidGalleryController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
 
             $validator = Validator::make($request->all(), [
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048'
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
             ]);
 
             if($validator->fails()) {

@@ -86,7 +86,7 @@ class SectionsController extends Controller
                 'settings' => 'nullable|array',
             ];
 
-            // Add validation for all possible image fields (2MB max)
+            // Add validation for all possible image fields (25MB max)
             $this->addImageFieldValidation($validationRules, $request);
 
             $validator = Validator::make($requestData, $validationRules);
@@ -161,7 +161,7 @@ class SectionsController extends Controller
                 'settings' => 'nullable|array',
             ];
 
-            // Add validation for all possible image fields (2MB max)
+            // Add validation for all possible image fields (25MB max)
             $this->addImageFieldValidation($validationRules, $request);
 
             $validator = Validator::make($requestData, $validationRules);
@@ -305,8 +305,8 @@ class SectionsController extends Controller
         $allFiles = $request->allFiles();
 
         foreach ($allFiles as $fieldName => $file) {
-            // Add validation for each image field (2MB max)
-            $validationRules[$fieldName] = 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:2048';
+            // Add validation for each image field (25MB max)
+            $validationRules[$fieldName] = 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:25600';
         }
     }
 

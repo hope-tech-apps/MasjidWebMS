@@ -99,7 +99,7 @@ class AuthController extends Controller
                 'name' => 'required|string',
                 'email' => 'required|email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-                'avatar' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'avatar' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
                 'old_password' => ['nullable', 'required_with:password', new MatchOldUserPasswordRule($user->id)],
                 'password' => [
                     'nullable',

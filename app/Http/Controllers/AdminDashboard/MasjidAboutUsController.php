@@ -38,9 +38,9 @@ class MasjidAboutUsController extends Controller
                 'about' => 'required|string|max:5000',
                 'mission' => 'required|string|max:5000',
                 'vision' => 'required|string|max:5000',
-                'about_image' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
-                'mission_icon' => 'required|image|mimes:png,svg,ico,bmb',
-                'vision_icon' => 'required|image|mimes:png,svg,ico,bmb'
+                'about_image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
+                'mission_icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600',
+                'vision_icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600'
             ];
 
             if($about) {
@@ -48,9 +48,9 @@ class MasjidAboutUsController extends Controller
                     'about' => 'required|string|max:5000',
                     'mission' => 'required|string|max:5000',
                     'vision' => 'required|string|max:5000',
-                    'about_image' => 'image|mimes:jpeg,png,jpg,gif,svg',
-                    'mission_icon' => 'image|mimes:png,svg,ico,bmb',
-                    'vision_icon' => 'image|mimes:png,svg,ico,bmb'
+                    'about_image' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
+                    'mission_icon' => 'image|mimes:png,svg,ico,bmb|max:25600',
+                    'vision_icon' => 'image|mimes:png,svg,ico,bmb|max:25600'
                 ];
             }
 

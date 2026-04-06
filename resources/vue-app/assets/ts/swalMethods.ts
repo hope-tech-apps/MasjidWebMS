@@ -2,8 +2,12 @@ import { BackendResponseData } from "@/core/types/config/AxiosCustom";
 import { AxiosError, AxiosResponse, isAxiosError } from "axios";
 
 export const getMessageFromObj = (obj: AxiosError<BackendResponseData>|AxiosResponse<BackendResponseData>) => {
+    const uploadLimitMessage = 'Uploaded file is too large for server limits. Please use a smaller file or ask support to increase upload/post limits.';
     let message = '';
     if(isAxiosError(obj)) {
+        if (obj.response?.status === 413) {
+            return uploadLimitMessage;
+        }
         if(obj.response?.data)
             message = JSON.stringify(
                 obj.response.data?.data
@@ -11,6 +15,9 @@ export const getMessageFromObj = (obj: AxiosError<BackendResponseData>|AxiosResp
                 ?? obj.response.data?.message
                 ?? 'Unexpected!'
             )
+        else if (obj.message) {
+            message = obj.message;
+        }
     } else {
         if(obj.data)
             message = JSON.stringify(

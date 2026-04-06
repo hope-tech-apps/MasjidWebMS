@@ -39,7 +39,7 @@ class AnnouncementsController extends Controller
                 'text' => 'required|string',
                 'start_date' => 'required|date_format:Y-m-d',
                 'end_date' => 'required|date_format:Y-m-d|after:start_date',
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg'
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
             ]);
 
             if ($validator->fails()) {
@@ -104,7 +104,7 @@ class AnnouncementsController extends Controller
                 'text' => 'required|string',
                 'start_date' => 'required|date_format:Y-m-d',
                 'end_date' => 'required|date_format:Y-m-d|after:start_date',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg'
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
             ]);
 
             if ($validator->fails()) {

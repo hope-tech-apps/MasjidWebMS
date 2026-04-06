@@ -37,8 +37,8 @@ class ServicesController extends Controller
                 'title' => 'required|string',
                 'description' => 'required|string',
                 'text' => 'required|string',
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
-                'icon' => 'required|image|mimes:png,svg,ico,bmb'
+                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
+                'icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600'
             ]);
 
             if ($validator->fails()) {
@@ -101,8 +101,8 @@ class ServicesController extends Controller
                 'title' => 'required|string',
                 'description' => 'required|string',
                 'text' => 'required|string',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg',
-                'icon' => 'nullable|image|mimes:png,gif,svg,ico,icns,bmb'
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
+                'icon' => 'nullable|image|mimes:png,gif,svg,ico,icns,bmb|max:25600'
             ]);
 
             if ($validator->fails()) {
