@@ -52,7 +52,7 @@
 
         <!-- notes - 1 -->
         <span v-if="!imageUploaded" class="d-block text-success image-input-note">
-            {{ `Note/1: Accepted types (${allowedTypes.map(elm => {return elm.split('/')[1]}).join(', ')}, up to 2 MB, no more than 4000 px in any dimension)` }}
+            {{ `Note/1: Accepted types (${allowedTypes.map(elm => {return elm.split('/')[1]}).join(', ')}, up to ${maxImageSizeInMb} MB, no more than 4000 px in any dimension)` }}
         </span>
 
         <!-- notes - 2 -->
@@ -136,6 +136,7 @@ const allowedTypes = computed(() => {
 const hasErrors = computed(() => {
     return !!(uploadErrorMessages.value.allowed || uploadErrorMessages.value.load || uploadErrorMessages.value.read);
 });
+const maxImageSizeInMb = computed(() => Math.round(MAX_IMAGE_SIZE / (1024 * 1024)));
 
 // Watch
 // emit the image change with the image file and source (data)
@@ -232,7 +233,7 @@ const checkAndLoadImage = (file: File) => {
 
             // Check file size
             if (file.size >= MAX_IMAGE_SIZE) {
-                uploadErrorMessages.value.allowed = "File size is too large. Maximum size is 2MB.";
+                uploadErrorMessages.value.allowed = `File size is too large. Maximum size is ${maxImageSizeInMb.value}MB.`;
                 return;
             }
 

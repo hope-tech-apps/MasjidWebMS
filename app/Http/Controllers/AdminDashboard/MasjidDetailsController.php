@@ -39,7 +39,7 @@ class MasjidDetailsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
 
             $validator = Validator::make($request->all(), [
-                'logo' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'logo' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
                 'name' => 'required|string',
                 'website_link' => 'nullable|string',
                 'email' => 'required|string|email',
@@ -133,8 +133,8 @@ class MasjidDetailsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
 
             $validator = Validator::make($request->all(), [
-                'header_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg',
-                'footer_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg',
+                'header_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
+                'footer_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
                 'copyright_text' => 'nullable|string',
                 'app_store_link' => 'nullable|url',
                 'google_play_link' => 'nullable|url',

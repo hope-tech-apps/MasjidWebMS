@@ -449,7 +449,9 @@ const handleSubmit = async () => {
         let errorMessage = 'Failed to save section. Please try again.';
 
         // Check for validation errors
-        if (error.response?.data?.data) {
+        if (error.response?.status === 413) {
+            errorMessage = 'Uploaded file is too large for server limits. Please use a smaller file or ask support to increase upload/post limits.';
+        } else if (error.response?.data?.data) {
             const validationErrors = error.response.data.data;
             const errorMessages = Object.values(validationErrors).flat();
             errorMessage = errorMessages.join('\n');

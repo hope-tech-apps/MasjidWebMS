@@ -427,7 +427,7 @@ const onSubmit = async () => {
                             } else {
                                 swalInstance.title = "Unexpected";
                                 swalInstance.text = getMessageFromObj(res);
-                                swalInstance.icon = "success";
+                                swalInstance.icon = "warning";
                             }
                         })
                         .catch((e: AxiosError<BackendResponseData>) => {

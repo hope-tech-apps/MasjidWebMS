@@ -38,7 +38,7 @@ class UsersController extends Controller
                 'email' => 'required|email|unique:users,email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'type' => ['required', new UserTypeRule()],
-                'avatar' => 'required|image|mimes:jpeg,png,jpg,gif,svg',
+                'avatar' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
                 'password' => [
                     'required',
                     'string',
@@ -111,7 +111,7 @@ class UsersController extends Controller
                 'email' => 'required|email',
                 'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
                 'type' => ['required', new UserTypeRule()],
-                'avatar' => 'image|mimes:jpeg,png,jpg,gif,svg',
+                'avatar' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
                 'old_password' => ['nullable', 'required_with:password', new MatchOldUserPasswordRule($user->id)],
                 'password' => [
                     'nullable',
