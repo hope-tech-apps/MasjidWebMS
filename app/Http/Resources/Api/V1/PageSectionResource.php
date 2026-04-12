@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Enums\SectionType;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,12 +15,20 @@ class PageSectionResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $isPaginatedSection = in_array($this->section_type, [
+            SectionType::SERVICES_LIST,
+            SectionType::ANNOUNCEMENTS_LIST,
+        ]);
+
         return [
             'id' => $this->id,
             'section_type' => $this->section_type->value,
             'section_type_label' => $this->section_type->label(),
             'title' => $this->title,
             'content' => $this->content,
+            'items_per_page' => $isPaginatedSection
+                ? (int) ($this->content['items_per_page'] ?? 9)
+                : null,
             'order' => $this->order,
             'is_active' => $this->is_active,
             'settings' => $this->settings,

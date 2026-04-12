@@ -123,12 +123,14 @@ export type ServicesListSectionContent = {
     title: string;
     subtitle: string;
     button_text: string;
+    items_per_page: number;
 };
 
 export type AnnouncementsListSectionContent = {
     title: string;
     subtitle: string;
     button_text: string;
+    items_per_page: number;
 };
 
 export type GallerySectionContent = {
