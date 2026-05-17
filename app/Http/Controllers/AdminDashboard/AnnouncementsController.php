@@ -3,10 +3,11 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Announcements\StoreAnnouncementRequest;
+use App\Http\Requests\Admin\Announcements\UpdateAnnouncementRequest;
 use App\Models\Announcement;
 use App\Models\Masjid;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class AnnouncementsController extends Controller
@@ -27,47 +28,29 @@ class AnnouncementsController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request, $masjid_id)
+    public function store(StoreAnnouncementRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'details' => 'required|string',
-                'text' => 'required|string',
-                'start_date' => 'required|date_format:Y-m-d',
-                'end_date' => 'required|date_format:Y-m-d|after:start_date',
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
-            ]);
+            $announcementInputs = $request->safe()->only(['title', 'details', 'text', 'start_date', 'end_date']);
+            $announcementInputs['masjid_id'] = $masjid->id;
 
-            if ($validator->fails()) {
-
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
-            } else if ($validator->passes()) {
-
-                $announcementInputs = $request->only(['title', 'details', 'text', 'start_date', 'end_date']);
-                $announcementInputs['masjid_id'] = $masjid->id;
-
-                $announcement = Announcement::create($announcementInputs);
-                if ($request->hasFile('image')) {
-                    $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $announcement->load('image')
-                ], Response::HTTP_OK);
+            $announcement = Announcement::create($announcementInputs);
+            if ($request->hasFile('image')) {
+                $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
             }
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $announcement->load('image')
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -77,11 +60,6 @@ class AnnouncementsController extends Controller
      */
     public function show($masjid_id, $announcement_id)
     {
-        // Get Announcement through Masjid
-        // $masjid = Masjid::findOrFail($masjid_id);
-        // $announcement = $masjid->announcements->findOrFail($announcement_id)->load('image');
-
-        // Get Announcement by ID
         $announcement = Announcement::with('image')->findOrFail($announcement_id);
         return response()->json([
             'status' => 'success',
@@ -92,49 +70,29 @@ class AnnouncementsController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $masjid_id, $announcement_id)
+    public function update(UpdateAnnouncementRequest $request, $masjid_id, $announcement_id)
     {
         try {
-
             $announcement = Announcement::findOrFail($announcement_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'details' => 'required|string',
-                'text' => 'required|string',
-                'start_date' => 'required|date_format:Y-m-d',
-                'end_date' => 'required|date_format:Y-m-d|after:start_date',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
-            ]);
+            $announcementInputs = $request->safe()->only(['title', 'details', 'text', 'start_date', 'end_date']);
+            $announcement->update($announcementInputs);
 
-            if ($validator->fails()) {
-
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
-            } else if ($validator->passes()) {
-
-                $announcementInputs = $request->only(['title', 'details', 'text', 'start_date', 'end_date']);
-
-                $announcement->update($announcementInputs);
-
-                if ($request->hasFile('image')) {
-                    $announcement->clearMediaCollection('announcements');
-                    $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $announcement->load('image')
-                ], Response::HTTP_OK);
-
+            if ($request->hasFile('image')) {
+                $announcement->clearMediaCollection('announcements');
+                $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
             }
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $announcement->load('image')
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -144,9 +102,11 @@ class AnnouncementsController extends Controller
      */
     public function destroy($masjid_id, $announcement_id)
     {
-        //
         $announcement = Announcement::findOrFail($announcement_id);
         $announcement->forceDelete();
+
+        MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+
         return response()->json([
             'status' => 'success',
             'data' => $announcement
@@ -155,9 +115,11 @@ class AnnouncementsController extends Controller
 
     public function moveToTrash($masjid_id, $announcement_id)
     {
-        //
         $announcement = Announcement::findOrFail($announcement_id);
         $announcement->delete();
+
+        MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+
         return response()->json([
             'status' => 'success',
             'data' => $announcement

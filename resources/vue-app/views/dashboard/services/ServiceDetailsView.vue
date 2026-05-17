@@ -13,10 +13,10 @@
                 <img v-if="service.image" :src="service.image.original_url" alt="" class="service-image">
             </div>
             <p class="fs-6">
-                <span v-html="service.description" class=""></span>
+                <SafeHtml :html="service.description" tag="span" />
             </p>
             <p class="fs-6">
-                <span v-html="service.text" class=""></span>
+                <SafeHtml :html="service.text" tag="span" />
             </p>
         </div>
     </DataItemContainer>
@@ -25,6 +25,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import DataItemContainer from '@/components/DataItemContainer.vue';
+import SafeHtml from '@/components/common/SafeHtml.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';

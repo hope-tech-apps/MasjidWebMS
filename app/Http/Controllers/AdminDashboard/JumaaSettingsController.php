@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Jumaa\SaveJumaaSettingsRequest;
 use App\Models\Masjid;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class JumaaSettingsController extends Controller
@@ -20,47 +20,32 @@ class JumaaSettingsController extends Controller
         ], Response::HTTP_OK);
     }
 
-    public function save(Request $request, $masjid_id)
+    public function save(SaveJumaaSettingsRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
+            $jumaaSettings = $masjid->jumaaSettings;
 
-            $validator = Validator::make($request->all(), [
-                'iqama' => 'date_format:H:i',
-                'athans' => 'array',
-                'athans.*' => 'date_format:H:i|before:iqama'
-            ]);
+            $payload = $request->safe()->only(['iqama', 'athans']);
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            } else if($validator->passes()) {
-                $jumaaSettings = $masjid->jumaaSettings;
-                if($jumaaSettings) {
-                    $jumaaSettings->athans = null;
-                    $jumaaSettings->update($request->only([
-                        'iqama',
-                        'athans'
-                    ]));
-                } else {
-                    $jumaaSettings = $masjid->jumaaSettings()->create($request->only([
-                        'iqama',
-                        'athans'
-                    ]));
-                }
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $jumaaSettings
-                ], Response::HTTP_OK);
+            if ($jumaaSettings) {
+                // Reset athans before update so a missing value clears the field.
+                $jumaaSettings->athans = null;
+                $jumaaSettings->update($payload);
+            } else {
+                $jumaaSettings = $masjid->jumaaSettings()->create($payload);
             }
 
-        } catch(\Exception $e) {
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::PRAYERS_SETTINGS);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $jumaaSettings
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

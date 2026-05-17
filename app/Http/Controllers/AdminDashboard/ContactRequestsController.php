@@ -103,7 +103,7 @@ class ContactRequestsController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

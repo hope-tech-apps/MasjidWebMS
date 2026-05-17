@@ -3,14 +3,14 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Tasabih\StoreTasbihRequest;
+use App\Http\Requests\Admin\Tasabih\UpdateTasbihRequest;
 use App\Models\Tasbih;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class TasabihController extends Controller
 {
-
     /**
      * Display a listing of the resource.
      */
@@ -26,36 +26,21 @@ class TasabihController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(StoreTasbihRequest $request)
     {
         try {
-            
-            $validator = Validator::make($request->all(), [
-                'text' => 'required|array',
-                'text.*' => 'required|string',
-                'pronunciation' => 'required|string',
-                'reference' => 'nullable|string'
-            ]);
+            $tasbih = Tasbih::create($request->validated());
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
+            MobileCache::flushGlobal(MobileCache::TASABIH_ALL);
 
-            if($validator->passes()) {
-                $tasbih = Tasbih::create($request->only('text', 'pronunciation', 'reference'));
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $tasbih
-                ], Response::HTTP_OK);
-            }
-
+            return response()->json([
+                'status' => 'success',
+                'data' => $tasbih
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -75,38 +60,22 @@ class TasabihController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $tasbih_id)
+    public function update(UpdateTasbihRequest $request, $tasbih_id)
     {
         try {
-
             $tasbih = Tasbih::findOrFail($tasbih_id);
-            
-            $validator = Validator::make($request->all(), [
-                'text' => 'required|array',
-                'text.*' => 'required|string',
-                'pronunciation' => 'required|string',
-                'reference' => 'nullable|string'
-            ]);
+            $tasbih->update($request->validated());
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
+            MobileCache::flushGlobal(MobileCache::TASABIH_ALL);
 
-            if($validator->passes()) {
-                $tasbih->update($request->only('text', 'pronunciation', 'reference'));
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $tasbih
-                ], Response::HTTP_OK);
-            }
-
+            return response()->json([
+                'status' => 'success',
+                'data' => $tasbih
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -118,10 +87,12 @@ class TasabihController extends Controller
     {
         $tasbih = Tasbih::findOrFail($tasbih_id);
         $tasbih->delete();
+
+        MobileCache::flushGlobal(MobileCache::TASABIH_ALL);
+
         return response()->json([
             'status' => 'success',
             'data' => $tasbih
         ], Response::HTTP_OK);
     }
-
 }

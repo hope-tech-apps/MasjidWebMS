@@ -27,7 +27,7 @@ class PagesController extends Controller
             return response()->api(200, __('api.success'), PageResource::collection($pages));
 
         } catch (\Exception $e) {
-            return response()->api(500, $e->getMessage(), null);
+            return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }
     }
 
@@ -80,7 +80,7 @@ class PagesController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->api(500, $e->getMessage(), null);
+            return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }
     }
 }

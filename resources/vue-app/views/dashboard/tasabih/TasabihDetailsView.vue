@@ -6,8 +6,7 @@
                 <span class="fs-5 fw-bold text-muted text-capitalize">
                     {{ key }}
                 </span>
-                <p v-html="getAttributeValues(key as keyof Tasbih, tasbih)" class="fs-6 m-0">
-                </p>
+                <SafeHtml :html="getAttributeValues(key as keyof Tasbih, tasbih)" tag="p" class="fs-6 m-0" />
             </div>
         </div>
     </DataItemContainer>
@@ -16,6 +15,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import DataItemContainer from '@/components/DataItemContainer.vue';
+import SafeHtml from '@/components/common/SafeHtml.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';

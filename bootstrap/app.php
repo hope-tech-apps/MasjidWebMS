@@ -1,14 +1,18 @@
 <?php
 
+use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
 use App\Http\Middleware\UserAdminMiddleware;
+use App\Support\Errors;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -22,34 +26,71 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::prefix('api')
                 ->middleware('api')
                 ->group(base_path('routes/admin.php'));
-        }
+        },
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // Security headers on every response (web + api).
+        $middleware->append(SecurityHeaders::class);
+
         $middleware->alias([
             'super' => SuperAdminMiddleware::class,
-            'admin' => UserAdminMiddleware::class
+            'admin' => UserAdminMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
 
+        // Don't include sensitive context in default reports.
+        $exceptions->dontFlash([
+            'current_password',
+            'password',
+            'password_confirmation',
+            'old_password',
+            'service_role_key',
+            'supabase_service_key',
+            'onesignal_rest_api_key',
+        ]);
+
+        // JSON renderer for API + AJAX requests — preserves the legacy envelope
+        // ({status, message}) the Vue admin and mobile clients expect, but
+        // never leaks $e->getMessage() in production.
         $exceptions->render(function (Throwable $e, Request $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
-                if ($e instanceof RouteNotFoundException) {
-                    return response()->json([
-                        'status' => 'error',
-                        'message' => 'Unauthenticated or Route not found.',
-                    ], Response::HTTP_INTERNAL_SERVER_ERROR);
-                } else if ($e instanceof AuthenticationException) {
+
+                // Rate limiter, BaseFormRequest, and other "I have my own response"
+                // exceptions carry the response object inside them. Return it
+                // as-is so we preserve 429 / 422 / etc. with their correct bodies.
+                if ($e instanceof HttpResponseException) {
+                    return $e->getResponse();
+                }
+
+                if ($e instanceof AuthenticationException) {
                     return response()->json([
                         'status' => 'error',
                         'message' => 'Unauthenticated.',
                     ], Response::HTTP_UNAUTHORIZED);
-                } else {
+                }
+
+                if ($e instanceof RouteNotFoundException) {
                     return response()->json([
                         'status' => 'error',
-                        'message' => $e->getMessage(),
-                    ], Response::HTTP_INTERNAL_SERVER_ERROR);
+                        'message' => 'Route not found.',
+                    ], Response::HTTP_NOT_FOUND);
                 }
+
+                // HTTP-aware exceptions (404, 403, 422 thrown manually, etc.) —
+                // preserve their status code, sanitize their message.
+                if ($e instanceof HttpExceptionInterface) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => Errors::publicMessage($e, 'Request failed.'),
+                    ], $e->getStatusCode());
+                }
+
+                // Anything else — generic 500 with sanitized message.
+                return response()->json([
+                    'status' => 'error',
+                    'message' => Errors::publicMessage($e),
+                ], Response::HTTP_INTERNAL_SERVER_ERROR);
             }
         });
 

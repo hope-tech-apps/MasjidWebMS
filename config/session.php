@@ -47,7 +47,9 @@ return [
     |
     */
 
-    'encrypt' => env('SESSION_ENCRYPT', false),
+    // Security: session payload encrypted at rest by default. Cheap CPU,
+    // big win if an attacker ever reads the sessions table.
+    'encrypt' => env('SESSION_ENCRYPT', true),
 
     /*
     |--------------------------------------------------------------------------
@@ -169,7 +171,9 @@ return [
     |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    // Security: session cookie sent only over HTTPS by default. Set
+    // SESSION_SECURE_COOKIE=false explicitly for local plain-HTTP dev.
+    'secure' => env('SESSION_SECURE_COOKIE', true),
 
     /*
     |--------------------------------------------------------------------------

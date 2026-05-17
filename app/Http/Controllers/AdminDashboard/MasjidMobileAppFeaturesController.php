@@ -3,9 +3,10 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\MobileAppFeatures\UpdateFeatureAvailabilityRequest;
 use App\Models\Masjid;
 use App\Models\MasjidMobileAppFeature;
-use Illuminate\Http\Request;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidMobileAppFeaturesController extends Controller
@@ -20,10 +21,9 @@ class MasjidMobileAppFeaturesController extends Controller
         ], Response::HTTP_OK);
     }
 
-    public function update(Request $request, $masjid_id, $feature_id)
+    public function update(UpdateFeatureAvailabilityRequest $request, $masjid_id, $feature_id)
     {
         try {
-
             $masjid = Masjid::with('features')->findOrFail($masjid_id);
             $feature = $masjid->features()->where('feature_id', $feature_id)->first();
             $masjidFeaturePivot = MasjidMobileAppFeature::where([
@@ -31,24 +31,19 @@ class MasjidMobileAppFeaturesController extends Controller
                 'feature_id' => $feature->id,
             ])->first();
 
-            $inputs = $request->validate([
-                'is_available' => 'required|boolean'
-            ]);
+            $masjidFeaturePivot->update(['is_available' => $request->boolean('is_available')]);
 
-            $masjidFeaturePivot->update(['is_available' => $inputs['is_available']]);
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::FEATURES);
 
             return response()->json([
                 'status' => 'success',
                 'data' => $masjidFeaturePivot
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
-
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
         }
     }
 }

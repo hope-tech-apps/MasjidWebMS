@@ -4,12 +4,12 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Enums\SectionType;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\PageSections\AttachSectionRequest;
+use App\Http\Requests\Admin\PageSections\StorePageSectionRequest;
+use App\Http\Requests\Admin\PageSections\UpdatePageSectionRequest;
 use App\Models\Masjid;
-use App\Models\Page;
 use App\Models\Section;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rules\Enum;
 use Symfony\Component\HttpFoundation\Response;
 
 class PageSectionsController extends Controller
@@ -28,32 +28,16 @@ class PageSectionsController extends Controller
                 ->withPivot('order')
                 ->orderBy('page_section.order')
                 ->get()
-                ->map(function ($section) {
-                    return [
-                        'id' => $section->id,
-                        'page_id' => $section->pivot->page_id,
-                        'section_type' => $section->section_type->value,
-                        'section_type_label' => $section->type_label,
-                        'title' => $section->title,
-                        'content' => $section->content,
-                        'order' => $section->pivot->order,
-                        'is_active' => $section->is_active,
-                        'settings' => $section->settings,
-                        'uses_external_data' => $section->usesExternalData(),
-                        'created_at' => $section->created_at?->toISOString(),
-                        'updated_at' => $section->updated_at?->toISOString(),
-                    ];
-                });
+                ->map(fn($section) => $this->serializeSection($section, $page->id, $section->pivot->order));
 
             return response()->json([
                 'status' => 'success',
                 'data' => $sections
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -61,59 +45,22 @@ class PageSectionsController extends Controller
     /**
      * Store a newly created section and attach it to the page
      */
-    public function store(Request $request, $masjid_id, $page_id)
+    public function store(StorePageSectionRequest $request, $masjid_id, $page_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
 
-            // Parse JSON fields if they come as strings (from FormData)
-            $requestData = $request->all();
-            if (is_string($request->input('content'))) {
-                $requestData['content'] = json_decode($request->input('content'), true);
-            }
-            if (is_string($request->input('settings'))) {
-                $requestData['settings'] = json_decode($request->input('settings'), true);
-            }
-
-            // Build validation rules with dynamic image field validation
-            $validationRules = [
-                'section_type' => ['required', new Enum(SectionType::class)],
-                'title' => 'nullable|string|max:255',
-                'content' => 'required|array',
-                'order' => 'nullable|integer',
-                'settings' => 'nullable|array',
-            ];
-
-            // Add validation for all possible image fields (25MB max)
-            $this->addImageFieldValidation($validationRules, $request);
-
-            $validator = Validator::make($requestData, $validationRules);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            // Validate that content doesn't contain base64 images
-            $base64ValidationError = $this->validateNoBase64Images($requestData['content']);
-            if ($base64ValidationError) {
-                return response()->json([
-                    'status' => 'failed',
-                    'message' => $base64ValidationError
-                ], Response::HTTP_BAD_REQUEST);
-            }
+            $validated = $request->validated();
 
             // Create new section in the sections library
             $sectionData = [
                 'masjid_id' => $masjid->id,
-                'section_type' => $requestData['section_type'],
-                'title' => $requestData['title'] ?? null,
-                'content' => $requestData['content'],
-                'is_active' => $request->has('is_active') ? (bool) $request->input('is_active') : true,
-                'settings' => $requestData['settings'] ?? null,
+                'section_type' => $validated['section_type'],
+                'title' => $validated['title'] ?? null,
+                'content' => $validated['content'],
+                'is_active' => $validated['is_active'] ?? true,
+                'settings' => $validated['settings'] ?? null,
             ];
 
             $section = Section::create($sectionData);
@@ -125,34 +72,17 @@ class PageSectionsController extends Controller
             $section->refresh();
 
             // Attach section to page with order
-            $order = $request->input('order', $page->sections()->count() + 1);
+            $order = $validated['order'] ?? ($page->sections()->count() + 1);
             $page->sections()->attach($section->id, ['order' => $order]);
-
-            // Return section in the same format as index
-            $sectionData = [
-                'id' => $section->id,
-                'page_id' => $page->id,
-                'section_type' => $section->section_type->value,
-                'section_type_label' => $section->type_label,
-                'title' => $section->title,
-                'content' => $section->content,
-                'order' => $order,
-                'is_active' => $section->is_active,
-                'settings' => $section->settings,
-                'uses_external_data' => $section->usesExternalData(),
-                'created_at' => $section->created_at?->toISOString(),
-                'updated_at' => $section->updated_at?->toISOString(),
-            ];
 
             return response()->json([
                 'status' => 'success',
-                'data' => $sectionData
+                'data' => $this->serializeSection($section, $page->id, $order)
             ], Response::HTTP_CREATED);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -167,30 +97,14 @@ class PageSectionsController extends Controller
             $page = $masjid->pages()->findOrFail($page_id);
             $section = $page->sections()->withPivot('order')->findOrFail($section_id);
 
-            $sectionData = [
-                'id' => $section->id,
-                'page_id' => $section->pivot->page_id,
-                'section_type' => $section->section_type->value,
-                'section_type_label' => $section->type_label,
-                'title' => $section->title,
-                'content' => $section->content,
-                'order' => $section->pivot->order,
-                'is_active' => $section->is_active,
-                'settings' => $section->settings,
-                'uses_external_data' => $section->usesExternalData(),
-                'created_at' => $section->created_at?->toISOString(),
-                'updated_at' => $section->updated_at?->toISOString(),
-            ];
-
             return response()->json([
                 'status' => 'success',
-                'data' => $sectionData
+                'data' => $this->serializeSection($section, $page->id, $section->pivot->order)
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -198,69 +112,25 @@ class PageSectionsController extends Controller
     /**
      * Update the specified section
      */
-    public function update(Request $request, $masjid_id, $page_id, $section_id)
+    public function update(UpdatePageSectionRequest $request, $masjid_id, $page_id, $section_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
             $section = $page->sections()->withPivot('order')->findOrFail($section_id);
 
-            // Parse JSON fields if they come as strings (from FormData)
-            $requestData = $request->all();
-            if (is_string($request->input('content'))) {
-                $requestData['content'] = json_decode($request->input('content'), true);
-            }
-            if (is_string($request->input('settings'))) {
-                $requestData['settings'] = json_decode($request->input('settings'), true);
-            }
+            $validated = $request->validated();
 
-            // Build validation rules with dynamic image field validation
-            $validationRules = [
-                'section_type' => ['sometimes', new Enum(SectionType::class)],
-                'title' => 'nullable|string|max:255',
-                'content' => 'sometimes|array',
-                'order' => 'nullable|integer',
-                'settings' => 'nullable|array',
-            ];
-
-            // Add validation for all possible image fields (25MB max)
-            $this->addImageFieldValidation($validationRules, $request);
-
-            $validator = Validator::make($requestData, $validationRules);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            // Validate that content doesn't contain base64 images (if content is being updated)
-            if (isset($requestData['content'])) {
-                $base64ValidationError = $this->validateNoBase64Images($requestData['content']);
-                if ($base64ValidationError) {
-                    return response()->json([
-                        'status' => 'failed',
-                        'message' => $base64ValidationError
-                    ], Response::HTTP_BAD_REQUEST);
-                }
-            }
-
-            // Update section data
-            $sectionData = [];
-            if (isset($requestData['section_type'])) $sectionData['section_type'] = $requestData['section_type'];
-            if (isset($requestData['title'])) $sectionData['title'] = $requestData['title'];
-            if (isset($requestData['content'])) $sectionData['content'] = $requestData['content'];
-            if (isset($requestData['settings'])) $sectionData['settings'] = $requestData['settings'];
-            if ($request->has('is_active')) $sectionData['is_active'] = (bool) $request->input('is_active');
+            // Build update set only with provided keys
+            $sectionData = collect($validated)->only(['section_type', 'title', 'content', 'settings', 'is_active'])->toArray();
 
             if (!empty($sectionData)) {
                 $section->update($sectionData);
             }
 
             // Update pivot order if provided
-            if ($request->has('order')) {
-                $page->sections()->updateExistingPivot($section->id, ['order' => $request->input('order')]);
+            if (isset($validated['order'])) {
+                $page->sections()->updateExistingPivot($section->id, ['order' => $validated['order']]);
             }
 
             // Handle image uploads
@@ -272,30 +142,16 @@ class PageSectionsController extends Controller
                 $query->where('pages.id', $page_id);
             }]);
 
-            $sectionData = [
-                'id' => $section->id,
-                'page_id' => $page->id,
-                'section_type' => $section->section_type->value,
-                'section_type_label' => $section->type_label,
-                'title' => $section->title,
-                'content' => $section->content,
-                'order' => $request->input('order', $section->pivot->order),
-                'is_active' => $section->is_active,
-                'settings' => $section->settings,
-                'uses_external_data' => $section->usesExternalData(),
-                'created_at' => $section->created_at?->toISOString(),
-                'updated_at' => $section->updated_at?->toISOString(),
-            ];
+            $order = $validated['order'] ?? $section->pivot->order;
 
             return response()->json([
                 'status' => 'success',
-                'data' => $sectionData
+                'data' => $this->serializeSection($section, $page->id, $order)
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -310,7 +166,7 @@ class PageSectionsController extends Controller
             $page = $masjid->pages()->findOrFail($page_id);
 
             // Verify section exists on this page
-            $section = $page->sections()->findOrFail($section_id);
+            $page->sections()->findOrFail($section_id);
 
             // Detach section from page (doesn't delete the section itself)
             $page->sections()->detach($section_id);
@@ -319,11 +175,10 @@ class PageSectionsController extends Controller
                 'status' => 'success',
                 'message' => 'Section removed from page successfully'
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -331,28 +186,16 @@ class PageSectionsController extends Controller
     /**
      * Attach an existing section to a page
      */
-    public function attach(Request $request, $masjid_id, $page_id)
+    public function attach(AttachSectionRequest $request, $masjid_id, $page_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
 
-            $validator = Validator::make($request->all(), [
-                'section_id' => 'required|integer|exists:sections,id',
-                'order' => 'nullable|integer',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
             $sectionId = $request->input('section_id');
 
             // Verify section belongs to same masjid
-            $section = $masjid->sections()->findOrFail($sectionId);
+            $masjid->sections()->findOrFail($sectionId);
 
             // Check if already attached
             if ($page->sections()->where('sections.id', $sectionId)->exists()) {
@@ -366,34 +209,17 @@ class PageSectionsController extends Controller
             $order = $request->input('order', $page->sections()->count() + 1);
             $page->sections()->attach($sectionId, ['order' => $order]);
 
-            // Return section data
             $section = $page->sections()->withPivot('order')->findOrFail($sectionId);
-
-            $sectionData = [
-                'id' => $section->id,
-                'page_id' => $page->id,
-                'section_type' => $section->section_type->value,
-                'section_type_label' => $section->type_label,
-                'title' => $section->title,
-                'content' => $section->content,
-                'order' => $section->pivot->order,
-                'is_active' => $section->is_active,
-                'settings' => $section->settings,
-                'uses_external_data' => $section->usesExternalData(),
-                'created_at' => $section->created_at?->toISOString(),
-                'updated_at' => $section->updated_at?->toISOString(),
-            ];
 
             return response()->json([
                 'status' => 'success',
-                'data' => $sectionData,
+                'data' => $this->serializeSection($section, $page->id, $section->pivot->order),
                 'message' => 'Section attached to page successfully'
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -404,27 +230,45 @@ class PageSectionsController extends Controller
     public function sectionTypes()
     {
         try {
-            $types = collect(SectionType::cases())->map(function ($type) {
-                return [
-                    'value' => $type->value,
-                    'label' => $type->label(),
-                    'description' => $type->description(),
-                    'uses_external_data' => $type->usesExternalData(),
-                    'default_content' => $type->defaultContent(),
-                ];
-            });
+            $types = collect(SectionType::cases())->map(fn($type) => [
+                'value' => $type->value,
+                'label' => $type->label(),
+                'description' => $type->description(),
+                'uses_external_data' => $type->usesExternalData(),
+                'default_content' => $type->defaultContent(),
+            ]);
 
             return response()->json([
                 'status' => 'success',
                 'data' => $types
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Build a uniform section payload for responses.
+     */
+    private function serializeSection(Section $section, int $pageId, ?int $order): array
+    {
+        return [
+            'id' => $section->id,
+            'page_id' => $pageId,
+            'section_type' => $section->section_type->value,
+            'section_type_label' => $section->type_label,
+            'title' => $section->title,
+            'content' => $section->content,
+            'order' => $order,
+            'is_active' => $section->is_active,
+            'settings' => $section->settings,
+            'uses_external_data' => $section->usesExternalData(),
+            'created_at' => $section->created_at?->toISOString(),
+            'updated_at' => $section->updated_at?->toISOString(),
+        ];
     }
 
     /**
@@ -436,26 +280,20 @@ class PageSectionsController extends Controller
         $imageFields = $this->getImageFieldsForSectionType($section->section_type);
 
         foreach ($imageFields as $fieldName) {
-            // Check if this is an array field (contains .*.  pattern)
             if (strpos($fieldName, '*') !== false) {
-                // Handle array items (e.g., items.*.image_url)
                 $this->handleArrayImageUploads($request, $section, $content, $fieldName);
             } else {
-                // Handle single image field
-                $inputName = str_replace('.', '_', $fieldName); // Convert dot notation to underscore
+                $inputName = str_replace('.', '_', $fieldName);
 
                 if ($request->hasFile($inputName)) {
-                    // Upload the image using Spatie Media Library
                     $media = $section->addMediaFromRequest($inputName)
                         ->toMediaCollection('section_images');
 
-                    // Update the content with the image URL
                     $this->setNestedValue($content, $fieldName, $media->getUrl());
                 }
             }
         }
 
-        // Save updated content
         $section->update(['content' => $content]);
     }
 
@@ -464,23 +302,17 @@ class PageSectionsController extends Controller
      */
     private function handleArrayImageUploads(Request $request, Section $section, array &$content, string $fieldPattern)
     {
-        // Get all files from the request
         $allFiles = $request->allFiles();
 
-        // Convert pattern like "items.*.image_url" to regex pattern
-        // This will match items_0_image_url, items_1_image_url, etc.
         $pattern = str_replace(['.', '*'], ['_', '(\d+)'], $fieldPattern);
 
         foreach ($allFiles as $key => $file) {
             if (preg_match('/^' . $pattern . '$/', $key, $matches)) {
-                $index = $matches[1]; // Get the index number
+                $index = $matches[1];
 
-                // Upload the image
                 $media = $section->addMedia($file)
                     ->toMediaCollection('section_images');
 
-                // Update the content with the image URL
-                // Convert items.*.image_url + index to items.0.image_url
                 $actualFieldName = str_replace('*', $index, $fieldPattern);
                 $this->setNestedValue($content, $actualFieldName, $media->getUrl());
             }
@@ -488,59 +320,19 @@ class PageSectionsController extends Controller
     }
 
     /**
-     * Add validation rules for image fields
-     */
-    private function addImageFieldValidation(array &$validationRules, Request $request): void
-    {
-        // Get all file inputs from the request
-        $allFiles = $request->allFiles();
-
-        foreach ($allFiles as $fieldName => $file) {
-            // Add validation for each image field (25MB max)
-            $validationRules[$fieldName] = 'nullable|file|mimes:jpeg,png,jpg,gif,svg,webp|max:25600';
-        }
-    }
-
-    /**
-     * Validate that content doesn't contain base64 encoded images
-     * Returns error message if base64 images found, null otherwise
-     */
-    private function validateNoBase64Images(array $content): ?string
-    {
-        // Recursively check all values in the content array
-        foreach ($content as $key => $value) {
-            if (is_array($value)) {
-                // Recursively check nested arrays
-                $error = $this->validateNoBase64Images($value);
-                if ($error) {
-                    return $error;
-                }
-            } elseif (is_string($value)) {
-                // Check if the value looks like a base64 encoded image
-                // Base64 images typically start with "data:image/"
-                if (preg_match('/^data:image\/[a-zA-Z]+;base64,/', $value)) {
-                    return 'Images must be uploaded as files, not base64 encoded strings. Please use the file upload feature.';
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * Get image field names for a specific section type
      */
     private function getImageFieldsForSectionType(SectionType $type): array
     {
-        return match($type) {
+        return match ($type) {
             SectionType::PAGE_TITLE => ['background_image_url'],
             SectionType::PRAYER_TIMES => ['image_url'],
             SectionType::ABOUT_US => ['image_url'],
             SectionType::IMAGE_TEXT_GRID => ['main_image_url', 'header_image_url', 'footer_image_url'],
-            SectionType::GRID_CARDS => ['items.*.image_url'], // Array of items
+            SectionType::GRID_CARDS => ['items.*.image_url'],
             SectionType::DONATION => ['image_url'],
             SectionType::CTA => ['background_image_url'],
-            SectionType::MISSION_VISION => ['items.*.icon_url'], // Array of items
+            SectionType::MISSION_VISION => ['items.*.icon_url'],
             default => [],
         };
     }
@@ -555,7 +347,6 @@ class PageSectionsController extends Controller
 
         foreach ($keys as $i => $k) {
             if ($k === '*') {
-                // Handle array items
                 continue;
             }
 

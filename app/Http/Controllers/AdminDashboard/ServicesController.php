@@ -3,10 +3,11 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Services\StoreServiceRequest;
+use App\Http\Requests\Admin\Services\UpdateServiceRequest;
 use App\Models\Masjid;
 use App\Models\Service;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class ServicesController extends Controller
@@ -27,50 +28,32 @@ class ServicesController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request, $masjid_id)
+    public function store(StoreServiceRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'description' => 'required|string',
-                'text' => 'required|string',
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600'
-            ]);
+            $serviceInputs = $request->safe()->only(['title', 'description', 'text']);
+            $serviceInputs['masjid_id'] = $masjid->id;
 
-            if ($validator->fails()) {
-
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
-            } else if ($validator->passes()) {
-
-                $serviceInputs = $request->only(['title', 'description', 'text']);
-                $serviceInputs['masjid_id'] = $masjid->id;
-
-                $service = Service::create($serviceInputs);
-                if ($request->hasFile('image')) {
-                    $service->addMediaFromRequest('image')->toMediaCollection('services');
-                }
-                if ($request->hasFile('icon')) {
-                    $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $service->load('image', 'icon')
-                ], Response::HTTP_OK);
-
+            $service = Service::create($serviceInputs);
+            if ($request->hasFile('image')) {
+                $service->addMediaFromRequest('image')->toMediaCollection('services');
             }
+            if ($request->hasFile('icon')) {
+                $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
+            }
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $service->load('image', 'icon')
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -90,54 +73,36 @@ class ServicesController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $masjid_id, $service_id)
+    public function update(UpdateServiceRequest $request, $masjid_id, $service_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
             $service = Service::findOrFail($service_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'description' => 'required|string',
-                'text' => 'required|string',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'icon' => 'nullable|image|mimes:png,gif,svg,ico,icns,bmb|max:25600'
-            ]);
+            $serviceInputs = $request->safe()->only(['title', 'description', 'text']);
+            $serviceInputs['masjid_id'] = $masjid->id;
 
-            if ($validator->fails()) {
+            $service->update($serviceInputs);
 
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
-            } else if ($validator->passes()) {
-
-                $serviceInputs = $request->only(['title', 'description', 'text']);
-                $serviceInputs['masjid_id'] = $masjid->id;
-
-                $service->update($serviceInputs);
-
-                if ($request->hasFile('image')) {
-                    $service->clearMediaCollection('services');
-                    $service->addMediaFromRequest('image')->toMediaCollection('services');
-                }
-                if ($request->hasFile('icon')) {
-                    $service->clearMediaCollection('servicesIcons');
-                    $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $service->load('image', 'icon')
-                ], Response::HTTP_OK);
-
+            if ($request->hasFile('image')) {
+                $service->clearMediaCollection('services');
+                $service->addMediaFromRequest('image')->toMediaCollection('services');
             }
+            if ($request->hasFile('icon')) {
+                $service->clearMediaCollection('servicesIcons');
+                $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
+            }
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $service->load('image', 'icon')
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -149,6 +114,9 @@ class ServicesController extends Controller
     {
         $service = Service::findOrFail($service_id);
         $service->forceDelete();
+
+        MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+
         return response()->json([
             'status' => 'success',
             'data' => $service
@@ -159,6 +127,9 @@ class ServicesController extends Controller
     {
         $service = Service::findOrFail($service_id);
         $service->delete();
+
+        MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+
         return response()->json([
             'status' => 'success',
             'data' => $service

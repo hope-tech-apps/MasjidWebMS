@@ -3,11 +3,12 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\MasjidDetails\UpdateGeneralSettingsRequest;
+use App\Http\Requests\Admin\MasjidDetails\UpdateMasjidDetailsRequest;
 use App\Models\Masjid;
 use App\Models\MasjidSocialMediaLink;
-use Illuminate\Http\Request;
+use App\Support\MobileCache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidDetailsController extends Controller
@@ -32,87 +33,65 @@ class MasjidDetailsController extends Controller
         ], Response::HTTP_OK);
     }
 
-    public function updateDetails(Request $request, $masjid_id)
+    public function updateDetails(UpdateMasjidDetailsRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'logo' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'name' => 'required|string',
-                'website_link' => 'nullable|string',
-                'email' => 'required|string|email',
-                'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-                'timezone' => 'required|string|timezone',
-                'latitude' => 'required|numeric|min:-90|max:90',
-                'longitude' => 'required|numeric|min:-180|max:180',
-                'facebook_url' => 'nullable|string|regex:/^(https?:\/\/)?(www\.)?([A-Za-z0-9-]+\.)?facebook\.com\/[A-Za-z0-9_.-]+\/?$/',
-                'youtube_url' => 'nullable|string|regex:/^(https?:\/\/)?(www\.)?([A-Za-z0-9-]+\.)?(youtube\.com\/.*)$/',
-                'instagram_url' => 'nullable|string|regex:/^(https?:\/\/)?(www\.)?([A-Za-z0-9-]+\.)?instagram\.com\/[A-Za-z0-9_.-]+\/?$/',
-                'whatsapp_url' => 'nullable|string|regex:/^(https?:\/\/)?(www\.)?([A-Za-z0-9-]+\.)?wa\.me\/[0-9]+\/?$/',
-                'whatsapp_number' => 'nullable|string|regex:/^\+?[0-9 ]+$/'
-            ]);
+            DB::beginTransaction();
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-            } else if ($validator->passes()) {
+            // Update masjid account
+            $masjid->name = $request->input('name');
+            $masjid->email = $request->input('email');
+            $masjid->phone = $request->input('phone');
+            $masjid->timezone = $request->input('timezone');
+            $masjid->latitude = $request->input('latitude');
+            $masjid->longitude = $request->input('longitude');
 
-                DB::beginTransaction();
-
-                // Update masjid account
-                $masjid->name = $request['name'];
-                $masjid->email = $request['email'];
-                $masjid->phone = $request['phone'];
-                $masjid->timezone = $request['timezone'];
-                $masjid->latitude = $request['latitude'];
-                $masjid->longitude = $request['longitude'];
-
-                if($request['website_link']) {
-                    $masjid->website_link = $request['website_link'];
-                }
-
-                $masjid->update();
-
-                if ($masjid && $request->hasFile('logo')) {
-                    $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
-                }
-
-                // Update or Store masjid links
-                if ($request['facebook_url']) {
-                    MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'Facebook', $request['facebook_url']);
-                }
-                if ($request['youtube_url']) {
-                    MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'YouTube', $request['youtube_url']);
-                }
-                if ($request['instagram_url']) {
-                    MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'Instagram', $request['instagram_url']);
-                }
-                if ($request['whatsapp_url']) {
-                    MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'WhatsApp_URL', $request['whatsapp_url']);
-                }
-                if ($request['whatsapp_number']) {
-                    MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'WhatsApp_Number', $request['whatsapp_number']);
-                }
-
-                $masjid = Masjid::with('logo', 'footer_logo', 'socialMediaLinks')->findOrFail($masjid->id);
-
-                DB::commit();
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $masjid
-                ], Response::HTTP_OK);
-
+            if ($request->filled('website_link')) {
+                $masjid->website_link = $request->input('website_link');
             }
 
+            $masjid->update();
+
+            if ($request->hasFile('logo')) {
+                $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
+            }
+
+            // Update or store social media links
+            if ($request->filled('facebook_url')) {
+                MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'Facebook', $request->input('facebook_url'));
+            }
+            if ($request->filled('youtube_url')) {
+                MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'YouTube', $request->input('youtube_url'));
+            }
+            if ($request->filled('instagram_url')) {
+                MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'Instagram', $request->input('instagram_url'));
+            }
+            if ($request->filled('whatsapp_url')) {
+                MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'WhatsApp_URL', $request->input('whatsapp_url'));
+            }
+            if ($request->filled('whatsapp_number')) {
+                MasjidSocialMediaLink::updateOrStoreSocialMediaLink($masjid->id, 'WhatsApp_Number', $request->input('whatsapp_number'));
+            }
+
+            $masjid = Masjid::with('logo', 'footer_logo', 'socialMediaLinks')->findOrFail($masjid->id);
+
+            DB::commit();
+
+            // Masjid metadata flows into multiple mobile endpoints (show, about).
+            MobileCache::flushMasjidAll((int) $masjid_id);
+            MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $masjid
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -127,42 +106,23 @@ class MasjidDetailsController extends Controller
         ], Response::HTTP_OK);
     }
 
-    public function updateGeneralSettings(Request $request, $masjid_id)
+    public function updateGeneralSettings(UpdateGeneralSettingsRequest $request, $masjid_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'header_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'footer_logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'copyright_text' => 'nullable|string',
-                'app_store_link' => 'nullable|url',
-                'google_play_link' => 'nullable|url',
-                'google_maps_key' => 'nullable|string',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
             DB::beginTransaction();
 
-            // Update general settings fields
             $masjid->copyright_text = $request->input('copyright_text');
             $masjid->app_store_link = $request->input('app_store_link');
             $masjid->google_play_link = $request->input('google_play_link');
             $masjid->google_maps_key = $request->input('google_maps_key');
             $masjid->update();
 
-            // Handle header logo upload
             if ($request->hasFile('header_logo')) {
                 $masjid->addMediaFromRequest('header_logo')->toMediaCollection('header_logos');
             }
 
-            // Handle footer logo upload
             if ($request->hasFile('footer_logo')) {
                 $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
             }
@@ -170,16 +130,19 @@ class MasjidDetailsController extends Controller
             $masjid = Masjid::with('header_logo', 'footer_logo')->findOrFail($masjid->id);
 
             DB::commit();
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+            MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $masjid
             ], Response::HTTP_OK);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

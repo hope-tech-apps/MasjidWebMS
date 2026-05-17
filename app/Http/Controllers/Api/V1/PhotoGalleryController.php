@@ -37,7 +37,7 @@ class PhotoGalleryController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            return response()->api(500, $e->getMessage(), null);
+            return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }
     }
 
@@ -57,7 +57,7 @@ class PhotoGalleryController extends Controller
             return response()->api(200, __('api.success'), $photo);
 
         } catch (\Exception $e) {
-            return response()->api(500, $e->getMessage(), null);
+            return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }
     }
 }

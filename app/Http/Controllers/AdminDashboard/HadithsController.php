@@ -4,11 +4,12 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Enums\HadithStrength;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Hadiths\StoreHadithRequest;
+use App\Http\Requests\Admin\Hadiths\UpdateHadithRequest;
 use App\Models\Hadith;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
+use Carbon\Carbon;
 use Symfony\Component\HttpFoundation\Response;
-use Illuminate\Validation\Rule;
 
 class HadithsController extends Controller
 {
@@ -27,59 +28,38 @@ class HadithsController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(StoreHadithRequest $request)
     {
         try {
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'isnad' => 'required|string',
-                'matn' => 'required|string',
-                'description' => 'required|string',
-                'strength' => ['required', 'string', Rule::in(HadithStrength::getValues())],
-                'muhaddith_ar' => 'required|string',
-                'muhaddith_en' => 'required|string',
-                'references' => 'required|array',
-                'references.*' => 'array',
-                'show_date' => ['required', 'date', 'unique:hadiths,show_date', function ($attribute, $value, $fail) {
-                    $today = date('Y-m-d'); // Get today's date in 'Y-m-d' format
-                    if ($value <= $today) {
-                        $fail('The ' . $attribute . ' must be a date after today.');
-                    }
-                },]
+            $validated = $request->validated();
+
+            $hadith = Hadith::create([
+                'title' => $validated['title'],
+                'isnad' => $validated['isnad'],
+                'matn' => $validated['matn'],
+                'description' => $validated['description'],
+                'strength' => HadithStrength::from($validated['strength'])->toJson(),
+                'muhaddith' => [
+                    'ar' => $validated['muhaddith_ar'],
+                    'en' => $validated['muhaddith_en'],
+                ],
+                'references' => $validated['references'],
+                'show_date' => $validated['show_date'],
             ]);
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
+            // If the new hadith is dated today, invalidate today's cached hadith.
+            if (Carbon::parse($validated['show_date'])->isToday()) {
+                MobileCache::flushGlobal(MobileCache::HADITH_TODAY, Carbon::now()->format('Y-m-d'));
             }
 
-            if($validator->passes()) {
-                $hadith = Hadith::create([
-                    'title' => $request->title,
-                    'isnad' => $request->isnad,
-                    'matn' => $request->matn,
-                    'description' => $request->description,
-                    'strength' => HadithStrength::from($request->strength)->toJson(),
-                    'muhaddith' => [
-                        'ar' => $request->muhaddith_ar,
-                        'en' => $request->muhaddith_en
-                    ],
-                    'references' => $request->references,
-                    'show_date' => $request->show_date
-                ]);
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $hadith
-                ], Response::HTTP_CREATED);
-            }
-            
+            return response()->json([
+                'status' => 'success',
+                'data' => $hadith
+            ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -99,59 +79,39 @@ class HadithsController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $hadith_id)
+    public function update(UpdateHadithRequest $request, string $hadith_id)
     {
         try {
-
             $hadith = Hadith::findOrFail($hadith_id);
+            $validated = $request->validated();
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'isnad' => 'required|string',
-                'matn' => 'required|string',
-                'description' => 'required|string',
-                'strength' => ['required', 'string', Rule::in(HadithStrength::getValues())],
-                'muhaddith_ar' => 'required|string',
-                'muhaddith_en' => 'required|string',
-                'references' => 'required|array',
-                'references.*' => 'array',
-                'show_date' => 'required|date|unique:hadiths,show_date,' . $hadith_id
+            $hadith->update([
+                'title' => $validated['title'],
+                'isnad' => $validated['isnad'],
+                'matn' => $validated['matn'],
+                'description' => $validated['description'],
+                'strength' => HadithStrength::from($validated['strength'])->toJson(),
+                'muhaddith' => [
+                    'ar' => $validated['muhaddith_ar'],
+                    'en' => $validated['muhaddith_en'],
+                ],
+                'references' => $validated['references'],
+                'show_date' => $validated['show_date'],
             ]);
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
+            // Today's cached hadith may be stale after an admin edit.
+            if (Carbon::parse($validated['show_date'])->isToday() || Carbon::parse($hadith->getOriginal('show_date'))->isToday()) {
+                MobileCache::flushGlobal(MobileCache::HADITH_TODAY, Carbon::now()->format('Y-m-d'));
             }
 
-            if($validator->passes()) {
-
-                $hadith->update([
-                    'title' => $request->title,
-                    'isnad' => $request->isnad,
-                    'matn' => $request->matn,
-                    'description' => $request->description,
-                    'strength' => HadithStrength::from($request->strength)->toJson(),
-                    'muhaddith' => [
-                        'ar' => $request->muhaddith_ar,
-                        'en' => $request->muhaddith_en
-                    ],
-                    'references' => $request->references,
-                    'show_date' => $request->show_date
-                ]);
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $hadith
-                ], Response::HTTP_CREATED);
-
-            }
-            
+            return response()->json([
+                'status' => 'success',
+                'data' => $hadith
+            ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -162,11 +122,16 @@ class HadithsController extends Controller
     public function destroy(string $hadith_id)
     {
         $hadith = Hadith::findOrFail($hadith_id);
+        $wasToday = Carbon::parse($hadith->show_date)->isToday();
         $hadith->delete();
+
+        if ($wasToday) {
+            MobileCache::flushGlobal(MobileCache::HADITH_TODAY, Carbon::now()->format('Y-m-d'));
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => $hadith
         ], Response::HTTP_OK);
     }
-    
 }

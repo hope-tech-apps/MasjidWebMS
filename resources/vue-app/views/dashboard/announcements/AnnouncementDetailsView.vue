@@ -7,10 +7,10 @@
                 <img v-if="announcement.image" :src="announcement.image.original_url" alt="" class="announcement-image">
             </div>
             <p class="fs-6">
-                <span v-html="announcement.details" class=""></span>
+                <SafeHtml :html="announcement.details" tag="span" />
             </p>
             <p class="fs-6">
-                <span v-html="announcement.text" class=""></span>
+                <SafeHtml :html="announcement.text" tag="span" />
             </p>
         </div>
     </DataItemContainer>
@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import DataItemContainer from '@/components/DataItemContainer.vue';
+import SafeHtml from '@/components/common/SafeHtml.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';

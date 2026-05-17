@@ -3,10 +3,9 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Gallery\StoreGalleryImageRequest;
 use App\Models\Masjid;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidGalleryController extends Controller
@@ -25,35 +24,22 @@ class MasjidGalleryController extends Controller
         ], Response::HTTP_OK);
     }
 
-    public function store(Request $request, $masjid_id)
+    public function store(StoreGalleryImageRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
+            $masjid->addMediaFromRequest('image')->toMediaCollection('galleries');
 
-            $validator = Validator::make($request->all(), [
-                'image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600'
-            ]);
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::GALLERY);
 
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'error',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            if($validator->passes()) {
-                $masjid->addMediaFromRequest('image')->toMediaCollection('galleries');
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $masjid->gallery
-                ], Response::HTTP_OK);
-            }
-
+            return response()->json([
+                'status' => 'success',
+                'data' => $masjid->gallery
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -64,6 +50,9 @@ class MasjidGalleryController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $media = $masjid->gallery()->findOrFail($media_id);
             $media->delete();
+
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::GALLERY);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $masjid->gallery
@@ -71,7 +60,7 @@ class MasjidGalleryController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -84,11 +73,9 @@ class MasjidGalleryController extends Controller
         $galleryMedia = $masjid->gallery()->get();
 
         foreach ($galleryMedia as $media) {
-            // Check if the file exists in storage
             $filePath = $media->getPath();
 
             if (!file_exists($filePath)) {
-                // File doesn't exist, delete the media record
                 $media->delete();
             }
         }

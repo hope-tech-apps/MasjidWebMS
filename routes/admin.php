@@ -28,7 +28,8 @@ use App\Http\Controllers\AdminDashboard\UsersController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('admin')->group(function () {
-    Route::post('/login', [AuthController::class, 'login']);
+    // Security: brute-force defense — 5 attempts per minute keyed on email+IP.
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
     Route::middleware(['auth:sanctum', 'admin'])->group(function () {
         Route::controller(AuthController::class)->group(function () {

@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\MasjidAbout\SaveMasjidAboutRequest;
 use App\Models\Masjid;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidAboutUsController extends Controller
@@ -14,7 +14,7 @@ class MasjidAboutUsController extends Controller
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $about = $masjid->masjidAbout;
-        if($about) {
+        if ($about) {
             return response()->json([
                 'status' => 'success',
                 'data' => $about->load('aboutImage', 'missionIcon', 'visionIcon')
@@ -27,76 +27,46 @@ class MasjidAboutUsController extends Controller
         }
     }
 
-    public function save(Request $request, $masjid_id)
+    public function save(SaveMasjidAboutRequest $request, $masjid_id)
     {
-
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
             $about = $masjid->masjidAbout;
-            $validationRules = [
-                'about' => 'required|string|max:5000',
-                'mission' => 'required|string|max:5000',
-                'vision' => 'required|string|max:5000',
-                'about_image' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'mission_icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600',
-                'vision_icon' => 'required|image|mimes:png,svg,ico,bmb|max:25600'
-            ];
 
-            if($about) {
-                $validationRules = [
-                    'about' => 'required|string|max:5000',
-                    'mission' => 'required|string|max:5000',
-                    'vision' => 'required|string|max:5000',
-                    'about_image' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                    'mission_icon' => 'image|mimes:png,svg,ico,bmb|max:25600',
-                    'vision_icon' => 'image|mimes:png,svg,ico,bmb|max:25600'
-                ];
+            $aboutInputs = $request->safe()->only(['about', 'mission', 'vision']);
+            $aboutInputs['masjid_id'] = $masjid->id;
+
+            if ($about) {
+                $about->update($aboutInputs);
+            } else {
+                $about = $masjid->masjidAbout()->create($aboutInputs);
             }
 
-            $validator = Validator::make($request->all(), $validationRules);
-
-            if($validator->fails()) {
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-            } else if($validator->passes()) {
-
-                $aboutInputs = $request->only(['about', 'mission', 'vision']);
-                $aboutInputs['masjid_id'] = $masjid->id;
-
-                if($about) {
-                    $about->update($aboutInputs);
-                } else {
-                    $about = $masjid->masjidAbout()->create($aboutInputs);
-                }
-
-                if($request->hasFile('about_image')) {
-                    $about->clearMediaCollection('aboutImages');
-                    $about->addMediaFromRequest('about_image')->toMediaCollection('aboutImages');
-                }
-                if($request->hasFile('mission_icon')) {
-                    $about->clearMediaCollection('missionIcons');
-                    $about->addMediaFromRequest('mission_icon')->toMediaCollection('missionIcons');
-                }
-                if($request->hasFile('vision_icon')) {
-                    $about->clearMediaCollection('visionIcons');
-                    $about->addMediaFromRequest('vision_icon')->toMediaCollection('visionIcons');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $about->load('aboutImage', 'missionIcon', 'visionIcon')
-                ], Response::HTTP_OK);
+            if ($request->hasFile('about_image')) {
+                $about->clearMediaCollection('aboutImages');
+                $about->addMediaFromRequest('about_image')->toMediaCollection('aboutImages');
+            }
+            if ($request->hasFile('mission_icon')) {
+                $about->clearMediaCollection('missionIcons');
+                $about->addMediaFromRequest('mission_icon')->toMediaCollection('missionIcons');
+            }
+            if ($request->hasFile('vision_icon')) {
+                $about->clearMediaCollection('visionIcons');
+                $about->addMediaFromRequest('vision_icon')->toMediaCollection('visionIcons');
             }
 
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ABOUT);
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $about->load('aboutImage', 'missionIcon', 'visionIcon')
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => $e->getMessage()
+                'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
-
 }

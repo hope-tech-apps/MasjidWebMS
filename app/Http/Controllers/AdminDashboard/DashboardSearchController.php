@@ -61,7 +61,7 @@ class DashboardSearchController extends Controller
 
             return response()->json([
                 'status' => 'failed',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
 
         }
@@ -86,7 +86,7 @@ class DashboardSearchController extends Controller
 
             return response()->json([
                 'status' => 'failed',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
 
         }

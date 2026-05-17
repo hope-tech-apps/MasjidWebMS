@@ -3,10 +3,11 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Events\StoreEventRequest;
+use App\Http\Requests\Admin\Events\UpdateEventRequest;
 use App\Models\Event;
 use App\Models\Masjid;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class EventsController extends Controller
@@ -27,44 +28,26 @@ class EventsController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request, $masjid_id)
+    public function store(StoreEventRequest $request, $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'details' => 'required|string',
-                'place' => 'required|string',
-                'start' => 'required|date_format:Y-m-d H:i',
-                'end' => 'required|date_format:Y-m-d H:i|after:start',
-                'link' => 'string'
-            ]);
+            $eventInputs = $request->safe()->only(['title', 'details', 'place', 'start', 'end', 'link']);
+            $eventInputs['masjid_id'] = $masjid->id;
 
-            if ($validator->fails()) {
+            $event = Event::create($eventInputs);
 
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::EVENTS);
 
-            } else if ($validator->passes()) {
-
-                $eventInputs = $request->only(['title', 'details', 'place', 'start', 'end', 'link']);
-                $eventInputs['masjid_id'] = $masjid->id;
-
-                $event = Event::create($eventInputs);
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $event
-                ], Response::HTTP_OK);
-            }
+            return response()->json([
+                'status' => 'success',
+                'data' => $event
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -74,11 +57,6 @@ class EventsController extends Controller
      */
     public function show($masjid_id, $event_id)
     {
-        // Get Event through Masjid
-        // $masjid = Masjid::findOrFail($masjid_id);
-        // $event = $masjid->events->findOrFail($event_id);
-
-        // Get Event by ID
         $event = Event::findOrFail($event_id);
         return response()->json([
             'status' => 'success',
@@ -89,44 +67,24 @@ class EventsController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $masjid_id, $event_id)
+    public function update(UpdateEventRequest $request, $masjid_id, $event_id)
     {
         try {
-
             $event = Event::findOrFail($event_id);
 
-            $validator = Validator::make($request->all(), [
-                'title' => 'required|string',
-                'details' => 'required|string',
-                'place' => 'required|string',
-                'start' => 'required|date_format:Y-m-d H:i',
-                'end' => 'required|date_format:Y-m-d H:i|after:start',
-                'link' => 'string'
-            ]);
+            $eventInputs = $request->safe()->only(['title', 'details', 'place', 'start', 'end', 'link']);
+            $event->update($eventInputs);
 
-            if ($validator->fails()) {
+            MobileCache::flushMasjid((int) $masjid_id, MobileCache::EVENTS);
 
-                return response()->json([
-                    'status' => 'failed',
-                    'data' => $validator->errors()
-                ], Response::HTTP_INTERNAL_SERVER_ERROR);
-
-            } else if ($validator->passes()) {
-
-                $eventInputs = $request->only(['title', 'details', 'place', 'start', 'end', 'link']);
-
-                $event->update($eventInputs);
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $event
-                ], Response::HTTP_OK);
-
-            }
+            return response()->json([
+                'status' => 'success',
+                'data' => $event
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'success',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -136,13 +94,14 @@ class EventsController extends Controller
      */
     public function destroy($masjid_id, $event_id)
     {
-        //
         $event = Event::findOrFail($event_id);
         $event->forceDelete();
+
+        MobileCache::flushMasjid((int) $masjid_id, MobileCache::EVENTS);
+
         return response()->json([
             'status' => 'success',
             'data' => $event
         ], Response::HTTP_OK);
     }
-
 }

@@ -46,7 +46,11 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Security: tokens auto-expire after 8 hours of issuance. Override via
+    // SANCTUM_EXPIRATION env var (in minutes). null = never expire (NOT recommended).
+    // Combined with `php artisan sanctum:prune-expired --hours=24` on a daily cron,
+    // this keeps the personal_access_tokens table bounded.
+    'expiration' => env('SANCTUM_EXPIRATION', 480),
 
     /*
     |--------------------------------------------------------------------------

@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Models\Prayer;
+use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\Response;
 
 class PrayersController extends Controller
@@ -16,13 +18,12 @@ class PrayersController extends Controller
      */
     public function index(Request $request, $masjid_id)
     {
-
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
             $request->validate([
                 'start_date' => 'nullable|date',
-                'end_date' => 'nullable|date'
+                'end_date' => 'nullable|date',
             ]);
 
             if ($request['start_date']) {
@@ -47,7 +48,10 @@ class PrayersController extends Controller
             // Store not-inserted prayers to the database
             $this->store($masjid_id, $rangeStartDate->copy()->addDay()->format('Y-m-d'), $rangeEndDate->copy()->format('Y-m-d'));
 
-            $prayers = Prayer::where('masjid_id', $masjid->id)->whereBetween('date', [$rangeStartDate, $rangeEndDate])->orderBy('date')->get();
+            $prayers = Prayer::where('masjid_id', $masjid->id)
+                ->whereBetween('date', [$rangeStartDate, $rangeEndDate])
+                ->orderBy('date')
+                ->get();
 
             return response()->json(
                 [
@@ -56,12 +60,11 @@ class PrayersController extends Controller
                 ],
                 Response::HTTP_OK
             );
-            
         } catch (\Exception $e) {
             return response()->json(
                 [
                     'status' => 'error',
-                    'message' => $e->getMessage()
+                    'message' => \App\Support\Errors::publicMessage($e)
                 ],
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
@@ -82,8 +85,9 @@ class PrayersController extends Controller
     public function store($masjid_id, $rangeStart, $rangeEnd)
     {
         try {
-
-            $masjid = Masjid::findOrFail($masjid_id);
+            // Eager load iqamaTimeSettings + jumaaSettings so the JSON-building loop below
+            // doesn't trigger a query per prayer day.
+            $masjid = Masjid::with('iqamaTimeSettings', 'jumaaSettings')->findOrFail($masjid_id);
 
             $longitude = $masjid->longitude;
             $latitude = $masjid->latitude;
@@ -91,35 +95,32 @@ class PrayersController extends Controller
             $rangeStartDate = Carbon::createFromFormat('Y-m-d', $rangeStart);
             $rangeEndDate = Carbon::createFromFormat('Y-m-d', $rangeEnd);
 
-            // // Try to get dates range in PHP and send it with node to the JS script
-            // // Could be used later
-            // $dateRange = [];
-            // $loopDate = $rangeStartDate->copy();
-            // while ($loopDate <= $rangeEndDate) {
-            //     array_push($dateRange, $loopDate->copy()->format("Y-m-d"));
-            //     $loopDate->addDay();
-            // }
-
-            // $storedDates = Prayer::where('masjid_id', $masjid->id)->whereIn('date', $dateRange)->pluck('date')->toArray();
-            // $notStoredDates = array_diff($dateRange, $storedDates);
-
-            // return $notStoredDates;
-
             if ($rangeStartDate > $rangeEndDate) {
                 return null;
             }
 
-            // Run the resources/js/FettchPrayerTimes.js script
+            // Run resources/js/fetchPrayerTimes.js via the Node binary.
+            //
+            // Security: every argument is escaped with escapeshellarg() so a
+            // malicious masjid coord / date couldn't break out of the shell
+            // word boundary and execute additional commands. Numeric inputs
+            // are also coerced to strings of the expected shape via Carbon /
+            // (float) casts.
+            $latArg = escapeshellarg((string) (float) $latitude);
+            $lonArg = escapeshellarg((string) (float) $longitude);
+            $startArg = escapeshellarg($rangeStartDate->format('Y-m-d H:i:s'));
+            $endArg = escapeshellarg($rangeEndDate->format('Y-m-d H:i:s'));
+            $scriptPath = escapeshellarg(base_path('resources/js/fetchPrayerTimes.js'));
+
             $prayerTimesFromJs = shell_exec(
-                'node "' . base_path('resources/js/fetchPrayerTimes.js') . '" '
-                    . $latitude . ' ' . $longitude . ' ' . $rangeStartDate . ' ' . $rangeEndDate
+                "node {$scriptPath} {$latArg} {$lonArg} {$startArg} {$endArg}",
             );
 
-            // Masjid iqama settings for set the prayers iqama times during data mapping
             $iqamaSettings = $masjid->iqamaTimeSettings;
+            $jumaaSettings = $masjid->jumaaSettings;
 
             // Map prayers data from JS script with Prayer model schema
-            $prayersToCreate = array_map(function ($item) use ($masjid, $iqamaSettings) {
+            $prayersToCreate = array_map(function ($item) use ($masjid, $iqamaSettings, $jumaaSettings) {
                 return [
                     'masjid_id' => $masjid->id,
                     'prayers_data' => json_encode($item),
@@ -128,12 +129,12 @@ class PrayersController extends Controller
                         'dhuhr' => Carbon::parse($item->dhuhr)->addMinutes($iqamaSettings->dhuhr)->format("H:i:s"),
                         'asr' => Carbon::parse($item->asr)->addMinutes($iqamaSettings->asr)->format("H:i:s"),
                         'maghrib' => Carbon::parse($item->maghrib)->addMinutes($iqamaSettings->maghrib)->format("H:i:s"),
-                        'isha' => Carbon::parse($item->isha)->addMinutes($iqamaSettings->isha)->format("H:i:s")
+                        'isha' => Carbon::parse($item->isha)->addMinutes($iqamaSettings->isha)->format("H:i:s"),
                     ]),
-                    'jumaa_data' => Carbon::parse($item->date)->isFriday() ? json_encode($masjid->jumaaSettings) : null,
+                    'jumaa_data' => Carbon::parse($item->date)->isFriday() ? json_encode($jumaaSettings) : null,
                     'date' => Carbon::parse($item->date)->format("Y-m-d"),
                     'created_at' => Carbon::now(),
-                    'updated_at' => Carbon::now()
+                    'updated_at' => Carbon::now(),
                 ];
             }, json_decode($prayerTimesFromJs));
 
@@ -154,7 +155,6 @@ class PrayersController extends Controller
                 }
             }
 
-            // Insert valid data (not replicated for same date and masjid)
             $inserted = 0;
             if ($validDataToCreate) {
                 $inserted = Prayer::insert($validDataToCreate);
@@ -168,12 +168,41 @@ class PrayersController extends Controller
 
     public function prayersSettings($masjid_id)
     {
-        $masjid = Masjid::findOrFail($masjid_id);
-        $iqamaTimes = $masjid->iqamaTimeSettings;
-        $jumaaTime = $masjid->jumaaSettings;
+        $data = Cache::remember(
+            MobileCache::masjidKey((int) $masjid_id, MobileCache::PRAYERS_SETTINGS),
+            MobileCache::TTL_MEDIUM,
+            function () use ($masjid_id) {
+                // Single sync endpoint: clients call this at startup and re-call after admin
+                // changes any calc/iqama/jumaa setting. Includes everything needed to drive
+                // the local Adhan calculation + iqama display + per-day notification scheduling.
+                $masjid = Masjid::with(
+                    'iqamaTimeSettings.timeRanges',
+                    'jumaaSettings',
+                    'prayerCalculationSettings'
+                )->findOrFail($masjid_id);
+
+                return [
+                    'iqama' => $masjid->iqamaTimeSettings,
+                    'jumaa' => $masjid->jumaaSettings,
+                    'calculation' => $masjid->prayerCalculationSettings ?: [
+                        // Defaults match what MasjidsController::store seeds on new masjids.
+                        'method' => 'MoonsightingCommittee',
+                        'madhab' => 'Shafi',
+                        'high_latitude_rule' => 'MiddleOfTheNight',
+                    ],
+                    'masjid' => [
+                        'id' => $masjid->id,
+                        'timezone' => $masjid->timezone,
+                        'latitude' => (float) $masjid->latitude,
+                        'longitude' => (float) $masjid->longitude,
+                    ],
+                ];
+            }
+        );
+
         return response()->json([
             'status' => 'success',
-            'data' => ['iqama' => $iqamaTimes, 'jumaa' => $jumaaTime]
+            'data' => $data
         ], Response::HTTP_OK);
     }
 

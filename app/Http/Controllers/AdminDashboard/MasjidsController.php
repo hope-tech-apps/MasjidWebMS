@@ -3,14 +3,15 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
+use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
 use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
-use Illuminate\Http\Request;
+use App\Support\MobileCache;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidsController extends Controller
@@ -30,109 +31,63 @@ class MasjidsController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(StoreMasjidRequest $request)
     {
         try {
-
-            $validator = Validator::make($request->all(), [
-                'name' => 'required|string',
-                'email' => 'required|email|unique:masjids,email',
-                'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-                'logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'footer_logo' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'longitude' => 'required|numeric|min:-180|max:180',
-                'latitude' => 'required|numeric|min:-90|max:90',
-                'address' => 'required|string',
-                'timezone' => 'required|string|timezone',
-                'user_id' => ['nullable', 'exists:users,id', 'unique:masjids,user_id', function ($attribute, $value, $fail) {
-                    $user = \App\Models\User::where('id', $value)
-                        ->where('type', 'MasjidAdmin')
-                        ->first();
-
-                    if (!$user) {
-                        $fail('The selected user is not of a Masjid Admin type.');
-                    }
-                }],
-                'country_id' => 'required|exists:countries,id',
-                'city_id' => ['required', 'exists:cities,id', function ($attribute, $value, $fail) use ($request) {
-                    $city = \App\Models\City::where('id', $value)
-                        ->where('country_id', $request['country_id'])
-                        ->exists();
-                    if (!$city) {
-                        $fail('The selected city does not belong to the given country.');
-                    }
-                }],
-                // 'created_by' => 'nullable|exists:users,id'
+            $payload = $request->safe()->only([
+                'name', 'email', 'phone', 'longitude', 'latitude',
+                'address', 'user_id', 'country_id', 'city_id',
             ]);
+            $payload['created_by'] = Auth::id();
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'error',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
-            }
+            $masjid = Masjid::create($payload);
 
-            if ($validator->passes()) {
+            if ($masjid) {
+                // Store logo
+                $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
 
-                $request['created_by'] = Auth::user()->id;
-                $masjid = Masjid::create($request->only(
-                    'name',
-                    'email',
-                    'phone',
-                    'longitude',
-                    'latitude',
-                    'address',
-                    'user_id',
-                    'country_id',
-                    'city_id',
-                    'created_by'
-                ));
+                // Store footer logo
+                $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
 
-                if ($masjid) {
-                    // Store logo
-                    $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
-
-                    // Store footer logo
-                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
-
-                    // Assign masjid mobile app features
-                    $features = MobileAppFeature::all();
-                    foreach ($features as $feature) {
-                        MasjidMobileAppFeature::create([
-                            'masjid_id' => $masjid->id,
-                            'feature_id' => $feature->id,
-                            'is_available' => true
-                        ]);
-                    }
-
-                    // Assign masjid Iqama time settings
-                    IqamaTimeSetting::create([
+                // Assign masjid mobile app features
+                $features = MobileAppFeature::all();
+                foreach ($features as $feature) {
+                    MasjidMobileAppFeature::create([
                         'masjid_id' => $masjid->id,
-                        'fajr' => 20,
-                        'dhuhr' => 10,
-                        'asr' => 10,
-                        'maghrib' => 10,
-                        'isha' => 10
-                    ]);
-
-                    // Assign masjid Prayer Calculation settings
-                    PrayerCalculationSetting::create([
-                        'masjid_id' => $masjid->id,
-                        'method' => 'MoonsightingCommittee',
-                        'madhab' => 'Shafi',
-                        'high_latitude_rule' => 'MiddleOfTheNight'
+                        'feature_id' => $feature->id,
+                        'is_available' => true,
                     ]);
                 }
 
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $masjid
-                ], Response::HTTP_OK);
+                // Assign masjid Iqama time settings
+                IqamaTimeSetting::create([
+                    'masjid_id' => $masjid->id,
+                    'fajr' => 20,
+                    'dhuhr' => 10,
+                    'asr' => 10,
+                    'maghrib' => 10,
+                    'isha' => 10,
+                ]);
+
+                // Assign masjid Prayer Calculation settings
+                PrayerCalculationSetting::create([
+                    'masjid_id' => $masjid->id,
+                    'method' => 'MoonsightingCommittee',
+                    'madhab' => 'Shafi',
+                    'high_latitude_rule' => 'MiddleOfTheNight',
+                ]);
             }
+
+            MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $masjid
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -161,87 +116,41 @@ class MasjidsController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $masjid_id)
+    public function update(UpdateMasjidRequest $request, string $masjid_id)
     {
         try {
-
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $validator = Validator::make($request->all(), [
-                'name' => 'required|string',
-                'email' => 'required|email',
-                'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-                'logo' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'footer_logo' => 'image|mimes:jpeg,png,jpg,gif,svg|max:25600',
-                'longitude' => 'required|numeric|min:-180|max:180',
-                'latitude' => 'required|numeric|min:-90|max:90',
-                'address' => 'required|string',
-                'timezone' => 'nullable|string|timezone',
-                'user_id' => ['nullable', 'exists:users,id', function ($attribute, $value, $fail) {
-                    $user = \App\Models\User::where('id', $value)
-                        ->where('type', 'MasjidAdmin')
-                        ->first();
-
-                    if (!$user) {
-                        $fail('The selected user is not of a Masjid Admin type.');
-                    }
-                }],
-                'country_id' => 'required|exists:countries,id',
-                'city_id' => ['required', 'exists:cities,id', function ($attribute, $value, $fail) use ($request) {
-                    $city = \App\Models\City::where('id', $value)
-                        ->where('country_id', $request->input('country_id'))
-                        ->exists();
-                    if (!$city) {
-                        $fail('The selected city does not belong to the given country.');
-                    }
-                }],
-                // 'updated_by' => 'nullable|exists:users,id'
+            $payload = $request->safe()->only([
+                'name', 'email', 'phone', 'longitude', 'latitude',
+                'address', 'user_id', 'country_id', 'city_id',
             ]);
+            $payload['user_id'] = $payload['user_id'] ?? null;
+            $payload['updated_by'] = Auth::id();
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => 'error',
-                    'data' => $validator->errors()
-                ], Response::HTTP_BAD_REQUEST);
+            $masjid->update($payload);
+
+            if ($request->hasFile('logo')) {
+                $masjid->clearMediaCollection('logos');
+                $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
             }
 
-            if ($validator->passes()) {
-
-                $request['updated_by'] = Auth::user()->id;
-                $request['user_id'] = $request['user_id'] ?? null;
-
-                $masjid->update($request->only(
-                    'name',
-                    'email',
-                    'phone',
-                    'longitude',
-                    'latitude',
-                    'address',
-                    'user_id',
-                    'country_id',
-                    'city_id',
-                    'updated_by'
-                ));
-
-                if ($masjid && $request['logo']) {
-                    $masjid->clearMediaCollection('logos');
-                    $masjid->addMediaFromRequest('logo')->toMediaCollection('logos');
-                }
-
-                if ($masjid && $request['footer_logo']) {
-                    $masjid->clearMediaCollection('footer_logos');
-                    $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'data' => $masjid
-                ], Response::HTTP_OK);
+            if ($request->hasFile('footer_logo')) {
+                $masjid->clearMediaCollection('footer_logos');
+                $masjid->addMediaFromRequest('footer_logo')->toMediaCollection('footer_logos');
             }
+
+            MobileCache::flushMasjidAll((int) $masjid_id);
+            MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $masjid
+            ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'data' => $e->getMessage()
+                'data' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
@@ -253,6 +162,10 @@ class MasjidsController extends Controller
     {
         $masjid = Masjid::findOrFail($masjid_id);
         $masjid->forceDelete();
+
+        MobileCache::flushMasjidAll((int) $masjid_id);
+        MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
         return response()->json([
             'status' => 'success',
             'data' => $masjid
@@ -262,9 +175,13 @@ class MasjidsController extends Controller
     public function moveToTrash($masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
-        $masjid->deleted_by = Auth::user()->id;
+        $masjid->deleted_by = Auth::id();
         $masjid->save();
         $masjid->delete();
+
+        MobileCache::flushMasjidAll((int) $masjid_id);
+        MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
         return response()->json([
             'status' => 'success',
             'data' => $masjid
