@@ -11,6 +11,10 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/announcements?page=${number}` |
     `/api/admin/masjids/${string}/announcements/${string}/` |
     `/api/admin/masjids/${string}/announcements/${string}/trash` |
+    `/api/admin/masjids/${string}/splash-announcements` |
+    `/api/admin/masjids/${string}/splash-announcements?page=${number}` |
+    `/api/admin/masjids/${string}/splash-announcements/${string}` |
+    `/api/admin/masjids/${string}/splash-announcements/${string}/trash` |
     `/api/admin/masjids/${string}/events` |
     `/api/admin/masjids/${string}/events?page=${number}` |
     `/api/admin/masjids/${string}/events/${string}/` |

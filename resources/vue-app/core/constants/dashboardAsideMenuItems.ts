@@ -18,6 +18,14 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin']
     },
     {
+        title: "Splash",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L13.09 8.26L19 7L14.74 11.74L21 13L14.74 14.26L19 19L13.09 17.74L12 24L10.91 17.74L5 19L9.26 14.26L3 13L9.26 11.74L5 7L10.91 8.26L12 2Z" stroke="white" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+                </svg>`,
+        to: '/masjid/splash-announcements',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+    },
+    {
         title: "Events",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M8 2V5" stroke="white" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"/>

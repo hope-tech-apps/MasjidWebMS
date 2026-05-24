@@ -23,6 +23,7 @@ use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
 use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
+use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\UsersController;
 use Illuminate\Support\Facades\Route;
@@ -99,6 +100,16 @@ Route::prefix('admin')->group(function () {
                 Route::delete('/{annoncement_id}', 'destroy');
                 Route::delete('/{annoncement_id}/trash', 'moveToTrash');
             }));
+
+            // Masjid splash announcements (in-app message / splash modal)
+            Route::prefix('{masjid_id}/splash-announcements')->controller(SplashAnnouncementsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{splash_id}', 'show');
+                Route::post('/{splash_id}', 'update');
+                Route::delete('/{splash_id}', 'destroy');
+                Route::delete('/{splash_id}/trash', 'moveToTrash');
+            });
 
             // Masjid events
             Route::prefix('{masjid_id}/events')->controller(EventsController::class)->group((function () {

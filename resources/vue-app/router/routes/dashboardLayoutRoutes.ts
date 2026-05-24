@@ -4,6 +4,7 @@ import servicesManagementRoutes from "@/router/routes/servicesManagementRoutes"
 import generalDataManagementRoutes from "@/router/routes/generalDataManagementRoutes"
 import eventsManagementRoutes from "@/router/routes/EventsManagementRoutes"
 import pagesManagementRoutes from "@/router/routes/pagesManagementRoutes"
+import splashAnnouncementsManagementRoutes from "@/router/routes/splashAnnouncementsManagementRoutes"
 
 const dashboardRoutes: RouteRecordRaw[] = [
     {
@@ -34,6 +35,7 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/MosqueDetailsTabsView.vue")
             },
             ...announcementsManagementRoutes,
+            ...splashAnnouncementsManagementRoutes,
             ...eventsManagementRoutes,
             ...servicesManagementRoutes,
             ...pagesManagementRoutes,

@@ -10,6 +10,7 @@ use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\PrayersController;
 use App\Http\Controllers\Mobile\ServicesController;
+use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
 use App\Http\Controllers\PusherWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -47,6 +48,10 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         Route::get('/{masjid_id}/announcements', [AnnouncementsController::class, 'index']);
         Route::get('/{masjid_id}/events', [EventsController::class, 'index']);
         Route::get('/{masjid_id}/services', [ServicesController::class, 'index']);
+
+        // Splash / in-app announcement — single active row, 204 when nothing's live.
+        // Web (Nuxt) reads this; mobile apps get the same content via OneSignal IAM.
+        Route::get('/{masjid_id}/splash', [SplashAnnouncementsController::class, 'current']);
 
         // Contact form: writes to DB, public to anonymous callers — strict throttle.
         Route::prefix('{masjid_id}/contact-us')->controller(ContactUsController::class)->group(function () {

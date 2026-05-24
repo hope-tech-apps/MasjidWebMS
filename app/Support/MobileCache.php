@@ -27,6 +27,7 @@ class MobileCache
     public const SERVICES = 'services';
     public const PRAYERS_SETTINGS = 'prayers_settings';
     public const CONTACT_REASONS = 'contact_reasons';
+    public const SPLASH = 'splash';
 
     // Global resources — change when an admin edits library content (azkar/hadith/tasabih).
     public const AZKAR_ALL = 'azkar.all';
@@ -73,7 +74,7 @@ class MobileCache
         foreach ([
             self::SHOW, self::ABOUT, self::DONATION_LINK, self::GALLERY, self::FEATURES,
             self::ANNOUNCEMENTS, self::EVENTS, self::SERVICES, self::PRAYERS_SETTINGS,
-            self::CONTACT_REASONS,
+            self::CONTACT_REASONS, self::SPLASH,
         ] as $resource) {
             self::flushMasjid($masjidId, $resource);
         }
