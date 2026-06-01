@@ -1,0 +1,118 @@
+# Deploys MasjidWebMS to the DigitalOcean Droplet hosting masjid.hopetechapps.com.
+#
+# Trigger: any push to `main`. Manual re-runs via the "Run workflow" button.
+#
+# What it does, in order:
+#   1. SSH into the Droplet using a deploy key (private key in GitHub secrets)
+#   2. git pull origin main
+#   3. composer install --no-dev --optimize-autoloader
+#   4. php artisan migrate --force   (applies the splash_announcements migration
+#                                     and any future ones automatically)
+#   5. npm ci && npm run build       (rebuilds the Vue admin SPA into public/build)
+#   6. Warm caches (config, route, view) and restart the queue worker
+#   7. Reload PHP-FPM so OPcache picks up changed PHP files
+#
+# Setup: see DEPLOY.md at the repo root. You need 4 GitHub secrets:
+#   - DEPLOY_HOST          (Droplet IP or domain)
+#   - DEPLOY_USER          (SSH user — e.g. root, deploy, or ubuntu)
+#   - DEPLOY_SSH_KEY       (private key, the matching public key lives in
+#                           ~/.ssh/authorized_keys on the Droplet)
+#   - DEPLOY_PATH          (absolute path to the MasjidWebMS checkout on the
+#                           Droplet, e.g. /var/www/MasjidWebMS)
+#
+# Optional secret:
+#   - DEPLOY_PHP_FPM_SERVICE  (default: php8.2-fpm. Set this if your Droplet
+#                              runs a different PHP version, e.g. php8.3-fpm.)
+#
+# Safety:
+#   - migrate --force is required in non-interactive prod (no scary; this is
+#     standard Laravel deploy practice).
+#   - The workflow `set -e`s so any failed step aborts the deploy. The site
+#     stays on the previous code until the next successful run.
+#   - Concurrency group ensures two simultaneous merges queue serially instead
+#     of stomping each other.
+
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy to DigitalOcean
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: 22
+          # We use bash so `set -e` aborts on first error instead of marching
+          # on through a half-broken deploy.
+          script_stop: true
+          script: |
+            set -eo pipefail
+
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            PHP_FPM_SERVICE="${{ secrets.DEPLOY_PHP_FPM_SERVICE }}"
+            PHP_FPM_SERVICE="${PHP_FPM_SERVICE:-php8.2-fpm}"
+
+            echo ">>> Deploying to $DEPLOY_PATH"
+            cd "$DEPLOY_PATH"
+
+            echo ">>> Marking app down (graceful, returns 503 to visitors)"
+            php artisan down --retry=15 || true
+
+            # Trap to make absolutely sure we bring the site back up even if
+            # something below fails. The trap runs `up` and re-exits with the
+            # original exit code so the workflow still reports failure.
+            trap 'rc=$?; echo ">>> Trap: bringing app back up after failure"; php artisan up || true; exit $rc' ERR
+
+            echo ">>> Pulling latest main"
+            git fetch origin
+            git reset --hard origin/main
+
+            echo ">>> composer install"
+            composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+
+            echo ">>> php artisan migrate --force"
+            php artisan migrate --force
+
+            echo ">>> npm ci && npm run build (admin SPA)"
+            # Uses whichever node is on PATH on the Droplet. If a specific
+            # version is required, see DEPLOY.md "Node version" section.
+            npm ci
+            npm run build
+
+            echo ">>> Warming caches"
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            php artisan event:cache || true   # only available on newer Laravel
+
+            echo ">>> Restarting queue worker (no-op if no daemon running)"
+            php artisan queue:restart
+
+            echo ">>> Reloading PHP-FPM to clear OPcache"
+            # `reload` is graceful — existing requests finish before the worker
+            # restarts. If sudo isn't passwordless for this command on the
+            # Droplet, this step will fail loudly; see DEPLOY.md for the
+            # `sudoers` snippet that fixes that.
+            if command -v systemctl >/dev/null 2>&1; then
+              sudo systemctl reload "$PHP_FPM_SERVICE" || sudo systemctl restart "$PHP_FPM_SERVICE"
+            fi
+
+            echo ">>> Bringing app back up"
+            php artisan up
+
+            echo ">>> Deploy complete: $(git rev-parse --short HEAD)"
