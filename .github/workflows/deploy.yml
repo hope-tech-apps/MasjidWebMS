@@ -89,9 +89,8 @@ jobs:
             php artisan migrate --force
 
             echo ">>> npm ci && npm run build (admin SPA)"
-            # If a different node version is required, install nvm on the Droplet
-            # and uncomment:
-            # export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"; nvm use --lts
+            # Uses whichever node is on PATH on the Droplet. If a specific
+            # version is required, see DEPLOY.md "Node version" section.
             npm ci
             npm run build
 

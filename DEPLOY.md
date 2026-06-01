@@ -183,6 +183,25 @@ git push origin main
 
 The revert push triggers a fresh deploy of the reverted code. Same flow — no SSH needed.
 
+### Node version
+
+The workflow runs `npm ci && npm run build` using whatever `node` is on `PATH` on the Droplet. If you need a specific version (e.g. the admin SPA's `package.json` engines field tightens):
+
+1. Install nvm on the Droplet (one-time):
+   ```sh
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+   ```
+2. Set a default for the deploy user:
+   ```sh
+   nvm install --lts
+   nvm alias default 'lts/*'
+   ```
+3. Make sure the deploy SSH session sources nvm. The non-interactive shell GitHub Actions opens doesn't read `~/.bashrc` by default; either add the `NVM_DIR` export to `~/.bash_profile` (which non-interactive shells DO read on most distros) or add a step before `npm ci` in `.github/workflows/deploy.yml` that sources nvm explicitly:
+   ```yaml
+   # in the script block, before npm ci:
+   export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+   ```
+
 ### Updating env vars
 
 The workflow does **not** touch `.env` on the Droplet. To change env vars:
