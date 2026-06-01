@@ -1,66 +1,119 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# MasjidWebMS
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+The Laravel API + Vue admin SPA powering **`masjid.hopetechapps.com`**. Together with the Nuxt public site (`burlington-masjid-site`) and mobile apps (consuming this API + OneSignal), this is the backend of the **Masjid System** — a per-masjid content + community platform.
 
-## About Laravel
+## Overview
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **REST API** over Sanctum auth + role middleware (`/api/admin/*`, `/api/mobile/*`, `/api/v1/*`).
+- **Vue 3 admin SPA** (bundled via Vite into `public/build/`) for masjid admins to manage announcements, events, services, prayer schedules, donations, photo gallery, contact requests, splash modals, and more.
+- **OneSignal integration** for both push notifications (existing) and In-App Messages (new — splash feature).
+- **Pusher** for realtime web events.
+- **Spatie MediaLibrary** for image uploads.
+- **Per-masjid caching** in front of every public mobile endpoint via `App\Support\MobileCache`.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Requirements
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- PHP 8.2+
+- Composer 2.x
+- Node.js LTS (18 or 20) + npm 10+
+- A MySQL/Postgres instance for the application database
+- An S3-compatible bucket for media (Supabase Storage works)
+- OneSignal account (push + IAM)
+- Pusher account (web realtime)
 
-## Learning Laravel
+## Installation (local)
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+```sh
+# 1. Clone + install
+git clone <repo-url> MasjidWebMS
+cd MasjidWebMS
+composer install
+npm install
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+# 2. Environment
+cp .env.example .env
+php artisan key:generate
+# Edit .env with your DB, S3, OneSignal, Pusher, etc. credentials.
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+# 3. Database
+php artisan migrate
+php artisan storage:link
 
-## Laravel Sponsors
+# 4. Build the Vue admin SPA
+npm run build      # or `npm run dev` for hot reload during admin SPA work
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+# 5. Serve
+php artisan serve
+# Vue admin lives at /
+# API lives at /api/*
+```
 
-### Premium Partners
+## Quick start — admin portal
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+1. Run the migrations (`php artisan migrate`).
+2. Seed an admin user, or create one via tinker:
+   ```sh
+   php artisan tinker
+   >>> User::factory()->create(['email' => 'you@example.com', 'password' => Hash::make('secret'), 'role' => 'SuperAdmin'])
+   ```
+3. Browse to `http://localhost:8000`, log in, and you'll land on the admin dashboard.
+
+## Features
+
+| Feature | Where in the admin |
+|---|---|
+| Mosque details, logos, theming | `/masjid/details` |
+| Announcements | `/masjid/announcements` |
+| **Splash announcements** (new — see [`docs/SPLASH_ANNOUNCEMENTS.md`](./docs/SPLASH_ANNOUNCEMENTS.md)) | `/masjid/splash-announcements` |
+| Events | `/masjid/events` |
+| Services | `/masjid/services` |
+| Prayer time settings, iqama, jumaa | `/masjid/iqama`, `/masjid/jumaa` |
+| Pages + sections (CMS-lite) | `/masjid/pages` |
+| Donation links | `/masjid/donation` |
+| About us | `/masjid/about` |
+| Photo gallery | `/masjid/gallery` |
+| Contact requests | `/masjid/contact-requests` |
+| Push notifications | `/masjid/notifications` |
+| Mobile feature toggles (super-admin) | `/masjid/mobile-features` |
+
+## Deployment
+
+Production deploys automatically on every push to `main` via GitHub Actions. **First-time setup is in [`DEPLOY.md`](./DEPLOY.md)** — generate an SSH deploy key, paste the public key into the Droplet, add 4 GitHub secrets, then any future `git push origin main` deploys in ~60-120s with a graceful maintenance window.
+
+After first-time setup, the entire flow for shipping a backend change is:
+
+1. Open a PR.
+2. Merge it.
+3. Done.
+
+## Tests
+
+Backend smoke tests live in the project coordination root (`/Users/moneebsayed/Documents/Claude/Projects/Masjid System/test_*.php`). Copy into the repo root and run:
+
+```sh
+php test_runner.php          # Phase 1 admin endpoints
+php test_caching.php         # Phase 1 cache hit/miss
+php test_queue.php           # Phase 1 queue dispatch
+php test_phase2_backend.php  # Phase 2 backend
+php test_security.php        # Phase 4.5 security verification (19 assertions)
+```
+
+PHPUnit feature tests for the splash feature live under `tests/Feature/Splash/`. Run via `php artisan test --testsuite=Feature --filter=Splash`.
+
+## Documentation
+
+- [`CLAUDE.md`](./CLAUDE.md) — per-repo memory file for AI agents (entry points, conventions, pitfalls).
+- [`DEPLOY.md`](./DEPLOY.md) — production deploy setup + day-to-day operation.
+- [`docs/SPLASH_ANNOUNCEMENTS.md`](./docs/SPLASH_ANNOUNCEMENTS.md) — splash feature architecture + mobile-team handoff.
+- [`CHANGELOG.md`](./CHANGELOG.md) — user-visible changes per release.
+- **Coordination root** (`/Users/moneebsayed/Documents/Claude/Projects/Masjid System/`) — cross-repo memory: `STATE.md` (resume point), `PLAN.md`, `DECISIONS.md`, `NOTES.md`, `LOG.md`, `.claude/rules/*.md`, `SECURITY_SWEEP_REPORT.md`, plus deployment-time test files.
 
 ## Contributing
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+- Branch from `origin/main`. Direct pushes to `main` reserved for explicit ops.
+- Commit-message style: see [`coordination root/.claude/rules/commit-style.md`](/Users/moneebsayed/Documents/Claude/Projects/Masjid%20System/.claude/rules/commit-style.md).
+- Security conventions for controllers + Form Requests: see [`coordination root/.claude/rules/security.md`](/Users/moneebsayed/Documents/Claude/Projects/Masjid%20System/.claude/rules/security.md). **Do not return `$e->getMessage()` to clients; do not allow `svg` in `mimes:` allowlists.**
 
 ## License
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Proprietary — Hope Tech Apps. Not open source.
