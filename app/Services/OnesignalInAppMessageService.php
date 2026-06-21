@@ -33,16 +33,25 @@ class OnesignalInAppMessageService
 {
     protected ?string $api_url;
     protected ?string $app_id;
-    protected ?string $app_key;
+    protected ?string $auth_key;
 
     public function __construct()
     {
-        // We deliberately reuse the existing OneSignal credentials and just
-        // swap the path. config/onesignal.php provides app_rest_api_key + app_id.
-        // api_url in that config points at /notifications; we derive the IAM
-        // base from it so we don't need a second env var.
+        // OneSignal IAM endpoints (/apps/{id}/in_app_messages) require the
+        // account-scoped User Auth Key (also called "Organization REST API
+        // Key" on newer accounts), NOT the app-scoped REST API Key.
+        //
+        // Calling IAM endpoints with the REST API key returns:
+        //   "Please include a case-sensitive header of Authorization: Basic
+        //    <YOUR-USER-AUTH-KEY-HERE> with a valid User Auth key."
+        //
+        // We fall back to the REST API key if User Auth Key isn't set, just
+        // so isConfigured() returns true in the legacy path — but it'll fail
+        // at the request, log the OneSignal error, and the local splash row
+        // still saves (fail-soft).
         $this->app_id = config('onesignal.app_id');
-        $this->app_key = config('onesignal.app_rest_api_key');
+        $this->auth_key = config('onesignal.user_auth_key')
+            ?: config('onesignal.app_rest_api_key');
 
         $notificationsUrl = config('onesignal.api_url');
         // Strip the trailing /notifications (or anything after the host) and
@@ -55,7 +64,7 @@ class OnesignalInAppMessageService
     /** True if the env config is complete enough to call OneSignal at all. */
     protected function isConfigured(): bool
     {
-        return !empty($this->api_url) && !empty($this->app_id) && !empty($this->app_key);
+        return !empty($this->api_url) && !empty($this->app_id) && !empty($this->auth_key);
     }
 
     /**
@@ -138,7 +147,7 @@ class OnesignalInAppMessageService
             $payload = $this->buildPayload($splash);
 
             $request = Http::withHeaders([
-                'Authorization' => 'Basic ' . $this->app_key,
+                'Authorization' => 'Basic ' . $this->auth_key,
                 'Content-Type' => 'application/json',
             ]);
 
@@ -180,7 +189,7 @@ class OnesignalInAppMessageService
 
         try {
             Http::withHeaders([
-                'Authorization' => 'Basic ' . $this->app_key,
+                'Authorization' => 'Basic ' . $this->auth_key,
             ])->delete("{$this->api_url}/{$splash->onesignal_iam_id}");
         } catch (\Throwable $e) {
             Log::error('OneSignal IAM delete threw', [
