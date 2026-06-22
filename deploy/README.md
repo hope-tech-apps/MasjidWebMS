@@ -48,3 +48,31 @@ store, so the restart signal propagates.)
 `WorkingDirectory` / `ExecStart` use the absolute prod path
 `/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem`. If the
 app is ever relocated, update both lines in the unit and `daemon-reload`.
+
+## Scheduler cron
+
+`routes/console.php` schedules `sanctum:prune-expired --hours=24` daily (keeps
+the `personal_access_tokens` table bounded). Laravel's scheduler only runs if
+the system cron invokes `schedule:run` every minute. Install once (as root):
+
+```sh
+( crontab -l 2>/dev/null; \
+  echo "* * * * * cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem && /usr/bin/php artisan schedule:run >> /dev/null 2>&1" \
+) | crontab -
+crontab -l   # confirm the line is present
+```
+
+## CORS allowed origins
+
+`config/cors.php` reads `CORS_ALLOWED_ORIGINS` (comma-separated). Default `*` is
+acceptable for the anonymous public endpoints (`supports_credentials => false`,
+no cookies/credentials cross-origin, public data only) but locked down in prod
+for defense-in-depth:
+
+```
+CORS_ALLOWED_ORIGINS=https://www.burlingtonmasjid.com,https://burlingtonmasjid.com,https://masjid.hopetechapps.com
+```
+
+Only browser origins need listing (native iOS/Android apps don't send an Origin
+header). The Nuxt site's client-side fetches (e.g. the splash modal) come from
+`www.burlingtonmasjid.com`, so that origin must stay in the list.
