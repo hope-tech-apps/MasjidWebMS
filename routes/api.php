@@ -9,6 +9,7 @@ use App\Http\Controllers\Mobile\MasjidsController;
 use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\PrayersController;
+use App\Http\Controllers\Mobile\AppConfigController;
 use App\Http\Controllers\Mobile\ServicesController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
@@ -23,6 +24,11 @@ use Illuminate\Support\Facades\Route;
  */
 
 Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
+
+    // Emergency app-version gate. iOS + Android read this on launch to decide
+    // whether to force-update, show maintenance, or soft-prompt. Global config
+    // (not per-masjid) since app version is a property of the build.
+    Route::get('/app-config', [AppConfigController::class, 'index']);
 
     // Identify and save mobile app user device — tighter limit (DB-writing endpoint).
     Route::prefix('user')->controller(MobileAppUsersController::class)
