@@ -36,6 +36,7 @@ class MobileCache
     public const TASABIH_ALL = 'tasabih.all';
     public const HADITH_TODAY = 'hadith.today';
     public const MASJIDS_LIST = 'masjids.list';
+    public const APP_CONFIG = 'app.config';   // global emergency app-version gate
 
     // TTLs (seconds). Tuned per how often content changes.
     public const TTL_SHORT = 300;       //  5 min — announcements, events

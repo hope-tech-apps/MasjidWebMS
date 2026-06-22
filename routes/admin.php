@@ -51,6 +51,13 @@ Route::prefix('admin')->group(function () {
 
         Route::get('search', [DashboardSearchController::class, 'searchForSuperDataRecords'])->middleware('super');
 
+        // Emergency app-version gate (super-admin only). The lever: flip
+        // force_update + bump minimum_build to wall off stale installs.
+        Route::prefix('app-config')->middleware('super')->controller(\App\Http\Controllers\AdminDashboard\AppConfigController::class)->group(function () {
+            Route::get('/', 'index');
+            Route::post('/{platform}', 'update');
+        });
+
         Route::prefix('masjids')->group(function () {
 
             // Get timezones list (must be before /{masjid_id} route)

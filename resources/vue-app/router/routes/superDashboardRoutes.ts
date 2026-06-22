@@ -99,6 +99,17 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/super/user/UserFormView.vue")
             },
             {
+                path: 'app-config',
+                name: 'appConfig',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin'],
+                    pageTitle: 'App Version Control',
+                    dashboardType: 'super'
+                },
+                component: () => import("@/views/dashboard/super/AppConfigView.vue")
+            },
+            {
                 path: 'profile',
                 name: 'profile',
                 meta: {

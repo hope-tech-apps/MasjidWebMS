@@ -50,4 +50,6 @@ export type BackendApiRoute =
     `/api/admin/users/${string}/` |
     `/api/admin/users/${string}/trash` |
     `/api/admin/profile` |
+    `/api/admin/app-config` |
+    `/api/admin/app-config/${string}` |
     `/api/admin/search?search_for=${string}`
