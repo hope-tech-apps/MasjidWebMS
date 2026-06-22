@@ -1,0 +1,21 @@
+[Unit]
+Description=Masjid Laravel queue worker (database driver)
+After=network.target mysql.service
+# Never give up restarting — a dead worker means push notifications
+# (SendMasjidNotificationJob) silently stop processing.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+# --tries=3 matches SendMasjidNotificationJob's retry policy; the job defines
+# its own 5/15/30s backoff. --max-time recycles the worker hourly to bound
+# memory. --timeout caps any single job at 90s.
+ExecStart=/usr/bin/php /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/artisan queue:work database --queue=default --sleep=3 --tries=3 --timeout=90 --max-time=3600
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
