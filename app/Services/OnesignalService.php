@@ -83,6 +83,52 @@ class OnesignalService
     }
 
     /**
+     * Sends a SILENT (content-available) data push so devices wake in the
+     * background and re-pull prayer/iqama times without the user opening the
+     * app. No headings/contents/sound — it is purely a background trigger; the
+     * app handles `data.type == "prayer_sync"` by re-fetching settings and
+     * re-arming its local notification schedule.
+     *
+     * Fail-soft: returns null (and never throws) so callers — e.g. the admin
+     * saving iqama times — are never blocked or broken by a OneSignal hiccup.
+     *
+     * @param string[] $external_ids OneSignal external_id aliases (device IDs).
+     */
+    public function sendDataSync(array $external_ids, array $data = [])
+    {
+        $external_ids = array_values(array_filter($external_ids));
+
+        if (empty($external_ids)) {
+            return null;
+        }
+
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Basic ' . $this->app_key,
+                'Content-Type' => 'application/json',
+            ])->timeout(15)->post($this->api_url, [
+                'app_id' => $this->app_id,
+                'include_aliases' => [
+                    'external_id' => $external_ids,
+                ],
+                'target_channel' => 'push',
+                // No alert/sound => silent. content_available wakes the app
+                // in the background on iOS (aps.content-available = 1).
+                'content_available' => true,
+                'data' => array_merge(['type' => 'prayer_sync'], $data),
+            ]);
+
+            return $response->json();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning(
+                'OneSignal sendDataSync failed: ' . $e->getMessage()
+            );
+
+            return null;
+        }
+    }
+
+    /**
      * Get details of a specific notification by its message ID.
      *
      * @param string $messageId The ID of the notification.
