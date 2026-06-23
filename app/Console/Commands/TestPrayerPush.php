@@ -37,7 +37,14 @@ class TestPrayerPush extends Command
         $body = 'Phase-3 backstop test — if you see this with the adhan sound, the server-side path works.';
         $sound = $iqama ? 'iqamah.wav' : 'adhan.wav';
 
-        $response = $onesignal->sendPrayerAlert([$subscriptionId], $title, $body, $sound, ['type' => 'prayer_test']);
+        $response = $onesignal->sendPrayerAlert(
+            [$subscriptionId],
+            $title,
+            $body,
+            $sound,
+            ['type' => 'prayer_test'],
+            $iqama ? null : 'PRAYER_ADHAN'
+        );
 
         $this->info("Sent to device {$deviceId} (subscription {$subscriptionId})");
         $this->line('OneSignal response: ' . json_encode($response));

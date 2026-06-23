@@ -141,8 +141,11 @@ class OnesignalService
      * and ≤30s (same cap as a background local-notification sound).
      *
      * @param string[] $subscription_ids OneSignal subscription (player) IDs.
+     * @param string|null $iosCategory iOS notification category id (e.g.
+     *        "PRAYER_ADHAN") so long-pressing the push shows its actions
+     *        (the "Play Full Adhan" button). The app must register the category.
      */
-    public function sendPrayerAlert(array $subscription_ids, string $title, string $body, ?string $iosSound = null, array $data = [])
+    public function sendPrayerAlert(array $subscription_ids, string $title, string $body, ?string $iosSound = null, array $data = [], ?string $iosCategory = null)
     {
         $subscription_ids = array_values(array_filter($subscription_ids));
 
@@ -163,6 +166,10 @@ class OnesignalService
 
             if (!empty($iosSound)) {
                 $payload['ios_sound'] = $iosSound;
+            }
+
+            if (!empty($iosCategory)) {
+                $payload['ios_category'] = $iosCategory;
             }
 
             $response = Http::withHeaders([

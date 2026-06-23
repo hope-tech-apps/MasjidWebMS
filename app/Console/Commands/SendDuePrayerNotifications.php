@@ -149,10 +149,14 @@ class SendDuePrayerNotifications extends Command
             return;
         }
 
-        $onesignal->sendPrayerAlert($subscriptionIds, $title, $body, $sound, [
-            'masjid_id' => $masjid->id,
-            'prayer' => $prayer,
-            'kind' => $type,
-        ]);
+        $onesignal->sendPrayerAlert(
+            $subscriptionIds,
+            $title,
+            $body,
+            $sound,
+            ['masjid_id' => $masjid->id, 'prayer' => $prayer, 'kind' => $type],
+            // Adhan pushes carry the category so long-press shows "Play Full Adhan".
+            $type === 'adhan' ? 'PRAYER_ADHAN' : null
+        );
     }
 }
