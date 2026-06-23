@@ -35,6 +35,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         ->middleware('throttle:device')->group(function () {
         Route::post('/', 'store');
         Route::put('/', 'update');
+        Route::post('/heartbeat', 'heartbeat');
         Route::get('/masjid', 'masjidDetails');
     });
 

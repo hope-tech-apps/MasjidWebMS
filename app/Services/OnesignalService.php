@@ -129,6 +129,59 @@ class OnesignalService
     }
 
     /**
+     * Sends a VISIBLE prayer-time push (adhan or iqama) with a custom iOS sound.
+     * Used by the server-side backstop (`prayers:send-due`) to reach devices
+     * that have gone dark — their local notifications have lapsed — so they
+     * still get a reminder at prayer time.
+     *
+     * Fail-soft: logs and returns null on error (never throws), so one bad send
+     * can't break the per-minute scheduler loop for other prayers/masjids.
+     *
+     * NOTE: iOS plays `ios_sound` only if the named file is bundled in the app
+     * and ≤30s (same cap as a background local-notification sound).
+     *
+     * @param string[] $external_ids OneSignal external_id aliases (device IDs).
+     */
+    public function sendPrayerAlert(array $external_ids, string $title, string $body, ?string $iosSound = null, array $data = [])
+    {
+        $external_ids = array_values(array_filter($external_ids));
+
+        if (empty($external_ids)) {
+            return null;
+        }
+
+        try {
+            $payload = [
+                'app_id' => $this->app_id,
+                'include_aliases' => [
+                    'external_id' => $external_ids,
+                ],
+                'target_channel' => 'push',
+                'headings' => ['en' => $title],
+                'contents' => ['en' => $body],
+                'data' => array_merge(['type' => 'prayer_alert'], $data),
+            ];
+
+            if (!empty($iosSound)) {
+                $payload['ios_sound'] = $iosSound;
+            }
+
+            $response = Http::withHeaders([
+                'Authorization' => 'Basic ' . $this->app_key,
+                'Content-Type' => 'application/json',
+            ])->timeout(15)->post($this->api_url, $payload);
+
+            return $response->json();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning(
+                'OneSignal sendPrayerAlert failed: ' . $e->getMessage()
+            );
+
+            return null;
+        }
+    }
+
+    /**
      * Get details of a specific notification by its message ID.
      *
      * @param string $messageId The ID of the notification.
