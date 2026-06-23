@@ -8,6 +8,7 @@ use App\Http\Requests\Mobile\Users\StoreMobileAppUserRequest;
 use App\Http\Requests\Mobile\Users\UpdateMobileAppUserRequest;
 use App\Models\Masjid;
 use App\Models\MobileAppUser;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class MobileAppUsersController extends Controller
@@ -21,6 +22,7 @@ class MobileAppUsersController extends Controller
                 'masjid_id' => $masjid->id,
                 'device_id' => $request->input('device_id'),
                 'user_agent' => $request->userAgent(),
+                'last_active_at' => now(),
             ]);
 
             return response()->json([
@@ -44,6 +46,7 @@ class MobileAppUsersController extends Controller
             $user->masjid_id = $masjid->id;
             $user->device_id = $request->input('device_id');
             $user->user_agent = $request->userAgent();
+            $user->last_active_at = now();
             $user->update();
 
             return response()->json([
@@ -56,6 +59,37 @@ class MobileAppUsersController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Lightweight heartbeat: marks a device active "now" so the server-side
+     * prayer backstop knows it's NOT dark and skips it (its precise local
+     * notifications are firing). Called by the app on launch + background
+     * refresh. Idempotent, no body beyond device_id, fail-soft for unknown ids.
+     */
+    public function heartbeat(Request $request)
+    {
+        $request->validate([
+            'device_id' => 'required|string',
+            'onesignal_subscription_id' => 'nullable|string',
+        ]);
+
+        $update = ['last_active_at' => now()];
+
+        // The OneSignal subscription id is the only reliable push target
+        // (external_id aliases don't resolve), so capture it whenever the app
+        // reports it.
+        if ($request->filled('onesignal_subscription_id')) {
+            $update['onesignal_subscription_id'] = $request->input('onesignal_subscription_id');
+        }
+
+        MobileAppUser::where('device_id', $request->input('device_id'))->update($update);
+
+        // Match the app's {status, data} envelope so the client decodes cleanly.
+        return response()->json([
+            'status' => 'success',
+            'data' => ['updated' => true],
+        ], Response::HTTP_OK);
     }
 
     public function masjidDetails(GetMasjidDetailsRequest $request)

@@ -68,6 +68,27 @@ class IqamaTimeSettingsController extends Controller
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::PRAYERS_SETTINGS);
 
+            // Wake this masjid's devices in the background to re-pull the new
+            // iqama times and re-arm their local notification schedule, so the
+            // change reaches users without them reopening the app. Silent push,
+            // queued, and fail-soft — must never block or break the save.
+            try {
+                $subscriptionIds = $masjid->mobileAppUsers()
+                    ->whereNotNull('onesignal_subscription_id')
+                    ->pluck('onesignal_subscription_id')
+                    ->filter()
+                    ->values()
+                    ->toArray();
+
+                if (!empty($subscriptionIds)) {
+                    \App\Jobs\SendPrayerSyncJob::dispatch((int) $masjid_id, $subscriptionIds);
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning(
+                    'Failed to queue prayer-sync push: ' . $e->getMessage()
+                );
+            }
+
             return response()->json([
                 'status' => 'success',
                 'data' => $iqamaTime
