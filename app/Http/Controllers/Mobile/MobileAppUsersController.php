@@ -85,7 +85,11 @@ class MobileAppUsersController extends Controller
 
         MobileAppUser::where('device_id', $request->input('device_id'))->update($update);
 
-        return response()->json(['status' => 'success'], Response::HTTP_OK);
+        // Match the app's {status, data} envelope so the client decodes cleanly.
+        return response()->json([
+            'status' => 'success',
+            'data' => ['updated' => true],
+        ], Response::HTTP_OK);
     }
 
     public function masjidDetails(GetMasjidDetailsRequest $request)
