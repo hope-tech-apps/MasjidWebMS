@@ -69,10 +69,21 @@ class MobileAppUsersController extends Controller
      */
     public function heartbeat(Request $request)
     {
-        $request->validate(['device_id' => 'required|string']);
+        $request->validate([
+            'device_id' => 'required|string',
+            'onesignal_subscription_id' => 'nullable|string',
+        ]);
 
-        MobileAppUser::where('device_id', $request->input('device_id'))
-            ->update(['last_active_at' => now()]);
+        $update = ['last_active_at' => now()];
+
+        // The OneSignal subscription id is the only reliable push target
+        // (external_id aliases don't resolve), so capture it whenever the app
+        // reports it.
+        if ($request->filled('onesignal_subscription_id')) {
+            $update['onesignal_subscription_id'] = $request->input('onesignal_subscription_id');
+        }
+
+        MobileAppUser::where('device_id', $request->input('device_id'))->update($update);
 
         return response()->json(['status' => 'success'], Response::HTTP_OK);
     }

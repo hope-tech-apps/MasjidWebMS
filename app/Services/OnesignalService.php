@@ -92,13 +92,13 @@ class OnesignalService
      * Fail-soft: returns null (and never throws) so callers — e.g. the admin
      * saving iqama times — are never blocked or broken by a OneSignal hiccup.
      *
-     * @param string[] $external_ids OneSignal external_id aliases (device IDs).
+     * @param string[] $subscription_ids OneSignal subscription (player) IDs.
      */
-    public function sendDataSync(array $external_ids, array $data = [])
+    public function sendDataSync(array $subscription_ids, array $data = [])
     {
-        $external_ids = array_values(array_filter($external_ids));
+        $subscription_ids = array_values(array_filter($subscription_ids));
 
-        if (empty($external_ids)) {
+        if (empty($subscription_ids)) {
             return null;
         }
 
@@ -108,9 +108,9 @@ class OnesignalService
                 'Content-Type' => 'application/json',
             ])->timeout(15)->post($this->api_url, [
                 'app_id' => $this->app_id,
-                'include_aliases' => [
-                    'external_id' => $external_ids,
-                ],
+                // Subscription IDs, NOT external_id aliases — aliases don't
+                // resolve in OneSignal's notification API (invalid_aliases).
+                'include_subscription_ids' => $subscription_ids,
                 'target_channel' => 'push',
                 // No alert/sound => silent. content_available wakes the app
                 // in the background on iOS (aps.content-available = 1).
@@ -140,22 +140,21 @@ class OnesignalService
      * NOTE: iOS plays `ios_sound` only if the named file is bundled in the app
      * and ≤30s (same cap as a background local-notification sound).
      *
-     * @param string[] $external_ids OneSignal external_id aliases (device IDs).
+     * @param string[] $subscription_ids OneSignal subscription (player) IDs.
      */
-    public function sendPrayerAlert(array $external_ids, string $title, string $body, ?string $iosSound = null, array $data = [])
+    public function sendPrayerAlert(array $subscription_ids, string $title, string $body, ?string $iosSound = null, array $data = [])
     {
-        $external_ids = array_values(array_filter($external_ids));
+        $subscription_ids = array_values(array_filter($subscription_ids));
 
-        if (empty($external_ids)) {
+        if (empty($subscription_ids)) {
             return null;
         }
 
         try {
             $payload = [
                 'app_id' => $this->app_id,
-                'include_aliases' => [
-                    'external_id' => $external_ids,
-                ],
+                // Subscription IDs, NOT external_id aliases (which don't resolve).
+                'include_subscription_ids' => $subscription_ids,
                 'target_channel' => 'push',
                 'headings' => ['en' => $title],
                 'contents' => ['en' => $body],

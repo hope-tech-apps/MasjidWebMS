@@ -25,13 +25,21 @@ class TestPrayerPush extends Command
         $deviceId = $this->argument('device_id');
         $iqama = (bool) $this->option('iqama');
 
+        $subscriptionId = \App\Models\MobileAppUser::where('device_id', $deviceId)
+            ->value('onesignal_subscription_id');
+
+        if (empty($subscriptionId)) {
+            $this->error("No onesignal_subscription_id stored for device {$deviceId}. Open the app once so it reports a heartbeat, then retry.");
+            return self::FAILURE;
+        }
+
         $title = $iqama ? 'Iqama time for Test' : "It's time for Test";
         $body = 'Phase-3 backstop test — if you see this with the adhan sound, the server-side path works.';
         $sound = $iqama ? 'iqamah.wav' : 'adhan.wav';
 
-        $response = $onesignal->sendPrayerAlert([$deviceId], $title, $body, $sound, ['type' => 'prayer_test']);
+        $response = $onesignal->sendPrayerAlert([$subscriptionId], $title, $body, $sound, ['type' => 'prayer_test']);
 
-        $this->info('Sent to ' . $deviceId);
+        $this->info("Sent to device {$deviceId} (subscription {$subscriptionId})");
         $this->line('OneSignal response: ' . json_encode($response));
 
         return self::SUCCESS;

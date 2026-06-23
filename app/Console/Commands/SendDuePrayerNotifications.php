@@ -110,7 +110,10 @@ class SendDuePrayerNotifications extends Command
             return;
         }
 
-        $query = MobileAppUser::where('masjid_id', $masjid->id);
+        // Only devices that have reported an OneSignal subscription id are
+        // targetable (alias targeting doesn't resolve).
+        $query = MobileAppUser::where('masjid_id', $masjid->id)
+            ->whereNotNull('onesignal_subscription_id');
         if ($onlyDevice) {
             $query->where('device_id', $onlyDevice);
         } elseif (!$ignoreStaleness) {
@@ -121,7 +124,7 @@ class SendDuePrayerNotifications extends Command
                 ->where('last_active_at', '<', $now->copy()->subDays(self::STALE_DAYS));
         }
 
-        $deviceIds = $query->pluck('device_id')->filter()->values()->toArray();
+        $subscriptionIds = $query->pluck('onesignal_subscription_id')->filter()->values()->toArray();
 
         $label = ucfirst($prayer);
         $title = $type === 'iqama' ? "Iqama time for {$label}" : "It's time for {$label}";
@@ -132,7 +135,7 @@ class SendDuePrayerNotifications extends Command
 
         Log::info(sprintf(
             'prayers:send-due %s %s masjid=%d recipients=%d%s',
-            $type, $label, $masjid->id, count($deviceIds), $dryRun ? ' [dry-run]' : ''
+            $type, $label, $masjid->id, count($subscriptionIds), $dryRun ? ' [dry-run]' : ''
         ));
 
         if ($dryRun) {
@@ -142,11 +145,11 @@ class SendDuePrayerNotifications extends Command
         // Mark sent BEFORE the network call so an overlapping run can't double-fire.
         Cache::put($guard, true, now()->addHours(26));
 
-        if (empty($deviceIds)) {
+        if (empty($subscriptionIds)) {
             return;
         }
 
-        $onesignal->sendPrayerAlert($deviceIds, $title, $body, $sound, [
+        $onesignal->sendPrayerAlert($subscriptionIds, $title, $body, $sound, [
             'masjid_id' => $masjid->id,
             'prayer' => $prayer,
             'kind' => $type,

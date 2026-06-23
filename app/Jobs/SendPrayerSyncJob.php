@@ -34,20 +34,20 @@ class SendPrayerSyncJob implements ShouldQueue
     public array $backoff = [5, 15, 30];
 
     /**
-     * @param string[] $externalIds OneSignal external_id aliases (device IDs).
+     * @param string[] $subscriptionIds OneSignal subscription (player) IDs.
      */
     public function __construct(
         public int $masjidId,
-        public array $externalIds,
+        public array $subscriptionIds,
     ) {}
 
     public function handle(OnesignalService $onesignal): void
     {
-        if (empty($this->externalIds)) {
+        if (empty($this->subscriptionIds)) {
             return;
         }
 
-        $onesignal->sendDataSync($this->externalIds, ['masjid_id' => $this->masjidId]);
+        $onesignal->sendDataSync($this->subscriptionIds, ['masjid_id' => $this->masjidId]);
     }
 
     public function failed(Throwable $e): void

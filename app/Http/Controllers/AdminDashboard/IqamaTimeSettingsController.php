@@ -73,14 +73,15 @@ class IqamaTimeSettingsController extends Controller
             // change reaches users without them reopening the app. Silent push,
             // queued, and fail-soft — must never block or break the save.
             try {
-                $externalIds = $masjid->mobileAppUsers()
-                    ->pluck('device_id')
+                $subscriptionIds = $masjid->mobileAppUsers()
+                    ->whereNotNull('onesignal_subscription_id')
+                    ->pluck('onesignal_subscription_id')
                     ->filter()
                     ->values()
                     ->toArray();
 
-                if (!empty($externalIds)) {
-                    \App\Jobs\SendPrayerSyncJob::dispatch((int) $masjid_id, $externalIds);
+                if (!empty($subscriptionIds)) {
+                    \App\Jobs\SendPrayerSyncJob::dispatch((int) $masjid_id, $subscriptionIds);
                 }
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning(
