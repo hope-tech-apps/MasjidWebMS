@@ -33,6 +33,7 @@ class MobileCache
     public const AZKAR_ALL = 'azkar.all';
     public const AZKAR_CATEGORIZED = 'azkar.categorized';
     public const AZKAR_BY_CATEGORY = 'azkar.category';
+    public const AZKAR_CATEGORIES = 'azkar.categories';
     public const TASABIH_ALL = 'tasabih.all';
     public const HADITH_TODAY = 'hadith.today';
     public const HADITH_CATEGORIES = 'hadith.categories';

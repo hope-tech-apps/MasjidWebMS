@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AuthController;
+use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
@@ -267,6 +268,16 @@ Route::prefix('admin')->group(function () {
             Route::get('/{hadith_id}', 'show');
             Route::put('/{hadith_id}', 'update');
             Route::delete('/{hadith_id}', 'destroy');
+        });
+
+        // Azkar categories (global library content). Registered as its own prefix
+        // (not nested under /azkar) so it never collides with /azkar/{zikr_id}.
+        Route::prefix('azkar-categories')->controller(AzkarCategoriesController::class)->group(function () {
+            Route::get('/', 'index');
+            Route::post('/', 'store');
+            Route::get('/{category_id}', 'show');
+            Route::put('/{category_id}', 'update');
+            Route::delete('/{category_id}', 'destroy');
         });
 
         Route::prefix('azkar')->controller(AzkarController::class)->group(function () {

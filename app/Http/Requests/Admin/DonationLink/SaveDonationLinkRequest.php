@@ -10,6 +10,9 @@ class SaveDonationLinkRequest extends BaseFormRequest
     {
         return [
             'link' => 'required|url',
+            'title' => 'nullable|string|max:255',
+            'message' => 'nullable|string|max:255',
+            'image' => 'nullable|image',
         ];
     }
 }
