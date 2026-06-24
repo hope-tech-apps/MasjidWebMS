@@ -15,6 +15,7 @@ enum SectionType: string
     case SERVICES_LIST = 'services_list';
     case ANNOUNCEMENTS_LIST = 'announcements_list';
     case GALLERY = 'gallery';
+    case EVENTS = 'events';
     case STATS = 'stats';
     case MISSION_VISION = 'mission_vision';
     case CTA = 'cta';
@@ -44,6 +45,7 @@ enum SectionType: string
             self::SERVICES_LIST => 'Services List',
             self::ANNOUNCEMENTS_LIST => 'Announcements List',
             self::GALLERY => 'Photo Gallery',
+            self::EVENTS => 'Events',
             self::STATS => 'Statistics Section',
             self::MISSION_VISION => 'Mission & Vision',
             self::CTA => 'Call to Action',
@@ -67,6 +69,7 @@ enum SectionType: string
             self::SERVICES_LIST => 'Display services from API (dynamic data)',
             self::ANNOUNCEMENTS_LIST => 'Display announcements from API (dynamic data)',
             self::GALLERY => 'Photo gallery from API (dynamic data)',
+            self::EVENTS => 'Display upcoming events from API (dynamic data)',
             self::STATS => 'Statistics/counters display',
             self::MISSION_VISION => 'Mission and vision cards with icons',
             self::CTA => 'Call to action button section',
@@ -82,6 +85,7 @@ enum SectionType: string
             self::SERVICES_LIST,
             self::ANNOUNCEMENTS_LIST,
             self::GALLERY,
+            self::EVENTS,
         ]);
     }
 
@@ -166,6 +170,11 @@ enum SectionType: string
                 'items_per_page' => 12,
                 'columns' => 4,
                 'enable_lightbox' => true,
+            ],
+            self::EVENTS => [
+                'heading' => 'Upcoming Events',
+                'description' => '',
+                'items_per_page' => 10,
             ],
             self::STATS => [
                 'heading' => 'Our Impact',
