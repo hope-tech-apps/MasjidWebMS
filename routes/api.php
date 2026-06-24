@@ -81,6 +81,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
     });
     Route::prefix('hadiths')->controller(HadithsController::class)->group(function () {
         Route::get('/today', 'todayHadith');
+        Route::get('/', 'index');
     });
     Route::prefix('tasabih')->controller(TasabihController::class)->group(function () {
         Route::get('/', 'index');

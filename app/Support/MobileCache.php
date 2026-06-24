@@ -35,6 +35,7 @@ class MobileCache
     public const AZKAR_BY_CATEGORY = 'azkar.category';
     public const TASABIH_ALL = 'tasabih.all';
     public const HADITH_TODAY = 'hadith.today';
+    public const HADITH_CATEGORIES = 'hadith.categories';
     public const MASJIDS_LIST = 'masjids.list';
     public const APP_CONFIG = 'app.config';   // global emergency app-version gate
 

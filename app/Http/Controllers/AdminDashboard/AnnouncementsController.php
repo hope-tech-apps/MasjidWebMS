@@ -33,7 +33,7 @@ class AnnouncementsController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $announcementInputs = $request->safe()->only(['title', 'details', 'text', 'start_date', 'end_date']);
+            $announcementInputs = $request->safe()->only(['title', 'summary', 'details', 'text', 'start_date', 'end_date']);
             $announcementInputs['masjid_id'] = $masjid->id;
 
             $announcement = Announcement::create($announcementInputs);
@@ -75,7 +75,7 @@ class AnnouncementsController extends Controller
         try {
             $announcement = Announcement::findOrFail($announcement_id);
 
-            $announcementInputs = $request->safe()->only(['title', 'details', 'text', 'start_date', 'end_date']);
+            $announcementInputs = $request->safe()->only(['title', 'summary', 'details', 'text', 'start_date', 'end_date']);
             $announcement->update($announcementInputs);
 
             if ($request->hasFile('image')) {

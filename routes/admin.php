@@ -8,6 +8,7 @@ use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\EventsController;
+use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
@@ -248,6 +249,16 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::get('/available', 'availableAdmins');
             });
+        });
+
+        // Hadith categories (global library content). Registered as its own prefix
+        // (not nested under /hadiths) so it never collides with /hadiths/{hadith_id}.
+        Route::prefix('hadith-categories')->controller(HadithCategoriesController::class)->group(function () {
+            Route::get('/', 'index');
+            Route::post('/', 'store');
+            Route::get('/{category_id}', 'show');
+            Route::put('/{category_id}', 'update');
+            Route::delete('/{category_id}', 'destroy');
         });
 
         Route::prefix('hadiths')->controller(HadithsController::class)->group(function () {
