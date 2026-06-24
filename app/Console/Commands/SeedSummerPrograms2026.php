@@ -27,7 +27,7 @@ use Illuminate\Console\Command;
  */
 class SeedSummerPrograms2026 extends Command
 {
-    protected $signature = 'events:seed-summer-2026 {--masjid=1} {--push : Also send one announcement push} {--clear : Remove the seeded content and exit}';
+    protected $signature = 'events:seed-summer-2026 {--masjid=1} {--push : Also send one announcement push} {--poster= : Path to a poster image to attach to the announcement} {--clear : Remove the seeded content and exit}';
 
     protected $description = 'Seed the June–July 2026 summer programs into Events + a summary Announcement (idempotent).';
 
@@ -48,13 +48,13 @@ class SeedSummerPrograms2026 extends Command
                 ['2026-06-23', '2026-06-30', '2026-07-07', '2026-07-14', '2026-07-21', '2026-07-28']],
             ['Youth Night', 'Youth Night — Stories of the Sahaba.', 'Youth Center', '19:00', 90,
                 ['2026-06-24', '2026-07-01', '2026-07-08', '2026-07-15', '2026-07-22', '2026-07-29']],
-            ['Book Study', 'Weekly book study.', 'Musallah', '19:00', 60,
+            ['Book Study', 'A Beautiful Patience — 40 Life Lessons. Led by Sister Zahra & Zonash.', 'Musallah', '19:00', 60,
                 ['2026-07-02', '2026-07-09', '2026-07-16', '2026-07-23', '2026-07-30']],
             ['Lessons from Surah Al-Kahf', 'Weekly lessons from Surah Al-Kahf.', 'Musallah', '19:00', 60,
                 ['2026-06-26', '2026-07-10', '2026-07-17', '2026-07-24', '2026-07-31']],
-            ['Soccer (Girls and Boys)', 'Soccer for girls and boys.', 'Masjid Playground', '10:30', 90,
+            ['Soccer (Girls and Boys)', 'Summer Youth Soccer for girls and boys. Register for details.', 'Masjid Playground', '10:30', 90,
                 ['2026-06-27']],
-            ['Soccer (Girls and Boys)', 'Soccer for girls and boys.', 'TBD', '10:30', 90,
+            ['Soccer (Girls and Boys)', 'Summer Youth Soccer for girls and boys. Register for details.', 'TBD', '10:30', 90,
                 ['2026-07-11', '2026-07-18', '2026-07-25']],
             // Holiday weekend (Jul 3–4) — tentative per the calendar legend.
             ['Lessons from Surah Al-Kahf', 'Tentative — holiday weekend, TBD based on availability.', 'TBD', '19:00', 60,
@@ -106,7 +106,7 @@ class SeedSummerPrograms2026 extends Command
             . "• Saturdays 10:30 AM — Soccer for Girls & Boys\n\n"
             . "June 22 – July 31, 2026. See the Events tab for dates. (Jul 3–4 are tentative — holiday weekend.)";
 
-        Announcement::create([
+        $announcement = Announcement::create([
             'masjid_id' => $masjidId,
             'title' => self::ANNOUNCEMENT_TITLE,
             'details' => 'June–July 2026 summer programs schedule.',
@@ -115,6 +115,17 @@ class SeedSummerPrograms2026 extends Command
             'end_date' => '2026-07-31',
         ]);
         $this->info('created announcement "' . self::ANNOUNCEMENT_TITLE . '"');
+
+        if ($posterPath = $this->option('poster')) {
+            if (is_file($posterPath)) {
+                $announcement->addMedia($posterPath)
+                    ->preservingOriginal()
+                    ->toMediaCollection('announcements');
+                $this->info("attached poster: {$posterPath}");
+            } else {
+                $this->warn("poster not found: {$posterPath}");
+            }
+        }
 
         MobileCache::flushMasjid($masjidId, MobileCache::EVENTS);
         MobileCache::flushMasjid($masjidId, MobileCache::ANNOUNCEMENTS);
