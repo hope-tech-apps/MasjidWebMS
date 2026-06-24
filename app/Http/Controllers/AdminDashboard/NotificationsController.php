@@ -20,10 +20,18 @@ class NotificationsController extends Controller
                 'message' => $request->input('message'),
             ]);
 
-            // Collect target device IDs while we have the Masjid context, then hand the
-            // OneSignal HTTP call to a queued worker so the admin's request returns immediately.
-            $targetedExternalIds = $masjid->mobileAppUsers->pluck('device_id')->filter()->values()->toArray();
-            SendMasjidNotificationJob::dispatch($notification, $masjid, $targetedExternalIds);
+            // Target OneSignal SUBSCRIPTION IDs, not external_id aliases (aliases
+            // don't resolve in OneSignal's notification API). Only devices that
+            // have reported a subscription id (via the heartbeat) are targetable.
+            // Hand the OneSignal HTTP call to a queued worker so the admin's
+            // request returns immediately.
+            $targetedSubscriptionIds = $masjid->mobileAppUsers()
+                ->whereNotNull('onesignal_subscription_id')
+                ->pluck('onesignal_subscription_id')
+                ->filter()
+                ->values()
+                ->toArray();
+            SendMasjidNotificationJob::dispatch($notification, $masjid, $targetedSubscriptionIds);
 
             return response()->json([
                 'status' => 'success',

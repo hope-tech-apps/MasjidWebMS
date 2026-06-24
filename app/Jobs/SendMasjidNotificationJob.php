@@ -42,8 +42,8 @@ class SendMasjidNotificationJob implements ShouldQueue
     public function __construct(
         public Notification $notification,
         public Masjid $masjid,
-        /** @var array<int, string> */
-        public array $externalIds
+        /** @var array<int, string> OneSignal subscription (player) IDs. */
+        public array $subscriptionIds
     ) {
     }
 
@@ -60,7 +60,7 @@ class SendMasjidNotificationJob implements ShouldQueue
     public function handle(OnesignalService $onesignal): void
     {
         // Skip silently if there are no targeted devices — nothing to send.
-        if (empty($this->externalIds)) {
+        if (empty($this->subscriptionIds)) {
             Log::info('SendMasjidNotificationJob: no devices to notify', [
                 'masjid_id' => $this->masjid->id,
                 'notification_id' => $this->notification->id,
@@ -68,7 +68,7 @@ class SendMasjidNotificationJob implements ShouldQueue
             return;
         }
 
-        $response = $onesignal->notifyAllOfMasjid($this->masjid, $this->notification, $this->externalIds);
+        $response = $onesignal->notifyAllOfMasjid($this->masjid, $this->notification, $this->subscriptionIds);
 
         if (isset($response['id']) && $response['id']) {
             $this->notification->onesignal_message_id = $response['id'];
