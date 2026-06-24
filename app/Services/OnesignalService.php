@@ -49,7 +49,7 @@ class OnesignalService
         return $response->json();
     }
 
-    public function notifyAllOfMasjid(Masjid $masjid, Notification $notification, array $external_ids)
+    public function notifyAllOfMasjid(Masjid $masjid, Notification $notification, array $subscription_ids)
     {
         try {
 
@@ -58,10 +58,9 @@ class OnesignalService
                 'Content-Type' => 'application/json'
             ])->post($this->api_url, [
                 'app_id' => $this->app_id,
-                // 'included_segments' => ['Active Subscriptions'],
-                'include_aliases' => [
-                    'external_id' => $external_ids
-                ],
+                // Subscription IDs, NOT external_id aliases — aliases don't
+                // resolve in OneSignal's notification API (invalid_aliases).
+                'include_subscription_ids' => array_values(array_filter($subscription_ids)),
                 'headings' => [
                     'en' => $notification->title,
                 ],
