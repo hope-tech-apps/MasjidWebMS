@@ -7,7 +7,10 @@ use App\Http\Requests\Admin\Azkar\StoreAzkarRequest;
 use App\Http\Requests\Admin\Azkar\UpdateAzkarRequest;
 use App\Models\Azkar;
 use App\Models\AzkarCategory;
+use App\Models\LibraryAzkar;
 use App\Support\MobileCache;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 class AzkarController extends Controller
@@ -31,6 +34,71 @@ class AzkarController extends Controller
             'status' => 'success',
             'data' => $categories
         ]);
+    }
+
+    /**
+     * List curated library presets, searchable by free text (?search=). Read-only.
+     */
+    public function library(Request $request)
+    {
+        $presets = LibraryAzkar::query()
+            ->searchLike($request->input('search'))
+            ->orderBy('category')
+            ->orderBy('id')
+            ->paginate($request->input('per_page', 30));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $presets,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Copy a chosen library preset into the live azkar collection as a normal,
+     * editable/deletable row. The preset's freeform category tag (morning/evening)
+     * is mapped to a matching AzkarCategory, auto-creating one if it doesn't exist,
+     * so the copied zikr lands in a usable category.
+     */
+    public function addFromLibrary(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'library_azkar_id' => 'required|integer|exists:library_azkar,id',
+            ]);
+
+            $preset = LibraryAzkar::findOrFail($validated['library_azkar_id']);
+
+            $categoryId = null;
+            if (!empty($preset->category)) {
+                $category = AzkarCategory::firstOrCreate(
+                    ['title' => Str::title($preset->category)]
+                );
+                $categoryId = $category->id;
+            }
+
+            $zikr = Azkar::create([
+                'azkar_category_id' => $categoryId,
+                'title' => $preset->title,
+                'text' => $preset->text,
+                'bless' => $preset->bless,
+                'pronunciation' => $preset->pronunciation,
+                'frequency' => $preset->frequency,
+                'reference' => $preset->reference,
+            ]);
+
+            MobileCache::flushGlobal(MobileCache::AZKAR_ALL);
+            MobileCache::flushGlobal(MobileCache::AZKAR_CATEGORIZED);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $zikr,
+            ], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'data' => \App\Support\Errors::publicMessage($e)
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
