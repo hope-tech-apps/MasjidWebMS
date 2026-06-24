@@ -21,3 +21,9 @@ Schedule::command('sanctum:prune-expired --hours=24')->daily();
 // no duplicates. withoutOverlapping() guards against a slow run stacking up.
 // Requires the same system cron running `php artisan schedule:run` every minute.
 Schedule::command('prayers:send-due')->everyMinute()->withoutOverlapping();
+
+// Daily silent "re-sync" nudge: wake all devices in the background to re-pull
+// prayer times and re-arm their rolling notification window, so the buffer stays
+// fresh even for users who don't open the app. 07:00 UTC ≈ pre-dawn US Eastern
+// (after midnight local, before Fajr). Complements the 6-day buffer.
+Schedule::command('prayers:daily-resync')->dailyAt('07:00');
