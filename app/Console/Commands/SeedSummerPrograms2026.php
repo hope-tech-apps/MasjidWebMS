@@ -63,7 +63,7 @@ class SeedSummerPrograms2026 extends Command
         // [title, details (full — shown on the detail page), posterFile]
         $announcements = [
             ['Summer Programs 2026',
-                'Our summer programs are here! Qur\'an, Seerah, Book Study, Stories of the Sahaba, Soccer, Gardening, Fitness and more — running June 22 to July 31, 2026. See the Events tab for the weekly dates and times, in shaa Allah.',
+                'Our summer programs are here! Qur\'an, Book Study, Stories of the Sahaba, Soccer, Gardening, Fitness and more — running June 22 to July 31, 2026. See the Events tab for the weekly dates and times, in shaa Allah.',
                 '00-summer-programs.svg.png'],
             ['Prophetic Leadership',
                 'Prophetic Leadership — every Tuesday at 7:00 PM in the Musallah. June 23 – July 28, 2026.',
