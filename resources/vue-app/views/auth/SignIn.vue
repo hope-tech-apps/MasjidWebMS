@@ -18,8 +18,8 @@
                             <Field type="email" name="email" v-model="signData.email" class="input w-100" placeholder="example@example.com" />
                         </ColumnInputContainer>
 
-                        <ColumnInputContainer name="email" label="Your Password" :show_error="true">
-                            <Field type="password" name="password" v-model="signData.password" class="input w-100" />
+                        <ColumnInputContainer name="password" label="Your Password" :show_error="true">
+                            <PasswordInput name="password" v-model="signData.password" input-class="input w-100" />
                         </ColumnInputContainer>
                     </div>
                     <div class="card-footer bg-white border-0">
@@ -35,6 +35,7 @@
 
 <script setup lang="ts">
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
+import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
