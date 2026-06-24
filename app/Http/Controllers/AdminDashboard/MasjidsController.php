@@ -158,10 +158,21 @@ class MasjidsController extends Controller
     /**
      * Remove the specified resource from storage.
      */
+    /**
+     * SCRUM-10: archive instead of hard-delete.
+     *
+     * forceDelete() permanently removed the row, orphaning every record and API
+     * consumer keyed on this masjid id (prayer settings, announcements, events,
+     * mobile devices…) and breaking the app. Soft-deleting preserves the row +
+     * id, drops the masjid out of normal queries (SoftDeletes global scope), and
+     * is fully reversible via restore(). Permanent deletion is no longer exposed.
+     */
     public function destroy($masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
-        $masjid->forceDelete();
+        $masjid->deleted_by = Auth::id();
+        $masjid->save();
+        $masjid->delete();
 
         MobileCache::flushMasjidAll((int) $masjid_id);
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
@@ -178,6 +189,41 @@ class MasjidsController extends Controller
         $masjid->deleted_by = Auth::id();
         $masjid->save();
         $masjid->delete();
+
+        MobileCache::flushMasjidAll((int) $masjid_id);
+        MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * List archived (soft-deleted) masjids so the panel can offer a restore UI.
+     */
+    public function trashed()
+    {
+        $masjids = Masjid::onlyTrashed()
+            ->with('logo', 'footer_logo', 'admin.avatar', 'country', 'city')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjids
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Restore an archived masjid, keeping the same id so all API dependencies
+     * remain valid (SCRUM-10).
+     */
+    public function restore($masjid_id)
+    {
+        $masjid = Masjid::onlyTrashed()->findOrFail($masjid_id);
+        $masjid->restore();
+        $masjid->deleted_by = null;
+        $masjid->save();
 
         MobileCache::flushMasjidAll((int) $masjid_id);
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
