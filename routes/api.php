@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Mobile\AnnouncementsController;
 use App\Http\Controllers\Mobile\AzkarController;
+use App\Http\Controllers\Mobile\ContactReasonsController;
 use App\Http\Controllers\Mobile\ContactUsController;
 use App\Http\Controllers\Mobile\EventsController;
 use App\Http\Controllers\Mobile\HadithsController;
@@ -55,6 +56,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         Route::get('/{masjid_id}/announcements', [AnnouncementsController::class, 'index']);
         Route::get('/{masjid_id}/events', [EventsController::class, 'index']);
         Route::get('/{masjid_id}/services', [ServicesController::class, 'index']);
+        Route::get('/{masjid_id}/contact-reasons', [ContactReasonsController::class, 'index']);
 
         // Splash / in-app announcement — single active row, 204 when nothing's live.
         // Web (Nuxt) reads this; mobile apps get the same content via OneSignal IAM.
