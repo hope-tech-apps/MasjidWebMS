@@ -14,7 +14,7 @@ class MasjidDonationLinkController extends Controller
     public function index($masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
-        $donationLink = $masjid->donationLink;
+        $donationLink = $masjid->donationLink?->load('image');
         return response()->json([
             'status' => 'success',
             'data' => $donationLink
@@ -26,17 +26,24 @@ class MasjidDonationLinkController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $donationLink = $masjid->donationLink;
-            $link = $request->validated()['link'];
+
+            // Only persist the text fields the admin actually sent. Fall back to the
+            // legacy defaults on first create so existing clients keep a sane label.
+            $inputs = $request->safe()->only(['link', 'title', 'message']);
 
             if ($donationLink) {
-                $donationLink->update(['link' => $link]);
+                $donationLink->update($inputs);
             } else {
-                $donationLink = DonationLink::create([
+                $donationLink = DonationLink::create(array_merge([
                     'masjid_id' => $masjid->id,
-                    'link' => $link,
                     'title' => 'Donation Link',
                     'message' => 'Donate Now',
-                ]);
+                ], $inputs));
+            }
+
+            if ($request->hasFile('image')) {
+                $donationLink->clearMediaCollection('donation_link');
+                $donationLink->addMediaFromRequest('image')->toMediaCollection('donation_link');
             }
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::DONATION_LINK);
@@ -44,7 +51,7 @@ class MasjidDonationLinkController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $donationLink
+                'data' => $donationLink->load('image')
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
