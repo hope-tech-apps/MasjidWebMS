@@ -67,10 +67,9 @@
                 <ColumnInputContainer label="Phone" name="phone_input" :show_error="true" class="w-100">
                     <Field name="phone_input" type="text" v-model="phone" v-slot="{ field }"
                         placeholder="+971 *** *** ****">
-                        <vue-tel-input v-bind="field" v-model="phone" @country-changed="(country: VueTelInputCountry) => {
-                            if (!phone)
-                                phone = `+${country.dialCode} `
-                        }" class="dashboard-input">
+                        <vue-tel-input v-bind="field" v-model="phone"
+                            @country-changed="(country: VueTelInputCountry) => { phone = applyCountryDialCode(phone, country) }"
+                            class="dashboard-input">
                         </vue-tel-input>
                     </Field>
                 </ColumnInputContainer>
@@ -165,6 +164,7 @@ import { City, Country } from '@/core/types/data/Country';
 import { Masjid } from '@/core/types/data/Masjid';
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import { VueTelInputCountry } from '@/core/types/elements/VueTelInput';
+import { applyCountryDialCode } from '@/assets/ts/handleVueTelInput';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidsStore } from '@/stores/super/masjidsStore';
 import { useUsersStore } from '@/stores/super/usersStore';
@@ -388,9 +388,11 @@ const onSubmit = async () => {
                 let apiEndpoint: BackendApiRoute | '' = '';
                 if (isEditForm.value) {
                     apiEndpoint = `/api/admin/masjids/${masjidId.value}/`;
+                    let requestSucceeded = false;
                     await ApiService.post(apiEndpoint as BackendApiRoute, apiRequestData)
                         .then(res => {
                             if (res.data.status === 'success') {
+                                requestSucceeded = true;
                                 swalInstance.title = "Success";
                                 swalInstance.text = "Data changed successfully.";
                                 swalInstance.icon = "success";
@@ -402,25 +404,32 @@ const onSubmit = async () => {
                         })
                         .catch((e: AxiosError<BackendResponseData>) => {
                             console.log(e);
-                            swalInstance.title = e.message;
+                            swalInstance.title = e.response?.status === 422 ? "Validation Error" : e.message;
                             swalInstance.text = getMessageFromObj(e);
                             swalInstance.icon = "error";
                         })
                         .finally(async () => {
-                            await masjidsStore.fetchMasjid(route.params.masjid_id as string, masjid).finally(() => {
-                                MSwal.fire(swalInstance).finally(() => {
-                                    router.push(`/dashboard/super/masjids/${masjidId.value}`).finally(() => {
-                                        isLoading.value = false;
-                                    });
-                                })
-                            });
-                            isLoading.value = false;
+                            // Keep entered values on validation/backend errors; only navigate away on success.
+                            if (requestSucceeded) {
+                                await masjidsStore.fetchMasjid(route.params.masjid_id as string, masjid).finally(() => {
+                                    MSwal.fire(swalInstance).finally(() => {
+                                        router.push(`/dashboard/super/masjids/${masjidId.value}`).finally(() => {
+                                            isLoading.value = false;
+                                        });
+                                    })
+                                });
+                            } else {
+                                MSwal.fire(swalInstance);
+                                isLoading.value = false;
+                            }
                         });
                 } else {
                     apiEndpoint = `/api/admin/masjids`;
+                    let requestSucceeded = false;
                     await ApiService.post(apiEndpoint as BackendApiRoute, apiRequestData)
                         .then(res => {
                             if (res.data.status === 'success') {
+                                requestSucceeded = true;
                                 swalInstance.title = "Success";
                                 swalInstance.text = "Data changed successfully.";
                                 swalInstance.icon = "success";
@@ -432,18 +441,24 @@ const onSubmit = async () => {
                         })
                         .catch((e: AxiosError<BackendResponseData>) => {
                             console.log(e);
-                            swalInstance.title = e.message;
+                            swalInstance.title = e.response?.status === 422 ? "Validation Error" : e.message;
                             swalInstance.text = getMessageFromObj(e);
                             swalInstance.icon = "error";
                         })
                         .finally(async () => {
-                            await masjidsStore.fetchMasjid(masjidId.value, masjid).finally(() => {
-                                MSwal.fire(swalInstance).finally(() => {
-                                    router.push('/dashboard/super/masjids').finally(() => {
-                                        isLoading.value = false;
+                            // Keep entered values on validation/backend errors; only navigate away on success.
+                            if (requestSucceeded) {
+                                await masjidsStore.fetchMasjid(masjidId.value, masjid).finally(() => {
+                                    MSwal.fire(swalInstance).finally(() => {
+                                        router.push('/dashboard/super/masjids').finally(() => {
+                                            isLoading.value = false;
+                                        });
                                     });
                                 });
-                            });
+                            } else {
+                                MSwal.fire(swalInstance);
+                                isLoading.value = false;
+                            }
                         });
                 }
 

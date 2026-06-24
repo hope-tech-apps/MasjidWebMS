@@ -41,10 +41,9 @@
                 <ColumnInputContainer label="Phone" name="phone_input" :show_error="true" class="w-100">
                     <Field name="phone_input" type="text" v-model="phone" v-slot="{ field }"
                         placeholder="+971 *** *** ****">
-                        <vue-tel-input v-bind="field" v-model="phone" @country-changed="(country: VueTelInputCountry) => {
-                            if (!phone)
-                                phone = `+${country.dialCode} `
-                        }" class="dashboard-input">
+                        <vue-tel-input v-bind="field" v-model="phone"
+                            @country-changed="(country: VueTelInputCountry) => { phone = applyCountryDialCode(phone, country) }"
+                            class="dashboard-input">
                         </vue-tel-input>
                     </Field>
                 </ColumnInputContainer>
@@ -80,21 +79,18 @@
                     <!-- Old Password Input -->
                     <ColumnInputContainer v-if="isEditForm" label="Old Password" name="old_password_input"
                         :show_error="true" class="w-100">
-                        <Field name="old_password_input" type="password" v-model="old_password" class="dashboard-input"
-                            placeholder="********"></Field>
+                        <PasswordInput name="old_password_input" v-model="old_password" />
                     </ColumnInputContainer>
 
                     <!-- Password Input -->
                     <ColumnInputContainer label="Password" name="new_password_input" :show_error="true" class="w-100">
-                        <Field name="new_password_input" type="password" v-model="password" class="dashboard-input"
-                            placeholder="********"></Field>
+                        <PasswordInput name="new_password_input" v-model="password" />
                     </ColumnInputContainer>
 
                     <!-- Confirm Password Input -->
                     <ColumnInputContainer label="Password" name="password_confirmation_input" :show_error="true"
                         class="w-100">
-                        <Field name="password_confirmation_input" type="password" v-model="confirmation"
-                            class="dashboard-input" placeholder="********"></Field>
+                        <PasswordInput name="password_confirmation_input" v-model="confirmation" />
                     </ColumnInputContainer>
                 </div>
             </div>
@@ -116,6 +112,7 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
+import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
@@ -124,6 +121,7 @@ import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { User, UserType } from '@/core/types/data/User';
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import { VueTelInputCountry } from '@/core/types/elements/VueTelInput';
+import { applyCountryDialCode } from '@/assets/ts/handleVueTelInput';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { AxiosError, AxiosResponse } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
@@ -311,9 +309,11 @@ const onSubmit = async () => {
                     apiRequestData.append(`password`, password.value);
                     apiRequestData.append(`password_confirmation`, confirmation.value);
                 }
+                let requestSucceeded = false;
                 await ApiService.post(apiEndpoint as BackendApiRoute, apiRequestData)
                     .then((res: AxiosResponse<BackendResponseData>) => {
                         if (res.data.status === 'success') {
+                            requestSucceeded = true;
                             swalInstance.title = "Success";
                             swalInstance.text = "Data changed successfully.";
                             swalInstance.icon = "success";
@@ -325,12 +325,18 @@ const onSubmit = async () => {
                     })
                     .catch((e: AxiosError<BackendResponseData>) => {
                         console.log(e);
-                        swalInstance.title = e.message;
+                        // Surface backend validation errors (e.g. duplicate email) inline; keep the form data.
+                        swalInstance.title = e.response?.status === 422 ? "Validation Error" : e.message;
                         swalInstance.text = getMessageFromObj(e);
                         swalInstance.icon = "error";
                     })
                     .finally(async () => {
-                        await usersStore.fetchUser(route.params.user_id as string, user).finally(() => {
+                        // On validation/backend errors keep the entered values and stay on the form.
+                        // Only refetch + navigate away on a successful save.
+                        if (requestSucceeded) {
+                            if (isEditForm.value) {
+                                await usersStore.fetchUser(route.params.user_id as string, user);
+                            }
                             MSwal.fire(swalInstance).finally(() => {
                                 if (isEditForm.value) {
                                     router.push(`/dashboard/super/users/${route.params.user_id}`).finally(() => {
@@ -342,8 +348,10 @@ const onSubmit = async () => {
                                     });
                                 }
                             });
-                        });
-
+                        } else {
+                            MSwal.fire(swalInstance);
+                            isLoading.value = false;
+                        }
                     });
 
             } else {

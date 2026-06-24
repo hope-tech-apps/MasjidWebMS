@@ -39,10 +39,9 @@
                 <ColumnInputContainer label="Phone" name="phone_input" :show_error="true" class="w-100">
                     <Field name="phone_input" type="text" v-model="phone" v-slot="{ field }"
                         placeholder="+971 *** *** ****">
-                        <vue-tel-input v-bind="field" v-model="phone" @country-changed="(country: VueTelInputCountry) => {
-                            if (!phone)
-                                phone = `+${country.dialCode} `
-                        }" class="dashboard-input">
+                        <vue-tel-input v-bind="field" v-model="phone"
+                            @country-changed="(country: VueTelInputCountry) => { phone = applyCountryDialCode(phone, country) }"
+                            class="dashboard-input">
                         </vue-tel-input>
                     </Field>
                 </ColumnInputContainer>
@@ -61,22 +60,19 @@
                     <!-- Old Password Input -->
                     <ColumnInputContainer label="Old Password" name="old_password_input" :show_error="true"
                         class="w-100">
-                        <Field name="old_password_input" type="password" v-model="old_password" class="dashboard-input"
-                            placeholder="********"></Field>
+                        <PasswordInput name="old_password_input" v-model="old_password" />
                     </ColumnInputContainer>
 
                     <!-- Nee Password Input -->
                     <ColumnInputContainer label="New Password" name="new_password_input" :show_error="true"
                         class="w-100">
-                        <Field name="new_password_input" type="password" v-model="password" class="dashboard-input"
-                            placeholder="********"></Field>
+                        <PasswordInput name="new_password_input" v-model="password" />
                     </ColumnInputContainer>
 
                     <!-- Confirm Password Input -->
                     <ColumnInputContainer label="Confirm Password" name="password_confirmation_input" :show_error="true"
                         class="w-100">
-                        <Field name="password_confirmation_input" type="password" v-model="confirmation"
-                            class="dashboard-input" placeholder="********"></Field>
+                        <PasswordInput name="password_confirmation_input" v-model="confirmation" />
                     </ColumnInputContainer>
 
                 </div>
@@ -98,12 +94,14 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
+import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import { VueTelInputCountry } from '@/core/types/elements/VueTelInput';
+import { applyCountryDialCode } from '@/assets/ts/handleVueTelInput';
 import { useAuthStore } from '@/stores/authStore';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { AxiosError, AxiosResponse } from 'axios';
@@ -256,9 +254,11 @@ const onSubmit = async () => {
                     icon: "info"
                 };
 
+                let requestSucceeded = false;
                 await ApiService.post(`/api/admin/profile`, apiRequestData)
                     .then((res: AxiosResponse<BackendResponseData>) => {
                         if (res.data.status === 'success') {
+                            requestSucceeded = true;
                             swalInstance.title = "Success";
                             swalInstance.text = "Data changed successfully.";
                             swalInstance.icon = "success";
@@ -275,9 +275,11 @@ const onSubmit = async () => {
                             swalInstance.icon = "error";
                         })
                     .finally(async () => {
-                        await authStore.fetchAuthUser().finally(() => {
-                            MSwal.fire(swalInstance);
-                        });
+                        // On validation/backend errors keep entered values; only refetch on success.
+                        if (requestSucceeded) {
+                            await authStore.fetchAuthUser();
+                        }
+                        MSwal.fire(swalInstance);
                         isLoading.value = false;
                     });
 

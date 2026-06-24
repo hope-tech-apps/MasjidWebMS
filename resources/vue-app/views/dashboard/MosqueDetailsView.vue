@@ -13,13 +13,16 @@
                 <span class="d-block fs-5 fw-semibold">Basic Info</span>
                 <div class="d-flex flex-column gap-3 w-100">
                     <!-- Logo Image Input -->
-                    <Field name="logo_image" v-model="detailsModel.logoSrc" v-slot="{ field }">
-                        <ImageDraggableInput
-                            label="Logo"
-                            :current-image-src="oldAvatarImage"
-                            @image-change="onLogoChange"
-                        />
-                    </Field>
+                    <div class="d-flex flex-column">
+                        <Field name="logo_image" v-model="detailsModel.logoSrc" v-slot="{ field }">
+                            <ImageDraggableInput
+                                label="Logo"
+                                :current-image-src="oldAvatarImage"
+                                @image-change="onLogoChange"
+                            />
+                        </Field>
+                        <ErrorMessage name="logo_image" class="error-message" />
+                    </div>
 
                     <ColumnInputContainer label="Name" name="masjid_name" :show_error="true" class="w-100">
                         <Field name="masjid_name" type="text" v-model="detailsModel.name" class="dashboard-input"
@@ -45,10 +48,9 @@
                         class="w-100 w-md-50">
                         <Field name="masjid_phone" type="text" v-model="phone" v-slot="{ field }"
                             placeholder="+971 *** *** ****">
-                            <vue-tel-input v-bind="field" v-model="phone" @country-changed="(country: VueTelInputCountry) => {
-                                if (!phone)
-                                    phone = `+${country.dialCode} `
-                            }" class="dashboard-input">
+                            <vue-tel-input v-bind="field" v-model="phone"
+                                @country-changed="(country: VueTelInputCountry) => { phone = applyCountryDialCode(phone, country) }"
+                                class="dashboard-input">
                             </vue-tel-input>
                         </Field>
                     </ColumnInputContainer>
@@ -60,10 +62,11 @@
                 <span class="d-block fs-5 fw-semibold">Location Info</span>
                 <div class="d-flex flex-column gap-3 w-100">
                     <ColumnInputContainer label="Timezone" name="masjid_timezone" :show_error="true" class="w-100">
-                        <Field name="masjid_timezone" v-model="detailsModel.timezone" v-slot="{ field }">
+                        <Field name="masjid_timezone" v-model="detailsModel.timezone" v-slot="{ value, handleChange }">
                             <SearchableSelect
                                 v-if="timezones.length > 0"
-                                v-model="detailsModel.timezone"
+                                :model-value="(value as string) ?? ''"
+                                @update:model-value="(val: string) => { detailsModel.timezone = val; handleChange(val); }"
                                 :options="timezones"
                                 placeholder="Select timezone..."
                             />
@@ -144,6 +147,7 @@ import { computed, onBeforeMount, ref } from 'vue';
 import { ErrorMessage, Field, Form, useForm } from 'vee-validate';
 import { object, string, number } from 'yup';
 import { VueTelInputCountry } from '@/core/types/elements/VueTelInput';
+import { applyCountryDialCode } from '@/assets/ts/handleVueTelInput';
 import { MasjidDetails, MasjidDetailsModel } from '@/core/types/data/custom/MasjidDetails';
 import ApiService from '@/core/services/ApiService';
 import LoadingButton from '@/components/form/LoadingButton.vue';
