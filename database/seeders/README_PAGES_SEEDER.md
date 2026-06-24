@@ -101,7 +101,7 @@ $this->call(PagesSeeder::class, false, ['masjid_id' => 1]);
 ```
 Seeding pages and sections for all masjids (3 total)
 
-Processing masjid 1/3: Al-Fateh Mosque (ID: 1)
+Processing masjid 1/3: Burlington Masjid (ID: 1)
 Creating reusable sections...
 ✓ Created all reusable sections
 Creating pages...
@@ -112,7 +112,7 @@ Creating pages...
 ✓ Gallery page created
 ✓ Donate page created
 ✓ Contact page created
-✅ Pages and sections seeded successfully for Al-Fateh Mosque
+✅ Pages and sections seeded successfully for Burlington Masjid
 Total pages created: 7
 Total sections created: 17
 

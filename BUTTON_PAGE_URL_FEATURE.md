@@ -111,7 +111,7 @@ print_r($section->content);
 ```json
 {
     "text": "It is a long established fact...",
-    "title": "Donate to Al-Fateh Mosque",
+    "title": "Donate to Burlington Masjid",
     "subtitle": "",
     "button_link": null,
     "button_text": "Donate",
