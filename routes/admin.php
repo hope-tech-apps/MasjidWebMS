@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
+use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
@@ -223,6 +224,15 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::get('/{message_id}', 'show');
                 Route::delete('/{message_id}', 'destroy');
+            });
+
+            // Masjid contact reasons
+            Route::prefix('{masjid_id}/contact-reasons')->controller(ContactReasonsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{contact_reason_id}', 'show');
+                Route::put('/{contact_reason_id}', 'update');
+                Route::delete('/{contact_reason_id}', 'destroy');
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);
