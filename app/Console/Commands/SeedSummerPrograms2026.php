@@ -89,9 +89,6 @@ class SeedSummerPrograms2026 extends Command
             ['Qur\'an',
                 'Qur\'an program — recite, reflect, and connect. Dates to be announced, in shaa Allah.',
                 '08-quran.svg.png'],
-            ['Seerah',
-                'Seerah — the life and legacy of the Prophet (peace be upon him). Dates to be announced, in shaa Allah.',
-                '09-seerah.svg.png'],
         ];
 
         // Clean previously-seeded content so re-runs don't duplicate.
@@ -101,6 +98,7 @@ class SeedSummerPrograms2026 extends Command
             ->whereIn('title', $eventTitles)
             ->delete();
         $annTitles = array_map(fn ($a) => $a[0], $announcements);
+        $annTitles[] = 'Seerah'; // dropped from the lineup — remove any prior Seerah announcement
         Announcement::where('masjid_id', $masjidId)->whereIn('title', $annTitles)->forceDelete();
         $this->info("cleared {$deletedEvents} event(s) + " . count($annTitles) . ' announcement title(s)');
 
