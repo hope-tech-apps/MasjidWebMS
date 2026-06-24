@@ -14,9 +14,9 @@ class Service extends Model implements HasMedia
 {
     use HasFactory, InteractsWithMedia, SoftDeletes, SearchableTrait;
 
-    protected $fillable = ['masjid_id', 'title', 'description', 'text'];
+    protected $fillable = ['masjid_id', 'title', 'summary', 'description', 'text'];
 
-    protected $searchableFields = ['title', 'description', 'text'];
+    protected $searchableFields = ['title', 'summary', 'description', 'text'];
 
     public function masjid()
     {

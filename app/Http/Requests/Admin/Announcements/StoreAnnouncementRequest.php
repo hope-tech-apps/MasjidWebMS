@@ -10,6 +10,7 @@ class StoreAnnouncementRequest extends BaseFormRequest
     {
         return [
             'title' => 'required|string',
+            'summary' => 'nullable|string',
             'details' => 'required|string',
             'text' => 'required|string',
             'start_date' => 'required|date_format:Y-m-d',

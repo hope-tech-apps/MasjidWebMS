@@ -33,7 +33,7 @@ class ServicesController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $serviceInputs = $request->safe()->only(['title', 'description', 'text']);
+            $serviceInputs = $request->safe()->only(['title', 'summary', 'description', 'text']);
             $serviceInputs['masjid_id'] = $masjid->id;
 
             $service = Service::create($serviceInputs);
@@ -79,7 +79,7 @@ class ServicesController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $service = Service::findOrFail($service_id);
 
-            $serviceInputs = $request->safe()->only(['title', 'description', 'text']);
+            $serviceInputs = $request->safe()->only(['title', 'summary', 'description', 'text']);
             $serviceInputs['masjid_id'] = $masjid->id;
 
             $service->update($serviceInputs);

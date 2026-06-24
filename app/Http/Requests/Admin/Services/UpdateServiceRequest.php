@@ -10,6 +10,7 @@ class UpdateServiceRequest extends BaseFormRequest
     {
         return [
             'title' => 'required|string',
+            'summary' => 'nullable|string',
             'description' => 'required|string',
             'text' => 'required|string',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:25600',

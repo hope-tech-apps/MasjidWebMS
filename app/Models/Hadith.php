@@ -10,6 +10,7 @@ class Hadith extends Model
     use SearchableTrait;
     
     protected $fillable = [
+        'hadith_category_id',
         'title',
         'isnad',
         'matn',
@@ -38,5 +39,10 @@ class Hadith extends Model
     public function getMuhaddithAttribute($value)
     {
         return json_decode($value);
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(HadithCategory::class, 'hadith_category_id', 'id');
     }
 }
