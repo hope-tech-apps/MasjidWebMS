@@ -7,8 +7,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Hadiths\StoreHadithRequest;
 use App\Http\Requests\Admin\Hadiths\UpdateHadithRequest;
 use App\Models\Hadith;
+use App\Models\LibraryHadith;
 use App\Support\MobileCache;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class HadithsController extends Controller
@@ -23,6 +25,81 @@ class HadithsController extends Controller
             'status' => 'success',
             'data' => $hadithList
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * List curated library presets, searchable by free text (?search=). Read-only:
+     * these are global presets the admin can copy into the live hadiths collection.
+     */
+    public function library(Request $request)
+    {
+        $search = $request->input('search');
+
+        $presets = LibraryHadith::query()
+            ->searchLike($search)
+            ->orderBy('category')
+            ->orderBy('title')
+            ->paginate($request->input('per_page', 30));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $presets,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Copy a chosen library preset into the live hadiths collection as a normal,
+     * editable/deletable row. `hadiths.show_date` is unique + required, so we assign
+     * the next free future date automatically (the admin can change it afterwards).
+     */
+    public function addFromLibrary(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'library_hadith_id' => 'required|integer|exists:library_hadiths,id',
+            ]);
+
+            $preset = LibraryHadith::findOrFail($validated['library_hadith_id']);
+
+            $hadith = Hadith::create([
+                'title' => $preset->title,
+                'isnad' => $preset->isnad ?? '',
+                'matn' => $preset->matn,
+                'description' => $preset->description,
+                'strength' => $preset->strength,
+                'muhaddith' => $preset->muhaddith,
+                'references' => $preset->references,
+                'show_date' => $this->nextAvailableShowDate(),
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $hadith,
+            ], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'data' => \App\Support\Errors::publicMessage($e)
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Find the next date (starting tomorrow) not already taken by a hadith's unique
+     * show_date, so a library copy never collides with an existing scheduled hadith.
+     */
+    private function nextAvailableShowDate(): string
+    {
+        $date = Carbon::tomorrow();
+        $taken = Hadith::pluck('show_date')
+            ->map(fn ($d) => Carbon::parse($d)->format('Y-m-d'))
+            ->flip();
+
+        while ($taken->has($date->format('Y-m-d'))) {
+            $date->addDay();
+        }
+
+        return $date->format('Y-m-d');
     }
 
     /**

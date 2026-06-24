@@ -2,11 +2,15 @@
     <Form :validationSchema="formValidationSchema" class="card border-0 py-4 px-3 w-100" @submit="onSubmit()">
 
         <!-- Title -->
-        <div class="card-header bg-white border-0">
+        <div class="card-header bg-white border-0 d-flex align-items-center justify-content-between gap-2">
             <div class="card-title  fs-4 fw-semibold">
                 <span v-if="isEditForm">Edit Hadith</span>
                 <span v-else>Add New Hadith</span>
             </div>
+            <button v-if="!isEditForm" type="button" class="btn btn-outline-primary"
+                @click.prevent="showLibrary = true">
+                <i class="bi bi-collection me-1"></i> Choose from Library
+            </button>
         </div>
 
         <!-- Form Fields -->
@@ -100,6 +104,10 @@
             </LoadingButton>
         </div>
 
+        <!-- Curated library picker -->
+        <LibraryPickerModal v-if="showLibrary" type="hadith" @close="showLibrary = false"
+            @prefill="onLibraryPrefill" @added="onLibraryAdded" />
+
     </Form>
 </template>
 
@@ -107,11 +115,13 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
+import LibraryPickerModal from '@/components/modals/LibraryPickerModal.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Hadith, HADITH_STRENGTHS, HadithReference } from '@/core/types/data/Hadith';
+import { LibraryHadithPreset } from '@/core/types/data/LibraryPresets';
 import { useHadithStore } from '@/stores/hadithStore';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
@@ -199,6 +209,29 @@ const {
 
 const isLoading = ref(false);
 const numberOfReferences = ref<number>(4);
+
+// Library picker
+const showLibrary = ref(false);
+
+// Prefill the form from a chosen library preset (admin can still edit before saving).
+// show_date is intentionally left for the admin to set (it must be a unique future
+// date). "Add directly" instead assigns the next free date server-side.
+const onLibraryPrefill = (preset: LibraryHadithPreset) => {
+    title.value = preset.title ?? '';
+    isnad.value = preset.isnad ?? '';
+    matn.value = preset.matn ?? '';
+    description.value = preset.description ?? '';
+    strength.value = preset.strength?.en ?? '';
+    muhaddith.value = { ar: preset.muhaddith?.ar ?? '', en: preset.muhaddith?.en ?? '' };
+    const refs = preset.references ?? [];
+    references.value = refs.length ? refs.map(r => ({ title: r.title, reference: r.reference })) : [{ title: '', reference: '' }];
+    numberOfReferences.value = references.value.length;
+};
+
+// "Add directly" copied the preset server-side (next free show_date) — go to the list.
+const onLibraryAdded = () => {
+    router.push('/hadith');
+};
 
 // Form
 const formValidationSchema = object().shape({

@@ -265,6 +265,10 @@ Route::prefix('admin')->group(function () {
         Route::prefix('hadiths')->controller(HadithsController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
+            // Curated library: list presets + copy one into the live collection.
+            // Declared before /{hadith_id} so "library" isn't captured as an id.
+            Route::get('/library', 'library');
+            Route::post('/library/add', 'addFromLibrary');
             Route::get('/{hadith_id}', 'show');
             Route::put('/{hadith_id}', 'update');
             Route::delete('/{hadith_id}', 'destroy');
@@ -284,6 +288,10 @@ Route::prefix('admin')->group(function () {
             Route::get('/', 'index');
             Route::get('/categories', 'categories');
             Route::post('/', 'store');
+            // Curated library: list presets + copy one into the live collection.
+            // Declared before /{zikr_id} so "library" isn't captured as an id.
+            Route::get('/library', 'library');
+            Route::post('/library/add', 'addFromLibrary');
             Route::get('/{zikr_id}', 'show');
             Route::put('/{zikr_id}', 'update');
             Route::delete('/{zikr_id}', 'destroy');
@@ -292,6 +300,10 @@ Route::prefix('admin')->group(function () {
         Route::prefix('tasabih')->controller(TasabihController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
+            // Curated library: list presets + copy one into the live collection.
+            // Declared before /{tasbih_id} so "library" isn't captured as an id.
+            Route::get('/library', 'library');
+            Route::post('/library/add', 'addFromLibrary');
             Route::get('/{tasbih_id}', 'show');
             Route::put('/{tasbih_id}', 'update');
             Route::delete('/{tasbih_id}', 'destroy');

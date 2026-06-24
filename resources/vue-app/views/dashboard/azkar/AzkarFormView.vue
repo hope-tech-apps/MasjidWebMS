@@ -2,11 +2,15 @@
     <Form :validationSchema="formValidationSchema" class="card border-0 py-4 px-3 w-100" @submit="onSubmit()">
 
         <!-- Title -->
-        <div class="card-header bg-white border-0">
+        <div class="card-header bg-white border-0 d-flex align-items-center justify-content-between gap-2">
             <div class="card-title  fs-4 fw-semibold">
                 <span v-if="isEditForm">Edit Zikr</span>
                 <span v-else>Add New Zikr</span>
             </div>
+            <button v-if="!isEditForm" type="button" class="btn btn-outline-primary"
+                @click.prevent="showLibrary = true">
+                <i class="bi bi-collection me-1"></i> Choose from Library
+            </button>
         </div>
 
         <!-- Form Fields -->
@@ -98,6 +102,10 @@
             </LoadingButton>
         </div>
 
+        <!-- Curated library picker -->
+        <LibraryPickerModal v-if="showLibrary" type="azkar" @close="showLibrary = false"
+            @prefill="onLibraryPrefill" @added="onLibraryAdded" />
+
     </Form>
 </template>
 
@@ -105,11 +113,13 @@
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
+import LibraryPickerModal from '@/components/modals/LibraryPickerModal.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Zikr } from '@/core/types/data/Azkar';
+import { LibraryAzkarPreset } from '@/core/types/data/LibraryPresets';
 import { TranslatableObject } from '@/core/types/data/interfaces/TranslatableObject';
 import { useAzkarStore } from '@/stores/azkarStore';
 import { AxiosError } from 'axios';
@@ -180,6 +190,28 @@ const {
 } = toRefs<ZikrEntry>(entryModel.value);
 
 const isLoading = ref(false);
+
+// Library picker
+const showLibrary = ref(false);
+
+// Prefill the form from a chosen library preset (admin can still edit before saving).
+// The preset's morning/evening category is freeform text, so it is left out of the
+// category <select> (which is keyed on existing AzkarCategory ids); the admin picks
+// a category as usual, or uses "Add directly" which maps the tag server-side.
+const onLibraryPrefill = (preset: LibraryAzkarPreset) => {
+    title.value = { ar: preset.title?.ar ?? '', en: preset.title?.en ?? '' };
+    text.value = { ar: preset.text?.ar ?? '', en: preset.text?.en ?? '' };
+    bless.value = { ar: preset.bless?.ar ?? '', en: preset.bless?.en ?? '' };
+    pronunciation.value = preset.pronunciation ?? '';
+    frequency.value = preset.frequency ?? 0;
+    reference.value = preset.reference ?? '';
+};
+
+// "Add directly" copied the preset server-side — refresh the list and go back to it.
+const onLibraryAdded = async () => {
+    await azkarStore.fetchAzkarPaginated(1);
+    router.push('/azkar');
+};
 
 // Form
 const formValidationSchema = object().shape({

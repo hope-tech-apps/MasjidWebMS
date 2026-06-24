@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Mobile;
 
 use App\Http\Controllers\Controller;
 use App\Models\Hadith;
+use App\Support\ArabicText;
 use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -32,9 +33,21 @@ class HadithsController extends Controller
         }
 
         if ($search) {
-            $query->where(function ($q) use ($search) {
+            // Diacritic-insensitive Arabic search: match the incoming query against
+            // the normalized shadow columns (tashkeel stripped, hamza/letter variants
+            // folded) so a bare query like "الايمان" still finds marked stored text
+            // like "الإِيمَان". The raw title/matn LIKE is kept as a fallback so
+            // Latin/partial searches and any not-yet-backfilled rows still match.
+            $normalized = ArabicText::normalize($search);
+
+            $query->where(function ($q) use ($search, $normalized) {
                 $q->where('title', 'LIKE', "%{$search}%")
                   ->orWhere('matn', 'LIKE', "%{$search}%");
+
+                if ($normalized !== '') {
+                    $q->orWhere('title_normalized', 'LIKE', "%{$normalized}%")
+                      ->orWhere('matn_normalized', 'LIKE', "%{$normalized}%");
+                }
             });
         }
 
