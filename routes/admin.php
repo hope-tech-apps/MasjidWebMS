@@ -63,6 +63,10 @@ Route::prefix('admin')->group(function () {
             // Get timezones list (must be before /{masjid_id} route)
             Route::get('timezones', [MasjidDetailsController::class, 'getTimezones']);
 
+            // Archived (soft-deleted) masjids — must be before the /{masjid_id}
+            // show route or "trashed" would be read as a masjid id. Super only.
+            Route::get('trashed', [MasjidsController::class, 'trashed'])->middleware('super');
+
             Route::controller(MasjidsController::class)->group(function () {
 
                 // Masjid account control
@@ -76,6 +80,7 @@ Route::prefix('admin')->group(function () {
                     Route::post('/{masjid_id}', 'update');
                     Route::delete('/{masjid_id}', 'destroy');
                     Route::delete('/{masjid_id}/trash', 'moveToTrash');
+                    Route::post('/{masjid_id}/restore', 'restore');
                 });
             });
 
