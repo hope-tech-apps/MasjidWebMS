@@ -29,6 +29,9 @@ export type BackendApiRoute =
     `/api/admin/hadiths` |
     `/api/admin/hadiths/${string}/` |
     `/api/admin/hadiths?page=${number}` |
+    `/api/admin/hadiths/library` |
+    `/api/admin/hadiths/library?search=${string}` |
+    `/api/admin/hadiths/library/add` |
     `/api/admin/masjids/${string}/features` |
     `/api/admin/masjids/${string}/features/${string}/` |
     `/api/admin/masjids/${string}/iqama` |
@@ -38,9 +41,15 @@ export type BackendApiRoute =
     `/api/admin/azkar/${string}/` |
     `/api/admin/azkar?page=${number}` |
     `/api/admin/azkar/categories` |
+    `/api/admin/azkar/library` |
+    `/api/admin/azkar/library?search=${string}` |
+    `/api/admin/azkar/library/add` |
     `/api/admin/tasabih` |
     `/api/admin/tasabih/${string}/` |
     `/api/admin/tasabih?page=${number}` |
+    `/api/admin/tasabih/library` |
+    `/api/admin/tasabih/library?search=${string}` |
+    `/api/admin/tasabih/library/add` |
     '/api/admin/admins/masjid/available' |
     '/api/admin/countries' |
     `/api/admin/countries/${number}/cities` |
