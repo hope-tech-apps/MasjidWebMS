@@ -99,7 +99,7 @@ class PagesSeeder extends Seeder
             'content' => [
                 'title' => 'About Us',
                 'subtitle' => '',
-                'text' => 'Al-Fateh Mosque has been a cornerstone of our community for over three decades. We are dedicated to providing a welcoming space for worship, education, and community engagement. Our mission is to foster spiritual growth, promote Islamic values, and serve the needs of our diverse community.',
+                'text' => 'Burlington Masjid has been a cornerstone of our community for over three decades. We are dedicated to providing a welcoming space for worship, education, and community engagement. Our mission is to foster spiritual growth, promote Islamic values, and serve the needs of our diverse community.',
                 'image_url' => null,
                 'button_text' => 'Read More',
             ],
@@ -239,7 +239,7 @@ class PagesSeeder extends Seeder
             'is_active' => true,
             'order' => 1,
             'show_in_menu' => true,
-            'meta_description' => 'Welcome to Al-Fateh Mosque',
+            'meta_description' => 'Welcome to Burlington Masjid',
         ]);
 
         $this->command->info('✓ Home page created');
@@ -251,7 +251,7 @@ class PagesSeeder extends Seeder
             'is_active' => true,
             'order' => 2,
             'show_in_menu' => true,
-            'meta_description' => 'Learn more about Al-Fateh Mosque',
+            'meta_description' => 'Learn more about Burlington Masjid',
         ]);
 
         $this->command->info('✓ About page created');
@@ -417,12 +417,12 @@ class PagesSeeder extends Seeder
             'is_active' => true,
         ]);
 
-        // Section 27: Donate to Al-Fateh Mosque (Image Text Grid)
+        // Section 27: Donate to Burlington Masjid (Image Text Grid)
         $donateImageTextSection = $masjid->sections()->create([
             'section_type' => SectionType::IMAGE_TEXT_GRID,
-            'title' => 'Donate to Al-Fateh Mosque',
+            'title' => 'Donate to Burlington Masjid',
             'content' => [
-                'title' => 'Donate to Al-Fateh Mosque',
+                'title' => 'Donate to Burlington Masjid',
                 'subtitle' => '',
                 'text' => 'It is a long established fact that a reader will be by the readable content of a page when looking at its layout. The point of using Lorem Ipsum is that it has a more-or-less normal distribution of letters, as opposed to using \'Content here, content here\', making it look like readable English.',
                 'button_text' => 'Donate',
