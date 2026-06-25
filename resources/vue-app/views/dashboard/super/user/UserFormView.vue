@@ -315,7 +315,9 @@ const onSubmit = async () => {
                         if (res.data.status === 'success') {
                             requestSucceeded = true;
                             swalInstance.title = "Success";
-                            swalInstance.text = "Data changed successfully.";
+                            // Surface a backend message when provided (e.g. an archived user
+                            // was restored on email reuse); otherwise show the generic text.
+                            swalInstance.text = res.data.message ?? "Data changed successfully.";
                             swalInstance.icon = "success";
                         } else {
                             swalInstance.title = "Sorry";

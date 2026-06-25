@@ -16,11 +16,9 @@
                 <div class="w-100 w-md-75 w-lg-50">
                     <ImageDraggableInput label="Service Icon" @imageChange="onIconInputChange"
                         :current-image-src="oldIcon" type="icon" />
-                    <Field type="file" v-model="imageSrc" name="service_icon" class="d-none"></Field>
+                    <Field type="file" v-model="iconSrc" name="service_icon" class="d-none"></Field>
                     <div class="error-message">
-                        <ErrorMessage v-if="errorMessage" name="service_icon">
-                            {{ errorMessage }}
-                        </ErrorMessage>
+                        <ErrorMessage name="service_icon" />
                     </div>
                 </div>
             </div>
@@ -30,9 +28,7 @@
                     :current-image-src="oldImage" type="photo" />
                 <Field type="file" v-model="imageSrc" name="service_image" class="d-none"></Field>
                 <div class="error-message">
-                    <ErrorMessage v-if="errorMessage" name="service_image">
-                        {{ errorMessage }}
-                    </ErrorMessage>
+                    <ErrorMessage name="service_image" />
                 </div>
             </div>
 
@@ -82,7 +78,7 @@ import { useServicesStore } from '@/stores/masjid/servicesStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
-import { Form, Field, ErrorMessage, useForm, useField } from 'vee-validate';
+import { Form, Field, ErrorMessage, useForm } from 'vee-validate';
 import { computed, onBeforeMount, ref, toRefs, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { object, string } from 'yup';
@@ -136,7 +132,6 @@ const formValidationSchema = object().shape({
     service_icon: string().required()
 });
 const { handleSubmit, setFieldValue, validate } = useForm({ validationSchema: formValidationSchema });
-const { value: service_image, errorMessage } = useField('service_image');
 const { title: serviceTitle, description: serviceDesc, text: serviceText, imageSrc, iconSrc } = toRefs<ServiceEntry>(entryModel.value);
 const imageFile = ref<File | undefined>(undefined);
 const iconFile = ref<File | undefined>(undefined);
@@ -167,7 +162,7 @@ const onImageInputChange = (data: UploadedImageInfo) => {
 };
 
 const onIconInputChange = (data: UploadedImageInfo) => {
-    setFieldValue('service_image', data.src);
+    setFieldValue('service_icon', data.src);
     iconSrc.value = data.src;
     iconFile.value = data.file;
 };

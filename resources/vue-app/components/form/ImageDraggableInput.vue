@@ -25,7 +25,7 @@
                     or drag and drop your files here
                 </span>
                 <input type="file" ref="fileInput" @change.prevent="onFileInputChange"
-                    :accept="allowedTypes.toString()" :multiple="false" class="d-none">
+                    :accept="allowedTypes.toString()" :multiple="multiple" class="d-none">
             </div>
 
             <!-- not allowed -->
@@ -42,12 +42,29 @@
 
         </div>
 
-        <div v-if="imageUploaded" class="image-preview">
+        <!-- Single-image preview -->
+        <div v-if="imageUploaded && !multiple" class="image-preview">
             <button type="button" @click.prevent="removeUploadedImage"
                 class="btn btn-icon btn-sm btn-danger rounded-circle remove-image">
                 <i class="bi bi-trash"></i>
             </button>
             <img :src="uploadedImageSrc" class="image" />
+        </div>
+
+        <!-- Multi-image preview -->
+        <div v-if="imageUploaded && multiple" class="d-flex flex-column gap-3 w-100">
+            <div class="d-flex flex-wrap gap-3">
+                <div v-for="(src, index) in uploadedSrcs" :key="index" class="image-preview multi-image-preview">
+                    <button type="button" @click.prevent="removeUploadedImageAt(index)"
+                        class="btn btn-icon btn-sm btn-danger rounded-circle remove-image">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                    <img :src="src" class="image" />
+                </div>
+            </div>
+            <button type="button" @click.prevent="triggerFileInput" class="btn btn-success btn-sm align-self-start">
+                Add more images
+            </button>
         </div>
 
         <!-- notes - 1 -->
@@ -57,7 +74,7 @@
 
         <!-- notes - 2 -->
         <span v-if="!imageUploaded" class="d-block text-success image-input-note">
-            Note/2: Only upload one image.
+            {{ multiple ? 'Note/2: You can upload multiple images at once.' : 'Note/2: Only upload one image.' }}
         </span>
 
         <!-- Error Messages -->
@@ -91,13 +108,26 @@ const props = defineProps({
         type: Object as PropType<DraggableImageType>,
         required: false,
         default: 'image'
+    },
+    // Opt-in multi-image mode. Defaults to false so every existing single-image
+    // form keeps its current behaviour unchanged.
+    multiple: {
+        type: Boolean,
+        required: false,
+        default: false
+    },
+    // Increment this from the parent to clear the input after a successful upload.
+    resetSignal: {
+        type: Number,
+        required: false,
+        default: 0
     }
 });
 
-const { label, currentImageSrc, type } = toRefs(props);
+const { label, currentImageSrc, type, multiple, resetSignal } = toRefs(props);
 
 // Emits
-const emits = defineEmits(['imageChange']);
+const emits = defineEmits(['imageChange', 'filesChange']);
 
 // Lifecycle hooks
 onBeforeMount(() => {
@@ -114,6 +144,9 @@ const fileInput = ref<HTMLInputElement>();
 const uploadedImageFile = ref<File>();
 const uploadedImage = ref<HTMLImageElement>();
 const uploadedImageSrc = ref<string>();
+// Multi-image mode collects every validated file/preview here.
+const uploadedFiles = ref<File[]>([]);
+const uploadedSrcs = ref<string[]>([]);
 const uploadErrorMessages = ref({
     allowed: "",
     load: "",
@@ -122,6 +155,9 @@ const uploadErrorMessages = ref({
 
 // Computed
 const imageUploaded = computed(() => {
+    if (multiple.value) {
+        return uploadedSrcs.value.length > 0;
+    }
     return uploadedImageSrc.value ? true : false;
 });
 const allowedTypes = computed(() => {
@@ -150,6 +186,10 @@ watch([() => uploadedImageFile.value, () => uploadedImageSrc.value], () => {
 watch(() => currentImageSrc.value, () => {
     uploadedImageSrc.value = currentImageSrc.value;
 });
+// Parent bumps resetSignal after a successful upload to clear the input.
+watch(() => resetSignal.value, () => {
+    removeUploadedImage();
+});
 
 // Functions
 function onDrag(event: DragEvent) {
@@ -157,7 +197,7 @@ function onDrag(event: DragEvent) {
     const target = event.target as HTMLElement;
     if (target && target.classList.contains("image-input-container")) {
         target.classList.add("on-drag");
-        if (event.dataTransfer?.items) {
+        if (event.dataTransfer?.items && !multiple.value) {
             if (event.dataTransfer.items.length !== 1) {
                 target.classList.add('show-prevent');
             } else {
@@ -190,7 +230,11 @@ function onDrop(event: DragEvent) {
     const target = event.target as HTMLElement;
 
     if (target && target.classList.contains("image-input-container")) {
-        if ((!target.classList.contains("show-prevent"))) {
+        if (multiple.value) {
+            if (event.dataTransfer?.files?.length) {
+                loadMultipleImages(Array.from(event.dataTransfer.files));
+            }
+        } else if ((!target.classList.contains("show-prevent"))) {
             if (event.dataTransfer?.files?.length == 1) {
                 uploadedImageFile.value = event.dataTransfer.files[0];
                 checkAndLoadImage(uploadedImageFile.value);
@@ -276,10 +320,60 @@ const checkAndLoadImage = (file: File) => {
 
 const onFileInputChange = (event: Event) => {
     const target = event.target as HTMLInputElement;
-    if (target.files?.length === 1) {
-        const file = target.files[0];
-        checkAndLoadImage(file);
+    if (!target.files || target.files.length === 0) {
+        return;
     }
+    if (multiple.value) {
+        loadMultipleImages(Array.from(target.files));
+    } else if (target.files.length === 1) {
+        checkAndLoadImage(target.files[0]);
+    }
+    // Clear the native input value so the same file(s) can be re-selected and the
+    // input does not visually retain the previous selection.
+    target.value = '';
+}
+
+// Validate and append a batch of files in multi-image mode.
+const loadMultipleImages = (files: File[]) => {
+    uploadErrorMessages.value = { allowed: "", load: "", read: "" };
+
+    files.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const image = new Image();
+            image.src = ev.target?.result as string;
+            image.onload = () => {
+                const currentAllowedTypes = allowedTypes.value;
+                const isAllowed = currentAllowedTypes.includes('image/*') || currentAllowedTypes.includes(file.type);
+                if (!isAllowed) {
+                    uploadErrorMessages.value.allowed = "One or more files are not an allowed image type.";
+                    return;
+                }
+                if (file.size >= MAX_IMAGE_SIZE) {
+                    uploadErrorMessages.value.allowed = `One or more files are too large. Maximum size is ${maxImageSizeInMb.value}MB.`;
+                    return;
+                }
+                const isSvg = file.type === 'image/svg+xml' || file.type === 'image/svg';
+                if (!isSvg) {
+                    if (image.naturalHeight >= MAX_IMAGE_Y_DIMENSION_IN_PX ||
+                        image.naturalWidth >= MAX_IMAGE_X_DIMENSION_IN_PX) {
+                        uploadErrorMessages.value.allowed = `One or more images exceed the maximum ${MAX_IMAGE_X_DIMENSION_IN_PX}x${MAX_IMAGE_Y_DIMENSION_IN_PX}px dimensions.`;
+                        return;
+                    }
+                }
+                uploadedFiles.value.push(file);
+                uploadedSrcs.value.push(image.src);
+                emits('filesChange', uploadedFiles.value);
+            };
+            image.onerror = () => {
+                uploadErrorMessages.value.load = "Failed to load one or more files.";
+            };
+        };
+        reader.onerror = () => {
+            uploadErrorMessages.value.read = "Failed to read one or more files.";
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
 const removeUploadedImage = () => {
@@ -287,6 +381,17 @@ const removeUploadedImage = () => {
     uploadedImage.value = undefined;
     uploadedImageFile.value = undefined;
     uploadedImageSrc.value = undefined;
+    uploadedFiles.value = [];
+    uploadedSrcs.value = [];
+    if (multiple.value) {
+        emits('filesChange', []);
+    }
+}
+
+const removeUploadedImageAt = (index: number) => {
+    uploadedFiles.value.splice(index, 1);
+    uploadedSrcs.value.splice(index, 1);
+    emits('filesChange', uploadedFiles.value);
 }
 
 const triggerFileInput = () => {
@@ -360,5 +465,17 @@ const triggerFileInput = () => {
 .image-preview .image {
     max-width: 100%;
     border-radius: 1rem;
+}
+
+.multi-image-preview {
+    width: 140px;
+    height: 140px;
+    min-height: 0;
+}
+
+.multi-image-preview .image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 </style>
