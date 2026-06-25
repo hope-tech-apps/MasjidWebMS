@@ -186,7 +186,7 @@
                                     <p class="mb-0">{{ formatDate(selectedRequest.created_at) }}</p>
                                 </div>
                             </div>
-                            <div class="row">
+                            <div class="row mb-3">
                                 <div class="col-12">
                                     <h6 class="text-muted mb-2">Message</h6>
                                     <div class="card bg-light">
@@ -196,18 +196,39 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- Reply -->
+                            <div class="row">
+                                <div class="col-12">
+                                    <h6 class="text-muted mb-2">Reply</h6>
+                                    <textarea
+                                        class="form-control"
+                                        rows="4"
+                                        maxlength="5000"
+                                        placeholder="Type your reply here. It will be emailed to the contacter."
+                                        v-model="replyText"
+                                        :disabled="sendingReply"
+                                    ></textarea>
+                                    <div class="text-end text-muted small mt-1">
+                                        {{ replyText.length }} / 5000 characters
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" @click="showViewModal = false">
+                            <button type="button" class="btn btn-secondary" @click="showViewModal = false" :disabled="sendingReply">
                                 Close
                             </button>
-                            <a
-                                :href="`mailto:${selectedRequest.contacter.email}?subject=Re: ${selectedRequest.reason?.text || 'Your inquiry'}`"
+                            <button
+                                type="button"
                                 class="btn btn-primary"
+                                @click="sendReply"
+                                :disabled="sendingReply || !replyText.trim()"
                             >
-                                <i class="bi bi-reply me-1"></i>
-                                Reply via Email
-                            </a>
+                                <span v-if="sendingReply" class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                <i v-else class="bi bi-send me-1"></i>
+                                {{ sendingReply ? 'Sending...' : 'Send Reply' }}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -232,6 +253,8 @@ const loading = ref(false);
 const searchQuery = ref('');
 const showViewModal = ref(false);
 const selectedRequest = ref<ContactRequest | null>(null);
+const replyText = ref('');
+const sendingReply = ref(false);
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Computed
@@ -311,7 +334,42 @@ const truncateMessage = (message: string, length: number = 100) => {
 
 const viewRequest = (request: ContactRequest) => {
     selectedRequest.value = request;
+    replyText.value = '';
     showViewModal.value = true;
+};
+
+const sendReply = async () => {
+    if (!selectedRequest.value || !replyText.value.trim()) {
+        return;
+    }
+
+    sendingReply.value = true;
+    try {
+        const message = await contactRequestsStore.replyToContactRequest(
+            selectedRequest.value.id,
+            replyText.value.trim()
+        );
+        showViewModal.value = false;
+        replyText.value = '';
+        Swal.fire({
+            icon: 'success',
+            title: 'Reply Sent!',
+            text: message,
+            timer: 2500,
+            showConfirmButton: false
+        });
+    } catch (error: any) {
+        const text = error?.response?.data?.message
+            ?? error?.message
+            ?? 'Failed to send the reply.';
+        Swal.fire({
+            icon: 'error',
+            title: 'Error!',
+            text: text
+        });
+    } finally {
+        sendingReply.value = false;
+    }
 };
 
 const confirmDelete = async (request: ContactRequest) => {

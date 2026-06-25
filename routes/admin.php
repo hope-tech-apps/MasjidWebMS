@@ -225,6 +225,7 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::get('/{message_id}', 'show');
+                Route::post('/{message_id}/reply', 'reply');
                 Route::delete('/{message_id}', 'destroy');
             });
 

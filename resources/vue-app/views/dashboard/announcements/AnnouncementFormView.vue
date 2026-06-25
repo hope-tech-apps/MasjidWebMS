@@ -30,9 +30,7 @@
                     :current-image-src="oldImage" type="photo" />
                 <Field type="file" v-model="imageSrc" name="announcement_image" class="d-none"></Field>
                 <div class="error-message">
-                    <ErrorMessage v-if="errorMessage" name="announcement_image">
-                        {{ errorMessage }}
-                    </ErrorMessage>
+                    <ErrorMessage name="announcement_image" />
                 </div>
             </div>
 
@@ -83,7 +81,7 @@ import { useAnnouncementsStore } from '@/stores/masjid/announcementsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
-import { Form, Field, ErrorMessage, useForm, useField } from 'vee-validate';
+import { Form, Field, ErrorMessage, useForm } from 'vee-validate';
 import { computed, onBeforeMount, ref, toRefs, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { object, string } from 'yup';
@@ -145,7 +143,6 @@ const formValidationSchema = object().shape({
     }).required()
 });
 const { setFieldValue } = useForm({ validationSchema: formValidationSchema });
-const { errorMessage } = useField('announcement_image');
 const { title: announcementTitle, description: announcementDesc, text: announcementText, imageSrc, startDate, endDate } = toRefs<AnnouncementEntry>(entryModel.value);
 const imageFile = ref<File | undefined>(undefined);
 

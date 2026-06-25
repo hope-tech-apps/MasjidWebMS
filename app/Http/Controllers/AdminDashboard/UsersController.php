@@ -28,16 +28,35 @@ class UsersController extends Controller
     public function store(StoreUserRequest $request)
     {
         try {
-            $user = User::create($request->safe()->only([
+            $data = $request->safe()->only([
                 'name', 'email', 'phone', 'type', 'password',
-            ]));
+            ]);
+
+            // An archived (soft-deleted) user may already own this email. The store
+            // validation ignores trashed users, so handle that case gracefully here by
+            // restoring the archived account and updating it with the submitted details.
+            $archivedUser = User::onlyTrashed()->where('email', $data['email'])->first();
+
+            if ($archivedUser) {
+                $archivedUser->restore();
+                $archivedUser->update($data);
+                $user = $archivedUser;
+                $restored = true;
+            } else {
+                $user = User::create($data);
+                $restored = false;
+            }
 
             if ($user && $request->hasFile('avatar')) {
+                $user->clearMediaCollection('avatars');
                 $user->addMediaFromRequest('avatar')->toMediaCollection('avatars');
             }
 
             return response()->json([
                 'status' => 'success',
+                'message' => $restored
+                    ? 'This email belonged to an archived user. That account has been restored and updated with the new details.'
+                    : 'User created successfully.',
                 'data' => $user->load('avatar')
             ], Response::HTTP_OK);
         } catch (\Exception $e) {

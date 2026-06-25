@@ -45,7 +45,8 @@
         </div>
     </PageDataContainer>
     <PhotoGalleryModal :modalId="'photo_gallery_modal_id'" :showPhoto="isShowModal" :photo="photoToShow"
-        :action-loading-status="modalActionLoading" @submit="onSubmit" @image-change="imageModalChange">
+        :action-loading-status="modalActionLoading" :reset-signal="imageResetSignal" @submit="onSubmit"
+        @image-change="imageModalChange" @files-change="imagesModalChange">
         <!-- <template #control_buttons>
             <div class="">
 
@@ -110,10 +111,17 @@ const photoToShow = ref<Media | null>(null);
 const isShowModal = ref<boolean>(false);
 const modalActionLoading = ref<boolean>(false);
 const modalImageFile = ref<File>();
+const modalImageFiles = ref<File[]>([]);
+// Bumped after a successful upload to clear the image input in the modal.
+const imageResetSignal = ref<number>(0);
 
 // Methods
 const imageModalChange = (data: UploadedImageInfo) => {
     modalImageFile.value = data.file;
+}
+
+const imagesModalChange = (files: File[]) => {
+    modalImageFiles.value = files;
 }
 
 const pageChange = async (data: PageChangeData) => {
@@ -189,26 +197,42 @@ const onSubmit = async () => {
                                 });
                         }
                     } else {
-                        const formData = new FormData();
-                        formData.append('image', modalImageFile.value ?? '');
-                        await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/gallery`, formData)
-                            .then(res => {
-                                if (res.data?.status === 'success') {
-                                    swalInstance.title = 'Success';
-                                    swalInstance.text = 'Photo added successfully';
-                                    swalInstance.icon = 'success';
-                                } else {
-                                    swalInstance.title = "Sorry";
-                                    swalInstance.text = getMessageFromObj(res);
-                                    swalInstance.icon = "warning";
-                                }
-                            })
-                            .catch((e: AxiosError<BackendResponseData>) => {
-                                console.log(e);
-                                swalInstance.title = e.message;
-                                swalInstance.text = getMessageFromObj(e);
-                                swalInstance.icon = "error";
-                            });
+                        const filesToUpload = modalImageFiles.value.length
+                            ? modalImageFiles.value
+                            : (modalImageFile.value ? [modalImageFile.value] : []);
+
+                        if (filesToUpload.length === 0) {
+                            swalInstance.title = 'Sorry';
+                            swalInstance.text = 'Please select at least one image';
+                            swalInstance.icon = 'error';
+                        } else {
+                            const formData = new FormData();
+                            filesToUpload.forEach(file => formData.append('images[]', file));
+                            await ApiService.post(`/api/admin/masjids/${masjidStore.masjid.id}/gallery`, formData)
+                                .then(res => {
+                                    if (res.data?.status === 'success') {
+                                        swalInstance.title = 'Success';
+                                        swalInstance.text = filesToUpload.length > 1
+                                            ? `${filesToUpload.length} photos added successfully`
+                                            : 'Photo added successfully';
+                                        swalInstance.icon = 'success';
+                                        // Clear the selected files and the upload input on success.
+                                        modalImageFiles.value = [];
+                                        modalImageFile.value = undefined;
+                                        imageResetSignal.value++;
+                                    } else {
+                                        swalInstance.title = "Sorry";
+                                        swalInstance.text = getMessageFromObj(res);
+                                        swalInstance.icon = "warning";
+                                    }
+                                })
+                                .catch((e: AxiosError<BackendResponseData>) => {
+                                    console.log(e);
+                                    swalInstance.title = e.message;
+                                    swalInstance.text = getMessageFromObj(e);
+                                    swalInstance.icon = "error";
+                                });
+                        }
                     }
                 }
             }

@@ -62,6 +62,23 @@ export const useContactRequestsStore = defineStore('contactRequestsStore', () =>
     }
 
     /**
+     * Send an email reply to a contact request's contacter.
+     */
+    async function replyToContactRequest(id: number, reply: string): Promise<string> {
+        if (masjidStore.masjid?.id) {
+            const res: AxiosResponse = await ApiService.post(
+                `/api/admin/masjids/${masjidStore.masjid.id}/contact-requests/${id}/reply`,
+                { reply }
+            );
+            if (res.data?.status === 'success') {
+                return res.data?.message ?? 'Reply sent successfully.';
+            }
+            throw new Error(res.data?.message ?? 'Failed to send reply.');
+        }
+        throw new Error('Masjid not specified.');
+    }
+
+    /**
      * Delete a contact request
      */
     async function deleteContactRequest(id: number): Promise<boolean> {
@@ -85,6 +102,7 @@ export const useContactRequestsStore = defineStore('contactRequestsStore', () =>
         contactRequestsPaginated,
         fetchContactRequests,
         fetchContactRequest,
+        replyToContactRequest,
         deleteContactRequest
     }
 })

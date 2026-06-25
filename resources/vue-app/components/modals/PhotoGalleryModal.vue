@@ -12,8 +12,9 @@
                 <div class="modal-body">
                     <template v-if="!showPhoto">
                         <div class="d-flex flex-column">
-                            <ImageDraggableInput name="photo_input" type="photo" label="Photo Gallery"
-                                :current-image-src="photoSrc" @image-change="imageChange" />
+                            <ImageDraggableInput name="photo_input" type="photo" label="Photo Gallery" :multiple="true"
+                                :current-image-src="photoSrc" :reset-signal="resetSignal" @image-change="imageChange"
+                                @files-change="filesChange" />
                             <Field type="file" v-model="photoInputModel" name="photo_input" class="d-none"></Field>
                             <ErrorMessage name="photo_input" class="error-message" />
                         </div>
@@ -65,11 +66,17 @@ const props = defineProps({
     actionLoadingStatus: {
         type: Boolean,
         required: false
+    },
+    // Parent bumps this after a successful upload to clear the image input.
+    resetSignal: {
+        type: Number,
+        required: false,
+        default: 0
     }
 });
 
 // Destructions
-const { modalId, showPhoto, photo } = toRefs(props);
+const { modalId, showPhoto, photo, resetSignal } = toRefs(props);
 
 // Lifecycle hooks
 onMounted(() => {
@@ -81,7 +88,7 @@ onMounted(() => {
 
 
 // Emits
-const emits = defineEmits(['imageChange', 'submit']);
+const emits = defineEmits(['imageChange', 'filesChange', 'submit']);
 
 // Computed
 const photoSrc = computed(() => {
@@ -99,7 +106,7 @@ const title = computed(() => {
 const validationSchema = computed(() => {
     if (!showPhoto.value) {
         return object().shape({
-            photo_input: string().required('Photo is required')
+            photo_input: string().required('At least one photo is required')
         });
     } else {
         return {};
@@ -110,17 +117,24 @@ const { setFieldValue } = useForm({
     validationSchema: validationSchema
 });
 const photoInputModel = ref<string>('');
+const selectedFiles = ref<File[]>([]);
 
 // Functions
 function imageChange(data: UploadedImageInfo) {
-    setFieldValue('photo_input', data.src);
-    photoInputModel.value = data.src as string;
+    // Kept for the single-image (view/replace) path; multi-upload uses filesChange.
     emits('imageChange', data);
 }
 
+function filesChange(files: File[]) {
+    selectedFiles.value = files;
+    // Drive the required-field validation off the selected files in multi mode.
+    setFieldValue('photo_input', files.length ? 'selected' : '');
+    photoInputModel.value = files.length ? 'selected' : '';
+    emits('filesChange', files);
+}
+
 const onSubmit = () => {
-    console.log('submitting');
-    emits('submit', photoInputModel.value);
+    emits('submit', selectedFiles.value);
 }
 
 </script>

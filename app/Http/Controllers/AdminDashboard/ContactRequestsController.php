@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\ContactRequests\ReplyContactRequestRequest;
+use App\Mail\ContactRequestReply;
 use App\Models\ContactUsMessage;
 use App\Models\Masjid;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
 use Symfony\Component\HttpFoundation\Response;
 
 class ContactRequestsController extends Controller
@@ -99,6 +102,45 @@ class ContactRequestsController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Contact request deleted successfully'
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => \App\Support\Errors::publicMessage($e)
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Send an email reply to the contacter for the specified contact request.
+     */
+    public function reply(ReplyContactRequestRequest $request, $masjid_id, $message_id)
+    {
+        try {
+            $masjid = Masjid::findOrFail($masjid_id);
+
+            $message = ContactUsMessage::whereHas('contacter.mobileAppUser', function ($query) use ($masjid) {
+                $query->where('masjid_id', $masjid->id);
+            })
+            ->with(['contacter', 'reason'])
+            ->findOrFail($message_id);
+
+            $recipient = $message->contacter?->email;
+
+            if (!$recipient) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This contact request has no email address to reply to.'
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            Mail::to($recipient)->send(
+                new ContactRequestReply($masjid, $message, $request->validated()['reply'])
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Reply sent successfully to ' . $recipient
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([

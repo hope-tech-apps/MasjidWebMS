@@ -28,7 +28,17 @@ class MasjidGalleryController extends Controller
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
-            $masjid->addMediaFromRequest('image')->toMediaCollection('galleries');
+
+            // Support multiple images uploaded at once (key `images[]`) while staying
+            // backwards-compatible with a single `image` upload.
+            if ($request->hasFile('images')) {
+                $masjid->addMultipleMediaFromRequest(['images'])
+                    ->each(function ($fileAdder) {
+                        $fileAdder->toMediaCollection('galleries');
+                    });
+            } elseif ($request->hasFile('image')) {
+                $masjid->addMediaFromRequest('image')->toMediaCollection('galleries');
+            }
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::GALLERY);
 
