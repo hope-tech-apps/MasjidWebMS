@@ -28,6 +28,8 @@ class OnesignalInAppMessageServiceTest extends TestCase
 
     protected function setUp(): void
     {
+        parent::setUp();
+
         config(['database.default' => 'sqlite']);
         config(['database.connections.sqlite' => [
             'driver' => 'sqlite',
@@ -35,8 +37,6 @@ class OnesignalInAppMessageServiceTest extends TestCase
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]]);
-
-        parent::setUp();
 
         // Default to a fully configured OneSignal so each test only has to
         // override what it specifically exercises (e.g. the "missing env" case).

@@ -13,7 +13,11 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('mobile_app_features', function (Blueprint $table) {
-            $table->string('key')->nullable()->after('name')->collation('utf8mb4_bin');
+            $key = $table->string('key')->nullable()->after('name');
+            // MySQL-only collation; guard for sqlite portability (test suite).
+            if (DB::getDriverName() === 'mysql') {
+                $key->collation('utf8mb4_bin');
+            }
         });
 
         // Populate the key field based on the name field

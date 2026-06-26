@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -14,7 +15,11 @@ return new class extends Migration
         Schema::create('pages', function (Blueprint $table) {
             $table->id();
             $table->foreignId('masjid_id')->constrained('masjids')->onDelete('cascade');
-            $table->string('slug')->collation('utf8mb4_bin'); // e.g., 'home', 'donate', 'about-us'
+            $slug = $table->string('slug'); // e.g., 'home', 'donate', 'about-us'
+            // MySQL-only collation; guard for sqlite portability (test suite).
+            if (DB::getDriverName() === 'mysql') {
+                $slug->collation('utf8mb4_bin');
+            }
             $table->string('title'); // e.g., 'Home', 'Donate', 'About Us'
             $table->string('page_title')->nullable(); // Custom page title (can be different from title)
             $table->boolean('is_active')->default(true);

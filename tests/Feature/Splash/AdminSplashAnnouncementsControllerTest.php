@@ -37,6 +37,8 @@ class AdminSplashAnnouncementsControllerTest extends TestCase
 
     protected function setUp(): void
     {
+        parent::setUp();
+
         config(['database.default' => 'sqlite']);
         config(['database.connections.sqlite' => [
             'driver' => 'sqlite',
@@ -44,8 +46,6 @@ class AdminSplashAnnouncementsControllerTest extends TestCase
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]]);
-
-        parent::setUp();
 
         config([
             'onesignal.api_url' => 'https://onesignal.com/api/v1/notifications',

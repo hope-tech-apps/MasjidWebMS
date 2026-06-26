@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -13,7 +14,11 @@ return new class extends Migration
     {
         Schema::create('mobile_app_features', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->unique()->collation('utf8mb4_bin');
+            $name = $table->string('name')->unique();
+            // MySQL-only collation; guard for sqlite portability (test suite).
+            if (DB::getDriverName() === 'mysql') {
+                $name->collation('utf8mb4_bin');
+            }
             $table->timestamps();
         });
     }
