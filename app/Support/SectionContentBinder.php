@@ -44,6 +44,18 @@ class SectionContentBinder
     {
         $masjidId = $masjidId ?? $section->masjid_id;
 
+        // An explicit per-section bind directive (section.settings.bind) lets a
+        // GENERIC section type (image_text_grid / grid_cards used as the About
+        // story or the Mission/Vision cards) be sourced from MasjidAbout WITHOUT
+        // changing presentation — only the model-owned body text is overridden.
+        // Takes precedence over the section-type binding below.
+        switch (self::settingBind($section)) {
+            case 'about_text':
+                return self::bindAboutText($content, $masjidId);
+            case 'mission_vision_cards':
+                return self::bindMissionVisionCards($content, $masjidId);
+        }
+
         return match ($section->section_type) {
             SectionType::ABOUT_US       => self::bindAbout($content, $masjidId),
             SectionType::MISSION_VISION => self::bindMissionVision($content, $masjidId),
@@ -185,6 +197,59 @@ class SectionContentBinder
             ->pluck('name')
             ->values()
             ->all();
+
+        return $content;
+    }
+
+    protected static function settingBind(Section $section): ?string
+    {
+        $settings = $section->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true);
+        }
+
+        return is_array($settings) ? ($settings['bind'] ?? null) : null;
+    }
+
+    /**
+     * A generic image_text_grid section used as the About "story": only the body
+     * `text` is sourced from MasjidAbout.about. The section's title/subtitle/image
+     * (heading + logo) are presentation and kept, so the layout is unchanged —
+     * this only removes the duplicate copy of the About prose.
+     */
+    protected static function bindAboutText(array $content, ?int $masjidId): array
+    {
+        $about = self::loadAbout($masjidId);
+
+        if ($about && self::filled($about->about)) {
+            $content['text'] = $about->about;
+        }
+
+        return $content;
+    }
+
+    /**
+     * A generic grid_cards section used for Mission/Vision: each card's body
+     * `text` is sourced from the model by matching the card's title keyword.
+     * Card order, titles and icons are kept; only the prose is unified.
+     */
+    protected static function bindMissionVisionCards(array $content, ?int $masjidId): array
+    {
+        $about = self::loadAbout($masjidId);
+
+        if (!$about || empty($content['items']) || !is_array($content['items'])) {
+            return $content;
+        }
+
+        foreach ($content['items'] as &$item) {
+            $title = strtolower((string) ($item['title'] ?? ''));
+            if (str_contains($title, 'mission') && self::filled($about->mission)) {
+                $item['text'] = $about->mission;
+            } elseif (str_contains($title, 'vision') && self::filled($about->vision)) {
+                $item['text'] = $about->vision;
+            }
+        }
+        unset($item);
 
         return $content;
     }
