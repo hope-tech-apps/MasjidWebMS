@@ -47,7 +47,8 @@ class Page extends Model implements HasMedia
     public function sections()
     {
         return $this->belongsToMany(Section::class, 'page_section')
-            ->withPivot('order')
+            ->using(PageSection::class)
+            ->withPivot('order', 'platforms')
             ->withTimestamps()
             ->orderBy('page_section.order');
     }
@@ -58,7 +59,8 @@ class Page extends Model implements HasMedia
     public function activeSections()
     {
         return $this->belongsToMany(Section::class, 'page_section')
-            ->withPivot('order')
+            ->using(PageSection::class)
+            ->withPivot('order', 'platforms')
             ->withTimestamps()
             ->where('sections.is_active', true)
             ->orderBy('page_section.order');

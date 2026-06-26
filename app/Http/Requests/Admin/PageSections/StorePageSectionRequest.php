@@ -18,6 +18,13 @@ class StorePageSectionRequest extends BaseFormRequest
         if (is_string($this->input('settings'))) {
             $merge['settings'] = json_decode($this->input('settings'), true);
         }
+        // platforms arrives as a JSON-encoded string in the multipart FormData.
+        if (is_string($this->input('platforms'))) {
+            $decoded = json_decode($this->input('platforms'), true);
+            if (is_array($decoded)) {
+                $merge['platforms'] = $decoded;
+            }
+        }
         if ($this->has('is_active')) {
             $merge['is_active'] = filter_var($this->input('is_active'), FILTER_VALIDATE_BOOLEAN);
         }
@@ -42,6 +49,9 @@ class StorePageSectionRequest extends BaseFormRequest
                 },
             ],
             'order' => 'nullable|integer',
+            // Per-placement platform visibility. Null/absent => both (web+mobile).
+            'platforms' => 'nullable|array',
+            'platforms.*' => 'string|in:web,mobile',
             'settings' => 'nullable|array',
             'is_active' => 'nullable|boolean',
         ];

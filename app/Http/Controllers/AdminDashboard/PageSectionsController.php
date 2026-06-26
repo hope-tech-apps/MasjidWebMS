@@ -23,12 +23,17 @@ class PageSectionsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
 
-            // Get sections through pivot table with order
+            // Get sections through pivot table with order + platforms
             $sections = $page->sections()
-                ->withPivot('order')
+                ->withPivot('order', 'platforms')
                 ->orderBy('page_section.order')
                 ->get()
-                ->map(fn($section) => $this->serializeSection($section, $page->id, $section->pivot->order));
+                ->map(fn($section) => $this->serializeSection(
+                    $section,
+                    $page->id,
+                    $section->pivot->order,
+                    $section->pivot->platforms
+                ));
 
             return response()->json([
                 'status' => 'success',
@@ -71,13 +76,17 @@ class PageSectionsController extends Controller
             // Reload section to get updated content with image URLs
             $section->refresh();
 
-            // Attach section to page with order
+            // Attach section to page with order + platform visibility.
             $order = $validated['order'] ?? ($page->sections()->count() + 1);
-            $page->sections()->attach($section->id, ['order' => $order]);
+            $platforms = $validated['platforms'] ?? null;
+            $page->sections()->attach($section->id, [
+                'order' => $order,
+                'platforms' => $platforms,
+            ]);
 
             return response()->json([
                 'status' => 'success',
-                'data' => $this->serializeSection($section, $page->id, $order)
+                'data' => $this->serializeSection($section, $page->id, $order, $platforms)
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -95,11 +104,11 @@ class PageSectionsController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
-            $section = $page->sections()->withPivot('order')->findOrFail($section_id);
+            $section = $page->sections()->withPivot('order', 'platforms')->findOrFail($section_id);
 
             return response()->json([
                 'status' => 'success',
-                'data' => $this->serializeSection($section, $page->id, $section->pivot->order)
+                'data' => $this->serializeSection($section, $page->id, $section->pivot->order, $section->pivot->platforms)
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -117,7 +126,11 @@ class PageSectionsController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $page = $masjid->pages()->findOrFail($page_id);
-            $section = $page->sections()->withPivot('order')->findOrFail($section_id);
+            $section = $page->sections()->withPivot('order', 'platforms')->findOrFail($section_id);
+
+            // Capture the current placement values before we mutate the pivot.
+            $currentOrder = $section->pivot->order;
+            $currentPlatforms = $section->pivot->platforms;
 
             $validated = $request->validated();
 
@@ -128,9 +141,16 @@ class PageSectionsController extends Controller
                 $section->update($sectionData);
             }
 
-            // Update pivot order if provided
-            if (isset($validated['order'])) {
-                $page->sections()->updateExistingPivot($section->id, ['order' => $validated['order']]);
+            // Update pivot order/platforms if provided (placement-level fields).
+            $pivotUpdate = [];
+            if (array_key_exists('order', $validated)) {
+                $pivotUpdate['order'] = $validated['order'];
+            }
+            if (array_key_exists('platforms', $validated)) {
+                $pivotUpdate['platforms'] = $validated['platforms'];
+            }
+            if (!empty($pivotUpdate)) {
+                $page->sections()->updateExistingPivot($section->id, $pivotUpdate);
             }
 
             // Handle image uploads
@@ -142,11 +162,14 @@ class PageSectionsController extends Controller
                 $query->where('pages.id', $page_id);
             }]);
 
-            $order = $validated['order'] ?? $section->pivot->order;
+            $order = $validated['order'] ?? $currentOrder;
+            $platforms = array_key_exists('platforms', $validated)
+                ? $validated['platforms']
+                : $currentPlatforms;
 
             return response()->json([
                 'status' => 'success',
-                'data' => $this->serializeSection($section, $page->id, $order)
+                'data' => $this->serializeSection($section, $page->id, $order, $platforms)
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -205,15 +228,20 @@ class PageSectionsController extends Controller
                 ], Response::HTTP_BAD_REQUEST);
             }
 
-            // Attach section to page with order
-            $order = $request->input('order', $page->sections()->count() + 1);
-            $page->sections()->attach($sectionId, ['order' => $order]);
+            // Attach section to page with order + platform visibility.
+            $validated = $request->validated();
+            $order = $validated['order'] ?? ($page->sections()->count() + 1);
+            $platforms = $validated['platforms'] ?? null;
+            $page->sections()->attach($sectionId, [
+                'order' => $order,
+                'platforms' => $platforms,
+            ]);
 
-            $section = $page->sections()->withPivot('order')->findOrFail($sectionId);
+            $section = $page->sections()->withPivot('order', 'platforms')->findOrFail($sectionId);
 
             return response()->json([
                 'status' => 'success',
-                'data' => $this->serializeSection($section, $page->id, $section->pivot->order),
+                'data' => $this->serializeSection($section, $page->id, $section->pivot->order, $section->pivot->platforms),
                 'message' => 'Section attached to page successfully'
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
@@ -252,8 +280,10 @@ class PageSectionsController extends Controller
 
     /**
      * Build a uniform section payload for responses.
+     *
+     * @param  array<int,string>|string|null  $platforms  Raw pivot platforms (array, JSON string, or null).
      */
-    private function serializeSection(Section $section, int $pageId, ?int $order): array
+    private function serializeSection(Section $section, int $pageId, ?int $order, $platforms = null): array
     {
         return [
             'id' => $section->id,
@@ -263,12 +293,35 @@ class PageSectionsController extends Controller
             'title' => $section->title,
             'content' => $section->content,
             'order' => $order,
+            'platforms' => $this->normalizePlatforms($platforms),
             'is_active' => $section->is_active,
             'settings' => $section->settings,
             'uses_external_data' => $section->usesExternalData(),
             'created_at' => $section->created_at?->toISOString(),
             'updated_at' => $section->updated_at?->toISOString(),
         ];
+    }
+
+    /**
+     * Normalize a raw pivot `platforms` value to an array. Null/empty => both
+     * (web+mobile), matching Section::DEFAULT_PLATFORMS and the V1 serializer,
+     * so the admin UI never has to special-case a null placement.
+     *
+     * @param  array<int,string>|string|null  $platforms
+     * @return array<int,string>
+     */
+    private function normalizePlatforms($platforms): array
+    {
+        if (is_string($platforms)) {
+            $decoded = json_decode($platforms, true);
+            $platforms = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!is_array($platforms) || empty($platforms)) {
+            return Section::DEFAULT_PLATFORMS;
+        }
+
+        return array_values($platforms);
     }
 
     /**

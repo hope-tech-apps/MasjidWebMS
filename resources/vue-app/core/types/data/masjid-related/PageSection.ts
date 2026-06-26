@@ -23,6 +23,7 @@ export type PageSection = {
     title: string | null;
     content: SectionContent;
     order: number;
+    platforms?: string[]; // Placement-level visibility: ['web','mobile']
     is_active: boolean;
     settings: Record<string, any> | null;
     uses_external_data: boolean;

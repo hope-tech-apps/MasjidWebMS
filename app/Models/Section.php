@@ -29,7 +29,13 @@ class Section extends Model implements HasMedia
         'is_active' => 'boolean',
     ];
 
-    protected $appends = ['order'];
+    protected $appends = ['order', 'platforms'];
+
+    /**
+     * Default platform visibility when a placement leaves `platforms` null.
+     * Null on the pivot means "both" — exposed to clients as web + mobile.
+     */
+    public const DEFAULT_PLATFORMS = ['web', 'mobile'];
 
     /**
      * Get the masjid that owns the section
@@ -45,7 +51,8 @@ class Section extends Model implements HasMedia
     public function pages()
     {
         return $this->belongsToMany(Page::class, 'page_section')
-            ->withPivot('order')
+            ->using(PageSection::class)
+            ->withPivot('order', 'platforms')
             ->withTimestamps()
             ->orderBy('page_section.order');
     }
@@ -108,6 +115,30 @@ class Section extends Model implements HasMedia
     public function getOrderAttribute()
     {
         return $this->pivot?->order ?? null;
+    }
+
+    /**
+     * Get the platform-visibility array from the pivot (placement).
+     *
+     * The pivot stores a JSON array or null. Null means "both" — we normalize
+     * it to the default web+mobile set so consumers never have to special-case
+     * null. When the section is loaded outside a page context (no pivot), we
+     * return the default as well.
+     */
+    public function getPlatformsAttribute(): array
+    {
+        $raw = $this->pivot?->platforms ?? null;
+
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!is_array($raw) || empty($raw)) {
+            return self::DEFAULT_PLATFORMS;
+        }
+
+        return array_values($raw);
     }
 
     /**
