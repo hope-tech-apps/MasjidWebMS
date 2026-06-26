@@ -27,6 +27,8 @@ class MobileSplashAnnouncementsControllerTest extends TestCase
 
     protected function setUp(): void
     {
+        parent::setUp();
+
         config(['database.default' => 'sqlite']);
         config(['database.connections.sqlite' => [
             'driver' => 'sqlite',
@@ -34,8 +36,6 @@ class MobileSplashAnnouncementsControllerTest extends TestCase
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]]);
-
-        parent::setUp();
     }
 
     protected function makeMasjid(): Masjid

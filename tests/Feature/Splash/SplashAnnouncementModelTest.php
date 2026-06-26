@@ -28,6 +28,8 @@ class SplashAnnouncementModelTest extends TestCase
 
     protected function setUp(): void
     {
+        parent::setUp();
+
         // Force sqlite-in-memory regardless of phpunit.xml — tests in this
         // suite must never need a network DB to run.
         config(['database.default' => 'sqlite']);
@@ -37,8 +39,6 @@ class SplashAnnouncementModelTest extends TestCase
             'prefix' => '',
             'foreign_key_constraints' => true,
         ]]);
-
-        parent::setUp();
     }
 
     /** Create a Masjid row with the minimum columns the schema requires. */
