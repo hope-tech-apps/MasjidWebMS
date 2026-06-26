@@ -93,6 +93,33 @@
                                 min="1"
                             />
                         </div>
+
+                        <!-- Platforms for attach mode -->
+                        <div class="mb-3">
+                            <label class="form-label d-block">Show On Platforms</label>
+                            <div class="d-flex gap-4">
+                                <div class="form-check">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="attachPlatformWeb"
+                                        value="web"
+                                        v-model="attachPlatforms"
+                                    />
+                                    <label class="form-check-label" for="attachPlatformWeb">Web</label>
+                                </div>
+                                <div class="form-check">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="attachPlatformMobile"
+                                        value="mobile"
+                                        v-model="attachPlatforms"
+                                    />
+                                    <label class="form-check-label" for="attachPlatformMobile">Mobile</label>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Create New Section Mode -->
@@ -166,6 +193,36 @@
                                     </label>
                                 </div>
                             </div>
+                        </div>
+
+                        <!-- Platforms (placement-level visibility: web / mobile) -->
+                        <div class="mb-3">
+                            <label class="form-label d-block">Show On Platforms</label>
+                            <div class="d-flex gap-4">
+                                <div class="form-check">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="platformWeb"
+                                        value="web"
+                                        v-model="formData.platforms"
+                                    />
+                                    <label class="form-check-label" for="platformWeb">Web</label>
+                                </div>
+                                <div class="form-check">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="platformMobile"
+                                        value="mobile"
+                                        v-model="formData.platforms"
+                                    />
+                                    <label class="form-check-label" for="platformMobile">Mobile</label>
+                                </div>
+                            </div>
+                            <small class="form-text text-muted">
+                                Controls where this section is shown. Leave both checked to display everywhere.
+                            </small>
                         </div>
 
                         <!-- Dynamic Content Editor -->
@@ -263,11 +320,14 @@ const loading = ref(false);
 const mode = ref<'create' | 'attach'>('create');
 const selectedSectionId = ref<number | ''>('');
 const attachOrder = ref(1);
+const attachPlatforms = ref<string[]>(['web', 'mobile']);
 const formData = ref<any>({
     section_type: '',
     title: '',
     content: {},
     order: 1,
+    // Placement-level platform visibility. Default both (web + mobile).
+    platforms: ['web', 'mobile'],
     is_active: true,
     settings: {}
 });
@@ -316,6 +376,10 @@ onMounted(async () => {
             title: props.section.title || '',
             content: props.section.content || {},
             order: props.section.order,
+            // Fall back to both if the placement has no platforms set.
+            platforms: Array.isArray(props.section.platforms) && props.section.platforms.length
+                ? props.section.platforms
+                : ['web', 'mobile'],
             is_active: props.section.is_active,
             settings: props.section.settings || {}
         };
@@ -343,7 +407,7 @@ const handleAttach = async () => {
     loading.value = true;
 
     try {
-        await pagesStore.attachSectionToPage(props.pageId, selectedSectionId.value as number, attachOrder.value);
+        await pagesStore.attachSectionToPage(props.pageId, selectedSectionId.value as number, attachOrder.value, attachPlatforms.value);
 
         Swal.fire({
             icon: 'success',
@@ -418,6 +482,8 @@ const handleSubmit = async () => {
         formDataToSend.append('title', formData.value.title || '');
         formDataToSend.append('content', JSON.stringify(cleanedContent));
         formDataToSend.append('order', formData.value.order.toString());
+        // Placement-level platform visibility (JSON array of 'web'/'mobile').
+        formDataToSend.append('platforms', JSON.stringify(formData.value.platforms || []));
         formDataToSend.append('is_active', formData.value.is_active ? '1' : '0');
 
         if (formData.value.settings && Object.keys(formData.value.settings).length > 0) {

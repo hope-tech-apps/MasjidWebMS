@@ -350,12 +350,12 @@ export const usePagesStore = defineStore('pagesStore', () => {
     /**
      * Attach an existing section to a page
      */
-    async function attachSectionToPage(pageId: number, sectionId: number, order?: number): Promise<PageSection | null> {
+    async function attachSectionToPage(pageId: number, sectionId: number, order?: number, platforms?: string[]): Promise<PageSection | null> {
         if (masjidStore.masjid?.id) {
             try {
                 const res: AxiosResponse = await ApiService.post(
                     `/api/admin/masjids/${masjidStore.masjid.id}/pages/${pageId}/sections/attach`,
-                    { section_id: sectionId, order }
+                    { section_id: sectionId, order, platforms }
                 );
                 if (res.data?.status === 'success' && res.data?.data) {
                     return res.data.data;

@@ -16,10 +16,12 @@ class PageSection extends Pivot
         'page_id',
         'section_id',
         'order',
+        'platforms',
     ];
 
     protected $casts = [
         'order' => 'integer',
+        'platforms' => 'array',
     ];
 
     /**
