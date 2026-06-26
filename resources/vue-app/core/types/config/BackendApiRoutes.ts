@@ -36,6 +36,7 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/features/${string}/` |
     `/api/admin/masjids/${string}/iqama` |
     `/api/admin/masjids/${string}/jumaa` |
+    `/api/admin/masjids/${string}/theme` |
     `/api/admin/masjids/${string}/notifications` |
     `/api/admin/azkar` |
     `/api/admin/azkar/${string}/` |

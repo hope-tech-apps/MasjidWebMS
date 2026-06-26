@@ -7,6 +7,7 @@ use App\Http\Resources\Api\V1\AnnouncementResource;
 use App\Http\Resources\Api\V1\IqamaTimeSettingResource;
 use App\Http\Resources\Api\V1\PrayerCalculationSettingResource;
 use App\Http\Resources\Api\V1\ServiceResource;
+use App\Http\Resources\Api\V1\ThemeSettingResource;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Models\Service;
@@ -33,7 +34,8 @@ class SettingController extends Controller
             'jumaaSettings',
             'country',
             'city',
-            'prayerCalculationSettings'
+            'prayerCalculationSettings',
+            'themeSettings'
         )->findOrFail(request()->header('masjid-id'));
     }
     /**
@@ -59,6 +61,11 @@ class SettingController extends Controller
             ],
             'prayer_calculation' => $masjid->prayerCalculationSettings
                 ? new PrayerCalculationSettingResource($masjid->prayerCalculationSettings)
+                : null,
+            // Per-masjid color theme. null when no row → clients fall back to their
+            // built-in defaults. Same shape as the mobile surface (MasjidsController).
+            'theme' => $masjid->themeSettings
+                ? new ThemeSettingResource($masjid->themeSettings)
                 : null,
             'logo_url' => $masjid->logo->original_url ?? null,
             'header_logo_url' => $masjid->header_logo->original_url ?? null,

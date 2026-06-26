@@ -38,6 +38,12 @@
                         Jumaa Settings
                     </button>
                 </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="theme-settings-tab" data-bs-toggle="tab" data-bs-target="#theme-settings" type="button" role="tab" aria-controls="theme-settings" aria-selected="false">
+                        <i class="bi bi-palette me-2"></i>
+                        Theme
+                    </button>
+                </li>
             </ul>
 
             <!-- Tab panes -->
@@ -57,6 +63,9 @@
                 <div class="tab-pane fade" id="jumaa-settings" role="tabpanel" aria-labelledby="jumaa-settings-tab">
                     <JumaaSettingsView />
                 </div>
+                <div class="tab-pane fade" id="theme-settings" role="tabpanel" aria-labelledby="theme-settings-tab">
+                    <ThemeSettingsView />
+                </div>
             </div>
         </div>
     </div>
@@ -68,6 +77,7 @@ import GeneralSettingsView from './GeneralSettingsView.vue';
 import PrayerCalculationSettingsView from './PrayerCalculationSettingsView.vue';
 import IqamaTimeSettingsView from './IqamaTimeSettingsView.vue';
 import JumaaSettingsView from './JumaaSettingsView.vue';
+import ThemeSettingsView from './ThemeSettingsView.vue';
 </script>
 
 <style scoped>

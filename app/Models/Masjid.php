@@ -65,6 +65,10 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(PrayerCalculationSetting::class);
     }
 
+    public function themeSettings() {
+        return $this->hasOne(ThemeSetting::class);
+    }
+
     public function logo() {
         return $this->hasOne(Media::class, 'model_id')
             ->where('collection_name', 'logos')

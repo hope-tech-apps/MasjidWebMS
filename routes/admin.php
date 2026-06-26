@@ -28,6 +28,7 @@ use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
+use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\UsersController;
 use Illuminate\Support\Facades\Route;
 
@@ -177,6 +178,12 @@ Route::prefix('admin')->group(function () {
 
             // Masjid prayer calculation settings
             Route::prefix('{masjid_id}/prayer-calculation')->controller(PrayerCalculationSettingsController::class)->group((function () {
+                Route::get('/', 'index');
+                Route::post('/', 'save');
+            }));
+
+            // Masjid color theme settings
+            Route::prefix('{masjid_id}/theme')->controller(ThemeSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
