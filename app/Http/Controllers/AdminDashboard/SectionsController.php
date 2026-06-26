@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Sections\StoreSectionRequest;
 use App\Http\Requests\Admin\Sections\UpdateSectionRequest;
 use App\Models\Masjid;
 use App\Models\Section;
+use App\Support\MobileCache;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 
@@ -79,6 +80,8 @@ class SectionsController extends Controller
             // Reload section to get updated content with image URLs
             $section->refresh();
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $section
@@ -113,6 +116,8 @@ class SectionsController extends Controller
 
             $section->refresh();
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $section
@@ -137,6 +142,8 @@ class SectionsController extends Controller
 
             // Delete the section (will also remove pivot relationships due to cascade)
             $section->delete();
+
+            MobileCache::flushPages((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

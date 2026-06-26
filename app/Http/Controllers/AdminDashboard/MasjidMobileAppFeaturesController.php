@@ -34,6 +34,8 @@ class MasjidMobileAppFeaturesController extends Controller
             $masjidFeaturePivot->update(['is_available' => $request->boolean('is_available')]);
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::FEATURES);
+            // activated_features rides along in the V1 /settings payload.
+            MobileCache::flushSettings((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

@@ -41,7 +41,7 @@ class ContactReasonsController extends Controller
 
             $contactReason = ContactReason::create($contactReasonInputs);
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::CONTACT_REASONS);
+            MobileCache::flushContactReasons((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -82,7 +82,7 @@ class ContactReasonsController extends Controller
 
             $contactReason->update($contactReasonInputs);
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::CONTACT_REASONS);
+            MobileCache::flushContactReasons((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -104,7 +104,7 @@ class ContactReasonsController extends Controller
         $contactReason = ContactReason::findOrFail($contact_reason_id);
         $contactReason->forceDelete();
 
-        MobileCache::flushMasjid((int) $masjid_id, MobileCache::CONTACT_REASONS);
+        MobileCache::flushContactReasons((int) $masjid_id);
 
         return response()->json([
             'status' => 'success',

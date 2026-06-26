@@ -10,7 +10,9 @@ use App\Http\Resources\Api\V1\ServiceResource;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Models\Service;
+use App\Support\MobileCache;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class SettingController extends Controller
 {
@@ -42,9 +44,28 @@ class SettingController extends Controller
      */
     public function index(Request $request)
     {
+        $masjidId = (int) $request->header('masjid-id');
+
+        $payload = Cache::remember(
+            MobileCache::masjidKey($masjidId, MobileCache::V1_SETTINGS),
+            MobileCache::TTL_MEDIUM,
+            fn() => $this->buildPayload()
+        );
+
+        return response()->api(200, __('api.success'), $payload);
+    }
+
+    /**
+     * Assemble the (cacheable) /v1/settings payload. Kept separate from index()
+     * so the result can be memoized via MobileCache; admin edits to masjid
+     * details, branding, prayer-calc, features, about, donation, iqama or jumaa
+     * settings flush MobileCache::V1_SETTINGS so the next request rebuilds it.
+     */
+    private function buildPayload(): array
+    {
         $this->init();
         $masjid = $this->masjid;
-        return response()->api(200, __('api.success'), [
+        return [
             'masjid' => [
                 'id' => $masjid->id,
                 'name' => $masjid->name,
@@ -58,7 +79,7 @@ class SettingController extends Controller
                 'timezone' => $masjid->timezone,
             ],
             'prayer_calculation' => $masjid->prayerCalculationSettings
-                ? new PrayerCalculationSettingResource($masjid->prayerCalculationSettings)
+                ? (new PrayerCalculationSettingResource($masjid->prayerCalculationSettings))->resolve()
                 : null,
             'logo_url' => $masjid->logo->original_url ?? null,
             'header_logo_url' => $masjid->header_logo->original_url ?? null,
@@ -70,7 +91,7 @@ class SettingController extends Controller
             'social_media' =>  $masjid->socialMediaLinks->map(fn($item) => array(
                 'type' => $item->type,
                 'value' => $item->value
-            )),
+            ))->values()->all(),
             'activated_features' => $masjid->features->filter(function ($feature) {
                 return $feature->pivot->is_available == true || $feature->pivot->is_available == 1 || $feature->pivot->is_available == "1";
             })->map(function ($feature) {
@@ -80,17 +101,19 @@ class SettingController extends Controller
                     'name' => $feature->name,
                     'icon_url' => $feature->icon->original_url ?? null,
                 ];
-            })->values(),
-            'iqama_settings' => $masjid->iqamaTimeSettings ? new IqamaTimeSettingResource($masjid->iqamaTimeSettings) : null,
+            })->values()->all(),
+            'iqama_settings' => $masjid->iqamaTimeSettings
+                ? (new IqamaTimeSettingResource($masjid->iqamaTimeSettings))->resolve()
+                : null,
             'jumaa_settings' => $this->getJumaaSettings(),
-        ]);
+        ];
     }
 
     public function getJumaaSettings()
     {
         return isset($this->masjid->jumaaSettings) ? [
-            'athans' => collect($this->masjid->jumaaSettings->athans)->map(fn($item,$index) => array('time' => $item,'name' => 'Shift #'.($index+1), 'formatted_time' => date('h:i A', strtotime($item)))),
-        ]: (object) ['athans' => []];
+            'athans' => collect($this->masjid->jumaaSettings->athans)->map(fn($item,$index) => array('time' => $item,'name' => 'Shift #'.($index+1), 'formatted_time' => date('h:i A', strtotime($item))))->values()->all(),
+        ]: ['athans' => []];
     }
 
 }

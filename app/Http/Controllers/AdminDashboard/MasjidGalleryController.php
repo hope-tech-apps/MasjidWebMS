@@ -40,7 +40,7 @@ class MasjidGalleryController extends Controller
                 $masjid->addMediaFromRequest('image')->toMediaCollection('galleries');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::GALLERY);
+            MobileCache::flushGallery((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -61,7 +61,7 @@ class MasjidGalleryController extends Controller
             $media = $masjid->gallery()->findOrFail($media_id);
             $media->delete();
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::GALLERY);
+            MobileCache::flushGallery((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

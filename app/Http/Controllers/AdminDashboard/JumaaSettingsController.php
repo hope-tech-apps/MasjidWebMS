@@ -36,7 +36,9 @@ class JumaaSettingsController extends Controller
                 $jumaaSettings = $masjid->jumaaSettings()->create($payload);
             }
 
+            // Jumaa settings ride mobile /prayers/settings AND the V1 /settings payload.
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::PRAYERS_SETTINGS);
+            MobileCache::flushSettings((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

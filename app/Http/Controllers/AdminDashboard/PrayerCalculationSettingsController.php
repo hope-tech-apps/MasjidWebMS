@@ -41,6 +41,8 @@ class PrayerCalculationSettingsController extends Controller
             // Mobile clients consume calc params via /prayers/settings — invalidate so
             // they see the new method on next sync.
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::PRAYERS_SETTINGS);
+            // prayer_calculation also rides along in the V1 /settings payload.
+            MobileCache::flushSettings((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

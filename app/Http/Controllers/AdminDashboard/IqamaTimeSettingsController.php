@@ -66,7 +66,9 @@ class IqamaTimeSettingsController extends Controller
 
             $iqamaTime->load('timeRanges');
 
+            // Prayer settings ride mobile /prayers/settings AND the V1 /settings payload.
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::PRAYERS_SETTINGS);
+            MobileCache::flushSettings((int) $masjid_id);
 
             // Wake this masjid's devices in the background to re-pull the new
             // iqama times and re-arm their local notification schedule, so the

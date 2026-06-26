@@ -8,6 +8,8 @@ use App\Models\ContactUsAccount;
 use App\Models\ContactUsMessage;
 use App\Models\ContactUsReason;
 use App\Models\MobileAppUser;
+use App\Support\MobileCache;
+use Illuminate\Support\Facades\Cache;
 
 class ContactUsController extends Controller
 {
@@ -18,7 +20,14 @@ class ContactUsController extends Controller
      */
     public function reasonsList()
     {
-        $reasons = ContactUsReason::where('show_to_users', 1)->get();
+        // ContactUsReason is a GLOBAL dropdown (not masjid-scoped). Cache under a
+        // global key; storeMessage() flushes it when a new visible reason appears.
+        $reasons = Cache::remember(
+            MobileCache::globalKey(MobileCache::V1_CONTACT_REASONS),
+            MobileCache::TTL_LONG,
+            fn() => ContactUsReason::where('show_to_users', 1)->get()->toArray()
+        );
+
         return response()->api(200, __('api.success'), $reasons);
     }
 

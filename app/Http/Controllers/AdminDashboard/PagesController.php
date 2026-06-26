@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Pages\StorePageRequest;
 use App\Http\Requests\Admin\Pages\UpdatePageRequest;
 use App\Http\Resources\Api\V1\PageResource;
 use App\Models\Masjid;
+use App\Support\MobileCache;
 use Symfony\Component\HttpFoundation\Response;
 
 class PagesController extends Controller
@@ -66,6 +67,8 @@ class PagesController extends Controller
 
             $page->load('pageTitleBackgroundImage');
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => new PageResource($page)
@@ -119,6 +122,8 @@ class PagesController extends Controller
 
             $page->load('pageTitleBackgroundImage');
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => new PageResource($page)
@@ -146,6 +151,8 @@ class PagesController extends Controller
                 }
             }
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'message' => 'Pages reordered successfully'
@@ -168,6 +175,8 @@ class PagesController extends Controller
             $page = $masjid->pages()->findOrFail($page_id);
 
             $page->delete();
+
+            MobileCache::flushPages((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

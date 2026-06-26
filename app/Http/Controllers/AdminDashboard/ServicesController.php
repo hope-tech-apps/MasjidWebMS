@@ -44,7 +44,7 @@ class ServicesController extends Controller
                 $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+            MobileCache::flushServices((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -93,7 +93,7 @@ class ServicesController extends Controller
                 $service->addMediaFromRequest('icon')->toMediaCollection('servicesIcons');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+            MobileCache::flushServices((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -115,7 +115,7 @@ class ServicesController extends Controller
         $service = Service::findOrFail($service_id);
         $service->forceDelete();
 
-        MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+        MobileCache::flushServices((int) $masjid_id);
 
         return response()->json([
             'status' => 'success',
@@ -128,7 +128,7 @@ class ServicesController extends Controller
         $service = Service::findOrFail($service_id);
         $service->delete();
 
-        MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
+        MobileCache::flushServices((int) $masjid_id);
 
         return response()->json([
             'status' => 'success',

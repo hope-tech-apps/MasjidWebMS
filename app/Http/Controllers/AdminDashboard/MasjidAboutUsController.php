@@ -55,8 +55,10 @@ class MasjidAboutUsController extends Controller
                 $about->addMediaFromRequest('vision_icon')->toMediaCollection('visionIcons');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ABOUT);
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+            // Flushes mobile (about, show) AND web V1 (/v1/settings, /v1/home, and every
+            // cached page — the about_us + mission_vision sections bind to MasjidAbout
+            // via SectionContentBinder at read time). flushAbout() handles all of it.
+            MobileCache::flushAbout((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

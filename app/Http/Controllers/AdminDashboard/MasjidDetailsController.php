@@ -133,6 +133,9 @@ class MasjidDetailsController extends Controller
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+            // header/footer logos, copyright, store links + maps key surface in
+            // the V1 /settings payload.
+            MobileCache::flushSettings((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

@@ -41,7 +41,7 @@ class AnnouncementsController extends Controller
                 $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+            MobileCache::flushAnnouncements((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -83,7 +83,7 @@ class AnnouncementsController extends Controller
                 $announcement->addMediaFromRequest('image')->toMediaCollection('announcements');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+            MobileCache::flushAnnouncements((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -105,7 +105,7 @@ class AnnouncementsController extends Controller
         $announcement = Announcement::findOrFail($announcement_id);
         $announcement->forceDelete();
 
-        MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+        MobileCache::flushAnnouncements((int) $masjid_id);
 
         return response()->json([
             'status' => 'success',
@@ -118,7 +118,7 @@ class AnnouncementsController extends Controller
         $announcement = Announcement::findOrFail($announcement_id);
         $announcement->delete();
 
-        MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
+        MobileCache::flushAnnouncements((int) $masjid_id);
 
         return response()->json([
             'status' => 'success',

@@ -46,8 +46,10 @@ class MasjidDonationLinkController extends Controller
                 $donationLink->addMediaFromRequest('image')->toMediaCollection('donation_link');
             }
 
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::DONATION_LINK);
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+            // Flushes mobile (donation_link, show) AND web V1 (/v1/settings + every
+            // cached page — the donation section binds to DonationLink via
+            // SectionContentBinder at read time). flushDonation() handles all of it.
+            MobileCache::flushDonation((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

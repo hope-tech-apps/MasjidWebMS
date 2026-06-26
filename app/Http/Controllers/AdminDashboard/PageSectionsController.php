@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\PageSections\StorePageSectionRequest;
 use App\Http\Requests\Admin\PageSections\UpdatePageSectionRequest;
 use App\Models\Masjid;
 use App\Models\Section;
+use App\Support\MobileCache;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -83,6 +84,8 @@ class PageSectionsController extends Controller
                 'order' => $order,
                 'platforms' => $platforms,
             ]);
+
+            MobileCache::flushPages((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -167,6 +170,8 @@ class PageSectionsController extends Controller
                 ? $validated['platforms']
                 : $currentPlatforms;
 
+            MobileCache::flushPages((int) $masjid_id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $this->serializeSection($section, $page->id, $order, $platforms)
@@ -193,6 +198,8 @@ class PageSectionsController extends Controller
 
             // Detach section from page (doesn't delete the section itself)
             $page->sections()->detach($section_id);
+
+            MobileCache::flushPages((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',
@@ -238,6 +245,8 @@ class PageSectionsController extends Controller
             ]);
 
             $section = $page->sections()->withPivot('order', 'platforms')->findOrFail($sectionId);
+
+            MobileCache::flushPages((int) $masjid_id);
 
             return response()->json([
                 'status' => 'success',

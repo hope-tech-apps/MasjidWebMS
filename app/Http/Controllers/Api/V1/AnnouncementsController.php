@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\AnnouncementResource;
 use App\Models\Announcement;
+use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class AnnouncementsController extends Controller
 {
@@ -18,33 +20,46 @@ class AnnouncementsController extends Controller
      */
     public function index(Request $request)
     {
+        $masjidId = (int) $request->header('masjid-id');
         $perPage = $request->input('per_page', 3);
         $filterActive = $request->input('filter_active', false);
+        $page = (int) $request->input('page', 1);
 
-        $query = Announcement::filterByMasjid()
-            ->with('image')
-            ->latest();
+        // Versioned variant key includes per_page + filter_active + page + (when
+        // filtering) today's date, so the active-window result rolls over daily.
+        $today = Carbon::now()->format('Y-m-d');
+        $variant = "pp{$perPage}_p{$page}_fa" . ($filterActive ? "1_{$today}" : '0');
 
-        // Filter active announcements (within date range)
-        if ($filterActive) {
-            $today = Carbon::now()->format('Y-m-d');
-            $query->where('start_date', '<=', $today)
-                  ->where('end_date', '>=', $today);
-        }
+        $payload = Cache::remember(
+            MobileCache::masjidVariantKey($masjidId, MobileCache::V1_ANNOUNCEMENTS, $variant),
+            MobileCache::TTL_SHORT,
+            function () use ($perPage, $filterActive, $today) {
+                $query = Announcement::filterByMasjid()
+                    ->with('image')
+                    ->latest();
 
-        $announcements = $query->paginate($perPage);
+                if ($filterActive) {
+                    $query->where('start_date', '<=', $today)
+                          ->where('end_date', '>=', $today);
+                }
 
-        return response()->api(200, __('api.success'), [
-            'items' => AnnouncementResource::collection($announcements->items()),
-            'pagination' => [
-                'current_page' => $announcements->currentPage(),
-                'last_page' => $announcements->lastPage(),
-                'per_page' => $announcements->perPage(),
-                'total' => $announcements->total(),
-                'from' => $announcements->firstItem(),
-                'to' => $announcements->lastItem(),
-            ]
-        ]);
+                $announcements = $query->paginate($perPage);
+
+                return [
+                    'items' => AnnouncementResource::collection($announcements->items())->resolve(),
+                    'pagination' => [
+                        'current_page' => $announcements->currentPage(),
+                        'last_page' => $announcements->lastPage(),
+                        'per_page' => $announcements->perPage(),
+                        'total' => $announcements->total(),
+                        'from' => $announcements->firstItem(),
+                        'to' => $announcements->lastItem(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->api(200, __('api.success'), $payload);
     }
 
     /**
@@ -55,11 +70,19 @@ class AnnouncementsController extends Controller
      */
     public function show($id)
     {
-        $announcement = Announcement::filterByMasjid()
-            ->with('image')
-            ->findOrFail($id);
+        $masjidId = (int) request()->header('masjid-id');
 
-        return response()->api(200, __('api.success'), new AnnouncementResource($announcement));
+        $announcement = Cache::remember(
+            MobileCache::masjidVariantKey($masjidId, MobileCache::V1_ANNOUNCEMENTS, "show_{$id}"),
+            MobileCache::TTL_SHORT,
+            fn() => (new AnnouncementResource(
+                Announcement::filterByMasjid()
+                    ->with('image')
+                    ->findOrFail($id)
+            ))->resolve()
+        );
+
+        return response()->api(200, __('api.success'), $announcement);
     }
 }
 

@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\PageResource;
 use App\Models\Page;
+use App\Support\MobileCache;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class PagesController extends Controller
 {
@@ -18,13 +20,21 @@ class PagesController extends Controller
     public function index(Request $request)
     {
         try {
-            $pages = Page::filterByMasjid()
-                ->active()
-                ->with(['activeSections', 'pageTitleBackgroundImage'])
-                ->orderBy('order')
-                ->get();
+            $masjidId = (int) $request->header('masjid-id');
 
-            return response()->api(200, __('api.success'), PageResource::collection($pages));
+            $pages = Cache::remember(
+                MobileCache::masjidKey($masjidId, MobileCache::V1_PAGES_LIST),
+                MobileCache::TTL_MEDIUM,
+                fn() => PageResource::collection(
+                    Page::filterByMasjid()
+                        ->active()
+                        ->with(['activeSections', 'pageTitleBackgroundImage'])
+                        ->orderBy('order')
+                        ->get()
+                )->resolve()
+            );
+
+            return response()->api(200, __('api.success'), $pages);
 
         } catch (\Exception $e) {
             return response()->api(500, \App\Support\Errors::publicMessage($e), null);
@@ -40,13 +50,23 @@ class PagesController extends Controller
     public function show($slug)
     {
         try {
-            $page = Page::filterByMasjid()
-                ->active()
-                ->where('slug', $slug)
-                ->with(['activeSections', 'pageTitleBackgroundImage'])
-                ->firstOrFail();
+            $masjidId = (int) request()->header('masjid-id');
 
-            return response()->api(200, __('api.success'), new PageResource($page));
+            // Per-slug variant key; flushPages() bumps the V1_PAGE_SHOW version so
+            // every cached slug for this masjid is invalidated on a builder edit.
+            $page = Cache::remember(
+                MobileCache::masjidVariantKey($masjidId, MobileCache::V1_PAGE_SHOW, md5($slug)),
+                MobileCache::TTL_MEDIUM,
+                fn() => (new PageResource(
+                    Page::filterByMasjid()
+                        ->active()
+                        ->where('slug', $slug)
+                        ->with(['activeSections', 'pageTitleBackgroundImage'])
+                        ->firstOrFail()
+                ))->resolve()
+            );
+
+            return response()->api(200, __('api.success'), $page);
 
         } catch (\Exception $e) {
             return response()->api(404, __('api.page_not_found'), null);
@@ -62,22 +82,32 @@ class PagesController extends Controller
     public function menu(Request $request)
     {
         try {
-            $menuPages = Page::filterByMasjid()
-                ->active()
-                ->showInMenu()
-                ->orderBy('order')
-                ->get(['id', 'slug', 'title', 'order', 'show_as_button']);
+            $masjidId = (int) $request->header('masjid-id');
 
-            $buttonPages = Page::filterByMasjid()
-                ->active()
-                ->where('show_as_button', true)
-                ->orderBy('order')
-                ->get(['id', 'slug', 'title', 'order', 'show_as_button']);
+            $payload = Cache::remember(
+                MobileCache::masjidKey($masjidId, MobileCache::V1_PAGES_MENU),
+                MobileCache::TTL_MEDIUM,
+                function () {
+                    $menuPages = Page::filterByMasjid()
+                        ->active()
+                        ->showInMenu()
+                        ->orderBy('order')
+                        ->get(['id', 'slug', 'title', 'order', 'show_as_button']);
 
-            return response()->api(200, __('api.success'), [
-                'menu_items' => $menuPages,
-                'button_items' => $buttonPages,
-            ]);
+                    $buttonPages = Page::filterByMasjid()
+                        ->active()
+                        ->where('show_as_button', true)
+                        ->orderBy('order')
+                        ->get(['id', 'slug', 'title', 'order', 'show_as_button']);
+
+                    return [
+                        'menu_items' => $menuPages->toArray(),
+                        'button_items' => $buttonPages->toArray(),
+                    ];
+                }
+            );
+
+            return response()->api(200, __('api.success'), $payload);
 
         } catch (\Exception $e) {
             return response()->api(500, \App\Support\Errors::publicMessage($e), null);
