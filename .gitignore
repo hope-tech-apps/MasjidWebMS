@@ -21,3 +21,9 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+
+# Unified Operating Protocol — Tier-B working state (single-operator, high-churn). Kept local.
+/STATE.md
+/PLAN.md
+/NOTES.md
+/LOG.md
