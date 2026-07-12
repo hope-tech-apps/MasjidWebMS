@@ -60,6 +60,12 @@ class DonationFlowTest extends TestCase
             'services.stripe.currency' => 'usd',
         ]);
 
+        // Seed the additive spatie roles/permissions so the MasjidAdmins created
+        // by makeAdminFor() are bridged to the masjid-admin role (holding the CRM
+        // permission set). The new `permission:` gate on the admin funds/donations
+        // routes then passes for them, exactly as it will in production.
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
         $this->masjidA = $this->makeMasjid(['stripe_account_id' => 'acct_A', 'stripe_charges_enabled' => true]);
         $this->masjidB = $this->makeMasjid(['stripe_account_id' => 'acct_B', 'stripe_charges_enabled' => true]);
 

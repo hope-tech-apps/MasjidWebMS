@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Auth\LoginRequest;
 use App\Http\Requests\Admin\Auth\UpdateProfileRequest;
 use App\Models\User;
+use App\Services\TwoFactorService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,6 +19,35 @@ class AuthController extends Controller
         if (!Hash::check($request->input('password'), $user->password)) {
             return response()->json(['message' => 'invalid credentials']);
         }
+
+        // --- Additive 2FA gate (NO lockout) ------------------------------------
+        // Runs ONLY after valid email+password, and ONLY for users who have
+        // CONFIRMED enrollment. Unenrolled users skip this entirely and log in
+        // exactly as before — no extra step, no behavior change. A future
+        // `crm.require_admin_2fa` flag (default false) can enforce enrollment
+        // globally without another code change; it is intentionally NOT consulted
+        // here so today's behavior is preserved.
+        if ($user->hasTwoFactorEnabled()) {
+            $code = $request->input('two_factor_code');
+
+            // No code supplied -> return a clear challenge WITHOUT issuing a
+            // token, so the client can prompt for the code and retry.
+            if (empty($code)) {
+                return response()->json([
+                    'status' => 'two_factor_required',
+                    'message' => 'A two-factor authentication code is required to continue.',
+                ], Response::HTTP_OK);
+            }
+
+            // Wrong code -> deny before any token is created.
+            if (! app(TwoFactorService::class)->verify($user->two_factor_secret, $code)) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'The two-factor authentication code is invalid.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+        // -----------------------------------------------------------------------
 
         $token = $user->createToken('login-token')->plainTextToken;
 

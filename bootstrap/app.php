@@ -39,6 +39,13 @@ return Application::configure(basePath: dirname(__DIR__))
             // Binds TenantContext to a MasjidAdmin's masjid; no-op for SuperAdmin
             // and never applied to the public mobile routes. See routes/admin.php.
             'tenant' => ResolveMasjidTenant::class,
+            // Additive spatie/laravel-permission aliases — applied ONLY to the new
+            // CRM endpoints (see routes/admin.php). Its UnauthorizedException is an
+            // HttpException(403), so the JSON renderer below returns a clean 403.
+            // The legacy `admin`/`super` type checks above are untouched.
+            'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
+            'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
+            'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

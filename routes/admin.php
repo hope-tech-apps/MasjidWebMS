@@ -33,6 +33,7 @@ use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
+use App\Http\Controllers\AdminDashboard\TwoFactorController;
 use App\Http\Controllers\AdminDashboard\UsersController;
 use Illuminate\Support\Facades\Route;
 
@@ -48,6 +49,16 @@ Route::prefix('admin')->group(function () {
             Route::get('/user', [AuthController::class, 'user']);
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::post('/profile', [AuthController::class, 'updateProfile']);
+        });
+
+        // Admin self-service TOTP two-factor auth (enroll / confirm / disable).
+        // Behind the existing auth:sanctum + admin group; NOT permission-gated —
+        // any admin manages 2FA for their own account. Enrollment is opt-in and
+        // only takes effect at login once confirmed. See TwoFactorController.
+        Route::prefix('2fa')->controller(TwoFactorController::class)->group(function () {
+            Route::post('/enroll', 'enroll');
+            Route::post('/confirm', 'confirm');
+            Route::delete('/', 'disable');
         });
 
         Route::prefix('users')->middleware('super')->controller(UsersController::class)->group(function () {
@@ -256,12 +267,16 @@ Route::prefix('admin')->group(function () {
             // {masjid_id} param by convention, but isolation is enforced by the
             // `tenant` middleware + BelongsToMasjid trait — the controller never
             // hand-filters by masjid_id. See .claude/rules/tenant-scoping.md.
+            // Granular CRM authorization (spatie) is layered ONLY on these new
+            // endpoints, per-route. It runs AFTER auth:sanctum + admin + tenant,
+            // so a MasjidAdmin (bridged to the masjid-admin role, which holds the
+            // full CRM permission set) keeps the exact access they have today.
             Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
-                Route::get('/', 'index');
-                Route::post('/', 'store');
-                Route::get('/{contact_id}', 'show');
-                Route::put('/{contact_id}', 'update');
-                Route::delete('/{contact_id}', 'destroy');
+                Route::get('/', 'index')->middleware('permission:view contacts');
+                Route::post('/', 'store')->middleware('permission:manage contacts');
+                Route::get('/{contact_id}', 'show')->middleware('permission:view contacts');
+                Route::put('/{contact_id}', 'update')->middleware('permission:manage contacts');
+                Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
             });
 
             // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
@@ -270,19 +285,19 @@ Route::prefix('admin')->group(function () {
 
             // Stripe Connect (Standard account) onboarding for this masjid.
             Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
-                Route::post('/onboarding', 'startOnboarding');
-                Route::get('/return', 'onboardingReturn');
+                Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
+                Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
             });
 
             // Donation funds (designations).
             Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
-                Route::get('/', 'index');
-                Route::post('/', 'store');
+                Route::get('/', 'index')->middleware('permission:view donations');
+                Route::post('/', 'store')->middleware('permission:manage funds');
             });
 
             // Donations ledger (read-only for the spike).
             Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
-                Route::get('/', 'index');
+                Route::get('/', 'index')->middleware('permission:view donations');
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);

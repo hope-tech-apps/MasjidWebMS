@@ -54,6 +54,23 @@ tenant isolation is app-layer only.
   Convention: `.claude/rules/stripe-payments.md`. DEFERRED: refunds, disputes,
   recurring/dunning, payout reconciliation, receipt PDF rendering, admin Vue
   screens.
+- **Granular permissions (Spatie) + admin 2FA — ADDITIVE, bridged** (same branch,
+  local only). `spatie/laravel-permission ^6.9` layered ALONGSIDE `users.type`
+  (NOT a replacement): `type`→role bridge (`User::TYPE_ROLE_MAP` +
+  `syncRoleFromType()` kept in sync by `UserObserver`, backfilled by
+  `RolesAndPermissionsSeeder`). Granular CRM permissions gate ONLY the new
+  contacts/funds/donations/connect endpoints via the spatie `permission:`
+  middleware (per-route, after `auth:sanctum`+`admin`+`tenant`). The `admin`/`super`
+  middleware and all `type` checks are UNCHANGED. Admin TOTP 2FA
+  (`pragmarx/google2fa` + `bacon/bacon-qr-code`, via `App\Services\TwoFactorService`
+  — NOT Fortify): enroll/confirm/disable endpoints + nullable **encrypted**
+  `two_factor_secret`/`two_factor_confirmed_at` on `users`. Login requires a code
+  ONLY for confirmed-enrolled admins — everyone else logs in exactly as before
+  (no lockout; `config('crm.require_admin_2fa')` default false, not enforced yet).
+  **Run `composer update` on the server** (no PHP/composer locally; `composer.lock`
+  /vendor not updated). Tests (not run — no PHP): `tests/Feature/RolePermissionBridgeTest.php`,
+  `tests/Feature/TwoFactorTest.php`; `ContactCrudTest`/`DonationFlowTest` now seed
+  roles in setUp. Convention: `.claude/rules/auth-permissions.md`.
 - Older backend state (theming, content unification, V1 caching deploy hold)
   is tracked in `STATE.md`.
 

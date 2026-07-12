@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Events\SendMasjidNotificationEvent;
 use App\Listeners\SentMasjidNotificationLitener;
+use App\Models\User;
+use App\Observers\UserObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
@@ -42,6 +44,10 @@ class AppServiceProvider extends ServiceProvider
             SendMasjidNotificationEvent::class,
             SentMasjidNotificationLitener::class,
         );
+
+        // Keep the additive Spatie role mirrored to the legacy `users.type` on
+        // every user save. See App\Observers\UserObserver + User::syncRoleFromType().
+        User::observe(UserObserver::class);
 
         $this->responseMacro();
         $this->configureRateLimiters();

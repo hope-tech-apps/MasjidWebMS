@@ -47,6 +47,13 @@ class ContactCrudTest extends TestCase
             'foreign_key_constraints' => true,
         ]]);
 
+        // Seed the additive spatie roles/permissions BEFORE creating the admins,
+        // so each MasjidAdmin is bridged to the masjid-admin role (with the full
+        // CRM permission set) on save — exactly as production does after the
+        // seeder runs. The new `permission:` gate on these routes then passes for
+        // them, preserving the access they have today.
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
         $this->masjidA = $this->makeMasjid();
         $this->masjidB = $this->makeMasjid();
 
