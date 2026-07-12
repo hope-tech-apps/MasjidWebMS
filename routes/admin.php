@@ -305,15 +305,23 @@ Route::prefix('admin')->group(function () {
                     Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
                 });
 
-                // Donation funds (designations).
+                // Donation funds (designations). Viewing is gated by
+                // `view donations` (funds are the read side of the money path);
+                // any mutation requires `manage funds`.
                 Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::post('/', 'store')->middleware('permission:manage funds');
+                    Route::get('/{fund_id}', 'show')->middleware('permission:view donations');
+                    Route::put('/{fund_id}', 'update')->middleware('permission:manage funds');
+                    Route::delete('/{fund_id}', 'destroy')->middleware('permission:manage funds');
                 });
 
-                // Donations ledger (read-only for the spike).
+                // Donations ledger — READ-ONLY. Rows are created and advanced
+                // exclusively by Stripe webhooks, so there is deliberately NO
+                // store / update / destroy route here.
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
                 });
             });
 

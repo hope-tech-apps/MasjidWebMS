@@ -122,6 +122,28 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/ContactsView.vue")
             },
             {
+                path: 'funds',
+                name: 'masjid.funds',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Donation Funds',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/FundsView.vue")
+            },
+            {
+                path: 'donations',
+                name: 'masjid.donations',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Donations',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/DonationsView.vue")
+            },
+            {
                 path: 'mobile-features',
                 name: 'masjid.mobileFeatures',
                 meta: {

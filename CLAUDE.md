@@ -86,6 +86,28 @@ tenant isolation is app-layer only.
   run — no PHP): `tests/Feature/CrmFeatureGateTest.php`; `ContactCrudTest`/
   `DonationFlowTest` now enable `crm_enabled` in setup. Convention:
   `.claude/rules/auth-permissions.md`.
+- **CRM Phase 1 — Funds + Donations admin UI** (branch
+  `feat/crm-phase1-funds-donations-ui`, off `feat/crm-phase0-tenancy`, local only —
+  not pushed). Completes `FundsController` (adds `show`/`update`/`destroy`,
+  mirroring `ContactsController`; `destroy` is a HARD delete wrapped in try/catch
+  because funds are not soft-deleted and `donations.fund_id` is a non-cascading
+  FK) + `UpdateFundRequest` (BaseFormRequest, same rules as StoreFundRequest);
+  routes `GET/PUT/DELETE .../funds/{fund_id}` (`view donations` to read,
+  `manage funds` to mutate). `DonationsController` adds `show` (donation +
+  eager-loaded fund + receipt) and a `?fund_id=` filter on `index`; donations
+  stay READ-ONLY (no store/update/destroy — Stripe webhooks own writes). Vue SPA:
+  `FundsView.vue` + `fundsStore.ts` (flat list — funds index returns a plain
+  array, not paginated; create/edit modal with type select + receiptable/active
+  switches, delete-confirm) and `DonationsView.vue` + `donationsStore.ts`
+  (paginated list, status + fund filters, detail modal showing intended/charged/
+  net/fees, donor-covered-fees, Stripe ids, and the linked receipt; amounts
+  formatted from integer cents via `Intl.NumberFormat`). Router entries
+  `/masjid/funds` + `/masjid/donations` (both `requiresCrm`), two `requiresCrm`
+  sidebar items, plus `SystemRoutes`/`BackendApiRoutes`/`Fund`/`Donation` types.
+  Both screens are CRM-gated (`crm` middleware) + tenant-scoped (BelongsToMasjid,
+  no hand-filtering) + permission-gated. Tests (not run — no PHP):
+  `tests/Feature/FundCrudTest.php`, `tests/Feature/DonationReadTest.php`. Vue
+  build green (`artifacts/vue_build_20260712_103122.log`).
 - Older backend state (theming, content unification, V1 caching deploy hold)
   is tracked in `STATE.md`.
 
