@@ -36,7 +36,10 @@ Route::prefix('admin')->group(function () {
     // Security: brute-force defense — 5 attempts per minute keyed on email+IP.
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
-    Route::middleware(['auth:sanctum', 'admin'])->group(function () {
+    // `tenant` (ResolveMasjidTenant) runs after auth: it binds TenantContext to
+    // a MasjidAdmin's masjid and is a no-op for SuperAdmin. Only BelongsToMasjid
+    // models consult that context, so existing endpoints are unaffected today.
+    Route::middleware(['auth:sanctum', 'admin', 'tenant'])->group(function () {
         Route::controller(AuthController::class)->group(function () {
             Route::get('/user', [AuthController::class, 'user']);
             Route::post('/logout', [AuthController::class, 'logout']);

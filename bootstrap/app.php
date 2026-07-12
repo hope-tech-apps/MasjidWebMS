@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
 use App\Http\Middleware\UserAdminMiddleware;
@@ -35,6 +36,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'super' => SuperAdminMiddleware::class,
             'admin' => UserAdminMiddleware::class,
+            // Binds TenantContext to a MasjidAdmin's masjid; no-op for SuperAdmin
+            // and never applied to the public mobile routes. See routes/admin.php.
+            'tenant' => ResolveMasjidTenant::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

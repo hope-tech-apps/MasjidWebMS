@@ -16,7 +16,10 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // Request-scoped tenant holder shared by ResolveMasjidTenant middleware
+        // and every BelongsToMasjid model. No Octane here, so singleton == per
+        // request. See App\Support\TenantContext.
+        $this->app->singleton(\App\Support\TenantContext::class);
     }
 
     public function boot(): void
