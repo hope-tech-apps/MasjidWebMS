@@ -9,6 +9,7 @@ use App\Http\Controllers\Mobile\HadithsController;
 use App\Http\Controllers\Mobile\MasjidsController;
 use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
+use App\Http\Controllers\Mobile\NotificationsController;
 use App\Http\Controllers\Mobile\PrayersController;
 use App\Http\Controllers\Mobile\AppConfigController;
 use App\Http\Controllers\Mobile\ServicesController;
@@ -55,6 +56,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         Route::get('/{masjid_id}/prayers/settings', [PrayersController::class, 'prayersSettings']);
         Route::get('/{masjid_id}/announcements', [AnnouncementsController::class, 'index']);
         Route::get('/{masjid_id}/events', [EventsController::class, 'index']);
+        Route::get('/{masjid_id}/notifications', [NotificationsController::class, 'index']);
         Route::get('/{masjid_id}/services', [ServicesController::class, 'index']);
         Route::get('/{masjid_id}/contact-reasons', [ContactReasonsController::class, 'index']);
 
