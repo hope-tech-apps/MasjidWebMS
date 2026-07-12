@@ -61,6 +61,10 @@ class RolePermissionBridgeTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // This suite exercises the permission-gated CRM endpoints, so CRM must
+            // be enabled for the masjid — the SuperAdmin feature gate is verified
+            // separately in CrmFeatureGateTest.
+            'crm_enabled' => true,
         ]);
     }
 
