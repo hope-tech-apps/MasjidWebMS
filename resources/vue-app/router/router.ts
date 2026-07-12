@@ -57,7 +57,15 @@ router.beforeEach((to, from, next) => {
             if (Array.isArray(to.meta?.allowedUsers)) {
                 if (authStore.user) {
                     if (to.meta.allowedUsers.includes(authStore.user.type)) {
-                        next();
+                        // CRM-gated routes: only hard-block once the masjid payload is
+                        // loaded and crm_enabled is explicitly false. While the masjid is
+                        // still null/undefined (e.g. on first load / hard refresh) we let
+                        // navigation through to avoid a race that would break the route.
+                        if (to.meta.requiresCrm && masjidStore.masjid && !masjidStore.masjid.crm_enabled) {
+                            next('/auth/401');
+                        } else {
+                            next();
+                        }
                     } else {
                         next('/auth/401');
                     }

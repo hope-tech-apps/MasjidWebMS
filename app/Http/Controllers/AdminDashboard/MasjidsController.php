@@ -11,6 +11,7 @@ use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
 use App\Support\MobileCache;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -110,6 +111,37 @@ class MasjidsController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $masjid
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only: flip the per-masjid CRM feature gate (masjids.crm_enabled).
+     *
+     * This is the lever that turns the `crm` gate on/off, so the route is
+     * deliberately NOT behind that gate — a SuperAdmin needs it to turn the CRM
+     * on. Super-ness is enforced here with abort(403) rather than the shared
+     * `super` middleware: that middleware answers non-super callers with 401, but
+     * the CRM-access contract is a clean 403 "forbidden" for anyone who isn't a
+     * SuperAdmin (a MasjidAdmin must never enable the CRM on their own masjid).
+     */
+    public function setCrmAccess(Request $request, string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change CRM access.');
+        }
+
+        $validated = $request->validate([
+            'enabled' => ['required', 'boolean'],
+        ]);
+
+        $masjid = Masjid::findOrFail($masjid_id);
+        $masjid->crm_enabled = $validated['enabled'];
+        $masjid->updated_by = Auth::id();
+        $masjid->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid,
         ], Response::HTTP_OK);
     }
 

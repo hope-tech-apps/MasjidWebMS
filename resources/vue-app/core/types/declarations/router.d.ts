@@ -7,5 +7,6 @@ declare module 'vue-router' {
         allowedUsers?: Array<UserType>;
         pageTitle?: string;
         dashboardType?: 'masjid' | 'super';
+        requiresCrm?: boolean;
     }
 }

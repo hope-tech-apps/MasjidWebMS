@@ -116,7 +116,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Member Directory'
+                    pageTitle: 'Member Directory',
+                    requiresCrm: true
                 },
                 component: () => import("@/views/dashboard/ContactsView.vue")
             },

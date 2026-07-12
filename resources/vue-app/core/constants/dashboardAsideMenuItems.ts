@@ -166,7 +166,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>
                 `,
         to: '/masjid/contacts',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
     },
     {
         title: "Mobile App Features",

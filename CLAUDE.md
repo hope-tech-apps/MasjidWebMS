@@ -71,6 +71,21 @@ tenant isolation is app-layer only.
   /vendor not updated). Tests (not run — no PHP): `tests/Feature/RolePermissionBridgeTest.php`,
   `tests/Feature/TwoFactorTest.php`; `ContactCrudTest`/`DonationFlowTest` now seed
   roles in setUp. Convention: `.claude/rules/auth-permissions.md`.
+- **SuperAdmin CRM feature gate — `crm_enabled` default off** (same branch, local
+  only). Adds `masjids.crm_enabled` (boolean, **default false**; fillable + cast;
+  auto-served in the admin masjid payload). New `crm` middleware
+  (`EnsureCrmEnabled`) 403s the CRM route group (contacts/funds/donations/connect)
+  unless the tenant masjid's `crm_enabled` is true — layered on top of the
+  `permission:` gates, so a permissioned MasjidAdmin still gets 403 when off.
+  SuperAdmin-only toggle `PATCH /api/admin/masjids/{id}/crm-access {enabled}` →
+  `MasjidsController::setCrmAccess` (super enforced via `abort(403)`, not the
+  `super` middleware's 401). **NOT gated:** 2FA, the toggle itself, any
+  pre-existing endpoint. Vue SPA hides the "Member Directory" sidebar item +
+  guards `/masjid/contacts` unless `masjidStore.masjid.crm_enabled`, and adds a
+  SuperAdmin CRM switch on `MasjidDetailsView.vue`. Vue build green. Tests (not
+  run — no PHP): `tests/Feature/CrmFeatureGateTest.php`; `ContactCrudTest`/
+  `DonationFlowTest` now enable `crm_enabled` in setup. Convention:
+  `.claude/rules/auth-permissions.md`.
 - Older backend state (theming, content unification, V1 caching deploy hold)
   is tracked in `STATE.md`.
 

@@ -381,6 +381,11 @@ class DonationFlowTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // CRM is OFF by default; the admin funds/donations assertions here
+            // assume access, so enable the gate for the test masjid. The public
+            // mobile checkout path is not CRM-gated. Default-off + gate behavior
+            // is covered separately in CrmFeatureGateTest.
+            'crm_enabled' => true,
         ], $overrides));
     }
 

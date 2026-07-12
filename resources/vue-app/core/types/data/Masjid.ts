@@ -33,6 +33,7 @@ export type Masjid = {
     country: Country | null;
     city: City | null;
     website_link: string;
+    crm_enabled: boolean;
 }
 
 export const masjid: Masjid = {
@@ -61,5 +62,6 @@ export const masjid: Masjid = {
     footer_logo: null,
     country: null,
     city: null,
-    website_link: ''
+    website_link: '',
+    crm_enabled: false
 }

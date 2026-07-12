@@ -75,6 +75,23 @@
                 </div>
             </div>
 
+            <!-- CRM Access (SuperAdmin-only screen; toggles the per-masjid CRM gate) -->
+            <div class="d-flex flex-column gap-2 w-100">
+                <span class="fs-5 fw-semibold">
+                    CRM Access
+                </span>
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <span class="fs-6 fw-semibold text-muted">
+                        Enable the CRM (Member Directory, funds &amp; donations) for this masjid.
+                    </span>
+                    <div class="form-check form-switch m-0">
+                        <input class="form-check-input bg-danger" type="checkbox"
+                            @click.prevent="toggleCrmAccess(!masjid.crm_enabled)"
+                            :checked="masjid.crm_enabled ? true : false" />
+                    </div>
+                </div>
+            </div>
+
         </div>
     </DataItemContainer>
 </template>
@@ -217,6 +234,52 @@ const archiveMasjid = async () => {
         })
 }
 
+const toggleCrmAccess = (enabled: boolean) => {
+    QSwal.fire("Question", "Are you sure that you want to change CRM access for this masjid?", 'question')
+        .then(async (result) => {
+            if (result.isConfirmed) {
+
+                let swalInstance: SweetAlertOptions = {
+                    title: "Info",
+                    text: "Nothing",
+                    icon: "info"
+                };
+
+                if (masjid.value?.id) {
+
+                    const apiRequestData = new URLSearchParams();
+                    apiRequestData.append('enabled', enabled ? "1" : "0");
+
+                    await ApiService.patch(`/api/admin/masjids/${masjid.value.id}/crm-access`, apiRequestData)
+                        .then(res => {
+                            if (res.data.status === 'success') {
+                                // Reflect the new gate value on the locally loaded masjid.
+                                if (masjid.value) masjid.value.crm_enabled = enabled;
+                                swalInstance.title = "Success";
+                                swalInstance.text = "CRM access updated successfully.";
+                                swalInstance.icon = "success";
+                            } else {
+                                swalInstance.title = "Sorry";
+                                swalInstance.text = getMessageFromObj(res);
+                                swalInstance.icon = "warning";
+                            }
+                        })
+                        .catch((e: AxiosError<BackendResponseData>) => {
+                            console.log(e);
+                            swalInstance.title = e.message;
+                            swalInstance.text = getMessageFromObj(e);
+                            swalInstance.icon = "error";
+                        })
+                        .finally(() => {
+                            MSwal.fire(swalInstance);
+                        });
+                } else {
+                    MSwal.fire('Sorry', 'The masjid ID missed.', 'error');
+                }
+            }
+        })
+}
+
 </script>
 
 <style scoped>
@@ -258,5 +321,19 @@ const archiveMasjid = async () => {
     .info-attribute {
         width: 100%;
     }
+}
+
+.form-check-input,
+.form-check-input:focus {
+    width: 4rem;
+    height: 2rem;
+    border: none;
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23F3F8FB'/%3e%3ctext x='0' y='0.1' font-size='2.5' font-weight='bold' text-anchor='middle' alignment-baseline='middle' fill='black' style='font-family:Poppins, sans-serif;'%3eOff%3c/text%3e%3c/svg%3e");
+}
+
+.form-check-input:checked,
+.form-check-input:checked:focus {
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23F3F8FB'/%3e%3ctext x='0' y='0.1' font-size='2.5' font-weight='bold' text-anchor='middle' alignment-baseline='middle' fill='black' style='font-family:Poppins, sans-serif;'%3eOn%3c/text%3e%3c/svg%3e");
+    background-color: var(--cgreen) !important;
 }
 </style>

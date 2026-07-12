@@ -78,6 +78,10 @@ class ContactCrudTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // CRM is OFF by default; these end-to-end contact tests assume access,
+            // so enable the gate for the test masjid. The default-off + gate
+            // behavior is covered separately in CrmFeatureGateTest.
+            'crm_enabled' => true,
         ]);
     }
 

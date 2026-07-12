@@ -52,6 +52,12 @@ class ApiService {
         return ApiService.VueApp.axios.put(resource, data);
     }
 
+    // Patch
+    public static patch(resource: BackendApiRoute, data: any, contentType: HeaderContentType = "url"): Promise<AxiosResponse> {
+        ApiService.setHeaderContentType(contentType);
+        return ApiService.VueApp.axios.patch(resource, data);
+    }
+
     // Delete
     public static delete(resource: BackendApiRoute): Promise<AxiosResponse> {
         return ApiService.VueApp.axios.delete(resource);

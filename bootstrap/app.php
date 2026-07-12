@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureCrmEnabled;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
@@ -39,6 +40,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // Binds TenantContext to a MasjidAdmin's masjid; no-op for SuperAdmin
             // and never applied to the public mobile routes. See routes/admin.php.
             'tenant' => ResolveMasjidTenant::class,
+            // Per-masjid CRM feature gate. Applied ONLY to the CRM route group
+            // (contacts/funds/donations/connect); 403s unless masjids.crm_enabled
+            // is true. Runs after `tenant`, so the target masjid is resolved. The
+            // SuperAdmin crm-access toggle and the 2FA endpoints are NOT gated.
+            'crm' => EnsureCrmEnabled::class,
             // Additive spatie/laravel-permission aliases — applied ONLY to the new
             // CRM endpoints (see routes/admin.php). Its UnauthorizedException is an
             // HttpException(403), so the JSON renderer below returns a clean 403.

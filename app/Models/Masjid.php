@@ -33,6 +33,7 @@ class Masjid extends Model implements HasMedia
         'stripe_account_id',
         'stripe_charges_enabled',
         'stripe_payouts_enabled',
+        'crm_enabled',
         'created_by',
         'updated_by',
         'deleted_by'
@@ -45,6 +46,8 @@ class Masjid extends Model implements HasMedia
         return [
             'stripe_charges_enabled' => 'boolean',
             'stripe_payouts_enabled' => 'boolean',
+            // Per-masjid CRM feature gate; default false = CRM off (SuperAdmin-only toggle).
+            'crm_enabled' => 'boolean',
         ];
     }
 

@@ -263,41 +263,58 @@ Route::prefix('admin')->group(function () {
                 Route::delete('/{contact_reason_id}', 'destroy');
             });
 
-            // Masjid member directory (CRM congregant contacts). Keeps the
-            // {masjid_id} param by convention, but isolation is enforced by the
-            // `tenant` middleware + BelongsToMasjid trait — the controller never
-            // hand-filters by masjid_id. See .claude/rules/tenant-scoping.md.
-            // Granular CRM authorization (spatie) is layered ONLY on these new
-            // endpoints, per-route. It runs AFTER auth:sanctum + admin + tenant,
-            // so a MasjidAdmin (bridged to the masjid-admin role, which holds the
-            // full CRM permission set) keeps the exact access they have today.
-            Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
-                Route::get('/', 'index')->middleware('permission:view contacts');
-                Route::post('/', 'store')->middleware('permission:manage contacts');
-                Route::get('/{contact_id}', 'show')->middleware('permission:view contacts');
-                Route::put('/{contact_id}', 'update')->middleware('permission:manage contacts');
-                Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
-            });
+            // SuperAdmin-only switch for the per-masjid CRM feature gate. The whole
+            // CRM (member directory + money path) is OFF by default
+            // (masjids.crm_enabled defaults to false) and only a SuperAdmin can
+            // flip it — enforced in MasjidsController::setCrmAccess (abort 403 for
+            // anyone non-super). Deliberately OUTSIDE the `crm` group below: a
+            // SuperAdmin needs this to turn the gate ON. See
+            // .claude/rules/auth-permissions.md.
+            Route::patch('{masjid_id}/crm-access', [MasjidsController::class, 'setCrmAccess']);
 
-            // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
-            // middleware + BelongsToMasjid — controllers never hand-filter by
-            // masjid_id. See .claude/rules/stripe-payments.md.
+            // The CRM route group — every endpoint gated by `crm`
+            // (EnsureCrmEnabled): 403 unless this masjid's crm_enabled is true.
+            // Layered on TOP of the per-route `permission:` checks; never touches
+            // the 2FA endpoints, the crm-access toggle above, or any pre-existing
+            // route.
+            Route::middleware('crm')->group(function () {
 
-            // Stripe Connect (Standard account) onboarding for this masjid.
-            Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
-                Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
-                Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
-            });
+                // Masjid member directory (CRM congregant contacts). Keeps the
+                // {masjid_id} param by convention, but isolation is enforced by the
+                // `tenant` middleware + BelongsToMasjid trait — the controller never
+                // hand-filters by masjid_id. See .claude/rules/tenant-scoping.md.
+                // Granular CRM authorization (spatie) is layered ONLY on these new
+                // endpoints, per-route. It runs AFTER auth:sanctum + admin + tenant,
+                // so a MasjidAdmin (bridged to the masjid-admin role, which holds the
+                // full CRM permission set) keeps the exact access they have today.
+                Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{contact_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{contact_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
+                });
 
-            // Donation funds (designations).
-            Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
-                Route::get('/', 'index')->middleware('permission:view donations');
-                Route::post('/', 'store')->middleware('permission:manage funds');
-            });
+                // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
+                // middleware + BelongsToMasjid — controllers never hand-filter by
+                // masjid_id. See .claude/rules/stripe-payments.md.
 
-            // Donations ledger (read-only for the spike).
-            Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
-                Route::get('/', 'index')->middleware('permission:view donations');
+                // Stripe Connect (Standard account) onboarding for this masjid.
+                Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
+                    Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
+                    Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
+                });
+
+                // Donation funds (designations).
+                Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::post('/', 'store')->middleware('permission:manage funds');
+                });
+
+                // Donations ledger (read-only for the spike).
+                Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                });
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);
