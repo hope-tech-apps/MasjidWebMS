@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Masjids\SetCrmAccessRequest;
 use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
 use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
 use App\Models\IqamaTimeSetting;
@@ -124,18 +125,14 @@ class MasjidsController extends Controller
      * the CRM-access contract is a clean 403 "forbidden" for anyone who isn't a
      * SuperAdmin (a MasjidAdmin must never enable the CRM on their own masjid).
      */
-    public function setCrmAccess(Request $request, string $masjid_id)
+    public function setCrmAccess(SetCrmAccessRequest $request, string $masjid_id)
     {
         if (Auth::user()?->type !== 'SuperAdmin') {
             abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change CRM access.');
         }
 
-        $validated = $request->validate([
-            'enabled' => ['required', 'boolean'],
-        ]);
-
         $masjid = Masjid::findOrFail($masjid_id);
-        $masjid->crm_enabled = $validated['enabled'];
+        $masjid->crm_enabled = $request->boolean('enabled');
         $masjid->updated_by = Auth::id();
         $masjid->save();
 
