@@ -31,16 +31,34 @@ class ResolveMasjidTenant
     {
         $user = $request->user();
 
-        if ($user && $user->type === 'MasjidAdmin') {
-            // Tenant is SERVER-DERIVED from the authenticated user, never from
-            // the request. Prefer a users.masjid_id attribute if one ever
-            // exists; otherwise resolve the masjid the admin owns
-            // (masjids.user_id -> User::masjid()).
-            $masjidId = $user->masjid_id ?? $user->masjid?->id;
+        if (! $user) {
+            return $next($request);
+        }
 
-            if ($masjidId !== null) {
-                $this->tenant->set((int) $masjidId);
+        // The admin SPA addresses a specific masjid via the route, matching the
+        // existing convention (/masjids/{masjid_id}/...). Bind the tenant to that
+        // masjid so BelongsToMasjid models filter to it — for a SuperAdmin this is
+        // how they operate on one masjid at a time; for a MasjidAdmin it must be
+        // their own masjid. When the route isn't masjid-scoped, fall back to the
+        // MasjidAdmin's own masjid (a SuperAdmin stays UNBOUND → cross-masjid views).
+        $routeMasjidId = $request->route('masjid_id');
+        $ownMasjidId = $user->masjid_id ?? $user->masjid?->id;
+
+        if ($user->type === 'MasjidAdmin') {
+            // A MasjidAdmin is confined to the one masjid they own. Targeting any
+            // other masjid in the URL is forbidden — this both drives the tenant
+            // scope and closes the pre-existing gap where nothing stopped a
+            // MasjidAdmin from passing another masjid's id in the route.
+            if ($routeMasjidId !== null && (int) $routeMasjidId !== (int) $ownMasjidId) {
+                abort(403, 'You are not authorized to access this masjid.');
             }
+            if ($ownMasjidId !== null) {
+                $this->tenant->set((int) $ownMasjidId);
+            }
+        } elseif ($user->type === 'SuperAdmin' && $routeMasjidId !== null) {
+            // SuperAdmin may act on any masjid; bind to the one the route targets
+            // so tenant-scoped CRM models filter to it. No route masjid → unbound.
+            $this->tenant->set((int) $routeMasjidId);
         }
 
         return $next($request);
