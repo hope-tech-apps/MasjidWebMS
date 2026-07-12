@@ -9,7 +9,9 @@ use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\ContactsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
+use App\Http\Controllers\AdminDashboard\DonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
+use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
@@ -28,6 +30,7 @@ use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
 use App\Http\Controllers\AdminDashboard\SectionsController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
+use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\UsersController;
@@ -259,6 +262,27 @@ Route::prefix('admin')->group(function () {
                 Route::get('/{contact_id}', 'show');
                 Route::put('/{contact_id}', 'update');
                 Route::delete('/{contact_id}', 'destroy');
+            });
+
+            // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
+            // middleware + BelongsToMasjid — controllers never hand-filter by
+            // masjid_id. See .claude/rules/stripe-payments.md.
+
+            // Stripe Connect (Standard account) onboarding for this masjid.
+            Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
+                Route::post('/onboarding', 'startOnboarding');
+                Route::get('/return', 'onboardingReturn');
+            });
+
+            // Donation funds (designations).
+            Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+            });
+
+            // Donations ledger (read-only for the spike).
+            Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
+                Route::get('/', 'index');
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);

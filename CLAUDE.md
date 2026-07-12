@@ -10,7 +10,7 @@ tenant isolation is app-layer only.
 - `STATE.md` — 60-second snapshot of where the project is.
 - `PLAN.md` / `LOG.md` / `NOTES.md` — plan, changelog, scratch notes.
 - `.claude/rules/` — path-scoped conventions (see `tenant-scoping.md`,
-  and `testing.md` in the coordination root).
+  `stripe-payments.md`, and `testing.md` in the coordination root).
 
 ## Status
 
@@ -35,6 +35,25 @@ tenant isolation is app-layer only.
   `/masjid/contacts` + "Member Directory" sidebar link. Proven by
   `tests/Feature/ContactCrudTest.php` (not run locally — no PHP; run on CI/
   droplet with `php artisan test --filter=ContactCrud`). Vue build verified green.
+- **CRM money-path scaffolded — funds/donations/receipts + Stripe Connect
+  webhook** (same branch, local only). Stripe Connect STANDARD accounts + DIRECT
+  charges + `application_fee_amount` (org is merchant of record; funds land in
+  the org's balance). Adds `funds`, `donations`, `donation_receipts`,
+  `stripe_webhook_events` tables + `stripe_account_id/charges_enabled/
+  payouts_enabled` on `masjids`; `Fund`/`Donation`/`DonationReceipt`
+  (BelongsToMasjid) + `StripeWebhookEvent` models; `StripeConnectService`,
+  `DonationService` (donor-covers-fees gross-up), `ReceiptService` (gap-free
+  serial per masjid); `StripeWebhookController` (signature-gated, dedup'd,
+  idempotent — webhooks are the source of truth, never the redirect); admin
+  connect/funds/donations + public donation-checkout endpoints. `stripe/
+  stripe-php ^16.0` added to `composer.json` — **run `composer update` on the
+  server** (no PHP/composer locally; `composer.lock`/vendor not yet updated).
+  Stripe test keys not yet in `.env` (user adds `STRIPE_KEY`/`STRIPE_SECRET`/
+  `STRIPE_WEBHOOK_SECRET`). Tests (Stripe mocked, not run — no PHP):
+  `tests/Unit/DonorCoversFeesTest.php`, `tests/Feature/DonationFlowTest.php`.
+  Convention: `.claude/rules/stripe-payments.md`. DEFERRED: refunds, disputes,
+  recurring/dunning, payout reconciliation, receipt PDF rendering, admin Vue
+  screens.
 - Older backend state (theming, content unification, V1 caching deploy hold)
   is tracked in `STATE.md`.
 

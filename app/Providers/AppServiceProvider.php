@@ -20,6 +20,20 @@ class AppServiceProvider extends ServiceProvider
         // and every BelongsToMasjid model. No Octane here, so singleton == per
         // request. See App\Support\TenantContext.
         $this->app->singleton(\App\Support\TenantContext::class);
+
+        // Shared Stripe SDK client for the CRM donation services. Constructed
+        // lazily, so an empty STRIPE_SECRET (keys not added yet) is fine until a
+        // call is actually made. Pin the API version so behavior is stable
+        // across SDK upgrades. See app/Services/Stripe.
+        $this->app->singleton(\Stripe\StripeClient::class, function () {
+            return new \Stripe\StripeClient([
+                // Pass null (not '') when unset — the SDK rejects an empty-string
+                // key at construction, and we want resolution to stay lazy until
+                // real keys land.
+                'api_key' => config('services.stripe.secret') ?: null,
+                'stripe_version' => '2024-06-20',
+            ]);
+        });
     }
 
     public function boot(): void
