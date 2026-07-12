@@ -32,6 +32,7 @@ export type MasjidDashboardRoute =
     '/masjid/iqama' |
     '/masjid/jumaa' |
     '/masjid/notifications' |
+    '/masjid/contacts' |
     '/azkar' |
     `/azkar/${number}` |
     '/tasabih' |

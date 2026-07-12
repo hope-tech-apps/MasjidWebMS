@@ -111,6 +111,16 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/ContactRequestsView.vue")
             },
             {
+                path: 'contacts',
+                name: 'masjid.contacts',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Member Directory'
+                },
+                component: () => import("@/views/dashboard/ContactsView.vue")
+            },
+            {
                 path: 'mobile-features',
                 name: 'masjid.mobileFeatures',
                 meta: {

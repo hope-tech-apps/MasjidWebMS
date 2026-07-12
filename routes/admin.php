@@ -6,6 +6,7 @@ use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
+use App\Http\Controllers\AdminDashboard\ContactsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\EventsController;
@@ -246,6 +247,18 @@ Route::prefix('admin')->group(function () {
                 Route::get('/{contact_reason_id}', 'show');
                 Route::put('/{contact_reason_id}', 'update');
                 Route::delete('/{contact_reason_id}', 'destroy');
+            });
+
+            // Masjid member directory (CRM congregant contacts). Keeps the
+            // {masjid_id} param by convention, but isolation is enforced by the
+            // `tenant` middleware + BelongsToMasjid trait — the controller never
+            // hand-filters by masjid_id. See .claude/rules/tenant-scoping.md.
+            Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{contact_id}', 'show');
+                Route::put('/{contact_id}', 'update');
+                Route::delete('/{contact_id}', 'destroy');
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);

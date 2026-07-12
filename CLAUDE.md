@@ -24,6 +24,17 @@ tenant isolation is app-layer only.
   `tests/Feature/TenantIsolationTest.php`. Not yet run locally (no PHP on the
   dev machine); run on the droplet/CI with `php artisan test --filter=TenantIsolation`.
   Convention documented in `.claude/rules/tenant-scoping.md`.
+- **Member directory — full admin Contact CRUD** (same branch, local only).
+  `ContactsController` (index w/ `?search=` over first/last/email/phone,
+  store, show, update, destroy) at `/api/admin/masjids/{masjid_id}/contacts`,
+  plus `Store`/`UpdateContactRequest`. The controller keeps the `{masjid_id}`
+  route param but does NOT hand-filter — the `tenant` middleware + the
+  `BelongsToMasjid` trait enforce isolation (create ignores client `masjid_id`;
+  `destroy` soft-deletes). Vue SPA: `ContactsView.vue` (table + search +
+  create/edit/view modals + delete-confirm), `contactsStore.ts`, router entry
+  `/masjid/contacts` + "Member Directory" sidebar link. Proven by
+  `tests/Feature/ContactCrudTest.php` (not run locally — no PHP; run on CI/
+  droplet with `php artisan test --filter=ContactCrud`). Vue build verified green.
 - Older backend state (theming, content unification, V1 caching deploy hold)
   is tracked in `STATE.md`.
 

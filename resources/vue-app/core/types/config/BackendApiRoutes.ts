@@ -22,6 +22,9 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/services?page=${number}` |
     `/api/admin/masjids/${string}/services/${string}/` |
     `/api/admin/masjids/${string}/services/${string}/trash` |
+    `/api/admin/masjids/${string}/contacts` |
+    `/api/admin/masjids/${string}/contacts?page=${number}` |
+    `/api/admin/masjids/${string}/contacts/${string}` |
     `/api/admin/masjids/${string}/donation-link` |
     `/api/admin/masjids/${string}/about` |
     `/api/admin/masjids/${string}/gallery` |
