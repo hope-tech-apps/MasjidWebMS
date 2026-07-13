@@ -24,7 +24,8 @@
 
             <div id="dashboard_aside_menu">
                 <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
-                    <router-link v-if="menuItem.allowed_types.includes(authStore.user?.type as UserType)"
+                    <router-link v-if="menuItem.allowed_types.includes(authStore.user?.type as UserType)
+                        && (!menuItem.requiresCrm || masjidStore.masjid?.crm_enabled)"
                         :to="menuItem.to" class="dashboard-aside-menu-item">
                         <div class="menu-item-icon">
                             <span v-html="menuItem.svg_icon"></span>

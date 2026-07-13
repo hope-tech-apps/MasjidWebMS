@@ -4,6 +4,7 @@ use App\Http\Controllers\Mobile\AnnouncementsController;
 use App\Http\Controllers\Mobile\AzkarController;
 use App\Http\Controllers\Mobile\ContactReasonsController;
 use App\Http\Controllers\Mobile\ContactUsController;
+use App\Http\Controllers\Mobile\DonationsController;
 use App\Http\Controllers\Mobile\EventsController;
 use App\Http\Controllers\Mobile\HadithsController;
 use App\Http\Controllers\Mobile\MasjidsController;
@@ -15,6 +16,7 @@ use App\Http\Controllers\Mobile\ServicesController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
 use App\Http\Controllers\PusherWebhookController;
+use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -68,6 +70,12 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             Route::post('/', 'storeMessage')->middleware('throttle:contact');
         });
 
+        // Public donation entry: create a Stripe Checkout Session for a gift to
+        // one of the masjid's active funds. Runs UNBOUND (no tenant middleware);
+        // the controller filters the fund by masjid_id explicitly. The donation
+        // is persisted `pending` here and only finalized by the Stripe webhook.
+        Route::post('/{masjid_id}/donations/checkout', [DonationsController::class, 'createCheckoutSession']);
+
         Route::prefix('{masjid_id}/features')->controller(MasjidMobileAppFeaturesController::class)->group(function () {
             Route::get('/', 'index');
         });
@@ -94,6 +102,16 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
  */
 Route::prefix('pusher')->group(function () {
     Route::post('notified', [PusherWebhookController::class, 'afterNotificationBroadcasted']);
+});
+
+/*
+ * Stripe webhook — the SOURCE OF TRUTH for donation state. Registered OUTSIDE
+ * auth + throttle (like the Pusher webhook above): the HMAC signature verified
+ * inside the controller against STRIPE_WEBHOOK_SECRET is the only gate, and
+ * Stripe is the legitimate caller. Handler is idempotent + dedups event ids.
+ */
+Route::prefix('stripe')->group(function () {
+    Route::post('webhook', [StripeWebhookController::class, 'handle']);
 });
 
 /*

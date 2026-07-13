@@ -22,6 +22,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/services?page=${number}` |
     `/api/admin/masjids/${string}/services/${string}/` |
     `/api/admin/masjids/${string}/services/${string}/trash` |
+    `/api/admin/masjids/${string}/contacts` |
+    `/api/admin/masjids/${string}/contacts?page=${number}` |
+    `/api/admin/masjids/${string}/contacts/${string}` |
+    `/api/admin/masjids/${string}/funds` |
+    `/api/admin/masjids/${string}/funds/${string}` |
+    `/api/admin/masjids/${string}/donations` |
+    `/api/admin/masjids/${string}/donations?page=${number}` |
+    `/api/admin/masjids/${string}/donations/${string}` |
     `/api/admin/masjids/${string}/donation-link` |
     `/api/admin/masjids/${string}/about` |
     `/api/admin/masjids/${string}/gallery` |
@@ -34,6 +42,7 @@ export type BackendApiRoute =
     `/api/admin/hadiths/library/add` |
     `/api/admin/masjids/${string}/features` |
     `/api/admin/masjids/${string}/features/${string}/` |
+    `/api/admin/masjids/${string}/crm-access` |
     `/api/admin/masjids/${string}/iqama` |
     `/api/admin/masjids/${string}/jumaa` |
     `/api/admin/masjids/${string}/theme` |

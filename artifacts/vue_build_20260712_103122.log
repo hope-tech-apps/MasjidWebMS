@@ -1,0 +1,146 @@
+
+> build
+> vite build
+
+vite v6.4.2 building for production...
+transforming...
+Browserslist: browsers data (caniuse-lite) is 16 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+✓ 761 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) /Users/moneebsayed/Developer/MasjidWebMS/resources/vue-app/AdminDashboardApp.vue is dynamically imported by /Users/moneebsayed/Developer/MasjidWebMS/resources/vue-app/router/routes/routes.ts but also statically imported by /Users/moneebsayed/Developer/MasjidWebMS/resources/vue-app/main.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+public/build/assets/masjid-Co2S4KIZ.png                                                 18.36 kB
+public/build/manifest.json                                                              37.30 kB │ gzip:   3.70 kB
+public/build/assets/bootstrap-icons-BtvjY1KL.woff2                                     130.40 kB
+public/build/assets/bootstrap-icons-BOrJxbIo.woff                                      176.03 kB
+public/build/assets/zokhrufa-BMymUACS.png                                              176.61 kB
+public/build/assets/app-tn0RQdqM.css                                                     0.00 kB │ gzip:   0.02 kB
+public/build/assets/NotificationFormView-B37_uXdm.css                                    0.04 kB │ gzip:   0.06 kB
+public/build/assets/SignIn-6cKKlBuI.css                                                  0.04 kB │ gzip:   0.06 kB
+public/build/assets/ColumnInputContainer-D46_Q29j.css                                    0.07 kB │ gzip:   0.09 kB
+public/build/assets/PageDataContainer-CEEoHHpQ.css                                       0.07 kB │ gzip:   0.08 kB
+public/build/assets/ProfileView-CZrfxoa6.css                                             0.12 kB │ gzip:   0.12 kB
+public/build/assets/MasjidFormView-CLkcmgDM.css                                          0.12 kB │ gzip:   0.12 kB
+public/build/assets/UserFormView-CsFtMbB-.css                                            0.12 kB │ gzip:   0.12 kB
+public/build/assets/AzkarDetailsView-BZY3G30G.css                                        0.12 kB │ gzip:   0.13 kB
+public/build/assets/EventDetailsView-CA6YeQPf.css                                        0.12 kB │ gzip:   0.12 kB
+public/build/assets/HadithsDetailsView-CYAUwsvN.css                                      0.12 kB │ gzip:   0.13 kB
+public/build/assets/TasabihDetailsView-DE1IXyh5.css                                      0.12 kB │ gzip:   0.13 kB
+public/build/assets/JumaaSettingsView-Vkv7Mb4V.css                                       0.14 kB │ gzip:   0.13 kB
+public/build/assets/AboutUsView-B_Eoolhr.css                                             0.17 kB │ gzip:   0.13 kB
+public/build/assets/HadithFormView-CdbqkGA8.css                                          0.17 kB │ gzip:   0.11 kB
+public/build/assets/DonationsView-DOub65NR.css                                           0.22 kB │ gzip:   0.16 kB
+public/build/assets/SectionsLibraryView-sq3A4Ty-.css                                     0.26 kB │ gzip:   0.17 kB
+public/build/assets/DashboardsView-DcAQbMY1.css                                          0.33 kB │ gzip:   0.17 kB
+public/build/assets/LibraryPickerModal-Bx2sRB2V.css                                      0.37 kB │ gzip:   0.21 kB
+public/build/assets/DataItemContainer-DL8-wcT7.css                                       0.37 kB │ gzip:   0.16 kB
+public/build/assets/ServiceDetailsView-DAcFpmhM.css                                      0.43 kB │ gzip:   0.21 kB
+public/build/assets/AnnouncementDetailsView-D2d7DMJN.css                                 0.49 kB │ gzip:   0.27 kB
+public/build/assets/AuthLayout-omJt9fKq.css                                              0.53 kB │ gzip:   0.25 kB
+public/build/assets/ServicesView-rlvSg59T.css                                            0.53 kB │ gzip:   0.27 kB
+public/build/assets/PasswordInput-D20fiyWR.css                                           0.54 kB │ gzip:   0.28 kB
+public/build/assets/AnnouncementsView-BCTtU8H1.css                                       0.54 kB │ gzip:   0.26 kB
+public/build/assets/PagesView-refU_n_3.css                                               0.67 kB │ gzip:   0.32 kB
+public/build/assets/UserDetailsView-CUi2k8Fj.css                                         0.69 kB │ gzip:   0.27 kB
+public/build/assets/PageSectionsView-Cd47WT8U.css                                        0.94 kB │ gzip:   0.43 kB
+public/build/assets/MobileAppFeaturesControlView-BCUo4G4r.css                            1.00 kB │ gzip:   0.41 kB
+public/build/assets/MasjidsView-DM8yr9xG.css                                             1.33 kB │ gzip:   0.53 kB
+public/build/assets/UsersView-P036YuVJ.css                                               1.34 kB │ gzip:   0.53 kB
+public/build/assets/PhotoGalleryView-BP7MVey5.css                                        1.38 kB │ gzip:   0.45 kB
+public/build/assets/AnnouncementFormView-H5UsXUaK.css                                    1.45 kB │ gzip:   0.45 kB
+public/build/assets/ServiceFormView-5sV8ZyLD.css                                         1.45 kB │ gzip:   0.45 kB
+public/build/assets/MasjidDetailsView-B4vt11NR.css                                       1.50 kB │ gzip:   0.55 kB
+public/build/assets/FundsView-DbdbQcNL.css                                               1.54 kB │ gzip:   0.53 kB
+public/build/assets/ImageDraggableInput-D7WgWIuy.css                                     1.78 kB │ gzip:   0.54 kB
+public/build/assets/MosqueDetailsTabsView-5PHp8RaI.css                                   2.18 kB │ gzip:   0.72 kB
+public/build/assets/ContactsView-CCt2AC4x.css                                            3.08 kB │ gzip:   0.84 kB
+public/build/assets/ContactRequestsView-CFSMttVg.css                                     3.19 kB │ gzip:   0.89 kB
+public/build/assets/DashboardLayout-CABddThk.css                                         4.75 kB │ gzip:   1.04 kB
+public/build/assets/IqamaTimeSettingsView-De1aqpau.css                                  31.99 kB │ gzip:   5.09 kB
+public/build/assets/app-BDpBCR3Y.css                                                   474.08 kB │ gzip: 123.42 kB
+public/build/assets/handleVueTelInput--0HTkIWq.js                                        0.22 kB │ gzip:   0.19 kB
+public/build/assets/Hadith-mx0K6Lev.js                                                   0.31 kB │ gzip:   0.24 kB
+public/build/assets/AuthLayout-BbLHmd9G.js                                               0.31 kB │ gzip:   0.25 kB
+public/build/assets/404NotFound-CIu1BDw5.js                                              0.52 kB │ gzip:   0.37 kB
+public/build/assets/masjidsStore-DFZUG5xf.js                                             0.57 kB │ gzip:   0.33 kB
+public/build/assets/_commonjsHelpers-Bx2EM-6T.js                                         0.61 kB │ gzip:   0.33 kB
+public/build/assets/ColumnInputContainer-D6iP3uQt.js                                     0.71 kB │ gzip:   0.46 kB
+public/build/assets/hadithStore-BAcF_j9T.js                                              0.72 kB │ gzip:   0.35 kB
+public/build/assets/LoadingButton.vue_vue_type_script_setup_true_lang-CImJGcNK.js        0.72 kB │ gzip:   0.43 kB
+public/build/assets/tasabihStore-bRnOF3sS.js                                             0.73 kB │ gzip:   0.36 kB
+public/build/assets/eventsStore-CMeo75np.js                                              0.81 kB │ gzip:   0.41 kB
+public/build/assets/servicesStore-CWVpQn2L.js                                            0.82 kB │ gzip:   0.42 kB
+public/build/assets/usersStore-ChPCthuI.js                                               0.83 kB │ gzip:   0.40 kB
+public/build/assets/announcementsStore-BOi8VMii.js                                       0.86 kB │ gzip:   0.42 kB
+public/build/assets/splashAnnouncementsStore-DzKk1xpU.js                                 0.98 kB │ gzip:   0.44 kB
+public/build/assets/401Unauthorized-CKAn8LyY.js                                          0.99 kB │ gzip:   0.61 kB
+public/build/assets/azkarStore-CR7IqCV3.js                                               1.04 kB │ gzip:   0.44 kB
+public/build/assets/PasswordInput-CWbOp8jc.js                                            1.18 kB │ gzip:   0.62 kB
+public/build/assets/fundsStore-BijcJ_46.js                                               1.87 kB │ gzip:   0.69 kB
+public/build/assets/TasabihDetailsView-edxIa63j.js                                       1.92 kB │ gzip:   1.10 kB
+public/build/assets/AzkarDetailsView-DJDHTRRv.js                                         1.92 kB │ gzip:   1.12 kB
+public/build/assets/UsersView-B4iDQ2RQ.js                                                1.96 kB │ gzip:   0.94 kB
+public/build/assets/SplashAnnouncementDetailsView-oavjcRgQ.js                            1.99 kB │ gzip:   1.05 kB
+public/build/assets/HadithsView-B40qwHtK.js                                              2.05 kB │ gzip:   0.96 kB
+public/build/assets/HadithsDetailsView-kwasMJU4.js                                       2.05 kB │ gzip:   1.14 kB
+public/build/assets/TasabihView-okcaFvVL.js                                              2.07 kB │ gzip:   0.96 kB
+public/build/assets/AzkarView-CK97Jlno.js                                                2.08 kB │ gzip:   0.98 kB
+public/build/assets/EventsView-BjV-Fjn7.js                                               2.11 kB │ gzip:   0.97 kB
+public/build/assets/DashboardsView-BCpDnnaU.js                                           2.12 kB │ gzip:   1.08 kB
+public/build/assets/ServicesView-CSDpCR2b.js                                             2.45 kB │ gzip:   1.13 kB
+public/build/assets/MasjidsView-CJw73XYu.js                                              2.45 kB │ gzip:   1.12 kB
+public/build/assets/AnnouncementsView-CY_xqDap.js                                        2.61 kB │ gzip:   1.15 kB
+public/build/assets/MobileAppFeaturesControlView-DEQ9r_2m.js                             2.67 kB │ gzip:   1.29 kB
+public/build/assets/EventDetailsView-lg2EeMy9.js                                         2.68 kB │ gzip:   1.16 kB
+public/build/assets/SignIn-CW92y1te.js                                                   2.74 kB │ gzip:   1.28 kB
+public/build/assets/AnnouncementDetailsView-CqQ66sy1.js                                  2.76 kB │ gzip:   1.13 kB
+public/build/assets/UserDetailsView-D3vup_Yt.js                                          2.82 kB │ gzip:   1.18 kB
+public/build/assets/ServiceDetailsView-D2eD-5tF.js                                       2.86 kB │ gzip:   1.17 kB
+public/build/assets/SplashAnnouncementsView-BQP1TYP4.js                                  3.13 kB │ gzip:   1.53 kB
+public/build/assets/PageDataContainer.vue_vue_type_script_setup_true_lang-D1wY8bRD.js    3.27 kB │ gzip:   1.39 kB
+public/build/assets/NotificationFormView-Dhr-lF-v.js                                     3.80 kB │ gzip:   1.70 kB
+public/build/assets/JumaaSettingsView-dlJ3dpjq.js                                        4.53 kB │ gzip:   2.10 kB
+public/build/assets/DonationView-Cl7QnAzQ.js                                             4.72 kB │ gzip:   1.98 kB
+public/build/assets/LibraryPickerModal-DAK0mvS7.js                                       5.02 kB │ gzip:   2.16 kB
+public/build/assets/AppConfigView-CNLlNSP2.js                                            5.13 kB │ gzip:   1.95 kB
+public/build/assets/TasabihFormView-DyUKGlx4.js                                          5.17 kB │ gzip:   1.99 kB
+public/build/assets/ServiceFormView-CSCy3MHE.js                                          5.43 kB │ gzip:   2.07 kB
+public/build/assets/MasjidDetailsView-Crb2roAj.js                                        5.79 kB │ gzip:   1.95 kB
+public/build/assets/AnnouncementFormView-Th9k671T.js                                     5.89 kB │ gzip:   2.15 kB
+public/build/assets/pagesStore-D39VDFI6.js                                               6.08 kB │ gzip:   1.16 kB
+public/build/assets/ProfileView-BItwcbQo.js                                              6.61 kB │ gzip:   2.53 kB
+public/build/assets/EventFormView-Dywq1B5I.js                                            6.80 kB │ gzip:   2.19 kB
+public/build/assets/DataItemContainer-DnynSU8U.js                                        6.93 kB │ gzip:   2.95 kB
+public/build/assets/FundsView-DwWGUeIX.js                                                7.34 kB │ gzip:   2.79 kB
+public/build/assets/SectionsLibraryView-DDN5Q7mG.js                                      7.52 kB │ gzip:   2.85 kB
+public/build/assets/AboutUsView-e4FcA-jw.js                                              8.13 kB │ gzip:   2.60 kB
+public/build/assets/SplashAnnouncementFormView-ZzOoeOIM.js                               8.17 kB │ gzip:   3.10 kB
+public/build/assets/UserFormView-BqvRTY1X.js                                             8.27 kB │ gzip:   3.04 kB
+public/build/assets/ImageDraggableInput-CJhjYFbs.js                                      8.65 kB │ gzip:   3.48 kB
+public/build/assets/AzkarFormView-C4O89rKn.js                                            8.81 kB │ gzip:   2.71 kB
+public/build/assets/DonationsView-D9qoSsOs.js                                            9.21 kB │ gzip:   3.38 kB
+public/build/assets/HadithFormView-r9PKAd6A.js                                           9.27 kB │ gzip:   3.01 kB
+public/build/assets/PhotoGalleryView-BQ0hkdGv.js                                         9.35 kB │ gzip:   3.24 kB
+public/build/assets/ContactRequestsView-CzyEsHmv.js                                     10.05 kB │ gzip:   3.66 kB
+public/build/assets/PagesView-CAhSErNc.js                                               10.67 kB │ gzip:   3.75 kB
+public/build/assets/MasjidFormView-Dic1_z8J.js                                          10.94 kB │ gzip:   3.34 kB
+public/build/assets/ContactsView-Bqytzpeh.js                                            11.82 kB │ gzip:   3.97 kB
+public/build/assets/DashboardLayout-BO52eOPP.js                                         18.03 kB │ gzip:   6.47 kB
+public/build/assets/SafeHtml.vue_vue_type_script_setup_true_lang-Dg-9b_Wr.js            26.54 kB │ gzip:  10.13 kB
+public/build/assets/MosqueDetailsTabsView-CWqn6LNM.js                                   30.23 kB │ gzip:   7.33 kB
+public/build/assets/vee-validate-C9IYofo_.js                                            35.72 kB │ gzip:  12.14 kB
+public/build/assets/index.esm-BT3zlqQN.js                                               37.12 kB │ gzip:  12.23 kB
+public/build/assets/PageSectionsView-BZ6CAZeB.js                                        52.78 kB │ gzip:  11.81 kB
+public/build/assets/vuedraggable.umd-CcEt9SxV.js                                        96.44 kB │ gzip:  33.91 kB
+public/build/assets/IqamaTimeSettingsView-B3mYD7-T.js                                  226.42 kB │ gzip:  68.54 kB
+public/build/assets/app-DLTHY-7A.js                                                    658.66 kB │ gzip: 216.35 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.51s

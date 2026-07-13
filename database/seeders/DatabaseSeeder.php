@@ -40,5 +40,9 @@ class DatabaseSeeder extends Seeder
         $this->call(AppLevelDataSeeder::class);
         $this->call(PagesSeeder::class);
 
+        // Additive Spatie roles/permissions + backfill of the `type`->role bridge.
+        // Runs last so every user created above is mirrored to its role. Idempotent.
+        $this->call(RolesAndPermissionsSeeder::class);
+
     }
 }

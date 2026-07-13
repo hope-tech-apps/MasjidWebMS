@@ -30,12 +30,26 @@ class Masjid extends Model implements HasMedia
         'app_store_link',
         'google_play_link',
         'google_maps_key',
+        'stripe_account_id',
+        'stripe_charges_enabled',
+        'stripe_payouts_enabled',
+        'crm_enabled',
         'created_by',
         'updated_by',
         'deleted_by'
     ];
 
     protected $searchableFields = ['name', 'email', 'address'];
+
+    protected function casts(): array
+    {
+        return [
+            'stripe_charges_enabled' => 'boolean',
+            'stripe_payouts_enabled' => 'boolean',
+            // Per-masjid CRM feature gate; default false = CRM off (SuperAdmin-only toggle).
+            'crm_enabled' => 'boolean',
+        ];
+    }
 
     public function admin() {
         return $this->belongsTo(User::class, 'user_id', 'id');
@@ -130,6 +144,20 @@ class Masjid extends Model implements HasMedia
 
     public function sections() {
         return $this->hasMany(Section::class);
+    }
+
+    public function funds() {
+        return $this->hasMany(Fund::class);
+    }
+
+    public function donations() {
+        return $this->hasMany(Donation::class);
+    }
+
+    /** True once Stripe reports the connected account can accept charges. */
+    public function canAcceptDonations(): bool
+    {
+        return $this->stripe_account_id !== null && $this->stripe_charges_enabled;
     }
 
 }
