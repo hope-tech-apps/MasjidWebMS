@@ -16,9 +16,21 @@ const routes: RouteRecordRaw[] = [
         ]
     },
     {
+        // Public donor-facing result pages (Stripe Checkout success/cancel URLs).
+        // Standalone — no auth or dashboard chrome.
+        path: '/donations/thank-you',
+        name: 'donation-thank-you',
+        component: () => import("@/views/general/DonationThankYou.vue")
+    },
+    {
+        path: '/donations/cancelled',
+        name: 'donation-cancelled',
+        component: () => import("@/views/general/DonationCancelled.vue")
+    },
+    {
         path: '/:pathMatch(.*)*',
         redirect: '/auth/404'
     }
-] 
+]
 
 export default routes
