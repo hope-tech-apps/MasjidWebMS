@@ -2,14 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\DonationReceiptMail;
+use App\Models\Contact;
 use App\Models\Donation;
+use App\Models\DonationReceipt;
+use App\Models\Masjid;
 use App\Models\StripeWebhookEvent;
+use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -41,6 +47,7 @@ class StripeWebhookController extends Controller
         private DonationService $donations,
         private ReceiptService $receipts,
         private StripeConnectService $connect,
+        private DonorContactService $donorContacts,
     ) {
     }
 
@@ -163,9 +170,62 @@ class StripeWebhookController extends Controller
 
         if ($paid) {
             $this->donations->markSucceeded($donation, $ids);
-            $this->receipts->issueFor($donation->refresh());
+            // Seed the donor CRM from the checkout details, then issue + email
+            // the receipt to that contact. Each step is idempotent.
+            $this->donorContacts->linkFromCheckoutSession($donation->refresh(), $session);
+            $receipt = $this->receipts->issueFor($donation->refresh());
+            if ($receipt) {
+                $this->deliverReceipt($donation->refresh(), $receipt);
+            }
         } else {
             $this->donations->recordStripeIds($donation, $ids);
+        }
+    }
+
+    /**
+     * Email the donor their receipt — exactly once (guarded by
+     * receipt_delivered_at). Best-effort: a mail failure is logged, never
+     * throws, so it can't fail the webhook or block receipt issuance.
+     */
+    private function deliverReceipt(Donation $donation, DonationReceipt $receipt): void
+    {
+        if ($donation->receipt_delivered_at) {
+            return;
+        }
+
+        $contact = $donation->contact_id
+            ? Contact::withoutMasjidScope()->find($donation->contact_id)
+            : null;
+
+        $email = $contact?->email;
+        if (! $email) {
+            return;
+        }
+
+        $masjid = Masjid::find($donation->masjid_id);
+        $fund = $donation->fund()->withoutGlobalScopes()->first();
+        $donorName = trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? ''));
+
+        try {
+            Mail::to($email)->send(new DonationReceiptMail(
+                masjidName: $masjid?->name ?? 'Your masjid',
+                donorName: $donorName !== '' ? $donorName : 'Valued donor',
+                serial: (int) $receipt->serial_number,
+                issueDate: (string) $receipt->issue_date,
+                fundName: $fund?->name ?? 'General',
+                currency: strtoupper((string) $receipt->currency),
+                grossAmount: number_format(((int) $receipt->gross_amount) / 100, 2),
+                eligibleAmount: number_format(((int) $receipt->eligible_amount) / 100, 2),
+                reference: (string) $donation->uuid,
+                recurring: $donation->type === 'recurring',
+            ));
+
+            $donation->forceFill(['receipt_delivered_at' => now()])->save();
+        } catch (\Throwable $e) {
+            Log::warning('Receipt email failed to send', [
+                'donation_id' => $donation->id,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
