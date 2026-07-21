@@ -2,6 +2,7 @@
 
 namespace App\Services\Assistant;
 
+use App\Mail\AssistantFeatureRequestMail;
 use App\Models\Announcement;
 use App\Models\AssistantFeatureRequest;
 use App\Models\Event;
@@ -9,6 +10,7 @@ use App\Models\Masjid;
 use App\Models\ThemeSetting;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 
 /**
@@ -331,6 +333,8 @@ class ToolRegistry
                     'status' => 'open',
                 ]);
 
+                $this->notifyHopeTech($req, $masjid, $user);
+
                 return [
                     'ok' => true,
                     'request_id' => $req->id,
@@ -338,5 +342,41 @@ class ToolRegistry
                 ];
             },
         );
+    }
+
+    /**
+     * Email Hope Tech about an escalation.
+     *
+     * Queued, so the admin isn't waiting on SMTP mid-conversation, and swallowed on
+     * failure: the assistant already told them "sent to Hope Tech Inc", and the
+     * assistant_feature_requests row is the record that makes that true. A bounced
+     * notification must not turn into a failed tool call.
+     */
+    private function notifyHopeTech(AssistantFeatureRequest $req, Masjid $masjid, User $user): void
+    {
+        $to = config('services.anthropic.escalation_email');
+
+        if (! $to) {
+            return;
+        }
+
+        try {
+            Mail::to($to)->send(new AssistantFeatureRequestMail(
+                requestId: $req->id,
+                masjidName: (string) $masjid->name,
+                masjidId: (int) $masjid->id,
+                requestedBy: (string) ($user->name ?: $user->email),
+                requestedByEmail: (string) $user->email,
+                category: (string) $req->category,
+                summary: (string) $req->summary,
+                details: $req->details,
+            ));
+        } catch (\Throwable $e) {
+            Log::error('Assistant escalation email failed', [
+                'request_id' => $req->id,
+                'masjid_id' => $masjid->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
