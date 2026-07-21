@@ -48,6 +48,26 @@ return [
     | .claude/rules/stripe-payments.md.
     |
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Anthropic (Masjid Assistant)
+    |--------------------------------------------------------------------------
+    | Model is configurable so we can move between tiers without a code change.
+    | Default is Sonnet 5: this workload is short-request comprehension + tool
+    | selection from a small surface, not long-horizon reasoning. Opus is
+    | available by changing one env var if a harder case ever justifies it.
+    */
+    'anthropic' => [
+        'key' => env('ANTHROPIC_API_KEY'),
+        'model' => env('ASSISTANT_MODEL', 'claude-sonnet-5'),
+        'effort' => env('ASSISTANT_EFFORT', 'medium'),
+        'max_tokens' => (int) env('ASSISTANT_MAX_TOKENS', 4096),
+        // Hard cap on tool-loop iterations so a confused turn cannot spiral.
+        'max_tool_iterations' => (int) env('ASSISTANT_MAX_TOOL_ITERATIONS', 5),
+        // Where escalated feature requests are emailed.
+        'escalation_email' => env('ASSISTANT_ESCALATION_EMAIL', 'support@hopetechapps.com'),
+    ],
+
     'stripe' => [
         // Publishable + secret API keys (test-mode until the org goes live).
         'key' => env('STRIPE_KEY'),

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
+use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
@@ -274,6 +275,13 @@ Route::prefix('admin')->group(function () {
             // SuperAdmin-only Masjid Assistant gate toggle. Like crm-access, this is
             // deliberately OUTSIDE the `assistant` gate — it is how the gate is opened.
             Route::patch('{masjid_id}/assistant-access', [MasjidsController::class, 'setAssistantAccess']);
+
+            // Masjid Assistant chat. Behind the per-masjid `assistant` gate (which
+            // runs after `tenant`, so the caller is already proven to act on this
+            // masjid). Which capabilities the AI is actually offered is decided
+            // per-tool in ToolRegistry and re-checked at execution.
+            Route::post('{masjid_id}/assistant/chat', [AssistantController::class, 'chat'])
+                ->middleware('assistant');
 
             // The CRM route group — every endpoint gated by `crm`
             // (EnsureCrmEnabled): 403 unless this masjid's crm_enabled is true.
