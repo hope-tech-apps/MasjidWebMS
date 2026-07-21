@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Masjids\SetAssistantAccessRequest;
 use App\Http\Requests\Admin\Masjids\SetCrmAccessRequest;
 use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
 use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
@@ -133,6 +134,27 @@ class MasjidsController extends Controller
 
         $masjid = Masjid::findOrFail($masjid_id);
         $masjid->crm_enabled = $request->boolean('enabled');
+        $masjid->updated_by = Auth::id();
+        $masjid->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only toggle for the Masjid Assistant (per-masjid feature gate).
+     * Deliberately NOT behind the `assistant` gate — it is how the gate is opened.
+     */
+    public function setAssistantAccess(SetAssistantAccessRequest $request, string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change Masjid Assistant access.');
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+        $masjid->assistant_enabled = $request->boolean('enabled');
         $masjid->updated_by = Auth::id();
         $masjid->save();
 

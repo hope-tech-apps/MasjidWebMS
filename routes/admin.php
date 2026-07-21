@@ -271,6 +271,9 @@ Route::prefix('admin')->group(function () {
             // SuperAdmin needs this to turn the gate ON. See
             // .claude/rules/auth-permissions.md.
             Route::patch('{masjid_id}/crm-access', [MasjidsController::class, 'setCrmAccess']);
+            // SuperAdmin-only Masjid Assistant gate toggle. Like crm-access, this is
+            // deliberately OUTSIDE the `assistant` gate — it is how the gate is opened.
+            Route::patch('{masjid_id}/assistant-access', [MasjidsController::class, 'setAssistantAccess']);
 
             // The CRM route group — every endpoint gated by `crm`
             // (EnsureCrmEnabled): 403 unless this masjid's crm_enabled is true.
