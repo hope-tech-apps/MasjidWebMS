@@ -345,7 +345,18 @@ Route::prefix('admin')->group(function () {
 
         // Hadith categories (global library content). Registered as its own prefix
         // (not nested under /hadiths) so it never collides with /hadiths/{hadith_id}.
-        Route::prefix('hadith-categories')->controller(HadithCategoriesController::class)->group(function () {
+        /*
+         * GLOBAL LIBRARY CONTENT — SuperAdmin only.
+         *
+         * hadiths / azkar / tasabih (and their categories) are NOT masjid-scoped:
+         * they have no masjid_id and the mobile API serves them globally at
+         * /api/mobile/{hadiths,azkar,tasabih}, so one row is shown in EVERY
+         * masjid's app. They were previously reachable by any admin type, which
+         * meant a MasjidAdmin could edit or delete content every other masjid
+         * depends on. Gated to `super` to match the other platform-wide
+         * resources (users, countries, app-config, features, admins).
+         */
+        Route::prefix('hadith-categories')->middleware('super')->controller(HadithCategoriesController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
             Route::get('/{category_id}', 'show');
@@ -353,7 +364,7 @@ Route::prefix('admin')->group(function () {
             Route::delete('/{category_id}', 'destroy');
         });
 
-        Route::prefix('hadiths')->controller(HadithsController::class)->group(function () {
+        Route::prefix('hadiths')->middleware('super')->controller(HadithsController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
             // Curated library: list presets + copy one into the live collection.
@@ -367,7 +378,7 @@ Route::prefix('admin')->group(function () {
 
         // Azkar categories (global library content). Registered as its own prefix
         // (not nested under /azkar) so it never collides with /azkar/{zikr_id}.
-        Route::prefix('azkar-categories')->controller(AzkarCategoriesController::class)->group(function () {
+        Route::prefix('azkar-categories')->middleware('super')->controller(AzkarCategoriesController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
             Route::get('/{category_id}', 'show');
@@ -375,7 +386,7 @@ Route::prefix('admin')->group(function () {
             Route::delete('/{category_id}', 'destroy');
         });
 
-        Route::prefix('azkar')->controller(AzkarController::class)->group(function () {
+        Route::prefix('azkar')->middleware('super')->controller(AzkarController::class)->group(function () {
             Route::get('/', 'index');
             Route::get('/categories', 'categories');
             Route::post('/', 'store');
@@ -388,7 +399,7 @@ Route::prefix('admin')->group(function () {
             Route::delete('/{zikr_id}', 'destroy');
         });
 
-        Route::prefix('tasabih')->controller(TasabihController::class)->group(function () {
+        Route::prefix('tasabih')->middleware('super')->controller(TasabihController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/', 'store');
             // Curated library: list presets + copy one into the live collection.
