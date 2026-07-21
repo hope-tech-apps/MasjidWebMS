@@ -421,6 +421,9 @@ const send = async () => {
 .assistant-action-error {
     display: block;
     color: #dc3545;
+    /* Belt-and-braces: messages are sanitized server-side, but nothing unexpected
+       should ever push the panel sideways. */
+    overflow-wrap: anywhere;
 }
 
 /* Composer */

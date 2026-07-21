@@ -11,6 +11,7 @@ use App\Models\ThemeSetting;
 use App\Models\User;
 use App\Support\MobileCache;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
@@ -90,11 +91,41 @@ class ToolRegistry
         } catch (\Throwable $e) {
             Log::error('Assistant tool failed', [
                 'tool' => $name, 'user_id' => $user->id, 'masjid_id' => $masjid->id,
+                'exception' => get_class($e),
                 'error' => $e->getMessage(),
             ]);
 
-            return ['ok' => false, 'error' => 'That action failed: ' . $e->getMessage()];
+            return ['ok' => false, 'error' => $this->friendlyError($e)];
         }
+    }
+
+    /**
+     * Turn an exception into something an admin should actually read.
+     *
+     * This value goes two places, and both matter: the model sees it as the
+     * tool_result and explains it to the admin, and the UI prints it verbatim in
+     * the action trail. A raw driver message ("SQLSTATE[22001]: ... insert into
+     * `events` (`title`, `details`, ...) values (...)") is useless to an admin,
+     * dumps our schema and the whole row onto their screen, and misleads the
+     * model — it once read a NOT NULL complaint about a dead column and filed a
+     * feature request to "expose the text field".
+     *
+     * Full detail is already in the log above; this is the public face.
+     */
+    private function friendlyError(\Throwable $e): string
+    {
+        if ($e instanceof QueryException) {
+            return match ((string) ($e->errorInfo[0] ?? '')) {
+                '22001' => "One of the values was too long to save. Try shortening it.",
+                '23000' => "That conflicts with something already saved.",
+                default => "I couldn't save that — the database rejected it.",
+            };
+        }
+
+        // In local dev the real message is far more useful than a euphemism.
+        return config('app.debug')
+            ? 'That action failed: ' . $e->getMessage()
+            : "That action didn't go through. Nothing was changed.";
     }
 
     /** @return AssistantTool[] keyed by name — the full surface before filtering. */
@@ -162,7 +193,7 @@ class ToolRegistry
                 // Model output is untrusted — validate as the REST endpoint would.
                 $v = Validator::make($in, [
                     'title' => ['required', 'string', 'max:255'],
-                    'details' => ['required', 'string', 'max:255'],
+                    'details' => ['required', 'string'],   // TEXT column — no practical cap
                     'summary' => ['nullable', 'string', 'max:255'],
                     'start_date' => ['required', 'date'],
                     'end_date' => ['required', 'date', 'after:start_date'],
