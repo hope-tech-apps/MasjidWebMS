@@ -72,9 +72,9 @@ class MasjidAssistantService
                 ];
             }
 
-            // Echo the assistant turn back verbatim (tool_use blocks must be preserved),
-            // then answer EVERY tool_use block in a single user message.
-            $messages[] = ['role' => 'assistant', 'content' => $response->content];
+            // Echo the assistant turn back, then answer EVERY tool_use block in a single
+            // user message. The blocks have to be re-shaped first — see echoable().
+            $messages[] = ['role' => 'assistant', 'content' => $this->echoable($response->content)];
 
             $toolResults = [];
 
@@ -114,6 +114,48 @@ class MasjidAssistantService
             'actions' => $actions,
             'stopped_reason' => 'max_iterations',
         ];
+    }
+
+    /**
+     * Re-shape response content blocks into blocks the API will accept back as input.
+     *
+     * Response blocks are not input blocks. A TextBlock carries an output-only
+     * `parsed` field, and sending it back verbatim fails the whole turn with
+     * "messages.N.content.0.text.parsed: Extra inputs are not permitted". So we
+     * copy across only the fields that belong on the way in.
+     *
+     * Thinking blocks are echoed complete with their signature: with adaptive
+     * thinking the model's reasoning has to survive the tool round-trip, and the
+     * signature is what proves it wasn't tampered with. Dropping them silently
+     * degrades multi-step tool use.
+     *
+     * Unknown block types are passed through as-is rather than dropped — losing a
+     * block the model emitted is worse than letting the API reject it loudly.
+     */
+    private function echoable(array $content): array
+    {
+        $blocks = [];
+
+        foreach ($content as $block) {
+            $blocks[] = match ($block->type ?? null) {
+                'text' => ['type' => 'text', 'text' => $block->text],
+                'thinking' => [
+                    'type' => 'thinking',
+                    'thinking' => $block->thinking,
+                    'signature' => $block->signature,
+                ],
+                'redacted_thinking' => ['type' => 'redacted_thinking', 'data' => $block->data],
+                'tool_use' => [
+                    'type' => 'tool_use',
+                    'id' => $block->id,
+                    'name' => $block->name,
+                    'input' => (object) $block->input,   // must serialize as {} when empty
+                ],
+                default => $block,
+            };
+        }
+
+        return $blocks;
     }
 
     /** Image block goes BEFORE the text block, per the vision docs. */
