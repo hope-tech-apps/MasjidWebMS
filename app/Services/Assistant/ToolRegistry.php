@@ -36,6 +36,24 @@ use Illuminate\Support\Facades\Validator;
  */
 class ToolRegistry
 {
+    /**
+     * Stand-in artwork for an announcement created without an attachment.
+     * Returns null if the asset is missing from the deploy, so the caller can
+     * refuse rather than write a row the mobile apps cannot decode.
+     */
+    private static function defaultAnnouncementImage(): ?string
+    {
+        $path = public_path('images/announcement-default.png');
+
+        if (! is_readable($path)) {
+            Log::error('Assistant default announcement image missing', ['path' => $path]);
+
+            return null;
+        }
+
+        return $path;
+    }
+
     /** @return AssistantTool[] keyed by tool name, filtered to this admin. */
     public function availableFor(User $user, Masjid $masjid): array
     {
@@ -215,13 +233,27 @@ class ToolRegistry
 
                 $a = Announcement::create($data);
 
-                // The attached image doubles as the announcement artwork, which is the
-                // whole point of letting an admin drop a flyer into the chat.
-                $withImage = false;
-                if ($attachmentPath && is_readable($attachmentPath)) {
-                    $a->addMedia($attachmentPath)->preservingOriginal()->toMediaCollection('announcements');
-                    $withImage = true;
+                // An announcement MUST end up with an image. The iOS client decodes
+                // `image` as a non-optional field, and because it decodes the whole
+                // list at once, a single imageless row blanks the entire announcements
+                // tab for every user of that masjid. The admin form has always
+                // enforced this (`'image' => 'required|image'`); this tool has to
+                // honour the same contract.
+                //
+                // The attached flyer is used when there is one — that is the point of
+                // letting an admin drop an image into the chat — otherwise a neutral
+                // masjid graphic stands in so the announcement is publishable now and
+                // the admin can swap the artwork later.
+                $hasAttachment = $attachmentPath && is_readable($attachmentPath);
+                $source = $hasAttachment ? $attachmentPath : self::defaultAnnouncementImage();
+
+                if ($source === null) {
+                    $a->forceDelete();   // never leave a row the apps will choke on
+
+                    return ['ok' => false, 'error' => 'I could not attach an image, and an announcement needs one. Please add it from the Announcements screen.'];
                 }
+
+                $a->addMedia($source)->preservingOriginal()->toMediaCollection('announcements');
 
                 // Without this the apps keep serving the cached list and the admin
                 // reasonably concludes the assistant lied to them.
@@ -230,7 +262,11 @@ class ToolRegistry
                 return ['ok' => true, 'created' => [
                     'id' => $a->id,
                     'title' => $a->title,
-                    'image_attached' => $withImage,
+                    // Surfaced so the model tells the admin a stand-in was used, rather
+                    // than letting them discover a generic graphic in the app later.
+                    'image' => $hasAttachment
+                        ? 'the image you attached'
+                        : 'a default masjid graphic (no image was attached — tell the admin they can replace it on the Announcements screen)',
                 ]];
             },
         );
