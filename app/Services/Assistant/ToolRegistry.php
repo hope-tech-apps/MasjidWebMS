@@ -9,6 +9,8 @@ use App\Models\Event;
 use App\Models\Masjid;
 use App\Models\ThemeSetting;
 use App\Models\User;
+use App\Support\MobileCache;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
@@ -53,8 +55,13 @@ class ToolRegistry
      * as data so the model can explain it to the admin rather than the whole
      * turn collapsing.
      */
-    public function execute(string $name, array $input, User $user, Masjid $masjid): array
-    {
+    public function execute(
+        string $name,
+        array $input,
+        User $user,
+        Masjid $masjid,
+        ?string $attachmentPath = null,
+    ): array {
         $tool = $this->all()[$name] ?? null;
 
         if ($tool === null) {
@@ -71,7 +78,8 @@ class ToolRegistry
         }
 
         try {
-            $result = ($tool->handler)($input, $masjid, $user);
+            // Handlers declare only the parameters they use; PHP ignores the extras.
+            $result = ($tool->handler)($input, $masjid, $user, $attachmentPath);
 
             Log::info('Assistant tool executed', [
                 'tool' => $name, 'user_id' => $user->id, 'masjid_id' => $masjid->id,
@@ -134,28 +142,30 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'create_announcement',
-            description: 'Create a new announcement for this masjid. Use for news the congregation should see in the app.',
+            description: 'Create a new announcement for this masjid. Use for news the congregation should see in the app. If the admin attached an image, it becomes the announcement image automatically — do not ask them to upload it again.',
             inputSchema: [
                 'type' => 'object',
                 'properties' => [
                     'title' => ['type' => 'string', 'description' => 'Short headline.'],
-                    'summary' => ['type' => 'string', 'description' => 'One or two sentence summary.'],
-                    'details' => ['type' => 'string', 'description' => 'Full body text.'],
-                    'start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD when it should start showing.'],
-                    'end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD when it should stop showing.'],
+                    'details' => ['type' => 'string', 'description' => 'The announcement body. This is what the congregation reads.'],
+                    'summary' => ['type' => 'string', 'description' => 'Optional one-line summary.'],
+                    'start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD — the day it starts showing. Ask if unknown; do not guess.'],
+                    'end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD — the day it stops showing. Must be after start_date.'],
                     'link' => ['type' => 'string', 'description' => 'Optional URL.'],
                 ],
-                'required' => ['title'],
+                // Mirrors the NOT NULL columns. The admin screen demands all of these too,
+                // so anything less would fail at the database and confuse everyone.
+                'required' => ['title', 'details', 'start_date', 'end_date'],
             ],
             writes: true,
-            handler: function (array $in, Masjid $masjid): array {
-                // Model output is untrusted — validate exactly as the REST endpoint would.
+            handler: function (array $in, Masjid $masjid, User $user, ?string $attachmentPath = null): array {
+                // Model output is untrusted — validate as the REST endpoint would.
                 $v = Validator::make($in, [
                     'title' => ['required', 'string', 'max:255'],
-                    'summary' => ['nullable', 'string', 'max:1000'],
-                    'details' => ['nullable', 'string'],
-                    'start_date' => ['nullable', 'date'],
-                    'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+                    'details' => ['required', 'string', 'max:255'],
+                    'summary' => ['nullable', 'string', 'max:255'],
+                    'start_date' => ['required', 'date'],
+                    'end_date' => ['required', 'date', 'after:start_date'],
                     'link' => ['nullable', 'url', 'max:2048'],
                 ]);
 
@@ -165,10 +175,32 @@ class ToolRegistry
 
                 $data = $v->validated();
                 $data['masjid_id'] = $masjid->id;   // server-derived, never from the model
+                // Accept whatever date phrasing the model produced, store the column's format.
+                $data['start_date'] = Carbon::parse($data['start_date'])->format('Y-m-d');
+                $data['end_date'] = Carbon::parse($data['end_date'])->format('Y-m-d');
+                // `text` is NOT NULL but unused — every live row carries ''. Matching that
+                // rather than duplicating the body into a column nothing reads.
+                $data['text'] = '';
 
                 $a = Announcement::create($data);
 
-                return ['ok' => true, 'created' => ['id' => $a->id, 'title' => $a->title]];
+                // The attached image doubles as the announcement artwork, which is the
+                // whole point of letting an admin drop a flyer into the chat.
+                $withImage = false;
+                if ($attachmentPath && is_readable($attachmentPath)) {
+                    $a->addMedia($attachmentPath)->preservingOriginal()->toMediaCollection('announcements');
+                    $withImage = true;
+                }
+
+                // Without this the apps keep serving the cached list and the admin
+                // reasonably concludes the assistant lied to them.
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::ANNOUNCEMENTS);
+
+                return ['ok' => true, 'created' => [
+                    'id' => $a->id,
+                    'title' => $a->title,
+                    'image_attached' => $withImage,
+                ]];
             },
         );
     }
@@ -208,22 +240,22 @@ class ToolRegistry
                 'type' => 'object',
                 'properties' => [
                     'title' => ['type' => 'string'],
-                    'details' => ['type' => 'string'],
+                    'details' => ['type' => 'string', 'description' => 'What the event is.'],
                     'place' => ['type' => 'string', 'description' => 'Where it is held.'],
-                    'start' => ['type' => 'string', 'description' => 'Start datetime, YYYY-MM-DD HH:MM:SS.'],
-                    'end' => ['type' => 'string', 'description' => 'End datetime, YYYY-MM-DD HH:MM:SS.'],
+                    'start' => ['type' => 'string', 'description' => 'Start datetime, YYYY-MM-DD HH:MM. Ask if unknown; do not guess.'],
+                    'end' => ['type' => 'string', 'description' => 'Optional end datetime, YYYY-MM-DD HH:MM. Must be after start.'],
                     'link' => ['type' => 'string'],
                 ],
-                'required' => ['title'],
+                'required' => ['title', 'details', 'place', 'start'],
             ],
             writes: true,
             handler: function (array $in, Masjid $masjid): array {
                 $v = Validator::make($in, [
                     'title' => ['required', 'string', 'max:255'],
-                    'details' => ['nullable', 'string'],
-                    'place' => ['nullable', 'string', 'max:255'],
-                    'start' => ['nullable', 'date'],
-                    'end' => ['nullable', 'date', 'after_or_equal:start'],
+                    'details' => ['required', 'string'],
+                    'place' => ['required', 'string', 'max:255'],
+                    'start' => ['required', 'date'],
+                    'end' => ['nullable', 'date', 'after:start'],
                     'link' => ['nullable', 'url', 'max:2048'],
                 ]);
 
@@ -233,8 +265,14 @@ class ToolRegistry
 
                 $data = $v->validated();
                 $data['masjid_id'] = $masjid->id;
+                $data['start'] = Carbon::parse($data['start'])->format('Y-m-d H:i');
+                if (! empty($data['end'])) {
+                    $data['end'] = Carbon::parse($data['end'])->format('Y-m-d H:i');
+                }
 
                 $e = Event::create($data);
+
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::EVENTS);
 
                 return ['ok' => true, 'created' => ['id' => $e->id, 'title' => $e->title]];
             },
@@ -282,6 +320,9 @@ class ToolRegistry
                 $theme = ThemeSetting::firstOrNew(['masjid_id' => $masjid->id]);
                 $theme->masjid_id = $masjid->id;
                 $theme->fill($data)->save();
+
+                // Theme rides along on the masjid `show` payload.
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::SHOW);
 
                 return ['ok' => true, 'updated' => $data];
             },

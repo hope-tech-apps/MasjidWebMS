@@ -40,6 +40,9 @@ class AssistantController extends Controller
             $image = [
                 'media_type' => $file->getMimeType(),
                 'data' => base64_encode(file_get_contents($file->getRealPath())),
+                // Kept so a create_* tool can attach the same file as real media.
+                // Valid only for this request — PHP discards the upload afterwards.
+                'path' => $file->getRealPath(),
             ];
         }
 

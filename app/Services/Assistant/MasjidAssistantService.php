@@ -28,7 +28,7 @@ class MasjidAssistantService
     }
 
     /**
-     * @param  ?array $image  ['media_type' => 'image/png', 'data' => <base64>]
+     * @param  ?array $image  ['media_type' => 'image/png', 'data' => <base64>, 'path' => <tmp file>]
      * @param  array  $history Prior turns: [['role' => 'user'|'assistant', 'content' => ...], ...]
      * @return array  ['reply' => string, 'actions' => array, 'stopped_reason' => string]
      */
@@ -84,7 +84,11 @@ class MasjidAssistantService
                 }
 
                 $input = (array) ($block->input ?? []);
-                $result = $this->registry->execute($block->name, $input, $user, $masjid);
+                // Tools that create content can also *use* the attachment, not just
+                // read it — a flyer becomes the announcement's image.
+                $result = $this->registry->execute(
+                    $block->name, $input, $user, $masjid, $image['path'] ?? null
+                );
 
                 $actions[] = [
                     'tool' => $block->name,
