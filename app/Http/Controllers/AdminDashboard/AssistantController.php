@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use Anthropic\Core\Exceptions\BadRequestException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Assistant\AssistantChatRequest;
 use App\Models\Masjid;
@@ -54,6 +55,21 @@ class AssistantController extends Controller
                 image: $image,
                 history: $request->input('history', []),
             );
+        } catch (BadRequestException $e) {
+            // Overwhelmingly this is an image the model can't decode — one that
+            // passed Laravel's mime check but is too small, truncated, or oddly
+            // encoded. "The assistant is unavailable" would send the admin chasing
+            // an outage when the fix is to attach a different picture.
+            report($e);
+
+            $aboutImage = $image !== null && str_contains(strtolower($e->getMessage()), 'image');
+
+            return response()->json([
+                'status' => 'failed',
+                'data' => $aboutImage
+                    ? "I couldn't read that image. Please try a different one — a normal photo or screenshot (JPEG or PNG) works best."
+                    : "I couldn't process that request. Please try rephrasing it.",
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Throwable $e) {
             report($e);
 
