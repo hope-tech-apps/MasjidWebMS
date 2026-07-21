@@ -8,5 +8,6 @@ declare module 'vue-router' {
         pageTitle?: string;
         dashboardType?: 'masjid' | 'super';
         requiresCrm?: boolean;
+        requiresAssistant?: boolean;
     }
 }

@@ -8,4 +8,6 @@ export type AsideMenuItem = {
     allowed_types: UserType[];
     // When true, the item is only shown if the active masjid's crm_enabled is true.
     requiresCrm?: boolean;
+    // When true, the item is only shown if the active masjid's assistant_enabled is true.
+    requiresAssistant?: boolean;
 }

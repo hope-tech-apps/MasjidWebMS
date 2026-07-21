@@ -92,6 +92,24 @@
                 </div>
             </div>
 
+            <!-- Masjid Assistant (SuperAdmin-only; toggles the per-masjid AI assistant gate) -->
+            <div class="d-flex flex-column gap-2 w-100">
+                <span class="fs-5 fw-semibold">
+                    Masjid Assistant
+                </span>
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <span class="fs-6 fw-semibold text-muted">
+                        Let this masjid's admins use the AI assistant to manage their content.
+                        It can only do what those admins are already permitted to do.
+                    </span>
+                    <div class="form-check form-switch m-0">
+                        <input class="form-check-input bg-danger" type="checkbox"
+                            @click.prevent="toggleAssistantAccess(!masjid.assistant_enabled)"
+                            :checked="masjid.assistant_enabled ? true : false" />
+                    </div>
+                </div>
+            </div>
+
         </div>
     </DataItemContainer>
 </template>
@@ -257,6 +275,51 @@ const toggleCrmAccess = (enabled: boolean) => {
                                 if (masjid.value) masjid.value.crm_enabled = enabled;
                                 swalInstance.title = "Success";
                                 swalInstance.text = "CRM access updated successfully.";
+                                swalInstance.icon = "success";
+                            } else {
+                                swalInstance.title = "Sorry";
+                                swalInstance.text = getMessageFromObj(res);
+                                swalInstance.icon = "warning";
+                            }
+                        })
+                        .catch((e: AxiosError<BackendResponseData>) => {
+                            console.log(e);
+                            swalInstance.title = e.message;
+                            swalInstance.text = getMessageFromObj(e);
+                            swalInstance.icon = "error";
+                        })
+                        .finally(() => {
+                            MSwal.fire(swalInstance);
+                        });
+                } else {
+                    MSwal.fire('Sorry', 'The masjid ID missed.', 'error');
+                }
+            }
+        })
+}
+
+const toggleAssistantAccess = (enabled: boolean) => {
+    QSwal.fire("Question", "Are you sure that you want to change Masjid Assistant access for this masjid?", 'question')
+        .then(async (result) => {
+            if (result.isConfirmed) {
+
+                let swalInstance: SweetAlertOptions = {
+                    title: "Info",
+                    text: "Nothing",
+                    icon: "info"
+                };
+
+                if (masjid.value?.id) {
+
+                    const apiRequestData = new URLSearchParams();
+                    apiRequestData.append('enabled', enabled ? "1" : "0");
+
+                    await ApiService.patch(`/api/admin/masjids/${masjid.value.id}/assistant-access`, apiRequestData)
+                        .then(res => {
+                            if (res.data.status === 'success') {
+                                if (masjid.value) masjid.value.assistant_enabled = enabled;
+                                swalInstance.title = "Success";
+                                swalInstance.text = "Masjid Assistant access updated successfully.";
                                 swalInstance.icon = "success";
                             } else {
                                 swalInstance.title = "Sorry";

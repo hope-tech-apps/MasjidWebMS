@@ -43,6 +43,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/features` |
     `/api/admin/masjids/${string}/features/${string}/` |
     `/api/admin/masjids/${string}/crm-access` |
+    `/api/admin/masjids/${string}/assistant-access` |
+    `/api/admin/masjids/${string}/assistant/chat` |
     `/api/admin/masjids/${string}/iqama` |
     `/api/admin/masjids/${string}/jumaa` |
     `/api/admin/masjids/${string}/theme` |

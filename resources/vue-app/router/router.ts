@@ -63,6 +63,11 @@ router.beforeEach((to, from, next) => {
                         // navigation through to avoid a race that would break the route.
                         if (to.meta.requiresCrm && masjidStore.masjid && !masjidStore.masjid.crm_enabled) {
                             next('/auth/401');
+                        } else if (to.meta.requiresAssistant && masjidStore.masjid && !masjidStore.masjid.assistant_enabled) {
+                            // Same shape as the CRM gate: only hard-block once we know the
+                            // flag is false. The backend gate (EnsureAssistantEnabled) is
+                            // the real boundary — this just avoids a dead screen.
+                            next('/auth/401');
                         } else {
                             next();
                         }

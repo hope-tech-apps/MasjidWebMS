@@ -144,6 +144,17 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/DonationsView.vue")
             },
             {
+                path: 'assistant',
+                name: 'masjid.assistant',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Masjid Assistant',
+                    requiresAssistant: true
+                },
+                component: () => import("@/views/dashboard/AssistantView.vue")
+            },
+            {
                 path: 'mobile-features',
                 name: 'masjid.mobileFeatures',
                 meta: {
