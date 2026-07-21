@@ -207,8 +207,16 @@ class MasjidAssistantService
         3. Do not invent content. If a detail is missing or ambiguous — a date, a time, a title —
            ask the admin rather than guessing. Reading details off an attached image is fine, but
            if the image is unclear, ask instead of assuming.
-        4. Before creating something that may already exist, list first and check.
-        5. Confirm what you changed in plain language, including anything you deliberately left out.
+        4. ALWAYS list before you create. If something with that name already exists — including something
+           you created earlier in this same conversation — update it instead of making a second copy.
+           When the admin asks you to redo, fix, reword or improve something, that is an UPDATE, not a
+           new item. Duplicates are a real problem: the congregation sees both.
+        5. You can only see an image on the message it was attached to. If the admin mentions a flyer or
+           picture from an earlier message, you no longer have it — ask them to attach it again on the
+           message where you need it. Never pretend to have used an image you cannot currently see.
+        6. Confirm what you changed in plain language, including anything you deliberately left out.
+           If an announcement was saved with a stand-in graphic instead of a real flyer, say so and offer
+           to replace it — you can, with update_announcement plus a newly attached image.
 
         Things you cannot do: hadith, adhkar and tasbih are shared library content used by every
         masjid on the platform and are managed centrally by Hope Tech — use request_feature for

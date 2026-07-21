@@ -103,6 +103,9 @@ class ToolRegistry
             Log::info('Assistant tool executed', [
                 'tool' => $name, 'user_id' => $user->id, 'masjid_id' => $masjid->id,
                 'writes' => $tool->writes, 'ok' => $result['ok'] ?? true,
+                // Recorded because "why didn't it use my flyer?" is otherwise
+                // impossible to answer after the fact.
+                'had_attachment' => $attachmentPath !== null,
             ]);
 
             return $result;
@@ -152,8 +155,10 @@ class ToolRegistry
         $tools = [
             $this->listAnnouncements(),
             $this->createAnnouncement(),
+            $this->updateAnnouncement(),
             $this->listEvents(),
             $this->createEvent(),
+            $this->updateEvent(),
             $this->updateTheme(),
             $this->requestFeature(),
         ];
@@ -272,6 +277,96 @@ class ToolRegistry
         );
     }
 
+    private function updateAnnouncement(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'update_announcement',
+            description: <<<'TXT'
+            Change an existing announcement. Use this INSTEAD of create_announcement whenever the admin is
+            correcting, rewording, or improving something that already exists — creating a second copy is
+            almost never what they want. Get the id from list_announcements first.
+            Only send the fields you are changing. If the admin attached an image, it REPLACES the current
+            artwork, so this is how you add a flyer to an announcement that was made without one.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'The announcement id from list_announcements.'],
+                    'title' => ['type' => 'string'],
+                    'details' => ['type' => 'string', 'description' => 'The announcement body.'],
+                    'summary' => ['type' => 'string'],
+                    'start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD'],
+                    'end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD, after start_date.'],
+                    'link' => ['type' => 'string'],
+                ],
+                'required' => ['id'],
+            ],
+            writes: true,
+            handler: function (array $in, Masjid $masjid, User $user, ?string $attachmentPath = null): array {
+                $v = Validator::make($in, [
+                    'id' => ['required', 'integer'],
+                    'title' => ['sometimes', 'string', 'max:255'],
+                    'details' => ['sometimes', 'string'],
+                    'summary' => ['sometimes', 'nullable', 'string', 'max:255'],
+                    'start_date' => ['sometimes', 'date'],
+                    'end_date' => ['sometimes', 'date'],
+                    'link' => ['sometimes', 'nullable', 'url', 'max:2048'],
+                ]);
+
+                if ($v->fails()) {
+                    return ['ok' => false, 'error' => 'Invalid values: ' . $v->errors()->first()];
+                }
+
+                $data = $v->validated();
+
+                // Scoped by masjid_id, not just id — the model supplies the id, and it
+                // must never be able to reach another tenant's announcement.
+                $a = Announcement::where('masjid_id', $masjid->id)->find($data['id']);
+
+                if (! $a) {
+                    return ['ok' => false, 'error' => "There is no announcement with id {$data['id']} for this masjid."];
+                }
+
+                unset($data['id']);
+
+                foreach (['start_date', 'end_date'] as $d) {
+                    if (! empty($data[$d])) {
+                        $data[$d] = Carbon::parse($data[$d])->format('Y-m-d');
+                    }
+                }
+
+                // Re-check the ordering against whatever the row ends up with, since
+                // the admin may be changing only one of the two dates.
+                $start = $data['start_date'] ?? $a->start_date;
+                $end = $data['end_date'] ?? $a->end_date;
+
+                if ($start && $end && Carbon::parse($end)->lte(Carbon::parse($start))) {
+                    return ['ok' => false, 'error' => 'The end date has to be after the start date.'];
+                }
+
+                if ($data !== []) {
+                    $a->fill($data)->save();
+                }
+
+                $imageReplaced = false;
+                if ($attachmentPath && is_readable($attachmentPath)) {
+                    $a->clearMediaCollection('announcements');
+                    $a->addMedia($attachmentPath)->preservingOriginal()->toMediaCollection('announcements');
+                    $imageReplaced = true;
+                }
+
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::ANNOUNCEMENTS);
+
+                return ['ok' => true, 'updated' => [
+                    'id' => $a->id,
+                    'title' => $a->title,
+                    'fields_changed' => array_keys($data),
+                    'image_replaced' => $imageReplaced,
+                ]];
+            },
+        );
+    }
+
     // ---------------------------------------------------------------- events
 
     private function listEvents(): AssistantTool
@@ -342,6 +437,78 @@ class ToolRegistry
                 MobileCache::flushMasjid((int) $masjid->id, MobileCache::EVENTS);
 
                 return ['ok' => true, 'created' => ['id' => $e->id, 'title' => $e->title]];
+            },
+        );
+    }
+
+    private function updateEvent(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'update_event',
+            description: 'Change an existing event. Use this INSTEAD of create_event when the admin is correcting or improving one that already exists. Get the id from list_events. Only send the fields you are changing.',
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'id' => ['type' => 'integer', 'description' => 'The event id from list_events.'],
+                    'title' => ['type' => 'string'],
+                    'details' => ['type' => 'string'],
+                    'place' => ['type' => 'string'],
+                    'start' => ['type' => 'string', 'description' => 'YYYY-MM-DD HH:MM'],
+                    'end' => ['type' => 'string', 'description' => 'YYYY-MM-DD HH:MM, after start.'],
+                    'link' => ['type' => 'string'],
+                ],
+                'required' => ['id'],
+            ],
+            writes: true,
+            handler: function (array $in, Masjid $masjid): array {
+                $v = Validator::make($in, [
+                    'id' => ['required', 'integer'],
+                    'title' => ['sometimes', 'string', 'max:255'],
+                    'details' => ['sometimes', 'string'],
+                    'place' => ['sometimes', 'string', 'max:255'],
+                    'start' => ['sometimes', 'date'],
+                    'end' => ['sometimes', 'nullable', 'date'],
+                    'link' => ['sometimes', 'nullable', 'url', 'max:2048'],
+                ]);
+
+                if ($v->fails()) {
+                    return ['ok' => false, 'error' => 'Invalid values: ' . $v->errors()->first()];
+                }
+
+                $data = $v->validated();
+
+                $e = Event::where('masjid_id', $masjid->id)->find($data['id']);
+
+                if (! $e) {
+                    return ['ok' => false, 'error' => "There is no event with id {$data['id']} for this masjid."];
+                }
+
+                unset($data['id']);
+
+                foreach (['start', 'end'] as $d) {
+                    if (! empty($data[$d])) {
+                        $data[$d] = Carbon::parse($data[$d])->format('Y-m-d H:i');
+                    }
+                }
+
+                $start = $data['start'] ?? $e->start;
+                $end = $data['end'] ?? $e->end;
+
+                if ($start && $end && Carbon::parse($end)->lte(Carbon::parse($start))) {
+                    return ['ok' => false, 'error' => 'The event has to end after it starts.'];
+                }
+
+                if ($data !== []) {
+                    $e->fill($data)->save();
+                }
+
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::EVENTS);
+
+                return ['ok' => true, 'updated' => [
+                    'id' => $e->id,
+                    'title' => $e->title,
+                    'fields_changed' => array_keys($data),
+                ]];
             },
         );
     }

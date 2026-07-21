@@ -133,8 +133,10 @@ const SUGGESTIONS = [
 const ACTION_LABELS: Record<string, string> = {
     list_announcements: 'Read your announcements',
     create_announcement: 'Created an announcement',
+    update_announcement: 'Updated an announcement',
     list_events: 'Read your events',
     create_event: 'Created an event',
+    update_event: 'Updated an event',
     update_theme: 'Updated your theme colors',
     request_feature: 'Sent a request to Hope Tech Inc',
 };
