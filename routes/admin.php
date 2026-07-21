@@ -280,8 +280,11 @@ Route::prefix('admin')->group(function () {
             // runs after `tenant`, so the caller is already proven to act on this
             // masjid). Which capabilities the AI is actually offered is decided
             // per-tool in ToolRegistry and re-checked at execution.
+            // Throttled because every call costs money at Anthropic. 20/min is far
+            // above what a person types and far below what a stuck retry loop in the
+            // browser would do overnight.
             Route::post('{masjid_id}/assistant/chat', [AssistantController::class, 'chat'])
-                ->middleware('assistant');
+                ->middleware(['assistant', 'throttle:20,1']);
 
             // The CRM route group — every endpoint gated by `crm`
             // (EnsureCrmEnabled): 403 unless this masjid's crm_enabled is true.
