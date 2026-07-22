@@ -176,6 +176,114 @@ class DonationService
     }
 
     /**
+     * The platform's application fee for a SUBSCRIPTION, as a percent (e.g. 2.00).
+     *
+     * Subscriptions can't take a fixed per-invoice fee the way one-time charges
+     * take application_fee_amount — Stripe applies application_fee_percent to every
+     * invoice. config stores the platform fee as a fraction (0.02); Stripe wants a
+     * percent (2.0), rounded to 2 dp as its API requires.
+     */
+    public static function applicationFeePercent(?float $platformPct = null): float
+    {
+        $platformPct ??= (float) config('services.stripe.platform_fee_percentage', 0);
+
+        return round($platformPct * 100, 2);
+    }
+
+    /**
+     * Persist a pending DonationSubscription and open a Stripe Checkout Session in
+     * subscription mode as a DIRECT charge on the masjid's connected account.
+     *
+     * The commitment row is 'pending' here; it (and the first Donation row) is
+     * advanced only by the invoice.payment_succeeded webhook, never by the
+     * browser redirect — same trust model as one-time.
+     *
+     * @param  array{success_url?:string,cancel_url?:string,contact_id?:int|null,interval?:string}  $options
+     * @return array{subscription: DonationSubscription, checkout_url: string}
+     */
+    public function createSubscriptionCheckout(
+        Masjid $masjid,
+        Fund $fund,
+        int $intendedAmount,
+        bool $donorCoversFees,
+        array $options = []
+    ): array {
+        $currency = strtolower((string) config('services.stripe.currency', 'usd'));
+        $interval = ($options['interval'] ?? 'month') === 'year' ? 'year' : 'month';
+
+        $chargedAmount = $donorCoversFees ? self::grossUp($intendedAmount) : $intendedAmount;
+        $feePercent = self::applicationFeePercent();
+        $idempotencyKey = 'subscription_' . Str::uuid();
+
+        $subscription = DonationSubscription::create([
+            'masjid_id' => $masjid->id,
+            'contact_id' => $options['contact_id'] ?? null,
+            'fund_id' => $fund->id,
+            'intended_amount' => $intendedAmount,
+            'charged_amount' => $chargedAmount,
+            'currency' => $currency,
+            'donor_covers_fees' => $donorCoversFees,
+            'interval' => $interval,
+            'status' => 'pending',
+            'application_fee_percent' => $feePercent > 0 ? $feePercent : null,
+            'idempotency_key' => $idempotencyKey,
+        ]);
+
+        // Every invoice carries this metadata, so the webhook can resolve the
+        // masjid/fund/commitment for each recurring charge.
+        $subscriptionData = [
+            'metadata' => [
+                'donation_subscription_uuid' => $subscription->uuid,
+                'masjid_id' => (string) $masjid->id,
+                'fund_id' => (string) $fund->id,
+            ],
+        ];
+        // Only attach a positive fee — Stripe rejects a zero application_fee_percent.
+        if ($feePercent > 0) {
+            $subscriptionData['application_fee_percent'] = $feePercent;
+        }
+
+        $params = [
+            'mode' => 'subscription',
+            'client_reference_id' => $subscription->uuid,
+            'line_items' => [[
+                'quantity' => 1,
+                'price_data' => [
+                    'currency' => $currency,
+                    'unit_amount' => $chargedAmount,
+                    'recurring' => ['interval' => $interval],
+                    'product_data' => [
+                        'name' => $fund->name . ' — recurring donation',
+                    ],
+                ],
+            ]],
+            'subscription_data' => $subscriptionData,
+            'metadata' => [
+                'donation_subscription_uuid' => $subscription->uuid,
+            ],
+            'success_url' => $options['success_url']
+                ?? rtrim((string) config('app.url'), '/') . '/donations/thank-you?session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url' => $options['cancel_url']
+                ?? rtrim((string) config('app.url'), '/') . '/donations/cancelled',
+        ];
+
+        $session = $this->createCheckoutSession(
+            $params,
+            (string) $masjid->stripe_account_id,
+            $idempotencyKey
+        );
+
+        $subscription->fill(array_filter([
+            'stripe_checkout_session_id' => $session['id'] ?? null,
+        ], fn ($v) => $v !== null))->save();
+
+        return [
+            'subscription' => $subscription,
+            'checkout_url' => (string) ($session['url'] ?? ''),
+        ];
+    }
+
+    /**
      * Advance a donation to `succeeded`, merging any Stripe identifiers/fees
      * that have arrived. Idempotent and safe on out-of-order events: it never
      * re-flips an already-succeeded row and only fills fields it was given.
@@ -246,9 +354,10 @@ class DonationService
         return [
             'id' => $session->id,
             'url' => $session->url,
+            // null on a subscription-mode session; ?-> keeps it warning-free.
             'payment_intent' => is_string($session->payment_intent)
                 ? $session->payment_intent
-                : ($session->payment_intent->id ?? null),
+                : ($session->payment_intent?->id ?? null),
         ];
     }
 
