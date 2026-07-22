@@ -35,6 +35,9 @@ class Masjid extends Model implements HasMedia
         'stripe_payouts_enabled',
         'crm_enabled',
         'assistant_enabled',
+        'tax_id',
+        'statement_signatory',
+        'mailing_locale',
         'created_by',
         'updated_by',
         'deleted_by'

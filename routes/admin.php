@@ -355,6 +355,7 @@ Route::prefix('admin')->group(function () {
                 Route::prefix('{masjid_id}/annual-statements')->controller(AnnualStatementsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{contact_id}', 'show')->middleware('permission:view donations');
+                    Route::get('/{contact_id}/pdf', 'downloadPdf')->middleware('permission:view donations');
                     Route::post('/{contact_id}/send', 'send')->middleware('permission:manage donations');
                     Route::post('/send-all', 'sendAll')->middleware('permission:manage donations');
                 });

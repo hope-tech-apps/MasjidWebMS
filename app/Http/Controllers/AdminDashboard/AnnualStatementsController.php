@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\AnnualStatementMail;
 use App\Models\Masjid;
 use App\Services\Receipts\AnnualStatementService;
+use App\Services\Receipts\StatementLetterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -23,8 +24,32 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AnnualStatementsController extends Controller
 {
-    public function __construct(private AnnualStatementService $statements)
+    public function __construct(
+        private AnnualStatementService $statements,
+        private StatementLetterService $letters,
+    ) {
+    }
+
+    /** Download one donor's statement as the formal letter PDF. */
+    public function downloadPdf(Request $request, $masjid_id, $contact_id)
     {
+        $year = $this->resolveYear($request);
+        $pdf = $this->letters->pdfFor((int) $masjid_id, (int) $contact_id, $year);
+
+        if ($pdf === null) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No receipted giving for this donor in ' . $year . '.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        $statement = $this->statements->forContact((int) $masjid_id, (int) $contact_id, $year);
+        $donorName = trim(($statement['contact']->first_name ?? '') . ' ' . ($statement['contact']->last_name ?? ''));
+
+        return response($pdf, Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $this->letters->filename($donorName, $year) . '"',
+        ]);
     }
 
     /** Summary report: every donor with receipted giving in the year, with totals. */
@@ -128,6 +153,9 @@ class AnnualStatementsController extends Controller
         $data = $this->present($statement);
         $donorName = trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? '')) ?: 'Valued donor';
 
+        // Attach the formal letter PDF (same one the download produces).
+        $pdf = $this->letters->pdfFor($masjidId, (int) $contact->id, $statement['year']);
+
         try {
             Mail::to($email)->send(new AnnualStatementMail(
                 masjidName: $masjid?->name ?? 'Your masjid',
@@ -138,6 +166,8 @@ class AnnualStatementsController extends Controller
                 giftCount: $statement['gift_count'],
                 gifts: $data['gifts'],
                 byFund: $data['by_fund'],
+                pdf: $pdf,
+                pdfName: $this->letters->filename($donorName, $statement['year']),
             ));
 
             return true;

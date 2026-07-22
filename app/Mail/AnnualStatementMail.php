@@ -5,6 +5,7 @@ namespace App\Mail;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -29,7 +30,22 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
         public int $giftCount,
         public array $gifts,
         public array $byFund,
+        public ?string $pdf = null,
+        public ?string $pdfName = null,
     ) {
+    }
+
+    /** Attach the formal letter PDF when one was rendered. */
+    public function attachments(): array
+    {
+        if (! $this->pdf) {
+            return [];
+        }
+
+        return [
+            Attachment::fromData(fn () => $this->pdf, $this->pdfName ?: 'giving-statement.pdf')
+                ->withMime('application/pdf'),
+        ];
     }
 
     public function envelope(): Envelope

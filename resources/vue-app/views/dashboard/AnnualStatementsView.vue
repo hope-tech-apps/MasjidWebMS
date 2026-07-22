@@ -59,13 +59,22 @@
                                     <td class="text-end"><strong>{{ formatCents(d.total_eligible, d.currency) }}</strong></td>
                                     <td class="text-end">
                                         <button
+                                            class="btn btn-sm btn-outline-secondary me-1"
+                                            :disabled="downloadingId === d.contact_id"
+                                            @click="downloadPdf(d)"
+                                            title="Download the letter PDF"
+                                        >
+                                            <span v-if="downloadingId === d.contact_id" class="spinner-border spinner-border-sm"></span>
+                                            <span v-else><i class="bi bi-download"></i> PDF</span>
+                                        </button>
+                                        <button
                                             class="btn btn-sm btn-outline-primary"
                                             :disabled="!d.email || sendingId === d.contact_id"
                                             @click="sendOne(d)"
-                                            :title="d.email ? 'Email this statement' : 'No email on file'"
+                                            :title="d.email ? 'Email this statement (PDF attached)' : 'No email on file'"
                                         >
                                             <span v-if="sendingId === d.contact_id" class="spinner-border spinner-border-sm"></span>
-                                            <span v-else>Email statement</span>
+                                            <span v-else>Email</span>
                                         </button>
                                     </td>
                                 </tr>
@@ -100,6 +109,7 @@ const masjidStore = useMasjidStore();
 
 const loading = ref(false);
 const sendingId = ref<number | null>(null);
+const downloadingId = ref<number | null>(null);
 const sendingAll = ref(false);
 const donors = ref<DonorRow[]>([]);
 const totalEligible = ref(0);
@@ -144,6 +154,34 @@ const sendOne = async (d: DonorRow) => {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to send statement.' });
     } finally {
         sendingId.value = null;
+    }
+};
+
+const downloadPdf = async (d: DonorRow) => {
+    const id = masjidId();
+    if (!id) return;
+    downloadingId.value = d.contact_id;
+    try {
+        // Blob fetch (not the JSON ApiService) so the Authorization header carries
+        // and the browser downloads the PDF.
+        const token = localStorage.getItem('MASJID_APP_AUTH_TOKEN');
+        const resp = await fetch(`/api/admin/masjids/${id}/annual-statements/${d.contact_id}/pdf?year=${year.value}`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/pdf' },
+        });
+        if (!resp.ok) throw new Error('pdf');
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${year.value}-statement-${d.name.replace(/[^A-Za-z0-9]+/g, '-')}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not generate the PDF.' });
+    } finally {
+        downloadingId.value = null;
     }
 };
 
