@@ -190,6 +190,18 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        title: "Recurring Donations",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M17 1L21 5L17 9" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M3 11V9C3 6.79 4.79 5 7 5H21" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M7 23L3 19L7 15" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                <path d="M21 13V15C21 17.21 19.21 19 17 19H3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </svg>`,
+        to: '/masjid/recurring-donations',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         title: "Masjid Assistant",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L13.6 7.6L19 9.2L13.6 10.8L12 16.4L10.4 10.8L5 9.2L10.4 7.6L12 2Z" fill="white"/>

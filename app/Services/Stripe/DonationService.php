@@ -446,6 +446,42 @@ class DonationService
         return [$fee, $charged - $fee, null];
     }
 
+    /**
+     * Admin-initiated cancel: tell Stripe to cancel the subscription on the
+     * connected account, then mark our row canceled for immediate feedback. The
+     * customer.subscription.deleted webhook will also arrive and is idempotent.
+     * Already-gone-at-Stripe is treated as success (we still cancel locally).
+     */
+    public function cancelSubscription(DonationSubscription $subscription): void
+    {
+        if ($subscription->stripe_subscription_id) {
+            $masjid = Masjid::find($subscription->masjid_id);
+            try {
+                $this->cancelStripeSubscription(
+                    $subscription->stripe_subscription_id,
+                    (string) ($masjid?->stripe_account_id ?? '')
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Stripe subscription cancel failed; canceling locally.', [
+                    'subscription_id' => $subscription->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $subscription->forceFill([
+            'status' => 'canceled',
+            'canceled_at' => now(),
+        ])->save();
+    }
+
+    /** Stripe seam: cancel a subscription on a connected account. */
+    protected function cancelStripeSubscription(string $stripeSubscriptionId, string $connectedAccountId): void
+    {
+        $opts = $connectedAccountId !== '' ? ['stripe_account' => $connectedAccountId] : [];
+        $this->stripe->subscriptions->cancel($stripeSubscriptionId, [], $opts);
+    }
+
     /** Mark a subscription canceled (from customer.subscription.deleted). */
     public function cancelSubscriptionByStripeId(string $stripeSubscriptionId): void
     {

@@ -11,6 +11,7 @@ use App\Http\Controllers\AdminDashboard\ContactsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\DonationsController;
+use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
@@ -336,6 +337,15 @@ Route::prefix('admin')->group(function () {
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
+                });
+
+                // Recurring donations (standing commitments). Read side is
+                // `view donations`; canceling a gift is a money mutation, so it
+                // requires `manage donations`.
+                Route::prefix('{masjid_id}/recurring-donations')->controller(RecurringDonationsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
+                    Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
                 });
             });
 

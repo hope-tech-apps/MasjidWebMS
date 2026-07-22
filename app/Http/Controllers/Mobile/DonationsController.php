@@ -51,16 +51,42 @@ class DonationsController extends Controller
             ], Response::HTTP_NOT_FOUND);
         }
 
+        $options = array_filter([
+            'success_url' => $request->input('success_url'),
+            'cancel_url' => $request->input('cancel_url'),
+        ], fn ($v) => $v !== null);
+
         try {
+            // Recurring path: subscription-mode checkout. The commitment is the
+            // handle we return; the individual charges are booked by webhook.
+            if ($request->boolean('recurring')) {
+                $result = $this->donations->createSubscriptionCheckout(
+                    $masjid,
+                    $fund,
+                    $request->integer('amount'),
+                    $request->boolean('donor_covers_fees'),
+                    $options + ['interval' => $request->input('interval', 'month')],
+                );
+
+                return response()->json([
+                    'status' => 'success',
+                    'data' => [
+                        'checkout_url' => $result['checkout_url'],
+                        'subscription_uuid' => $result['subscription']->uuid,
+                        'charged_amount' => $result['subscription']->charged_amount,
+                        'currency' => $result['subscription']->currency,
+                        'interval' => $result['subscription']->interval,
+                        'recurring' => true,
+                    ],
+                ], Response::HTTP_CREATED);
+            }
+
             $result = $this->donations->createDonationCheckout(
                 $masjid,
                 $fund,
                 $request->integer('amount'),
                 $request->boolean('donor_covers_fees'),
-                array_filter([
-                    'success_url' => $request->input('success_url'),
-                    'cancel_url' => $request->input('cancel_url'),
-                ], fn ($v) => $v !== null),
+                $options,
             );
 
             return response()->json([
@@ -70,6 +96,7 @@ class DonationsController extends Controller
                     'donation_uuid' => $result['donation']->uuid,
                     'charged_amount' => $result['donation']->charged_amount,
                     'currency' => $result['donation']->currency,
+                    'recurring' => false,
                 ],
             ], Response::HTTP_CREATED);
         } catch (\Throwable $e) {

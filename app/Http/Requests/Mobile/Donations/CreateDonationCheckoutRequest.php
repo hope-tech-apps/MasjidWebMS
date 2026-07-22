@@ -20,6 +20,10 @@ class CreateDonationCheckoutRequest extends BaseFormRequest
             'fund_id' => 'required|integer',
             'amount' => 'required|integer|min:100|max:99999999',
             'donor_covers_fees' => 'sometimes|boolean',
+            // Recurring giving: when `recurring` is true the checkout opens in
+            // subscription mode and charges every `interval` (default monthly).
+            'recurring' => 'sometimes|boolean',
+            'interval' => 'sometimes|in:month,year',
             'success_url' => 'sometimes|url',
             'cancel_url' => 'sometimes|url',
         ];
