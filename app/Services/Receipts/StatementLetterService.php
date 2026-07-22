@@ -66,15 +66,33 @@ class StatementLetterService
         return "{$year}-giving-statement-{$slug}.pdf";
     }
 
-    /** Masjid logo as a base64 data URI for dompdf, or null. */
+    /**
+     * Masjid logo as a base64 data URI for dompdf, or null.
+     *
+     * dompdf embeds JPEG without the GD extension but needs GD for PNG. The droplet
+     * has no GD, so we prefer a per-masjid JPEG "statement asset"
+     * (storage/app/statement-assets/masjid-{id}-logo.jpg); failing that, the media
+     * logo is used only when it is already a JPEG.
+     */
     private function logoDataUri(?Masjid $masjid): ?string
     {
-        $media = $masjid?->getFirstMedia('logo');
-        if (! $media || ! is_readable($media->getPath())) {
+        if (! $masjid) {
             return null;
         }
 
-        return 'data:' . $media->mime_type . ';base64,' . base64_encode(file_get_contents($media->getPath()));
+        foreach (['jpg', 'jpeg'] as $ext) {
+            $path = storage_path("app/statement-assets/masjid-{$masjid->id}-logo.{$ext}");
+            if (is_readable($path)) {
+                return 'data:image/jpeg;base64,' . base64_encode(file_get_contents($path));
+            }
+        }
+
+        $media = $masjid->getFirstMedia('logo');
+        if ($media && is_readable($media->getPath()) && str_contains((string) $media->mime_type, 'jpeg')) {
+            return 'data:image/jpeg;base64,' . base64_encode(file_get_contents($media->getPath()));
+        }
+
+        return null;
     }
 
     private function displayPhone(?string $phone): ?string
