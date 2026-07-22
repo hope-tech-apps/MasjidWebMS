@@ -43,7 +43,7 @@
                                 <tr>
                                     <th>Donor</th>
                                     <th>Email</th>
-                                    <th class="text-center">Gifts</th>
+                                    <th class="text-center">Donations</th>
                                     <th class="text-end">Total eligible</th>
                                     <th class="text-end">Actions</th>
                                 </tr>

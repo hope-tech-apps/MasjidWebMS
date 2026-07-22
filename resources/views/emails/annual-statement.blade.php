@@ -28,7 +28,7 @@
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4e7eb; border-radius:8px; margin-bottom:20px;">
                                 <tr>
                                     <td style="padding:16px 20px;">
-                                        <div style="font-size:13px; color:#7b8794; text-transform:uppercase; letter-spacing:.04em;">Total tax-eligible ({{ $giftCount }} {{ $giftCount === 1 ? 'gift' : 'gifts' }})</div>
+                                        <div style="font-size:13px; color:#7b8794; text-transform:uppercase; letter-spacing:.04em;">Total tax-eligible ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }})</div>
                                         <div style="font-size:26px; font-weight:700; color:#1f2933; margin-top:4px;">{{ $currency }} {{ $totalEligible }}</div>
                                     </td>
                                 </tr>

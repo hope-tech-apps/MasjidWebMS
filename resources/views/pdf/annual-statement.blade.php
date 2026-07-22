@@ -56,7 +56,7 @@
         that supporters like you have shown to charity.</p>
 
     <p>This is to acknowledge your total contributions of <strong>{{ $currency }} {{ $totalEligible }}</strong>
-        ({{ $giftCount }} {{ $giftCount === 1 ? 'gift' : 'gifts' }}) to {{ $masjidName }} during {{ $year }}.
+        ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }}) to {{ $masjidName }} during {{ $year }}.
         {{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
         As such, all contributions are tax deductible for federal and state income tax purposes.@if ($taxId)
         Our US Federal tax ID number is {{ $taxId }}.@endif</p>
@@ -82,7 +82,7 @@
         </table>
     @endif
 
-    <p>Thanks again for your generous gift.</p>
+    <p>Thanks again for your generous support.</p>
 
     <div class="sig">
         <p style="margin-bottom:26px;">Respectfully,</p>
