@@ -4,6 +4,7 @@ namespace App\Services\Crm;
 
 use App\Models\Contact;
 use App\Models\Donation;
+use App\Models\DonationSubscription;
 
 /**
  * Turns an anonymous donor into a first-class Contact — the seed of the donor
@@ -25,16 +26,57 @@ class DonorContactService
             return Contact::withoutMasjidScope()->find($donation->contact_id);
         }
 
-        $details = $session['customer_details'] ?? [];
-        $email = isset($details['email']) ? trim((string) $details['email']) : '';
+        $contact = $this->findOrCreateForMasjid(
+            (int) $donation->masjid_id,
+            $session['customer_details'] ?? []
+        );
+
+        if ($contact) {
+            $donation->forceFill(['contact_id' => $contact->id])->save();
+        }
+
+        return $contact;
+    }
+
+    /**
+     * Same as above for a recurring commitment: seed the donor from the first
+     * checkout session and pin them to the subscription, so every monthly charge
+     * inherits the contact without re-reading customer details.
+     */
+    public function linkSubscriptionContact(DonationSubscription $subscription, array $session): ?Contact
+    {
+        if ($subscription->contact_id) {
+            return Contact::withoutMasjidScope()->find($subscription->contact_id);
+        }
+
+        $contact = $this->findOrCreateForMasjid(
+            (int) $subscription->masjid_id,
+            $session['customer_details'] ?? []
+        );
+
+        if ($contact) {
+            $subscription->forceFill(['contact_id' => $contact->id])->save();
+        }
+
+        return $contact;
+    }
+
+    /**
+     * Find-or-create a Contact for a masjid from Stripe customer_details. Returns
+     * null when no email was collected (nothing to key on). Idempotent per
+     * (masjid, email). Runs unbound, so masjid_id is set/filtered explicitly.
+     */
+    public function findOrCreateForMasjid(int $masjidId, array $customerDetails): ?Contact
+    {
+        $email = isset($customerDetails['email']) ? trim((string) $customerDetails['email']) : '';
         if ($email === '') {
             return null;
         }
 
-        [$first, $last] = $this->splitName((string) ($details['name'] ?? ''));
+        [$first, $last] = $this->splitName((string) ($customerDetails['name'] ?? ''));
 
         $contact = Contact::withoutMasjidScope()
-            ->where('masjid_id', $donation->masjid_id)
+            ->where('masjid_id', $masjidId)
             ->where('email', $email)
             ->first();
 
@@ -44,12 +86,9 @@ class DonorContactService
                 'last_name' => $last,
                 'email' => $email,
             ]);
-            // Unbound context: the BelongsToMasjid creating hook won't stamp, so set it.
-            $contact->masjid_id = $donation->masjid_id;
+            $contact->masjid_id = $masjidId;
             $contact->save();
         }
-
-        $donation->forceFill(['contact_id' => $contact->id])->save();
 
         return $contact;
     }

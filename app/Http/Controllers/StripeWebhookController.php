@@ -142,6 +142,8 @@ class StripeWebhookController extends Controller
         match ($event['type']) {
             'checkout.session.completed' => $this->handleCheckoutCompleted($object),
             'payment_intent.succeeded' => $this->handlePaymentIntentSucceeded($object, $account),
+            'invoice.payment_succeeded' => $this->handleInvoicePaid($object, $account),
+            'customer.subscription.deleted' => $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? '')),
             'account.updated' => $this->connect->syncAccountStatus($object),
             default => null, // unhandled event types are acked and ignored.
         };
@@ -149,6 +151,14 @@ class StripeWebhookController extends Controller
 
     private function handleCheckoutCompleted(array $session): void
     {
+        // A subscription checkout only links the commitment + seeds the donor;
+        // the money is booked per invoice by invoice.payment_succeeded.
+        if (($session['mode'] ?? null) === 'subscription') {
+            $this->handleSubscriptionCheckout($session);
+
+            return;
+        }
+
         $donation = $this->findDonation([
             'uuid' => $session['metadata']['donation_uuid'] ?? ($session['client_reference_id'] ?? null),
             'stripe_checkout_session_id' => $session['id'] ?? null,
@@ -179,6 +189,41 @@ class StripeWebhookController extends Controller
             }
         } else {
             $this->donations->recordStripeIds($donation, $ids);
+        }
+    }
+
+    /**
+     * A subscription-mode checkout completed. Pin the Stripe subscription/customer
+     * ids to our commitment and seed the donor contact from the first checkout —
+     * every monthly charge then inherits that contact. No donation is booked here.
+     */
+    private function handleSubscriptionCheckout(array $session): void
+    {
+        $subscription = $this->donations->linkSubscriptionCheckout($session);
+
+        if (! $subscription) {
+            return;
+        }
+
+        $this->donorContacts->linkSubscriptionContact($subscription->refresh(), $session);
+    }
+
+    /**
+     * A recurring invoice was paid — book it as a donation and issue + deliver its
+     * receipt, exactly as a one-time gift. Non-subscription / unrelated invoices
+     * resolve to null and are acked without effect.
+     */
+    private function handleInvoicePaid(array $invoice, ?string $account): void
+    {
+        $donation = $this->donations->bookRecurringInvoice($invoice, $account);
+
+        if (! $donation) {
+            return;
+        }
+
+        $receipt = $this->receipts->issueFor($donation->refresh());
+        if ($receipt) {
+            $this->deliverReceipt($donation->refresh(), $receipt);
         }
     }
 

@@ -3,6 +3,7 @@
 namespace App\Services\Stripe;
 
 use App\Models\Donation;
+use App\Models\DonationSubscription;
 use App\Models\Fund;
 use App\Models\Masjid;
 use Illuminate\Support\Str;
@@ -281,6 +282,219 @@ class DonationService
             'subscription' => $subscription,
             'checkout_url' => (string) ($session['url'] ?? ''),
         ];
+    }
+
+    /**
+     * A subscription-mode checkout completed: pin the Stripe subscription/customer
+     * ids onto our commitment row. Does NOT book a donation — the first
+     * invoice.payment_succeeded does that, so out-of-order events converge.
+     *
+     * @return ?DonationSubscription  null when the session isn't one of ours
+     */
+    public function linkSubscriptionCheckout(array $session): ?DonationSubscription
+    {
+        $subscription = $this->findSubscription([
+            'uuid' => $session['metadata']['donation_subscription_uuid']
+                ?? ($session['client_reference_id'] ?? null),
+            'stripe_checkout_session_id' => $session['id'] ?? null,
+        ]);
+
+        if (! $subscription) {
+            return null;
+        }
+
+        $subscription->fill(array_filter([
+            'stripe_subscription_id' => is_string($session['subscription'] ?? null)
+                ? $session['subscription'] : null,
+            'stripe_customer_id' => is_string($session['customer'] ?? null)
+                ? $session['customer'] : null,
+        ], fn ($v) => $v !== null))->save();
+
+        return $subscription;
+    }
+
+    /**
+     * Book a paid recurring invoice as a succeeded Donation (type = 'recurring')
+     * and activate its subscription. Returns the donation so the caller can issue
+     * and deliver the receipt exactly as for a one-time gift.
+     *
+     * Resolution is metadata-first so event ordering never matters: the invoice
+     * carries our subscription uuid even if checkout.session.completed hasn't
+     * linked the Stripe subscription id yet (and we self-heal that link here).
+     *
+     * Idempotent: dedup by invoice id AND a deterministic idempotency key, so a
+     * redelivered invoice can never book a second donation.
+     *
+     * @return ?Donation  null when the invoice isn't one of ours
+     */
+    public function bookRecurringInvoice(array $invoice, ?string $account = null): ?Donation
+    {
+        // The subscription id and our metadata have lived in different spots across
+        // Stripe API versions, so check the known locations rather than one path.
+        $stripeSubId = $this->firstString($invoice, [
+            ['subscription'],
+            ['parent', 'subscription_details', 'subscription'],
+            ['subscription_details', 'subscription'],
+        ]);
+        $uuid = $this->firstString($invoice, [
+            ['subscription_details', 'metadata', 'donation_subscription_uuid'],
+            ['parent', 'subscription_details', 'metadata', 'donation_subscription_uuid'],
+            ['lines', 'data', 0, 'metadata', 'donation_subscription_uuid'],
+        ]);
+
+        $subscription = $this->findSubscription([
+            'stripe_subscription_id' => $stripeSubId,
+            'uuid' => $uuid,
+        ]);
+
+        if (! $subscription) {
+            return null; // not one of ours — the controller acks and ignores.
+        }
+
+        // Self-heal the Stripe link if the invoice arrived before checkout.completed.
+        if ($stripeSubId && ! $subscription->stripe_subscription_id) {
+            $subscription->stripe_subscription_id = $stripeSubId;
+            $subscription->save();
+        }
+
+        $invoiceId = $invoice['id'] ?? null;
+
+        // Dedup: this invoice may already have booked a donation.
+        if ($invoiceId) {
+            $existing = Donation::where('stripe_invoice_id', $invoiceId)->first();
+            if ($existing) {
+                $this->activateSubscription($subscription, $invoice);
+
+                return $existing;
+            }
+        }
+
+        $charged = (int) ($invoice['amount_paid'] ?? $subscription->charged_amount);
+        // charge / payment_intent moved under `payments` in newer API versions;
+        // a null here just means we fall back to the deterministic fee formula.
+        $chargeId = $this->firstString($invoice, [
+            ['charge'],
+            ['payments', 'data', 0, 'payment', 'charge'],
+        ]);
+        $paymentIntent = $this->firstString($invoice, [
+            ['payment_intent'],
+            ['payments', 'data', 0, 'payment', 'payment_intent'],
+        ]);
+
+        [$fee, $net, $btId] = $this->resolveInvoiceFee($charged, $chargeId, $account);
+
+        $donation = Donation::create([
+            'masjid_id' => $subscription->masjid_id,
+            'contact_id' => $subscription->contact_id,
+            'fund_id' => $subscription->fund_id,
+            'type' => 'recurring',
+            'intended_amount' => $subscription->intended_amount,
+            'charged_amount' => $charged,
+            'currency' => $subscription->currency,
+            'donor_covers_fees' => $subscription->donor_covers_fees,
+            'status' => 'succeeded',
+            'stripe_subscription_id' => $subscription->stripe_subscription_id,
+            'stripe_invoice_id' => $invoiceId,
+            'stripe_payment_intent_id' => $paymentIntent,
+            'stripe_charge_id' => $chargeId,
+            'stripe_balance_transaction_id' => $btId,
+            'stripe_fee_amount' => $fee,
+            'net_amount' => $net,
+            // Deterministic per invoice: the unique constraint is the last-resort
+            // guard against a double-book under a race.
+            'idempotency_key' => 'invoice_' . ($invoiceId ?? Str::uuid()),
+        ]);
+
+        $this->activateSubscription($subscription, $invoice);
+
+        return $donation;
+    }
+
+    /** Advance a subscription to active and record its customer id. */
+    private function activateSubscription(DonationSubscription $subscription, array $invoice): void
+    {
+        $fields = [];
+
+        if ($subscription->status !== 'active' && $subscription->status !== 'canceled') {
+            $fields['status'] = 'active';
+        }
+        if (! $subscription->stripe_customer_id && is_string($invoice['customer'] ?? null)) {
+            $fields['stripe_customer_id'] = $invoice['customer'];
+        }
+
+        if ($fields !== []) {
+            $subscription->fill($fields)->save();
+        }
+    }
+
+    /** Fee/net for a recurring charge: real balance transaction if reachable, else the formula. */
+    private function resolveInvoiceFee(int $charged, ?string $chargeId, ?string $account): array
+    {
+        if ($chargeId) {
+            try {
+                $f = $this->fetchChargeFinancials($chargeId, $account);
+                if ($f['fee'] !== null) {
+                    return [$f['fee'], $f['net'], $f['balance_transaction_id']];
+                }
+            } catch (\Throwable $e) {
+                // fall through to the deterministic formula
+            }
+        }
+
+        $fee = self::computeStripeFee($charged);
+
+        return [$fee, $charged - $fee, null];
+    }
+
+    /** Mark a subscription canceled (from customer.subscription.deleted). */
+    public function cancelSubscriptionByStripeId(string $stripeSubscriptionId): void
+    {
+        $subscription = DonationSubscription::where('stripe_subscription_id', $stripeSubscriptionId)->first();
+
+        if ($subscription && $subscription->status !== 'canceled') {
+            $subscription->forceFill([
+                'status' => 'canceled',
+                'canceled_at' => now(),
+            ])->save();
+        }
+    }
+
+    /**
+     * Return the first path that resolves to a non-empty string in a nested array.
+     * Each path is a list of keys/indexes to walk. Tolerates missing branches.
+     */
+    private function firstString(array $data, array $paths): ?string
+    {
+        foreach ($paths as $path) {
+            $node = $data;
+            foreach ($path as $key) {
+                if (! is_array($node) || ! array_key_exists($key, $node)) {
+                    $node = null;
+                    break;
+                }
+                $node = $node[$key];
+            }
+            if (is_string($node) && $node !== '') {
+                return $node;
+            }
+        }
+
+        return null;
+    }
+
+    /** Find a subscription by any known identifier (runs unbound in the webhook). */
+    private function findSubscription(array $keys): ?DonationSubscription
+    {
+        foreach (['uuid', 'stripe_subscription_id', 'stripe_checkout_session_id'] as $column) {
+            if (! empty($keys[$column])) {
+                $sub = DonationSubscription::where($column, $keys[$column])->first();
+                if ($sub) {
+                    return $sub;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

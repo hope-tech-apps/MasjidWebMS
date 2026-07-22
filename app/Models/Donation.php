@@ -37,6 +37,8 @@ class Donation extends Model
         'status',
         'stripe_payment_intent_id',
         'stripe_checkout_session_id',
+        'stripe_subscription_id',
+        'stripe_invoice_id',
         'stripe_charge_id',
         'stripe_balance_transaction_id',
         'application_fee_amount',
