@@ -629,14 +629,19 @@ class ToolRegistry
      */
     private function notifyHopeTech(AssistantFeatureRequest $req, Masjid $masjid, User $user): void
     {
-        $to = config('services.anthropic.escalation_email');
+        // The setting can name several recipients, comma-separated.
+        $recipients = collect(explode(',', (string) config('services.anthropic.escalation_email')))
+            ->map(fn ($e) => trim($e))
+            ->filter()
+            ->values()
+            ->all();
 
-        if (! $to) {
+        if ($recipients === []) {
             return;
         }
 
         try {
-            Mail::to($to)->send(new AssistantFeatureRequestMail(
+            Mail::to($recipients)->send(new AssistantFeatureRequestMail(
                 requestId: $req->id,
                 masjidName: (string) $masjid->name,
                 masjidId: (int) $masjid->id,

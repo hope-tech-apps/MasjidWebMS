@@ -65,7 +65,8 @@ return [
         // Hard cap on tool-loop iterations so a confused turn cannot spiral.
         'max_tool_iterations' => (int) env('ASSISTANT_MAX_TOOL_ITERATIONS', 5),
         // Where escalated feature requests are emailed.
-        'escalation_email' => env('ASSISTANT_ESCALATION_EMAIL', 'support@hopetechapps.com'),
+        // Comma-separated; the Masjid Assistant emails escalations here.
+        'escalation_email' => env('ASSISTANT_ESCALATION_EMAIL', 'moneeb@hopetechapps.com,shaher@hopetechapps.com'),
     ],
 
     'stripe' => [
