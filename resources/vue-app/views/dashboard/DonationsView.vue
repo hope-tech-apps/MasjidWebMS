@@ -45,6 +45,7 @@
                             <tr>
                                 <th>Amount</th>
                                 <th>Fund</th>
+                                <th>Method</th>
                                 <th>Date</th>
                                 <th>Status</th>
                                 <th class="text-end">Actions</th>
@@ -59,7 +60,10 @@
                                     <span v-if="donation.fund">{{ donation.fund.name }}</span>
                                     <span v-else class="text-muted">-</span>
                                 </td>
-                                <td>{{ formatDate(donation.created_at) }}</td>
+                                <td>
+                                    <span class="text-capitalize">{{ methodLabel(donation) }}</span>
+                                </td>
+                                <td>{{ formatDate(donation.donated_at || donation.created_at) }}</td>
                                 <td>
                                     <span class="badge text-capitalize" :class="statusClass(donation.status)">
                                         {{ donation.status }}
@@ -286,6 +290,17 @@ const formatDate = (iso: string): string => {
     if (!iso) return '—';
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+// Online = Stripe (card via checkout); offline = the recorded payment method
+// (cash/check/zelle/…). Falls back to a dash when neither is set.
+const methodLabel = (donation: any): string => {
+    if (donation.source === 'offline') {
+        return (donation.payment_method && donation.payment_method !== 'unknown')
+            ? donation.payment_method.replace(/_/g, '/')
+            : 'offline';
+    }
+    return 'card';
 };
 
 const statusClass = (status: DonationStatus): string => {
