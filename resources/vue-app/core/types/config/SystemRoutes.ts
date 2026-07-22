@@ -36,6 +36,7 @@ export type MasjidDashboardRoute =
     '/masjid/funds' |
     '/masjid/donations' |
     '/masjid/recurring-donations' |
+    '/masjid/annual-statements' |
     '/masjid/assistant' |
     '/azkar' |
     `/azkar/${number}` |

@@ -10,6 +10,7 @@ use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\ContactsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
+use App\Http\Controllers\AdminDashboard\AnnualStatementsController;
 use App\Http\Controllers\AdminDashboard\DonationsController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
@@ -346,6 +347,16 @@ Route::prefix('admin')->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
                     Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
+                });
+
+                // Year-end (annual) giving statements. Computed on the fly from
+                // receipted donations; the report is read-only, emailing a
+                // statement is `manage donations`.
+                Route::prefix('{masjid_id}/annual-statements')->controller(AnnualStatementsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view donations');
+                    Route::get('/{contact_id}', 'show')->middleware('permission:view donations');
+                    Route::post('/{contact_id}/send', 'send')->middleware('permission:manage donations');
+                    Route::post('/send-all', 'sendAll')->middleware('permission:manage donations');
                 });
             });
 

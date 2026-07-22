@@ -155,6 +155,17 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/RecurringDonationsView.vue")
             },
             {
+                path: 'annual-statements',
+                name: 'masjid.annualStatements',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Year-End Statements',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/AnnualStatementsView.vue")
+            },
+            {
                 path: 'assistant',
                 name: 'masjid.assistant',
                 meta: {

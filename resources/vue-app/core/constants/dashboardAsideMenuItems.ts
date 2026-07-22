@@ -202,6 +202,18 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        title: "Year-End Statements",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2Z" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M14 2V8H20" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M8 13H16" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M8 17H13" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>`,
+        to: '/masjid/annual-statements',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         title: "Masjid Assistant",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L13.6 7.6L19 9.2L13.6 10.8L12 16.4L10.4 10.8L5 9.2L10.4 7.6L12 2Z" fill="white"/>
