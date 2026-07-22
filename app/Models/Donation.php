@@ -30,6 +30,11 @@ class Donation extends Model
         'contact_id',
         'fund_id',
         'type',
+        'source',
+        'payment_method',
+        'donated_at',
+        'note',
+        'import_batch',
         'intended_amount',
         'charged_amount',
         'currency',
@@ -51,6 +56,7 @@ class Donation extends Model
     protected function casts(): array
     {
         return [
+            'donated_at' => 'date',
             'intended_amount' => 'integer',
             'charged_amount' => 'integer',
             'donor_covers_fees' => 'boolean',

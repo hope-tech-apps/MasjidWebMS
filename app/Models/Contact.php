@@ -27,5 +27,26 @@ class Contact extends Model
         'email',
         'phone',
         'notes',
+        'is_placeholder',
+        'import_batch',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_placeholder' => 'boolean',
+        ];
+    }
+
+    /** Card last-4 records for this contact (historical lookup + placeholder merge). */
+    public function cards()
+    {
+        return $this->hasMany(ContactCard::class);
+    }
+
+    /** Succeeded giving attributed to this contact (Stripe + offline alike). */
+    public function donations()
+    {
+        return $this->hasMany(Donation::class);
+    }
 }
