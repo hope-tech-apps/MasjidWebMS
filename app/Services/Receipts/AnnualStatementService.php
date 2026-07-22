@@ -48,15 +48,21 @@ class AnnualStatementService
 
         [$start, $end] = $this->yearBounds($year);
 
+        // Tax-eligible giving = succeeded donations to a RECEIPTABLE fund, dated by
+        // the real gift date (donated_at for imported/offline history, else the
+        // entry date). A gift counts whether or not a formal receipt row exists:
+        // Stripe gifts have one; imported historical gifts don't, but a genuine
+        // donation to a receiptable fund is still eligible. Eligible amount comes
+        // from the receipt when present, else the amount given.
         $donations = Donation::withoutGlobalScopes()
             ->where('masjid_id', $masjidId)
             ->where('contact_id', $contactId)
             ->where('status', 'succeeded')
-            ->whereBetween('created_at', [$start, $end])
+            ->whereRaw('COALESCE(donated_at, created_at) BETWEEN ? AND ?', [$start, $end])
+            ->whereHas('fund', fn ($q) => $q->withoutGlobalScopes()->where('receiptable', true))
             ->with(['fund' => fn ($q) => $q->withoutGlobalScopes(), 'receipt'])
-            ->orderBy('created_at')
-            ->get()
-            ->filter(fn (Donation $d) => $d->receipt !== null); // receipted = tax-eligible
+            ->orderByRaw('COALESCE(donated_at, created_at)')
+            ->get();
 
         if ($donations->isEmpty()) {
             return null;
@@ -67,16 +73,16 @@ class AnnualStatementService
         $total = 0;
 
         foreach ($donations as $d) {
-            $eligible = (int) $d->receipt->eligible_amount;
+            $eligible = $d->receipt ? (int) $d->receipt->eligible_amount : (int) $d->charged_amount;
             $fundName = $d->fund?->name ?? 'General';
             $total += $eligible;
             $byFund[$fundName] = ($byFund[$fundName] ?? 0) + $eligible;
 
             $gifts[] = [
-                'date' => Carbon::parse($d->created_at)->format('M j, Y'),
+                'date' => Carbon::parse($d->donated_at ?? $d->created_at)->format('M j, Y'),
                 'fund' => $fundName,
                 'amount' => $eligible,
-                'serial' => (int) $d->receipt->serial_number,
+                'serial' => $d->receipt ? (int) $d->receipt->serial_number : null,
             ];
         }
 
@@ -101,19 +107,22 @@ class AnnualStatementService
     {
         [$start, $end] = $this->yearBounds($year);
 
-        // One pass over the year's receipted donations, grouped by contact.
+        // One pass over the year's tax-eligible giving (succeeded, to a receiptable
+        // fund), grouped by donor. Uses the real gift date and sums the amount
+        // given (eligible == gross in this system; advantage is always 0).
         $rows = Donation::withoutGlobalScopes()
             ->where('donations.masjid_id', $masjidId)
             ->where('donations.status', 'succeeded')
             ->whereNotNull('donations.contact_id')
-            ->whereBetween('donations.created_at', [$start, $end])
-            ->join('donation_receipts', 'donation_receipts.donation_id', '=', 'donations.id')
+            ->whereRaw('COALESCE(donations.donated_at, donations.created_at) BETWEEN ? AND ?', [$start, $end])
+            ->join('funds', 'funds.id', '=', 'donations.fund_id')
+            ->where('funds.receiptable', true)
             ->join('contacts', 'contacts.id', '=', 'donations.contact_id')
             ->groupBy('donations.contact_id', 'contacts.first_name', 'contacts.last_name', 'contacts.email', 'donations.currency')
             ->selectRaw('donations.contact_id as contact_id,
                          contacts.first_name, contacts.last_name, contacts.email,
                          donations.currency as currency,
-                         SUM(donation_receipts.eligible_amount) as total_eligible,
+                         SUM(donations.charged_amount) as total_eligible,
                          COUNT(*) as gift_count')
             ->orderByDesc('total_eligible')
             ->get();

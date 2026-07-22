@@ -23,6 +23,11 @@
                             <option v-for="fund in funds" :key="fund.id" :value="fund.id">{{ fund.name }}</option>
                         </select>
                     </div>
+                    <div class="col-md-4 col-lg-4">
+                        <label class="form-label small text-muted mb-1">Search donor</label>
+                        <input type="text" class="form-control" v-model="searchQuery"
+                            placeholder="Name or email…" @keyup.enter="loadData(1)" />
+                    </div>
                 </div>
 
                 <!-- Loading State -->
@@ -43,6 +48,7 @@
                     <table class="table table-hover align-middle">
                         <thead>
                             <tr>
+                                <th>Donor</th>
                                 <th>Amount</th>
                                 <th>Fund</th>
                                 <th>Method</th>
@@ -53,6 +59,10 @@
                         </thead>
                         <tbody>
                             <tr v-for="donation in donations" :key="donation.id">
+                                <td>
+                                    <span v-if="donation.contact" class="fw-semibold">{{ donorName(donation) }}</span>
+                                    <span v-else class="text-muted">— (general)</span>
+                                </td>
                                 <td>
                                     <strong>{{ formatCents(donation.charged_amount, donation.currency) }}</strong>
                                 </td>
@@ -132,6 +142,14 @@
                             <h6 class="text-muted text-uppercase small mb-3">Details</h6>
                             <div class="row mb-4">
                                 <div class="col-md-4">
+                                    <h6 class="text-muted mb-1">Donor</h6>
+                                    <p class="mb-0">{{ selectedDonation.contact ? donorName(selectedDonation) : '— (general)' }}</p>
+                                </div>
+                                <div class="col-md-4">
+                                    <h6 class="text-muted mb-1">Method</h6>
+                                    <p class="mb-0 text-capitalize">{{ methodLabel(selectedDonation) }}</p>
+                                </div>
+                                <div class="col-md-4">
                                     <h6 class="text-muted mb-1">Fund</h6>
                                     <p class="mb-0">{{ selectedDonation.fund?.name ?? '—' }}</p>
                                 </div>
@@ -208,6 +226,7 @@ const fundsStore = useFundsStore();
 const loading = ref(false);
 const statusFilter = ref<DonationStatus | ''>('');
 const fundFilter = ref<number | ''>('');
+const searchQuery = ref('');
 const showViewModal = ref(false);
 const selectedDonation = ref<Donation | null>(null);
 const funds = ref<Fund[]>([]);
@@ -247,7 +266,7 @@ watch([statusFilter, fundFilter], async () => {
 const loadData = async (page: number = 1) => {
     loading.value = true;
     try {
-        await donationsStore.fetchDonations(page, statusFilter.value, fundFilter.value);
+        await donationsStore.fetchDonations(page, statusFilter.value, fundFilter.value, searchQuery.value.trim());
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load donations.' });
     } finally {
@@ -290,6 +309,13 @@ const formatDate = (iso: string): string => {
     if (!iso) return '—';
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+// Donor's First Last (or the business name). Falls back gracefully.
+const donorName = (donation: any): string => {
+    const c = donation.contact;
+    if (!c) return '';
+    return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Donor';
 };
 
 // Online = Stripe (card via checkout); offline = the recorded payment method

@@ -28,7 +28,8 @@ export const useDonationsStore = defineStore('donationsStore', () => {
     async function fetchDonations(
         page: number = 1,
         status: DonationStatus | '' = '',
-        fundId: number | string | '' = ''
+        fundId: number | string | '' = '',
+        search: string = ''
     ): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
@@ -42,6 +43,9 @@ export const useDonationsStore = defineStore('donationsStore', () => {
         }
         if (fundId) {
             url += `&fund_id=${encodeURIComponent(fundId)}`;
+        }
+        if (search) {
+            url += `&search=${encodeURIComponent(search)}`;
         }
 
         await ApiService.get(url)

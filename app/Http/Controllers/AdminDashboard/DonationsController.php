@@ -18,10 +18,19 @@ class DonationsController extends Controller
     public function index(Request $request, $masjid_id)
     {
         $donations = Donation::query()
-            ->with(['fund', 'receipt'])
+            ->with(['fund', 'receipt', 'contact'])
             ->when($request->query('status'), fn ($q, $status) => $q->where('status', $status))
             ->when($request->query('fund_id'), fn ($q, $fundId) => $q->where('fund_id', $fundId))
-            ->latest()
+            // Optional donor search (name or email).
+            ->when($request->query('search'), function ($q, $search) {
+                $q->whereHas('contact', function ($c) use ($search) {
+                    $c->where('first_name', 'like', "%{$search}%")
+                        ->orWhere('last_name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                });
+            })
+            // Newest gift first — by the real gift date for offline history, else entry.
+            ->orderByRaw('COALESCE(donated_at, created_at) DESC')
             ->paginate($request->query('per_page', 15));
 
         return response()->json([
@@ -38,7 +47,7 @@ class DonationsController extends Controller
      */
     public function show($masjid_id, $donation_id)
     {
-        $donation = Donation::with(['fund', 'receipt'])->findOrFail($donation_id);
+        $donation = Donation::with(['fund', 'receipt', 'contact'])->findOrFail($donation_id);
 
         return response()->json([
             'status' => 'success',
