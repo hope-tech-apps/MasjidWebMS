@@ -3,8 +3,12 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Donations\StoreOfflineDonationRequest;
+use App\Models\Contact;
 use App\Models\Donation;
+use App\Models\Fund;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -37,6 +41,46 @@ class DonationsController extends Controller
             'status' => 'success',
             'data' => $donations,
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Record a manual OFFLINE donation (cash/check/Zelle/…). Stripe donations are
+     * still webhook-only; this path exists for gifts that never touch Stripe. The
+     * row is booked succeeded, source=offline, dated to when it was given, with no
+     * receipt (an offline gift isn't a Stripe-verified event). Tenant-scoped:
+     * fund/contact are validated to belong to this masjid before the write.
+     */
+    public function store(StoreOfflineDonationRequest $request, $masjid_id)
+    {
+        // Validate fund + contact belong to THIS masjid (bound tenant scopes these).
+        $fund = Fund::findOrFail($request->integer('fund_id'));
+        $contactId = null;
+        if ($request->filled('contact_id')) {
+            $contactId = Contact::findOrFail($request->integer('contact_id'))->id;
+        }
+
+        $cents = (int) round(((float) $request->validated('amount')) * 100);
+
+        $donation = Donation::create([
+            'contact_id' => $contactId,
+            'fund_id' => $fund->id,
+            'type' => 'one_time',
+            'source' => 'offline',
+            'payment_method' => $request->validated('payment_method'),
+            'donated_at' => $request->validated('donated_at'),
+            'note' => $request->input('note'),
+            'intended_amount' => $cents,
+            'charged_amount' => $cents,
+            'currency' => strtolower((string) config('services.stripe.currency', 'usd')),
+            'donor_covers_fees' => false,
+            'status' => 'succeeded',
+            'idempotency_key' => 'offline_' . Str::uuid(),
+        ]);   // masjid_id stamped by BelongsToMasjid
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $donation->load(['fund', 'contact']),
+        ], Response::HTTP_CREATED);
     }
 
     /**

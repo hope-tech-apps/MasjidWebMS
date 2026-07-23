@@ -77,11 +77,62 @@ class ContactsController extends Controller
      */
     public function show($masjid_id, $contact_id)
     {
-        $contact = Contact::findOrFail($contact_id);
+        // Card last-4 + giving history, newest gift first (by real gift date).
+        $contact = Contact::with([
+            'cards',
+            'donations' => fn ($q) => $q->with('fund')->orderByRaw('COALESCE(donated_at, created_at) DESC'),
+        ])->findOrFail($contact_id);
+
+        $data = $contact->toArray();
+        $data['giving_total'] = (int) $contact->donations
+            ->where('status', 'succeeded')->sum('charged_amount');
 
         return response()->json([
             'status' => 'success',
-            'data' => $contact
+            'data' => $data,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Merge a contact (typically a placeholder "Unidentified Card ####") into
+     * another member — existing (target_contact_id) or newly created. Moves the
+     * source's donations and card last-4 onto the target, then removes the source.
+     *
+     * All queries run in the bound-tenant context, so BelongsToMasjid scopes every
+     * move to this masjid — a merge can't reach across tenants.
+     */
+    public function merge(\App\Http\Requests\Admin\Contacts\MergeContactRequest $request, $masjid_id, $contact_id)
+    {
+        $source = Contact::findOrFail($contact_id);   // tenant-scoped
+
+        $target = $request->filled('target_contact_id')
+            ? Contact::findOrFail($request->integer('target_contact_id'))
+            : Contact::create($request->only(['first_name', 'last_name', 'email', 'phone']));
+
+        if ($target->id === $source->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'A contact cannot be merged into itself.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target) {
+            \App\Models\Donation::where('contact_id', $source->id)
+                ->update(['contact_id' => $target->id]);
+
+            foreach ($source->cards as $card) {
+                \App\Models\ContactCard::firstOrCreate(
+                    ['contact_id' => $target->id, 'last4' => $card->last4],
+                    ['masjid_id' => $target->masjid_id],
+                );
+            }
+            $source->cards()->delete();
+            $source->forceDelete();   // the placeholder is fully absorbed
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $target->fresh(['cards']),
         ], Response::HTTP_OK);
     }
 

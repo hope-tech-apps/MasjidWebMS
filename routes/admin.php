@@ -310,6 +310,8 @@ Route::prefix('admin')->group(function () {
                     Route::get('/{contact_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{contact_id}', 'update')->middleware('permission:manage contacts');
                     Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
+                    // Merge a placeholder (unidentified-card) contact into a member.
+                    Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
                 });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
@@ -338,6 +340,9 @@ Route::prefix('admin')->group(function () {
                 // store / update / destroy route here.
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
+                    // Manual/offline gift entry (cash/check/Zelle/…). Stripe gifts
+                    // remain webhook-only; this is the only write path for donations.
+                    Route::post('/', 'store')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
                 });
 
