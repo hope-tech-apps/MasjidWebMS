@@ -12,7 +12,7 @@
         "anthropic-ai/sdk": "^0.7",
         "barryvdh/laravel-dompdf": "^3.1",
         "bacon/bacon-qr-code": "^3.0",
-        "laravel/framework": "^11.31",
+        "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "php": "^8.2",
