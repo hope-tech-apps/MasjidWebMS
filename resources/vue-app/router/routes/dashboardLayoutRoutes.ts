@@ -166,6 +166,17 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/AnnualStatementsView.vue")
             },
             {
+                path: 'properties',
+                name: 'masjid.properties',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Properties & Rent',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/PropertiesView.vue")
+            },
+            {
                 path: 'assistant',
                 name: 'masjid.assistant',
                 meta: {

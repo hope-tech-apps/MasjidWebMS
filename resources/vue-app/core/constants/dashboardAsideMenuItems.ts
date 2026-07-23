@@ -214,6 +214,17 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        title: "Properties & Rent",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 21H21" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M5 21V9L12 4L19 9V21" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M9 21V13H15V21" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                </svg>`,
+        to: '/masjid/properties',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         title: "Masjid Assistant",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L13.6 7.6L19 9.2L13.6 10.8L12 16.4L10.4 10.8L5 9.2L10.4 7.6L12 2Z" fill="white"/>

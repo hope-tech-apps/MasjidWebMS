@@ -12,6 +12,7 @@ use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\AnnualStatementsController;
 use App\Http\Controllers\AdminDashboard\DonationsController;
+use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FundsController;
@@ -347,6 +348,19 @@ Route::prefix('admin')->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
                     Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
+                });
+
+                // Rental properties + rent payments. A separate component from the
+                // donor CRM (rent is not a gift). Viewing is `view properties`;
+                // any mutation is `manage properties`.
+                Route::prefix('{masjid_id}/properties')->controller(PropertiesController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view properties');
+                    Route::post('/', 'store')->middleware('permission:manage properties');
+                    Route::get('/{property_id}', 'show')->middleware('permission:view properties');
+                    Route::put('/{property_id}', 'update')->middleware('permission:manage properties');
+                    Route::delete('/{property_id}', 'destroy')->middleware('permission:manage properties');
+                    Route::post('/{property_id}/rent', 'storeRent')->middleware('permission:manage properties');
+                    Route::delete('/{property_id}/rent/{rent_id}', 'destroyRent')->middleware('permission:manage properties');
                 });
 
                 // Year-end (annual) giving statements. Computed on the fly from
