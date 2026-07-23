@@ -241,8 +241,26 @@
                     publishes under its own accounts and supplies credentials.
                 </p>
 
+                <!-- Platform selection -->
+                <div class="wizard-subsection">
+                    <span class="subsection-title">Platforms to provision</span>
+                    <p class="text-muted small mb-2">Choose which platforms this masjid will publish to.</p>
+                    <div class="d-flex flex-wrap gap-2">
+                        <label v-for="p in platformOptions" :key="p.slug" class="mode-pill"
+                            :class="{
+                                selected: form.platforms.includes(p.slug),
+                                'pill-disabled': p.slug === 'tvos' && !form.platforms.includes('ios'),
+                            }">
+                            <input type="checkbox" :value="p.slug" v-model="form.platforms"
+                                :disabled="p.slug === 'tvos' && !form.platforms.includes('ios')" />
+                            {{ p.label }}
+                        </label>
+                    </div>
+                    <p class="text-muted small mb-0">tvOS ships under the iOS Apple account.</p>
+                </div>
+
                 <!-- iOS -->
-                <div class="platform-card">
+                <div v-if="form.platforms.includes('ios')" class="platform-card">
                     <div class="platform-head d-flex align-items-center justify-content-between">
                         <span class="platform-name">iOS — Apple App Store</span>
                         <div class="mode-toggle d-flex gap-2">
@@ -275,7 +293,7 @@
                 </div>
 
                 <!-- Android -->
-                <div class="platform-card">
+                <div v-if="form.platforms.includes('android')" class="platform-card">
                     <div class="platform-head d-flex align-items-center justify-content-between">
                         <span class="platform-name">Android — Google Play</span>
                         <div class="mode-toggle d-flex gap-2">
@@ -299,7 +317,7 @@
                 </div>
 
                 <!-- Web -->
-                <div class="platform-card">
+                <div v-if="form.platforms.includes('web')" class="platform-card">
                     <div class="platform-head d-flex align-items-center justify-content-between">
                         <span class="platform-name">Web</span>
                         <div class="mode-toggle d-flex gap-2">
@@ -336,9 +354,16 @@
                         <div class="review-item"><span>Method</span><strong>{{ form.method }}</strong></div>
                         <div class="review-item"><span>Madhab</span><strong>{{ form.madhab }}</strong></div>
                         <div class="review-item"><span>Features on</span><strong>{{ form.feature_keys.length }}</strong></div>
-                        <div class="review-item"><span>iOS</span><strong>{{ appModeLabel(form.apps.ios.account_mode) }}</strong></div>
-                        <div class="review-item"><span>Android</span><strong>{{ appModeLabel(form.apps.android.account_mode) }}</strong></div>
-                        <div class="review-item"><span>Web</span><strong>{{ appModeLabel(form.apps.web.account_mode) }}</strong></div>
+                        <div class="review-item">
+                            <span>Platforms</span>
+                            <span v-if="selectedPlatformLabels.length" class="d-flex flex-wrap gap-1">
+                                <span v-for="label in selectedPlatformLabels" :key="label" class="mode-pill selected">{{ label }}</span>
+                            </span>
+                            <strong v-else>—</strong>
+                        </div>
+                        <div v-if="form.platforms.includes('ios')" class="review-item"><span>iOS</span><strong>{{ appModeLabel(form.apps.ios.account_mode) }}</strong></div>
+                        <div v-if="form.platforms.includes('android')" class="review-item"><span>Android</span><strong>{{ appModeLabel(form.apps.android.account_mode) }}</strong></div>
+                        <div v-if="form.platforms.includes('web')" class="review-item"><span>Web</span><strong>{{ appModeLabel(form.apps.web.account_mode) }}</strong></div>
                         <div class="review-item">
                             <span>Brand</span>
                             <span class="d-flex gap-1">
@@ -419,6 +444,15 @@ const colorFields = [
     { key: 'background_color' as const, label: 'Background' },
 ];
 
+// Selectable publishing platforms. tvOS ships under the iOS Apple account, so it
+// has no account-mode block of its own and depends on iOS being selected.
+const platformOptions = [
+    { slug: 'ios', label: 'iOS' },
+    { slug: 'android', label: 'Android' },
+    { slug: 'tvos', label: 'tvOS' },
+    { slug: 'web', label: 'Web' },
+];
+
 const currentStep = ref(0);
 const isLoading = ref(false);
 const createdMasjidId = ref<number | null>(null);
@@ -472,6 +506,9 @@ const form = reactive({
     mission: '',
     vision: '',
     feature_keys: [] as string[],
+    // Platforms to provision. Defaults to the historical set (iOS/Android/Web) so
+    // existing onboarding behavior is preserved. tvOS is opt-in and iOS-gated.
+    platforms: ['ios', 'android', 'web'] as string[],
     apps: {
         ios: { account_mode: 'managed' as AccountMode, asc_key_p8: '', asc_key_id: '', asc_issuer_id: '' },
         android: { account_mode: 'managed' as AccountMode, play_service_account_json: '' },
@@ -520,6 +557,15 @@ watch(() => form.country_id, async (id) => {
             if (res.data?.status === 'success' && res.data?.data) cities.value = res.data.data;
         })
         .catch((e: Error) => console.log(e));
+});
+
+// tvOS cannot ship without iOS (it publishes under the iOS Apple account), so
+// drop it from the selection whenever iOS is deselected.
+watch(() => form.platforms.includes('ios'), (iosSelected) => {
+    if (!iosSelected) {
+        const i = form.platforms.indexOf('tvos');
+        if (i !== -1) form.platforms.splice(i, 1);
+    }
 });
 
 // ---- Validation helpers ----
@@ -573,14 +619,25 @@ function contentErrors(): string[] {
     return e;
 }
 
-function appsErrors(): string[] {
+function platformsErrors(): string[] {
     const e: string[] = [];
-    if (form.apps.ios.account_mode === 'byo') {
+    if (form.platforms.length === 0) e.push('Select at least one platform.');
+    if (form.platforms.includes('tvos') && !form.platforms.includes('ios')) {
+        e.push('tvOS requires iOS to be selected (it ships under the iOS Apple account).');
+    }
+    return e;
+}
+
+function appsErrors(): string[] {
+    // Platform selection is validated as part of the Apps step.
+    const e: string[] = [...platformsErrors()];
+    // Only require account-mode credentials for platforms that are actually selected.
+    if (form.platforms.includes('ios') && form.apps.ios.account_mode === 'byo') {
         if (!form.apps.ios.asc_key_p8.trim()) e.push('iOS: App Store Connect .p8 key is required for bring-your-own.');
         if (!form.apps.ios.asc_key_id.trim()) e.push('iOS: Key ID is required for bring-your-own.');
         if (!form.apps.ios.asc_issuer_id.trim()) e.push('iOS: Issuer ID is required for bring-your-own.');
     }
-    if (form.apps.android.account_mode === 'byo') {
+    if (form.platforms.includes('android') && form.apps.android.account_mode === 'byo') {
         if (!form.apps.android.play_service_account_json.trim()) e.push('Android: Play service-account JSON is required for bring-your-own.');
         else if (!jsonValid(form.apps.android.play_service_account_json)) e.push('Android: Play service-account JSON is not valid JSON.');
     }
@@ -604,6 +661,9 @@ const allStepsValid = computed(() => [0, 1, 2, 3, 4].every(s => errorsForStep(s)
 const countryName = computed(() => countries.value.find(c => c.id === form.country_id)?.name ?? '—');
 const cityName = computed(() => cities.value.find(c => c.id === form.city_id)?.name ?? '—');
 const appModeLabel = (m: AccountMode) => (m === 'managed' ? 'Managed (paid)' : 'Bring your own');
+const selectedPlatformLabels = computed(() =>
+    platformOptions.filter(p => form.platforms.includes(p.slug)).map(p => p.label)
+);
 
 function next() {
     if (currentStepErrors.value.length === 0 && currentStep.value < steps.length - 1) currentStep.value++;
@@ -680,6 +740,8 @@ async function provision() {
         // Explicit-selection flag: survives the empty-array case (see controller).
         feature_keys_provided: '1',
         feature_keys: form.feature_keys,
+        // Selected publishing platforms (backend validates platforms.*).
+        platforms: form.platforms,
         apps: {
             ios: { account_mode: form.apps.ios.account_mode },
             android: { account_mode: form.apps.android.account_mode },
@@ -861,6 +923,11 @@ async function provision() {
     background: var(--cgreen, #01b151);
     color: #fff;
     border-color: var(--cgreen, #01b151);
+}
+
+.mode-pill.pill-disabled {
+    opacity: .5;
+    cursor: not-allowed;
 }
 
 .secret-input {
