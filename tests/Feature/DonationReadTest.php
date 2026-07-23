@@ -22,7 +22,8 @@ use Tests\TestCase;
  *   - show returns a single donation (with fund + receipt) scoped to the masjid;
  *   - cross-masjid access is blocked (404 via the scope, 403 via the tenant
  *     middleware when targeting another masjid in the route);
- *   - there is deliberately NO store / update / destroy route (405).
+ *   - there is deliberately NO update / destroy route (405); Phase 2 added an
+ *     offline store route, which is registered and validated (422 on a bad body).
  *
  * Sqlite-in-memory is forced in setUp (mirrors ContactCrudTest). Rows are seeded
  * while the tenant context is UNBOUND so the explicit masjid_id is honored.
@@ -224,15 +225,18 @@ class DonationReadTest extends TestCase
     // ---------- read-only: no write routes exist ----------
 
     #[Test]
-    public function donations_have_no_store_route(): void
+    public function donations_store_route_validates_the_offline_gift_body(): void
     {
         Sanctum::actingAs($this->adminA);
 
-        // POST is not registered on the donations collection -> 405.
+        // Phase 2 added an OFFLINE store route (cash/check/Zelle/…). It is
+        // registered (so NOT 405) and guarded by StoreOfflineDonationRequest,
+        // which rejects this incomplete body with a 422 (missing amount,
+        // payment_method, donated_at). `intended_amount` is not an accepted key.
         $this->postJson("/api/admin/masjids/{$this->masjidA->id}/donations", [
             'intended_amount' => 5000,
             'fund_id' => $this->fundA->id,
-        ])->assertStatus(405);
+        ])->assertStatus(422);
     }
 
     #[Test]

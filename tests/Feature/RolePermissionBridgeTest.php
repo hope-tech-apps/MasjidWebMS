@@ -93,18 +93,19 @@ class RolePermissionBridgeTest extends TestCase
         $expectedPermissions = [
             'view contacts', 'manage contacts', 'view donations',
             'manage funds', 'view donor pii', 'manage donations',
+            'view properties', 'manage properties',
         ];
         foreach ($expectedPermissions as $permission) {
             $this->assertTrue(Permission::where('name', $permission)->exists(), "permission {$permission} should exist");
         }
 
-        $this->assertSame(6, Permission::count());
+        $this->assertSame(8, Permission::count());
     }
 
     #[Test]
     public function super_admin_has_all_permissions_and_member_has_none(): void
     {
-        $this->assertCount(6, Role::findByName('super-admin')->permissions);
+        $this->assertCount(8, Role::findByName('super-admin')->permissions);
         $this->assertCount(0, Role::findByName('member')->permissions);
     }
 
@@ -116,6 +117,7 @@ class RolePermissionBridgeTest extends TestCase
         foreach ([
             'view contacts', 'manage contacts', 'view donations',
             'manage funds', 'view donor pii', 'manage donations',
+            'view properties', 'manage properties',
         ] as $permission) {
             $this->assertTrue(
                 $masjidAdmin->hasPermissionTo($permission),
