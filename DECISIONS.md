@@ -36,3 +36,31 @@ layout/heading/card-titles. Alternatives: rebuild those pages using the
 canonical about_us/mission_vision section types. Rationale: the existing
 layout was already approved/live; binding by directive avoided a page
 rebuild while still collapsing the edit-twice problem for the real prose.
+
+## 2026-07-23 — Super-Admin masjid onboarding wizard
+Decision: turn the manual per-tenant onboarding into one Super-Admin
+wizard + a single transactional `OnboardingController@provision`
+(`POST /api/admin/onboarding/provision`, own prefix under the admin group,
+`super`-gated). One call creates the masjid + theme + about + prayer-calc +
+iqama + jumaa + donation link + social links + default feature toggles +
+app-publishing config. Per-platform app publishing (`masjid_app_publishing`
+table + `MasjidAppPublishing` model) records `managed` (org publishes, paid
+tier) vs `byo`; BYO Apple ASC .p8/key-id/issuer-id and Google Play
+service-account JSON are stored via Laravel `encrypted` casts, `$hidden`, and
+NEVER returned — reads expose only `has_asc_key` / `has_play_service_account`
+booleans. Validation is a FormRequest (`ProvisionMasjidRequest extends
+BaseFormRequest`) so failures throw the legacy `{status:'failed'}` envelope,
+never a raw ValidationException. Wizard posts one nested payload as a real
+`FormData` (axios 1.16 drops the global multipart header and lets the browser
+set the boundary; Laravel re-parses bracket keys into nested arrays validated
+with dot rules); a `feature_keys_provided` flag disambiguates an
+all-unchecked selection from an omitted field (multipart drops empty arrays).
+Alternatives: reuse `MasjidsController@store` + N follow-up save calls from
+the client (multi-request, non-atomic, partial-tenant risk on failure);
+JSON body (the app's global content-type is multipart, and nested JSON
+doesn't round-trip through the existing form-post convention). Rationale: one
+atomic transaction can't leave a half-provisioned tenant; reusing each
+config's existing rules/models keeps parity; secrets-as-encrypted-never-echoed
+is the security-critical invariant. Scope note: the wizard configures the
+"minutes after adhan" iqama model and a single Jumu'ah iqama time; the richer
+fixed per-date iqama ranges stay in the dedicated Iqama screen post-onboarding.

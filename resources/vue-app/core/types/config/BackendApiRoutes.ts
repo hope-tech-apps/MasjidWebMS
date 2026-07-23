@@ -73,4 +73,6 @@ export type BackendApiRoute =
     `/api/admin/profile` |
     `/api/admin/app-config` |
     `/api/admin/app-config/${string}` |
+    `/api/admin/onboarding/options` |
+    `/api/admin/onboarding/provision` |
     `/api/admin/search?search_for=${string}`

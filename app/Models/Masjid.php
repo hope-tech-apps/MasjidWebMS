@@ -143,6 +143,11 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(JumaaSetting::class);
     }
 
+    /** Per-masjid app-publishing config (managed vs BYO per platform). */
+    public function appPublishing() {
+        return $this->hasOne(MasjidAppPublishing::class);
+    }
+
     public function pages() {
         return $this->hasMany(Page::class);
     }

@@ -99,6 +99,17 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/super/user/UserFormView.vue")
             },
             {
+                path: 'onboarding',
+                name: 'masjid.onboarding',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin'],
+                    pageTitle: 'Onboard Masjid',
+                    dashboardType: 'super'
+                },
+                component: () => import("@/views/dashboard/super/OnboardingWizardView.vue")
+            },
+            {
                 path: 'app-config',
                 name: 'appConfig',
                 meta: {

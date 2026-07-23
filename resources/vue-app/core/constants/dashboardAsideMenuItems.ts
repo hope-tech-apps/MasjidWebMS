@@ -302,6 +302,16 @@ export const SUPER_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin']
     },
     {
+        title: "Onboard Masjid",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3v14" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M7 8l5-5 5 5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>`,
+        to: '/dashboard/super/onboarding',
+        allowed_types: ['SuperAdmin']
+    },
+    {
         title: "App Version",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" stroke="white" stroke-width="1.5"/>

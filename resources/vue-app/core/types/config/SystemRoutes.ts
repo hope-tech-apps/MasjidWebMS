@@ -49,6 +49,7 @@ export type MasjidDashboardRoute =
 export type SuperDashboardRoute =
     '/dashboard/super/masjids' |
     `/dashboard/super/masjids/${number}` |
+    '/dashboard/super/onboarding' |
     '/dashboard/super/users' |
     `/dashboard/super/users/${number}` |
     '/dashboard/super/profile'

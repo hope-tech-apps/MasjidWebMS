@@ -28,6 +28,7 @@ use App\Http\Controllers\AdminDashboard\MasjidGalleryController;
 use App\Http\Controllers\AdminDashboard\MasjidsController;
 use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
+use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
@@ -381,6 +382,15 @@ Route::prefix('admin')->group(function () {
             });
 
             Route::get('{masjid_id}/search', [DashboardSearchController::class, 'searchForMasjidDataRecords']);
+        });
+
+        // Super-Admin masjid onboarding wizard. SuperAdmin-only (the `super`
+        // middleware = SuperAdminMiddleware). Its own prefix (NOT under
+        // `masjids/`) so `provision` can never be captured as a {masjid_id}. The
+        // wizard creates a brand-new tenant, so there is no masjid_id yet.
+        Route::prefix('onboarding')->middleware('super')->controller(OnboardingController::class)->group(function () {
+            Route::get('/options', 'options');
+            Route::post('/provision', 'provision');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {
