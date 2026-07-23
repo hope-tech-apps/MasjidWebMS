@@ -30,6 +30,10 @@ class MasjidAppPublishing extends Model
         'ios_account_mode',
         'android_account_mode',
         'web_account_mode',
+        // Which platforms the masjid wants an app for (JSON array of slugs, e.g.
+        // ["ios","tvos","android"]). Source of truth for platform SELECTION; the
+        // *_account_mode columns only describe HOW an enabled platform ships.
+        'enabled_platforms',
         'asc_key_p8',
         'asc_key_id',
         'asc_issuer_id',
@@ -52,6 +56,7 @@ class MasjidAppPublishing extends Model
      * secret — it is embedded in the mobile client — so it is left as-is.)
      */
     protected $casts = [
+        'enabled_platforms' => 'array',
         'asc_key_p8' => 'encrypted',
         'asc_key_id' => 'encrypted',
         'asc_issuer_id' => 'encrypted',
@@ -85,6 +90,22 @@ class MasjidAppPublishing extends Model
     public function masjid()
     {
         return $this->belongsTo(Masjid::class);
+    }
+
+    /**
+     * Whether this masjid opted into an app for the given platform
+     * (one of: ios, android, tvos, web). Backward-compatible: rows created
+     * before platform selection existed have a null enabled_platforms and are
+     * treated as targeting the original iOS + Android + Web set.
+     */
+    public function platformEnabled(string $platform): bool
+    {
+        $platforms = $this->enabled_platforms;
+        if ($platforms === null) {
+            return in_array($platform, ['ios', 'android', 'web'], true);
+        }
+
+        return in_array($platform, $platforms, true);
     }
 
     /** True when a BYO Apple App Store Connect key is stored. */

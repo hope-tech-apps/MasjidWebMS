@@ -175,9 +175,16 @@ class AppProvisioningController extends Controller
         if ($platform === ProvisioningJob::PLATFORM_IOS) {
             $bundlePrefix = config('services.github.ios_bundle_prefix', 'com.hopetechapps');
 
+            // tvOS ships alongside iOS. Honor an explicit request override; else
+            // fall back to the masjid's onboarding platform selection (the iOS
+            // scaffolder adds the tvOS scheme when this is true).
+            $includeTvos = $request->has('include_tvos')
+                ? $request->boolean('include_tvos')
+                : (bool) $publishing?->platformEnabled('tvos');
+
             return array_merge($common, [
                 'bundle_id' => $request->input('bundle_id') ?: ($bundlePrefix . '.' . $bundleSlug),
-                'include_tvos' => $request->boolean('include_tvos'),
+                'include_tvos' => $includeTvos,
             ]);
         }
 

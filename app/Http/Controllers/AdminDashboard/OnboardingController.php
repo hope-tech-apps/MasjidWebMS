@@ -184,21 +184,32 @@ class OnboardingController extends Controller
                     ]);
                 }
 
-                // ---- App-publishing config (managed vs BYO per platform) ----
-                $apps = $request->input('apps');
+                // ---- App-publishing config (platform selection + managed/BYO) ----
+                // `platforms` (the Platforms step) is the source of truth for WHICH
+                // apps the masjid wants; `apps[*].account_mode` describes HOW each
+                // selected platform ships. account_mode defaults to `managed`.
+                $platforms = array_values($request->input('platforms', []));
+                $apps = $request->input('apps', []);
+
+                $iosMode = $apps['ios']['account_mode'] ?? 'managed';
+                $androidMode = $apps['android']['account_mode'] ?? 'managed';
+                $webMode = $apps['web']['account_mode'] ?? 'managed';
+
                 $publishing = [
                     'masjid_id' => $masjid->id,
-                    'ios_account_mode' => $apps['ios']['account_mode'],
-                    'android_account_mode' => $apps['android']['account_mode'],
-                    'web_account_mode' => $apps['web']['account_mode'],
+                    'enabled_platforms' => $platforms,
+                    'ios_account_mode' => $iosMode,
+                    'android_account_mode' => $androidMode,
+                    'web_account_mode' => $webMode,
                 ];
-                // Only persist BYO credentials for platforms actually in BYO mode.
-                if ($apps['ios']['account_mode'] === 'byo') {
+                // Only persist BYO credentials for a platform that is BOTH selected
+                // AND in BYO mode.
+                if (in_array('ios', $platforms, true) && $iosMode === 'byo') {
                     $publishing['asc_key_p8'] = $apps['ios']['asc_key_p8'] ?? null;
                     $publishing['asc_key_id'] = $apps['ios']['asc_key_id'] ?? null;
                     $publishing['asc_issuer_id'] = $apps['ios']['asc_issuer_id'] ?? null;
                 }
-                if ($apps['android']['account_mode'] === 'byo') {
+                if (in_array('android', $platforms, true) && $androidMode === 'byo') {
                     $publishing['play_service_account_json'] = $apps['android']['play_service_account_json'] ?? null;
                 }
                 MasjidAppPublishing::create($publishing);
@@ -220,6 +231,7 @@ class OnboardingController extends Controller
                     // model already reduces the secrets to presence booleans, but
                     // we build this explicitly so the contract is unambiguous.
                     'app_publishing' => [
+                        'enabled_platforms' => $masjid->appPublishing?->enabled_platforms,
                         'ios_account_mode' => $masjid->appPublishing?->ios_account_mode,
                         'android_account_mode' => $masjid->appPublishing?->android_account_mode,
                         'web_account_mode' => $masjid->appPublishing?->web_account_mode,

@@ -113,11 +113,20 @@ class ProvisionMasjidRequest extends BaseFormRequest
             'feature_keys' => 'nullable|array',
             'feature_keys.*' => 'string|exists:mobile_app_features,key',
 
+            // ---- Platform selection (which apps the masjid wants) ----
+            // The wizard's Platforms step. tvOS ships under the iOS Apple account,
+            // so it has no account_mode of its own and requires iOS to be chosen
+            // too (enforced in withValidator below).
+            'platforms' => ['required', 'array', 'min:1'],
+            'platforms.*' => ['string', Rule::in(['ios', 'android', 'tvos', 'web'])],
+
             // ---- Apps (per-platform managed vs BYO) ----
-            'apps' => 'required|array',
-            'apps.ios.account_mode' => ['required', Rule::in(['managed', 'byo'])],
-            'apps.android.account_mode' => ['required', Rule::in(['managed', 'byo'])],
-            'apps.web.account_mode' => ['required', Rule::in(['managed', 'byo'])],
+            // account_mode is optional and defaults to `managed` in the
+            // controller; it only matters for platforms actually selected above.
+            'apps' => ['nullable', 'array'],
+            'apps.ios.account_mode' => ['nullable', Rule::in(['managed', 'byo'])],
+            'apps.android.account_mode' => ['nullable', Rule::in(['managed', 'byo'])],
+            'apps.web.account_mode' => ['nullable', Rule::in(['managed', 'byo'])],
 
             // BYO iOS App Store Connect API key — required only when byo.
             'apps.ios.asc_key_p8' => 'nullable|required_if:apps.ios.account_mode,byo|string',
@@ -127,6 +136,26 @@ class ProvisionMasjidRequest extends BaseFormRequest
             // BYO Google Play service-account JSON — required only when byo.
             'apps.android.play_service_account_json' => 'nullable|required_if:apps.android.account_mode,byo|json',
         ];
+    }
+
+    /**
+     * Cross-field platform rules that don't fit a single-field rule.
+     *
+     * tvOS apps are distributed through the SAME Apple Developer account / App
+     * Store Connect record as the iOS app (they share a bundle-id prefix and
+     * signing team), so selecting tvOS without iOS is not a valid configuration.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $platforms = (array) $this->input('platforms', []);
+            if (in_array('tvos', $platforms, true) && ! in_array('ios', $platforms, true)) {
+                $validator->errors()->add(
+                    'platforms',
+                    'tvOS apps ship under the iOS Apple Developer account — select iOS as well to include tvOS.'
+                );
+            }
+        });
     }
 
     public function attributes(): array
