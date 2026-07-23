@@ -25,13 +25,18 @@ class TestPrayerPush extends Command
         $deviceId = $this->argument('device_id');
         $iqama = (bool) $this->option('iqama');
 
-        $subscriptionId = \App\Models\MobileAppUser::where('device_id', $deviceId)
-            ->value('onesignal_subscription_id');
+        $device = \App\Models\MobileAppUser::where('device_id', $deviceId)->first();
+        $subscriptionId = $device?->onesignal_subscription_id;
 
         if (empty($subscriptionId)) {
             $this->error("No onesignal_subscription_id stored for device {$deviceId}. Open the app once so it reports a heartbeat, then retry.");
             return self::FAILURE;
         }
+
+        // Route the test through the device's masjid's own OneSignal app when
+        // it has one (subscription ids are app-scoped, so this is required for
+        // the send to resolve once a masjid is migrated off the shared app).
+        $masjid = \App\Models\Masjid::find($device->masjid_id);
 
         $title = $iqama ? 'Iqama time for Test' : "It's time for Test";
         $body = 'Phase-3 backstop test — if you see this with the adhan sound, the server-side path works.';
@@ -43,7 +48,8 @@ class TestPrayerPush extends Command
             $body,
             $sound,
             ['type' => 'prayer_test'],
-            $iqama ? null : 'PRAYER_ADHAN'
+            $iqama ? null : 'PRAYER_ADHAN',
+            $masjid
         );
 
         $this->info("Sent to device {$deviceId} (subscription {$subscriptionId})");

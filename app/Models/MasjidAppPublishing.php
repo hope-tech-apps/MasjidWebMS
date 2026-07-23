@@ -8,12 +8,16 @@ use Illuminate\Database\Eloquent\Model;
  * Per-masjid app-publishing configuration (see the masjid_app_publishing
  * migration).
  *
- * SECURITY: the four credential columns are `encrypted` casts (ciphertext at
+ * SECURITY: the secret credential columns are `encrypted` casts (ciphertext at
  * rest) AND `$hidden`, so they never appear in toArray()/toJson() output.
  * Nothing in the codebase should ever echo them back over the API. Read paths
- * expose only the derived booleans `has_asc_key` / `has_play_service_account`
- * (see $appends) so a caller can tell whether BYO credentials are on file
- * without ever receiving them.
+ * expose only the derived booleans `has_asc_key` / `has_play_service_account` /
+ * `has_onesignal_key` (see $appends) so a caller can tell whether credentials
+ * are on file without ever receiving them.
+ *
+ * The `onesignal_app_id` is the ONE non-secret credential here: it is embedded
+ * in the mobile client, so it is neither encrypted nor hidden and IS readable.
+ * Only `onesignal_rest_api_key` is a secret (encrypted + hidden).
  */
 class MasjidAppPublishing extends Model
 {
@@ -30,29 +34,37 @@ class MasjidAppPublishing extends Model
         'asc_key_id',
         'asc_issuer_id',
         'play_service_account_json',
+        // Per-masjid OneSignal push config. The app id is a public identifier;
+        // the REST key is a secret (encrypted + hidden, see below).
+        'onesignal_app_id',
+        'onesignal_rest_api_key',
     ];
 
     /**
-     * Encrypt the BYO credentials at rest. The `encrypted` cast transparently
+     * Encrypt the secret credentials at rest. The `encrypted` cast transparently
      * decrypts on read for server-side use, but combined with $hidden below the
-     * plaintext never crosses the API boundary.
+     * plaintext never crosses the API boundary. (onesignal_app_id is NOT a
+     * secret — it is embedded in the mobile client — so it is left as-is.)
      */
     protected $casts = [
         'asc_key_p8' => 'encrypted',
         'asc_key_id' => 'encrypted',
         'asc_issuer_id' => 'encrypted',
         'play_service_account_json' => 'encrypted',
+        'onesignal_rest_api_key' => 'encrypted',
     ];
 
     /**
      * Never serialize the secrets. Any accidental ->toJson()/->toArray() (e.g. a
      * model returned straight from a controller) drops them entirely.
+     * onesignal_app_id is deliberately NOT hidden (safe to expose).
      */
     protected $hidden = [
         'asc_key_p8',
         'asc_key_id',
         'asc_issuer_id',
         'play_service_account_json',
+        'onesignal_rest_api_key',
     ];
 
     /**
@@ -62,6 +74,7 @@ class MasjidAppPublishing extends Model
     protected $appends = [
         'has_asc_key',
         'has_play_service_account',
+        'has_onesignal_key',
     ];
 
     public function masjid()
@@ -79,5 +92,26 @@ class MasjidAppPublishing extends Model
     public function getHasPlayServiceAccountAttribute(): bool
     {
         return filled($this->getRawOriginal('play_service_account_json'));
+    }
+
+    /**
+     * True when this masjid has its OWN OneSignal REST API key on file. Checks
+     * the raw (still-encrypted) column so we never decrypt just to test presence.
+     */
+    public function getHasOnesignalKeyAttribute(): bool
+    {
+        return filled($this->getRawOriginal('onesignal_rest_api_key'));
+    }
+
+    /**
+     * True only when BOTH the app id and REST key are present — i.e. this masjid
+     * can send push through its OWN OneSignal app. Both are required: the app id
+     * identifies the app, the REST key authorizes the send. Used by
+     * OnesignalService to decide per-masjid vs shared-app routing.
+     */
+    public function hasOwnOnesignalApp(): bool
+    {
+        return filled($this->onesignal_app_id)
+            && filled($this->getRawOriginal('onesignal_rest_api_key'));
     }
 }

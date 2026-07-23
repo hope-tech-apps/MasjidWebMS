@@ -50,7 +50,7 @@ class SendDuePrayerNotifications extends Command
         $onlyDevice = $this->option('only-device');
         $ignoreStaleness = (bool) $this->option('ignore-staleness');
 
-        foreach (Masjid::with('iqamaTimeSettings')->get() as $masjid) {
+        foreach (Masjid::with('iqamaTimeSettings', 'appPublishing')->get() as $masjid) {
             $offsets = $masjid->iqamaTimeSettings;
             if (!$offsets) {
                 continue;
@@ -156,7 +156,9 @@ class SendDuePrayerNotifications extends Command
             $sound,
             ['masjid_id' => $masjid->id, 'prayer' => $prayer, 'kind' => $type],
             // Adhan pushes carry the category so long-press shows "Play Full Adhan".
-            $type === 'adhan' ? 'PRAYER_ADHAN' : null
+            $type === 'adhan' ? 'PRAYER_ADHAN' : null,
+            // Route through the masjid's own OneSignal app when provisioned.
+            $masjid
         );
     }
 }

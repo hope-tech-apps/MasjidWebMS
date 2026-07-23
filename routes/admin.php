@@ -27,6 +27,7 @@ use App\Http\Controllers\AdminDashboard\MasjidDonationLinkController;
 use App\Http\Controllers\AdminDashboard\MasjidGalleryController;
 use App\Http\Controllers\AdminDashboard\MasjidsController;
 use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
+use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\PagesController;
@@ -218,6 +219,15 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/notifications')->controller(NotificationsController::class)->group((function () {
                 Route::post('/', 'save');
             }));
+
+            // Per-masjid OneSignal push config. SuperAdmin-only: provisioning
+            // mints a new OneSignal app (an org-level action) and the read
+            // exposes only the app id + a has_onesignal_key boolean (never the
+            // REST key). The masjid is server-derived from {masjid_id}.
+            Route::prefix('{masjid_id}/onesignal')->middleware('super')->controller(MasjidOneSignalController::class)->group(function () {
+                Route::get('/', 'show');
+                Route::post('/provision', 'provision');
+            });
 
             // Pages & Sections Management
             Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {

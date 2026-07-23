@@ -93,4 +93,49 @@ return [
         'currency' => env('STRIPE_CURRENCY', 'usd'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | OneSignal (org-level machine-to-machine — per-masjid app provisioning)
+    |--------------------------------------------------------------------------
+    |
+    | These are the ORG/ACCOUNT-scoped credentials used by
+    | App\Services\OneSignalProvisioningService to CREATE a per-masjid OneSignal
+    | app via the "Create an app" API, so onboarding needs no manual OneSignal
+    | dashboard step. They are wired machine-to-machine (like the Stripe keys),
+    | never hardcoded, and never touched by masjid admins.
+    |
+    | Distinct from config/onesignal.php: that file holds the runtime SEND
+    | credentials for the current SHARED app (app id + app-scoped REST key) used
+    | by OnesignalService. THIS block holds the credentials needed to MINT new
+    | apps and seed their push certificates. `user_auth_key` intentionally reads
+    | the same env var as config('onesignal.user_auth_key') — it is one org key.
+    |
+    | All optional: when unset, provisioning returns a clear error instead of
+    | crashing, and the fleet keeps using the shared app unchanged.
+    |
+    */
+    'onesignal' => [
+        // Org/account-scoped "User Auth Key" (a.k.a. "Organization REST API
+        // Key"). Authorizes POST https://api.onesignal.com/apps. Same key as
+        // config('onesignal.user_auth_key').
+        'user_auth_key' => env('ONESIGNAL_USER_AUTH_KEY'),
+
+        // OneSignal Apps API endpoint (create/update apps).
+        'apps_api_url' => env('ONESIGNAL_APPS_API_URL', 'https://api.onesignal.com/apps'),
+
+        // Team APNs auth key (.p8 contents), its Key ID and Team ID — used to
+        // seed iOS push on every newly created per-masjid app. The .p8 is the
+        // raw key file contents (BEGIN PRIVATE KEY … END PRIVATE KEY).
+        'apns_p8' => env('ONESIGNAL_APNS_P8'),
+        'apns_key_id' => env('ONESIGNAL_APNS_KEY_ID'),
+        'apns_team_id' => env('ONESIGNAL_APNS_TEAM_ID'),
+
+        // APNs environment for created apps: 'production' or 'sandbox'.
+        'apns_env' => env('ONESIGNAL_APNS_ENV', 'production'),
+
+        // Firebase Cloud Messaging v1 service-account JSON (raw JSON string) —
+        // seeds Android push on newly created per-masjid apps.
+        'fcm_v1_service_account_json' => env('ONESIGNAL_FCM_V1_SERVICE_ACCOUNT_JSON'),
+    ],
+
 ];

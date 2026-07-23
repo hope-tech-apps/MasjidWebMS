@@ -47,7 +47,15 @@ class SendPrayerSyncJob implements ShouldQueue
             return;
         }
 
-        $onesignal->sendDataSync($this->subscriptionIds, ['masjid_id' => $this->masjidId]);
+        // Pass the masjid so the send routes through ITS own OneSignal app when
+        // one is provisioned (and the shared app otherwise). Server-derived id.
+        $masjid = \App\Models\Masjid::find($this->masjidId);
+
+        $onesignal->sendDataSync(
+            $this->subscriptionIds,
+            ['masjid_id' => $this->masjidId],
+            $masjid
+        );
     }
 
     public function failed(Throwable $e): void
