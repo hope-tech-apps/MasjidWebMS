@@ -69,10 +69,14 @@ class StatementLetterService
     /**
      * Masjid logo as a base64 data URI for dompdf, or null.
      *
-     * dompdf embeds JPEG without the GD extension but needs GD for PNG. The droplet
-     * has no GD, so we prefer a per-masjid JPEG "statement asset"
-     * (storage/app/statement-assets/masjid-{id}-logo.jpg); failing that, the media
-     * logo is used only when it is already a JPEG.
+     * A hand-curated per-masjid "statement asset"
+     * (storage/app/statement-assets/masjid-{id}-logo.{jpg,jpeg,png}) takes
+     * precedence — this is what a masjid whose media logo is an SVG (e.g. a
+     * base64-PNG-wrapped SVG, which dompdf can't rasterize) uses. Otherwise the
+     * masjid's media logo is embedded directly when it is a JPEG or PNG. The prod
+     * host now has the GD extension, so PNG logos render natively — a plain-PNG
+     * masjid needs no curated asset. SVG media logos are still skipped (dompdf has
+     * no SVG rasterizer); such masjids should drop a JPEG/PNG into statement-assets.
      */
     private function logoDataUri(?Masjid $masjid): ?string
     {
@@ -80,16 +84,19 @@ class StatementLetterService
             return null;
         }
 
-        foreach (['jpg', 'jpeg'] as $ext) {
+        foreach (['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'] as $ext => $mime) {
             $path = storage_path("app/statement-assets/masjid-{$masjid->id}-logo.{$ext}");
             if (is_readable($path)) {
-                return 'data:image/jpeg;base64,' . base64_encode(file_get_contents($path));
+                return "data:{$mime};base64," . base64_encode(file_get_contents($path));
             }
         }
 
         $media = $masjid->getFirstMedia('logo');
-        if ($media && is_readable($media->getPath()) && str_contains((string) $media->mime_type, 'jpeg')) {
-            return 'data:image/jpeg;base64,' . base64_encode(file_get_contents($media->getPath()));
+        if ($media && is_readable($media->getPath())) {
+            $mime = (string) $media->mime_type;
+            if (str_contains($mime, 'jpeg') || str_contains($mime, 'png')) {
+                return "data:{$mime};base64," . base64_encode(file_get_contents($media->getPath()));
+            }
         }
 
         return null;
