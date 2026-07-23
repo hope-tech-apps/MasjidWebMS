@@ -16,6 +16,7 @@ use App\Http\Controllers\Mobile\AppConfigController;
 use App\Http\Controllers\Mobile\ServicesController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
+use App\Http\Controllers\ProvisioningCallbackController;
 use App\Http\Controllers\PusherWebhookController;
 use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -118,6 +119,20 @@ Route::prefix('pusher')->group(function () {
  */
 Route::prefix('stripe')->group(function () {
     Route::post('webhook', [StripeWebhookController::class, 'handle']);
+});
+
+/*
+ * App-provisioning callback — the SELF-HOSTED RUNNER reports job progress here.
+ * Registered OUTSIDE auth:sanctum/super (the runner is not a logged-in user),
+ * like the Stripe/Pusher webhooks above. It is authenticated per-request by the
+ * per-job `callback_token`: the controller looks up the job by `job_id` and
+ * constant-time compares it against the `Authorization: Bearer` header, so no
+ * session/PAT is involved. Named so route('provisioning.callback') resolves the
+ * absolute callback_url baked into each dispatch payload.
+ */
+Route::prefix('provisioning')->group(function () {
+    Route::post('callback', [ProvisioningCallbackController::class, 'handle'])
+        ->name('provisioning.callback');
 });
 
 /*

@@ -290,6 +290,18 @@ Route::prefix('admin')->group(function () {
             // deliberately OUTSIDE the `assistant` gate — it is how the gate is opened.
             Route::patch('{masjid_id}/assistant-access', [MasjidsController::class, 'setAssistantAccess']);
 
+            // App-provisioning control plane (SuperAdmin only). "Generate apps"
+            // dispatches a GitHub Actions workflow (self-hosted runner) that
+            // scaffolds + builds + uploads this masjid's iOS/Android apps; the
+            // status panel polls provisioning-jobs. The masjid is server-derived
+            // from {masjid_id}. The workflow reports progress via the UNAUTHed
+            // /api/provisioning/callback route (registered in routes/api.php),
+            // authenticated by a per-job callback token — NOT this group.
+            Route::middleware('super')->controller(\App\Http\Controllers\AdminDashboard\AppProvisioningController::class)->group(function () {
+                Route::post('{masjid_id}/provision-apps', 'provision');
+                Route::get('{masjid_id}/provisioning-jobs', 'index');
+            });
+
             // Masjid Assistant chat. Behind the per-masjid `assistant` gate (which
             // runs after `tenant`, so the caller is already proven to act on this
             // masjid). Which capabilities the AI is actually offered is decided

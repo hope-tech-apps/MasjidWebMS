@@ -33,6 +33,11 @@ class MasjidAppPublishing extends Model
         'asc_key_p8',
         'asc_key_id',
         'asc_issuer_id',
+        // Apple Developer Team ID for iOS signing. NOT a secret (embedded in
+        // every distributed build) — plain, non-hidden. Feeds the provisioning
+        // dispatch's `development_team`; null for managed-tier masjids, which
+        // fall back to config('services.github.development_team').
+        'development_team',
         'play_service_account_json',
         // Per-masjid OneSignal push config. The app id is a public identifier;
         // the REST key is a secret (encrypted + hidden, see below).

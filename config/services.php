@@ -37,6 +37,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | GitHub (app-provisioning control plane — repository_dispatch)
+    |--------------------------------------------------------------------------
+    |
+    | The Super-Admin "Generate apps" action fires a GitHub repository_dispatch
+    | (App\Services\GithubDispatchService) to a mobile repo, whose workflow runs
+    | on a self-hosted runner to scaffold + build + upload a masjid's app.
+    |
+    |  - dispatch_token : org/fine-grained PAT authorizing POST .../dispatches on
+    |    the two mobile repos. An org secret the operator wires; NEVER hardcoded
+    |    or echoed. When unset, a dispatch returns a clear error (fail-soft) and
+    |    the job is marked failed instead of crashing.
+    |  - ios_repo / android_repo : the full "owner/repo" each platform dispatches
+    |    to (the URL is https://api.github.com/repos/{owner/repo}/dispatches).
+    |  - development_team : platform-default Apple Developer Team ID used to sign
+    |    managed-tier iOS builds. Overridden per-masjid by
+    |    masjid_app_publishing.development_team (BYO) when present.
+    |  - ios_bundle_prefix : default reverse-DNS prefix for a derived iOS
+    |    bundle id when the request supplies no explicit bundle_id.
+    |
+    */
+    'github' => [
+        'dispatch_token' => env('GITHUB_DISPATCH_TOKEN'),
+        'ios_repo' => env('GITHUB_IOS_REPO', 'hope-tech-apps/burlington-masjid-iOS'),
+        'android_repo' => env('GITHUB_ANDROID_REPO', 'hope-tech-apps/burlington-masjid-Android'),
+        'development_team' => env('APPLE_DEVELOPMENT_TEAM'),
+        'ios_bundle_prefix' => env('IOS_BUNDLE_PREFIX', 'com.hopetechapps'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Stripe (CRM donations — Connect Standard + direct charges)
     |--------------------------------------------------------------------------
     |
