@@ -41,7 +41,7 @@
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="theme-settings-tab" data-bs-toggle="tab" data-bs-target="#theme-settings" type="button" role="tab" aria-controls="theme-settings" aria-selected="false">
                         <i class="bi bi-palette me-2"></i>
-                        Theme
+                        Brand Studio
                     </button>
                 </li>
             </ul>
