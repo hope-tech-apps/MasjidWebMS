@@ -28,6 +28,8 @@ class RolesAndPermissionsSeeder extends Seeder
         'manage funds',
         'view donor pii',
         'manage donations',
+        'view properties',
+        'manage properties',
     ];
 
     public function run(): void

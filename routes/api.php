@@ -78,6 +78,10 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // is persisted `pending` here and only finalized by the Stripe webhook.
         Route::post('/{masjid_id}/donations/checkout', [DonationsController::class, 'createCheckoutSession']);
 
+        // Public list of active donation funds — the native donate screen offers
+        // these as designations before opening hosted checkout.
+        Route::get('/{masjid_id}/funds', [\App\Http\Controllers\Mobile\FundsController::class, 'index']);
+
         Route::prefix('{masjid_id}/features')->controller(MasjidMobileAppFeaturesController::class)->group(function () {
             Route::get('/', 'index');
         });
