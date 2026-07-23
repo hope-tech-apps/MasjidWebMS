@@ -3,7 +3,8 @@
         <PageDataContainer
             title="Donations"
             :paginationOptions="paginationOptions"
-            :hideButton="true"
+            :buttonProps="{ title: 'Record gift', type: 'button', class: 'btn btn-success', disabled: false }"
+            @headerButtonClick="openOffline"
             @pageChange="pageChange"
         >
             <div class="container w-100">
@@ -205,6 +206,64 @@
                 </div>
             </div>
         </Teleport>
+
+        <!-- Record an offline gift -->
+        <Teleport to="body">
+            <div v-if="showOffline" class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="showOffline=false">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Record an offline gift</h5>
+                            <button type="button" class="btn-close" @click="showOffline=false"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="text-muted small">For cash, check, Zelle, Venmo, PayPal or Square donations recorded by hand.</p>
+                            <div class="mb-2">
+                                <label class="form-label small text-muted">Donor (optional)</label>
+                                <input class="form-control" v-model="offlineDonorSearch" @input="searchDonors" :placeholder="offlineDonor ? '' : 'Search a member, or leave blank for general'">
+                                <div v-if="offlineDonor" class="form-text">Selected: <strong>{{ offlineDonor.first_name }} {{ offlineDonor.last_name }}</strong> <a href="#" @click.prevent="offlineDonor=null">change</a></div>
+                                <div v-else-if="offlineDonorResults.length" class="list-group mt-1" style="max-height:22vh; overflow-y:auto;">
+                                    <button v-for="m in offlineDonorResults" :key="m.id" type="button" class="list-group-item list-group-item-action" @click="pickDonor(m)">{{ m.first_name }} {{ m.last_name }} <small class="text-muted">{{ m.email||'' }}</small></button>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Amount ($) *</label>
+                                    <input class="form-control" type="number" step="0.01" v-model="offlineForm.amount">
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Method *</label>
+                                    <select class="form-select" v-model="offlineForm.payment_method">
+                                        <option v-for="m in methods" :key="m" :value="m" class="text-capitalize">{{ m }}</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Fund *</label>
+                                    <select class="form-select" v-model="offlineForm.fund_id">
+                                        <option value="">Select…</option>
+                                        <option v-for="f in funds" :key="f.id" :value="f.id">{{ f.name }}</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Date *</label>
+                                    <input class="form-control" type="date" v-model="offlineForm.donated_at">
+                                </div>
+                                <div class="col-12 mb-2">
+                                    <label class="form-label small text-muted">Note</label>
+                                    <input class="form-control" v-model="offlineForm.note">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" @click="showOffline=false">Cancel</button>
+                            <button class="btn btn-success" :disabled="!offlineValid || savingOffline" @click="submitOffline">
+                                <span v-if="savingOffline" class="spinner-border spinner-border-sm"></span><span v-else>Record gift</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
     </div>
 </template>
 
@@ -216,6 +275,9 @@ import { Donation, DonationStatus } from '@/core/types/data/masjid-related/Donat
 import { Fund } from '@/core/types/data/masjid-related/Fund';
 import { useDonationsStore } from '@/stores/masjid/donationsStore';
 import { useFundsStore } from '@/stores/masjid/fundsStore';
+import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
+import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
 
 // Stores
@@ -272,6 +334,56 @@ const loadData = async (page: number = 1) => {
     } finally {
         loading.value = false;
     }
+};
+
+// --- Offline gift entry ---
+const masjidStore = useMasjidStore();
+const authStore = useAuthStore();
+const methods = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other'];
+const showOffline = ref(false);
+const savingOffline = ref(false);
+const offlineForm = ref<any>({ amount: '', payment_method: 'cash', fund_id: '', donated_at: '', note: '' });
+const offlineDonor = ref<any>(null);
+const offlineDonorSearch = ref('');
+const offlineDonorResults = ref<any[]>([]);
+let donorTimer: any = null;
+
+const oMasjidId = () => authStore.dashboardMasjidId ?? masjidStore.masjid?.id;
+const offlineValid = computed(() => !!offlineForm.value.amount && !!offlineForm.value.fund_id && !!offlineForm.value.donated_at && !!offlineForm.value.payment_method);
+
+const openOffline = () => {
+    offlineForm.value = { amount: '', payment_method: 'cash', fund_id: '', donated_at: new Date().toISOString().slice(0, 10), note: '' };
+    offlineDonor.value = null; offlineDonorSearch.value = ''; offlineDonorResults.value = [];
+    showOffline.value = true;
+};
+const searchDonors = () => {
+    clearTimeout(donorTimer);
+    donorTimer = setTimeout(async () => {
+        const q = offlineDonorSearch.value.trim();
+        if (!q) { offlineDonorResults.value = []; return; }
+        const res = await ApiService.get(`/api/admin/masjids/${oMasjidId()}/contacts?search=${encodeURIComponent(q)}&per_page=8` as any);
+        offlineDonorResults.value = res.data?.data?.data || [];
+    }, 300);
+};
+const pickDonor = (m: any) => { offlineDonor.value = m; offlineDonorResults.value = []; offlineDonorSearch.value = `${m.first_name} ${m.last_name}`; };
+const submitOffline = async () => {
+    if (!offlineValid.value) return;
+    const p = new URLSearchParams();
+    p.append('amount', offlineForm.value.amount);
+    p.append('payment_method', offlineForm.value.payment_method);
+    p.append('fund_id', String(offlineForm.value.fund_id));
+    p.append('donated_at', offlineForm.value.donated_at);
+    if (offlineDonor.value) p.append('contact_id', String(offlineDonor.value.id));
+    if (offlineForm.value.note) p.append('note', offlineForm.value.note);
+    savingOffline.value = true;
+    try {
+        await ApiService.post(`/api/admin/masjids/${oMasjidId()}/donations` as any, p);
+        showOffline.value = false;
+        await loadData(1);
+        Swal.fire({ icon: 'success', title: 'Recorded', text: 'The gift was added.' });
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not record the gift.' });
+    } finally { savingOffline.value = false; }
 };
 
 const pageChange = async (data: PageChangeData) => {

@@ -162,12 +162,13 @@
         <!-- View Details Modal -->
         <Teleport to="body">
             <div v-if="showViewModal && selectedContact" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);" @click.self="showViewModal = false">
-                <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
                     <div class="modal-content">
                         <div class="modal-header">
                             <h5 class="modal-title">
                                 <i class="bi bi-person-vcard me-2"></i>
                                 Member Details
+                                <span v-if="(selectedContact as any).is_placeholder" class="badge bg-warning-subtle text-warning ms-2">Unidentified card</span>
                             </h5>
                             <button type="button" class="btn-close" @click="showViewModal = false"></button>
                         </div>
@@ -194,21 +195,111 @@
                                     </p>
                                 </div>
                             </div>
-                            <div class="row">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <h6 class="text-muted mb-1">Total giving</h6>
+                                    <p class="mb-0 fw-semibold">{{ formatCents((selectedContact as any).giving_total || 0) }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <h6 class="text-muted mb-1">Card last-4 on file</h6>
+                                    <p class="mb-0">
+                                        <span v-for="c in ((selectedContact as any).cards || [])" :key="c.id" class="badge bg-light text-dark border me-1 font-monospace">{{ c.last4 }}</span>
+                                        <span v-if="!((selectedContact as any).cards || []).length" class="text-muted">—</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
                                 <div class="col-12">
                                     <h6 class="text-muted mb-2">Notes</h6>
-                                    <div class="card bg-light">
-                                        <div class="card-body">
-                                            <p class="mb-0" style="white-space: pre-wrap;">{{ selectedContact.notes || '—' }}</p>
-                                        </div>
-                                    </div>
+                                    <p class="mb-0 small" style="white-space: pre-wrap;">{{ selectedContact.notes || '—' }}</p>
                                 </div>
+                            </div>
+                            <h6 class="text-muted mb-2">Giving history</h6>
+                            <div class="table-responsive" style="max-height:40vh; overflow-y:auto;">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead><tr><th>Date</th><th>Fund</th><th>Method</th><th class="text-end">Amount</th></tr></thead>
+                                    <tbody>
+                                        <tr v-for="d in ((selectedContact as any).donations || [])" :key="d.id">
+                                            <td>{{ formatDate(d.donated_at || d.created_at) }}</td>
+                                            <td>{{ d.fund?.name || '—' }}</td>
+                                            <td class="text-capitalize">{{ d.source === 'offline' ? (d.payment_method || 'offline') : 'card' }}</td>
+                                            <td class="text-end">{{ formatCents(d.charged_amount) }}</td>
+                                        </tr>
+                                        <tr v-if="!((selectedContact as any).donations || []).length"><td colspan="4" class="text-center text-muted py-3">No giving recorded</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" @click="showViewModal = false">Close</button>
+                            <button v-if="(selectedContact as any).is_placeholder" type="button" class="btn btn-outline-primary" @click="openMerge">
+                                <i class="bi bi-person-plus me-1"></i> Attach to member
+                            </button>
                             <button type="button" class="btn btn-outline-secondary" @click="editFromView">
                                 <i class="bi bi-pencil me-1"></i> Edit
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- Attach placeholder card to a member -->
+        <Teleport to="body">
+            <div v-if="showMergeModal && selectedContact" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);" @click.self="showMergeModal = false">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Attach card to a member</h5>
+                            <button type="button" class="btn-close" @click="showMergeModal = false"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="text-muted small">
+                                This moves “{{ selectedContact.first_name }} {{ selectedContact.last_name }}”’s giving and card
+                                onto a member, then removes the placeholder.
+                            </p>
+                            <div class="btn-group w-100 mb-3">
+                                <button class="btn" :class="mergeMode==='existing' ? 'btn-success' : 'btn-outline-secondary'" @click="mergeMode='existing'">Existing member</button>
+                                <button class="btn" :class="mergeMode==='new' ? 'btn-success' : 'btn-outline-secondary'" @click="mergeMode='new'">New member</button>
+                            </div>
+
+                            <div v-if="mergeMode==='existing'">
+                                <label class="form-label small text-muted">Search members</label>
+                                <input class="form-control mb-2" v-model="mergeSearch" @input="searchMembers" placeholder="Name or email…">
+                                <div class="list-group" style="max-height:30vh; overflow-y:auto;">
+                                    <button v-for="m in mergeResults" :key="m.id" type="button"
+                                        class="list-group-item list-group-item-action d-flex justify-content-between"
+                                        :class="{ active: mergeTarget?.id === m.id }" @click="mergeTarget = m">
+                                        <span>{{ m.first_name }} {{ m.last_name }}</span>
+                                        <small class="text-muted">{{ m.email || '' }}</small>
+                                    </button>
+                                    <div v-if="!mergeResults.length" class="text-muted small p-2">Type to search…</div>
+                                </div>
+                            </div>
+
+                            <div v-else class="row">
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">First name *</label>
+                                    <input class="form-control" v-model="mergeNew.first_name">
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Last name</label>
+                                    <input class="form-control" v-model="mergeNew.last_name">
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Email</label>
+                                    <input class="form-control" v-model="mergeNew.email">
+                                </div>
+                                <div class="col-md-6 mb-2">
+                                    <label class="form-label small text-muted">Phone</label>
+                                    <input class="form-control" v-model="mergeNew.phone">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" @click="showMergeModal = false">Cancel</button>
+                            <button class="btn btn-success" :disabled="!canMerge || merging" @click="doMerge">
+                                <span v-if="merging" class="spinner-border spinner-border-sm"></span><span v-else>Attach</span>
                             </button>
                         </div>
                     </div>
@@ -224,10 +315,13 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { Contact, ContactPayload } from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';
+import { useMasjidStore } from '@/stores/masjidStore';
+import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
 
 // Store
 const contactsStore = useContactsStore();
+const masjidStore = useMasjidStore();
 
 // State
 const loading = ref(false);
@@ -309,13 +403,82 @@ const closeFormModal = () => {
     showFormModal.value = false;
 };
 
-const viewContact = (contact: Contact) => {
-    selectedContact.value = contact;
+const viewContact = async (contact: Contact) => {
+    selectedContact.value = contact;   // show immediately with row data
     showViewModal.value = true;
+    try {
+        const full = await contactsStore.fetchContact(contact.id);   // hydrate cards + giving history
+        if (full) selectedContact.value = full;
+    } catch (e) { /* keep row-level data */ }
 };
 
 const editFromView = () => {
     if (selectedContact.value) openEditModal(selectedContact.value);
+};
+
+// --- Placeholder → member merge ---
+const showMergeModal = ref(false);
+const mergeMode = ref<'existing' | 'new'>('existing');
+const mergeSearch = ref('');
+const mergeResults = ref<any[]>([]);
+const mergeTarget = ref<any>(null);
+const mergeNew = ref<any>({ first_name: '', last_name: '', email: '', phone: '' });
+const merging = ref(false);
+let mergeSearchTimer: any = null;
+
+const canMerge = computed(() =>
+    mergeMode.value === 'existing' ? !!mergeTarget.value : !!mergeNew.value.first_name);
+
+const openMerge = () => {
+    mergeMode.value = 'existing';
+    mergeSearch.value = ''; mergeResults.value = []; mergeTarget.value = null;
+    mergeNew.value = { first_name: '', last_name: '', email: '', phone: '' };
+    showMergeModal.value = true;
+};
+
+const searchMembers = () => {
+    clearTimeout(mergeSearchTimer);
+    mergeSearchTimer = setTimeout(async () => {
+        const q = mergeSearch.value.trim();
+        if (!q) { mergeResults.value = []; return; }
+        const id = masjidStore.masjid?.id;
+        const res = await ApiService.get(`/api/admin/masjids/${id}/contacts?search=${encodeURIComponent(q)}&per_page=8` as any);
+        // exclude the placeholder itself and other placeholders
+        mergeResults.value = (res.data?.data?.data || []).filter((c: any) => c.id !== selectedContact.value?.id && !c.is_placeholder);
+    }, 300);
+};
+
+const doMerge = async () => {
+    if (!selectedContact.value || !canMerge.value) return;
+    const id = masjidStore.masjid?.id;
+    const payload = new URLSearchParams();
+    if (mergeMode.value === 'existing') payload.append('target_contact_id', String(mergeTarget.value.id));
+    else {
+        payload.append('first_name', mergeNew.value.first_name);
+        if (mergeNew.value.last_name) payload.append('last_name', mergeNew.value.last_name);
+        if (mergeNew.value.email) payload.append('email', mergeNew.value.email);
+        if (mergeNew.value.phone) payload.append('phone', mergeNew.value.phone);
+    }
+    merging.value = true;
+    try {
+        await ApiService.post(`/api/admin/masjids/${id}/contacts/${selectedContact.value.id}/merge` as any, payload);
+        showMergeModal.value = false;
+        showViewModal.value = false;
+        await loadData();
+        Swal.fire({ icon: 'success', title: 'Attached', text: 'The card and its giving were moved to the member.' });
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not attach. Please try again.' });
+    } finally { merging.value = false; }
+};
+
+const formatCents = (cents: number): string => {
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format((cents ?? 0) / 100); }
+    catch (e) { return `$${((cents ?? 0) / 100).toFixed(2)}`; }
+};
+const formatDate = (iso: string): string => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
 const submitForm = async () => {
