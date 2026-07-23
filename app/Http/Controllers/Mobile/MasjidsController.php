@@ -63,7 +63,7 @@ class MasjidsController extends Controller
      * Canonical theme shape shared with the web surface (Api/V1/SettingController).
      * Returns null when the masjid has no theme_settings row.
      *
-     * @return array{primary: ?string, secondary: ?string, accent: ?string, background: ?string}|null
+     * @return array{primary: ?string, secondary: ?string, accent: ?string, background: ?string, tokens: array}|null
      */
     public static function themePayload(Masjid $masjid): ?array
     {
@@ -78,6 +78,9 @@ class MasjidsController extends Controller
             'secondary' => $theme->secondary_color,
             'accent' => $theme->accent_color,
             'background' => $theme->background_color,
+            // Full resolved design-token tree — additive; the four keys above are
+            // unchanged for older app builds. See App\Support\DesignTokens.
+            'tokens' => $theme->resolvedTokens(),
         ];
     }
 

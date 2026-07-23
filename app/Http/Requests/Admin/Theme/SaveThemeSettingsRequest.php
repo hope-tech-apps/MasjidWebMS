@@ -18,6 +18,10 @@ class SaveThemeSettingsRequest extends BaseFormRequest
             'secondary_color' => $hex,
             'accent_color' => $hex,
             'background_color' => $hex,
+            // Optional per-masjid design-token overrides (deep-merged over the
+            // derived defaults by App\Support\DesignTokens). The Brand Studio
+            // sends a structured tree; null/absent leaves it fully derived.
+            'tokens' => ['nullable', 'array'],
         ];
     }
 }

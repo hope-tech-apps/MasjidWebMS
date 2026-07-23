@@ -32,6 +32,7 @@ class ThemeSettingsController extends Controller
                 'secondary_color',
                 'accent_color',
                 'background_color',
+                'tokens',
             ]);
 
             if ($settings) {

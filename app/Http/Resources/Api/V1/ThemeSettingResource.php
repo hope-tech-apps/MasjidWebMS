@@ -27,6 +27,9 @@ class ThemeSettingResource extends JsonResource
             'secondary' => $this->secondary_color,
             'accent' => $this->accent_color,
             'background' => $this->background_color,
+            // Full resolved design-token tree (additive; legacy keys above are
+            // unchanged for older clients). See App\Support\DesignTokens.
+            'tokens' => $this->resolvedTokens(),
         ];
     }
 }
