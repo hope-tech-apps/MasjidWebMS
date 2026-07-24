@@ -60,7 +60,7 @@ class ContactReasonsController extends Controller
      */
     public function show($masjid_id, $contact_reason_id)
     {
-        $contactReason = ContactReason::findOrFail($contact_reason_id);
+        $contactReason = ContactReason::where('masjid_id', $masjid_id)->findOrFail($contact_reason_id);
 
         return response()->json([
             'status' => 'success',
@@ -75,7 +75,7 @@ class ContactReasonsController extends Controller
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
-            $contactReason = ContactReason::findOrFail($contact_reason_id);
+            $contactReason = ContactReason::where('masjid_id', $masjid_id)->findOrFail($contact_reason_id);
 
             $contactReasonInputs = $request->safe()->only(['name', 'is_active', 'order']);
             $contactReasonInputs['masjid_id'] = $masjid->id;
@@ -101,7 +101,7 @@ class ContactReasonsController extends Controller
      */
     public function destroy($masjid_id, $contact_reason_id)
     {
-        $contactReason = ContactReason::findOrFail($contact_reason_id);
+        $contactReason = ContactReason::where('masjid_id', $masjid_id)->findOrFail($contact_reason_id);
         $contactReason->forceDelete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::CONTACT_REASONS);

@@ -57,7 +57,7 @@ class EventsController extends Controller
      */
     public function show($masjid_id, $event_id)
     {
-        $event = Event::findOrFail($event_id);
+        $event = Event::where('masjid_id', $masjid_id)->findOrFail($event_id);
         return response()->json([
             'status' => 'success',
             'data' => $event
@@ -70,7 +70,7 @@ class EventsController extends Controller
     public function update(UpdateEventRequest $request, $masjid_id, $event_id)
     {
         try {
-            $event = Event::findOrFail($event_id);
+            $event = Event::where('masjid_id', $masjid_id)->findOrFail($event_id);
 
             $eventInputs = $request->safe()->only(['title', 'details', 'place', 'start', 'end', 'link']);
             $event->update($eventInputs);
@@ -94,7 +94,7 @@ class EventsController extends Controller
      */
     public function destroy($masjid_id, $event_id)
     {
-        $event = Event::findOrFail($event_id);
+        $event = Event::where('masjid_id', $masjid_id)->findOrFail($event_id);
         $event->forceDelete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::EVENTS);

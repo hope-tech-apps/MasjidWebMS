@@ -60,7 +60,7 @@ class AnnouncementsController extends Controller
      */
     public function show($masjid_id, $announcement_id)
     {
-        $announcement = Announcement::with('image')->findOrFail($announcement_id);
+        $announcement = Announcement::with('image')->where('masjid_id', $masjid_id)->findOrFail($announcement_id);
         return response()->json([
             'status' => 'success',
             'data' => $announcement
@@ -73,7 +73,7 @@ class AnnouncementsController extends Controller
     public function update(UpdateAnnouncementRequest $request, $masjid_id, $announcement_id)
     {
         try {
-            $announcement = Announcement::findOrFail($announcement_id);
+            $announcement = Announcement::where('masjid_id', $masjid_id)->findOrFail($announcement_id);
 
             $announcementInputs = $request->safe()->only(['title', 'summary', 'details', 'text', 'start_date', 'end_date']);
             $announcement->update($announcementInputs);
@@ -102,7 +102,7 @@ class AnnouncementsController extends Controller
      */
     public function destroy($masjid_id, $announcement_id)
     {
-        $announcement = Announcement::findOrFail($announcement_id);
+        $announcement = Announcement::where('masjid_id', $masjid_id)->findOrFail($announcement_id);
         $announcement->forceDelete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);
@@ -115,7 +115,7 @@ class AnnouncementsController extends Controller
 
     public function moveToTrash($masjid_id, $announcement_id)
     {
-        $announcement = Announcement::findOrFail($announcement_id);
+        $announcement = Announcement::where('masjid_id', $masjid_id)->findOrFail($announcement_id);
         $announcement->delete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::ANNOUNCEMENTS);

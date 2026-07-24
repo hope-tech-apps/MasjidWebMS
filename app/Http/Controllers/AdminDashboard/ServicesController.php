@@ -63,7 +63,7 @@ class ServicesController extends Controller
      */
     public function show($masjid_id, $service_id)
     {
-        $service = Service::with('image', 'icon')->findOrFail($service_id);
+        $service = Service::with('image', 'icon')->where('masjid_id', $masjid_id)->findOrFail($service_id);
         return response()->json([
             'status' => 'success',
             'data' => $service
@@ -77,7 +77,7 @@ class ServicesController extends Controller
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
-            $service = Service::findOrFail($service_id);
+            $service = Service::where('masjid_id', $masjid_id)->findOrFail($service_id);
 
             $serviceInputs = $request->safe()->only(['title', 'summary', 'description', 'text']);
             $serviceInputs['masjid_id'] = $masjid->id;
@@ -112,7 +112,7 @@ class ServicesController extends Controller
      */
     public function destroy($masjid_id, $service_id)
     {
-        $service = Service::findOrFail($service_id);
+        $service = Service::where('masjid_id', $masjid_id)->findOrFail($service_id);
         $service->forceDelete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
@@ -125,7 +125,7 @@ class ServicesController extends Controller
 
     public function moveToTrash($masjid_id, $service_id)
     {
-        $service = Service::findOrFail($service_id);
+        $service = Service::where('masjid_id', $masjid_id)->findOrFail($service_id);
         $service->delete();
 
         MobileCache::flushMasjid((int) $masjid_id, MobileCache::SERVICES);
