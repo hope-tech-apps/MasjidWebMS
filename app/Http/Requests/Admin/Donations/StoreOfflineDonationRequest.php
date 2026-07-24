@@ -18,6 +18,7 @@ class StoreOfflineDonationRequest extends BaseFormRequest
             'contact_id' => ['nullable', 'integer'],
             'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
             'payment_method' => ['required', 'in:cash,check,zelle,venmo,paypal,square,credit,giftcard,other'],
+            'check_number' => ['nullable', 'string', 'max:50'],
             'donated_at' => ['required', 'date'],
             'note' => ['nullable', 'string', 'max:1000'],
         ];

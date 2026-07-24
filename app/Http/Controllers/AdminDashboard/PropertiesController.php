@@ -96,7 +96,7 @@ class PropertiesController extends Controller
     {
         $property = Property::findOrFail($property_id);   // tenant-scoped
 
-        $payment = new RentPayment($request->safe()->only(['paid_on', 'payment_method', 'note']));
+        $payment = new RentPayment($request->safe()->only(['paid_on', 'payment_method', 'check_number', 'note']));
         $payment->property_id = $property->id;
         // A rent payment always belongs to the same masjid as its property. The
         // BelongsToMasjid creating-hook stamps masjid_id when a tenant is BOUND,

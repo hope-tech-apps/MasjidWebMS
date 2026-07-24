@@ -32,6 +32,7 @@ class Donation extends Model
         'type',
         'source',
         'payment_method',
+        'check_number',
         'donated_at',
         'note',
         'import_batch',

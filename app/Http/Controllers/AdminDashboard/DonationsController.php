@@ -67,6 +67,7 @@ class DonationsController extends Controller
             'type' => 'one_time',
             'source' => 'offline',
             'payment_method' => $request->validated('payment_method'),
+            'check_number' => $request->validated('payment_method') === 'check' ? $request->input('check_number') : null,
             'donated_at' => $request->validated('donated_at'),
             'note' => $request->input('note'),
             'intended_amount' => $cents,

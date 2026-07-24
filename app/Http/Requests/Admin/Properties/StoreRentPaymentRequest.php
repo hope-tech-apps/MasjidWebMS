@@ -17,6 +17,7 @@ class StoreRentPaymentRequest extends BaseFormRequest
             'paid_on' => ['required', 'date'],
             'amount' => ['required', 'numeric', 'min:-1000000', 'max:1000000'],
             'payment_method' => ['nullable', 'string', 'max:30'],
+            'check_number' => ['nullable', 'string', 'max:50'],
             'note' => ['nullable', 'string', 'max:255'],
         ];
     }

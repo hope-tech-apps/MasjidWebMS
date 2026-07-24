@@ -20,6 +20,7 @@ class RentPayment extends Model
         'paid_on',
         'amount',
         'payment_method',
+        'check_number',
         'note',
         'import_batch',
     ];

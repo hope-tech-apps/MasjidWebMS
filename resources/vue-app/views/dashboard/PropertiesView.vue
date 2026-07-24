@@ -119,13 +119,19 @@
                                     <label class="form-label small text-muted mb-1">Date</label>
                                     <input class="form-control" type="date" v-model="rentForm.paid_on">
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-md-2">
                                     <label class="form-label small text-muted mb-1">Amount ($)</label>
                                     <input class="form-control" type="number" step="0.01" v-model="rentForm.amount" placeholder="800">
                                 </div>
-                                <div class="col-md-3">
+                                <div class="col-md-2">
                                     <label class="form-label small text-muted mb-1">Method</label>
-                                    <input class="form-control" v-model="rentForm.payment_method" placeholder="check">
+                                    <select class="form-select text-capitalize" v-model="rentForm.payment_method">
+                                        <option v-for="m in rentMethods" :key="m" :value="m" class="text-capitalize">{{ m }}</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2" v-if="rentForm.payment_method === 'check'">
+                                    <label class="form-label small text-muted mb-1">Check #</label>
+                                    <input class="form-control" v-model="rentForm.check_number" placeholder="1234">
                                 </div>
                                 <div class="col-md-3">
                                     <button class="btn btn-success w-100" :disabled="!rentForm.paid_on || rentForm.amount==='' || savingRent" @click="logRent">
@@ -141,7 +147,7 @@
                                     <tbody>
                                         <tr v-for="r in (selected.rent_payments || [])" :key="r.id">
                                             <td>{{ formatDate(r.paid_on) }}</td>
-                                            <td class="text-capitalize">{{ r.payment_method || '—' }}</td>
+                                            <td class="text-capitalize">{{ r.payment_method || '—' }}<span v-if="r.check_number" class="text-muted text-lowercase"> · #{{ r.check_number }}</span></td>
                                             <td class="text-end" :class="{ 'text-danger': r.amount < 0 }">{{ formatCents(r.amount) }}</td>
                                             <td class="text-end"><button class="btn btn-sm btn-outline-danger" @click="removeRent(r)"><i class="bi bi-x"></i></button></td>
                                         </tr>
@@ -185,7 +191,8 @@ const showDetail = ref(false);
 const selected = ref<PropertyRow | null>(null);
 
 const form = ref<any>({ name: '', address: '', tenant_name: '', monthly_rent: '', notes: '', is_active: true });
-const rentForm = ref<any>({ paid_on: '', amount: '', payment_method: '' });
+const rentForm = ref<any>({ paid_on: '', amount: '', payment_method: 'cash', check_number: '' });
+const rentMethods = ['cash', 'check', 'zelle', 'venmo', 'credit', 'other'];
 
 const masjidId = () => authStore.dashboardMasjidId ?? masjidStore.masjid?.id;
 const base = computed(() => `/api/admin/masjids/${masjidId()}/properties`);
@@ -247,7 +254,7 @@ async function remove(p: PropertyRow) {
 async function openDetail(p: PropertyRow) {
     selected.value = p;
     showDetail.value = true;
-    rentForm.value = { paid_on: new Date().toISOString().slice(0, 10), amount: '', payment_method: '' };
+    rentForm.value = { paid_on: new Date().toISOString().slice(0, 10), amount: '', payment_method: 'cash', check_number: '' };
     try {
         const res = await ApiService.get(`${base.value}/${p.id}` as any);
         if (res.data?.status === 'success') selected.value = res.data.data;
@@ -260,6 +267,7 @@ async function logRent() {
     payload.append('paid_on', rentForm.value.paid_on);
     payload.append('amount', rentForm.value.amount);
     if (rentForm.value.payment_method) payload.append('payment_method', rentForm.value.payment_method);
+    if (rentForm.value.payment_method === 'check' && rentForm.value.check_number) payload.append('check_number', rentForm.value.check_number);
     savingRent.value = true;
     try {
         await ApiService.post(`${base.value}/${selected.value.id}/rent` as any, payload);

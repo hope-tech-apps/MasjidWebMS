@@ -148,7 +148,7 @@
                                 </div>
                                 <div class="col-md-4">
                                     <h6 class="text-muted mb-1">Method</h6>
-                                    <p class="mb-0 text-capitalize">{{ methodLabel(selectedDonation) }}</p>
+                                    <p class="mb-0 text-capitalize">{{ methodLabel(selectedDonation) }}<span v-if="selectedDonation.check_number" class="text-muted text-lowercase"> · #{{ selectedDonation.check_number }}</span></p>
                                 </div>
                                 <div class="col-md-4">
                                     <h6 class="text-muted mb-1">Fund</h6>
@@ -233,9 +233,13 @@
                                 </div>
                                 <div class="col-md-6 mb-2">
                                     <label class="form-label small text-muted">Method *</label>
-                                    <select class="form-select" v-model="offlineForm.payment_method">
+                                    <select class="form-select text-capitalize" v-model="offlineForm.payment_method">
                                         <option v-for="m in methods" :key="m" :value="m" class="text-capitalize">{{ m }}</option>
                                     </select>
+                                </div>
+                                <div class="col-md-6 mb-2" v-if="offlineForm.payment_method === 'check'">
+                                    <label class="form-label small text-muted">Check #</label>
+                                    <input class="form-control" v-model="offlineForm.check_number" placeholder="1234">
                                 </div>
                                 <div class="col-md-6 mb-2">
                                     <label class="form-label small text-muted">Fund *</label>
@@ -342,7 +346,7 @@ const authStore = useAuthStore();
 const methods = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other'];
 const showOffline = ref(false);
 const savingOffline = ref(false);
-const offlineForm = ref<any>({ amount: '', payment_method: 'cash', fund_id: '', donated_at: '', note: '' });
+const offlineForm = ref<any>({ amount: '', payment_method: 'cash', check_number: '', fund_id: '', donated_at: '', note: '' });
 const offlineDonor = ref<any>(null);
 const offlineDonorSearch = ref('');
 const offlineDonorResults = ref<any[]>([]);
@@ -352,7 +356,7 @@ const oMasjidId = () => authStore.dashboardMasjidId ?? masjidStore.masjid?.id;
 const offlineValid = computed(() => !!offlineForm.value.amount && !!offlineForm.value.fund_id && !!offlineForm.value.donated_at && !!offlineForm.value.payment_method);
 
 const openOffline = () => {
-    offlineForm.value = { amount: '', payment_method: 'cash', fund_id: '', donated_at: new Date().toISOString().slice(0, 10), note: '' };
+    offlineForm.value = { amount: '', payment_method: 'cash', check_number: '', fund_id: '', donated_at: new Date().toISOString().slice(0, 10), note: '' };
     offlineDonor.value = null; offlineDonorSearch.value = ''; offlineDonorResults.value = [];
     showOffline.value = true;
 };
@@ -371,6 +375,7 @@ const submitOffline = async () => {
     const p = new URLSearchParams();
     p.append('amount', offlineForm.value.amount);
     p.append('payment_method', offlineForm.value.payment_method);
+    if (offlineForm.value.payment_method === 'check' && offlineForm.value.check_number) p.append('check_number', offlineForm.value.check_number);
     p.append('fund_id', String(offlineForm.value.fund_id));
     p.append('donated_at', offlineForm.value.donated_at);
     if (offlineDonor.value) p.append('contact_id', String(offlineDonor.value.id));
