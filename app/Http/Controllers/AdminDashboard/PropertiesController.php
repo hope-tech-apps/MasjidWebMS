@@ -53,7 +53,10 @@ class PropertiesController extends Controller
         $data = $request->validated();
         $data['monthly_rent'] = $this->toCents($data['monthly_rent'] ?? null);
 
-        $property = Property::create($data);   // masjid_id stamped by BelongsToMasjid
+        // masjid_id is stamped by the BelongsToMasjid hook when a tenant is bound;
+        // fall back to the route masjid when unbound so the NOT NULL insert holds.
+        $data['masjid_id'] = $data['masjid_id'] ?? (int) $masjid_id;
+        $property = Property::create($data);
 
         return response()->json([
             'status' => 'success',
@@ -95,8 +98,14 @@ class PropertiesController extends Controller
 
         $payment = new RentPayment($request->safe()->only(['paid_on', 'payment_method', 'note']));
         $payment->property_id = $property->id;
+        // A rent payment always belongs to the same masjid as its property. The
+        // BelongsToMasjid creating-hook stamps masjid_id when a tenant is BOUND,
+        // but when the context is UNBOUND (a SuperAdmin, or an admin whose masjid
+        // link did not resolve) the hook is a no-op, so the caller must set it —
+        // otherwise the NOT NULL insert fails ("masjid_id doesn't have a default").
+        $payment->masjid_id = $property->masjid_id;
         $payment->amount = $this->toCents($request->validated('amount'));
-        $payment->save();   // masjid_id stamped by BelongsToMasjid
+        $payment->save();
 
         return response()->json([
             'status' => 'success',
