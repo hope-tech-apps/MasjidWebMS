@@ -13,6 +13,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        // GUARD: the block below TRUNCATES ~15 tenant tables (masjids, users, ...).
+        // Running this on production would wipe every paying tenant. Refuse to run
+        // in production unless explicitly overridden for a deliberate reseed.
+        if (app()->environment('production') && ! env('ALLOW_DESTRUCTIVE_SEED')) {
+            $this->command->error('Refusing to run the destructive DatabaseSeeder on production. Set ALLOW_DESTRUCTIVE_SEED=true to override.');
+            return;
+        }
 
 //         $this->call(CountriesCitiesSeeder::class);
 
