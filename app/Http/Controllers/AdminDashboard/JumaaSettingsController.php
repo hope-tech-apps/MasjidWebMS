@@ -28,8 +28,23 @@ class JumaaSettingsController extends Controller
 
             $payload = $request->safe()->only(['iqama', 'athans']);
 
+            // Normalize shifts to the canonical shape so every stored/returned
+            // entry always carries all four keys (empties become null). Stored
+            // null when empty so apps fall back to `athans` (no regression).
+            $shifts = collect($request->validated()['shifts'] ?? [])
+                ->map(fn ($shift) => [
+                    'time' => $shift['time'] ?? null,
+                    'khateeb_name' => filled($shift['khateeb_name'] ?? null) ? $shift['khateeb_name'] : null,
+                    'khateeb_title' => filled($shift['khateeb_title'] ?? null) ? $shift['khateeb_title'] : null,
+                    'khutbah_title' => filled($shift['khutbah_title'] ?? null) ? $shift['khutbah_title'] : null,
+                ])
+                ->values()
+                ->all();
+            $payload['shifts'] = count($shifts) ? $shifts : null;
+
             if ($jumaaSettings) {
                 // Reset athans before update so a missing value clears the field.
+                // `shifts` is always present in $payload, so it clears on its own.
                 $jumaaSettings->athans = null;
                 $jumaaSettings->update($payload);
             } else {

@@ -9,11 +9,16 @@ class JumaaSetting extends Model
     protected $fillable = [
         'masjid_id',
         'iqama',
-        'athans'
+        'athans',
+        'shifts'
     ];
 
     protected $casts = [
-        'athans' => 'array'
+        'athans' => 'array',
+        // Ordered array of richer Jumaa entries:
+        // [{ time: "HH:MM", khateeb_name: ?string, khateeb_title: ?string, khutbah_title: ?string }].
+        // The richer source of truth when present; `athans` stays for backward-compat.
+        'shifts' => 'array'
     ];
 
     public function getAthansAttribute($value)

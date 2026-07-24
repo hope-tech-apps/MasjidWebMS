@@ -68,6 +68,90 @@
                     </div>
                 </div>
 
+                <!-- Jumaa Shifts: richer per-khutbah entries (time + khateeb + khutbah title).
+                     Optional; when empty the apps fall back to the Athans times above. -->
+                <div class="container">
+                    <div class="row justify-content-center">
+                        <div class="col-12">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <div class="fs-5 fw-semibold">Jumaa Shifts (Khateeb details)</div>
+                                <button type="button" @click.prevent="addShift"
+                                    class="btn btn-primary btn-sm add-ref-btn">
+                                    + Add Shift
+                                </button>
+                            </div>
+                            <p class="text-muted small mb-3">
+                                Add each khutbah with its Khateeb and topic. Leave empty to use the Athans times above.
+                            </p>
+
+                            <div v-if="shifts.length" class="d-flex flex-column gap-3">
+                                <div v-for="(shift, i) in shifts" :key="i"
+                                    class="border rounded p-3 bg-white">
+                                    <div class="d-flex align-items-center justify-content-between mb-2">
+                                        <div class="fw-semibold">Shift #{{ i + 1 }}</div>
+                                        <button type="button" @click.prevent="removeShift(i)"
+                                            class="btn btn-danger btn-sm add-ref-btn">
+                                            - Remove
+                                        </button>
+                                    </div>
+                                    <div class="row g-3">
+                                        <div class="col-12 col-md-3">
+                                            <ColumnInputContainer :label="`Time`"
+                                                :name="`shift_${i + 1}_time`" :show_error="true">
+                                                <div class="d-flex flex-column">
+                                                    <Field :name="`shift_${i + 1}_time`" type="time"
+                                                        v-model="shift.time" class="dashboard-input" />
+                                                    <ErrorMessage :name="`shift_${i + 1}_time`"
+                                                        class="error-message" />
+                                                </div>
+                                            </ColumnInputContainer>
+                                        </div>
+                                        <div class="col-12 col-md-3">
+                                            <ColumnInputContainer :label="`Khateeb Name`"
+                                                :name="`shift_${i + 1}_khateeb_name`" :show_error="true">
+                                                <div class="d-flex flex-column">
+                                                    <Field :name="`shift_${i + 1}_khateeb_name`" type="text"
+                                                        v-model="shift.khateeb_name" class="dashboard-input"
+                                                        placeholder="e.g. Imam Ahmad" maxlength="255" />
+                                                    <ErrorMessage :name="`shift_${i + 1}_khateeb_name`"
+                                                        class="error-message" />
+                                                </div>
+                                            </ColumnInputContainer>
+                                        </div>
+                                        <div class="col-12 col-md-3">
+                                            <ColumnInputContainer :label="`Khateeb Title`"
+                                                :name="`shift_${i + 1}_khateeb_title`" :show_error="true">
+                                                <div class="d-flex flex-column">
+                                                    <Field :name="`shift_${i + 1}_khateeb_title`" type="text"
+                                                        v-model="shift.khateeb_title" class="dashboard-input"
+                                                        placeholder="e.g. Head Imam" maxlength="255" />
+                                                    <ErrorMessage :name="`shift_${i + 1}_khateeb_title`"
+                                                        class="error-message" />
+                                                </div>
+                                            </ColumnInputContainer>
+                                        </div>
+                                        <div class="col-12 col-md-3">
+                                            <ColumnInputContainer :label="`Khutbah Title`"
+                                                :name="`shift_${i + 1}_khutbah_title`" :show_error="true">
+                                                <div class="d-flex flex-column">
+                                                    <Field :name="`shift_${i + 1}_khutbah_title`" type="text"
+                                                        v-model="shift.khutbah_title" class="dashboard-input"
+                                                        placeholder="e.g. Patience in Islam" maxlength="255" />
+                                                    <ErrorMessage :name="`shift_${i + 1}_khutbah_title`"
+                                                        class="error-message" />
+                                                </div>
+                                            </ColumnInputContainer>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="text-muted small fst-italic">
+                                No shifts configured.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
 
@@ -91,7 +175,7 @@ import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import { SweetAlertOptions } from 'sweetalert2';
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
-import { JumaaSetting } from '@/core/types/data/masjid-related/JumaaSetting';
+import { JumaaSetting, JumaaShift } from '@/core/types/data/masjid-related/JumaaSetting';
 
 // Lifecycle hooks
 onBeforeMount(async () => {
@@ -101,7 +185,15 @@ onBeforeMount(async () => {
 // Types
 type SettingsModel = {
     athans: string[];
+    shifts: JumaaShift[];
 }
+
+const emptyShift = (): JumaaShift => ({
+    time: '',
+    khateeb_name: '',
+    khateeb_title: '',
+    khutbah_title: '',
+});
 
 // Stores
 const masjidStore = useMasjidStore();
@@ -118,6 +210,9 @@ const athansFieldsNumber = computed(() => {
 });
 
 // Form
+const isValidTime = (value?: string) =>
+    (!value) || /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value); // Validates HH:MM format
+
 const validationSchema = computed(() => {
     let additionalValidation: any = {};
     if (athans.value?.length > 0) {
@@ -126,8 +221,22 @@ const validationSchema = computed(() => {
                 .test(
                     'is-valid-time',
                     'Invalid time format (use HH:MM)',
-                    (value) => (!value) || /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(value) // Validates HH:MM format
+                    (value) => isValidTime(value)
                 ).label('Jumaa Athan')
+        });
+    }
+    if (shifts.value?.length > 0) {
+        shifts.value.forEach((s, i) => {
+            additionalValidation[`shift_${i + 1}_time`] = string()
+                .required('Shift time is required')
+                .test(
+                    'is-valid-time',
+                    'Invalid time format (use HH:MM)',
+                    (value) => isValidTime(value)
+                ).label('Shift Time');
+            additionalValidation[`shift_${i + 1}_khateeb_name`] = string().nullable().max(255).label('Khateeb Name');
+            additionalValidation[`shift_${i + 1}_khateeb_title`] = string().nullable().max(255).label('Khateeb Title');
+            additionalValidation[`shift_${i + 1}_khutbah_title`] = string().nullable().max(255).label('Khutbah Title');
         });
     }
     return object().shape({
@@ -135,15 +244,23 @@ const validationSchema = computed(() => {
     });
 });
 const settingsModel = ref<SettingsModel>({
-    athans: []
+    athans: [],
+    shifts: []
 });
 
-const { athans } = toRefs(settingsModel.value);
+const { athans, shifts } = toRefs(settingsModel.value);
 
 watch(() => jumaaSetting.value, () => {
-    console.log(jumaaSetting.value);
     if (jumaaSetting.value) {
         settingsModel.value.athans = jumaaSetting.value.athans?.length ? jumaaSetting.value.athans : [];
+        settingsModel.value.shifts = jumaaSetting.value.shifts?.length
+            ? jumaaSetting.value.shifts.map(s => ({
+                time: s.time ?? '',
+                khateeb_name: s.khateeb_name ?? '',
+                khateeb_title: s.khateeb_title ?? '',
+                khutbah_title: s.khutbah_title ?? '',
+            }))
+            : [];
     }
     numberOfAthans.value = settingsModel.value.athans?.length || 0;
 })
@@ -173,6 +290,14 @@ const changeAthanFieldsNumber = (action: 'add' | 'remove') => {
     }
 }
 
+const addShift = () => {
+    shifts.value.push(emptyShift());
+}
+
+const removeShift = (index: number) => {
+    shifts.value.splice(index, 1);
+}
+
 const onSubmit = async () => {
     isLoading.value = true;
     QSwal.fire("Question", 'Change Jumaa settings ?', 'question')
@@ -185,6 +310,17 @@ const onSubmit = async () => {
                 if (athans.value?.length > 0) {
                     athans.value.forEach((a, i) => {
                         apiRequestData.append(`athans[${i}]`, a);
+                    });
+                }
+
+                // Richer per-khutbah shifts. Sent alongside athans; the backend
+                // normalizes empty metadata to null and stores null when no shifts.
+                if (shifts.value?.length > 0) {
+                    shifts.value.forEach((s, i) => {
+                        apiRequestData.append(`shifts[${i}][time]`, s.time ?? '');
+                        apiRequestData.append(`shifts[${i}][khateeb_name]`, s.khateeb_name ?? '');
+                        apiRequestData.append(`shifts[${i}][khateeb_title]`, s.khateeb_title ?? '');
+                        apiRequestData.append(`shifts[${i}][khutbah_title]`, s.khutbah_title ?? '');
                     });
                 }
 
