@@ -295,7 +295,9 @@ const formatCents = (cents: number): string => {
 const formatDate = (iso: string): string => {
     if (!iso) return '—';
     const d = new Date(iso);
-    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    // Date-only fields (paid_on) are serialized as UTC midnight; render in UTC so
+    // a July 24 date doesn't display as July 23 in timezones behind UTC.
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 };
 </script>
 

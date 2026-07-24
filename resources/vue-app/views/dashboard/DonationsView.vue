@@ -425,7 +425,9 @@ const formatCents = (cents: number, currency: string = 'usd'): string => {
 const formatDate = (iso: string): string => {
     if (!iso) return '—';
     const d = new Date(iso);
-    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    // Date-only fields (donated_at) are serialized as UTC midnight; render in UTC
+    // so a July 2 date doesn't display as July 1 in timezones behind UTC.
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 };
 
 // Donor's First Last (or the business name). Falls back gracefully.

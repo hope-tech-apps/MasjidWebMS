@@ -30,7 +30,10 @@ class DonationsController extends Controller
                 $q->whereHas('contact', function ($c) use ($search) {
                     $c->where('first_name', 'like', "%{$search}%")
                         ->orWhere('last_name', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
+                        ->orWhere('email', 'like', "%{$search}%")
+                        // Full name, so "Ahmad Fais" (first + last together) matches.
+                        ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", ["%{$search}%"])
+                        ->orWhereRaw("CONCAT(last_name, ' ', first_name) LIKE ?", ["%{$search}%"]);
                 });
             })
             // Newest gift first — by the real gift date for offline history, else entry.
