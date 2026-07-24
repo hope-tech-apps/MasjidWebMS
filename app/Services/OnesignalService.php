@@ -138,15 +138,12 @@ class OnesignalService
      * its own provisioned app sends through THAT app (also required, since
      * subscription ids are app-scoped), otherwise the shared app.
      */
-    public function notifyAllOfMasjid(Masjid $masjid, Notification $notification, array $subscription_ids)
+    public function notifyAllOfMasjid(Masjid $masjid, Notification $notification, array $subscription_ids, ?string $imageUrl = null)
     {
         try {
             [$appId, $appKey] = $this->resolveConfig($masjid);
 
-            $response = Http::withHeaders([
-                'Authorization' => 'Basic ' . $appKey,
-                'Content-Type' => 'application/json'
-            ])->post($this->api_url, [
+            $payload = [
                 'app_id' => $appId,
                 // Subscription IDs, NOT external_id aliases — aliases don't
                 // resolve in OneSignal's notification API (invalid_aliases).
@@ -162,10 +159,22 @@ class OnesignalService
                     'masjid_id' => $masjid->id,
                     'notification_id' => $notification->id,
                 ]
-            ]);
+            ];
+
+            // Rich push image when the notification carries one: big_picture on
+            // Android, ios_attachments on iOS.
+            if (!empty($imageUrl)) {
+                $payload['big_picture'] = $imageUrl;
+                $payload['ios_attachments'] = ['id1' => $imageUrl];
+            }
+
+            $response = Http::withHeaders([
+                'Authorization' => 'Basic ' . $appKey,
+                'Content-Type' => 'application/json'
+            ])->post($this->api_url, $payload);
 
             return $response->json();
-            
+
         } catch (\Exception $e) {
             throw $e;
         }

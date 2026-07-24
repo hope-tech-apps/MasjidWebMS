@@ -27,6 +27,10 @@
                 <Field name="notification_message" as="textarea" v-model="notificationModel.message"
                     class="dashboard-input" placeholder="add notification message here" />
             </ColumnInputContainer>
+            <ColumnInputContainer name="notification_image" label="Notification Image (optional)" :show_error="false">
+                <input name="notification_image" type="file" accept="image/*" class="dashboard-input"
+                    @change="onImageChange" />
+            </ColumnInputContainer>
         </div>
 
         <div class="card-footer bg-white border-0 d-flex justify-content-end">
@@ -92,6 +96,14 @@ const notificationModel = ref<NotificationEntry>({
     masjid_id: undefined
 });
 
+// Optional image attachment for the notification.
+const notificationImage = ref<File | null>(null);
+
+const onImageChange = (event: Event) => {
+    const target = event.target as HTMLInputElement;
+    notificationImage.value = target.files && target.files.length ? target.files[0] : null;
+};
+
 
 // Functions
 
@@ -106,7 +118,10 @@ const onSubmit = async () => {
                 const apiRequestData = new FormData();
                 apiRequestData.append('title', notificationModel.value.title);
                 apiRequestData.append('message', notificationModel.value.message);
-                
+                if (notificationImage.value) {
+                    apiRequestData.append('image', notificationImage.value);
+                }
+
                 // Send the request
                 let swalInstance: SweetAlertOptions = {
                     title: "Info",

@@ -20,8 +20,10 @@ class NotificationsController extends Controller
      * only exposes the broadcast history; the app compares ids against a locally
      * stored last-seen id to compute the unread badge.
      *
-     * Only the columns the inbox renders are selected; `onesignal_message_id`
-     * (an internal delivery id) is intentionally withheld from the mobile payload.
+     * Each item exposes the FULL message body plus an optional image_url (Spatie
+     * media, collection "notifications"); the internal `onesignal_message_id` is
+     * intentionally withheld from the mobile payload. The app truncates long
+     * bodies in the list row and opens a detail screen for the full text + image.
      */
     public function index(Request $request, $masjid_id)
     {
@@ -30,12 +32,22 @@ class NotificationsController extends Controller
 
         $notifications = Notification::where('masjid_id', $masjid->id)
             ->latest()
-            ->paginate($perPage, ['id', 'masjid_id', 'title', 'message', 'created_at']);
+            ->paginate($perPage);
+
+        $items = collect($notifications->items())->map(function (Notification $n) {
+            return [
+                'id' => $n->id,
+                'title' => $n->title,
+                'message' => $n->message,
+                'image_url' => $n->getFirstMediaUrl('notifications') ?: null,
+                'created_at' => $n->created_at,
+            ];
+        })->values();
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'items' => $notifications->items(),
+                'items' => $items,
                 'pagination' => [
                     'current_page' => $notifications->currentPage(),
                     'last_page' => $notifications->lastPage(),

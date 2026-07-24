@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 class AppVersionSetting extends Model
 {
     protected $fillable = [
+        'masjid_id',
         'platform',
         'minimum_version',
         'minimum_build',
@@ -27,4 +28,9 @@ class AppVersionSetting extends Model
         'force_update' => 'boolean',
         'maintenance_mode' => 'boolean',
     ];
+
+    public function masjid()
+    {
+        return $this->belongsTo(Masjid::class);
+    }
 }

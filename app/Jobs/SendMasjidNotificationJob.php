@@ -68,7 +68,11 @@ class SendMasjidNotificationJob implements ShouldQueue
             return;
         }
 
-        $response = $onesignal->notifyAllOfMasjid($this->masjid, $this->notification, $this->subscriptionIds);
+        // Include the notification's image (if any) so the push renders it —
+        // big_picture on Android, ios_attachments on iOS.
+        $imageUrl = $this->notification->getFirstMediaUrl('notifications') ?: null;
+
+        $response = $onesignal->notifyAllOfMasjid($this->masjid, $this->notification, $this->subscriptionIds, $imageUrl);
 
         if (isset($response['id']) && $response['id']) {
             $this->notification->onesignal_message_id = $response['id'];

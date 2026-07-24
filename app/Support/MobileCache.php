@@ -28,6 +28,7 @@ class MobileCache
     public const PRAYERS_SETTINGS = 'prayers_settings';
     public const CONTACT_REASONS = 'contact_reasons';
     public const SPLASH = 'splash';
+    public const APP_CONFIG = 'app.config';   // per-masjid emergency app-version gate
 
     // Global resources — change when an admin edits library content (azkar/hadith/tasabih).
     public const AZKAR_ALL = 'azkar.all';
@@ -38,7 +39,6 @@ class MobileCache
     public const HADITH_TODAY = 'hadith.today';
     public const HADITH_CATEGORIES = 'hadith.categories';
     public const MASJIDS_LIST = 'masjids.list';
-    public const APP_CONFIG = 'app.config';   // global emergency app-version gate
 
     // TTLs (seconds). Tuned per how often content changes.
     public const TTL_SHORT = 300;       //  5 min — announcements, events
@@ -77,7 +77,7 @@ class MobileCache
         foreach ([
             self::SHOW, self::ABOUT, self::DONATION_LINK, self::GALLERY, self::FEATURES,
             self::ANNOUNCEMENTS, self::EVENTS, self::SERVICES, self::PRAYERS_SETTINGS,
-            self::CONTACT_REASONS, self::SPLASH,
+            self::CONTACT_REASONS, self::SPLASH, self::APP_CONFIG,
         ] as $resource) {
             self::flushMasjid($masjidId, $resource);
         }

@@ -30,11 +30,6 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
 
-    // Emergency app-version gate. iOS + Android read this on launch to decide
-    // whether to force-update, show maintenance, or soft-prompt. Global config
-    // (not per-masjid) since app version is a property of the build.
-    Route::get('/app-config', [AppConfigController::class, 'index']);
-
     // Identify and save mobile app user device — tighter limit (DB-writing endpoint).
     Route::prefix('user')->controller(MobileAppUsersController::class)
         ->middleware('throttle:device')->group(function () {
@@ -54,6 +49,11 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             Route::get('/{masjid_id}/donation-link', 'donationLink');
             Route::get('/{masjid_id}/about', 'about');
         });
+
+        // Emergency app-version gate. iOS + Android read this on launch to decide
+        // whether to force-update, show maintenance, or soft-prompt. Per-masjid
+        // now — each white-labeled listing carries its own build gate.
+        Route::get('/{masjid_id}/app-config', [AppConfigController::class, 'index']);
 
         Route::get('/{masjid_id}/prayers', [PrayersController::class, 'index']);
         Route::get('/{masjid_id}/prayers/settings', [PrayersController::class, 'prayersSettings']);

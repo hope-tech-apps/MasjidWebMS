@@ -16,29 +16,32 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AppConfigController extends Controller
 {
-    /** All platforms (ios + android). */
-    public function index()
+    /** All platforms (ios + android) for a single masjid. */
+    public function index(int $masjid_id)
     {
         return response()->json([
             'status' => 'success',
-            'data' => AppVersionSetting::orderBy('platform')->get(),
+            'data' => AppVersionSetting::where('masjid_id', $masjid_id)
+                ->orderBy('platform')
+                ->get(),
         ], Response::HTTP_OK);
     }
 
-    /** Update a single platform's config. */
-    public function update(UpdateAppConfigRequest $request, string $platform)
+    /** Update (or create) a single masjid+platform's config. */
+    public function update(UpdateAppConfigRequest $request, int $masjid_id, string $platform)
     {
         try {
-            $setting = AppVersionSetting::where('platform', $platform)->firstOrFail();
-
-            $setting->update($request->safe()->only([
-                'minimum_version', 'minimum_build', 'force_update', 'update_message',
-                'latest_version', 'store_url', 'maintenance_mode', 'maintenance_message',
-            ]));
+            $setting = AppVersionSetting::updateOrCreate(
+                ['masjid_id' => $masjid_id, 'platform' => $platform],
+                $request->safe()->only([
+                    'minimum_version', 'minimum_build', 'force_update', 'update_message',
+                    'latest_version', 'store_url', 'maintenance_mode', 'maintenance_message',
+                ])
+            );
 
             // Flush so the public endpoint serves the new config immediately —
             // critical for an emergency lever, where staleness defeats the point.
-            MobileCache::flushGlobal(MobileCache::APP_CONFIG);
+            MobileCache::flushMasjid($masjid_id, MobileCache::APP_CONFIG);
 
             return response()->json([
                 'status' => 'success',

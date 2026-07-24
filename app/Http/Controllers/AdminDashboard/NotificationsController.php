@@ -20,6 +20,12 @@ class NotificationsController extends Controller
                 'message' => $request->input('message'),
             ]);
 
+            // Optional image — stored via Spatie media (collection "notifications"),
+            // mirroring the Announcement pattern.
+            if ($request->hasFile('image')) {
+                $notification->addMediaFromRequest('image')->toMediaCollection('notifications');
+            }
+
             // Target OneSignal SUBSCRIPTION IDs, not external_id aliases (aliases
             // don't resolve in OneSignal's notification API). Only devices that
             // have reported a subscription id (via the heartbeat) are targetable.

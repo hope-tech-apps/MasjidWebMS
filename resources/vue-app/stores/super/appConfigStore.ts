@@ -26,9 +26,9 @@ export const useAppConfigStore = defineStore("appConfigStore", () => {
     const settings = ref<AppVersionSetting[]>([])
     const isLoading = ref(false)
 
-    async function fetchAll() {
+    async function fetchAll(masjidId: number) {
         isLoading.value = true
-        await ApiService.get("/api/admin/app-config")
+        await ApiService.get(`/api/admin/masjids/${masjidId}/app-config`)
             .then((res: AxiosResponse) => {
                 if (res.data?.status === "success") settings.value = res.data.data
             })
@@ -36,8 +36,8 @@ export const useAppConfigStore = defineStore("appConfigStore", () => {
             .finally(() => { isLoading.value = false })
     }
 
-    async function save(platform: string, payload: Partial<AppVersionSetting>) {
-        return ApiService.post(`/api/admin/app-config/${platform}`, payload)
+    async function save(masjidId: number, platform: string, payload: Partial<AppVersionSetting>) {
+        return ApiService.post(`/api/admin/masjids/${masjidId}/app-config/${platform}`, payload)
     }
 
     return { settings, isLoading, fetchAll, save }

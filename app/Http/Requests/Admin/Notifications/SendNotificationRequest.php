@@ -11,6 +11,7 @@ class SendNotificationRequest extends BaseFormRequest
         return [
             'title' => 'required|string',
             'message' => 'required|string',
+            'image' => 'nullable|image|max:5120',
         ];
     }
 }

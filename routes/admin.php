@@ -80,9 +80,10 @@ Route::prefix('admin')->group(function () {
 
         Route::get('search', [DashboardSearchController::class, 'searchForSuperDataRecords'])->middleware('super');
 
-        // Emergency app-version gate (super-admin only). The lever: flip
+        // Emergency app-version gate (super-admin only). Per-masjid now: each
+        // masjid's white-labeled listing has its own rows. The lever: flip
         // force_update + bump minimum_build to wall off stale installs.
-        Route::prefix('app-config')->middleware('super')->controller(\App\Http\Controllers\AdminDashboard\AppConfigController::class)->group(function () {
+        Route::prefix('masjids/{masjid_id}/app-config')->middleware('super')->controller(\App\Http\Controllers\AdminDashboard\AppConfigController::class)->group(function () {
             Route::get('/', 'index');
             Route::post('/{platform}', 'update');
         });
