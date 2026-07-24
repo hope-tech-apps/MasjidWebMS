@@ -23,20 +23,25 @@ class ApiService {
         ApiService.VueApp.axios.defaults.headers.common['X-Requested-With'] = "XMLHttpRequest";
         ApiService.setHeader()
 
-        // The default Content-Type below is a hard-coded "multipart/form-data"
-        // string, which carries NO boundary. For a FormData body the browser
-        // must set Content-Type itself so it appends the boundary; if we send
-        // the boundary-less header, PHP cannot parse the multipart body and every
-        // field arrives empty -> 422 on all create/log forms (rent, donations,
-        // funds, ...). Strip the header for FormData so the browser sets it right.
+        // setHeaderContentType() pins a global default Content-Type of
+        // "multipart/form-data" — a string with NO boundary. But requests send
+        // either URLSearchParams (urlencoded forms like rent/donations) or
+        // FormData (file uploads). Sending a urlencoded/multipart body under the
+        // boundary-less "multipart/form-data" header makes PHP fail to parse it,
+        // so every field arrives empty and FormRequest validation returns 422
+        // ("Could not log the payment"). Set the Content-Type from the ACTUAL
+        // body type so PHP can parse the body.
         ApiService.VueApp.axios.interceptors.request.use((config) => {
-            if (typeof FormData !== "undefined" && config.data instanceof FormData) {
-                const headers = config.headers as any;
-                if (headers && typeof headers.delete === "function") {
-                    headers.delete("Content-Type");
-                } else if (headers) {
-                    delete headers["Content-Type"];
-                }
+            const body: any = config.data;
+            const headers: any = config.headers;
+            if (!headers) return config;
+            if (typeof FormData !== "undefined" && body instanceof FormData) {
+                // Let the browser set "multipart/form-data; boundary=...".
+                if (typeof headers.delete === "function") headers.delete("Content-Type");
+                else { delete headers["Content-Type"]; delete headers["content-type"]; }
+            } else if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+                if (typeof headers.set === "function") headers.set("Content-Type", "application/x-www-form-urlencoded", true);
+                else headers["Content-Type"] = "application/x-www-form-urlencoded";
             }
             return config;
         });
@@ -61,7 +66,15 @@ class ApiService {
 
     // Post
     public static post(resource: BackendApiRoute, data: any): Promise<AxiosResponse> {
-        return ApiService.VueApp.axios.post(resource, data);
+        // Override the boundary-less multipart default per-request based on the
+        // body type, so PHP can parse the body (see the interceptor in init()).
+        const config: any = {};
+        if (typeof FormData !== "undefined" && data instanceof FormData) {
+            config.headers = { "Content-Type": undefined };            // browser sets the boundary
+        } else if (typeof URLSearchParams !== "undefined" && data instanceof URLSearchParams) {
+            config.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+        }
+        return ApiService.VueApp.axios.post(resource, data, config);
     }
 
     // Put
