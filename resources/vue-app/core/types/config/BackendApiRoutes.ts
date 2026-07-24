@@ -75,4 +75,5 @@ export type BackendApiRoute =
     `/api/admin/app-config/${string}` |
     `/api/admin/onboarding/options` |
     `/api/admin/onboarding/provision` |
+    `/api/admin/onboarding/intake/geocode` |
     `/api/admin/search?search_for=${string}`

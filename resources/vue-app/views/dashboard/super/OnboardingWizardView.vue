@@ -46,7 +46,16 @@
 
                 <div class="wizard-field">
                     <label>Address <span class="req">*</span></label>
-                    <input v-model="form.address" type="text" class="dashboard-input" placeholder="Street, City, State" />
+                    <div class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-center">
+                        <input v-model="form.address" type="text" class="dashboard-input flex-grow-1" placeholder="Street, City, State" />
+                        <button type="button" class="btn btn-outline-success text-nowrap"
+                            :disabled="geocoding || !form.address.trim()" @click="geocodeAddress">
+                            {{ geocoding ? 'Finding…' : 'Find coordinates' }}
+                        </button>
+                    </div>
+                    <p v-if="geocodeMessage" class="small mb-0" :class="geocodeError ? 'wizard-error' : 'text-muted'">
+                        {{ geocodeMessage }}
+                    </p>
                 </div>
 
                 <div class="d-flex flex-column flex-md-row gap-4">
@@ -178,6 +187,19 @@
                 <p class="text-muted small">
                     Pick the four base colors. Full design-token overrides live in the masjid's Brand Studio after onboarding.
                 </p>
+
+                <div class="wizard-subsection">
+                    <span class="subsection-title">Sample from logo (optional)</span>
+                    <p class="text-muted small mb-2">
+                        Upload a logo to auto-fill the palette from its dominant colors, then fine-tune below. The logo
+                        itself isn't uploaded here — set it later in the masjid's general settings.
+                    </p>
+                    <div class="d-flex flex-column flex-sm-row gap-3 align-items-start align-items-sm-center">
+                        <input ref="logoInput" type="file" accept="image/*" class="dashboard-input" @change="onLogoSelected" />
+                        <img v-if="logoPreview" :src="logoPreview" alt="Logo preview" class="logo-preview" />
+                    </div>
+                    <p v-if="logoMessage" class="text-muted small mb-0">{{ logoMessage }}</p>
+                </div>
 
                 <div class="d-flex flex-wrap gap-4">
                     <div v-for="c in colorFields" :key="c.key" class="wizard-field color-field">
@@ -457,6 +479,16 @@ const currentStep = ref(0);
 const isLoading = ref(false);
 const createdMasjidId = ref<number | null>(null);
 
+// Server-side geocoding ("Find coordinates") state.
+const geocoding = ref(false);
+const geocodeMessage = ref('');
+const geocodeError = ref(false);
+
+// Logo -> palette sampling state.
+const logoInput = ref<HTMLInputElement | null>(null);
+const logoPreview = ref('');
+const logoMessage = ref('');
+
 // Fetched catalogs
 const countries = ref<Country[]>([]);
 const cities = ref<City[]>([]);
@@ -665,6 +697,131 @@ const selectedPlatformLabels = computed(() =>
     platformOptions.filter(p => form.platforms.includes(p.slug)).map(p => p.label)
 );
 
+/**
+ * Server-side geocode the typed address into lat/lng (the "Find coordinates"
+ * button). Fills form.latitude/longitude on success; the manual inputs stay as
+ * the fallback. The endpoint always answers HTTP 200 — a { status:'error' } body
+ * (e.g. the key isn't provisioned, or the address didn't resolve) is surfaced as
+ * an inline note rather than a hard failure.
+ */
+async function geocodeAddress() {
+    const address = form.address.trim();
+    if (!address) return;
+
+    geocoding.value = true;
+    geocodeMessage.value = '';
+    geocodeError.value = false;
+
+    await ApiService.post('/api/admin/onboarding/intake/geocode', { address })
+        .then(res => {
+            if (res.data?.status === 'success' && res.data?.data) {
+                const d = res.data.data;
+                form.latitude = Number(d.latitude);
+                form.longitude = Number(d.longitude);
+                geocodeError.value = false;
+                geocodeMessage.value = d.formatted_address
+                    ? `Matched: ${d.formatted_address}`
+                    : 'Coordinates filled from the address.';
+            } else {
+                geocodeError.value = true;
+                geocodeMessage.value = res.data?.message
+                    || 'Could not find coordinates for that address. Enter latitude and longitude manually.';
+            }
+        })
+        .catch((e: AxiosError<BackendResponseData>) => {
+            geocodeError.value = true;
+            geocodeMessage.value = getMessageFromObj(e) || 'Geocoding failed. Enter latitude and longitude manually.';
+        })
+        .finally(() => { geocoding.value = false; });
+}
+
+/** #rrggbb from 0-255 channels. */
+function rgbToHex(r: number, g: number, b: number): string {
+    const to2 = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    return `#${to2(r)}${to2(g)}${to2(b)}`;
+}
+
+/**
+ * Sample up to `count` dominant colors from an image by drawing it small,
+ * quantizing each channel into coarse buckets, and ranking buckets by pixel
+ * count. Near-transparent, near-white and near-black pixels are skipped so the
+ * logo's actual brand colors win over its background/outline. Runs entirely in
+ * the browser (object-URL image -> canvas is same-origin, so getImageData is
+ * not tainted); nothing is uploaded.
+ */
+function extractDominantColors(img: HTMLImageElement, count: number): string[] {
+    const w = 64, h = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return [];
+    ctx.drawImage(img, 0, 0, w, h);
+
+    let pixels: Uint8ClampedArray;
+    try {
+        pixels = ctx.getImageData(0, 0, w, h).data;
+    } catch {
+        return [];
+    }
+
+    const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
+    for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i + 3] < 125) continue; // skip near-transparent
+        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        if (max > 240 && min > 240) continue; // skip near-white
+        if (max < 18) continue;               // skip near-black
+        // Quantize each channel into 6 levels (~216 buckets).
+        const key = `${Math.round(r / 51)}-${Math.round(g / 51)}-${Math.round(b / 51)}`;
+        const bucket = buckets.get(key);
+        if (bucket) { bucket.count++; bucket.r += r; bucket.g += g; bucket.b += b; }
+        else buckets.set(key, { count: 1, r, g, b });
+    }
+
+    return [...buckets.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, count)
+        .map(bk => rgbToHex(bk.r / bk.count, bk.g / bk.count, bk.b / bk.count));
+}
+
+/**
+ * On logo selection, sample its dominant colors and write them into
+ * form.brand.* (which feeds the existing derived-palette preview). Background is
+ * left untouched — a masjid app background is a light neutral, not a logo color.
+ */
+function onLogoSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    logoMessage.value = '';
+    if (logoPreview.value) URL.revokeObjectURL(logoPreview.value);
+    const url = URL.createObjectURL(file);
+    logoPreview.value = url;
+
+    const img = new Image();
+    img.onload = () => {
+        try {
+            const colors = extractDominantColors(img, 3);
+            if (colors.length) {
+                form.brand.primary_color = colors[0];
+                if (colors[1]) form.brand.secondary_color = colors[1];
+                if (colors[2]) form.brand.accent_color = colors[2];
+                logoMessage.value = `Sampled ${colors.length} color${colors.length > 1 ? 's' : ''} from the logo — adjust below if needed.`;
+            } else {
+                logoMessage.value = 'Could not read colors from that image — set the palette manually below.';
+            }
+        } catch {
+            logoMessage.value = 'Could not read colors from that image — set the palette manually below.';
+        }
+    };
+    img.onerror = () => {
+        logoMessage.value = 'That file could not be loaded as an image.';
+    };
+    img.src = url;
+}
+
 function next() {
     if (currentStepErrors.value.length === 0 && currentStep.value < steps.length - 1) currentStep.value++;
 }
@@ -694,6 +851,13 @@ function appendNested(fd: FormData, value: unknown, key: string) {
 function resetWizard() {
     createdMasjidId.value = null;
     currentStep.value = 0;
+    geocoding.value = false;
+    geocodeMessage.value = '';
+    geocodeError.value = false;
+    if (logoPreview.value) URL.revokeObjectURL(logoPreview.value);
+    logoPreview.value = '';
+    logoMessage.value = '';
+    if (logoInput.value) logoInput.value.value = '';
 }
 
 async function provision() {
@@ -865,6 +1029,16 @@ async function provision() {
     border: 1px solid var(--input-border, #ccc);
     border-radius: .35rem;
     background: none;
+}
+
+.logo-preview {
+    width: 3.5rem;
+    height: 3.5rem;
+    object-fit: contain;
+    border: 1px solid var(--input-border, #e6e6e6);
+    border-radius: .4rem;
+    padding: .2rem;
+    background: #fff;
 }
 
 .brand-preview {

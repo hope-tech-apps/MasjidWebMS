@@ -67,6 +67,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Google (server-side Geocoding — onboarding wizard)
+    |--------------------------------------------------------------------------
+    |
+    | A SERVER-SIDE Google Geocoding API key used by
+    | App\Services\Onboarding\GeocodingService to turn a typed street address
+    | into latitude/longitude during Super-Admin onboarding, so the operator no
+    | longer has to look coordinates up by hand. This is DISTINCT from the
+    | browser Maps key baked into the public Nuxt site — a browser key is
+    | HTTP-referrer restricted and unusable server-side.
+    |
+    | Optional: when unset, the geocode endpoint fails soft (returns a clear
+    | "not configured" message) and the wizard falls back to its manual
+    | latitude/longitude inputs — nothing crashes and existing behavior is
+    | unchanged. Provision GOOGLE_MAPS_GEOCODING_KEY (a key with the Geocoding
+    | API enabled) to turn the feature on. NEVER hardcode the key here.
+    |
+    */
+    'google' => [
+        'geocoding_key' => env('GOOGLE_MAPS_GEOCODING_KEY'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Stripe (CRM donations — Connect Standard + direct charges)
     |--------------------------------------------------------------------------
     |

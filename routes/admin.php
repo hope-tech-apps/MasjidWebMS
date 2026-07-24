@@ -30,6 +30,7 @@ use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
+use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
 use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
@@ -413,6 +414,14 @@ Route::prefix('admin')->group(function () {
         Route::prefix('onboarding')->middleware('super')->controller(OnboardingController::class)->group(function () {
             Route::get('/options', 'options');
             Route::post('/provision', 'provision');
+
+            // Intake helper: server-side address -> lat/lng for the wizard's
+            // "Find coordinates" button (OnboardingIntakeController, a distinct
+            // controller from the group default). Fails soft — responds
+            // { status:'error' } (HTTP 200) with a clear message when
+            // GOOGLE_MAPS_GEOCODING_KEY isn't provisioned, so the wizard keeps
+            // its manual latitude/longitude inputs as the fallback.
+            Route::post('/intake/geocode', [OnboardingIntakeController::class, 'geocode']);
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {
