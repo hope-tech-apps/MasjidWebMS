@@ -1,0 +1,1 @@
+import{m as e,K as a,h as t,e as o,l as s,a5 as c,R as _,_ as n}from"./app--_H44fXv.js";const r={id:"auth_layout",class:"auth-layout"},u={class:"background"},d=e({__name:"AuthLayout",setup(i){return(l,p)=>(a(),t("div",r,[o("div",u,[s(c(_))])]))}}),f=n(d,[["__scopeId","data-v-dbed1a6f"]]);export{f as default};
