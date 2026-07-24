@@ -192,7 +192,7 @@ const selected = ref<PropertyRow | null>(null);
 
 const form = ref<any>({ name: '', address: '', tenant_name: '', monthly_rent: '', notes: '', is_active: true });
 const rentForm = ref<any>({ paid_on: '', amount: '', payment_method: 'cash', check_number: '' });
-const rentMethods = ['cash', 'check', 'zelle', 'venmo', 'credit', 'other'];
+const rentMethods = ['cash', 'check', 'money order', 'bank transfer', 'zelle', 'venmo', 'credit', 'other'];
 
 const masjidId = () => authStore.dashboardMasjidId ?? masjidStore.masjid?.id;
 const base = computed(() => `/api/admin/masjids/${masjidId()}/properties`);
