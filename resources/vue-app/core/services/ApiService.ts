@@ -42,6 +42,17 @@ class ApiService {
             } else if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
                 if (typeof headers.set === "function") headers.set("Content-Type", "application/x-www-form-urlencoded", true);
                 else headers["Content-Type"] = "application/x-www-form-urlencoded";
+            } else if (
+                body && typeof body === "object" &&
+                !(typeof Blob !== "undefined" && body instanceof Blob) &&
+                !(typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer)
+            ) {
+                // Plain object -> JSON (Laravel parses it natively). Without this,
+                // the boundary-less multipart default converts the object to a
+                // FormData with no boundary and PHP can't parse it (settings/theme
+                // forms would silently save nothing or 422).
+                if (typeof headers.set === "function") headers.set("Content-Type", "application/json", true);
+                else headers["Content-Type"] = "application/json";
             }
             return config;
         });
@@ -73,6 +84,8 @@ class ApiService {
             config.headers = { "Content-Type": undefined };            // browser sets the boundary
         } else if (typeof URLSearchParams !== "undefined" && data instanceof URLSearchParams) {
             config.headers = { "Content-Type": "application/x-www-form-urlencoded" };
+        } else if (data && typeof data === "object" && !(typeof Blob !== "undefined" && data instanceof Blob)) {
+            config.headers = { "Content-Type": "application/json" };   // plain object -> JSON
         }
         return ApiService.VueApp.axios.post(resource, data, config);
     }
