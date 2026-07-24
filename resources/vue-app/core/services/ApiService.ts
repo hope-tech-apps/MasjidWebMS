@@ -22,6 +22,24 @@ class ApiService {
         ApiService.VueApp.axios.defaults.withCredentials = allowCredentials;
         ApiService.VueApp.axios.defaults.headers.common['X-Requested-With'] = "XMLHttpRequest";
         ApiService.setHeader()
+
+        // The default Content-Type below is a hard-coded "multipart/form-data"
+        // string, which carries NO boundary. For a FormData body the browser
+        // must set Content-Type itself so it appends the boundary; if we send
+        // the boundary-less header, PHP cannot parse the multipart body and every
+        // field arrives empty -> 422 on all create/log forms (rent, donations,
+        // funds, ...). Strip the header for FormData so the browser sets it right.
+        ApiService.VueApp.axios.interceptors.request.use((config) => {
+            if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+                const headers = config.headers as any;
+                if (headers && typeof headers.delete === "function") {
+                    headers.delete("Content-Type");
+                } else if (headers) {
+                    delete headers["Content-Type"];
+                }
+            }
+            return config;
+        });
     }
 
     // Set axios headers
