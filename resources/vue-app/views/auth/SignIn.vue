@@ -1,9 +1,10 @@
 <template>
     <div class="d-flex flex-column align-items-center justify-content-center gap-5 w-100 min-vh-100 py-4">
         <div class="d-flex flex-column align-items-center justify-content-center gap-2">
-            <div class="display-6 text-cgreen text-center fw-bold">
-                Masjid App Admin Login
+            <div class="display-4 text-cgreen text-center fw-bold">
+                Manara
             </div>
+            <div class="fs-5 text-muted text-center">Masjid Management Portal</div>
         </div>
 
         <div class="container">
