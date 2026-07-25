@@ -121,7 +121,9 @@ const asideMenuItems = ref<NodeListOf<Element>>();
 #dashboard_aside_menu {
     margin: .5rem;
     color: var(--cgreen-light);
-    background-color: var(--cgreen);
+    /* Nav labels are --cgreen-light (#EBFFF4) on this surface; over --cgreen (#01B151)
+       that is only 2.72:1. Darkened same-hue brand green carries it at 4.79:1. */
+    background-color: #01813B;
     display: flex;
     flex-direction: column;
     gap: .5rem;
@@ -174,7 +176,9 @@ const asideMenuItems = ref<NodeListOf<Element>>();
 
 #dashboard_aside_menu .dashboard-aside-menu-item:hover,
 #dashboard_aside_menu .router-link-active.dashboard-aside-menu-item {
-    background-color: var(--cgreen-active);
+    /* --cgreen-active (#04C159) left #EBFFF4 label text at 2.30:1. This darker
+       same-hue green carries it at 6.40:1 and still reads as the active state. */
+    background-color: #016B31;
 }
 
 </style>

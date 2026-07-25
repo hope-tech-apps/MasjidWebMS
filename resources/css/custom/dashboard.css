@@ -35,7 +35,9 @@
 #dashboard_aside {
     width: var(--dash-aside-width);
     height: 100vh;
-    background-color: var(--cgreen);
+    /* Same surface/text pair as #dashboard_aside_menu: --cgreen-light on --cgreen is
+       2.72:1. Matched to the darkened same-hue brand green so the rail stays uniform. */
+    background-color: #01813B;
     color: var(--cgreen-light);
     position: fixed;
     top: 0;

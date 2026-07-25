@@ -320,7 +320,9 @@ const goToSuperDashboard = () => {
     text-decoration: none;
     padding: .5rem 1rem;
     border-radius: .5rem;
-    color: var(--cgreen-active)
+    /* Result link text on the container's white fill (and #EBF0F4 on hover);
+       --cgreen-active is only 2.39:1 / 2.26:1. #016B31 is 6.67:1 / 5.81:1. */
+    color: #016B31
 }
 
 .search-results-container .search-result:hover {

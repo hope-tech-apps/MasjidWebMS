@@ -327,7 +327,9 @@ const send = async () => {
 
 .assistant-suggestion:hover {
     border-color: var(--cgreen, #1b7f4c);
-    color: var(--cgreen, #1b7f4c);
+    /* .85rem chip text on the #fff chip fill; --cgreen is only 2.83:1 there.
+       Accessible fixed brand green: 6.67:1 on #fff. Border stays brand-vivid. */
+    color: #016B31;
 }
 
 /* Turns */
@@ -408,7 +410,9 @@ const send = async () => {
 }
 
 .assistant-action-mark {
-    color: var(--cgreen, #1b7f4c);
+    /* .85rem bold glyph on the .assistant-actions #fff panel — below the 18.66px
+       large-bold threshold, so 4.5:1 applies. #016B31 is 6.67:1 on #fff. */
+    color: #016B31;
     font-weight: 700;
 }
 
