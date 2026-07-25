@@ -129,7 +129,7 @@ body {
 }
 
 .text-muted {
-    color: var(--muted-gray) !important;
+    color: #6c757d !important;
 }
 
 .card {
@@ -168,8 +168,3 @@ body {
     height: 1.5rem !important;
 }
 
-@media (min-width: 1200px) {
-    html {
-        font-size: clamp(16px, 1vw, calc(16px + .25vw));
-    }
-}

@@ -4,7 +4,8 @@
         <!-- Previous button -->
         <button type="button" @click.prevent="pageChange((activePage - 1))"
             class="btn btn-icon btn-success rounded-1 text-center pagination-btn"
-            :class="{'btn-alice-blue-success': (activePage <= 1)}"  :disabled="activePage <= 1">
+            :class="{'btn-alice-blue-success': (activePage <= 1)}"  :disabled="activePage <= 1"
+            aria-label="Previous page" title="Previous page">
             <i class="bi bi-arrow-left"></i>
         </button>
 
@@ -24,7 +25,8 @@
         <!-- Next button -->
         <button type="button" @click.prevent="pageChange((activePage + 1))"
             class="btn btn-icon btn-success rounded-1 text-center pagination-btn"
-            :class="{'btn-alice-blue-success': (pagesNumber <= activePage)}" :disabled="pagesNumber <= activePage">
+            :class="{'btn-alice-blue-success': (pagesNumber <= activePage)}" :disabled="pagesNumber <= activePage"
+            aria-label="Next page" title="Next page">
             <i class="bi bi-arrow-right"></i>
         </button>
 

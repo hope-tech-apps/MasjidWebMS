@@ -1,6 +1,6 @@
 <template>
     <div class="image-input-group">
-        <label for="image_input" class="label">
+        <label :for="fileInputId" class="label">
             {{ label }}
         </label>
 
@@ -24,7 +24,7 @@
                 <span class="d-block fs-7 mx-2 text-center">
                     or drag and drop your files here
                 </span>
-                <input type="file" ref="fileInput" @change.prevent="onFileInputChange"
+                <input type="file" :id="fileInputId" ref="fileInput" @change.prevent="onFileInputChange"
                     :accept="allowedTypes.toString()" :multiple="multiple" class="d-none">
             </div>
 
@@ -125,6 +125,10 @@ const props = defineProps({
 });
 
 const { label, currentImageSrc, type, multiple, resetSignal } = toRefs(props);
+
+// Unique id per instance so the label is programmatically associated with the
+// (visually hidden) file input.
+const fileInputId = `image-input-${Math.random().toString(36).slice(2, 9)}`;
 
 // Emits
 const emits = defineEmits(['imageChange', 'filesChange']);

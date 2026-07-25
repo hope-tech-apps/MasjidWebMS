@@ -176,10 +176,6 @@
 
 @media(max-width: 576px) {
 
-    body {
-        font-size: 12px !important;
-    }
-
     #dashboard_header {
         position: relative;
     }

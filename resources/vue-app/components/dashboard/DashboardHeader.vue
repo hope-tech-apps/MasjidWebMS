@@ -48,6 +48,7 @@
                             placeholder="Search anything here..." aria-autocomplete="none">
                         </Field>
                         <button v-if="searchValue?.length" type="button" @click.prevent="clearSearchResults"
+                            aria-label="Clear search" title="Clear search"
                             class="btn btn-sm btn-icon btn-light-success btn-rounded rounded-3 align-self-end close-search-results-btn">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor"
                                 class="bi bi-x-lg aside-toggle-icon" viewBox="0 0 16 16">
