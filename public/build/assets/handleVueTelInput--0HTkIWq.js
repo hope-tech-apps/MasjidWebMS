@@ -1,0 +1,1 @@
+function $(e,t){if(!(t!=null&&t.dialCode))return e??"";const a=`+${t.dialCode}`,i=(e??"").trim();if(!i.startsWith("+"))return`${a} `;const s=i.match(/^\+\d+\s*(.*)$/),d=s?s[1]:"";return d?`${a} ${d}`:`${a} `}export{$ as a};
