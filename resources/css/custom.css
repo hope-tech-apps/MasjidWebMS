@@ -125,7 +125,8 @@ body {
 }
 
 .text-success {
-    color: var(--cgreen) !important;
+    /* Accessible fixed brand green (WCAG AA): 6.67:1 on white, 5.14:1 on .bg-success-subtle. --cgreen (#01B151) is only 2.83:1 and fails small-text contrast. */
+    color: #016B31 !important;
 }
 
 .text-muted {
