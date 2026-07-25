@@ -1,6 +1,6 @@
 <template>
     <div>
-        <PageDataContainer title="Masjid Assistant"
+        <PageDataContainer title="Manara Assistant"
             :buttonProps="{ title: 'New chat', type: 'button', class: 'btn btn-outline-secondary', disabled: busy }"
             @headerButtonClick="resetChat">
 

@@ -182,7 +182,7 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Masjid Assistant',
+                    pageTitle: 'Manara Assistant',
                     requiresAssistant: true
                 },
                 component: () => import("@/views/dashboard/AssistantView.vue")

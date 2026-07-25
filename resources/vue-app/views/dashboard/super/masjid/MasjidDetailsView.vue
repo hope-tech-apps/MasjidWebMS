@@ -92,10 +92,10 @@
                 </div>
             </div>
 
-            <!-- Masjid Assistant (SuperAdmin-only; toggles the per-masjid AI assistant gate) -->
+            <!-- Manara Assistant (SuperAdmin-only; toggles the per-masjid AI assistant gate) -->
             <div class="d-flex flex-column gap-2 w-100">
                 <span class="fs-5 fw-semibold">
-                    Masjid Assistant
+                    Manara Assistant
                 </span>
                 <div class="d-flex align-items-center gap-3 w-100">
                     <span class="fs-6 fw-semibold text-muted">
@@ -386,7 +386,7 @@ const toggleCrmAccess = (enabled: boolean) => {
 }
 
 const toggleAssistantAccess = (enabled: boolean) => {
-    QSwal.fire("Question", "Are you sure that you want to change Masjid Assistant access for this masjid?", 'question')
+    QSwal.fire("Question", "Are you sure that you want to change Manara Assistant access for this masjid?", 'question')
         .then(async (result) => {
             if (result.isConfirmed) {
 
@@ -406,7 +406,7 @@ const toggleAssistantAccess = (enabled: boolean) => {
                             if (res.data.status === 'success') {
                                 if (masjid.value) masjid.value.assistant_enabled = enabled;
                                 swalInstance.title = "Success";
-                                swalInstance.text = "Masjid Assistant access updated successfully.";
+                                swalInstance.text = "Manara Assistant access updated successfully.";
                                 swalInstance.icon = "success";
                             } else {
                                 swalInstance.title = "Sorry";

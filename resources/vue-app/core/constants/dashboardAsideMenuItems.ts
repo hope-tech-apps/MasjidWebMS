@@ -225,7 +225,7 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
-        title: "Masjid Assistant",
+        title: "Manara Assistant",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L13.6 7.6L19 9.2L13.6 10.8L12 16.4L10.4 10.8L5 9.2L10.4 7.6L12 2Z" fill="white"/>
                 <path d="M18.5 14L19.3 16.7L22 17.5L19.3 18.3L18.5 21L17.7 18.3L15 17.5L17.7 16.7L18.5 14Z" fill="white"/>
