@@ -1,18 +1,33 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <radialGradient id="glow" cx="50%" cy="27%" r="55%">
-      <stop offset="0%" stop-color="#6E8BEF" stop-opacity="0.55"/>
-      <stop offset="100%" stop-color="#6E8BEF" stop-opacity="0"/>
-    </radialGradient>
+    <mask id="cres">
+      <rect width="512" height="512" fill="black"/>
+      <circle cx="256" cy="80" r="20" fill="white"/>
+      <circle cx="268" cy="74" r="17" fill="black"/>
+    </mask>
   </defs>
   <rect width="512" height="512" rx="116" fill="#012F53"/>
-  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
-  <circle cx="256" cy="138" r="30" fill="#6E8BEF"/>
-  <circle cx="256" cy="138" r="30" fill="none" stroke="#9DB2FF" stroke-width="3" opacity="0.85"/>
+  <!-- crescent finial -->
+  <circle cx="256" cy="80" r="20" fill="#6E8BEF" mask="url(#cres)"/>
   <g fill="#F4F7FF">
-    <path d="M256 168c-32 0-56 24-56 56h112c0-32-24-56-56-56z"/>
-    <path d="M220 236h72l-9 156h-54z"/>
-    <rect x="192" y="292" width="128" height="24" rx="12"/>
-    <path d="M196 392h120l12 46H184z"/>
+    <!-- spire -->
+    <rect x="252" y="104" width="8" height="16" rx="3"/>
+    <!-- pointed dome -->
+    <path d="M256 116 C232 148 226 162 226 176 L286 176 C286 162 280 148 256 116 Z"/>
+    <!-- neck -->
+    <rect x="238" y="176" width="36" height="10"/>
+    <!-- upper balcony (muezzin gallery) -->
+    <rect x="212" y="188" width="88" height="16" rx="7"/>
+    <!-- slender tapering shaft -->
+    <path d="M234 206 L278 206 L284 356 L228 356 Z"/>
+    <!-- lower balcony -->
+    <rect x="206" y="356" width="100" height="16" rx="7"/>
+    <!-- base -->
+    <path d="M214 372 L298 372 L310 428 L202 428 Z"/>
+  </g>
+  <!-- arched windows -->
+  <g fill="#012F53">
+    <path d="M247 240 a9 9 0 0 1 18 0 v26 h-18 z"/>
+    <path d="M248 296 a8 8 0 0 1 16 0 v24 h-16 z"/>
   </g>
 </svg>
