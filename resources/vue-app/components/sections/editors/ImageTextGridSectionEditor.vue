@@ -176,7 +176,7 @@
                 <label class="form-label">Background Color</label>
                 <input
                     type="color"
-                    class="form-control form-control-color"
+                    class="form-control form-control-color flex-shrink-0"
                     v-model="localContent.background_color"
                     @input="emitUpdate"
                     title="Choose background color"

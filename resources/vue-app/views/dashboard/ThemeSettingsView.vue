@@ -22,7 +22,7 @@
                         <div class="col-12 col-md-6 mb-3">
                             <label class="form-label fw-semibold">Primary Color</label>
                             <div class="d-flex align-items-center gap-2">
-                                <input type="color" class="form-control form-control-color"
+                                <input type="color" class="form-control form-control-color flex-shrink-0"
                                     :value="pickerValue(settingsModel.primary_color, DEFAULTS.primary)"
                                     @input="settingsModel.primary_color = ($event.target as HTMLInputElement).value.toUpperCase()" />
                                 <Field name="primary_color" v-model="settingsModel.primary_color"
@@ -35,7 +35,7 @@
                         <div class="col-12 col-md-6 mb-3">
                             <label class="form-label fw-semibold">Secondary Color</label>
                             <div class="d-flex align-items-center gap-2">
-                                <input type="color" class="form-control form-control-color"
+                                <input type="color" class="form-control form-control-color flex-shrink-0"
                                     :value="pickerValue(settingsModel.secondary_color, DEFAULTS.secondary)"
                                     @input="settingsModel.secondary_color = ($event.target as HTMLInputElement).value.toUpperCase()" />
                                 <Field name="secondary_color" v-model="settingsModel.secondary_color"
@@ -48,7 +48,7 @@
                         <div class="col-12 col-md-6 mb-3">
                             <label class="form-label fw-semibold">Accent Color</label>
                             <div class="d-flex align-items-center gap-2">
-                                <input type="color" class="form-control form-control-color"
+                                <input type="color" class="form-control form-control-color flex-shrink-0"
                                     :value="pickerValue(settingsModel.accent_color, DEFAULTS.accent)"
                                     @input="settingsModel.accent_color = ($event.target as HTMLInputElement).value.toUpperCase()" />
                                 <Field name="accent_color" v-model="settingsModel.accent_color"
@@ -61,7 +61,7 @@
                         <div class="col-12 col-md-6 mb-3">
                             <label class="form-label fw-semibold">Background Color</label>
                             <div class="d-flex align-items-center gap-2">
-                                <input type="color" class="form-control form-control-color"
+                                <input type="color" class="form-control form-control-color flex-shrink-0"
                                     :value="pickerValue(settingsModel.background_color, DEFAULTS.background)"
                                     @input="settingsModel.background_color = ($event.target as HTMLInputElement).value.toUpperCase()" />
                                 <Field name="background_color" v-model="settingsModel.background_color"
