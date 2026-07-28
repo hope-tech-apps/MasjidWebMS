@@ -293,6 +293,7 @@ import StatsSectionEditor from '@/components/sections/editors/StatsSectionEditor
 import MissionVisionSectionEditor from '@/components/sections/editors/MissionVisionSectionEditor.vue';
 import CTASectionEditor from '@/components/sections/editors/CTASectionEditor.vue';
 import PageTitleSectionEditor from '@/components/sections/editors/PageTitleSectionEditor.vue';
+import FormSectionEditor from '@/components/sections/editors/FormSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -357,6 +358,9 @@ const editorMap: Record<SectionType, any> = {
     'stats': StatsSectionEditor,
     'mission_vision': MissionVisionSectionEditor,
     'cta': CTASectionEditor,
+    // Without this entry the Form type still appears in the dropdown (it comes from the
+    // backend enum) and the modal still saves — the editor area just renders nothing.
+    'form': FormSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

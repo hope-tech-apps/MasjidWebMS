@@ -12,7 +12,8 @@ export type SectionType =
     | 'gallery'
     | 'stats'
     | 'mission_vision'
-    | 'cta';
+    | 'cta'
+    | 'form';
 
 // Base Section
 export type PageSection = {
@@ -47,7 +48,8 @@ export type SectionContent =
     | GallerySectionContent
     | StatsSectionContent
     | MissionVisionSectionContent
-    | CTASectionContent;
+    | CTASectionContent
+    | FormSectionContent;
 
 // Individual Section Content Types
 
@@ -162,6 +164,16 @@ export type MissionVisionSectionContent = {
         icon_url: string | null;
     }>;
     layout: 'side_by_side' | 'stacked';
+};
+
+// A sign-up form section holds a REFERENCE, never the schema: the questions and every
+// response live in the forms / form_responses tables, so detaching this section from a
+// page cannot destroy a registration list. `title` and `intro` are page-level wording;
+// the form's own intro, submit button and thank-you message belong to the form.
+export type FormSectionContent = {
+    form_id: number | null;
+    title: string;
+    intro: string;
 };
 
 export type CTASectionContent = {

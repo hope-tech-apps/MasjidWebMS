@@ -177,6 +177,16 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/PropertiesView.vue")
             },
             {
+                path: 'form-responses',
+                name: 'masjid.formResponses',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Form Responses'
+                },
+                component: () => import("@/views/dashboard/FormResponsesView.vue")
+            },
+            {
                 path: 'assistant',
                 name: 'masjid.assistant',
                 meta: {

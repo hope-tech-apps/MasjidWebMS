@@ -109,6 +109,21 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/pages',
         allowed_types: ['SuperAdmin']
     },
+    {
+        // Deliberately open to MasjidAdmin as well as SuperAdmin: a masjid runs its own
+        // registrations, so its own admins have to be able to read who signed up. (The
+        // Web Pages item above is SuperAdmin-only even though its routes are not — that
+        // is a separate decision and is left alone here.)
+        title: "Form Responses",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M9 4H7C5.89543 4 5 4.89543 5 6V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V6C19 4.89543 18.1046 4 17 4H15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 3.5C9 2.94772 9.44772 2.5 10 2.5H14C14.5523 2.5 15 2.94772 15 3.5V4.5C15 5.05228 14.5523 5.5 14 5.5H10C9.44772 5.5 9 5.05228 9 4.5V3.5Z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+                <path d="M8.5 11.5L10 13L13 10" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8.5 16.5H15.5" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>`,
+        to: '/masjid/form-responses',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+    },
     // {
     //     title: "Iqama Settings",
     //     svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
