@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Enums\SectionType;
 use App\Models\ContactReason;
 use App\Models\DonationLink;
+use App\Models\Form;
 use App\Models\Masjid;
 use App\Models\MasjidAbout;
 use App\Models\Section;
@@ -61,8 +62,70 @@ class SectionContentBinder
             SectionType::MISSION_VISION => self::bindMissionVision($content, $masjidId),
             SectionType::DONATION       => self::bindDonation($content, $masjidId),
             SectionType::CONTACT_FORM   => self::bindContact($content, $masjidId),
+            SectionType::FORM           => self::bindForm($content, $masjidId),
             default                     => $content,
         };
+    }
+
+    /**
+     * Inline the referenced form's schema into the section content.
+     *
+     * The section stores only `form_id`; the renderer needs the whole definition. Doing
+     * it here means the site fetches a page ONCE and has everything it needs to draw the
+     * form — no second request, and no window in which the page has rendered but the
+     * form has not.
+     *
+     * Scoped by masjid: a section can only ever inline a form belonging to the same
+     * masjid, so a mis-set form_id surfaces as a missing form rather than as another
+     * tenant's questions appearing on someone else's website.
+     *
+     * `form` is null when the id is unset, points at nothing, belongs to another masjid,
+     * or the form is soft-deleted. The renderer treats all four the same way: render
+     * nothing rather than an empty shell that collects submissions into a void.
+     */
+    private static function bindForm(array $content, ?int $masjidId): array
+    {
+        $content['form'] = null;
+
+        $formId = $content['form_id'] ?? null;
+
+        if (! $formId || ! $masjidId) {
+            return $content;
+        }
+
+        $form = Form::query()
+            ->where('masjid_id', $masjidId)
+            ->whereKey($formId)
+            ->first();
+
+        if (! $form) {
+            return $content;
+        }
+
+        // Public shape ONLY. `settings` carries notification recipients and the identity
+        // map, which are operational detail and must not be published; the renderer gets
+        // just the parts it draws with.
+        $settings = $form->settings ?? [];
+
+        $content['form'] = [
+            'id' => $form->id,
+            'slug' => $form->slug,
+            'name' => $form->name,
+            'description' => $form->description,
+            'schema' => $form->schema,
+            'accepting' => $form->acceptsSubmissions(),
+            'closed_reason' => $form->closedReason(),
+            'settings' => [
+                'submitButtonLabel' => $settings['submitButtonLabel'] ?? 'Submit',
+                'successTitle' => $settings['successTitle'] ?? null,
+                'successBody' => $settings['successBody'] ?? null,
+                'successNextSteps' => $settings['successNextSteps'] ?? [],
+                'intro' => $settings['intro'] ?? null,
+                'fee' => $form->feeRule(),
+            ],
+        ];
+
+        return $content;
     }
 
     /**

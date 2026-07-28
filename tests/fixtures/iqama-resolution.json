@@ -1,0 +1,134 @@
+{
+  "$comment": [
+    "CANONICAL IQAMA RESOLUTION FIXTURE — the single source of truth for a rule that is",
+    "implemented FOUR independent times:",
+    "",
+    "  1. backend  MasjidWebMS  app/Http/Resources/Api/V1/IqamaTimeSettingResource.php  (drives the website)",
+    "  2. iOS      New Masjid System  Masjid/Modifiers/PrayerTimesManager.swift",
+    "  3. tvOS     New Masjid System  MasjidKit/Sources/MasjidKit/Prayer/PrayerCalculator.swift",
+    "  4. Android  burlington-masjid-Android  IqamaResolver.kt",
+    "",
+    "They have already drifted twice. In June 2026 iOS and Android ignored time_ranges",
+    "entirely, so fixed iqama times never displayed. In July 2026 the tvOS board still did,",
+    "showing iqama == adhan while the phone showed the correct time — the two products",
+    "visibly disagreed in the same lobby. Separately, the website served the previous",
+    "range's Fajr time for a whole day after a range boundary.",
+    "",
+    "Every implementation asserts against THIS file. Copy it verbatim into each repo; the",
+    "copies are checked byte-for-byte by a checksum test so they cannot silently diverge.",
+    "",
+    "THE RULE, stated once:",
+    "  For each prayer, if iqama_type == 'specific_time_ranges' AND a range for that prayer",
+    "  covers today (start_date <= today <= end_date, BOTH INCLUSIVE, compared in the",
+    "  masjid's timezone), the iqama is that range's specific_time. Otherwise the iqama is",
+    "  adhan + the per-prayer offset in minutes. The two mechanisms coexist: Burlington uses",
+    "  fixed times for fajr/dhuhr/asr and offsets for maghrib/isha, simultaneously."
+  ],
+
+  "timezone": "America/New_York",
+
+  "settings": {
+    "iqama_type": "specific_time_ranges",
+    "offsets": { "fajr": 0, "dhuhr": 0, "asr": 0, "maghrib": 5, "isha": 5 },
+    "time_ranges": [
+      { "salah": "fajr",  "start_date": "2026-06-01", "end_date": "2026-06-30", "specific_time": "05:05:00" },
+      { "salah": "fajr",  "start_date": "2026-07-01", "end_date": "2026-07-10", "specific_time": "05:05:00" },
+      { "salah": "fajr",  "start_date": "2026-07-11", "end_date": "2026-07-20", "specific_time": "05:10:00" },
+      { "salah": "fajr",  "start_date": "2026-07-21", "end_date": "2026-07-25", "specific_time": "05:20:00" },
+      { "salah": "fajr",  "start_date": "2026-07-26", "end_date": "2026-07-31", "specific_time": "05:25:00" },
+      { "salah": "dhuhr", "start_date": "2026-07-01", "end_date": "2026-07-31", "specific_time": "13:45:00" },
+      { "salah": "asr",   "start_date": "2026-07-01", "end_date": "2026-07-31", "specific_time": "17:45:00" }
+    ]
+  },
+
+  "cases": [
+    {
+      "name": "mid-range: fixed times win for fajr/dhuhr/asr, offsets still apply to maghrib/isha",
+      "date": "2026-07-15",
+      "adhan": { "fajr": "04:52", "dhuhr": "13:25", "asr": "17:10", "maghrib": "20:31", "isha": "21:53" },
+      "expected": { "fajr": "05:10", "dhuhr": "13:45", "asr": "17:45", "maghrib": "20:36", "isha": "21:58" }
+    },
+    {
+      "name": "last day of a sub-range — end_date is INCLUSIVE",
+      "date": "2026-07-25",
+      "adhan": { "fajr": "04:57", "dhuhr": "13:25", "asr": "17:12", "maghrib": "20:29", "isha": "21:51" },
+      "expected": { "fajr": "05:20", "dhuhr": "13:45", "asr": "17:45", "maghrib": "20:34", "isha": "21:56" }
+    },
+    {
+      "name": "first day of the next sub-range — start_date is INCLUSIVE. This is the exact boundary the website got wrong on 2026-07-26, serving 05:20 while every app served 05:25.",
+      "date": "2026-07-26",
+      "adhan": { "fajr": "04:58", "dhuhr": "13:25", "asr": "17:12", "maghrib": "20:28", "isha": "21:50" },
+      "expected": { "fajr": "05:25", "dhuhr": "13:45", "asr": "17:45", "maghrib": "20:33", "isha": "21:55" }
+    },
+    {
+      "name": "first day of the month, earliest fajr sub-range",
+      "date": "2026-07-01",
+      "adhan": { "fajr": "04:42", "dhuhr": "13:24", "asr": "17:08", "maghrib": "20:36", "isha": "22:00" },
+      "expected": { "fajr": "05:05", "dhuhr": "13:45", "asr": "17:45", "maghrib": "20:41", "isha": "22:05" }
+    },
+    {
+      "name": "last day of the month — still inside the dhuhr/asr whole-month range",
+      "date": "2026-07-31",
+      "adhan": { "fajr": "05:03", "dhuhr": "13:25", "asr": "17:09", "maghrib": "20:23", "isha": "21:44" },
+      "expected": { "fajr": "05:25", "dhuhr": "13:45", "asr": "17:45", "maghrib": "20:28", "isha": "21:49" }
+    },
+    {
+      "name": "NO range covers this date — every prayer falls back to adhan + offset. Offsets of 0 mean iqama == adhan, which is what the tvOS board wrongly showed for ALL dates before the July 2026 fix.",
+      "date": "2026-08-05",
+      "adhan": { "fajr": "05:08", "dhuhr": "13:24", "asr": "17:04", "maghrib": "20:15", "isha": "21:34" },
+      "expected": { "fajr": "05:08", "dhuhr": "13:24", "asr": "17:04", "maghrib": "20:20", "isha": "21:39" }
+    },
+    {
+      "name": "a date before every range — same fallback, guarding against an off-by-one that treats 'no match' as 'first range'",
+      "date": "2026-05-31",
+      "adhan": { "fajr": "04:38", "dhuhr": "13:22", "asr": "17:10", "maghrib": "20:26", "isha": "21:52" },
+      "expected": { "fajr": "04:38", "dhuhr": "13:22", "asr": "17:10", "maghrib": "20:31", "isha": "21:57" }
+    },
+    {
+      "name": "June: fajr has a whole-month range but dhuhr/asr do not, so the two mechanisms mix WITHIN one day",
+      "date": "2026-06-15",
+      "adhan": { "fajr": "04:36", "dhuhr": "13:22", "asr": "17:12", "maghrib": "20:33", "isha": "22:00" },
+      "expected": { "fajr": "05:05", "dhuhr": "13:22", "asr": "17:12", "maghrib": "20:38", "isha": "22:05" }
+    },
+    {
+      "name": "offset arithmetic crosses an hour boundary",
+      "date": "2026-08-06",
+      "adhan": { "fajr": "05:09", "dhuhr": "13:24", "asr": "17:03", "maghrib": "20:56", "isha": "21:58" },
+      "expected": { "fajr": "05:09", "dhuhr": "13:24", "asr": "17:03", "maghrib": "21:01", "isha": "22:03" }
+    }
+  ],
+
+  "offsets_only_settings": {
+    "$comment": "A masjid that uses NO fixed times at all — iqama_type is minutes_after_adhan and there are no ranges. Guards against an implementation that assumes time_ranges is always present.",
+    "iqama_type": "minutes_after_adhan",
+    "offsets": { "fajr": 20, "dhuhr": 15, "asr": 15, "maghrib": 10, "isha": 15 },
+    "time_ranges": []
+  },
+
+  "offsets_only_cases": [
+    {
+      "name": "pure offsets, no ranges anywhere",
+      "date": "2026-07-26",
+      "adhan": { "fajr": "04:58", "dhuhr": "13:25", "asr": "17:12", "maghrib": "20:28", "isha": "21:50" },
+      "expected": { "fajr": "05:18", "dhuhr": "13:40", "asr": "17:27", "maghrib": "20:38", "isha": "22:05" }
+    }
+  ],
+
+  "ignored_ranges_settings": {
+    "$comment": "Ranges EXIST but iqama_type is minutes_after_adhan, so they must be ignored entirely. An implementation that resolves ranges without first checking iqama_type fails here.",
+    "iqama_type": "minutes_after_adhan",
+    "offsets": { "fajr": 20, "dhuhr": 15, "asr": 15, "maghrib": 10, "isha": 15 },
+    "time_ranges": [
+      { "salah": "fajr", "start_date": "2026-07-26", "end_date": "2026-07-31", "specific_time": "05:25:00" }
+    ]
+  },
+
+  "ignored_ranges_cases": [
+    {
+      "name": "iqama_type wins over the presence of ranges",
+      "date": "2026-07-26",
+      "adhan": { "fajr": "04:58", "dhuhr": "13:25", "asr": "17:12", "maghrib": "20:28", "isha": "21:50" },
+      "expected": { "fajr": "05:18", "dhuhr": "13:40", "asr": "17:27", "maghrib": "20:38", "isha": "22:05" }
+    }
+  ]
+}
