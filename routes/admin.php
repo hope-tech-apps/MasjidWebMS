@@ -31,6 +31,8 @@ use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
+use App\Http\Controllers\AdminDashboard\FormResponsesController;
+use App\Http\Controllers\AdminDashboard\FormsController;
 use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
@@ -262,6 +264,27 @@ Route::prefix('admin')->group(function () {
 
             // Get available section types
             Route::get('{masjid_id}/section-types', [PageSectionsController::class, 'sectionTypes']);
+
+            // Sign-up Forms Management (event RSVPs, membership, camp registration).
+            // Open to MasjidAdmin as well as SuperAdmin — a masjid builds its own forms.
+            Route::prefix('{masjid_id}/forms')->controller(FormsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::get('/options', 'options');        // literal paths first, so they
+                Route::get('/field-types', 'fieldTypes'); // are not captured as {form_id}
+                Route::post('/', 'store');
+                Route::get('/{form_id}', 'show');
+                Route::put('/{form_id}', 'update');
+                Route::delete('/{form_id}', 'destroy');
+            });
+
+            // Form Responses — the "who filled this out" list, with search/filter/sort.
+            Route::prefix('{masjid_id}/forms/{form_id}/responses')->controller(FormResponsesController::class)->group(function () {
+                Route::get('/export', 'export'); // literal before /{response_id}
+                Route::get('/', 'index');
+                Route::get('/{response_id}', 'show');
+                Route::put('/{response_id}', 'update');
+                Route::delete('/{response_id}', 'destroy');
+            });
 
             // Contact Requests Management
             Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
