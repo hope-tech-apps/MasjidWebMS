@@ -25,8 +25,26 @@ return new class extends Migration
             $table->unsignedBigInteger('masjid_id')->nullable()->after('id');
         });
 
-        // 2. Backfill existing global rows to Burlington (masjid 1).
-        DB::table('app_version_settings')->whereNull('masjid_id')->update(['masjid_id' => 1]);
+        // 2. Backfill existing global rows to Burlington (masjid 1) — but ONLY if masjid 1
+        //    exists. On an established database it does, which is what this migration was
+        //    written for. On a FRESH one (a new environment, or CI) the masjids table is
+        //    empty, so pointing rows at a masjid that does not exist made step 3's foreign
+        //    key fail with a 1452 and aborted the whole migration stack. Provisioning a
+        //    new environment from scratch was therefore impossible; found 2026-07-28 by
+        //    the MySQL leg of the tests workflow.
+        if (DB::table('masjids')->where('id', 1)->exists()) {
+            DB::table('app_version_settings')->whereNull('masjid_id')->update(['masjid_id' => 1]);
+        }
+
+        // Any row still without a real owner is a leftover global default that cannot be
+        // expressed per-masjid. Drop it rather than block the FK: the app writes a fresh
+        // row for a masjid the first time one is configured.
+        DB::table('app_version_settings')
+            ->whereNull('masjid_id')
+            ->orWhereNotIn('masjid_id', function ($query) {
+                $query->select('id')->from('masjids');
+            })
+            ->delete();
 
         // 3. Drop the old unique(platform) index, then make masjid_id NOT NULL,
         //    add the FK, and add the composite unique(masjid_id, platform).
