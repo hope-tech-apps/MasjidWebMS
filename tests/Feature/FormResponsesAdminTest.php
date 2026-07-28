@@ -268,7 +268,10 @@ class FormResponsesAdminTest extends TestCase
     {
         $this->actingAsAdmin();
 
-        $target = FormResponse::where('form_id', $this->formA->id)->first();
+        // Order explicitly: an unordered first() picks an arbitrary row, which makes the
+        // assertion below depend on storage order rather than on behaviour.
+        $target = FormResponse::where('form_id', $this->formA->id)->orderBy('id')->first();
+        $originalName = $target->data['registrantName'];
 
         $this->putJson($this->url($this->masjidA, $this->formA, "/{$target->id}"), [
             'status' => 'confirmed',
@@ -281,7 +284,8 @@ class FormResponsesAdminTest extends TestCase
 
         $this->assertSame('confirmed', $target->status);
         $this->assertSame('Paid by Zelle.', $target->admin_notes);
-        $this->assertSame('Amal Yusuf', $target->data['registrantName']);
+        $this->assertSame($originalName, $target->data['registrantName']);
+        $this->assertNotSame('Tampered', $target->data['registrantName']);
     }
 
     // --------------------------------------------------------------------- export
