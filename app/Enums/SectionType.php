@@ -19,6 +19,7 @@ enum SectionType: string
     case STATS = 'stats';
     case MISSION_VISION = 'mission_vision';
     case CTA = 'cta';
+    case FORM = 'form';
 
     /**
      * Get all section type values
@@ -49,6 +50,7 @@ enum SectionType: string
             self::STATS => 'Statistics Section',
             self::MISSION_VISION => 'Mission & Vision',
             self::CTA => 'Call to Action',
+            self::FORM => 'Sign-up Form',
         };
     }
 
@@ -73,6 +75,7 @@ enum SectionType: string
             self::STATS => 'Statistics/counters display',
             self::MISSION_VISION => 'Mission and vision cards with icons',
             self::CTA => 'Call to action button section',
+            self::FORM => 'A sign-up form — event RSVPs, membership applications, camp registrations. Responses appear under Form Responses.',
         };
     }
 
@@ -194,6 +197,16 @@ enum SectionType: string
                 'button_style' => 'primary',
                 'background_image_url' => null,
                 'background_color' => '#2c5f2d',
+            ],
+            // The section holds a REFERENCE, never the schema. The form and its
+            // responses live in the `forms` / `form_responses` tables so that removing
+            // this section from a page does not destroy the submissions collected
+            // through it (sections are hard-deleted). See the create_forms_table
+            // migration for the full reasoning.
+            self::FORM => [
+                'form_id' => null,
+                'title' => '',
+                'intro' => '',
             ],
         };
     }
