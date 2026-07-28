@@ -257,9 +257,16 @@ class FormInsightsTest extends TestCase
 
         $buckets = collect($age['buckets'])->pluck('count', 'label');
 
-        $this->assertSame(1, $buckets['Under 13']);  // Yusuf Jr, 11
-        $this->assertSame(1, $buckets['13–17']);     // Hana, 15
-        $this->assertSame(3, $buckets['18–34']);     // 34, 29 ... and none else
+        // The six attendees are 34, 11, 41, 29, 15, 52.
+        $this->assertSame(1, $buckets['Under 13']);  // 11
+        $this->assertSame(1, $buckets['13–17']);     // 15
+        $this->assertSame(2, $buckets['18–34']);     // 34, 29
+        $this->assertSame(2, $buckets['35–54']);     // 41, 52
+        $this->assertSame(0, $buckets['55+']);
+
+        // Every attendee lands in exactly one bucket.
+        $this->assertSame(6, collect($age['buckets'])->sum('count'));
+        $this->assertSame(6, $age['answered']);
     }
 
     #[Test]
