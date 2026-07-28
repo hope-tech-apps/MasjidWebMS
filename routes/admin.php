@@ -31,6 +31,7 @@ use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
+use App\Http\Controllers\AdminDashboard\FormInsightsController;
 use App\Http\Controllers\AdminDashboard\FormResponsesController;
 use App\Http\Controllers\AdminDashboard\FormsController;
 use App\Http\Controllers\AdminDashboard\PagesController;
@@ -285,6 +286,13 @@ Route::prefix('admin')->group(function () {
                 Route::put('/{response_id}', 'update');
                 Route::delete('/{response_id}', 'destroy');
             });
+
+            // Manara Insights — gated on the Assistant entitlement. `assistant` must run
+            // AFTER `tenant` (the enclosing group already supplies auth + admin + tenant).
+            // Read-only and computed on this server; it deliberately does NOT go through
+            // MasjidAssistantService, whose tool surface includes writes.
+            Route::get('{masjid_id}/forms/{form_id}/insights', [FormInsightsController::class, 'show'])
+                ->middleware('assistant');
 
             // Contact Requests Management
             Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
