@@ -3,6 +3,7 @@
 
 use App\Http\Controllers\Api\V1\AnnouncementsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
+use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
 use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
@@ -31,6 +32,14 @@ Route::prefix('v1')->group(function () {
         Route::get('/reasons', 'reasonsList');
         Route::post('/', 'storeMessage');
     });
+
+    // Public form submissions.
+    //
+    // The only unauthenticated DB write in this feature, so it is throttled by name.
+    // The rest of /api/v1 carries no middleware at all; do not follow that example for
+    // anything that writes.
+    Route::post('/forms/{form_id}/responses', [FormSubmissionsController::class, 'store'])
+        ->middleware('throttle:form-submit');
 
     // Photo Gallery routes
     Route::prefix('gallery')->controller(PhotoGalleryController::class)->group(function () {

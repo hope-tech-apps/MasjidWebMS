@@ -1,0 +1,207 @@
+{
+  "$comment": "Ashab al-Kahf Youth Retreat 2026 — Burlington Masjid Youth Program. Translated from the committee's camp-registration.json into the platform's form schema. Import with: php artisan form:import <masjid_id> database/forms/camp-2026.json",
+
+  "slug": "camp-2026",
+  "name": "Ashab al-Kahf Youth Retreat 2026",
+  "description": "Labor Day Weekend · Friday, September 4 – Sunday, September 6, 2026 · YMCA Camp Weaver, Greensboro NC",
+
+  "is_active": true,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+
+  "settings": {
+    "submitButtonLabel": "Complete registration",
+
+    "intro": "<p><strong>Ashab al-Kahf: Conviction, Courage, Refuge, Trust, Patience &amp; Renewal.</strong></p><p>The People of the Cave left their people for the sake of Allah and found refuge, and on the Hijrah the Prophet (peace be upon him) and Abu Bakr (RA) sheltered in the Cave of Thawr. Both teach us the same lesson: leaving for Allah, trusting Him completely, and emerging to build something new.</p><p><strong>Check-in</strong> Friday, September 4 at 6:00 PM. <strong>Departure</strong> Sunday, September 6 at 2:35 PM.<br /><strong>Where</strong> YMCA Camp Weaver, 4924 Tapawingo Trail, Greensboro, NC 27406.<br /><strong>Ages</strong> 7 and up. <strong>$100 per person</strong>, including two nights of climate-controlled cabin lodging, all halal meals from Friday dinner through Sunday lunch, and every camp activity.</p><p>Brothers and sisters follow separate activity tracks; swimming is always private to one group at a time. Financial assistance is available — no one is turned away for cost, insha'Allah.</p><p>Questions: Sr. Amal 336-567-6340 · Br. Kassim 202-744-5603</p>",
+
+    "successTitle": "Jazak Allahu Khairan — your registration is in!",
+    "successBody": "We've received your registration for the Ashab al-Kahf Youth Retreat. A coordinator will follow up by email with payment confirmation and final details. If you haven't paid yet, please complete payment before the registration deadline.",
+    "successNextSteps": [
+      "Complete your payment if you haven't already.",
+      "Sign and return the paper liability waiver for each attendee.",
+      "Watch your email for the packing list and final schedule."
+    ],
+
+    "identity": {
+      "name": "registrantName",
+      "email": "registrantEmail",
+      "phone": "registrantPhone"
+    },
+
+    "fee": {
+      "amount": 100,
+      "currency": "USD",
+      "perEntryOfSection": "attendees"
+    }
+  },
+
+  "schema": {
+    "sections": [
+      {
+        "id": "registrant",
+        "title": "Your Information",
+        "description": "The parent, guardian, or adult completing this registration.",
+        "fields": [
+          { "name": "registrantName", "label": "Full name", "type": "text", "required": true, "autocomplete": "name" },
+          { "name": "registrantEmail", "label": "Email address", "type": "email", "required": true, "autocomplete": "email" },
+          { "name": "registrantPhone", "label": "Phone number", "type": "tel", "required": true, "autocomplete": "tel", "placeholder": "336-555-0123" },
+          { "name": "registrantAddress", "label": "Home address", "type": "text", "required": false, "autocomplete": "street-address" }
+        ]
+      },
+
+      {
+        "id": "attendees",
+        "title": "Who Is Attending?",
+        "description": "Add one entry per person attending, including adults. The fee is $100 per person and the total below updates as you add people.",
+        "repeatable": true,
+        "minEntries": 1,
+        "maxEntries": 12,
+        "addButtonLabel": "Add another attendee",
+        "fields": [
+          { "name": "fullName", "label": "Full name", "type": "text", "required": true },
+          { "name": "age", "label": "Age", "type": "number", "required": true, "min": 7, "max": 99, "help": "Minimum age is 7." },
+          {
+            "name": "group",
+            "label": "Program track",
+            "type": "select",
+            "required": true,
+            "help": "Determines which activity schedule this attendee follows.",
+            "options": [
+              { "value": "brothers", "label": "Brothers" },
+              { "value": "sisters", "label": "Sisters" }
+            ]
+          },
+          { "name": "allergies", "label": "Allergies (food, medication, insect, other)", "type": "textarea", "required": false, "placeholder": "e.g. tree nuts, bee stings — or write None" },
+          { "name": "medicalConditions", "label": "Medical conditions or special needs", "type": "textarea", "required": false },
+          { "name": "medications", "label": "Current medications", "type": "textarea", "required": false, "help": "Medications are handed to the camp medic or a coordinator at check-in." },
+          { "name": "dietaryRestrictions", "label": "Dietary restrictions", "type": "text", "required": false }
+        ]
+      },
+
+      {
+        "id": "emergency",
+        "title": "Emergency Contacts",
+        "description": "Two contacts who can be reached during the retreat. The second is optional but strongly encouraged.",
+        "fields": [
+          { "name": "emergency1Name", "label": "Contact 1 — Name", "type": "text", "required": true },
+          { "name": "emergency1Relationship", "label": "Contact 1 — Relationship", "type": "text", "required": true },
+          { "name": "emergency1Phone", "label": "Contact 1 — Phone", "type": "tel", "required": true },
+          { "name": "emergency2Name", "label": "Contact 2 — Name", "type": "text", "required": false },
+          { "name": "emergency2Relationship", "label": "Contact 2 — Relationship", "type": "text", "required": false },
+          { "name": "emergency2Phone", "label": "Contact 2 — Phone", "type": "tel", "required": false }
+        ]
+      },
+
+      {
+        "id": "payment",
+        "title": "Payment",
+        "description": "$100 per attendee. Payment is not processed on this form — choose a method below and send it separately.",
+        "fields": [
+          {
+            "name": "paymentMethod",
+            "label": "How will you be paying?",
+            "type": "select",
+            "required": true,
+            "options": [
+              { "value": "zelle", "label": "Zelle", "detail": "Send to (336) 350-1642" },
+              { "value": "venmo", "label": "Venmo", "detail": "Send to (336) 350-1642" },
+              { "value": "cash", "label": "Cash", "detail": "Pay in person at the masjid" },
+              { "value": "square", "label": "Square terminal at the masjid", "detail": "Note: a card surcharge applies" }
+            ]
+          },
+          {
+            "name": "paymentStatus",
+            "label": "Have you made your payment?",
+            "type": "radio",
+            "required": true,
+            "options": [
+              { "value": "paid", "label": "Yes, payment sent" },
+              { "value": "pending", "label": "Not yet — I will pay before the deadline" }
+            ]
+          },
+          {
+            "name": "financialAssistance",
+            "label": "I would like to request financial assistance (handled privately and confidentially)",
+            "type": "checkbox",
+            "required": false
+          }
+        ]
+      },
+
+      {
+        "id": "consents",
+        "title": "Agreements & Consent",
+        "description": "Required for every attendee. A signed paper copy of the full liability waiver and consent form is also collected for every participant at or before check-in.",
+        "fields": [
+          {
+            "name": "waiverAgreement",
+            "label": "I have read and agree to the Release of Liability, Waiver of Claims, and Assumption of Risk.",
+            "type": "checkbox",
+            "required": true,
+            "bodyText": "In consideration of being permitted to participate in the Ashab al-Kahf Youth Retreat organized by Burlington Masjid, I acknowledge that participation is voluntary and involves known and unforeseen risks, including outdoor recreation, water activities, high ropes and zipline, sports, travel, and overnight stays. To the fullest extent permitted by law, I release, waive, and discharge Burlington Masjid, its board, committees, officers, volunteers, employees, agents, and representatives from any and all liability, claims, demands, or causes of action arising out of any loss, damage, injury, or illness sustained while taking part, including claims caused by ordinary negligence. This release does not apply to gross negligence or willful or intentional misconduct. I further agree to indemnify and hold harmless the released parties to the fullest extent permitted by law. This agreement is governed by the laws of the State of North Carolina."
+          },
+          {
+            "name": "medicalAuthorization",
+            "label": "I authorize camp staff to obtain or administer first aid and arrange emergency medical treatment if needed.",
+            "type": "checkbox",
+            "required": true,
+            "bodyText": "I certify that the attendee(s) are physically able to take part. In the event of injury or illness, I authorize camp staff and the released parties to obtain or administer first aid and to arrange emergency medical treatment as deemed necessary. Reasonable efforts will be made to contact me or the emergency contacts listed first. I accept financial responsibility for any medical treatment provided."
+          },
+          {
+            "name": "photoConsent",
+            "label": "Photo & media permission",
+            "type": "radio",
+            "required": true,
+            "bodyText": "Burlington Masjid may take photographs or video at the retreat for documentation and promotional purposes. Attending constitutes consent to general event photography unless you decline. Privacy at sisters-only sessions: no photographs or video will be taken during sisters-only activities unless explicit, specific consent is given by those present — a general grant here does not override that protection.",
+            "options": [
+              { "value": "grant", "label": "I GRANT permission for photos/video to be used by Burlington Masjid." },
+              { "value": "decline", "label": "I DO NOT grant permission." }
+            ]
+          },
+          {
+            "name": "codeOfConduct",
+            "label": "I agree that the attendee(s) will follow the camp Code of Conduct.",
+            "type": "checkbox",
+            "required": true,
+            "bodyText": "Attendees will conduct themselves respectfully, follow the instructions of organizers and volunteers, observe the rules of the retreat and the venue, and behave in a manner befitting the values of the masjid. Burlington Masjid may dismiss a participant for conduct that is unsafe or seriously disruptive, without refund, and a parent or guardian may be asked to arrange pick-up of a minor."
+          },
+          {
+            "name": "guardianName",
+            "label": "Parent / legal guardian name",
+            "type": "text",
+            "required": false,
+            "help": "Required if any attendee is under 18.",
+            "requiredIf": {
+              "rule": "anyEntryUnder",
+              "section": "attendees",
+              "field": "age",
+              "value": 18
+            }
+          }
+        ]
+      },
+
+      {
+        "id": "extras",
+        "title": "Anything Else?",
+        "fields": [
+          { "name": "questions", "label": "Questions or concerns", "type": "textarea", "required": false },
+          {
+            "name": "volunteerInterest",
+            "label": "I'm interested in helping with the camp",
+            "type": "checkboxGroup",
+            "required": false,
+            "options": [
+              { "value": "groupLeader", "label": "Group leader" },
+              { "value": "organizing", "label": "Part of the organizing team" },
+              { "value": "guestSpeaker", "label": "Guest speaker / halaqa" },
+              { "value": "kitchen", "label": "Kitchen / meals" },
+              { "value": "transport", "label": "Transportation" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -156,6 +156,20 @@ class Masjid extends Model implements HasMedia
         return $this->hasMany(Section::class);
     }
 
+    /** Sign-up forms (event RSVPs, membership, camp registration). */
+    public function forms() {
+        return $this->hasMany(Form::class);
+    }
+
+    /**
+     * Every submission across all of this masjid's forms.
+     * `masjid_id` is denormalised onto form_responses so admin queries can scope by
+     * tenant without joining `forms`.
+     */
+    public function formResponses() {
+        return $this->hasMany(FormResponse::class);
+    }
+
     public function funds() {
         return $this->hasMany(Fund::class);
     }

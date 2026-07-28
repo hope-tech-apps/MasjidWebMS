@@ -1,0 +1,176 @@
+name: tests
+
+# Nothing ran this suite except a developer, by hand, when they happened to need it.
+# That is how a broken migration took the entire feature suite down for three days on
+# 2026-07-24 without anyone noticing: the tests did not fail, they stopped running.
+#
+# So this workflow checks two different things:
+#   1. do the tests pass, and
+#   2. did the suite actually RUN — a suite that cannot boot must be as loud as a
+#      failing assertion, because "0 tests ran" is the failure mode that hides.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: PHP suite (sqlite)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          # pdo_sqlite is what the suite runs on; the rest match production's extensions.
+          extensions: pdo_sqlite, sqlite3, mbstring, bcmath, intl, gd, zip, exif
+          coverage: none
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Cache composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies
+        # --no-scripts because composer's post-autoload-dump runs `artisan
+        # package:discover`, which boots the app and fails without an APP_KEY. Discover
+        # separately, once APP_ENV points it at .env.testing.
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Discover packages
+        env:
+          APP_ENV: testing
+        run: php artisan package:discover --ansi
+
+      - name: Build the admin SPA assets
+        # ExampleTest renders resources/views/vue-app-index.blade.php, which needs
+        # public/build/manifest.json. Building here both fixes that and gives the Vue
+        # admin a real compile check on every PR — it had none.
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run the suite
+        env:
+          APP_ENV: testing
+        # --log-junit gives us a machine-readable record to assert against below.
+        # `|| true` so a genuine test failure still reaches the boot check, which
+        # produces a far clearer message than a wall of identical errors.
+        run: |
+          php vendor/bin/pest --log-junit junit.xml --colors=never || true
+
+      - name: Fail if the suite did not actually run
+        # The check that would have caught 2026-07-24 on the day it shipped.
+        # A suite that aborts during migration reports many tests and ZERO assertions;
+        # a suite nobody wired up reports zero tests. Both are failures, and neither
+        # shows up as a failed assertion.
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::No junit.xml was produced — the suite did not run at all."
+            exit 1
+          fi
+
+          tests=$(grep -o 'tests="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*')
+          errors=$(grep -o 'errors="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*')
+          failures=$(grep -o 'failures="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*')
+          assertions=$(grep -o 'assertions="[0-9]*"' junit.xml | head -1 | grep -o '[0-9]*')
+
+          echo "tests=$tests assertions=$assertions failures=$failures errors=$errors"
+
+          # Floor, not an exact count, so adding tests never breaks the build. Raise it
+          # when the suite grows substantially.
+          if [ "${tests:-0}" -lt 150 ]; then
+            echo "::error::Only ${tests:-0} tests were collected (expected at least 150). The suite is probably not booting."
+            exit 1
+          fi
+
+          # The signature of a suite that died during migration: plenty of tests, no
+          # assertions. Without this check it looks like ordinary breakage and gets
+          # scrolled past.
+          if [ "${assertions:-0}" -eq 0 ]; then
+            echo "::error::${tests} tests ran but made ZERO assertions — the suite aborted before executing anything (usually a failed migration)."
+            exit 1
+          fi
+
+          if [ "${errors:-0}" -gt 0 ] || [ "${failures:-0}" -gt 0 ]; then
+            echo "::error::${failures} failure(s), ${errors} error(s)."
+            exit 1
+          fi
+
+  migrations-mysql:
+    name: Migrations (mysql, as production runs them)
+    runs-on: ubuntu-latest
+
+    # The suite proves migrations work on SQLite. Production is MySQL, and the two
+    # disagree in both directions — SQLite rejects `ALTER … MODIFY`, MySQL rejects some
+    # SQLite-isms. Running the stack on both is the only way a driver-specific migration
+    # cannot reach production.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: masjid_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, bcmath, intl, gd, zip, exif
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Discover packages
+        env:
+          APP_ENV: testing
+        run: php artisan package:discover --ansi
+
+      - name: Migrate against MySQL
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: masjid_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: php artisan migrate --force --no-interaction
+
+      - name: Roll the whole stack back and forward again
+        # Catches a migration with a broken or missing down(), which only ever hurts at
+        # the worst possible moment — during a production rollback.
+        env:
+          APP_ENV: testing
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: masjid_test
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: |
+          php artisan migrate:rollback --force --no-interaction --step=1
+          php artisan migrate --force --no-interaction

@@ -96,6 +96,21 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public form submissions. Tighter than 'contact' because an RSVP or camp
+        // signup form is a materially bigger abuse target than a contact form, and a
+        // legitimate person submits once. Keyed by IP AND form so flooding one form
+        // cannot lock a visitor out of a different masjid's form.
+        RateLimiter::for('form-submit', function (Request $request) {
+            $key = $request->ip() . '|' . $request->route('form_id');
+
+            return Limit::perHour(8)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many submissions from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
