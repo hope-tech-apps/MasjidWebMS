@@ -30,6 +30,11 @@ jobs:
           extensions: pdo_sqlite, sqlite3, mbstring, bcmath, intl, gd, zip, exif
           coverage: none
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
       - name: Cache composer packages
         uses: actions/cache@v4
         with:
@@ -38,7 +43,23 @@ jobs:
           restore-keys: composer-
 
       - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
+        # --no-scripts because composer's post-autoload-dump runs `artisan
+        # package:discover`, which boots the app and fails without an APP_KEY. Discover
+        # separately, once APP_ENV points it at .env.testing.
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Discover packages
+        env:
+          APP_ENV: testing
+        run: php artisan package:discover --ansi
+
+      - name: Build the admin SPA assets
+        # ExampleTest renders resources/views/vue-app-index.blade.php, which needs
+        # public/build/manifest.json. Building here both fixes that and gives the Vue
+        # admin a real compile check on every PR — it had none.
+        run: |
+          npm ci
+          npm run build
 
       - name: Run the suite
         env:
@@ -119,7 +140,12 @@ jobs:
           coverage: none
 
       - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Discover packages
+        env:
+          APP_ENV: testing
+        run: php artisan package:discover --ansi
 
       - name: Migrate against MySQL
         env:
