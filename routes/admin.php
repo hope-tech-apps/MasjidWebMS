@@ -280,7 +280,10 @@ Route::prefix('admin')->group(function () {
 
             // Form Responses — the "who filled this out" list, with search/filter/sort.
             Route::prefix('{masjid_id}/forms/{form_id}/responses')->controller(FormResponsesController::class)->group(function () {
-                Route::get('/export', 'export'); // literal before /{response_id}
+                Route::get('/export', 'export'); // literal paths before /{response_id}
+                // The attendee roster: one row per PERSON, not per submission.
+                Route::get('/roster/export', 'rosterExport');
+                Route::get('/roster', 'roster');
                 Route::get('/', 'index');
                 Route::get('/{response_id}', 'show');
                 Route::put('/{response_id}', 'update');

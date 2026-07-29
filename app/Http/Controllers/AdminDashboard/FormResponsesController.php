@@ -9,7 +9,9 @@ use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Support\Errors;
+use App\Support\FormRoster;
 use App\Support\FormSchema;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -65,6 +67,163 @@ class FormResponsesController extends Controller
                 'message' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * GET /api/admin/masjids/{masjid_id}/forms/{form_id}/responses/roster
+     *
+     * The attendee roster: ONE ROW PER PERSON rather than per submission, so a
+     * coordinator can read a check-in list without opening every registration. Honours
+     * the same filters as the list.
+     *
+     * Declared before /{response_id} so "roster" is not captured as an id.
+     */
+    public function roster(IndexFormResponsesRequest $request, $masjid_id, $form_id)
+    {
+        try {
+            $masjid = Masjid::findOrFail($masjid_id);
+            $form = $masjid->forms()->findOrFail($form_id);
+
+            $roster = FormRoster::for($form);
+
+            // Flattening happens in PHP (the entries live in a JSON column, and JSON-path
+            // sorting is not portable MySQL/SQLite), so the filtered responses are read in
+            // full. The bound is one form's registrations — hundreds for a camp.
+            $rows = $roster->rows($this->query($request, $masjid, $form)->get());
+
+            $rows = $this->sortRoster($rows, $request);
+
+            $perPage = $request->perPage();
+            $page = max(1, (int) $request->input('page', 1));
+
+            $paginator = new LengthAwarePaginator(
+                $rows->forPage($page, $perPage)->values(),
+                $rows->count(),
+                $perPage,
+                $page,
+                ['path' => $request->url(), 'query' => $request->query()]
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $paginator,
+                'meta' => [
+                    'form' => [
+                        'id' => $form->id,
+                        'name' => $form->name,
+                        'capacity' => $form->capacity,
+                    ],
+                    'columns' => $roster->columns(),
+                    'summary' => $roster->summary($rows),
+                    'statuses' => FormResponse::STATUSES,
+                    'sortable' => $this->rosterSortable($roster),
+                ],
+            ], Response::HTTP_OK);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * GET .../responses/roster/export
+     *
+     * The printable check-in sheet: one line per attendee. This is the artefact a camp
+     * actually carries to the door.
+     */
+    public function rosterExport(IndexFormResponsesRequest $request, $masjid_id, $form_id): StreamedResponse
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+        $form = $masjid->forms()->findOrFail($form_id);
+
+        $roster = FormRoster::for($form);
+        $columns = $roster->columns();
+        $rows = $this->sortRoster($roster->rows($this->query($request, $masjid, $form)->get()), $request);
+
+        $filename = $form->slug . '-roster-' . now()->format('Y-m-d') . '.csv';
+
+        return response()->stream(function () use ($rows, $columns) {
+            $out = fopen('php://output', 'w');
+
+            $header = [];
+            foreach ($columns as $column) {
+                $header[] = $column['label'];
+            }
+            $header = array_merge($header, ['Registered by', 'Registrant email', 'Registrant phone', 'Status', 'Submitted']);
+            fputcsv($out, $header);
+
+            foreach ($rows as $row) {
+                $line = [];
+                foreach ($columns as $column) {
+                    $line[] = $this->csvCell($this->stringify($row['values'][$column['key']] ?? ''));
+                }
+                $line[] = $this->csvCell((string) ($row['registered_by'] ?? ''));
+                $line[] = $this->csvCell((string) ($row['registrant_email'] ?? ''));
+                $line[] = $this->csvCell((string) ($row['registrant_phone'] ?? ''));
+                $line[] = $row['status'] ?? '';
+                $line[] = $row['submitted_at'] ? date('Y-m-d H:i', strtotime($row['submitted_at'])) : '';
+                fputcsv($out, $line);
+            }
+
+            fclose($out);
+        }, Response::HTTP_OK, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ]);
+    }
+
+    /**
+     * Roster sorting is applied to the flattened collection, because the sort keys live
+     * inside the JSON entries and cannot be expressed in the SQL that produced them.
+     *
+     * @param  \Illuminate\Support\Collection<int,array<string,mixed>>  $rows
+     */
+    private function sortRoster($rows, IndexFormResponsesRequest $request)
+    {
+        $sort = $request->input('sort');
+        $descending = $request->sortDirection() === 'desc';
+
+        // Default: submission order, then the order people were listed within it, so a
+        // family stays together and in the order the parent typed them.
+        if (! $sort) {
+            return $rows->sortBy([
+                fn ($a, $b) => strcmp((string) $b['submitted_at'], (string) $a['submitted_at']),
+                fn ($a, $b) => $a['entry_index'] <=> $b['entry_index'],
+            ])->values();
+        }
+
+        $reader = match (true) {
+            $sort === 'submitted_at' => fn ($row) => $row['submitted_at'] ?? '',
+            $sort === 'respondent_name' => fn ($row) => mb_strtolower((string) ($row['registered_by'] ?? '')),
+            $sort === 'status' => fn ($row) => $row['status'] ?? '',
+            // Anything else is a roster COLUMN key.
+            default => fn ($row) => $this->sortableValue($row['values'][$sort] ?? null),
+        };
+
+        $sorted = $rows->sortBy($reader, SORT_NATURAL | SORT_FLAG_CASE, $descending);
+
+        return $sorted->values();
+    }
+
+    /** Numbers must sort numerically (age 9 before 10), text case-insensitively. */
+    private function sortableValue(mixed $value): mixed
+    {
+        if (is_numeric($value)) {
+            return str_pad((string) (int) $value, 12, '0', STR_PAD_LEFT);
+        }
+
+        return mb_strtolower((string) $value);
+    }
+
+    /** @return array<int,string> */
+    private function rosterSortable(FormRoster $roster): array
+    {
+        return array_merge(
+            ['submitted_at', 'respondent_name', 'status'],
+            collect($roster->columns())->pluck('key')->all()
+        );
     }
 
     /** GET /api/admin/masjids/{masjid_id}/forms/{form_id}/responses/{response_id} */
