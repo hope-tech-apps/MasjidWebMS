@@ -50,11 +50,18 @@
                     <!-- Filters -->
                     <div class="row g-3 mb-3">
                         <div class="col-md-6 col-lg-4">
-                            <label class="form-label small text-muted mb-1">Search</label>
-                            <div class="input-group">
-                                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                            <label class="form-label small text-muted mb-1" for="responses-search">Search</label>
+                            <!--
+                                flex-nowrap is load-bearing: .input-group defaults to
+                                flex-wrap: wrap, so in a narrow column the trailing clear
+                                button drops onto its own line and reads as a small empty
+                                box floating under the field. Keep the group on one line.
+                            -->
+                            <div class="input-group flex-nowrap">
+                                <span class="input-group-text bg-white" aria-hidden="true"><i class="bi bi-search"></i></span>
                                 <input
-                                    type="text"
+                                    id="responses-search"
+                                    type="search"
                                     class="form-control"
                                     placeholder="Name, email or phone…"
                                     v-model="searchQuery"
@@ -65,8 +72,11 @@
                                     type="button"
                                     @click="searchQuery = ''"
                                     title="Clear search"
+                                    aria-label="Clear search"
                                 >
-                                    <i class="bi bi-x-lg"></i>
+                                    <!-- Icon-only, so it needs the aria-label above: without
+                                         it a screen reader announces an unnamed button. -->
+                                    <i class="bi bi-x-lg" aria-hidden="true"></i>
                                 </button>
                             </div>
                         </div>
