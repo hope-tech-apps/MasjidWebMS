@@ -170,25 +170,88 @@ class Form extends Model
     }
 
     /**
-     * The fee rule, or null when the form does not charge.
+     * The fee rule as it applies RIGHT NOW, or null when the form does not charge.
      *
      * `perEntryOfSection` names a repeatable section — the total is that section's
-     * entry count times `amount`. Without it, `amount` is a flat fee.
+     * entry count times the amount. Without it, the amount is a flat fee.
      *
-     * @return array{amount: float, currency: string, perEntryOfSection: ?string}|null
+     * `tiers` express date-stepped pricing (early bird → standard → day-of). Each tier
+     * has an `amount` and an optional `until` date, INCLUSIVE: the first tier whose
+     * `until` has not yet passed wins, and a tier with no `until` is the final price. A
+     * form with no tiers behaves exactly as before.
+     *
+     * The resolved amount is what gets stored on a response at submission time, so a
+     * later price step never restates what somebody already agreed to pay.
+     *
+     * @return array{amount: float, currency: string, perEntryOfSection: ?string, tiers: array, currentTier: ?array}|null
      */
-    public function feeRule(): ?array
+    public function feeRule(?CarbonInterface $at = null): ?array
     {
         $fee = $this->settings['fee'] ?? null;
 
-        if (! is_array($fee) || ! isset($fee['amount'])) {
+        if (! is_array($fee)) {
+            return null;
+        }
+
+        $tiers = is_array($fee['tiers'] ?? null) ? array_values($fee['tiers']) : [];
+
+        if ($tiers === [] && ! isset($fee['amount'])) {
+            return null;
+        }
+
+        $currentTier = $this->resolveTier($tiers, $at);
+
+        $amount = $currentTier['amount']
+            ?? $fee['amount']
+            ?? null;
+
+        if ($amount === null) {
             return null;
         }
 
         return [
-            'amount' => (float) $fee['amount'],
+            'amount' => (float) $amount,
             'currency' => $fee['currency'] ?? 'USD',
             'perEntryOfSection' => $fee['perEntryOfSection'] ?? null,
+            'tiers' => $tiers,
+            'currentTier' => $currentTier,
         ];
+    }
+
+    /**
+     * The tier in force on a given day: the first whose inclusive `until` has not passed,
+     * otherwise the first tier without an `until` (the final, open-ended price).
+     *
+     * @param  array<int,array<string,mixed>>  $tiers
+     */
+    private function resolveTier(array $tiers, ?CarbonInterface $at = null): ?array
+    {
+        if ($tiers === []) {
+            return null;
+        }
+
+        $today = ($at ?: now())->toDateString();
+
+        foreach ($tiers as $tier) {
+            if (! is_array($tier) || ! isset($tier['amount'])) {
+                continue;
+            }
+
+            $until = $tier['until'] ?? null;
+
+            if ($until === null || $until === '') {
+                return $tier;
+            }
+
+            // String comparison is safe and portable: both sides are ISO yyyy-mm-dd.
+            if ($today <= (string) $until) {
+                return $tier;
+            }
+        }
+
+        // Every dated tier has passed and none was open-ended — the last one stands.
+        $last = end($tiers);
+
+        return is_array($last) && isset($last['amount']) ? $last : null;
     }
 }

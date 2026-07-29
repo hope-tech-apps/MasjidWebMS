@@ -121,6 +121,8 @@ class SectionContentBinder
                 'successBody' => $settings['successBody'] ?? null,
                 'successNextSteps' => $settings['successNextSteps'] ?? [],
                 'intro' => $settings['intro'] ?? null,
+                // feeRule() resolves the tier in force today, and carries the whole
+                // schedule so the page can show what the price becomes and when.
                 'fee' => $form->feeRule(),
             ],
         ];

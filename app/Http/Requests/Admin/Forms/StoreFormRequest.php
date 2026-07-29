@@ -70,7 +70,14 @@ class StoreFormRequest extends BaseFormRequest
             'settings.identity.phone' => 'nullable|string|max:255',
 
             'settings.fee' => 'nullable|array',
-            'settings.fee.amount' => 'required_with:settings.fee|numeric|min:0|max:1000000',
+            // amount is optional when tiers carry the pricing instead.
+            'settings.fee.amount' => 'nullable|numeric|min:0|max:1000000',
+            // Date-stepped pricing: early bird -> standard -> day-of. `until` is
+            // INCLUSIVE; the last tier normally omits it as the open-ended final price.
+            'settings.fee.tiers' => 'nullable|array|max:10',
+            'settings.fee.tiers.*.amount' => 'required|numeric|min:0|max:1000000',
+            'settings.fee.tiers.*.until' => 'nullable|date_format:Y-m-d',
+            'settings.fee.tiers.*.label' => 'nullable|string|max:60',
             'settings.fee.currency' => 'nullable|string|size:3',
             'settings.fee.perEntryOfSection' => 'nullable|string|max:255',
 
