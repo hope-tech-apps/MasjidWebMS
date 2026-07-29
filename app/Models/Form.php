@@ -156,7 +156,11 @@ class Form extends Model
      * Which schema fields feed the denormalised respondent_* columns.
      * Declared by the builder so search and sort do not have to guess.
      *
-     * @return array{name: ?string, email: ?string, phone: ?string}
+     * A slot may name ONE field, or a LIST of fields whose values are joined with a
+     * space — which is how a form that asks for first and last name separately still
+     * produces a single searchable "Amal Yusuf" in the responses list.
+     *
+     * @return array{name: string|array|null, email: string|array|null, phone: string|array|null}
      */
     public function identityMap(): array
     {

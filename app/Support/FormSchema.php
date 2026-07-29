@@ -406,13 +406,25 @@ class FormSchema
     {
         $map = $this->form->identityMap();
 
-        $read = function (?string $path) use ($data): ?string {
+        // A slot may name ONE field or SEVERAL. Several matters for a form that splits a
+        // person's name into first and last: the admin list has to show and search
+        // "Amal Yusuf", not just "Amal", so the parts are joined here rather than the
+        // list being made to understand a composite.
+        $read = function ($path) use ($data): ?string {
             if ($path === null) {
                 return null;
             }
-            $value = Arr::get($data, $path);
 
-            return is_scalar($value) && $value !== '' ? mb_substr((string) $value, 0, 255) : null;
+            $parts = collect(is_array($path) ? $path : [$path])
+                ->map(fn ($p) => Arr::get($data, $p))
+                ->filter(fn ($v) => is_scalar($v) && trim((string) $v) !== '')
+                ->map(fn ($v) => trim((string) $v));
+
+            if ($parts->isEmpty()) {
+                return null;
+            }
+
+            return mb_substr($parts->implode(' '), 0, 255);
         };
 
         return [

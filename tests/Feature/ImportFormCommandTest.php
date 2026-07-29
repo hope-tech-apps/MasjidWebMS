@@ -59,7 +59,7 @@ class ImportFormCommandTest extends TestCase
         $form = Form::where('masjid_id', $this->masjid->id)->where('slug', 'camp-2026')->first();
 
         $this->assertNotNull($form, 'The camp form should exist after import.');
-        $this->assertSame('Ashab al-Kahf Youth Retreat 2026', $form->name);
+        $this->assertSame('Burlington Masjid Camp 2026', $form->name);
     }
 
     /** Everything the camp form actually relies on, pinned. */
@@ -91,8 +91,14 @@ class ImportFormCommandTest extends TestCase
         $this->assertSame('attendees', $fee['perEntryOfSection']);
 
         // The identity map drives the searchable columns on the responses list.
+        // The name is composite: the form asks for first and last separately, and the
+        // responses list must still show and search a whole name.
         $this->assertSame(
-            ['name' => 'registrantName', 'email' => 'registrantEmail', 'phone' => 'registrantPhone'],
+            [
+                'name' => ['registrantFirstName', 'registrantLastName'],
+                'email' => 'registrantEmail',
+                'phone' => 'registrantPhone',
+            ],
             $form->identityMap()
         );
     }
@@ -137,7 +143,7 @@ class ImportFormCommandTest extends TestCase
         FormResponse::create([
             'form_id' => $form->id,
             'masjid_id' => $this->masjid->id,
-            'data' => ['registrantName' => 'Amal Yusuf'],
+            'data' => ['registrantFirstName' => 'Amal', 'registrantLastName' => 'Yusuf'],
             'respondent_name' => 'Amal Yusuf',
             'submitted_at' => now(),
         ]);

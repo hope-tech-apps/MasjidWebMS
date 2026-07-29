@@ -65,9 +65,14 @@ class StoreFormRequest extends BaseFormRequest
 
             // Which schema field feeds each searchable column on form_responses.
             'settings.identity' => 'nullable|array',
-            'settings.identity.name' => 'nullable|string|max:255',
-            'settings.identity.email' => 'nullable|string|max:255',
-            'settings.identity.phone' => 'nullable|string|max:255',
+            // Each slot is one question name, or a list of them joined with a space
+            // (first + last name).
+            'settings.identity.name' => 'nullable',
+            'settings.identity.name.*' => 'string|max:255',
+            'settings.identity.email' => 'nullable',
+            'settings.identity.email.*' => 'string|max:255',
+            'settings.identity.phone' => 'nullable',
+            'settings.identity.phone.*' => 'string|max:255',
 
             'settings.fee' => 'nullable|array',
             // amount is optional when tiers carry the pricing instead.
@@ -105,13 +110,19 @@ class StoreFormRequest extends BaseFormRequest
             [$flatNames, $repeatableIds] = $this->schemaNames($schema);
 
             foreach (['name', 'email', 'phone'] as $slot) {
-                $field = $this->input("settings.identity.{$slot}");
+                $declared = $this->input("settings.identity.{$slot}");
 
-                if ($field !== null && $field !== '' && ! in_array($field, $flatNames, true)) {
-                    $validator->errors()->add(
-                        "settings.identity.{$slot}",
-                        "\"{$field}\" is not a question in this form, so it cannot be used for the {$slot}."
-                    );
+                if ($declared === null || $declared === '') {
+                    continue;
+                }
+
+                foreach ((array) $declared as $field) {
+                    if (! in_array($field, $flatNames, true)) {
+                        $validator->errors()->add(
+                            "settings.identity.{$slot}",
+                            "\"{$field}\" is not a question in this form, so it cannot be used for the {$slot}."
+                        );
+                    }
                 }
             }
 

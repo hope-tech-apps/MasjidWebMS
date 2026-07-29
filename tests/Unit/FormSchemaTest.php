@@ -257,6 +257,47 @@ class FormSchemaTest extends TestCase
         $this->assertNull(FormSchema::for($form)->amountDue($this->validSubmission()));
     }
 
+    /**
+     * A form that asks for first and last name separately must still produce ONE
+     * searchable name, or the responses list shows half of everybody's name.
+     */
+    public function test_a_composite_identity_slot_joins_its_parts(): void
+    {
+        $form = $this->campForm();
+
+        $schema = $form->schema;
+        $schema['sections'][0]['fields'][0] = ['name' => 'firstName', 'label' => 'First name', 'type' => 'text', 'required' => true];
+        array_splice($schema['sections'][0]['fields'], 1, 0, [
+            ['name' => 'lastName', 'label' => 'Last name', 'type' => 'text', 'required' => true],
+        ]);
+        $form->schema = $schema;
+
+        $settings = $form->settings;
+        $settings['identity']['name'] = ['firstName', 'lastName'];
+        $form->settings = $settings;
+
+        $identity = FormSchema::for($form)->identity([
+            'firstName' => 'Amal',
+            'lastName' => 'Yusuf',
+            'registrantEmail' => 'amal@example.com',
+        ]);
+
+        $this->assertSame('Amal Yusuf', $identity['respondent_name']);
+    }
+
+    /** A missing half must not leave a dangling space. */
+    public function test_a_composite_identity_slot_tolerates_a_missing_part(): void
+    {
+        $form = $this->campForm();
+        $settings = $form->settings;
+        $settings['identity']['name'] = ['firstName', 'lastName'];
+        $form->settings = $settings;
+
+        $identity = FormSchema::for($form)->identity(['firstName' => 'Amal']);
+
+        $this->assertSame('Amal', $identity['respondent_name']);
+    }
+
     public function test_identity_is_extracted_per_the_declared_map(): void
     {
         $identity = FormSchema::for($this->campForm())->identity($this->validSubmission());
