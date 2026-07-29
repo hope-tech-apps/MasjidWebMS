@@ -37,6 +37,7 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/forms/field-types` |
     `/api/admin/masjids/${string}/forms/${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses?${string}` |
+    `/api/admin/masjids/${string}/forms/${string}/responses/roster?${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}` |
     `/api/admin/masjids/${string}/about` |
     `/api/admin/masjids/${string}/gallery` |

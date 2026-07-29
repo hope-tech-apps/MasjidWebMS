@@ -33,6 +33,13 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     const responsesPaginated = ref<PaginatedData<FormResponseRow>>();
     const responsesMeta = ref<FormResponsesMeta>();
 
+    /**
+     * The attendee roster: one row per PERSON rather than per submission. Kept in its own
+     * slice so switching views does not blank the other one.
+     */
+    const rosterPaginated = ref<PaginatedData<any>>();
+    const rosterMeta = ref<any>();
+
     // Stores
     const masjidStore = useMasjidStore();
     const authStore = useAuthStore();
@@ -113,6 +120,37 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
             });
     }
 
+    /**
+     * Fetch the attendee roster. Same filters as the list, so what an organiser is
+     * looking at stays consistent when they flip between the two views.
+     */
+    async function fetchRoster(
+        formId: number | string,
+        filters: FormResponseFilters,
+        page: number = 1
+    ): Promise<void> {
+        const id = masjidId();
+        if (!id) return;
+
+        if (rosterPaginated.value) {
+            rosterPaginated.value.data = [];
+        }
+
+        const query = buildResponsesQuery(filters, page);
+
+        await ApiService.get(`/api/admin/masjids/${id}/forms/${formId}/responses/roster?${query}`)
+            .then((res: AxiosResponse) => {
+                if (res.data?.status === 'success' && res.data?.data) {
+                    rosterPaginated.value = res.data.data;
+                    rosterMeta.value = res.data.meta;
+                }
+            })
+            .catch((e: Error) => {
+                console.error('Fetch attendee roster error: ', e);
+                throw e;
+            });
+    }
+
     /** Fetch one response — the only endpoint that returns the full submission. */
     async function fetchResponse(
         formId: number | string,
@@ -178,6 +216,9 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     }
 
     return {
+        rosterPaginated,
+        rosterMeta,
+        fetchRoster,
         formOptions,
         responsesPaginated,
         responsesMeta,

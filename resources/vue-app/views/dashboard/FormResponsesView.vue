@@ -111,8 +111,56 @@
                         The “to” date cannot be earlier than the “from” date.
                     </p>
 
+                    <!-- Which question are we answering? -->
+                    <div class="btn-group mb-3" role="group" aria-label="View mode">
+                        <button
+                            type="button"
+                            class="btn"
+                            :class="viewMode === 'submissions' ? 'btn-primary' : 'btn-outline-primary'"
+                            :aria-pressed="viewMode === 'submissions'"
+                            @click="switchView('submissions')"
+                        >
+                            Registrations
+                        </button>
+                        <button
+                            type="button"
+                            class="btn"
+                            :class="viewMode === 'attendees' ? 'btn-primary' : 'btn-outline-primary'"
+                            :aria-pressed="viewMode === 'attendees'"
+                            @click="switchView('attendees')"
+                        >
+                            Everyone attending
+                        </button>
+                    </div>
+
+                    <!-- Roster head count: the numbers an organiser reads first -->
+                    <div
+                        v-if="viewMode === 'attendees' && rosterSummary"
+                        class="alert alert-light border d-flex flex-wrap gap-3 align-items-center mb-3"
+                    >
+                        <span>
+                            <strong>{{ rosterSummary.people }}</strong>
+                            {{ rosterSummary.people === 1 ? 'person' : 'people' }}
+                            across {{ rosterSummary.submissions }}
+                            {{ rosterSummary.submissions === 1 ? 'registration' : 'registrations' }}
+                        </span>
+                        <span
+                            v-for="b in rosterSummary.breakdowns"
+                            :key="b.field"
+                            class="text-muted small"
+                        >
+                            {{ b.label }}:
+                            <template v-for="(o, i) in b.options" :key="o.value">
+                                {{ o.label }} {{ o.count }}<span v-if="i < b.options.length - 1"> · </span>
+                            </template>
+                        </span>
+                        <span v-if="rosterMeta?.form?.capacity" class="text-muted small ms-auto">
+                            capacity {{ rosterMeta.form.capacity }}
+                        </span>
+                    </div>
+
                     <!-- Summary -->
-                    <div v-if="meta" class="alert alert-light border d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
+                    <div v-if="viewMode === 'submissions' && meta" class="alert alert-light border d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
                         <span>
                             <strong>{{ meta.form.name }}</strong>
                             · {{ paginationOptions?.itemsTotal ?? 0 }} response{{ (paginationOptions?.itemsTotal ?? 0) === 1 ? '' : 's' }} shown
@@ -135,8 +183,8 @@
                         <p class="mb-0">{{ filtersApplied ? 'No responses match these filters' : 'No responses yet' }}</p>
                     </div>
 
-                    <!-- Responses Table -->
-                    <div v-else class="table-responsive">
+                    <!-- Registrations table: one row per submission -->
+                    <div v-else-if="viewMode === 'submissions'" class="table-responsive">
                         <table class="table table-hover align-middle">
                             <thead>
                                 <tr>
@@ -196,6 +244,75 @@
                                                 <i class="bi bi-trash"></i>
                                             </button>
                                         </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Everyone attending: one row per PERSON -->
+                    <div v-if="viewMode === 'attendees' && !loading" class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead>
+                                <tr>
+                                    <th
+                                        v-for="col in rosterColumns"
+                                        :key="col.key"
+                                        :class="{ 'cursor-pointer': rosterSortable.includes(col.key) }"
+                                        :aria-sort="ariaSort(col.key as any)"
+                                        @click="rosterSortable.includes(col.key) && toggleSort(col.key)"
+                                    >
+                                        {{ col.label }}
+                                        <i v-if="rosterSortable.includes(col.key)" class="bi sort-icon" :class="sortIcon(col.key as any)"></i>
+                                    </th>
+                                    <th
+                                        :aria-sort="ariaSort('respondent_name')"
+                                        class="cursor-pointer"
+                                        @click="toggleSort('respondent_name')"
+                                    >
+                                        Registered by
+                                        <i class="bi sort-icon" :class="sortIcon('respondent_name')"></i>
+                                    </th>
+                                    <th>Contact</th>
+                                    <th
+                                        :aria-sort="ariaSort('status')"
+                                        class="cursor-pointer"
+                                        @click="toggleSort('status')"
+                                    >
+                                        Status
+                                        <i class="bi sort-icon" :class="sortIcon('status')"></i>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-if="!rosterRows.length">
+                                    <td :colspan="rosterColumns.length + 3" class="text-center text-muted py-4">
+                                        No one is registered yet.
+                                    </td>
+                                </tr>
+                                <tr
+                                    v-for="(row, i) in rosterRows"
+                                    :key="`${row.response_id}-${row.entry_index}-${i}`"
+                                    :class="{ 'table-warning': row.incomplete }"
+                                >
+                                    <td v-for="col in rosterColumns" :key="col.key">
+                                        <span v-if="row.values[col.key] !== null && row.values[col.key] !== ''">
+                                            {{ row.values[col.key] }}
+                                        </span>
+                                        <span v-else-if="row.incomplete" class="text-muted small fst-italic">
+                                            no attendees listed
+                                        </span>
+                                        <span v-else class="text-muted">—</span>
+                                    </td>
+                                    <td>{{ row.registered_by || '—' }}</td>
+                                    <td class="small">
+                                        <a v-if="row.registrant_email" :href="`mailto:${row.registrant_email}`">{{ row.registrant_email }}</a>
+                                        <span v-if="row.registrant_email && row.registrant_phone" class="text-muted"> · </span>
+                                        <a v-if="row.registrant_phone" :href="`tel:${row.registrant_phone}`">{{ row.registrant_phone }}</a>
+                                        <span v-if="!row.registrant_email && !row.registrant_phone" class="text-muted">—</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge text-capitalize" :class="statusClass(row.status)">{{ row.status }}</span>
                                     </td>
                                 </tr>
                             </tbody>
@@ -432,6 +549,15 @@ const detail = ref<FormResponseDetail | null>(null);
 const editStatus = ref<FormResponseStatus>('new');
 const editNotes = ref('');
 
+/**
+ * Which question the screen is answering.
+ *  'submissions' — who filled in the form (one row per submission)
+ *  'attendees'   — who is actually coming (one row per PERSON)
+ * For a camp those are different numbers: one parent registering four people is one
+ * submission and four attendees, and a coordinator needs the second one to run check-in.
+ */
+const viewMode = ref<'submissions' | 'attendees'>('submissions');
+
 // Computed
 const formOptions = computed<FormOption[]>(() => formResponsesStore.formOptions);
 const meta = computed<FormResponsesMeta | undefined>(() => formResponsesStore.responsesMeta);
@@ -440,12 +566,26 @@ const statuses = computed<FormResponseStatus[]>(() => meta.value?.statuses ?? FA
 const sortableColumns = computed<FormResponseSortColumn[]>(() => meta.value?.sortable ?? FALLBACK_SORTABLE);
 const columns = computed<FormResponseColumn[]>(() => meta.value?.columns ?? []);
 
+// --- attendee roster ---
+const rosterMeta = computed<any>(() => formResponsesStore.rosterMeta);
+const rosterRows = computed<any[]>(() => (formResponsesStore.rosterPaginated?.data as any[]) || []);
+const rosterColumns = computed<{ key: string; label: string; type: string }[]>(
+    () => rosterMeta.value?.columns ?? []
+);
+const rosterSummary = computed<any>(() => rosterMeta.value?.summary);
+/** Roster columns are sortable too — the server orders the flattened rows. */
+const rosterSortable = computed<string[]>(() => rosterMeta.value?.sortable ?? []);
+
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
-    if (!formResponsesStore.responsesPaginated) return undefined;
+    const source = viewMode.value === 'attendees'
+        ? formResponsesStore.rosterPaginated
+        : formResponsesStore.responsesPaginated;
+
+    if (!source) return undefined;
     return {
-        currentPage: formResponsesStore.responsesPaginated.current_page,
-        itemsTotal: formResponsesStore.responsesPaginated.total,
-        perPage: formResponsesStore.responsesPaginated.per_page
+        currentPage: source.current_page,
+        itemsTotal: source.total,
+        perPage: source.per_page
     };
 });
 
@@ -554,12 +694,31 @@ const loadData = async (page: number = 1) => {
 
     loading.value = true;
     try {
-        await formResponsesStore.fetchResponses(selectedFormId.value, filters.value, page);
+        if (viewMode.value === 'attendees') {
+            await formResponsesStore.fetchRoster(selectedFormId.value, filters.value, page);
+        } else {
+            await formResponsesStore.fetchResponses(selectedFormId.value, filters.value, page);
+        }
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load responses.' });
     } finally {
         loading.value = false;
     }
+};
+
+/**
+ * Flip between the two questions. The filters and the sort are deliberately shared, but
+ * the sort key is reset because the two views sort by different things — an attendee
+ * column means nothing to the submission list, and vice versa.
+ */
+const switchView = async (mode: 'submissions' | 'attendees') => {
+    if (viewMode.value === mode) return;
+
+    viewMode.value = mode;
+    sort.value = undefined;
+    direction.value = 'desc';
+
+    await loadData(1);
 };
 
 const pageChange = async (data: PageChangeData) => {
@@ -695,7 +854,10 @@ const exportCsv = async () => {
         // uses, so the export can only ever contain what is on screen.
         const token = localStorage.getItem(LOCAL_STORAGE_KEYS.token);
         const query = formResponsesStore.buildResponsesQuery(filters.value);
-        const resp = await fetch(`/api/admin/masjids/${id}/forms/${selectedFormId.value}/responses/export?${query}`, {
+        // Export whatever is on screen: the submission list, or the attendee check-in
+        // sheet. Exporting the other one would be a quiet trap.
+        const path = viewMode.value === 'attendees' ? 'responses/roster/export' : 'responses/export';
+        const resp = await fetch(`/api/admin/masjids/${id}/forms/${selectedFormId.value}/${path}?${query}`, {
             headers: { Authorization: `Bearer ${token}`, Accept: 'text/csv' }
         });
         if (!resp.ok) throw new Error('csv');
