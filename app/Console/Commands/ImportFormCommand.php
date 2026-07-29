@@ -187,10 +187,18 @@ class ImportFormCommand extends Command
         }
 
         foreach (['name', 'email', 'phone'] as $slot) {
-            $field = $definition['settings']['identity'][$slot] ?? null;
+            $declared = $definition['settings']['identity'][$slot] ?? null;
 
-            if ($field && ! in_array($field, $flat, true)) {
-                $problems[] = "settings.identity.{$slot} points at \"{$field}\", which is not a question in this form.";
+            if ($declared === null || $declared === '') {
+                continue;
+            }
+
+            // A slot may name one question or several (first + last name), so check each.
+            foreach ((array) $declared as $field) {
+                if (! is_string($field) || ! in_array($field, $flat, true)) {
+                    $label = is_string($field) ? $field : json_encode($field);
+                    $problems[] = "settings.identity.{$slot} points at \"{$label}\", which is not a question in this form.";
+                }
             }
         }
 
