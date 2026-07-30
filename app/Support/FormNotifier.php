@@ -112,7 +112,7 @@ class FormNotifier
                     fn ($step) => is_string($step) && trim($step) !== ''
                 )),
                 paymentNote: is_string($settings['paymentNote'] ?? null) ? $settings['paymentNote'] : null,
-                replyTo: $masjid?->email,
+                masjidEmail: $masjid?->email,
             ));
         });
     }

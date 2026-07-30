@@ -43,8 +43,8 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
         public ?string $title,
         public ?string $body,
         public array $nextSteps,
-        public ?string $paymentNote,
-        public ?string $replyTo,
+        /** Named masjidEmail, not replyTo: Mailable already owns a $replyTo property. */
+        public ?string $masjidEmail,
     ) {
     }
 
@@ -52,8 +52,8 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
     {
         return new Envelope(
             subject: $this->formName . ' — registration received',
-            replyTo: $this->replyTo && filter_var($this->replyTo, FILTER_VALIDATE_EMAIL)
-                ? [$this->replyTo]
+            replyTo: $this->masjidEmail && filter_var($this->masjidEmail, FILTER_VALIDATE_EMAIL)
+                ? [$this->masjidEmail]
                 : [],
         );
     }
