@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# Deploy the current origin/main to this host.
+#
+# This exists because deploying by hand loses a step. The step it lost was
+# `composer dump-autoload`: composer.json sets "optimize-autoloader", so production
+# resolves classes through vendor/composer/autoload_classmap.php, and a pull that adds a
+# new class does not add it to that map. The class then does not exist as far as the app
+# is concerned — and because the code that used it caught its own errors, the symptom was
+# a feature that silently did nothing. Nothing in the HTTP response, nothing in the
+# deploy output, said so.
+#
+# So the last thing this script does is prove the new code is reachable, rather than
+# assume it. Run it as root:
+#
+#     sudo bin/deploy
+#
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem}"
+WEB_USER="${WEB_USER:-www-data}"
+QUEUE_SERVICE="${QUEUE_SERVICE:-masjid-queue.service}"
+
+cd "$APP_DIR"
+
+say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
+as_web() { sudo -u "$WEB_USER" HOME=/tmp "$@"; }
+
+say "Before"
+git log --oneline -1
+
+say "Fetching origin/main"
+git fetch --quiet origin main
+BEFORE="$(git rev-parse HEAD)"
+git merge --quiet --ff-only origin/main
+AFTER="$(git rev-parse HEAD)"
+
+if [ "$BEFORE" = "$AFTER" ]; then
+    echo "Already up to date."
+else
+    git --no-pager log --oneline "$BEFORE..$AFTER"
+fi
+
+say "Dependencies"
+# --no-dev matches production; -o regenerates the classmap, which is the step that
+# silently breaks new classes when it is skipped.
+COMPOSER_ALLOW_SUPERUSER=1 composer install \
+    --no-interaction --no-progress --no-dev --optimize-autoloader 2>&1 | tail -3
+
+say "Ownership"
+chown -R "$WEB_USER":"$WEB_USER" app bootstrap/cache config database resources routes storage vendor/composer
+
+say "Migrations"
+as_web php artisan migrate --force
+
+say "Caches"
+as_web php artisan config:clear >/dev/null
+as_web php artisan route:clear  >/dev/null
+as_web php artisan view:clear   >/dev/null
+as_web php artisan config:cache >/dev/null
+as_web php artisan route:cache  >/dev/null
+
+say "Queue worker"
+# Long-running workers hold the old code in memory; without this a deployed fix keeps
+# not happening for up to --max-time.
+systemctl restart "$QUEUE_SERVICE"
+sleep 2
+systemctl is-active "$QUEUE_SERVICE"
+
+say "Verifying every application class is actually loadable"
+# The check that would have caught the autoloader bug: walk app/, work out the class name
+# each file declares, and assert the running autoloader can resolve it. Cheap, and it
+# fails loudly instead of leaving a feature quietly inert.
+as_web php -r '
+require "vendor/autoload.php";
+
+$missing = [];
+$checked = 0;
+
+$files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator("app"));
+
+foreach ($files as $file) {
+    if ($file->getExtension() !== "php") {
+        continue;
+    }
+
+    $source = file_get_contents($file->getPathname());
+
+    if (! preg_match("/^namespace\s+([^;]+);/m", $source, $ns)) {
+        continue;
+    }
+
+    if (! preg_match("/^(?:final\s+|abstract\s+)?(?:class|interface|trait|enum)\s+(\w+)/m", $source, $cls)) {
+        continue;
+    }
+
+    $fqcn = trim($ns[1]) . "\\" . $cls[1];
+    $checked++;
+
+    if (! class_exists($fqcn) && ! interface_exists($fqcn) && ! trait_exists($fqcn) && ! enum_exists($fqcn)) {
+        $missing[] = $fqcn;
+    }
+}
+
+if ($missing !== []) {
+    fwrite(STDERR, "\n  The autoloader cannot resolve " . count($missing) . " class(es):\n");
+    foreach ($missing as $class) {
+        fwrite(STDERR, "    - {$class}\n");
+    }
+    fwrite(STDERR, "\n  Run: composer dump-autoload -o\n\n");
+    exit(1);
+}
+
+echo "  {$checked} classes, all resolvable.\n";
+'
+
+say "Deployed"
+git log --oneline -1
