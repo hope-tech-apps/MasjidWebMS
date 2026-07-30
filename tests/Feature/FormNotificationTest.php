@@ -42,7 +42,7 @@ class FormNotificationTest extends TestCase
     private function makeMasjid(array $overrides = []): Masjid
     {
         return Masjid::create(array_merge([
-            'name' => 'Burlington Masjid',
+            'name' => 'Burlington Masjid ' . uniqid(),
             'email' => 'masjid-' . uniqid() . '@test.local',
             'phone' => '+1' . random_int(1000000000, 9999999999),
             'country_id' => '1',
