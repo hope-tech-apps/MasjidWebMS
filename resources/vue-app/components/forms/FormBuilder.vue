@@ -380,6 +380,43 @@
                             <button type="button" class="btn btn-sm btn-outline-secondary" @click="draft.settings.notifyEmails.push('')">
                                 <i class="bi bi-plus-circle"></i> Add Email
                             </button>
+                            <div class="form-text">
+                                Emailed whenever someone submits. Leave empty and it goes to the
+                                masjid's own contact address.
+                            </div>
+                        </div>
+
+                        <div class="col-12 mb-3">
+                            <div class="form-check form-switch">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="form-confirmation-email"
+                                    v-model="draft.settings.confirmationEmail"
+                                />
+                                <label class="form-check-label" for="form-confirmation-email">
+                                    Email a confirmation to whoever fills this in
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Sends a copy of what they submitted, including the total owed.
+                                Turning this off usually means people submit twice because they
+                                aren't sure it worked.
+                            </div>
+                        </div>
+
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Payment note</label>
+                            <textarea
+                                class="form-control"
+                                v-model="draft.settings.paymentNote"
+                                rows="2"
+                                placeholder="When payment is due, how to pay, any card surcharge."
+                            ></textarea>
+                            <div class="form-text">
+                                Shown on the confirmation email beside the total. Only useful when
+                                this form charges money.
+                            </div>
                         </div>
 
                         <div class="col-12 mb-3">
@@ -515,6 +552,8 @@ type DraftSettings = {
     successBody: string;
     successNextSteps: string[];
     notifyEmails: string[];
+    confirmationEmail: boolean;
+    paymentNote: string;
     intro: string;
     identityName: string | null;
     identityEmail: string | null;
@@ -547,6 +586,9 @@ const blankSettings = (): DraftSettings => ({
     successBody: '',
     successNextSteps: [],
     notifyEmails: [],
+    // On by default: a form that collects an email should acknowledge it.
+    confirmationEmail: true,
+    paymentNote: '',
     intro: '',
     identityName: null,
     identityEmail: null,
@@ -654,6 +696,8 @@ const load = async () => {
                 successBody: settings.successBody ?? '',
                 successNextSteps: [...(settings.successNextSteps ?? [])],
                 notifyEmails: [...(settings.notifyEmails ?? [])],
+                confirmationEmail: settings.confirmationEmail !== false,
+                paymentNote: settings.paymentNote ?? '',
                 intro: settings.intro ?? '',
                 identityName: settings.identity?.name ?? null,
                 identityEmail: settings.identity?.email ?? null,
@@ -713,6 +757,12 @@ const buildPayload = (): FormPayload => {
 
     const notifyEmails = draftSettings.notifyEmails.map(email => email.trim()).filter(Boolean);
     if (notifyEmails.length) settings.notifyEmails = notifyEmails;
+
+    // Only sent when switched off — absent means on, which is the server's default too.
+    if (!draftSettings.confirmationEmail) settings.confirmationEmail = false;
+
+    const paymentNote = draftSettings.paymentNote.trim();
+    if (paymentNote) settings.paymentNote = paymentNote;
 
     const identity: FormIdentityMap = {};
     if (draftSettings.identityName) identity.name = draftSettings.identityName;

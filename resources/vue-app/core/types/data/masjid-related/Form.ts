@@ -213,6 +213,10 @@ export type FormSettings = {
     successBody?: string | null;
     successNextSteps?: string[];
     notifyEmails?: string[];
+    /** Absent means on — the submitter gets a copy of what they sent. */
+    confirmationEmail?: boolean;
+    /** Shown beside the total on that copy: when payment is due, card surcharges. */
+    paymentNote?: string | null;
     intro?: string | null;
     identity?: FormIdentityMap;
     fee?: FormFeeRule | null;
