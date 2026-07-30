@@ -63,6 +63,14 @@ class StoreFormRequest extends BaseFormRequest
             'settings.notifyEmails.*' => 'email:rfc',
             'settings.intro' => 'nullable|string|max:20000',
 
+            // Whether the submitter gets a copy. Absent means yes — a form that collects an
+            // email address should acknowledge it by default.
+            'settings.confirmationEmail' => 'nullable|boolean',
+            // Shown on the receipt where money is involved: card surcharges, where to pay,
+            // when payment is due. Kept as form data so nothing masjid-specific is written
+            // into the mail template.
+            'settings.paymentNote' => 'nullable|string|max:1000',
+
             // Which schema field feeds each searchable column on form_responses.
             'settings.identity' => 'nullable|array',
             // Each slot is one question name, or a list of them joined with a space
