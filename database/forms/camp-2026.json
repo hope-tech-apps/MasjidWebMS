@@ -18,6 +18,9 @@
       "Watch your email for the packing list and final schedule."
     ],
     "paymentNote": "Your total is due before camp. Card payments taken on the masjid terminal carry a 3% service charge on the total, which is added to the amount above. By submitting this registration you agreed that you are responsible for paying the total shown.",
+    "notifyEmails": [
+      "moneebssayed@gmail.com"
+    ],
     "identity": {
       "name": [
         "registrantFirstName",
