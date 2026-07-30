@@ -191,7 +191,7 @@ class FormNotifier
         }
 
         return $roster->rows(collect([$response]))
-            ->map(function (array $row) use ($nameKeys, $detailColumns, $columns) {
+            ->map(function (array $row) use ($nameKeys, $detailColumns, $columns, $optionLabels) {
                 $values = $row['values'] ?? [];
 
                 $name = collect($nameKeys)
