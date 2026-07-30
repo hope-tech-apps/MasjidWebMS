@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Support\Errors;
+use App\Support\FormNotifier;
 use App\Support\FormSchema;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +27,10 @@ use Illuminate\Support\Facades\DB;
  *  - The window and capacity are re-checked here, inside the same transaction that
  *    writes the row, because a page can sit open in a tab long after a form closed.
  *  - A honeypot field catches the naive bots; `throttle:form-submit` catches the rest.
+ *
+ * Once a submission is accepted it also notifies the masjid's coordinators and sends the
+ * submitter a receipt (App\Support\FormNotifier) — a registration nobody is told about is
+ * only half-accepted.
  */
 class FormSubmissionsController extends Controller
 {
@@ -118,6 +123,11 @@ class FormSubmissionsController extends Controller
                 // Closed or full between the page loading and the submit landing.
                 return response()->api(422, $form->fresh()->closedReason() ?? 'This form is no longer accepting responses.', null);
             }
+
+            // Deliberately after the transaction: the registration is already committed, so
+            // a mail failure can neither roll it back nor reach the submitter. FormNotifier
+            // swallows its own errors for the same reason.
+            FormNotifier::submitted($form, $response);
 
             $settings = $form->settings ?? [];
 
