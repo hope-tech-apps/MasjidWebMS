@@ -170,6 +170,7 @@ class FormNotifier
     {
         $roster = FormRoster::for($form);
         $columns = $roster->columns();
+        $optionLabels = self::optionLabels($form);
 
         $nameKeys = [];
         $detailColumns = [];
@@ -206,10 +207,18 @@ class FormNotifier
                 }
 
                 $detail = collect($detailColumns)
-                    ->map(function (array $column) use ($values) {
+                    ->map(function (array $column) use ($values, $optionLabels) {
                         $value = trim((string) ($values[$column['key']] ?? ''));
 
-                        return $value === '' ? null : $column['label'] . ' ' . $value;
+                        if ($value === '') {
+                            return null;
+                        }
+
+                        // A dropdown stores its value ("brothers"); a coordinator should
+                        // read the label they wrote on the form ("Brothers").
+                        $value = $optionLabels[$column['key']][$value] ?? $value;
+
+                        return $column['label'] . ' ' . $value;
                     })
                     ->filter()
                     ->implode(' · ');
@@ -221,6 +230,33 @@ class FormNotifier
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * value => label for every choice field in the schema, keyed by field name.
+     *
+     * @return array<string,array<string,string>>
+     */
+    private static function optionLabels(Form $form): array
+    {
+        $map = [];
+
+        foreach ($form->sections() as $section) {
+            foreach ($section['fields'] ?? [] as $field) {
+                if (! isset($field['name']) || ! is_array($field['options'] ?? null)) {
+                    continue;
+                }
+
+                foreach ($field['options'] as $option) {
+                    if (isset($option['value'])) {
+                        $map[$field['name']][(string) $option['value']] =
+                            (string) ($option['label'] ?? $option['value']);
+                    }
+                }
+            }
+        }
+
+        return $map;
     }
 
     /** Whether the person who submitted gets a copy. On unless a form opts out. */

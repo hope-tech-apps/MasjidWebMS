@@ -43,6 +43,7 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
         public ?string $title,
         public ?string $body,
         public array $nextSteps,
+        public ?string $paymentNote,
         /** Named masjidEmail, not replyTo: Mailable already owns a $replyTo property. */
         public ?string $masjidEmail,
     ) {
