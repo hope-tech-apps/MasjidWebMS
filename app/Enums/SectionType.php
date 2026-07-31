@@ -20,6 +20,12 @@ enum SectionType: string
     case MISSION_VISION = 'mission_vision';
     case CTA = 'cta';
     case FORM = 'form';
+    // Layout primitives added for the meccharlotte.org rebuild: a plain decorative
+    // image, a row/stack of link buttons (the mailto + website icon strips), and a
+    // rotating image carousel.
+    case IMAGE = 'image';
+    case LINK_LIST = 'link_list';
+    case CAROUSEL = 'carousel';
 
     /**
      * Get all section type values
@@ -51,6 +57,9 @@ enum SectionType: string
             self::MISSION_VISION => 'Mission & Vision',
             self::CTA => 'Call to Action',
             self::FORM => 'Sign-up Form',
+            self::IMAGE => 'Image',
+            self::LINK_LIST => 'Link Buttons',
+            self::CAROUSEL => 'Image Carousel',
         };
     }
 
@@ -76,6 +85,9 @@ enum SectionType: string
             self::MISSION_VISION => 'Mission and vision cards with icons',
             self::CTA => 'Call to action button section',
             self::FORM => 'A sign-up form — event RSVPs, membership applications, camp registrations. Responses appear under Form Responses.',
+            self::IMAGE => 'A single standalone image with optional caption — flyers, posters, decorative banners',
+            self::LINK_LIST => 'A row or stack of link buttons — email, phone, website, external registration links',
+            self::CAROUSEL => 'A rotating slideshow of images with optional titles, captions and links',
         };
     }
 
@@ -84,12 +96,32 @@ enum SectionType: string
      */
     public function usesExternalData(): bool
     {
-        return in_array($this, [
+        // Exhaustive match with NO default arm, on purpose: adding a case without
+        // classifying it here fails loudly instead of silently defaulting to
+        // "self-contained". defaultContent() below is exhaustive for the same reason.
+        return match ($this) {
             self::SERVICES_LIST,
             self::ANNOUNCEMENTS_LIST,
             self::GALLERY,
-            self::EVENTS,
-        ]);
+            self::EVENTS => true,
+
+            self::PAGE_TITLE,
+            self::PRAYER_TIMES,
+            self::TEXT,
+            self::ABOUT_US,
+            self::IMAGE_TEXT_GRID,
+            self::GRID_CARDS,
+            self::DONATION,
+            self::CONTACT_FORM,
+            self::STATS,
+            self::MISSION_VISION,
+            self::CTA,
+            self::FORM,
+            // Author-supplied content only — nothing is pulled from another table.
+            self::IMAGE,
+            self::LINK_LIST,
+            self::CAROUSEL => false,
+        };
     }
 
     /**
@@ -207,6 +239,38 @@ enum SectionType: string
                 'form_id' => null,
                 'title' => '',
                 'intro' => '',
+            ],
+            // A plain decorative image. `max_width` is a named size the renderer maps to
+            // its own layout scale (full-bleed / page container / narrow column) rather
+            // than a pixel value, so the same content renders correctly on web and mobile.
+            self::IMAGE => [
+                'image_url' => null,
+                'alt_text' => '',
+                'caption' => '',
+                'max_width' => 'container', // full | container | narrow
+                'background_color' => '#ffffff',
+            ],
+            // A row/stack of link buttons. Each link is
+            // ['label' => '', 'url' => '', 'icon' => '', 'style' => 'primary'].
+            // `url` carries mailto:/tel: as readily as https:, which is what the
+            // contact strips on meccharlotte.org need.
+            self::LINK_LIST => [
+                'heading' => '',
+                'description' => '',
+                'links' => [],
+                'layout' => 'stack', // stack | inline | grid
+                'background_color' => '#ffffff',
+            ],
+            // A rotating slideshow. Each slide is
+            // ['image_url' => '', 'title' => '', 'caption' => '', 'link_url' => '', 'link_text' => ''].
+            // `height` is a named size for the same reason `max_width` is above.
+            self::CAROUSEL => [
+                'slides' => [],
+                'autoplay' => true,
+                'interval_ms' => 6000,
+                'show_arrows' => true,
+                'show_dots' => true,
+                'height' => 'medium', // short | medium | tall
             ],
         };
     }

@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Admin\Sections;
 
+use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
+use Illuminate\Validation\Rules\Enum;
 
 class UpdateSectionRequest extends BaseFormRequest
 {
@@ -28,7 +30,8 @@ class UpdateSectionRequest extends BaseFormRequest
     public function rules(): array
     {
         $rules = [
-            'section_type' => 'sometimes|required|string',
+            // Allowlisted against the enum — see StoreSectionRequest for the reasoning.
+            'section_type' => ['sometimes', 'required', new Enum(SectionType::class)],
             'title' => 'nullable|string|max:255',
             'content' => [
                 'sometimes',

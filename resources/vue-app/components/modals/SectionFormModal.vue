@@ -294,6 +294,10 @@ import MissionVisionSectionEditor from '@/components/sections/editors/MissionVis
 import CTASectionEditor from '@/components/sections/editors/CTASectionEditor.vue';
 import PageTitleSectionEditor from '@/components/sections/editors/PageTitleSectionEditor.vue';
 import FormSectionEditor from '@/components/sections/editors/FormSectionEditor.vue';
+import EventsSectionEditor from '@/components/sections/editors/EventsSectionEditor.vue';
+import ImageSectionEditor from '@/components/sections/editors/ImageSectionEditor.vue';
+import LinkListSectionEditor from '@/components/sections/editors/LinkListSectionEditor.vue';
+import CarouselSectionEditor from '@/components/sections/editors/CarouselSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -355,12 +359,18 @@ const editorMap: Record<SectionType, any> = {
     'services_list': ServicesSectionEditor,
     'announcements_list': AnnouncementsSectionEditor,
     'gallery': ListSectionEditor,
+    // `events` has a working public renderer and shipped in the backend enum, but had no
+    // entry here: the dropdown offered it and the editor pane rendered nothing.
+    'events': EventsSectionEditor,
     'stats': StatsSectionEditor,
     'mission_vision': MissionVisionSectionEditor,
     'cta': CTASectionEditor,
     // Without this entry the Form type still appears in the dropdown (it comes from the
     // backend enum) and the modal still saves — the editor area just renders nothing.
     'form': FormSectionEditor,
+    'image': ImageSectionEditor,
+    'link_list': LinkListSectionEditor,
+    'carousel': CarouselSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

@@ -217,6 +217,9 @@ class SectionsController extends Controller
             SectionType::DONATION => ['image_url'],
             SectionType::CTA => ['background_image_url'],
             SectionType::MISSION_VISION => ['items.*.icon_url'],
+            SectionType::IMAGE => ['image_url'],
+            SectionType::CAROUSEL => ['slides.*.image_url'],
+            // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };
     }
