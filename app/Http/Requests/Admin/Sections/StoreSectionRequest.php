@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Admin\Sections;
 
+use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
+use Illuminate\Validation\Rules\Enum;
 
 class StoreSectionRequest extends BaseFormRequest
 {
@@ -33,7 +35,10 @@ class StoreSectionRequest extends BaseFormRequest
     public function rules(): array
     {
         $rules = [
-            'section_type' => 'required|string',
+            // Allowlisted against the enum — the same rule the page-scoped requests use.
+            // `Section.section_type` is cast to SectionType, so a value outside the enum
+            // is not "extra data", it is a row that explodes on every subsequent read.
+            'section_type' => ['required', new Enum(SectionType::class)],
             'title' => 'nullable|string|max:255',
             'content' => [
                 'required',

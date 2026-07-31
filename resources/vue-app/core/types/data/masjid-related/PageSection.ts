@@ -10,10 +10,14 @@ export type SectionType =
     | 'services_list'
     | 'announcements_list'
     | 'gallery'
+    | 'events'
     | 'stats'
     | 'mission_vision'
     | 'cta'
-    | 'form';
+    | 'form'
+    | 'image'
+    | 'link_list'
+    | 'carousel';
 
 // Base Section
 export type PageSection = {
@@ -46,10 +50,14 @@ export type SectionContent =
     | ServicesListSectionContent
     | AnnouncementsListSectionContent
     | GallerySectionContent
+    | EventsSectionContent
     | StatsSectionContent
     | MissionVisionSectionContent
     | CTASectionContent
-    | FormSectionContent;
+    | FormSectionContent
+    | ImageSectionContent
+    | LinkListSectionContent
+    | CarouselSectionContent;
 
 // Individual Section Content Types
 
@@ -145,6 +153,14 @@ export type GallerySectionContent = {
     enable_lightbox: boolean;
 };
 
+// Events are backend-driven (the `events` table): the section only carries the
+// wording around the list and how many entries to show.
+export type EventsSectionContent = {
+    heading: string;
+    description: string;
+    items_per_page: number;
+};
+
 export type StatsSectionContent = {
     heading: string;
     stats: Array<{
@@ -184,6 +200,48 @@ export type CTASectionContent = {
     button_style: 'primary' | 'secondary';
     background_image_url: string | null;
     background_color: string;
+};
+
+// A single standalone image — flyers, posters, decorative banners. `max_width` is a
+// named size the renderer maps onto its own layout scale, not a pixel value.
+export type ImageSectionContent = {
+    image_url: string | null;
+    alt_text: string;
+    caption: string;
+    max_width: 'full' | 'container' | 'narrow';
+    background_color: string;
+};
+
+export type LinkListItem = {
+    label: string;
+    url: string;   // https:, mailto: and tel: are all valid here
+    icon: string;  // bootstrap icon class, e.g. "bi-envelope"
+    style: 'primary' | 'secondary' | 'outline';
+};
+
+export type LinkListSectionContent = {
+    heading: string;
+    description: string;
+    links: LinkListItem[];
+    layout: 'stack' | 'inline' | 'grid';
+    background_color: string;
+};
+
+export type CarouselSlide = {
+    image_url: string;
+    title: string;
+    caption: string;
+    link_url: string;
+    link_text: string;
+};
+
+export type CarouselSectionContent = {
+    slides: CarouselSlide[];
+    autoplay: boolean;
+    interval_ms: number;
+    show_arrows: boolean;
+    show_dots: boolean;
+    height: 'short' | 'medium' | 'tall';
 };
 
 // Section Type Info (for admin panel)
