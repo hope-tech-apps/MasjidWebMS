@@ -6,6 +6,7 @@ use App\Mail\AssistantFeatureRequestMail;
 use App\Models\Announcement;
 use App\Models\AssistantFeatureRequest;
 use App\Models\Event;
+use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\ThemeSetting;
 use App\Models\User;
@@ -14,7 +15,9 @@ use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 /**
  * The capabilities the Masjid Assistant can actually perform, and the rules that
@@ -160,6 +163,8 @@ class ToolRegistry
             $this->createEvent(),
             $this->updateEvent(),
             $this->updateTheme(),
+            $this->listIqamaTimes(),
+            $this->setIqamaSchedule(),
             $this->requestFeature(),
         ];
 
@@ -617,6 +622,304 @@ class ToolRegistry
                 ];
             },
         );
+    }
+
+    // ---------------------------------------------------------------- iqama times
+
+    private function listIqamaTimes(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'list_iqama_times',
+            description: <<<'TXT'
+            Show the masjid's current iqama (jama'ah) times — how they are calculated, and every
+            fixed time already scheduled. ALWAYS call this before set_iqama_schedule, so you can
+            tell the admin what is currently set and avoid re-entering something that is already
+            there. Also the right tool when an admin simply asks "what time is Asr iqama".
+            Adhan times are NOT set here — they are calculated from the masjid's location.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'month' => [
+                        'type' => 'string',
+                        'description' => 'Optional YYYY-MM to list only that month, e.g. "2026-08". Omit for everything.',
+                    ],
+                ],
+            ],
+            handler: function (array $in, Masjid $masjid, User $user): array {
+                $setting = IqamaTimeSetting::where('masjid_id', $masjid->id)->first();
+
+                if (! $setting) {
+                    return ['ok' => false, 'error' => 'This masjid has no iqama settings yet. Set them up on the Iqama Times screen first.'];
+                }
+
+                $q = $setting->timeRanges()->orderByRaw(
+                    "FIELD(salah,'fajr','dhuhr','asr','maghrib','isha'), start_date"
+                );
+
+                if (! empty($in['month']) && preg_match('/^\d{4}-\d{2}$/', $in['month'])) {
+                    $start = $in['month'] . '-01';
+                    $end = date('Y-m-t', strtotime($start));
+                    // Any range that OVERLAPS the month, not just one starting inside it —
+                    // a range spanning a month boundary still governs days in this month.
+                    $q->where('start_date', '<=', $end)->where('end_date', '>=', $start);
+                }
+
+                $ranges = $q->get()->map(fn ($r) => [
+                    'salah' => $r->salah,
+                    'from' => substr((string) $r->start_date, 0, 10),
+                    'to' => substr((string) $r->end_date, 0, 10),
+                    'time' => substr((string) $r->specific_time, 0, 5),
+                ])->all();
+
+                return [
+                    'ok' => true,
+                    'mode' => $setting->iqama_type instanceof \BackedEnum
+                        ? $setting->iqama_type->value
+                        : (string) $setting->iqama_type,
+                    'mode_explained' => ($setting->iqama_type instanceof \BackedEnum ? $setting->iqama_type->value : $setting->iqama_type) === 'specific_time_ranges'
+                        ? 'Fixed clock times from the schedule below. Any prayer with no range for a date falls back to the minutes-after-adhan offsets.'
+                        : 'Every iqama is calculated as N minutes after the adhan. Fixed times below are stored but NOT in use until the mode changes.',
+                    'offsets_minutes_after_adhan' => [
+                        'fajr' => (int) $setting->fajr,
+                        'dhuhr' => (int) $setting->dhuhr,
+                        'asr' => (int) $setting->asr,
+                        'maghrib' => (int) $setting->maghrib,
+                        'isha' => (int) $setting->isha,
+                    ],
+                    'shown_to_congregation' => (bool) $setting->show_iqama_times,
+                    'fixed_times' => $ranges,
+                ];
+            },
+        );
+    }
+
+    private function setIqamaSchedule(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'set_iqama_schedule',
+            description: <<<'TXT'
+            Set fixed iqama (jama'ah) times for date ranges — this is how a masjid publishes its
+            monthly prayer schedule. Send every line of the schedule in one call.
+
+            Each entry is one prayer over one date range at one clock time, exactly as printed on
+            the masjid's schedule, e.g. Fajr from 2026-08-01 to 2026-08-05 at 05:30.
+
+            IMPORTANT — read these before calling:
+            * This sets IQAMA (jama'ah) only. Adhan times are calculated from the masjid's
+              location and cannot be set here. If the admin is reading a sheet with two columns,
+              the one you want is the later time (often labelled Salat, Iqama or Jama'ah).
+            * An entry REPLACES that prayer's time only on the days it covers. Correcting one
+              week does not disturb the rest of the month, so a spot fix is safe.
+            * Call list_iqama_times first, and read the resulting schedule back to the admin for
+              confirmation before you call this. It changes what the whole congregation sees.
+            * Jumu'ah is configured separately and is not handled by this tool.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'entries' => [
+                        'type' => 'array',
+                        'description' => 'Every prayer/date-range/time line to set.',
+                        'items' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'salah' => [
+                                    'type' => 'string',
+                                    'enum' => ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'],
+                                ],
+                                'start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD, first day this time applies.'],
+                                'end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD, last day. Same as start_date for a single day.'],
+                                'time' => [
+                                    'type' => 'string',
+                                    'description' => 'The iqama time. 24-hour "17:30" is safest; "5:30 PM" is also accepted.',
+                                ],
+                            ],
+                            'required' => ['salah', 'start_date', 'end_date', 'time'],
+                        ],
+                    ],
+                ],
+                'required' => ['entries'],
+            ],
+            writes: true,
+            handler: function (array $in, Masjid $masjid, User $user): array {
+                $v = Validator::make($in, [
+                    'entries' => ['required', 'array', 'min:1', 'max:200'],
+                    'entries.*.salah' => ['required', 'string', Rule::in(['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'])],
+                    'entries.*.start_date' => ['required', 'date_format:Y-m-d'],
+                    'entries.*.end_date' => ['required', 'date_format:Y-m-d'],
+                    'entries.*.time' => ['required', 'string', 'max:16'],
+                ]);
+
+                if ($v->fails()) {
+                    return ['ok' => false, 'error' => 'Invalid values: ' . $v->errors()->first()];
+                }
+
+                $setting = IqamaTimeSetting::where('masjid_id', $masjid->id)->first();
+
+                if (! $setting) {
+                    return ['ok' => false, 'error' => 'This masjid has no iqama settings yet. Create them on the Iqama Times screen first, then I can keep them updated.'];
+                }
+
+                // Normalise and check each line BEFORE writing anything: a schedule that
+                // half-applied would leave the congregation with a mix of two months.
+                $clean = [];
+                foreach ($v->validated()['entries'] as $i => $e) {
+                    $line = $i + 1;
+
+                    $time = $this->normaliseClockTime($e['time']);
+                    if ($time === null) {
+                        return ['ok' => false, 'error' => "I could not read the time \"{$e['time']}\" on line {$line}. Give it as 17:30 or 5:30 PM."];
+                    }
+
+                    if ($e['end_date'] < $e['start_date']) {
+                        return ['ok' => false, 'error' => "On line {$line} the end date ({$e['end_date']}) is before the start date ({$e['start_date']})."];
+                    }
+
+                    $clean[] = [
+                        'salah' => $e['salah'],
+                        'start_date' => $e['start_date'],
+                        'end_date' => $e['end_date'],
+                        'specific_time' => $time . ':00',
+                    ];
+                }
+
+                $wasMode = $setting->iqama_type instanceof \BackedEnum
+                    ? $setting->iqama_type->value
+                    : (string) $setting->iqama_type;
+
+                DB::transaction(function () use ($setting, $clean, $wasMode) {
+                    $now = now();
+
+                    foreach ($clean as $row) {
+                        // Two ranges covering one day for one prayer would make the resolved
+                        // iqama depend on row order, so overlaps have to go. But DELETING an
+                        // overlapping range takes its non-overlapping days with it: correcting
+                        // Asr for the 5th–15th would silently blank the 1st–4th and 16th–30th,
+                        // dropping those days back to the offset without saying so. So trim
+                        // the neighbour instead, and only delete what the new range fully covers.
+                        $overlapping = $setting->timeRanges()
+                            ->where('salah', $row['salah'])
+                            ->where('start_date', '<=', $row['end_date'])
+                            ->where('end_date', '>=', $row['start_date'])
+                            ->get();
+
+                        foreach ($overlapping as $old) {
+                            $oldStart = substr((string) $old->start_date, 0, 10);
+                            $oldEnd = substr((string) $old->end_date, 0, 10);
+
+                            $keepBefore = $oldStart < $row['start_date'];
+                            $keepAfter = $oldEnd > $row['end_date'];
+
+                            if ($keepBefore) {
+                                DB::table('iqama_time_ranges')->insert([
+                                    'iqama_time_setting_id' => $setting->id,
+                                    'salah' => $old->salah,
+                                    'start_date' => $oldStart,
+                                    'end_date' => date('Y-m-d', strtotime($row['start_date'] . ' -1 day')),
+                                    'specific_time' => $old->specific_time,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
+                                ]);
+                            }
+
+                            if ($keepAfter) {
+                                DB::table('iqama_time_ranges')->insert([
+                                    'iqama_time_setting_id' => $setting->id,
+                                    'salah' => $old->salah,
+                                    'start_date' => date('Y-m-d', strtotime($row['end_date'] . ' +1 day')),
+                                    'end_date' => $oldEnd,
+                                    'specific_time' => $old->specific_time,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
+                                ]);
+                            }
+
+                            DB::table('iqama_time_ranges')->where('id', $old->id)->delete();
+                        }
+                    }
+
+                    DB::table('iqama_time_ranges')->insert(array_map(
+                        fn ($r) => $r + [
+                            'iqama_time_setting_id' => $setting->id,
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ],
+                        $clean
+                    ));
+
+                    // Fixed times are INERT while the masjid is on minutes-after-adhan.
+                    // Saving a schedule that then does nothing is the worst outcome here —
+                    // it looks like it worked. Switch the mode so what was entered is what
+                    // the congregation actually sees.
+                    if ($wasMode !== 'specific_time_ranges') {
+                        $setting->iqama_type = 'specific_time_ranges';
+                        $setting->save();
+                    }
+                });
+
+                MobileCache::flushMasjid((int) $masjid->id, MobileCache::PRAYERS_SETTINGS);
+
+                $summary = collect($clean)
+                    ->map(fn ($r) => sprintf(
+                        '%s %s to %s at %s',
+                        ucfirst($r['salah']),
+                        $r['start_date'],
+                        $r['end_date'],
+                        substr($r['specific_time'], 0, 5)
+                    ))
+                    ->all();
+
+                return [
+                    'ok' => true,
+                    'saved' => count($clean),
+                    'schedule' => $summary,
+                    'switched_to_fixed_times' => $wasMode !== 'specific_time_ranges',
+                    'message' => $wasMode !== 'specific_time_ranges'
+                        ? 'Saved. This masjid was calculating iqama as minutes after the adhan, so I also switched it to use fixed times — otherwise the schedule would have been stored but ignored.'
+                        : 'Saved. The apps and website will show these within a few minutes.',
+                ];
+            },
+        );
+    }
+
+    /**
+     * Accept what an admin would actually say and return "HH:MM", or null.
+     *
+     * The model is transcribing a printed sheet, so it may pass "5:30 PM", "5:30PM",
+     * "17:30" or "5:30" — the last being genuinely ambiguous. Rather than guess at
+     * a bare "5:30" for Asr and publish a 5:30 AM jama'ah, anything without a
+     * meridiem is read as 24-hour, which is what the schema asks for.
+     */
+    private function normaliseClockTime(string $raw): ?string
+    {
+        $s = strtoupper(trim($raw));
+        $s = preg_replace('/\s+/', '', $s) ?? $s;
+
+        if (preg_match('/^(\d{1,2}):(\d{2})(AM|PM)$/', $s, $m)) {
+            $h = (int) $m[1];
+            $min = (int) $m[2];
+            if ($h < 1 || $h > 12 || $min > 59) {
+                return null;
+            }
+            if ($m[3] === 'PM' && $h !== 12) {
+                $h += 12;
+            }
+            if ($m[3] === 'AM' && $h === 12) {
+                $h = 0;
+            }
+
+            return sprintf('%02d:%02d', $h, $min);
+        }
+
+        if (preg_match('/^(\d{1,2}):(\d{2})$/', $s, $m)) {
+            $h = (int) $m[1];
+            $min = (int) $m[2];
+
+            return ($h > 23 || $min > 59) ? null : sprintf('%02d:%02d', $h, $min);
+        }
+
+        return null;
     }
 
     /**
