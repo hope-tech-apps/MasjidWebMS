@@ -709,8 +709,8 @@ class ToolRegistry
             * This sets IQAMA (jama'ah) only. Adhan times are calculated from the masjid's
               location and cannot be set here. If the admin is reading a sheet with two columns,
               the one you want is the later time (often labelled Salat, Iqama or Jama'ah).
-            * Entering a range REPLACES any existing time for that same prayer over the days it
-              covers, so re-sending a corrected line fixes it rather than duplicating it.
+            * An entry REPLACES that prayer's time only on the days it covers. Correcting one
+              week does not disturb the rest of the month, so a spot fix is safe.
             * Call list_iqama_times first, and read the resulting schedule back to the admin for
               confirmation before you call this. It changes what the whole congregation sees.
             * Jumu'ah is configured separately and is not handled by this tool.
@@ -789,18 +789,56 @@ class ToolRegistry
                     : (string) $setting->iqama_type;
 
                 DB::transaction(function () use ($setting, $clean, $wasMode) {
+                    $now = now();
+
                     foreach ($clean as $row) {
-                        // Replace, don't stack. Two ranges covering one day for one prayer
-                        // makes the resolved iqama depend on row order — which is not a
-                        // thing anyone should have to reason about.
-                        $setting->timeRanges()
+                        // Two ranges covering one day for one prayer would make the resolved
+                        // iqama depend on row order, so overlaps have to go. But DELETING an
+                        // overlapping range takes its non-overlapping days with it: correcting
+                        // Asr for the 5th–15th would silently blank the 1st–4th and 16th–30th,
+                        // dropping those days back to the offset without saying so. So trim
+                        // the neighbour instead, and only delete what the new range fully covers.
+                        $overlapping = $setting->timeRanges()
                             ->where('salah', $row['salah'])
                             ->where('start_date', '<=', $row['end_date'])
                             ->where('end_date', '>=', $row['start_date'])
-                            ->delete();
+                            ->get();
+
+                        foreach ($overlapping as $old) {
+                            $oldStart = substr((string) $old->start_date, 0, 10);
+                            $oldEnd = substr((string) $old->end_date, 0, 10);
+
+                            $keepBefore = $oldStart < $row['start_date'];
+                            $keepAfter = $oldEnd > $row['end_date'];
+
+                            if ($keepBefore) {
+                                DB::table('iqama_time_ranges')->insert([
+                                    'iqama_time_setting_id' => $setting->id,
+                                    'salah' => $old->salah,
+                                    'start_date' => $oldStart,
+                                    'end_date' => date('Y-m-d', strtotime($row['start_date'] . ' -1 day')),
+                                    'specific_time' => $old->specific_time,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
+                                ]);
+                            }
+
+                            if ($keepAfter) {
+                                DB::table('iqama_time_ranges')->insert([
+                                    'iqama_time_setting_id' => $setting->id,
+                                    'salah' => $old->salah,
+                                    'start_date' => date('Y-m-d', strtotime($row['end_date'] . ' +1 day')),
+                                    'end_date' => $oldEnd,
+                                    'specific_time' => $old->specific_time,
+                                    'created_at' => $now,
+                                    'updated_at' => $now,
+                                ]);
+                            }
+
+                            DB::table('iqama_time_ranges')->where('id', $old->id)->delete();
+                        }
                     }
 
-                    $now = now();
                     DB::table('iqama_time_ranges')->insert(array_map(
                         fn ($r) => $r + [
                             'iqama_time_setting_id' => $setting->id,
