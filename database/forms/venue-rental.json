@@ -1,0 +1,173 @@
+{
+  "$comment": "Burlington Masjid venue rental request. Import with: php artisan form:import 1 database/forms/venue-rental.json",
+  "slug": "venue-rental",
+  "name": "Venue Rental Request",
+  "description": "Request the tent or the cafeteria for a private or community event.",
+  "is_active": true,
+  "schema": {
+    "sections": [
+      {
+        "id": "requester",
+        "title": "Your Information",
+        "fields": [
+          { "name": "firstName", "label": "First name", "type": "text", "required": true },
+          { "name": "lastName", "label": "Last name", "type": "text", "required": true },
+          { "name": "email", "label": "Email address", "type": "email", "required": true },
+          { "name": "phone", "label": "Phone number", "type": "tel", "required": true },
+          { "name": "address", "label": "Home address", "type": "text", "required": true },
+          { "name": "organization", "label": "Organisation, if you are booking on behalf of one", "type": "text" }
+        ]
+      },
+      {
+        "id": "space",
+        "title": "Which Space",
+        "fields": [
+          {
+            "name": "venue",
+            "label": "What would you like to rent?",
+            "type": "radio",
+            "required": true,
+            "options": [
+              { "value": "tent", "label": "The tent" },
+              { "value": "cafeteria", "label": "The cafeteria" },
+              { "value": "both", "label": "Both the tent and the cafeteria" },
+              { "value": "unsure", "label": "Not sure yet — please advise" }
+            ]
+          },
+          {
+            "name": "eventType",
+            "label": "What is the occasion?",
+            "type": "select",
+            "required": true,
+            "options": [
+              { "value": "nikah", "label": "Nikah" },
+              { "value": "walima", "label": "Walima" },
+              { "value": "aqiqah", "label": "Aqiqah" },
+              { "value": "janazah", "label": "Janazah gathering" },
+              { "value": "graduation", "label": "Graduation or academic celebration" },
+              { "value": "community", "label": "Community gathering or dinner" },
+              { "value": "lecture", "label": "Lecture, class or seminar" },
+              { "value": "youth", "label": "Youth programme" },
+              { "value": "other", "label": "Something else — described below" }
+            ]
+          },
+          { "name": "eventDate", "label": "Date you would like", "type": "date", "required": true },
+          { "name": "startTime", "label": "Start time", "type": "text", "required": true, "placeholder": "e.g. 6:00 PM" },
+          { "name": "endTime", "label": "End time", "type": "text", "required": true, "placeholder": "e.g. 10:00 PM" },
+          { "name": "attendance", "label": "Roughly how many people?", "type": "number", "required": true, "min": 1, "max": 1000 },
+          {
+            "name": "setupTime",
+            "label": "How much setup time do you need before the start?",
+            "type": "select",
+            "options": [
+              { "value": "none", "label": "None" },
+              { "value": "1h", "label": "About an hour" },
+              { "value": "2h", "label": "About two hours" },
+              { "value": "halfday", "label": "Half a day or more" }
+            ]
+          },
+          {
+            "name": "food",
+            "label": "Will food be served?",
+            "type": "radio",
+            "required": true,
+            "options": [
+              { "value": "outside_caterer", "label": "Yes — an outside caterer" },
+              { "value": "self", "label": "Yes — brought in by us" },
+              { "value": "none", "label": "No food" }
+            ]
+          },
+          { "name": "setupNotes", "label": "Tables, chairs, or anything else you need from the masjid", "type": "textarea" }
+        ]
+      },
+      {
+        "id": "rules",
+        "title": "House Rules",
+        "fields": [
+          {
+            "name": "rulesAgreement",
+            "label": "I have read the rules above and I accept them on behalf of everyone attending my event.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "noSmokingAgreement",
+            "label": "I understand that smoking of any kind — cigarettes, vapes, e-cigarettes, hookah — is not permitted anywhere on masjid property, indoors or outdoors.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "noMusicAgreement",
+            "label": "I understand there is to be no music and no dancing on masjid property.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "prayerAgreement",
+            "label": "I understand the masjid remains open for prayer during my event, and that my event must pause and stay quiet during the adhan and salah.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "depositAgreement",
+            "label": "I understand a cleaning deposit is required before the event, that it is returned after the space is inspected, and that any damage to masjid property will be charged to me — including any amount beyond the deposit.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "cleanupAgreement",
+            "label": "I will leave the space as I found it — rubbish bagged and removed, tables and chairs returned, decorations taken down — by the end time above.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "notConfirmedAgreement",
+            "label": "I understand this is a request, not a confirmed booking, and that nothing is reserved until the masjid replies and the deposit is paid.",
+            "type": "checkbox",
+            "required": true
+          },
+          { "name": "responsibleName", "label": "Full name of the person responsible on the day", "type": "text", "required": true },
+          { "name": "responsiblePhone", "label": "Their phone number, if different from above", "type": "tel" }
+        ]
+      },
+      {
+        "id": "extras",
+        "title": "Anything Else",
+        "fields": [
+          { "name": "notes", "label": "Anything else we should know?", "type": "textarea" },
+          {
+            "name": "heardFrom",
+            "label": "How did you hear that the masjid rents its spaces?",
+            "type": "select",
+            "options": [
+              { "value": "member", "label": "I attend the masjid" },
+              { "value": "friend", "label": "Friend or family" },
+              { "value": "website", "label": "The website" },
+              { "value": "social", "label": "Social media" },
+              { "value": "other", "label": "Somewhere else" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "settings": {
+    "submitButtonLabel": "Send Rental Request",
+    "intro": "<p>Burlington Masjid makes the <strong>tent</strong> and the <strong>cafeteria</strong> available to rent for nikahs, walimas, aqiqahs, community dinners, lectures and similar gatherings. Tell us what you need below and a member of the team will get back to you about availability and cost.</p><p><strong>A cleaning deposit is required for every booking.</strong> It is paid before the event and returned after the space has been inspected and found clean and undamaged. Any damage to masjid property is charged to the person named on this form, including any amount beyond the deposit.</p><h3>Rules for using the space</h3><p>These apply to you and to everyone you invite. Please read them before you agree below — they are what makes the masjid available to everybody.</p><ul><li><strong>No music and no dancing</strong> anywhere on masjid property.</li><li><strong>No smoking of any kind</strong> — cigarettes, vapes, e-cigarettes and hookah are all included, indoors and outdoors.</li><li><strong>No alcohol, and all food must be halal.</strong> This applies to outside caterers too.</li><li><strong>The masjid stays open for prayer.</strong> Your event pauses and stays quiet during the adhan and the salah.</li><li><strong>Modest dress and Islamic etiquette</strong> are expected of everyone attending.</li><li><strong>Children must be supervised</strong> at all times and are not to be left to roam the building.</li><li><strong>Only the space you booked.</strong> The prayer hall, offices, classrooms and any other area stay off limits unless staff say otherwise.</li><li><strong>Nothing that marks the walls.</strong> No nails, screws, tape or adhesive on walls, doors or ceilings. Ask us first about decorations.</li><li><strong>No open flame</strong> — candles, sparklers, cooking flames and similar are not permitted indoors.</li><li><strong>Leave it as you found it.</strong> Rubbish bagged and removed, tables and chairs returned, decorations taken down, by the end time you booked.</li><li><strong>Finish on time.</strong> Overrunning may reduce the deposit returned to you.</li><li><strong>You are responsible for your guests,</strong> including any damage or injury caused by them.</li><li><strong>The masjid is not responsible</strong> for personal belongings that are lost, damaged or stolen during your event.</li></ul><p>The masjid may decline a request, or end an event in progress, if these rules are not being kept.</p>",
+    "successTitle": "Jazak Allahu Khairan — we have your request",
+    "successBody": "Your venue rental request has been received. A member of the Burlington Masjid team will contact you about availability, the rental cost and the cleaning deposit. Nothing is reserved until you hear back from us and the deposit has been paid.",
+    "successNextSteps": [
+      "Watch your email for a reply from the masjid — check your spam folder too.",
+      "Have your cleaning deposit ready; the booking is confirmed once it is paid.",
+      "Let us know as early as possible if your date or numbers change."
+    ],
+    "paymentNote": "A cleaning deposit is required before your event and is returned after the space is inspected. Any damage to masjid property is charged to the person named on this request, including any amount beyond the deposit. The rental cost and deposit amount will be confirmed by the masjid when they reply.",
+    "identity": {
+      "name": ["firstName", "lastName"],
+      "email": "email",
+      "phone": "phone"
+    },
+    "notifyEmails": ["burlington.masjid@gmail.com"],
+    "confirmationEmail": true
+  }
+}
