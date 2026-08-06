@@ -1,0 +1,136 @@
+<!--
+  Event archetype: PHOTO — the masjid building or a group shot behind the title.
+
+  Not measured. The load-bearing part is the scrim: the photo is user-supplied
+  and can be any brightness, so white type over it can never be checked the way
+  palette.js checks ink against a known ground. A fixed dark gradient under the
+  text block is what makes the type legible on a bright sky as well as a dim
+  interior — it is the contrast guarantee for this archetype, not decoration.
+-->
+<style>
+.flyer-photo,
+.flyer-photo *,
+.flyer-photo *::before,
+.flyer-photo *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+.flyer-photo {
+    position: relative;
+    width: 1200px;
+    height: 1600px;
+    overflow: hidden;
+    font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    font-kerning: normal;
+    text-rendering: geometricPrecision;
+    background: var(--flyer-field, #2E4258);
+    color: #FFFFFF;
+}
+
+.flyer-photo .backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.flyer-photo .scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg,
+            rgba(0, 0, 0, 0.42) 0%,
+            rgba(0, 0, 0, 0.10) 26%,
+            rgba(0, 0, 0, 0.10) 40%,
+            rgba(0, 0, 0, 0.72) 72%,
+            rgba(0, 0, 0, 0.92) 100%);
+}
+
+.flyer-photo .content {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 6%;
+}
+
+.flyer-photo .logo {
+    height: 84px;
+    align-self: flex-start;
+    object-fit: contain;
+}
+
+.flyer-photo .block {
+    margin-top: auto;
+}
+
+.flyer-photo .kicker {
+    font-size: var(--flyer-kicker-size, 32px);
+    line-height: 1.3;
+    font-weight: 500;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--flyer-accent, #7A8CA3);
+    /* The accent is brand-derived and may be mid-tone; a hard shadow keeps it
+       readable over the photo without forcing it to white. */
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.65);
+}
+
+.flyer-photo .title {
+    margin-top: 2.5%;
+    font-size: var(--flyer-title-size, 104px);
+    line-height: 0.98;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    text-shadow: 0 4px 24px rgba(0, 0, 0, 0.55);
+}
+
+.flyer-photo .subtitle {
+    margin-top: 3%;
+    font-size: var(--flyer-subtitle-size, 40px);
+    line-height: 1.3;
+    font-weight: 500;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+
+.flyer-photo .details {
+    margin-top: 4%;
+    font-size: var(--flyer-details-size, 42px);
+    line-height: 1.45;
+    font-weight: 800;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+
+.flyer-photo .cta {
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 5%;
+    padding: 0.16em 0.34em;
+    border-radius: 4px;
+    font-size: var(--flyer-cta-size, 42px);
+    line-height: 1.16;
+    font-weight: 500;
+    background: var(--flyer-bar-bg, #000000);
+    color: var(--flyer-bar-ink, #FFFFFF);
+    text-shadow: none;
+}
+</style>
+
+<div class="flyer flyer-photo" data-template="event-photo" data-canvas="1200x1600">
+    <img class="backdrop" data-slot="photo" src="{{ photo }}" alt="">
+    <div class="scrim"></div>
+
+    <div class="content">
+        <img class="logo" data-slot="logo" data-optional="true" src="{{ logo }}" alt="">
+
+        <div class="block">
+            <p class="kicker" data-slot="kicker" data-optional="true">{{ kicker }}</p>
+            <h1 class="title" data-slot="title">{{ title }}</h1>
+            <p class="subtitle" data-slot="subtitle" data-optional="true">{{ subtitle }}</p>
+            <p class="details" data-slot="details">{{ details }}</p>
+            <p class="cta" data-slot="cta" data-optional="true">{{ cta }}</p>
+        </div>
+    </div>
+</div>

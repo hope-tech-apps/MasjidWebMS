@@ -1,0 +1,152 @@
+<!--
+  Event archetype: BANNER — a big title over a flat colour field, with optional
+  cut-out artwork.
+
+  Unlike food.html this is not a measured template: the ~107 event flyers in the
+  corpus share no grid or type scale, so nothing here can claim to be sampled.
+  What it does inherit are the enforced constants — Montserrat, the palette
+  contract, and the black CTA bar carrying the phone number last. The layout is
+  a flow column rather than pinned bands precisely because there is no measured
+  truth to pin it to; content of varying length must not break it.
+-->
+<style>
+.flyer-banner,
+.flyer-banner *,
+.flyer-banner *::before,
+.flyer-banner *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+.flyer-banner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 1200px;
+    height: 1600px;
+    padding: 5.5% 6%;
+    overflow: hidden;
+    font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    font-kerning: normal;
+    text-rendering: geometricPrecision;
+    background: var(--flyer-field, #2E4258);
+    color: var(--flyer-field-ink, #FFFFFF);
+}
+
+/* The corpus banners nearly all carry some low-contrast surface texture. A 3%
+   diagonal wash gives the flat field the same depth without importing an image. */
+.flyer-banner::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(45deg,
+            rgba(255, 255, 255, 0.03) 0 6px,
+            rgba(255, 255, 255, 0) 6px 18px);
+    pointer-events: none;
+}
+
+.flyer-banner > * {
+    position: relative; /* above the texture */
+}
+
+.flyer-banner .rule {
+    flex: 0 0 auto;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--flyer-accent, #7A8CA3);
+}
+
+.flyer-banner .eyebrow {
+    margin-top: 5%;
+    font-size: var(--flyer-eyebrow-size, 40px);
+    line-height: 1.32;
+    font-weight: 500;
+    text-align: center;
+}
+
+.flyer-banner .title {
+    margin-top: 5%;
+    font-size: var(--flyer-title-size, 124px);
+    line-height: 0.94;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+}
+
+/* The artwork absorbs whatever vertical slack the text leaves, so a two-line
+   and a four-line title both produce a balanced flyer. */
+.flyer-banner .art {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-height: 0;
+    padding: 3% 0;
+}
+
+.flyer-banner .art img {
+    display: block;
+    max-width: 78%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+/* 800, not 700: index.json declares the face at 400/500/800/900 and the venue is
+   the same secondary-emphasis line the other archetypes set in 800. */
+.flyer-banner .venue {
+    font-size: var(--flyer-venue-size, 48px);
+    line-height: 1.24;
+    font-weight: 800;
+}
+
+.flyer-banner .details {
+    margin-top: 4%;
+    font-size: var(--flyer-details-size, 38px);
+    line-height: 1.7;
+    font-weight: 500;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+}
+
+.flyer-banner .foot {
+    margin-top: auto;
+    padding-top: 5%;
+}
+
+/* Same CTA treatment as the food template: white on solid black, weight 500,
+   the phone number, last. It is the one element every flyer kind shares. */
+.flyer-banner .cta {
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 4%;
+    padding: 0.16em 0.34em;
+    border-radius: 4px;
+    font-size: var(--flyer-cta-size, 44px);
+    line-height: 1.16;
+    font-weight: 500;
+    background: var(--flyer-bar-bg, #000000);
+    color: var(--flyer-bar-ink, #FFFFFF);
+}
+</style>
+
+<div class="flyer flyer-banner" data-template="event-banner" data-canvas="1200x1600">
+    <div class="rule"></div>
+
+    <p class="eyebrow" data-slot="eyebrow" data-optional="true">{{ eyebrow }}</p>
+
+    <h1 class="title" data-slot="title">{{ title }}</h1>
+
+    <div class="art" data-slot="art" data-optional="true">
+        <img src="{{ art }}" alt="">
+    </div>
+
+    <p class="venue" data-slot="venue">{{ venue }}</p>
+
+    <p class="details" data-slot="details">{{ details }}</p>
+
+    <div class="foot">
+        <div class="rule"></div>
+        <p class="cta" data-slot="cta" data-optional="true">{{ cta }}</p>
+    </div>
+</div>

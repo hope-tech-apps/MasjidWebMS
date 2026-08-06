@@ -26,6 +26,8 @@ export type MasjidDashboardRoute =
     '/masjid/donation' |
     '/masjid/about' |
     '/masjid/gallery' |
+    '/masjid/flyers' |
+    '/masjid/donations/dashboard' |
     '/hadith' |
     `/hadith/${number}` |
     '/masjid/mobile-features' |

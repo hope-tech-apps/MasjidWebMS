@@ -6,10 +6,13 @@ use App\Mail\AssistantFeatureRequestMail;
 use App\Models\Announcement;
 use App\Models\AssistantFeatureRequest;
 use App\Models\Event;
+use App\Models\Flyer;
+use App\Models\FlyerTemplate;
 use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\ThemeSetting;
 use App\Models\User;
+use App\Services\Assistant\Tools\FlyerContent;
 use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -165,6 +168,9 @@ class ToolRegistry
             $this->updateTheme(),
             $this->listIqamaTimes(),
             $this->setIqamaSchedule(),
+            $this->listFlyerTemplates(),
+            $this->draftFlyer(),
+            $this->listFlyers(),
             $this->requestFeature(),
         ];
 
@@ -920,6 +926,296 @@ class ToolRegistry
         }
 
         return null;
+    }
+
+    // ---------------------------------------------------------------- flyers
+
+    /*
+     * Flyer and FlyerTemplate both carry BelongsToMasjid, so the queries below are
+     * already tenant-filtered and must NOT be hand-scoped (.claude/rules/tenant-scoping.md).
+     * The assistant route is /masjids/{masjid_id}/assistant/chat, so `tenant` has bound
+     * the context for a MasjidAdmin and a SuperAdmin alike by the time a handler runs.
+     * FlyerTemplate widens that scope to "shared OR mine" — see its booted().
+     */
+
+    private function listFlyerTemplates(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'list_flyer_templates',
+            description: <<<'TXT'
+            List the flyer designs this masjid can use, what each one is for, and every slot it
+            needs filled. ALWAYS call this before draft_flyer: the slot names, their length
+            limits, and the palettes on offer all come from here.
+
+            You write WORDS ONLY. The design owns every pixel — layout, colours, fonts, sizes,
+            and where each line sits. Never choose those, never describe them, and never offer to
+            move, resize or recolour anything; the design and the Studio own that.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'kind' => [
+                        'type' => 'string',
+                        'enum' => ['food', 'event', 'janazah'],
+                        'description' => 'Optional filter. Omit to see everything.',
+                    ],
+                ],
+                'required' => [],
+            ],
+            handler: function (array $in, Masjid $masjid): array {
+                $kind = isset($in['kind']) && is_string($in['kind'])
+                    ? strtolower(trim($in['kind']))
+                    : null;
+
+                if ($kind !== null && ! in_array($kind, FlyerTemplate::KINDS, true)) {
+                    return ['ok' => false, 'error' => 'There is no such kind of flyer. The kinds are: ' . implode(', ', FlyerTemplate::KINDS) . '.'];
+                }
+
+                $query = FlyerTemplate::active()->orderBy('kind')->orderBy('name');
+
+                if ($kind !== null) {
+                    $query->ofKind($kind);
+                }
+
+                $templates = $query->get();
+
+                if ($templates->isEmpty()) {
+                    return ['ok' => false, 'error' => $kind !== null
+                        ? "There are no {$kind} designs available to this masjid."
+                        : 'No flyer designs are installed yet. Tell the admin, and use request_feature so Hope Tech can set them up.'];
+                }
+
+                return [
+                    'ok' => true,
+                    'templates' => $templates->map(fn (FlyerTemplate $t) => FlyerContent::describe($t))->all(),
+                    'palettes' => FlyerContent::palettesFor($masjid),
+                    'palette_rule' => 'Ask which colours this masjid wants, or pass "theme" to use their own brand colours. Never assume one — a palette is a masjid\'s identity, and only the palettes listed here may be offered to this masjid.',
+                    // A suggestion to put to the admin, never an answer. A masjid commonly runs
+                    // more than one line (orders on one, events on another), and the number on
+                    // file is only ever one of them.
+                    'contact_number_on_file' => $masjid->phone ?: null,
+                    'contact_rule' => 'Offer the number on file as a suggestion only. Masjids often run separate lines — a food-order number and an events/RSVP number — so ask which belongs on THIS flyer, and never copy one off a past flyer.',
+                    'rules' => [
+                        'You write words. The design owns layout, colour, font, size and position.',
+                        'Dates read the way these flyers read: "Friday (May 15th), After Juma\'a Prayer". Never "2026-05-15", never "5/15".',
+                        'A slot marked ask_the_admin_every_time is asked every single time, on every flyer. Never reuse an earlier answer.',
+                        'A suggested_value is wording to read back to the admin for approval — never something to apply on your own.',
+                        'Photos and logos are added by the admin in Flyer Studio. You cannot attach one, even if they attached a picture to the chat.',
+                        'draft_flyer saves a draft and stops there. Nothing is posted, published or sent.',
+                    ],
+                ];
+            },
+        );
+    }
+
+    private function draftFlyer(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'draft_flyer',
+            description: <<<'TXT'
+            Fill a design's slots with the words the admin gave you and save it as a DRAFT. Call
+            list_flyer_templates first; the slot names and limits come from there.
+
+            Nothing is posted, published, printed or sent by this tool. The draft opens in Flyer
+            Studio, where the admin adds any photo and exports the image. Drafting is the end of
+            your job — say so, and give them the link it returns.
+
+            You supply words only. The design owns layout, colour, font, size and position: do not
+            choose them, do not describe them, do not promise to change them.
+
+            Three things you MUST ask the admin before calling this. Never assume one, never carry
+            it forward from an earlier flyer, and never read it off a past flyer:
+              * THE PHONE NUMBER. A masjid's food-order line and its events/RSVP line are
+                different numbers. Ask which one belongs on this flyer.
+              * THE PALETTE. Ask which colours, or pass "theme" for the masjid's own brand
+                colours. One masjid's brand is never used on another's flyer.
+              * THE DISCLAIMER — where the money goes. It is deliberately different on every
+                flyer: masjid operations, youth activities, a named relief cause. Ask each time.
+
+            A janazah notice is stricter still: every detail comes from the family, exactly as they
+            gave it. Do not supply a single missing field — not a name, not a time, not a cemetery.
+            Ask, and read the whole draft back before it is used.
+
+            If anything required is missing, this tool refuses and tells you what to ask for.
+            Ask the admin. Do not invent it.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'template_key' => [
+                        'type' => 'string',
+                        'description' => 'The design key from list_flyer_templates, e.g. "food".',
+                    ],
+                    'title' => [
+                        'type' => 'string',
+                        'description' => "A name for this draft in the admin's flyer list. Not printed on the flyer.",
+                    ],
+                    'content' => [
+                        'type' => 'object',
+                        'description' => 'Slot name => value, using the slot names from list_flyer_templates. A list slot (event-bulletin\'s "sessions") takes an array of row objects. Leave image slots out — the admin adds those in the Studio.',
+                        'additionalProperties' => true,
+                    ],
+                    'palette' => [
+                        'type' => 'string',
+                        'description' => 'A palette key from list_flyer_templates, or "theme" for the masjid\'s own brand colours. Ask the admin — there is no safe default.',
+                    ],
+                ],
+                'required' => ['template_key', 'title', 'content', 'palette'],
+            ],
+            writes: true,
+            handler: function (array $in, Masjid $masjid, User $user): array {
+                $v = Validator::make($in, [
+                    'template_key' => ['required', 'string', 'max:120'],
+                    'title' => ['required', 'string', 'max:255'],
+                    // `present`, not `required`: an empty content object is a real case —
+                    // the model calling before it has asked anything — and FlyerContent
+                    // answers it with the list of questions to put to the admin, which is
+                    // far more use than "the content field is required".
+                    'content' => ['present', 'array'],
+                    'palette' => ['required', 'string', 'max:60'],
+                ]);
+
+                if ($v->fails()) {
+                    return ['ok' => false, 'error' => 'Invalid values: ' . $v->errors()->first()];
+                }
+
+                $data = $v->validated();
+
+                $template = FlyerTemplate::active()->where('key', $data['template_key'])->first();
+
+                if (! $template) {
+                    $keys = FlyerTemplate::active()->orderBy('kind')->pluck('key')->all();
+
+                    return ['ok' => false, 'error' => $keys === []
+                        ? 'No flyer designs are installed for this masjid yet. Use request_feature so Hope Tech can set them up.'
+                        : "There is no flyer design called \"{$data['template_key']}\". The ones available are: " . implode(', ', $keys) . '.'];
+                }
+
+                // Both of these return their own ok=false/error, phrased for the admin —
+                // pass them straight through rather than flattening what was wrong.
+                $checked = FlyerContent::validate($template, $data['content']);
+
+                if (! $checked['ok']) {
+                    return $checked;
+                }
+
+                $palette = FlyerContent::resolvePalette($template, $data['palette'], $masjid);
+
+                if (! $palette['ok']) {
+                    return $palette;
+                }
+
+                // masjid_id is stamped by BelongsToMasjid from the bound tenant and is
+                // deliberately not passed here.
+                $flyer = Flyer::create([
+                    'flyer_template_id' => $template->id,
+                    'title' => $data['title'],
+                    'content' => $checked['content'],
+                    'palette' => $palette['palette'],
+                    'status' => 'draft',
+                    'created_by' => $user->id,
+                ]);
+
+                // No MobileCache flush on purpose: a flyer is an image an admin exports,
+                // not content the apps or the website read.
+
+                return array_filter([
+                    'ok' => true,
+                    'flyer' => [
+                        'id' => $flyer->id,
+                        'title' => $flyer->title,
+                        'design' => $template->name,
+                        'status' => 'draft',
+                        'palette' => $palette['label'],
+                    ],
+                    'open_in_flyer_studio' => $this->flyerStudioUrl((int) $flyer->id),
+                    // Named so the model tells the admin what is still missing rather than
+                    // letting them open a draft with an empty photo band and wonder.
+                    'admin_still_adds_in_studio' => $checked['studio_needs'] ?: null,
+                    'palette_note' => $palette['note'] ?? null,
+                    'published' => false,
+                    // Only what the Studio actually does with this draft: it opens on the
+                    // saved flyer with these words in place, takes a picture, and exports a
+                    // PNG the admin downloads. It does not post, print or send anything,
+                    // and neither does anything else in this product.
+                    'message' => 'Saved as a draft. The link opens this flyer in Flyer Studio with the wording already filled in, where the admin adds any picture and downloads the image. Nothing has been posted, printed or sent.',
+                ], fn ($value) => $value !== null);
+            },
+        );
+    }
+
+    private function listFlyers(): AssistantTool
+    {
+        return new AssistantTool(
+            name: 'list_flyers',
+            description: <<<'TXT'
+            List this masjid's recent flyers — what has been drafted, what has been rendered, and
+            the link to open each one in Flyer Studio. Call this when the admin refers to "the
+            flyer we made", so you talk about the right one instead of drafting a near-duplicate.
+            Editing an existing draft is done in the Studio, not here.
+            TXT,
+            inputSchema: [
+                'type' => 'object',
+                'properties' => [
+                    'limit' => ['type' => 'integer', 'description' => 'How many to return (max 20).'],
+                    'status' => [
+                        'type' => 'string',
+                        'enum' => ['draft', 'rendered'],
+                        'description' => 'Optional filter. Omit for both.',
+                    ],
+                ],
+                'required' => [],
+            ],
+            handler: function (array $in, Masjid $masjid): array {
+                $limit = min(20, max(1, (int) ($in['limit'] ?? 10)));
+
+                $query = Flyer::with('template:id,key,name')->orderByDesc('id')->limit($limit);
+
+                if (isset($in['status'])) {
+                    // Refused rather than ignored: silently dropping the filter would answer
+                    // "which ones are still drafts?" with the whole list.
+                    if (! in_array($in['status'], Flyer::STATUSES, true)) {
+                        return ['ok' => false, 'error' => 'A flyer is either ' . implode(' or ', Flyer::STATUSES) . '.'];
+                    }
+
+                    $query->where('status', $in['status']);
+                }
+
+                $flyers = $query->get()->map(fn (Flyer $f) => array_filter([
+                    'id' => $f->id,
+                    'title' => $f->title,
+                    'design' => $f->template?->name,
+                    'design_key' => $f->template?->key,
+                    'status' => $f->status,
+                    'created' => $f->created_at?->format('Y-m-d'),
+                    // Only worth a line when a cutout was actually asked for; 'none' is the
+                    // resting state for a flyer with no photo and means nothing to an admin.
+                    'background_removal' => $f->cutout_status === 'none' ? null : $f->cutout_status,
+                    'open_in_flyer_studio' => $this->flyerStudioUrl((int) $f->id),
+                ], fn ($value) => $value !== null))->all();
+
+                return ['ok' => true, 'flyers' => $flyers];
+            },
+        );
+    }
+
+    /**
+     * Where an admin opens one saved flyer.
+     *
+     * This path is half of a contract, not a guess. The SPA route `masjid.flyerStudio`
+     * (resources/vue-app/router/routes/dashboardLayoutRoutes.ts, path
+     * `flyers/:flyer_id`) mounts Flyer Studio on an existing draft, and the Studio
+     * loads it with GET /api/admin/masjids/{masjid_id}/flyers/{flyer_id}, which is a
+     * scoped findOrFail on the numeric id. So the id in this URL is the flyer's `id`
+     * and NOT its `uuid` — the uuid is the opaque handle for sharing a finished render
+     * and would 404 here.
+     *
+     * routes/web.php hands every non-/api path to the SPA, so this is a real link the
+     * admin can click straight out of the chat.
+     */
+    private function flyerStudioUrl(int $flyerId): string
+    {
+        return url('/masjid/flyers/' . $flyerId);
     }
 
     /**

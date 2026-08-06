@@ -7,7 +7,12 @@ use App\Http\Requests\Admin\Donations\StoreOfflineDonationRequest;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Fund;
+use App\Models\Masjid;
+use App\Support\DonationMetrics;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -21,12 +26,78 @@ class DonationsController extends Controller
 {
     public function index(Request $request, $masjid_id)
     {
-        $donations = Donation::query()
+        $donations = self::filteredQuery($request)
             ->with(['fund', 'receipt', 'contact'])
-            ->when($request->query('status'), fn ($q, $status) => $q->where('status', $status))
-            ->when($request->query('fund_id'), fn ($q, $fundId) => $q->where('fund_id', $fundId))
+            // Newest gift first — by the real gift date for offline history, else
+            // entry. donated_at is a DATE, so an imported batch shares one sort key;
+            // id breaks the tie because MySQL's order among equal keys is otherwise
+            // arbitrary per execution, and under LIMIT/OFFSET that lets a gift show
+            // up on two pages or on none.
+            ->orderByRaw('COALESCE(donated_at, created_at) DESC, id DESC')
+            ->paginate($request->query('per_page', 15));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $donations,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * The single filter contract behind BOTH the ledger page and the CSV export
+     * (DonationExportController), so what the accountant downloads can never
+     * disagree with what the admin is looking at.
+     *
+     * Validated here rather than in a FormRequest because a rejected filter has to
+     * be loud: a mistyped `from` that degraded into "no filter" would hand an
+     * accountant a report covering years they never asked for. Failures throw the
+     * app's standard 422 envelope (same shape as BaseFormRequest).
+     *
+     * $masjid is needed only for its timezone (see the date window below) and is
+     * accepted so a caller that already loaded the row does not fetch it twice;
+     * left out, it is read from the route.
+     */
+    public static function filteredQuery(Request $request, ?Masjid $masjid = null): Builder
+    {
+        $query = $request->query();
+
+        $rules = [
+            'status' => ['nullable', 'in:pending,succeeded,failed,refunded'],
+            'fund_id' => ['nullable', 'integer'],
+            'source' => ['nullable', 'in:stripe,offline'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date'],
+        ];
+
+        // Compare the two ends only when `from` actually carries a date. Laravel
+        // resolves the reference by value: an ABSENT `from` reads as null and the
+        // comparison then passes trivially, but a PRESENT-but-empty one (?from=&to=…,
+        // a cleared date input) is parsed by Carbon as *now*, which 422s any
+        // open-ended "everything up to 2024" export. The empty string is the case
+        // that has to be excluded here — `!== null` would let it through.
+        $from = $query['from'] ?? null;
+
+        if (is_string($from) && trim($from) !== '') {
+            $rules['to'][] = 'after_or_equal:from';
+        }
+
+        $validator = Validator::make($query, $rules);
+
+        if ($validator->fails()) {
+            throw new HttpResponseException(response()->json([
+                'status' => 'failed',
+                'data' => $validator->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY));
+        }
+
+        $filters = $validator->validated();
+
+        $donations = Donation::query()
+            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
+            ->when($filters['fund_id'] ?? null, fn ($q, $fundId) => $q->where('fund_id', $fundId))
+            ->when($filters['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
             // Optional donor search (name or email).
-            ->when($request->query('search'), function ($q, $search) {
+            ->when($filters['search'] ?? null, function ($q, $search) {
                 $q->whereHas('contact', function ($c) use ($search) {
                     $c->where('first_name', 'like', "%{$search}%")
                         ->orWhere('last_name', 'like', "%{$search}%")
@@ -35,15 +106,25 @@ class DonationsController extends Controller
                         ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", ["%{$search}%"])
                         ->orWhereRaw("CONCAT(last_name, ' ', first_name) LIKE ?", ["%{$search}%"]);
                 });
-            })
-            // Newest gift first — by the real gift date for offline history, else entry.
-            ->orderByRaw('COALESCE(donated_at, created_at) DESC')
-            ->paginate($request->query('per_page', 15));
+            });
 
-        return response()->json([
-            'status' => 'success',
-            'data' => $donations,
-        ], Response::HTTP_OK);
+        // Date window: borrowed from DonationMetrics, never restated. from/to are
+        // calendar days at the MASJID (masjids.timezone), but created_at is stored
+        // in the app timezone — config/app.php pins that to UTC while every live
+        // tenant is US-Eastern, so a day boundary is a different literal for each
+        // of the two date columns. DonationMetrics already resolves that split for
+        // the stats header; the ledger and the CSV go through the same predicate so
+        // the header can never report a different set of gifts than the rows and
+        // the export beneath it. Only loaded when there is a window to apply.
+        if (($filters['from'] ?? null) !== null || ($filters['to'] ?? null) !== null) {
+            [$windowSql, $windowBindings] = DonationMetrics::forMasjid(
+                $masjid ?? Masjid::find($request->route('masjid_id'))
+            )->windowSqlForFilters($filters);
+
+            $donations->whereRaw($windowSql, $windowBindings);
+        }
+
+        return $donations;
     }
 
     /**

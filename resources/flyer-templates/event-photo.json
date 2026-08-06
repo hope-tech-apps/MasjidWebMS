@@ -1,0 +1,86 @@
+{
+  "key": "event-photo",
+  "name": "Event — Photo",
+  "kind": "event",
+  "archetype": "photo",
+  "version": 1,
+  "html": "event-photo.html",
+  "root_class": "flyer-photo",
+  "summary": "Full-bleed photo — the masjid building or a group shot — with the title over a dark scrim at the foot.",
+  "canvas": {
+    "width": 1200,
+    "height": 1600,
+    "aspect": "3:4"
+  },
+  "layout": "flow",
+  "palette": {
+    "default": "cool-neutral",
+    "ground": "photo",
+    "note": "Type is white over a fixed dark scrim, not over the palette. The scrim is the contrast guarantee here because a user-supplied photo cannot be checked ahead of time."
+  },
+  "slots": [
+    {
+      "name": "photo",
+      "label": "Background photo",
+      "type": "image",
+      "required": true,
+      "maxLength": null,
+      "default": null,
+      "help": "Cover-cropped to 3:4. Supply at least 1200x1600 — anything smaller shows. Keep faces and the building out of the bottom third; the scrim darkens it."
+    },
+    {
+      "name": "logo",
+      "label": "Masjid logo",
+      "type": "image",
+      "required": false,
+      "maxLength": null,
+      "default": null,
+      "help": "Top-left. Use a light or white version — it sits over the photo."
+    },
+    {
+      "name": "kicker",
+      "label": "Kicker",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "help": "Spaced caps in the accent colour, e.g. \"Community Open House\"."
+    },
+    {
+      "name": "title",
+      "label": "Event title",
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "default": null,
+      "size_var": "--flyer-title-size"
+    },
+    {
+      "name": "subtitle",
+      "label": "Subtitle",
+      "type": "text",
+      "required": false,
+      "maxLength": 140,
+      "default": null
+    },
+    {
+      "name": "details",
+      "label": "When and where",
+      "type": "multiline",
+      "required": true,
+      "maxLength": 120,
+      "default": null,
+      "help": "Two lines: date and time, then venue."
+    },
+    {
+      "name": "cta",
+      "label": "Call to action (phone number)",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "ask_always": true,
+      "help": "Ask which number to use — the events/RSVP line is not the food-order line."
+    }
+  ]
+}

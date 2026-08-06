@@ -1,0 +1,106 @@
+{
+  "key": "event-bulletin",
+  "name": "Event — Bulletin",
+  "kind": "event",
+  "archetype": "bulletin",
+  "version": 1,
+  "html": "event-bulletin.html",
+  "root_class": "flyer-bulletin",
+  "summary": "Dense schedule layout for multi-session programmes: solid header band, then a scannable time / title / speaker table.",
+  "canvas": {
+    "width": 1200,
+    "height": 1600,
+    "aspect": "3:4"
+  },
+  "layout": "flow",
+  "palette": {
+    "default": "cool-neutral",
+    "ground": "gradient",
+    "contrast_sample": 0.6,
+    "note": "Header band uses --flyer-field / --flyer-field-ink; the schedule body sits on the gradient and uses --flyer-ink."
+  },
+  "slots": [
+    {
+      "name": "kicker",
+      "label": "Kicker",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "help": "Spaced caps above the title, e.g. \"Weekend Seminar\"."
+    },
+    {
+      "name": "title",
+      "label": "Programme title",
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "default": null,
+      "size_var": "--flyer-title-size"
+    },
+    {
+      "name": "subtitle",
+      "label": "Dates / location",
+      "type": "multiline",
+      "required": false,
+      "maxLength": 140,
+      "default": null,
+      "help": "Said once here so it does not have to repeat in every row."
+    },
+    {
+      "name": "sessions",
+      "label": "Sessions",
+      "type": "list",
+      "required": true,
+      "maxLength": null,
+      "default": null,
+      "maxItems": 9,
+      "help": "Nine rows is the comfortable ceiling at these sizes. Past that, split the programme across two flyers rather than shrinking the type.",
+      "item_slots": [
+        {
+          "name": "time",
+          "label": "Time",
+          "type": "text",
+          "required": true,
+          "maxLength": 22,
+          "default": null
+        },
+        {
+          "name": "title",
+          "label": "Session",
+          "type": "text",
+          "required": true,
+          "maxLength": 54,
+          "default": null
+        },
+        {
+          "name": "speaker",
+          "label": "Speaker",
+          "type": "text",
+          "required": false,
+          "maxLength": 48,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "note",
+      "label": "Footnote",
+      "type": "multiline",
+      "required": false,
+      "maxLength": 130,
+      "default": null,
+      "help": "Childcare, meals, registration — the small print."
+    },
+    {
+      "name": "cta",
+      "label": "Call to action (phone number)",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "ask_always": true,
+      "help": "Ask which number to use — the events/RSVP line is not the food-order line."
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+<!--
+  Event archetype: BULLETIN — dense, for schedules and multi-session programmes
+  (weekend seminars, Ramadan night-by-night, class timetables).
+
+  Not measured. Its job is legibility at volume: a solid header band that states
+  what and when once, then a scannable time / title / speaker table underneath.
+  Type is smaller here than in any other template on purpose — a bulletin that
+  shouts has no room left for the schedule.
+
+  The session rows repeat. The element marked data-repeat="sessions" is a
+  prototype: the renderer clones it once per item and substitutes the
+  {{ sessions.* }} placeholders inside. See README.md.
+-->
+<style>
+.flyer-bulletin,
+.flyer-bulletin *,
+.flyer-bulletin *::before,
+.flyer-bulletin *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+.flyer-bulletin {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 1200px;
+    height: 1600px;
+    overflow: hidden;
+    font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    font-kerning: normal;
+    text-rendering: geometricPrecision;
+    color: var(--flyer-ink, #14181F);
+    background: linear-gradient(180deg,
+            var(--flyer-grad-0, #C7D2DE) 0%,
+            var(--flyer-grad-1, #D6DDE6) 50%,
+            var(--flyer-grad-2, #E6E7EC) 80%,
+            var(--flyer-grad-3, #F1F0F2) 100%);
+}
+
+.flyer-bulletin .header {
+    flex: 0 0 auto;
+    padding: 6% 6% 5%;
+    background: var(--flyer-field, #2E4258);
+    color: var(--flyer-field-ink, #FFFFFF);
+}
+
+.flyer-bulletin .header .kicker {
+    font-size: var(--flyer-kicker-size, 30px);
+    line-height: 1.3;
+    font-weight: 500;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    opacity: 0.85;
+}
+
+.flyer-bulletin .header .title {
+    margin-top: 2.5%;
+    font-size: var(--flyer-title-size, 82px);
+    line-height: 1.0;
+    font-weight: 900;
+    letter-spacing: -0.015em;
+}
+
+.flyer-bulletin .header .subtitle {
+    margin-top: 2.5%;
+    font-size: var(--flyer-subtitle-size, 36px);
+    line-height: 1.3;
+    font-weight: 500;
+}
+
+.flyer-bulletin .schedule {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 4% 6%;
+}
+
+.flyer-bulletin .session {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    align-items: baseline;
+    column-gap: 32px;
+    padding: 22px 20px;
+    border-radius: 8px;
+}
+
+/* Zebra tint rather than rules: at eight-plus rows, lines start to read as a
+   grid the eye has to climb over. */
+.flyer-bulletin .session:nth-child(odd) {
+    background: rgba(0, 0, 0, 0.045);
+}
+
+.flyer-bulletin .session .time {
+    font-size: var(--flyer-time-size, 34px);
+    line-height: 1.2;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.flyer-bulletin .session .what {
+    font-size: var(--flyer-session-size, 36px);
+    line-height: 1.18;
+    font-weight: 900;
+}
+
+.flyer-bulletin .session .who {
+    margin-top: 6px;
+    font-size: var(--flyer-speaker-size, 28px);
+    line-height: 1.25;
+    font-weight: 500;
+    opacity: 0.75;
+}
+
+.flyer-bulletin .foot {
+    flex: 0 0 auto;
+    padding: 0 6% 6%;
+}
+
+.flyer-bulletin .note {
+    font-size: var(--flyer-note-size, 28px);
+    line-height: 1.3;
+    font-weight: 400;
+}
+
+.flyer-bulletin .cta {
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 4%;
+    padding: 0.16em 0.34em;
+    border-radius: 4px;
+    font-size: var(--flyer-cta-size, 40px);
+    line-height: 1.16;
+    font-weight: 500;
+    background: var(--flyer-bar-bg, #000000);
+    color: var(--flyer-bar-ink, #FFFFFF);
+}
+</style>
+
+<div class="flyer flyer-bulletin" data-template="event-bulletin" data-canvas="1200x1600">
+    <div class="header">
+        <p class="kicker" data-slot="kicker" data-optional="true">{{ kicker }}</p>
+        <h1 class="title" data-slot="title">{{ title }}</h1>
+        <p class="subtitle" data-slot="subtitle" data-optional="true">{{ subtitle }}</p>
+    </div>
+
+    <div class="schedule">
+        <div class="session" data-repeat="sessions">
+            <p class="time" data-slot="sessions.time">{{ sessions.time }}</p>
+            <div>
+                <p class="what" data-slot="sessions.title">{{ sessions.title }}</p>
+                <p class="who" data-slot="sessions.speaker" data-optional="true">{{ sessions.speaker }}</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="foot">
+        <p class="note" data-slot="note" data-optional="true">{{ note }}</p>
+        <p class="cta" data-slot="cta" data-optional="true">{{ cta }}</p>
+    </div>
+</div>
