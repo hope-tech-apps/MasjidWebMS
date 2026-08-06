@@ -1,124 +1,128 @@
 {
-    "key": "janazah",
-    "name": "Janazah Announcement",
-    "kind": "janazah",
-    "version": 1,
-    "html": "janazah.html",
-    "root_class": "flyer-janazah",
-    "summary": "Plain dark ground, no photo, no gradient, none of the food treatments. Name of the deceased, salah details, burial, and the tarji' line.",
-    "canvas": { "width": 1200, "height": 1600, "aspect": "3:4" },
-    "layout": "flow",
-    "palette": {
-        "default": "janazah-night",
-        "ground": "solid",
-        "note": "Reads --flyer-ground / --flyer-ground-ink only. A tenant's derived ground is its brand hue desaturated to near-black, so the notice stays sombre whatever the brand is."
+  "key": "janazah",
+  "name": "Janazah Announcement",
+  "kind": "janazah",
+  "version": 1,
+  "html": "janazah.html",
+  "root_class": "flyer-janazah",
+  "summary": "Plain dark ground, no photo, no gradient, none of the food treatments. Name of the deceased, salah details, burial, and the tarji' line.",
+  "canvas": {
+    "width": 1200,
+    "height": 1600,
+    "aspect": "3:4"
+  },
+  "layout": "flow",
+  "palette": {
+    "default": "janazah-night",
+    "ground": "solid",
+    "note": "Reads --flyer-ground / --flyer-ground-ink only. A tenant's derived ground is its brand hue desaturated to near-black, so the notice stays sombre whatever the brand is."
+  },
+  "constraints": [
+    "No photograph of the deceased, ever.",
+    "No gradient, no illustration, no accent-coloured decoration.",
+    "None of the three food treatments — no sticker outline, no white pill, no black CTA bar.",
+    "No phone number in a bar. If a contact is genuinely needed it belongs in the note, quietly."
+  ],
+  "slots": [
+    {
+      "name": "arabic",
+      "label": "Tarji' (Arabic)",
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "default": "إِنَّا لِلَّٰهِ وَإِنَّا إِلَيْهِ رَاجِعُونَ",
+      "help": "Rendered right-to-left in a system Naskh face. Check the exported image before sending — shaping depends on the device's fonts."
     },
-    "constraints": [
-        "No photograph of the deceased, ever.",
-        "No gradient, no illustration, no accent-coloured decoration.",
-        "None of the three food treatments — no sticker outline, no white pill, no black CTA bar.",
-        "No phone number in a bar. If a contact is genuinely needed it belongs in the note, quietly."
-    ],
-    "slots": [
-        {
-            "name": "arabic",
-            "label": "Tarji' (Arabic)",
-            "type": "text",
-            "required": true,
-            "maxLength": 60,
-            "default": "إِنَّا لِلَّٰهِ وَإِنَّا إِلَيْهِ رَاجِعُونَ",
-            "help": "Rendered right-to-left in a system Naskh face. Check the exported image before sending — shaping depends on the device's fonts."
-        },
-        {
-            "name": "translit",
-            "label": "Tarji' (transliteration)",
-            "type": "text",
-            "required": true,
-            "maxLength": 70,
-            "default": "Inna lillahi wa inna ilayhi raji'un",
-            "help": "Kept even when the Arabic renders correctly — it is what survives a font fallback."
-        },
-        {
-            "name": "intro",
-            "label": "Opening line",
-            "type": "multiline",
-            "required": true,
-            "maxLength": 120,
-            "default": "It is with great sadness that we announce the passing of",
-            "help": "Confirm the wording with the family before sending."
-        },
-        {
-            "name": "name",
-            "label": "Name of the deceased",
-            "type": "text",
-            "required": true,
-            "maxLength": 48,
-            "default": null,
-            "size_var": "--flyer-name-size",
-            "ask_always": true,
-            "help": "Spell it exactly as the family gives it. Never carry a name forward from a previous flyer."
-        },
-        {
-            "name": "lifespan",
-            "label": "Years",
-            "type": "text",
-            "required": false,
-            "maxLength": 30,
-            "default": null,
-            "help": "Optional, e.g. \"1948 — 2026\". Omit unless the family asked for it."
-        },
-        {
-            "name": "janazah_time",
-            "label": "Salatul Janazah — time",
-            "type": "text",
-            "required": true,
-            "maxLength": 60,
-            "default": null,
-            "help": "e.g. \"Tuesday, after Dhuhr Prayer\"."
-        },
-        {
-            "name": "janazah_masjid",
-            "label": "Salatul Janazah — masjid",
-            "type": "text",
-            "required": true,
-            "maxLength": 70,
-            "default": null
-        },
-        {
-            "name": "burial_location",
-            "label": "Burial — location",
-            "type": "text",
-            "required": true,
-            "maxLength": 70,
-            "default": null,
-            "help": "Cemetery name; add the city if it is not the masjid's own."
-        },
-        {
-            "name": "burial_time",
-            "label": "Burial — time",
-            "type": "text",
-            "required": false,
-            "maxLength": 60,
-            "default": null,
-            "help": "Only when it is known. An estimate that turns out wrong is worse than no line."
-        },
-        {
-            "name": "note",
-            "label": "Closing note",
-            "type": "multiline",
-            "required": false,
-            "maxLength": 140,
-            "default": "Please keep the family in your du'a.",
-            "help": "Also where a family contact goes, if they want one shared."
-        },
-        {
-            "name": "logo",
-            "label": "Masjid logo",
-            "type": "image",
-            "required": false,
-            "maxLength": null,
-            "default": null,
-            "help": "Small, at the foot. Identification, not branding."
-        }
-    ]
+    {
+      "name": "translit",
+      "label": "Tarji' (transliteration)",
+      "type": "text",
+      "required": true,
+      "maxLength": 90,
+      "default": "Inna lillahi wa inna ilayhi raji'un",
+      "help": "Kept even when the Arabic renders correctly — it is what survives a font fallback."
+    },
+    {
+      "name": "intro",
+      "label": "Opening line",
+      "type": "multiline",
+      "required": true,
+      "maxLength": 120,
+      "default": "It is with great sadness that we announce the passing of",
+      "help": "Confirm the wording with the family before sending."
+    },
+    {
+      "name": "name",
+      "label": "Name of the deceased",
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "default": null,
+      "size_var": "--flyer-name-size",
+      "ask_always": true,
+      "help": "Spell it exactly as the family gives it. Never carry a name forward from a previous flyer."
+    },
+    {
+      "name": "lifespan",
+      "label": "Years",
+      "type": "text",
+      "required": false,
+      "maxLength": 30,
+      "default": null,
+      "help": "Optional, e.g. \"1948 — 2026\". Omit unless the family asked for it."
+    },
+    {
+      "name": "janazah_time",
+      "label": "Salatul Janazah — time",
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "default": null,
+      "help": "e.g. \"Tuesday, after Dhuhr Prayer\"."
+    },
+    {
+      "name": "janazah_masjid",
+      "label": "Salatul Janazah — masjid",
+      "type": "text",
+      "required": true,
+      "maxLength": 90,
+      "default": null
+    },
+    {
+      "name": "burial_location",
+      "label": "Burial — location",
+      "type": "text",
+      "required": true,
+      "maxLength": 90,
+      "default": null,
+      "help": "Cemetery name; add the city if it is not the masjid's own."
+    },
+    {
+      "name": "burial_time",
+      "label": "Burial — time",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "help": "Only when it is known. An estimate that turns out wrong is worse than no line."
+    },
+    {
+      "name": "note",
+      "label": "Closing note",
+      "type": "multiline",
+      "required": false,
+      "maxLength": 140,
+      "default": "Please keep the family in your du'a.",
+      "help": "Also where a family contact goes, if they want one shared."
+    },
+    {
+      "name": "logo",
+      "label": "Masjid logo",
+      "type": "image",
+      "required": false,
+      "maxLength": null,
+      "default": null,
+      "help": "Small, at the foot. Identification, not branding."
+    }
+  ]
 }

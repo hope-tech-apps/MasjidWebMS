@@ -1,110 +1,114 @@
 {
-    "key": "event-invitation",
-    "name": "Event — Invitation",
-    "kind": "event",
-    "archetype": "invitation",
-    "version": 1,
-    "html": "event-invitation.html",
-    "root_class": "flyer-invitation",
-    "summary": "Centred and airy, for dinners and Eid. The only template that does not end in the black CTA bar — a black slab would undo the airiness.",
-    "canvas": { "width": 1200, "height": 1600, "aspect": "3:4" },
-    "layout": "flow",
-    "palette": {
-        "default": "cool-neutral",
-        "ground": "gradient",
-        "contrast_sample": 0.5,
-        "note": "All type is unboxed here, so --flyer-ink carries the whole flyer rather than one line of it."
+  "key": "event-invitation",
+  "name": "Event — Invitation",
+  "kind": "event",
+  "archetype": "invitation",
+  "version": 1,
+  "html": "event-invitation.html",
+  "root_class": "flyer-invitation",
+  "summary": "Centred and airy, for dinners and Eid. The only template that does not end in the black CTA bar — a black slab would undo the airiness.",
+  "canvas": {
+    "width": 1200,
+    "height": 1600,
+    "aspect": "3:4"
+  },
+  "layout": "flow",
+  "palette": {
+    "default": "cool-neutral",
+    "ground": "gradient",
+    "contrast_sample": 0.5,
+    "note": "All type is unboxed here, so --flyer-ink carries the whole flyer rather than one line of it."
+  },
+  "slots": [
+    {
+      "name": "logo",
+      "label": "Masjid logo",
+      "type": "image",
+      "required": false,
+      "maxLength": null,
+      "default": null,
+      "help": "Small, at the top. Use a dark version — the ground here is pale. Omit rather than stretch a low-resolution file."
     },
-    "slots": [
-        {
-            "name": "logo",
-            "label": "Masjid logo",
-            "type": "image",
-            "required": false,
-            "maxLength": null,
-            "default": null,
-            "help": "Small, at the top. Use a dark version — the ground here is pale. Omit rather than stretch a low-resolution file."
-        },
-        {
-            "name": "eyebrow",
-            "label": "Invitation line",
-            "type": "text",
-            "required": false,
-            "maxLength": 44,
-            "default": "You are cordially invited",
-            "help": "Set in spaced caps. Keep it short — long text at this letter-spacing wraps badly."
-        },
-        {
-            "name": "arabic",
-            "label": "Arabic line",
-            "type": "text",
-            "required": false,
-            "maxLength": 60,
-            "default": null,
-            "help": "Optional. Rendered right-to-left in a system Naskh face; check the export before sending."
-        },
-        {
-            "name": "title",
-            "label": "Event title",
-            "type": "text",
-            "required": true,
-            "maxLength": 40,
-            "default": "Eid Dinner",
-            "size_var": "--flyer-title-size"
-        },
-        {
-            "name": "subtitle",
-            "label": "Subtitle",
-            "type": "text",
-            "required": false,
-            "maxLength": 90,
-            "default": null,
-            "help": "Who is hosting, or what the evening is for."
-        },
-        {
-            "name": "date",
-            "label": "Date",
-            "type": "text",
-            "required": true,
-            "maxLength": 44,
-            "default": null,
-            "help": "e.g. \"Saturday, April 12th\"."
-        },
-        {
-            "name": "time",
-            "label": "Time",
-            "type": "text",
-            "required": true,
-            "maxLength": 44,
-            "default": null,
-            "help": "e.g. \"After Maghrib Prayer\"."
-        },
-        {
-            "name": "venue",
-            "label": "Venue",
-            "type": "text",
-            "required": true,
-            "maxLength": 60,
-            "default": null
-        },
-        {
-            "name": "rsvp",
-            "label": "RSVP line",
-            "type": "multiline",
-            "required": false,
-            "maxLength": 120,
-            "default": null,
-            "help": "Deadline and how to reply."
-        },
-        {
-            "name": "contact",
-            "label": "Contact (phone number)",
-            "type": "text",
-            "required": false,
-            "maxLength": 44,
-            "default": null,
-            "ask_always": true,
-            "help": "Ask which number to use — the events/RSVP line is not the food-order line. Sits on a ruled line here, not in a black bar."
-        }
-    ]
+    {
+      "name": "eyebrow",
+      "label": "Invitation line",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": "You are cordially invited",
+      "help": "Set in spaced caps. Keep it short — long text at this letter-spacing wraps badly."
+    },
+    {
+      "name": "arabic",
+      "label": "Arabic line",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "help": "Optional. Rendered right-to-left in a system Naskh face; check the export before sending."
+    },
+    {
+      "name": "title",
+      "label": "Event title",
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "default": "Eid Dinner",
+      "size_var": "--flyer-title-size"
+    },
+    {
+      "name": "subtitle",
+      "label": "Subtitle",
+      "type": "text",
+      "required": false,
+      "maxLength": 140,
+      "default": null,
+      "help": "Who is hosting, or what the evening is for."
+    },
+    {
+      "name": "date",
+      "label": "Date",
+      "type": "text",
+      "required": true,
+      "maxLength": 44,
+      "default": null,
+      "help": "e.g. \"Saturday, April 12th\"."
+    },
+    {
+      "name": "time",
+      "label": "Time",
+      "type": "text",
+      "required": true,
+      "maxLength": 44,
+      "default": null,
+      "help": "e.g. \"After Maghrib Prayer\"."
+    },
+    {
+      "name": "venue",
+      "label": "Venue",
+      "type": "text",
+      "required": true,
+      "maxLength": 90,
+      "default": null
+    },
+    {
+      "name": "rsvp",
+      "label": "RSVP line",
+      "type": "multiline",
+      "required": false,
+      "maxLength": 120,
+      "default": null,
+      "help": "Deadline and how to reply."
+    },
+    {
+      "name": "contact",
+      "label": "Contact (phone number)",
+      "type": "text",
+      "required": false,
+      "maxLength": 60,
+      "default": null,
+      "ask_always": true,
+      "help": "Ask which number to use — the events/RSVP line is not the food-order line. Sits on a ruled line here, not in a black bar."
+    }
+  ]
 }

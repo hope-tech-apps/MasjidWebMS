@@ -217,3 +217,31 @@ Add `<key>.json` and `<key>.html`, register it in `index.json`, and keep to the
 contract: root class scoped, palette read from the variables above, no external
 asset, no font import, `{{ slot }}` placeholders only. If it introduces a new
 ground, add its ink to `auditPalette()` so the contrast gate covers it too.
+
+## A template is not self-sufficient: it needs the fitter
+
+Zones are absolutely positioned at measured percentages, and a zone is an ink
+extent rather than a hard box — text centres in its band and is allowed to bleed
+into the gap, which is how the hand-made originals behave. That is deliberate,
+and it means **a template rendered on its own will overlap its neighbours as soon
+as the text runs long.**
+
+What keeps it correct is `fitText()` in
+`resources/vue-app/components/flyer/FlyerPreview.vue`: it shrinks each slot's
+`size_var` custom property in up to 8 steps of 0.96, floored at 0.72 of the
+declared size. Verified against the longest real ingredient line in the corpus
+(134 characters, the Falafel Sandwiches flyer): without the fitter the title,
+ingredients and date pill collide; with it the line wraps to four lines and every
+zone stays clear.
+
+Two consequences worth knowing before you touch this directory:
+
+- **Do not render a template outside the Studio and judge it.** You are looking
+  at the unfitted layout. Export is fine — it rasterises the live, already-fitted
+  DOM through `<foreignObject>`, so the fitted sizes carry.
+- **`maxLength` is a design constraint, not a data one, and it must clear the
+  longest value the masjid actually writes.** The first cut of these caps was
+  invented rather than measured and rejected 7 of 9 real ingredient lines — the
+  tool would have refused the majority of Burlington's own flyers. Every cap here
+  is now derived from the corpus with headroom; the reasoning is recorded in each
+  slot's `maxLengthNote`. If you tighten one, check it against a real flyer first.

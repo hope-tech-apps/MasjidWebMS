@@ -1,129 +1,177 @@
 {
-    "key": "food",
-    "name": "Food Sale",
-    "kind": "food",
-    "version": 1,
-    "html": "food.html",
-    "root_class": "flyer-food",
-    "summary": "The locked food-sale layout: eight stacked zones, three treatments, black CTA bar last. Reproduced from ~124 exemplars.",
-    "canvas": {
-        "width": 1200,
-        "height": 1600,
-        "aspect": "3:4"
+  "key": "food",
+  "name": "Food Sale",
+  "kind": "food",
+  "version": 1,
+  "html": "food.html",
+  "root_class": "flyer-food",
+  "summary": "The locked food-sale layout: eight stacked zones, three treatments, black CTA bar last. Reproduced from ~124 exemplars.",
+  "canvas": {
+    "width": 1200,
+    "height": 1600,
+    "aspect": "3:4"
+  },
+  "palette": {
+    "default": "cool-neutral",
+    "ground": "gradient",
+    "contrast_sample": 0.84,
+    "note": "Burlington's purple is the named palette 'burlington-purple' and is the default for masjid 1 only. Every other tenant gets a cool/neutral gradient derived from theme_settings."
+  },
+  "zones": [
+    {
+      "name": "title",
+      "top": 4.1,
+      "bottom": 15.7,
+      "treatment": "sticker"
     },
-    "palette": {
-        "default": "cool-neutral",
-        "ground": "gradient",
-        "contrast_sample": 0.84,
-        "note": "Burlington's purple is the named palette 'burlington-purple' and is the default for masjid 1 only. Every other tenant gets a cool/neutral gradient derived from theme_settings."
+    {
+      "name": "ingredients",
+      "top": 18.1,
+      "bottom": 29.2,
+      "treatment": "sticker"
     },
-    "zones": [
-        { "name": "title",       "top": 4.1,  "bottom": 15.7, "treatment": "sticker" },
-        { "name": "ingredients", "top": 18.1, "bottom": 29.2, "treatment": "sticker" },
-        { "name": "when",        "top": 31.0, "bottom": 35.8, "treatment": "pill" },
-        { "name": "photo",       "top": 40.2, "bottom": 70.2, "treatment": "image", "elastic": true },
-        { "name": "price",       "top": 74.1, "bottom": 79.4, "treatment": "sticker" },
-        { "name": "disclaimer",  "top": 81.9, "bottom": 86.1, "treatment": "plain" },
-        { "name": "deadline",    "top": 87.7, "bottom": 92.0, "treatment": "pill" },
-        { "name": "cta",         "top": 93.1, "bottom": 97.8, "treatment": "bar" }
-    ],
-    "slots": [
-        {
-            "name": "title",
-            "label": "Dish name",
-            "type": "text",
-            "required": true,
-            "maxLength": 36,
-            "default": "Fresh Homemade Biryani",
-            "zone": "title",
-            "treatment": "sticker",
-            "size_var": "--flyer-title-size",
-            "help": "Two lines at 107px. Longer names shrink to fit rather than wrap to three."
-        },
-        {
-            "name": "ingredients",
-            "label": "Ingredients",
-            "type": "text",
-            "required": true,
-            "maxLength": 72,
-            "default": "Rice, Chicken, Onions, Garlic and Spices",
-            "zone": "ingredients",
-            "treatment": "sticker",
-            "size_var": "--flyer-ingredients-size",
-            "help": "Comma-separated, no 'Ingredients:' prefix — the originals never label it."
-        },
-        {
-            "name": "when",
-            "label": "When it is served",
-            "type": "text",
-            "required": true,
-            "maxLength": 44,
-            "default": "Friday, After Juma'a Prayer",
-            "zone": "when",
-            "treatment": "pill",
-            "size_var": "--flyer-when-size",
-            "help": "Pickup day and moment, e.g. \"Friday (June 5th), After Juma'a Prayer\"."
-        },
-        {
-            "name": "photo",
-            "label": "Dish photo",
-            "type": "image",
-            "required": true,
-            "maxLength": null,
-            "default": null,
-            "zone": "photo",
-            "treatment": "image",
-            "help": "Cut out (transparent PNG) reads best against the gradient; a square crop also works. Contained, never cropped by the template."
-        },
-        {
-            "name": "price",
-            "label": "Price",
-            "type": "text",
-            "required": true,
-            "maxLength": 18,
-            "default": "$10 Each",
-            "zone": "price",
-            "treatment": "sticker",
-            "size_var": "--flyer-price-size",
-            "help": "Includes the unit — \"$8 Each\", \"$25 Per Tray\"."
-        },
-        {
-            "name": "disclaimer",
-            "label": "Where the money goes",
-            "type": "multiline",
-            "required": true,
-            "maxLength": 140,
-            "default": null,
-            "zone": "disclaimer",
-            "treatment": "plain",
-            "size_var": "--flyer-disclaimer-size",
-            "ask_always": true,
-            "help": "Deliberately different on every flyer. Ask the masjid each time; never carry the last one forward."
-        },
-        {
-            "name": "deadline",
-            "label": "Order deadline",
-            "type": "text",
-            "required": true,
-            "maxLength": 50,
-            "default": "All orders must be placed by 11 am Friday",
-            "zone": "deadline",
-            "treatment": "pill",
-            "size_var": "--flyer-deadline-size",
-            "help": "The cut-off, not the pickup time — those are different lines on purpose."
-        },
-        {
-            "name": "cta",
-            "label": "Call to action (phone number)",
-            "type": "text",
-            "required": true,
-            "maxLength": 48,
-            "default": null,
-            "zone": "cta",
-            "treatment": "bar",
-            "size_var": "--flyer-cta-size",
-            "ask_always": true,
-            "help": "Ask which number to use — the food-order line and the events/RSVP line are not interchangeable. Never infer one from past flyers."
-        }
-    ]
+    {
+      "name": "when",
+      "top": 31.0,
+      "bottom": 35.8,
+      "treatment": "pill"
+    },
+    {
+      "name": "photo",
+      "top": 40.2,
+      "bottom": 70.2,
+      "treatment": "image",
+      "elastic": true
+    },
+    {
+      "name": "price",
+      "top": 74.1,
+      "bottom": 79.4,
+      "treatment": "sticker"
+    },
+    {
+      "name": "disclaimer",
+      "top": 81.9,
+      "bottom": 86.1,
+      "treatment": "plain"
+    },
+    {
+      "name": "deadline",
+      "top": 87.7,
+      "bottom": 92.0,
+      "treatment": "pill"
+    },
+    {
+      "name": "cta",
+      "top": 93.1,
+      "bottom": 97.8,
+      "treatment": "bar"
+    }
+  ],
+  "slots": [
+    {
+      "name": "title",
+      "label": "Dish name",
+      "type": "text",
+      "required": true,
+      "maxLength": 80,
+      "default": "Fresh Homemade Biryani",
+      "zone": "title",
+      "treatment": "sticker",
+      "size_var": "--flyer-title-size",
+      "help": "Two lines at 107px. Longer names shrink to fit rather than wrap to three.",
+      "maxLengthNote": "longest real: \"Fresh Homemade Spinach, Zatar Akhdar, Meat, and Cheese (Iqras) Pies!\" = 68"
+    },
+    {
+      "name": "ingredients",
+      "label": "Ingredients",
+      "type": "text",
+      "required": true,
+      "maxLength": 180,
+      "default": "Rice, Chicken, Onions, Garlic and Spices",
+      "zone": "ingredients",
+      "treatment": "sticker",
+      "size_var": "--flyer-ingredients-size",
+      "help": "Comma-separated, no 'Ingredients:' prefix — the originals never label it.",
+      "maxLengthNote": "longest real: the Falafel line = 134; 7 of 9 sampled exceeded the old cap of 72"
+    },
+    {
+      "name": "when",
+      "label": "When it is served",
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "default": "Friday, After Juma'a Prayer",
+      "zone": "when",
+      "treatment": "pill",
+      "size_var": "--flyer-when-size",
+      "help": "Pickup day and moment, e.g. \"Friday (June 5th), After Juma'a Prayer\".",
+      "maxLengthNote": "longest real: \"Friday (February 28th), After Juma'a Prayer\" = 42"
+    },
+    {
+      "name": "photo",
+      "label": "Dish photo",
+      "type": "image",
+      "required": true,
+      "maxLength": null,
+      "default": null,
+      "zone": "photo",
+      "treatment": "image",
+      "help": "Cut out (transparent PNG) reads best against the gradient; a square crop also works. Contained, never cropped by the template."
+    },
+    {
+      "name": "price",
+      "label": "Price",
+      "type": "text",
+      "required": true,
+      "maxLength": 40,
+      "default": "$10 Each",
+      "zone": "price",
+      "treatment": "sticker",
+      "size_var": "--flyer-price-size",
+      "help": "Includes the unit — \"$8 Each\", \"$25 Per Tray\".",
+      "maxLengthNote": "longest real: \"$7 for Meal + $1 for Dessert\" = 28"
+    },
+    {
+      "name": "disclaimer",
+      "label": "Where the money goes",
+      "type": "multiline",
+      "required": true,
+      "maxLength": 200,
+      "default": null,
+      "zone": "disclaimer",
+      "treatment": "plain",
+      "size_var": "--flyer-disclaimer-size",
+      "ask_always": true,
+      "help": "Deliberately different on every flyer. Ask the masjid each time; never carry the last one forward.",
+      "maxLengthNote": "longest real = 81; headroom for a named cause, e.g. Sudan relief"
+    },
+    {
+      "name": "deadline",
+      "label": "Order deadline",
+      "type": "text",
+      "required": true,
+      "maxLength": 70,
+      "default": "All orders must be placed by 11 am Friday",
+      "zone": "deadline",
+      "treatment": "pill",
+      "size_var": "--flyer-deadline-size",
+      "help": "The cut-off, not the pickup time — those are different lines on purpose.",
+      "maxLengthNote": "longest real: \"All Orders must be placed by 11 PM Nov 14th, Thursday\" = 52"
+    },
+    {
+      "name": "cta",
+      "label": "Call to action (phone number)",
+      "type": "text",
+      "required": true,
+      "maxLength": 60,
+      "default": null,
+      "zone": "cta",
+      "treatment": "bar",
+      "size_var": "--flyer-cta-size",
+      "ask_always": true,
+      "help": "Ask which number to use — the food-order line and the events/RSVP line are not interchangeable. Never infer one from past flyers.",
+      "maxLengthNote": "longest real: \"Text 336-350-1642 to reserve yours today!\" = 41"
+    }
+  ]
 }
