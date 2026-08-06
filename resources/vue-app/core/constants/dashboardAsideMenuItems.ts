@@ -100,6 +100,20 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin']
     },
     {
+        // Sits with the content tools, not the CRM block — and deliberately
+        // carries no `requiresCrm`, so a masjid without the CRM can still make
+        // its own flyers.
+        title: "Flyer Studio",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="4" y="3" width="16" height="18" rx="2" stroke="white" stroke-width="1.7"/>
+                <path d="M8 8H16" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8 12H13" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8 16H16" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>`,
+        to: '/masjid/flyers',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+    },
+    {
         title: "Web Pages Management",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 21 20.1046 21 19V5C21 3.89543 20.1046 3 19 3Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -181,6 +195,20 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>
                 `,
         to: '/masjid/contacts',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
+        // The overview sits above the ledger: totals first, individual gifts second.
+        title: "Giving Dashboard",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 20V11" stroke="white" stroke-width="1.9" stroke-linecap="round"/>
+                <path d="M10 20V4" stroke="white" stroke-width="1.9" stroke-linecap="round"/>
+                <path d="M16 20V8" stroke="white" stroke-width="1.9" stroke-linecap="round"/>
+                <path d="M22 20V14" stroke="white" stroke-width="1.9" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/donations/dashboard',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true
     },

@@ -1,0 +1,179 @@
+<!--
+  Food sale flyer — the one genuinely locked layout in the corpus (~124 of the
+  231 Burlington flyers reuse it). Zone bands, type sizes and the three
+  treatments below are MEASURED off those exemplars, not chosen; changing a
+  number stops the output looking like the masjid's own flyers.
+
+  Rendered client-side: no template engine, no @import, no remote asset. The
+  host substitutes the slot placeholders below and supplies Montserrat
+  400/500/800/900 itself.
+-->
+<style>
+.flyer-food,
+.flyer-food *,
+.flyer-food *::before,
+.flyer-food *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+.flyer-food {
+    position: relative;
+    width: 1200px;
+    height: 1600px;
+    overflow: hidden;
+    font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    font-kerning: normal;
+    text-rendering: geometricPrecision;
+    color: var(--flyer-ink, #14181F);
+
+    /* The palette arrives as custom properties from the host (see palette.js).
+       They are consumed as var() fallbacks and never re-declared here, so a
+       value set on ANY ancestor still wins. The built-in fallback is the
+       neutral/cool default — Burlington's purple is a named palette, not a
+       hard-coded ground, because tenant 1's brand is not every tenant's. */
+    background: linear-gradient(180deg,
+            var(--flyer-grad-0, #C7D2DE) 0%,
+            var(--flyer-grad-1, #D6DDE6) 50%,
+            var(--flyer-grad-2, #E6E7EC) 80%,
+            var(--flyer-grad-3, #F1F0F2) 100%);
+}
+
+/* Each zone is an absolutely positioned band, top/height as a % of canvas
+   height exactly as measured. The bands are ink extents, not hard boxes: text
+   centres inside its band and is allowed to bleed into the gap above/below
+   rather than reflow, which is how the originals behave. */
+.flyer-food .zone {
+    position: absolute;
+    left: 4%;
+    right: 4%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.flyer-food .zone-title       { top: 4.1%;  height: 11.6%; }
+.flyer-food .zone-ingredients { top: 18.1%; height: 11.1%; }
+.flyer-food .zone-when        { top: 31.0%; height: 4.8%; }
+.flyer-food .zone-price       { top: 74.1%; height: 5.3%; }
+.flyer-food .zone-disclaimer  { top: 81.9%; height: 4.2%; }
+.flyer-food .zone-deadline    { top: 87.7%; height: 4.3%; }
+.flyer-food .zone-cta         { top: 93.1%; height: 4.7%; }
+
+/* The photo is the one elastic band: pinned top and bottom, so when a short
+   dish name leaves slack above, LOWERING --flyer-photo-top hands that slack to
+   the photo. The measured 40.2% is the floor for a full-height two-line title. */
+.flyer-food .zone-photo {
+    top: var(--flyer-photo-top, 40.2%);
+    bottom: 29.8%;
+}
+
+.flyer-food .photo {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+/* ---- Treatment 1: sticker ------------------------------------------------
+   Black fill with a white outline painted BEHIND the fill, plus a soft
+   down-right shadow. Title, ingredients and price only — never a pill, never
+   the bar. The stroke is in em so it stays proportional when a long line is
+   shrunk to fit. */
+.flyer-food .sticker {
+    font-weight: 900;
+    letter-spacing: -0.015em;
+    color: var(--flyer-sticker-ink, #000000);
+    -webkit-text-stroke: 0.15em var(--flyer-sticker-outline, #FFFFFF);
+    paint-order: stroke fill; /* without this the stroke closes up the counters */
+    text-shadow: 0.035em 0.05em 0.06em rgba(0, 0, 0, 0.28);
+}
+
+/* ---- Treatment 2: pill ---------------------------------------------------
+   Bold black on a white rounded rect that hugs its text. Carries the two
+   operational lines (when, deadline). Text in a pill is NEVER stroked — the
+   reset below is deliberate, not defensive noise. */
+.flyer-food .pill {
+    display: inline-block;
+    max-width: 100%;
+    padding: 0.14em 0.30em;
+    border-radius: 10px;
+    font-weight: 800;
+    background: var(--flyer-pill-bg, #FFFFFF);
+    color: var(--flyer-pill-ink, #000000);
+    -webkit-text-stroke: 0;
+    text-shadow: none;
+}
+
+/* ---- Treatment 3: CTA bar ------------------------------------------------
+   White on solid black. Always the phone number, always the last thing on the
+   flyer. Lighter weight than the pills and near-square corners, which is what
+   separates it from them at a glance. */
+.flyer-food .cta {
+    display: inline-block;
+    max-width: 100%;
+    padding: 0.16em 0.34em;
+    border-radius: 4px;
+    font-weight: 500;
+    background: var(--flyer-bar-bg, #000000);
+    color: var(--flyer-bar-ink, #FFFFFF);
+    -webkit-text-stroke: 0;
+    text-shadow: none;
+}
+
+/* Type scale at the 1200x1600 reference. Each size is a var so a shrink-to-fit
+   pass can step a long line down without forking the stylesheet. */
+.flyer-food .t-title       { font-size: var(--flyer-title-size, 107px); line-height: 0.92; }
+.flyer-food .t-ingredients { font-size: var(--flyer-ingredients-size, 52px); line-height: 1.20; }
+.flyer-food .t-when        { font-size: var(--flyer-when-size, 46px); line-height: 1.16; }
+.flyer-food .t-price       { font-size: var(--flyer-price-size, 86px); line-height: 1.00; }
+.flyer-food .t-deadline    { font-size: var(--flyer-deadline-size, 39px); line-height: 1.16; }
+.flyer-food .t-cta         { font-size: var(--flyer-cta-size, 46px); line-height: 1.16; }
+
+/* The disclaimer is the deliberate exception to all three treatments: no box,
+   no outline, weight 400. It is therefore the ONLY line whose legibility
+   depends on the ground, which is why palette.js gates --flyer-ink against the
+   gradient sampled at this band. */
+.flyer-food .t-disclaimer {
+    font-size: var(--flyer-disclaimer-size, 33px);
+    line-height: 1.26;
+    font-weight: 400;
+    color: var(--flyer-ink, #14181F);
+}
+</style>
+
+<div class="flyer flyer-food" data-template="food" data-canvas="1200x1600">
+    <div class="zone zone-title">
+        <h1 class="sticker t-title" data-slot="title">{{ title }}</h1>
+    </div>
+
+    <div class="zone zone-ingredients">
+        <p class="sticker t-ingredients" data-slot="ingredients">{{ ingredients }}</p>
+    </div>
+
+    <div class="zone zone-when">
+        <p class="pill t-when" data-slot="when">{{ when }}</p>
+    </div>
+
+    <div class="zone zone-photo">
+        <img class="photo" data-slot="photo" src="{{ photo }}" alt="">
+    </div>
+
+    <div class="zone zone-price">
+        <p class="sticker t-price" data-slot="price">{{ price }}</p>
+    </div>
+
+    <div class="zone zone-disclaimer">
+        <p class="t-disclaimer" data-slot="disclaimer">{{ disclaimer }}</p>
+    </div>
+
+    <div class="zone zone-deadline">
+        <p class="pill t-deadline" data-slot="deadline">{{ deadline }}</p>
+    </div>
+
+    <div class="zone zone-cta">
+        <p class="cta t-cta" data-slot="cta">{{ cta }}</p>
+    </div>
+</div>

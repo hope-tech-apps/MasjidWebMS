@@ -11,7 +11,12 @@ use App\Http\Controllers\AdminDashboard\ContactsController;
 use App\Http\Controllers\AdminDashboard\CountriesCitiesController;
 use App\Http\Controllers\AdminDashboard\DashboardSearchController;
 use App\Http\Controllers\AdminDashboard\AnnualStatementsController;
+use App\Http\Controllers\AdminDashboard\DonationExportController;
 use App\Http\Controllers\AdminDashboard\DonationsController;
+use App\Http\Controllers\AdminDashboard\DonationStatsController;
+use App\Http\Controllers\AdminDashboard\FlyerCutoutController;
+use App\Http\Controllers\AdminDashboard\FlyersController;
+use App\Http\Controllers\AdminDashboard\FlyerTemplatesController;
 use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
@@ -297,6 +302,45 @@ Route::prefix('admin')->group(function () {
             Route::get('{masjid_id}/forms/{form_id}/insights', [FormInsightsController::class, 'show'])
                 ->middleware('assistant');
 
+            // Flyer Studio. Rendering happens CLIENT-SIDE in the browser — the
+            // droplet has no Node, and DomPDF cannot do flexbox, grid or Arabic
+            // shaping — so these endpoints serve the designs and store the data;
+            // they never rasterise anything. Background removal is the one server
+            // -side step, and it runs as a queued job (a 3s inference on the only
+            // vCPU would stall the prayer-time API for three tenants' apps).
+            //
+            // Deliberately OUTSIDE the `crm` group: flyers are content authoring
+            // like forms and pages, not the CRM money path, so gating them on
+            // masjids.crm_enabled would hide the Studio from every masjid that has
+            // not bought the CRM. Same reasoning (and same lack of a `permission:`
+            // middleware) as the forms group above.
+            Route::prefix('{masjid_id}/flyer-templates')->controller(FlyerTemplatesController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::get('/{template_id}', 'show');
+            });
+
+            Route::prefix('{masjid_id}/flyers')->group(function () {
+                Route::controller(FlyersController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store');
+                    Route::get('/{flyer_id}', 'show');
+                    Route::put('/{flyer_id}', 'update');
+                    Route::delete('/{flyer_id}', 'destroy');
+                });
+
+                // Source photo + background removal. `image` streams the stored
+                // file through the app rather than a public symlink: these live on
+                // the private disk, because a janazah photo above all must not be
+                // world-readable by guessing a URL.
+                Route::controller(FlyerCutoutController::class)->group(function () {
+                    Route::post('/{flyer_id}/photo', 'store');
+                    Route::get('/{flyer_id}/cutout', 'show');
+                    Route::post('/{flyer_id}/cutout/retry', 'retry');
+                    Route::get('/{flyer_id}/image/{variant?}', 'image');
+                    Route::delete('/{flyer_id}/photo', 'destroy');
+                });
+            });
+
             // Contact Requests Management
             Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
                 Route::get('/', 'index');
@@ -392,6 +436,23 @@ Route::prefix('admin')->group(function () {
                     Route::get('/{fund_id}', 'show')->middleware('permission:view donations');
                     Route::put('/{fund_id}', 'update')->middleware('permission:manage funds');
                     Route::delete('/{fund_id}', 'destroy')->middleware('permission:manage funds');
+                });
+
+                // Giving dashboard numbers, and the ledger CSV.
+                //
+                // These MUST stay above the `{masjid_id}/donations` group below:
+                // that group ends in `/{donation_id}`, which would otherwise match
+                // "export" and "stats" as ids and 404 on a cast. Laravel matches in
+                // declaration order, so position here is load-bearing, not stylistic.
+                //
+                // The export is driven by the same filter contract as the ledger
+                // index (DonationsController::filteredQuery), so what the accountant
+                // downloads is exactly what the admin is looking at.
+                Route::get('{masjid_id}/donations/export', [DonationExportController::class, 'export'])
+                    ->middleware('permission:view donations');
+                Route::prefix('{masjid_id}/donations/stats')->controller(DonationStatsController::class)->group(function () {
+                    Route::get('/summary', 'summary')->middleware('permission:view donations');
+                    Route::get('/by-fund', 'byFund')->middleware('permission:view donations');
                 });
 
                 // Donations ledger — READ-ONLY. Rows are created and advanced

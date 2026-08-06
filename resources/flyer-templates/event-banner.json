@@ -1,0 +1,76 @@
+{
+    "key": "event-banner",
+    "name": "Event — Banner",
+    "kind": "event",
+    "archetype": "banner",
+    "version": 1,
+    "html": "event-banner.html",
+    "root_class": "flyer-banner",
+    "summary": "Big title over a flat colour field with optional cut-out artwork. The loudest archetype — use it to announce, not to invite.",
+    "canvas": { "width": 1200, "height": 1600, "aspect": "3:4" },
+    "layout": "flow",
+    "palette": {
+        "default": "cool-neutral",
+        "ground": "field",
+        "note": "Reads --flyer-field / --flyer-field-ink, not the gradient. palette.js clamps the field dark enough that white type clears AA."
+    },
+    "slots": [
+        {
+            "name": "eyebrow",
+            "label": "Intro line",
+            "type": "multiline",
+            "required": false,
+            "maxLength": 160,
+            "default": null,
+            "help": "One or two sentences of context above the title. Leave empty and the line is removed."
+        },
+        {
+            "name": "title",
+            "label": "Event title",
+            "type": "text",
+            "required": true,
+            "maxLength": 42,
+            "default": "Brothers Game Night",
+            "size_var": "--flyer-title-size",
+            "help": "Set in caps by the template — type it normally."
+        },
+        {
+            "name": "art",
+            "label": "Artwork",
+            "type": "image",
+            "required": false,
+            "maxLength": null,
+            "default": null,
+            "help": "Transparent PNG (an icon or illustration). Absorbs the leftover vertical space, so it is what keeps a short flyer balanced."
+        },
+        {
+            "name": "venue",
+            "label": "Venue",
+            "type": "text",
+            "required": true,
+            "maxLength": 60,
+            "default": null,
+            "help": "e.g. \"Youth Center, Burlington Masjid\"."
+        },
+        {
+            "name": "details",
+            "label": "When / how to join",
+            "type": "multiline",
+            "required": true,
+            "maxLength": 150,
+            "default": null,
+            "size_var": "--flyer-details-size",
+            "help": "Set in spaced caps. Three short lines read better than one long one."
+        },
+        {
+            "name": "cta",
+            "label": "Call to action (phone number)",
+            "type": "text",
+            "required": false,
+            "maxLength": 48,
+            "default": null,
+            "ask_always": true,
+            "help": "Ask which number to use — the events/RSVP line is not the food-order line. Never infer one from past flyers."
+        }
+    ]
+}

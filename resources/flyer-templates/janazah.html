@@ -1,0 +1,189 @@
+<!--
+  Janazah announcement.
+
+  Nothing in the corpus to copy — there were zero examples, so this is derived
+  from constants rather than extrapolated, and every choice is a subtraction.
+  Plain dark ground: no gradient, no photograph, no illustration, no accent
+  colour used as decoration. None of the three food treatments appear: no
+  sticker outline, no white pill, no black CTA bar. A janazah notice is not
+  advertising and must never look like the food flyer that shipped last Friday.
+
+  Sizes are restrained on purpose. The name of the deceased is the largest thing
+  on the page and nothing competes with it.
+-->
+<style>
+.flyer-janazah,
+.flyer-janazah *,
+.flyer-janazah *::before,
+.flyer-janazah *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+.flyer-janazah {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 1200px;
+    height: 1600px;
+    padding: 9% 8% 6%;
+    overflow: hidden;
+    text-align: center;
+    font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    font-kerning: normal;
+    text-rendering: geometricPrecision;
+    background: var(--flyer-ground, #12161C);
+    color: var(--flyer-ground-ink, #F2F4F7);
+}
+
+/* The notice centres in the space above the logo rather than stacking from the
+   top, so a short announcement and a long one are both composed rather than
+   trailing off into empty ground. */
+.flyer-janazah .body {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
+}
+
+.flyer-janazah .body > * {
+    max-width: 100%;
+}
+
+/* Arabic falls outside Montserrat's coverage, so it resolves to a system
+   Naskh face. If the export path cannot shape Arabic, render the
+   transliteration alone rather than shipping broken glyphs. */
+.flyer-janazah .arabic {
+    font-family: 'Geeza Pro', 'Noto Naskh Arabic', 'Segoe UI', 'Times New Roman', serif;
+    font-size: var(--flyer-arabic-size, 56px);
+    line-height: 1.7;
+    direction: rtl;
+    unicode-bidi: isolate;
+    opacity: 0.92;
+}
+
+.flyer-janazah .translit {
+    margin-top: 2.5%;
+    font-size: var(--flyer-translit-size, 30px);
+    line-height: 1.4;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    opacity: 0.72;
+}
+
+.flyer-janazah .intro {
+    margin-top: 9%;
+    font-size: var(--flyer-intro-size, 34px);
+    line-height: 1.45;
+    font-weight: 400;
+    opacity: 0.82;
+}
+
+.flyer-janazah .name {
+    margin-top: 3.5%;
+    font-size: var(--flyer-name-size, 84px);
+    line-height: 1.06;
+    font-weight: 900;
+    letter-spacing: -0.01em;
+}
+
+.flyer-janazah .lifespan {
+    margin-top: 2.5%;
+    font-size: var(--flyer-lifespan-size, 32px);
+    line-height: 1.3;
+    font-weight: 400;
+    opacity: 0.72;
+}
+
+.flyer-janazah .hairline {
+    width: 18%;
+    height: 1px;
+    margin: 8% 0;
+    background: currentColor;
+    opacity: 0.35;
+}
+
+.flyer-janazah .details {
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+    width: 100%;
+}
+
+.flyer-janazah .label {
+    font-size: var(--flyer-label-size, 26px);
+    line-height: 1.3;
+    font-weight: 500;
+    letter-spacing: 0.30em;
+    text-transform: uppercase;
+    text-indent: 0.30em; /* letter-spacing pads the right edge; re-centre it */
+    opacity: 0.62;
+}
+
+.flyer-janazah .value {
+    margin-top: 14px;
+    font-size: var(--flyer-value-size, 42px);
+    line-height: 1.3;
+    font-weight: 800;
+}
+
+.flyer-janazah .where {
+    margin-top: 8px;
+    font-size: var(--flyer-where-size, 34px);
+    line-height: 1.32;
+    font-weight: 400;
+    opacity: 0.85;
+}
+
+.flyer-janazah .note {
+    margin-top: 8%;
+    font-size: var(--flyer-note-size, 30px);
+    line-height: 1.45;
+    font-weight: 400;
+    opacity: 0.78;
+}
+
+/* Small, and last. The masjid identifies itself; it does not brand this. */
+.flyer-janazah .logo {
+    flex: 0 0 auto;
+    margin-top: 6%;
+    height: 130px;
+    object-fit: contain;
+    opacity: 0.85;
+}
+</style>
+
+<div class="flyer flyer-janazah" data-template="janazah" data-canvas="1200x1600">
+    <div class="body">
+        <p class="arabic" data-slot="arabic">{{ arabic }}</p>
+        <p class="translit" data-slot="translit">{{ translit }}</p>
+
+        <p class="intro" data-slot="intro">{{ intro }}</p>
+        <h1 class="name" data-slot="name">{{ name }}</h1>
+        <p class="lifespan" data-slot="lifespan" data-optional="true">{{ lifespan }}</p>
+
+        <div class="hairline"></div>
+
+        <div class="details">
+            <div>
+                <p class="label">Salatul Janazah</p>
+                <p class="value" data-slot="janazah_time">{{ janazah_time }}</p>
+                <p class="where" data-slot="janazah_masjid">{{ janazah_masjid }}</p>
+            </div>
+            <div>
+                <p class="label">Burial</p>
+                <p class="value" data-slot="burial_location">{{ burial_location }}</p>
+                <p class="where" data-slot="burial_time" data-optional="true">{{ burial_time }}</p>
+            </div>
+        </div>
+
+        <p class="note" data-slot="note" data-optional="true">{{ note }}</p>
+    </div>
+
+    <img class="logo" data-slot="logo" data-optional="true" src="{{ logo }}" alt="">
+</div>

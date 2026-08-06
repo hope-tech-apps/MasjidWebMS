@@ -1,0 +1,91 @@
+{
+    "version": 1,
+    "font": {
+        "family": "Montserrat",
+        "weights": [400, 500, 800, 900],
+        "self_hosted": true,
+        "note": "Templates never @import or link a font; the app shell loads it once. resources/views/vue-app-index.blade.php serves public/fonts/Montserrat-variable.ttf as a single 100-900 variable face, so all four weights come from one first-party request — self-hosted because the PNG export must not depend on a font CDN. Without that face everything falls back to Helvetica/Arial, which changes the look."
+    },
+    "canvas_default": { "width": 1200, "height": 1600, "aspect": "3:4" },
+    "palette": {
+        "resolver": "palette.js",
+        "named": "palettes.json",
+        "default": "cool-neutral",
+        "vars": [
+            "--flyer-grad-0",
+            "--flyer-grad-1",
+            "--flyer-grad-2",
+            "--flyer-grad-3",
+            "--flyer-ink",
+            "--flyer-field",
+            "--flyer-field-ink",
+            "--flyer-ground",
+            "--flyer-ground-ink",
+            "--flyer-accent",
+            "--flyer-pill-bg",
+            "--flyer-pill-ink",
+            "--flyer-bar-bg",
+            "--flyer-bar-ink"
+        ]
+    },
+    "templates": [
+        {
+            "key": "food",
+            "name": "Food Sale",
+            "kind": "food",
+            "manifest": "food.json",
+            "html": "food.html",
+            "measured": true,
+            "summary": "The locked layout, reproduced from ~124 exemplars. Eight pinned zones, three treatments, black CTA bar last."
+        },
+        {
+            "key": "event-banner",
+            "name": "Event — Banner",
+            "kind": "event",
+            "archetype": "banner",
+            "manifest": "event-banner.json",
+            "html": "event-banner.html",
+            "measured": false,
+            "summary": "Big title over a flat colour field with optional cut-out artwork."
+        },
+        {
+            "key": "event-invitation",
+            "name": "Event — Invitation",
+            "kind": "event",
+            "archetype": "invitation",
+            "manifest": "event-invitation.json",
+            "html": "event-invitation.html",
+            "measured": false,
+            "summary": "Centred and airy, for dinners and Eid."
+        },
+        {
+            "key": "event-bulletin",
+            "name": "Event — Bulletin",
+            "kind": "event",
+            "archetype": "bulletin",
+            "manifest": "event-bulletin.json",
+            "html": "event-bulletin.html",
+            "measured": false,
+            "summary": "Dense schedule for multi-session programmes."
+        },
+        {
+            "key": "event-photo",
+            "name": "Event — Photo",
+            "kind": "event",
+            "archetype": "photo",
+            "manifest": "event-photo.json",
+            "html": "event-photo.html",
+            "measured": false,
+            "summary": "Full-bleed photo with the title over a dark scrim."
+        },
+        {
+            "key": "janazah",
+            "name": "Janazah Announcement",
+            "kind": "janazah",
+            "manifest": "janazah.json",
+            "html": "janazah.html",
+            "measured": false,
+            "summary": "Plain dark ground, no photo, no gradient, no CTA bar. Derived from constants — the corpus had no example."
+        }
+    ]
+}

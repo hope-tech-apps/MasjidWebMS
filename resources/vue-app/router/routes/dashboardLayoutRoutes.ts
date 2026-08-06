@@ -69,6 +69,32 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/PhotoGalleryView.vue")
             },
+            {
+                // Flyer Studio. No `requiresCrm` on purpose — making a flyer is
+                // content authoring like forms and pages, not part of the CRM
+                // money path, so it must not be hidden from masjids without CRM.
+                path: 'flyers',
+                name: 'masjid.flyers',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Flyer Studio'
+                },
+                component: () => import("@/views/dashboard/FlyerStudioView.vue")
+            },
+            {
+                // Same view, opened on an existing draft. The Assistant's
+                // draft_flyer tool hands the admin a link of exactly this shape,
+                // so the path is part of that tool's contract.
+                path: 'flyers/:flyer_id',
+                name: 'masjid.flyerStudio',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Flyer Studio'
+                },
+                component: () => import("@/views/dashboard/FlyerStudioView.vue")
+            },
             ...generalDataManagementRoutes,
             {
                 path: 'iqama',
@@ -142,6 +168,33 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     requiresCrm: true
                 },
                 component: () => import("@/views/dashboard/DonationsView.vue")
+            },
+            {
+                // The overview: header totals, per-fund breakdown, and a filtered
+                // feed that shares one filter contract with the CSV export, so the
+                // dashboard and the accountant's file can never disagree.
+                path: 'donations/dashboard',
+                name: 'masjid.donationsDashboard',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Giving Dashboard',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/DonationsDashboardView.vue")
+            },
+            {
+                // Route NAME is load-bearing: the dashboard's per-fund
+                // "view details" links here by name.
+                path: 'donations/funds/:fundId',
+                name: 'masjid.fundDetail',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Fund Detail',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/FundDetailView.vue")
             },
             {
                 path: 'recurring-donations',
