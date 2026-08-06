@@ -155,6 +155,32 @@ class SuperAdminExportScopeTest extends TestCase
     }
 
     #[Test]
+    public function every_masjid_scoped_admin_route_spells_the_param_masjid_id(): void
+    {
+        // ResolveMasjidTenant binds from $request->route('masjid_id') — the literal
+        // name. A route declared with {masjid} or {mosque_id} would still look
+        // masjid-scoped to a reader, but would leave a SuperAdmin UNBOUND and
+        // therefore unfiltered. That is the one way the leak reported in review
+        // could actually be introduced, so pin the spelling rather than trusting
+        // that everyone keeps typing it the same way.
+        $offenders = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            if (! str_starts_with($route->uri(), 'api/admin/')) {
+                continue;
+            }
+            foreach ($route->parameterNames() as $param) {
+                if ($param !== 'masjid_id' && str_contains(strtolower($param), 'masjid')) {
+                    $offenders[] = $route->uri() . ' -> {' . $param . '}';
+                }
+            }
+        }
+
+        $this->assertSame([], $offenders, "Masjid-scoped admin routes must name the param 'masjid_id' "
+            . 'or ResolveMasjidTenant will not bind the tenant: ' . implode(', ', $offenders));
+    }
+
+    #[Test]
     public function switching_the_url_switches_the_masjid_rather_than_widening_it(): void
     {
         Sanctum::actingAs($this->superAdmin());

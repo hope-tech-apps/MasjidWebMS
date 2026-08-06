@@ -17,11 +17,22 @@ every tenant-scoped CRM model.
   input.** When a tenant is bound, the creating hook OVERRIDES any supplied
   `masjid_id` — a MasjidAdmin cannot create or move a row into another masjid.
 - **Unbound context = no filter.** When `TenantContext` is not bound, the global
-  scope adds no constraint. This is deliberate and preserves two behaviors:
-  - **SuperAdmin** — left unbound by `ResolveMasjidTenant`, so cross-masjid
-    dashboards keep working.
+  scope adds no constraint. Unbound means **"this route is not about one
+  masjid"** — it does NOT mean "the caller is a SuperAdmin":
+  - **SuperAdmin on a masjid-scoped route** (`/masjids/{id}/...`) — **BOUND to
+    the masjid the route names.** A SuperAdmin may act on any masjid, but only
+    one at a time. `/masjids/5/donations/export` returns masjid 5 and nothing
+    else; pinned by `tests/Feature/SuperAdminExportScopeTest.php`.
+  - **SuperAdmin on a route with no `{masjid_id}`** (the masjid list, the
+    portal) — unbound, which is what keeps genuinely cross-masjid views working.
   - **Public mobile API** (`routes/api.php`, unauthenticated) — never runs the
     tenant middleware, passes `masjid_id` explicitly in the URL.
+
+  > This bullet previously said SuperAdmins are *always* left unbound. That was
+  > true of an early version of `ResolveMasjidTenant` and has not been true
+  > since; it caused a security review to report a cross-tenant export leak that
+  > does not exist. If you are about to "fix" such a leak, run the test above
+  > first — the guardrail already holds.
 - **Bypass explicitly** with `Model::withoutMasjidScope()` or
   `TenantContext::runWithout()` for super/system/reporting code. Never remove the
   trait to "make a query work".

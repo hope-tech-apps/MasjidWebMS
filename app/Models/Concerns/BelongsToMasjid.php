@@ -15,10 +15,15 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * request-scoped App\Support\TenantContext:
  *
  *   1. Global scope — when a tenant is BOUND, every query is constrained to
- *      that masjid. When the context is UNBOUND (SuperAdmin, system jobs, and
- *      the public/unauthenticated mobile API) NO constraint is added, so those
- *      callers keep seeing every masjid's rows. Unbound == no filter is what
- *      preserves existing SuperAdmin cross-masjid views and public behavior.
+ *      that masjid. When the context is UNBOUND (system jobs, seeders, the
+ *      public/unauthenticated mobile API, and admin routes that name no masjid)
+ *      NO constraint is added, so those callers see every masjid's rows.
+ *
+ *      Note what UNBOUND does NOT mean: it is not "the caller is a SuperAdmin".
+ *      On a masjid-scoped admin route, ResolveMasjidTenant binds a SuperAdmin to
+ *      the masjid the URL names, so /masjids/5/... is filtered to masjid 5 for
+ *      them too. Unbound is about the ROUTE, not the role. See
+ *      .claude/rules/tenant-scoping.md and SuperAdminExportScopeTest.
  *
  *   2. Creating hook — when a tenant is BOUND, masjid_id is stamped from the
  *      context and OVERRIDES anything the caller supplied. masjid_id is always
