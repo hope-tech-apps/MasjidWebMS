@@ -159,7 +159,21 @@ final class EmbedProviders
         if ($provider === self::SITE_PAGE) {
             $host = self::siteHost($masjid);
 
-            return $host === null ? [] : [$host];
+            if ($host === null) {
+                return [];
+            }
+
+            // `www.` is an alias for the same site, and which of the two a masjid typed
+            // into its settings is arbitrary. Without this, a tenant registered as
+            // www.meccharlotte.org cannot embed meccharlotte.org/calendar — the same
+            // page, refused on a technicality nobody outside this file can see.
+            //
+            // Deliberately just the leading `www.` label, NOT the parent domain: for a
+            // masjid on a shared host, `mec.wixsite.com` must never widen to
+            // `wixsite.com` and let every other Wix site through.
+            $alias = str_starts_with($host, 'www.') ? substr($host, 4) : 'www.' . $host;
+
+            return [$host, $alias];
         }
 
         return self::PROVIDERS[$provider]['hosts'] ?? [];
