@@ -46,6 +46,15 @@
     color: var(--flyer-field-ink, #FFFFFF);
 }
 
+/* Sits inside the coloured header band, above the kicker. Same reasoning as the
+   banner: the mark is a corpus constant, not an ornament. */
+.flyer-bulletin .header .logo {
+    height: 96px;
+    display: block;
+    margin: 0 0 4%;
+    object-fit: contain;
+}
+
 .flyer-bulletin .header .kicker {
     font-size: var(--flyer-kicker-size, 30px);
     line-height: 1.3;
@@ -70,18 +79,30 @@
     font-weight: 500;
 }
 
+/* `overflow: hidden` is the backstop, not the plan: nine rows is the documented
+   ceiling and the fitter shrinks the type before this ever bites. Without it a
+   tenth row silently paints over the note and the address below. */
 .flyer-bulletin .schedule {
     flex: 1 1 auto;
     min-height: 0;
-    padding: 4% 6%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: 3% 6%;
 }
 
+/* The time column sizes to its own content rather than a fixed width. It was
+   300px against `white-space: nowrap`, so any time longer than that — e.g.
+   "Wednesdays 7:00 PM" — overflowed straight across the session title instead of
+   widening or wrapping. max-content lets the longest time in the schedule set the
+   column for every row, which is also what keeps the times aligned. */
 .flyer-bulletin .session {
     display: grid;
-    grid-template-columns: 300px 1fr;
+    grid-template-columns: max-content 1fr;
     align-items: baseline;
     column-gap: 32px;
-    padding: 22px 20px;
+    padding: 18px 20px;
     border-radius: 8px;
 }
 
@@ -140,6 +161,7 @@
 
 <div class="flyer flyer-bulletin" data-template="event-bulletin" data-canvas="1200x1600">
     <div class="header">
+        <img class="logo" data-slot="logo" data-optional="true" src="{{ logo }}" alt="">
         <p class="kicker" data-slot="kicker" data-optional="true">{{ kicker }}</p>
         <h1 class="title" data-slot="title">{{ title }}</h1>
         <p class="subtitle" data-slot="subtitle" data-optional="true">{{ subtitle }}</p>

@@ -57,8 +57,17 @@
     background: var(--flyer-accent, #7A8CA3);
 }
 
+/* The masjid mark. Every flyer in the corpus carries it — top-centre or
+   bottom-right, never both — so it is a constant rather than a decoration.
+   Optional in the schema only because a tenant may not have uploaded one. */
+.flyer-banner .logo {
+    height: 118px;
+    margin: 4% auto 0;
+    object-fit: contain;
+}
+
 .flyer-banner .eyebrow {
-    margin-top: 5%;
+    margin-top: 3%;
     font-size: var(--flyer-eyebrow-size, 40px);
     line-height: 1.32;
     font-weight: 500;
@@ -132,6 +141,8 @@
 
 <div class="flyer flyer-banner" data-template="event-banner" data-canvas="1200x1600">
     <div class="rule"></div>
+
+    <img class="logo" data-slot="logo" data-optional="true" src="{{ logo }}" alt="">
 
     <p class="eyebrow" data-slot="eyebrow" data-optional="true">{{ eyebrow }}</p>
 

@@ -21,6 +21,15 @@
   },
   "slots": [
     {
+      "name": "logo",
+      "label": "Masjid logo",
+      "type": "image",
+      "required": false,
+      "maxLength": null,
+      "default": null,
+      "help": "The masjid mark. Every flyer in the corpus carries one; optional here only because a tenant may not have uploaded theirs yet."
+    },
+    {
       "name": "kicker",
       "label": "Kicker",
       "type": "text",
