@@ -4,10 +4,13 @@ namespace App\Http\Requests\Admin\PageSections;
 
 use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
+use App\Http\Requests\Concerns\ValidatesEmbedContent;
 use Illuminate\Validation\Rules\Enum;
 
 class StorePageSectionRequest extends BaseFormRequest
 {
+    use ValidatesEmbedContent;
+
     protected function prepareForValidation(): void
     {
         $merge = [];
@@ -46,6 +49,8 @@ class StorePageSectionRequest extends BaseFormRequest
                     if ($error = $this->findBase64ImageInContent($value)) {
                         $fail($error);
                     }
+                    // An embed's provider+url are allowlisted server-side; see the trait.
+                    $this->validateEmbedContent($value, $fail);
                 },
             ],
             'order' => 'nullable|integer',

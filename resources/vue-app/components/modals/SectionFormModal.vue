@@ -298,6 +298,7 @@ import EventsSectionEditor from '@/components/sections/editors/EventsSectionEdit
 import ImageSectionEditor from '@/components/sections/editors/ImageSectionEditor.vue';
 import LinkListSectionEditor from '@/components/sections/editors/LinkListSectionEditor.vue';
 import CarouselSectionEditor from '@/components/sections/editors/CarouselSectionEditor.vue';
+import EmbedSectionEditor from '@/components/sections/editors/EmbedSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -371,6 +372,7 @@ const editorMap: Record<SectionType, any> = {
     'image': ImageSectionEditor,
     'link_list': LinkListSectionEditor,
     'carousel': CarouselSectionEditor,
+    'embed': EmbedSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

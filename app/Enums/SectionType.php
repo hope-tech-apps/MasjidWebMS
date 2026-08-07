@@ -26,6 +26,10 @@ enum SectionType: string
     case IMAGE = 'image';
     case LINK_LIST = 'link_list';
     case CAROUSEL = 'carousel';
+    // A third-party widget framed into a page — the masjid's existing events calendar,
+    // a YouTube khutbah, a map. See App\Support\EmbedProviders for why the URL is
+    // allowlisted by provider rather than free text.
+    case EMBED = 'embed';
 
     /**
      * Get all section type values
@@ -60,6 +64,7 @@ enum SectionType: string
             self::IMAGE => 'Image',
             self::LINK_LIST => 'Link Buttons',
             self::CAROUSEL => 'Image Carousel',
+            self::EMBED => 'Embedded Widget',
         };
     }
 
@@ -88,6 +93,7 @@ enum SectionType: string
             self::IMAGE => 'A single standalone image with optional caption — flyers, posters, decorative banners',
             self::LINK_LIST => 'A row or stack of link buttons — email, phone, website, external registration links',
             self::CAROUSEL => 'A rotating slideshow of images with optional titles, captions and links',
+            self::EMBED => 'A widget from another site — your existing events calendar, a YouTube video, a Google Map or Form',
         };
     }
 
@@ -120,7 +126,11 @@ enum SectionType: string
             // Author-supplied content only — nothing is pulled from another table.
             self::IMAGE,
             self::LINK_LIST,
-            self::CAROUSEL => false,
+            self::CAROUSEL,
+            // The widget fetches its own content from the provider, in the visitor's
+            // browser. Nothing is pulled from our tables, so this is false — the flag
+            // means "this renderer needs data from another endpoint of OURS".
+            self::EMBED => false,
         };
     }
 
@@ -271,6 +281,27 @@ enum SectionType: string
                 'show_arrows' => true,
                 'show_dots' => true,
                 'height' => 'medium', // short | medium | tall
+            ],
+            // A framed third-party widget. `provider` decides which hosts `url` may
+            // belong to and which sandbox the frame gets — see App\Support\EmbedProviders.
+            //
+            // `aspect` wins over `height` when both are set, because a ratio survives a
+            // phone screen and a fixed pixel height does not. Leaving both unset falls
+            // back to the provider's own default ratio (16:9 for video, 4:3 for a map).
+            //
+            // `fallback_text` is the label on the "open in a new tab" link that renders
+            // BESIDE the frame, always. Providers block framing without warning and
+            // without an error event; a blank rectangle is the failure mode, so the
+            // content stays reachable by a plain link no matter what the frame does.
+            self::EMBED => [
+                'provider' => null,
+                'url' => '',
+                'title' => '',
+                'caption' => '',
+                'height' => null,
+                'aspect' => null,
+                'fallback_text' => '',
+                'background_color' => '#ffffff',
             ],
         };
     }

@@ -4,10 +4,13 @@ namespace App\Http\Requests\Admin\Sections;
 
 use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
+use App\Http\Requests\Concerns\ValidatesEmbedContent;
 use Illuminate\Validation\Rules\Enum;
 
 class StoreSectionRequest extends BaseFormRequest
 {
+    use ValidatesEmbedContent;
+
     /**
      * Section editors submit FormData (because they upload image files alongside JSON
      * content). The `content` and `settings` fields arrive as JSON-encoded strings —
@@ -47,6 +50,8 @@ class StoreSectionRequest extends BaseFormRequest
                     if ($error = $this->findBase64ImageInContent($value)) {
                         $fail($error);
                     }
+                    // An embed's provider+url are allowlisted server-side; see the trait.
+                    $this->validateEmbedContent($value, $fail);
                 },
             ],
             'is_active' => 'boolean',

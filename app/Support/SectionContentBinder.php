@@ -63,8 +63,55 @@ class SectionContentBinder
             SectionType::DONATION       => self::bindDonation($content, $masjidId),
             SectionType::CONTACT_FORM   => self::bindContact($content, $masjidId),
             SectionType::FORM           => self::bindForm($content, $masjidId),
+            SectionType::EMBED          => self::bindEmbed($content, $masjidId),
             default                     => $content,
         };
+    }
+
+    /**
+     * Resolve an embed section into something the renderer can draw directly: the
+     * normalised frame URL plus the sandbox/allow policy for its provider.
+     *
+     * The URL is re-validated HERE, at serve time, not just at save time. Two reasons:
+     *
+     *  1. The allowlist is code, and code changes. Tightening EmbedProviders — or a
+     *     masjid changing its website_link — must stop already-stored rows from
+     *     rendering, rather than leaving whatever was legal on the day it was saved
+     *     framed inside the masjid's site forever.
+     *  2. It keeps the allowlist in ONE place. The site never has to carry its own copy
+     *     of which hosts belong to which provider; it is handed a resolved src and the
+     *     exact sandbox to use.
+     *
+     * Fails closed: a URL that no longer validates is blanked, and the renderer draws
+     * nothing at all. A widget that silently disappears is recoverable; one that frames
+     * an unvetted origin inside the masjid's own domain is not.
+     */
+    private static function bindEmbed(array $content, ?int $masjidId): array
+    {
+        $provider = is_string($content['provider'] ?? null) ? trim($content['provider']) : '';
+        $url = is_string($content['url'] ?? null) ? trim($content['url']) : '';
+
+        $masjid = $masjidId ? Masjid::find($masjidId) : null;
+        $src = ($provider !== '' && $url !== '')
+            ? EmbedProviders::normalize($provider, $url, $masjid)
+            : null;
+
+        if ($src === null) {
+            return array_merge($content, ['url' => '', 'iframe' => null]);
+        }
+
+        $attributes = EmbedProviders::attributes($provider);
+
+        return array_merge($content, [
+            'url' => $src,
+            'iframe' => [
+                'src' => $src,
+                'sandbox' => $attributes['sandbox'],
+                'allow' => $attributes['allow'],
+                // Only a suggestion: an explicit aspect/height in the content wins.
+                'default_aspect' => $attributes['default_aspect'],
+            ],
+        ]);
     }
 
     /**

@@ -17,7 +17,8 @@ export type SectionType =
     | 'form'
     | 'image'
     | 'link_list'
-    | 'carousel';
+    | 'carousel'
+    | 'embed';
 
 // Base Section
 export type PageSection = {
@@ -57,7 +58,8 @@ export type SectionContent =
     | FormSectionContent
     | ImageSectionContent
     | LinkListSectionContent
-    | CarouselSectionContent;
+    | CarouselSectionContent
+    | EmbedSectionContent;
 
 // Individual Section Content Types
 
@@ -253,3 +255,35 @@ export type SectionTypeInfo = {
     default_content: SectionContent;
 };
 
+/**
+ * A third-party widget framed into a page.
+ *
+ * `provider` picks the allowlist the URL is checked against server-side
+ * (App\Support\EmbedProviders) — that check is the control, not this type. `iframe`
+ * is READ-ONLY: the API adds it when serving a page (resolved src + the sandbox policy
+ * for that provider) and it is null when a stored URL no longer validates. The editor
+ * never sets it.
+ */
+export type EmbedProvider =
+    | 'youtube'
+    | 'google_maps'
+    | 'google_form'
+    | 'wix_widget'
+    | 'site_page';
+
+export type EmbedSectionContent = {
+    provider: EmbedProvider | null;
+    url: string;
+    title: string;
+    caption: string;
+    height: number | null;
+    aspect: string | null;   // "16:9" — wins over height when set
+    fallback_text: string;
+    background_color: string;
+    iframe?: {
+        src: string;
+        sandbox: string;
+        allow: string;
+        default_aspect: string | null;
+    } | null;
+};
