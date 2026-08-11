@@ -148,6 +148,33 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/ContactsView.vue")
             },
             {
+                // The tenant's groups. `pageTitle` is the vertical-neutral word
+                // on purpose: the SCREEN names itself from the terminology pack
+                // ("Classrooms" / "Halaqat" / "Teams") once the masjid payload
+                // has loaded, and a route meta string cannot reach the store.
+                path: 'groups',
+                name: 'masjid.groups',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Groups',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/GroupsView.vue")
+            },
+            {
+                // Route NAME is load-bearing: the groups list links here by name.
+                path: 'groups/:groupId',
+                name: 'masjid.groupDetail',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Group Detail',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/GroupDetailView.vue")
+            },
+            {
                 path: 'funds',
                 name: 'masjid.funds',
                 meta: {

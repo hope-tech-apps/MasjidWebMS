@@ -206,6 +206,25 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        // What a group is CALLED is the tenant's vocabulary: "Halaqat" for a
+        // masjid, "Classrooms" for a school, "Teams" for a community org. The
+        // authored `title` stays as the neutral default for a payload that
+        // carries no vertical block. NEVER hardcode "Classrooms" here.
+        title: "Groups",
+        title_term: 'groups',
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 20V19C3 16.7909 4.79086 15 7 15H11C13.2091 15 15 16.7909 15 19V20" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M9 12C10.6569 12 12 10.6569 12 9C12 7.34315 10.6569 6 9 6C7.34315 6 6 7.34315 6 9C6 10.6569 7.34315 12 9 12Z" stroke="white" stroke-width="1.7"/>
+                <path d="M17 20V19C17 17.1362 16.0248 15.5001 14.5571 14.5742" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M16 6.2C17.1652 6.58851 18 7.6962 18 9C18 10.3038 17.1652 11.4115 16 11.8" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M21 4H3" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/groups',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         // The overview sits above the ledger: totals first, individual gifts second.
         title: "Giving Dashboard",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
