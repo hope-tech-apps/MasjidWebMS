@@ -102,3 +102,33 @@ quote/register/checkout endpoints) fixed these — T-006d..f build on them:
   client-supplied `code` is reported back as `code_applied: false` and can never
   move a price — aid is an admin grant (T-006d). The payer's email is required
   because a Contact is keyed on (masjid, email); registrants may have none.
+
+T-006f (`registrations:reap-expired`, `App\Console\Commands\ReapExpiredCheckouts`)
+fixed these:
+
+- **The reaper owns no seat arithmetic.** It selects and calls
+  `RegistrationService::releaseSeat()`; there is deliberately no decrement in
+  the command. `offerings.registration_count` still has exactly two writers
+  (intake's increment, the release seam's decrement).
+- **The sweep set is `Registration::scopeCheckoutExpiredBefore($deadline)`** —
+  `pending` + `awaiting` + non-null `checkout_expires_at <= deadline`.
+  `past_due` is EXCLUDED on purpose (dunning never ejects, T-006e), and `none`
+  is the free path, which has no window to expire.
+- **`$deadline` is `now() minus a GRACE MARGIN`, never a bare `now()`.**
+  `config('services.stripe.registration_reaper_grace_minutes')`, default 15,
+  `--grace=` for a one-off. It exists so a payment webhook still in flight can
+  never have its seat reaped out from under a paying customer; the costs are
+  asymmetric (a wrongly reaped seat needs a human refund from the org's
+  dashboard, a late-swept seat costs a slightly later waitlist opening).
+- **Convergence with `checkout.session.expired` is by construction**, both
+  orders: webhook-first leaves a row the filter no longer matches, reaper-first
+  leaves a non-pending seat the pending-only seam refuses. One decrement either
+  way.
+- **Not scheduled by default**, exactly like `groups:purge-feed` — cadence is an
+  operator decision, so it belongs in routes/console.php when a policy is agreed.
+- **The concurrency invariant is tested in two arms** (`RegistrationConcurrencyTest`):
+  a forked N-process race that only runs on a lock-capable scratch database and
+  skips cleanly otherwise, plus a deterministic arm that renders `lockForUpdate`
+  as an inert SQL comment to prove the locked read and the relative counter
+  write share one transaction. SQLite cannot prove mutual exclusion; that limit
+  is stated in the test, not papered over with sequential calls.

@@ -161,6 +161,23 @@ return [
         // reaper (T-006f). The free path never sets a window — it has no
         // Stripe leg to wait on.
         'registration_checkout_window_minutes' => (int) env('STRIPE_REGISTRATION_CHECKOUT_WINDOW_MINUTES', 30),
+
+        // GRACE MARGIN for the expired-checkout reaper (T-006f,
+        // registrations:reap-expired), minutes ON TOP OF checkout_expires_at.
+        // The reaper only sweeps holds older than expiry + this.
+        //
+        // Why 15, and why a margin at all: a donor can complete payment in the
+        // final second of their checkout window. Stripe then has to DELIVER
+        // checkout.session.completed / payment_intent.succeeded to us, and that
+        // delivery can lag or need a retry (Stripe's retries start minutes
+        // apart). Sweeping inside that gap cancels a seat somebody has already
+        // paid for, and the only fix is a human refund from the org's own
+        // Stripe dashboard — the org is merchant of record. Holding a dead seat
+        // 15 minutes longer merely delays a waitlist opening. Asymmetric costs,
+        // so the margin is generous. 15 also stays BELOW the 30-minute minimum
+        // checkout window, so a stale hold is never held for more than double
+        // its window.
+        'registration_reaper_grace_minutes' => (int) env('STRIPE_REGISTRATION_REAPER_GRACE_MINUTES', 15),
     ],
 
     /*
