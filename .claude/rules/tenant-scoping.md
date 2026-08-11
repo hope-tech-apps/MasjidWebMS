@@ -61,9 +61,72 @@ use the trait. New CRM controllers must NOT copy that hand-filtering.
 ## How the tenant is bound
 
 `App\Http\Middleware\ResolveMasjidTenant` (alias `tenant`, on the admin route
-group only) binds `TenantContext` to a MasjidAdmin's masjid. The masjid is
-resolved from the authenticated user (`users.masjid_id` if present, else the
-masjid the admin owns via `masjids.user_id` -> `User::masjid()`).
+group only) binds `TenantContext` to a MasjidAdmin's masjid. Since S3 the masjid
+is decided by `App\Support\TenantResolver` from the `masjid_user` pivot, and the
+binding is made with `TenantContext::setFromMembership()` — see the next two
+sections. The pre-S3 rule (`users.masjid_id` if present, else the masjid the
+admin owns via `masjids.user_id` -> `User::masjid()`) is still exactly what a
+production request resolves to, because the resolver's gate is shut.
+
+## The resolver FAILS CLOSED — an unbound context is not a safe default
+
+`App\Support\TenantResolver` answers one question: which masjid may this
+authenticated admin act on for this request? Its verdict is one of three
+(`App\Support\TenantResolution`), and the third is the one that gets lost:
+
+- **bind** this verified `masjid_user` row;
+- **denied** — 403, `ResolveMasjidTenant::FORBIDDEN_MESSAGE`;
+- **unbound** — *this route is not about one masjid*, which is a narrow,
+  deliberate verdict and NOT a synonym for "could not decide".
+
+Collapsing the last two is how cross-tenant reads happen: there is no row-level
+security here, so an unbound context adds **no filter**. None of these bind, and
+each is a comment in the code saying why: no membership at all; a membership
+whose masjid is soft-deleted; a `{masjid_id}` the user holds no membership for
+(holding one *elsewhere* does not soften it); several memberships with nothing in
+the route to choose between them; a principal that is neither admin type. A
+`masjid_id` in the body, the query string or a header is never read — the
+resolver takes the ROUTE parameter, and `ResolveMasjidTenant::routeMasjidId()`
+is the only place it is obtained.
+
+- **The branch order in the middleware is MasjidAdmin-`if` / SuperAdmin-`elseif`.
+  Do not swap it.** A SuperAdmin is bound from the ROUTE (they hold no
+  memberships — S2's backfill gave them none on purpose); moving them onto the
+  membership branch would 403 them out of every masjid they are not a member of.
+  A design proposal described the SuperAdmin branch as "first"; it never was.
+- **`TenantContext::set(int)` is `@internal`.** It stays public for exactly two
+  callers with no membership to offer: the SuperAdmin route-derived branch, and
+  system/reporting code that resolved the masjid itself (`ImpactMetrics::
+  withTenant`). Request code binding on behalf of an admin uses
+  `setFromMembership(MasjidUser)`, so the binding carries provenance
+  (`TenantContext::membership()`) and no controller can bind an id it merely
+  received. For the same reason, code that needs "the current masjid" reads the
+  bound tenant FIRST and the route parameter only as a fallback — see
+  `ValidatesEmbedContent::embedMasjid()`.
+
+## The one-membership gate: `tenancy.multi_membership` ships FALSE
+
+S3 shipped the multi-tenant resolver behind `config/tenancy.php` so production
+behaviour is unchanged until S5. **While the flag is false a user's grants are
+the single organisation they own**, and any further `masjid_user` row is inert:
+it cannot be bound and naming its masjid in the URL is the same 403 it always
+was. Read `TenantResolver::soleOwnedMembership()` — it is the gate, it is the
+only place the flag is consulted, and S5 lifts exactly that method.
+
+- **Do not flip the flag to "make multi-tenant work".** Turning it true also
+  drops the ownership fallback (`membershipFromOwnership()`) that keeps admins
+  working where the S2 backfill never ran or where a masjid was provisioned
+  after it — nothing writes membership rows yet, that is S4. It also needs the
+  SPA switcher, the request epoch and the store resets (S5), or a user gains a
+  second tenant they can hold and never leave.
+- The fallback is not a hole: it binds `masjids.user_id`, which S0 made unique
+  among live rows in the database and which is precisely the authority the
+  middleware ran on before S3. It is built as an UNSAVED `MasjidUser` — never
+  persist it; a read path must not backfill authorization rows, and the
+  one-default-per-user index would make that a request-time constraint error.
+- `tests/Feature/TenantResolverTest.php` pins both halves: the identical fixture
+  is refused with the gate shut and binds with it open, so the gate — not a
+  half-built resolver — is demonstrably what holds the path closed.
 
 ## `masjids.user_id` is UNIQUE among live rows — keep it that way
 
@@ -110,9 +173,10 @@ surface), not a global-scope one.
 - `pivot.role` mirrors the values of `User::TYPE_ROLE_MAP` and is **advisory**:
   authorization still runs on the `users.type` bridge, and spatie's `teams`
   feature stays off (flipping it ALTERs `model_has_roles`' primary key).
-- `masjids.user_id` remains the ownership/billing pointer and, until the resolver
-  slice lands, remains the ONLY thing `ResolveMasjidTenant` reads. A membership
-  row grants nothing on its own.
+- `masjids.user_id` remains the ownership/billing pointer. Since S3 the resolver
+  reads `masjid_user` — but while the one-membership gate below is shut,
+  ownership is still what selects the single grant, so a membership row in any
+  OTHER organisation grants nothing on its own.
 
 ## `TenantContext` is `scoped()`, and every queued job starts UNBOUND
 

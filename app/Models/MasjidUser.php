@@ -13,10 +13,15 @@ use Illuminate\Database\Eloquent\Model;
  * a consultant running two masjids or a parent who is staff at a school and a
  * member at a masjid.
  *
- * **Nothing consumes it yet.** In this slice the rows exist, the relations exist,
- * and tenant resolution still runs entirely off `masjids.user_id` exactly as
- * before. `ResolveMasjidTenant`, `TenantContext::setFromMembership()` and the
- * fail-closed rules are S3.
+ * Since S3 this table IS the authorization source: `App\Support\TenantResolver`
+ * answers "which masjid may this admin act on?" from these rows and
+ * `TenantContext::setFromMembership()` binds the one it picked, so the tenant
+ * carries the grant that admitted the request rather than a bare id.
+ *
+ * **A second membership still grants nothing in production.** S3 ships behind
+ * the one-membership gate (`config/tenancy.php`): while it is shut, a user's
+ * grants are the single organisation they own, which is exactly what the
+ * pre-S3 middleware bound. Rows naming any other masjid are inert until S5.
  *
  * ------------------------------------------------------------------------------
  * This model deliberately does NOT use `BelongsToMasjid`

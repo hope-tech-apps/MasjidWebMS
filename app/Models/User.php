@@ -117,14 +117,16 @@ class User extends Authenticatable implements HasMedia
     /**
      * Every organisation this user holds a membership in (`masjid_user`).
      *
-     * The pivot that S3 will resolve the tenant from — one human, many org
+     * The pivot S3's resolver decides the tenant from — one human, many org
      * affiliations, which `masjid()` above (a `hasOne`) cannot express.
      *
-     * **Nothing consumes this yet, and `masjid()` is untouched.** S2 adds the
-     * table, the backfill and this relation only; tenant resolution still runs
-     * entirely off `masjids.user_id`, so behaviour is identical to before. At most
-     * one of these rows may carry `is_default = 1`, enforced by a unique index
-     * rather than by convention — see `create_masjid_user_table`.
+     * **`masjid()` is untouched, and still decides which of these counts.** S3
+     * ships behind the one-membership gate (`config/tenancy.php`): while it is
+     * shut, `App\Support\TenantResolver` treats only the membership naming the
+     * masjid this user OWNS as a grant, so the binding is identical to before
+     * the pivot existed. At most one of these rows may carry `is_default = 1`,
+     * enforced by a unique index rather than by convention — see
+     * `create_masjid_user_table`.
      *
      * `hasMany(MasjidUser)` rather than `belongsToMany(Masjid)` on purpose: the
      * design's resolver takes the MEMBERSHIP itself
