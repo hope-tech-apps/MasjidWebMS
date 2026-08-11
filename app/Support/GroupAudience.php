@@ -7,6 +7,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupThread;
+use App\Models\HifzEntry;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
@@ -17,8 +18,8 @@ use Illuminate\Support\Str;
  * This class answers exactly one question — "may this authenticated caller
  * receive THIS disclosure about THIS group?" — and it is the only place that
  * answers it, so the feed listing, a single post, an image download, a
- * messaging thread (T-005c) and a child's behaviour record (T-013) cannot drift
- * apart.
+ * messaging thread (T-005c), a child's behaviour record (T-013) and their ḥifẓ
+ * record (T-014) cannot drift apart.
  *
  * .claude/rules/groups.md, obligation 4: a group-scoped read is visible to the
  * group's leaders and to a contact's own guardians, "never to the whole tenant
@@ -279,8 +280,59 @@ class GroupAudience
      */
     public function mayReceiveAwardsAbout(?User $user, Group $group, GroupMembership $subject): bool
     {
-        // An award is given to a person. A guardian row is a relationship, so it
-        // is never a subject — refusing here means a mis-targeted award can
+        return $this->mayReceiveRecordAbout($user, $group, $subject);
+    }
+
+    /**
+     * May this user read the ḥifẓ record of `$subject` — one PARTICIPANT
+     * membership in `$group`? (T-014)
+     *
+     * THE SAME RULE, deliberately not a second one: leaders of the ḥalaqa, the
+     * student, and that student's own guardians. A memorisation record is a
+     * child's academic record, and .claude/rules/groups.md obligation 4 does not
+     * become weaker because the subject is Qur'an rather than behaviour —
+     * another guardian in the same ḥalaqa is refused here exactly as they are
+     * for an award. It delegates to the shared decision below so the two
+     * surfaces cannot drift apart; the separate name exists so callers read
+     * clearly and so a future slice that genuinely needs a different rule has an
+     * obvious place to put it.
+     */
+    public function mayReceiveHifzAbout(?User $user, Group $group, GroupMembership $subject): bool
+    {
+        return $this->mayReceiveRecordAbout($user, $group, $subject);
+    }
+
+    /**
+     * May this user read one specific ḥifẓ entry? Delegates to the rule above so
+     * a single entry and a listing cannot disagree about the same row.
+     */
+    public function mayReceiveHifzEntry(?User $user, Group $group, HifzEntry $entry): bool
+    {
+        $subject = $entry->membership;
+
+        return $subject !== null && $this->mayReceiveHifzAbout($user, $group, $subject);
+    }
+
+    /**
+     * WHO MAY READ A RECORD ABOUT ONE STUDENT — the single decision behind both
+     * behaviour awards (T-013) and ḥifẓ entries (T-014).
+     *
+     * Three ways in, and no fourth:
+     *
+     *   1. a LEADER of the group — the teacher who keeps the record;
+     *   2. the student THEMSELVES, when the subject membership is one of the
+     *      caller's own participant memberships;
+     *   3. a GUARDIAN of that student, i.e. a guardian edge in this group whose
+     *      ward is the subject's contact.
+     *
+     * ANOTHER GUARDIAN IN THE SAME GROUP IS EXACTLY WHO THIS EXCLUDES, and it is
+     * why the two modules share one implementation rather than two that agree
+     * today.
+     */
+    private function mayReceiveRecordAbout(?User $user, Group $group, GroupMembership $subject): bool
+    {
+        // A record is kept about a person. A guardian row is a relationship, so
+        // it is never a subject — refusing here means a mis-targeted record can
         // never be read by anyone, rather than quietly by the wrong person.
         if (! in_array($subject->role, GroupMembership::PARTICIPANT_ROLES, true)) {
             return false;
@@ -340,15 +392,57 @@ class GroupAudience
      */
     public function readableAwardsQuery(?User $user, Group $group): ?Builder
     {
+        // getQuery(): the relation's underlying Eloquent builder, group
+        // constraint already applied — this method promises a Builder.
+        return $this->constrainToOwnStudents($user, $group, $group->behaviorAwards()->getQuery());
+    }
+
+    /**
+     * The ḥifẓ entries of `$group` this user may read, as a constrained query —
+     * or null when the caller has no standing in the ḥalaqa at all. (T-014)
+     *
+     * The listing half of the privacy guarantee, and the reason a summary is
+     * safe to compute: a forbidden entry is never fetched, so another family's
+     * child cannot surface in a page, in a paginator total, or inside a
+     * memorisation aggregate. Same constraint as the awards listing, from the
+     * same code.
+     */
+    public function readableHifzQuery(?User $user, Group $group): ?Builder
+    {
+        return $this->constrainToOwnStudents($user, $group, $group->hifzEntries()->getQuery());
+    }
+
+    /**
+     * Narrow a query over records-about-students to the ones this caller may
+     * read, or null when they have no standing in the group at all.
+     *
+     * Query-shaped for the reason readableThreadsQuery() is: the listing must
+     * filter with the SAME decision mayReceiveRecordAbout() makes row by row, in
+     * one place, so a forbidden row is never even fetched — a guardian cannot
+     * learn what another family's child was marked for, or how much they have
+     * memorised, by counting rows, reading a paginator total, or summing an
+     * aggregate. The clauses:
+     *
+     *   - leader   -> every record in the group;
+     *   - anyone
+     *     else     -> only records whose subject membership names the caller's
+     *                 own contact or one of their wards.
+     *
+     * Null (rather than an empty query) distinguishes "not in this group" —
+     * which the controllers answer with 403, mirroring the feed and the threads
+     * — from "in the group with nothing to see", which is an empty 200.
+     *
+     * Every model passed here MUST expose its subject as a `membership`
+     * relation to a `group_memberships` row; BehaviorAward and HifzEntry both
+     * do, on purpose.
+     */
+    private function constrainToOwnStudents(?User $user, Group $group, Builder $query): ?Builder
+    {
         $standing = $this->standingIn($user, $group);
 
         if (! $standing['in_group']) {
             return null;
         }
-
-        // getQuery(): the relation's underlying Eloquent builder, group
-        // constraint already applied — this method promises a Builder.
-        $query = $group->behaviorAwards()->getQuery();
 
         if ($standing['leader']) {
             return $query;
@@ -368,7 +462,7 @@ class GroupAudience
 
         return $query->whereHas('membership', function (Builder $membership) use ($targets): void {
             $membership->whereIn('contact_id', $targets)
-                // Belt and braces with the audience rule above: an award
+                // Belt and braces with the audience rule above: a record
                 // mis-attached to a guardian edge must not become readable
                 // because that guardian's own contact is in the target list.
                 ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);

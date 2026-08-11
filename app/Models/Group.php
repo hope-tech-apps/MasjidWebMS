@@ -153,6 +153,22 @@ class Group extends Model
     }
 
     /**
+     * This ḥalaqa's ḥifẓ recitation records (T-014).
+     *
+     * Private on exactly the same terms as the behaviour awards above: an entry
+     * reaches the ḥalaqa's leaders, the student, and that student's own
+     * guardians, and every read goes through
+     * App\Support\GroupAudience::readableHifzQuery(), which constrains this
+     * relation per caller. Not a payload — this accessor exists for leaders'
+     * listings and for the per-student derivation, never to be serialized with
+     * a group. See .claude/rules/groups.md.
+     */
+    public function hifzEntries(): HasMany
+    {
+        return $this->hasMany(HifzEntry::class);
+    }
+
+    /**
      * The people in this group. Guardians appear here too (they hold a
      * membership); read the pivot's `role` to tell them apart.
      */

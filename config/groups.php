@@ -132,6 +132,77 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Qur'an memorization — hifz tracking (T-014)
+    |--------------------------------------------------------------------------
+    |
+    | One recitation heard from ONE student: sabak (the new lesson), sabqi
+    | (recent memorisation under revision) or manzil (the long rotation).
+    |
+    | THE SAME TWO DESIGN CONSTRAINTS AS THE BEHAVIOUR BLOCK ABOVE APPLY HERE,
+    | and neither is a preference:
+    |
+    |   1. A CHILD'S RECORD IS PRIVATE. It is disclosed to the halaqa's
+    |      leaders, to the student, and to that student's own guardians — never
+    |      to another guardian, and never as a class-wide ranking of who has
+    |      memorised most. There is no leaderboard setting in this block because
+    |      there is no leaderboard; the decision is enforced in
+    |      App\Support\GroupAudience, as a query constraint, not a UI choice.
+    |   2. NOTHING HERE IS PAYWALLED. No key gates a feature behind a plan, and
+    |      none should ever be added.
+    |
+    | THERE IS DELIBERATELY NO `retention_days` KEY, breaking with the feed, the
+    | messaging threads and the behaviour awards — and its absence is a decision,
+    | not an omission. Those surfaces describe a MOMENT (a class photo, a point
+    | given on a Tuesday), so bounding them by default is right. A hifz record is
+    | an ACADEMIC RECORD: it is the only evidence of what a student has
+    | memorised, a school that loses last year's sabak entries cannot tell a new
+    | teacher where the child is, and families reasonably expect a memorisation
+    | history to outlast a school year. Decisively, the student's current
+    | position is DERIVED from the sabak entries rather than stored, so a sweep
+    | that removed the newest one would silently move a child BACKWARDS in the
+    | mushaf. `hifz_entries` is therefore absent from `groups:purge-feed` on
+    | purpose. Its lifetime is bounded by the roster instead: the DB cascade off
+    | `group_memberships` takes a student's entries with them when they leave.
+    | See .claude/rules/groups.md.
+    |
+    */
+
+    'hifz' => [
+
+        /*
+         * Ceiling on the teacher's note attached to one recitation, enforced at
+         * the request boundary. A note is a sentence of context ("struggled
+         * with the waqf on ayah 12"), not a report card — anything longer
+         * belongs in a conversation with the guardian, which the messaging
+         * threads already carry.
+         */
+        'max_note_length' => (int) env('GROUP_HIFZ_MAX_NOTE_LENGTH', 1000),
+
+        /*
+         * Bound on either mistake counter for one recitation, enforced at the
+         * request boundary. Not a judgement about how many mistakes a portion
+         * may contain — it is a guard against a fat-fingered 10000 dominating
+         * every summary a parent reads.
+         */
+        'max_mistakes' => (int) env('GROUP_HIFZ_MAX_MISTAKES', 100),
+
+        /*
+         * Default window, in days, for the REVISION section of a student's
+         * progress report ("what has actually been revised lately?"). Only that
+         * section is windowed: the position and the memorisation totals are
+         * cumulative and are never date-filtered. A caller may override per
+         * request with `?window=`, bounded to a year.
+         *
+         * Configurable because the cadence is genuinely different between a
+         * full-time academy hearing manzil daily and a weekend circle hearing it
+         * monthly.
+         */
+        'revision_window_days' => (int) env('GROUP_HIFZ_REVISION_WINDOW_DAYS', 30),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Group media
     |--------------------------------------------------------------------------
     |

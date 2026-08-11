@@ -126,6 +126,17 @@ class PurgeGroupFeed extends Command
             }
         });
 
+        // `hifz_entries` (T-014) is ABSENT FROM THIS SWEEP ON PURPOSE, and the
+        // absence is a decision rather than an oversight — do not "finish the
+        // job" by adding it. A feed post and a behaviour point describe a
+        // moment; a memorisation record is an ACADEMIC record, the only evidence
+        // of what a student has memorised, and a student's current position is
+        // DERIVED from their sabak entries rather than stored. A sweep that
+        // removed the newest sabak would therefore move a child backwards in the
+        // mushaf without anyone touching their record. Those entries are bounded
+        // by the ROSTER instead: the DB cascade off group_memberships takes them
+        // with the student. See config/groups.php and .claude/rules/groups.md.
+
         $this->info(sprintf(
             '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
