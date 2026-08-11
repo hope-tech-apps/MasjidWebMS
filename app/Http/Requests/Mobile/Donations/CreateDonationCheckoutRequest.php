@@ -24,6 +24,12 @@ class CreateDonationCheckoutRequest extends BaseFormRequest
             // subscription mode and charges every `interval` (default monthly).
             'recurring' => 'sometimes|boolean',
             'interval' => 'sometimes|in:month,year',
+            // The giver's own zakat designation. `sometimes` is load-bearing:
+            // ABSENT means "the donor was not asked / did not say", and the
+            // fund's type then supplies the default (App\Support\ZakatDesignation).
+            // A present `false` is a real answer — "not zakat" even into a
+            // zakat-typed fund — and must not collapse into the absent case.
+            'zakat' => 'sometimes|boolean',
             'success_url' => 'sometimes|url',
             'cancel_url' => 'sometimes|url',
         ];

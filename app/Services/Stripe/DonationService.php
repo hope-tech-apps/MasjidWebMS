@@ -6,6 +6,7 @@ use App\Models\Donation;
 use App\Models\DonationSubscription;
 use App\Models\Fund;
 use App\Models\Masjid;
+use App\Support\ZakatDesignation;
 use Illuminate\Support\Str;
 use Stripe\StripeClient;
 
@@ -91,7 +92,13 @@ class DonationService
      * Persist a pending donation and open a Stripe Checkout Session for it as a
      * DIRECT charge on the masjid's connected account.
      *
-     * @param  array{success_url?:string,cancel_url?:string,contact_id?:int|null}  $options
+     * `zakat` is the giver's own designation (null = did not say, in which case
+     * the fund's type is the default — App\Support\ZakatDesignation). It is
+     * stamped on the row persisted HERE, before the redirect, so it is already
+     * present on the row the webhook later advances: the designation never
+     * depends on the browser coming back.
+     *
+     * @param  array{success_url?:string,cancel_url?:string,contact_id?:int|null,zakat?:bool|null}  $options
      * @return array{donation: Donation, checkout_url: string}
      */
     public function createDonationCheckout(
@@ -106,6 +113,7 @@ class DonationService
         $chargedAmount = $donorCoversFees ? self::grossUp($intendedAmount) : $intendedAmount;
         $applicationFee = self::applicationFee($intendedAmount);
         $idempotencyKey = 'checkout_' . Str::uuid();
+        $zakat = ZakatDesignation::resolve($options['zakat'] ?? null, $fund);
 
         // Persist BEFORE talking to Stripe. masjid_id is set explicitly because
         // the public donation flow runs UNBOUND (no tenant middleware), so the
@@ -115,6 +123,8 @@ class DonationService
             'contact_id' => $options['contact_id'] ?? null,
             'fund_id' => $fund->id,
             'type' => 'one_time',
+            'is_zakat' => $zakat['is_zakat'],
+            'zakat_source' => $zakat['zakat_source'],
             'intended_amount' => $intendedAmount,
             'charged_amount' => $chargedAmount,
             'currency' => $currency,
@@ -134,6 +144,19 @@ class DonationService
         // Only attach a positive application fee — Stripe rejects a zero fee.
         if ($applicationFee > 0) {
             $paymentIntentData['application_fee_amount'] = $applicationFee;
+        }
+        // The designation rides on the PAYMENT INTENT's metadata, which is what
+        // the org sees against the payment in its own Stripe dashboard — the
+        // surface a treasurer reconciles the restricted pot against.
+        //
+        // ABSENT rather than 'false' when the gift is not zakat, the same
+        // positive-only discipline application_fee_amount follows above: a
+        // non-zakat gift's Session parameters are byte-identical to what they
+        // were before T-031. Our own row, not this metadata, is the record of
+        // record — Stripe metadata is a convenience for the org's reconciliation.
+        if ($zakat['is_zakat']) {
+            $paymentIntentData['metadata']['zakat'] = 'true';
+            $paymentIntentData['metadata']['zakat_source'] = (string) $zakat['zakat_source'];
         }
 
         $params = [
@@ -199,7 +222,15 @@ class DonationService
      * advanced only by the invoice.payment_succeeded webhook, never by the
      * browser redirect — same trust model as one-time.
      *
-     * @param  array{success_url?:string,cancel_url?:string,contact_id?:int|null,interval?:string}  $options
+     * The zakat designation is resolved ONCE here and stored on the commitment;
+     * every invoice it books copies it (see bookRecurringInvoice) rather than
+     * re-deriving it from the fund, whose type an admin may have edited in the
+     * meantime. Recurring zakat is a real pattern — payers commonly settle one
+     * annual obligation in monthly installments — and the platform records the
+     * designation the giver made without ruling on whether instalments discharge
+     * the obligation, which is a fiqh question it must not answer for them.
+     *
+     * @param  array{success_url?:string,cancel_url?:string,contact_id?:int|null,interval?:string,zakat?:bool|null}  $options
      * @return array{subscription: DonationSubscription, checkout_url: string}
      */
     public function createSubscriptionCheckout(
@@ -215,6 +246,7 @@ class DonationService
         $chargedAmount = $donorCoversFees ? self::grossUp($intendedAmount) : $intendedAmount;
         $feePercent = self::applicationFeePercent();
         $idempotencyKey = 'subscription_' . Str::uuid();
+        $zakat = ZakatDesignation::resolve($options['zakat'] ?? null, $fund);
 
         $subscription = DonationSubscription::create([
             'masjid_id' => $masjid->id,
@@ -224,6 +256,8 @@ class DonationService
             'charged_amount' => $chargedAmount,
             'currency' => $currency,
             'donor_covers_fees' => $donorCoversFees,
+            'is_zakat' => $zakat['is_zakat'],
+            'zakat_source' => $zakat['zakat_source'],
             'interval' => $interval,
             'status' => 'pending',
             'application_fee_percent' => $feePercent > 0 ? $feePercent : null,
@@ -242,6 +276,15 @@ class DonationService
         // Only attach a positive fee — Stripe rejects a zero application_fee_percent.
         if ($feePercent > 0) {
             $subscriptionData['application_fee_percent'] = $feePercent;
+        }
+        // Present only when the gift IS zakat, exactly as on the one-time path,
+        // so a non-zakat recurring Session is unchanged from before T-031. It
+        // goes on subscription_data.metadata for the same reason the routing
+        // uuid does: invoices do not inherit invoice-level metadata, so this is
+        // the only place it reaches every recurring charge in the org's dashboard.
+        if ($zakat['is_zakat']) {
+            $subscriptionData['metadata']['zakat'] = 'true';
+            $subscriptionData['metadata']['zakat_source'] = (string) $zakat['zakat_source'];
         }
 
         $params = [
@@ -388,6 +431,13 @@ class DonationService
             'contact_id' => $subscription->contact_id,
             'fund_id' => $subscription->fund_id,
             'type' => 'recurring',
+            // Copied from the commitment, never re-derived: the designation was
+            // made once at checkout, and the fund's type may have been edited
+            // since. The metadata on the invoice is not consulted for this —
+            // metadata never decides anything authoritative on an inbound event
+            // (.claude/rules/stripe-payments.md); our own row is the record.
+            'is_zakat' => $subscription->is_zakat,
+            'zakat_source' => $subscription->zakat_source,
             'intended_amount' => $subscription->intended_amount,
             'charged_amount' => $charged,
             'currency' => $subscription->currency,

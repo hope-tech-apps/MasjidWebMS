@@ -21,6 +21,12 @@ class StoreOfflineDonationRequest extends BaseFormRequest
             'check_number' => ['nullable', 'string', 'max:50'],
             'donated_at' => ['required', 'date'],
             'note' => ['nullable', 'string', 'max:1000'],
+            // The zakat designation the giver stated when they handed the cash
+            // over. ABSENT means it was not recorded, and the fund's type then
+            // supplies the default; a present `false` is a real "not zakat".
+            // Cash zakat is the common case for a masjid, so an admin has to be
+            // able to say so without inventing a second fund.
+            'zakat' => ['sometimes', 'boolean'],
         ];
     }
 }

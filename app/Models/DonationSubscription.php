@@ -31,6 +31,10 @@ class DonationSubscription extends Model
         'charged_amount',
         'currency',
         'donor_covers_fees',
+        // Designated once, at checkout; every invoice this commitment books
+        // inherits it rather than re-deriving it from the fund years later.
+        'is_zakat',
+        'zakat_source',
         'interval',
         'status',
         'stripe_subscription_id',
@@ -47,6 +51,7 @@ class DonationSubscription extends Model
             'intended_amount' => 'integer',
             'charged_amount' => 'integer',
             'donor_covers_fees' => 'boolean',
+            'is_zakat' => 'boolean',
             'application_fee_percent' => 'decimal:2',
             'canceled_at' => 'datetime',
         ];

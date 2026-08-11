@@ -155,6 +155,23 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public zakat calculator (T-031). Writes nothing, so it takes the
+        // looser 'registration-quote' allowance rather than the intake one — a
+        // donor legitimately recalculates many times while assembling their
+        // figures, and there is no row at the end of it to abuse. Still bounded:
+        // the endpoint should not become free compute. Keyed by IP AND target
+        // organization for the same reason as every limiter above.
+        RateLimiter::for('zakat-calculator', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(60)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
