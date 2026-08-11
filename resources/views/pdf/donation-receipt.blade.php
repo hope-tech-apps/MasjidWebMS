@@ -84,6 +84,15 @@
             <td class="k">Fund</td>
             <td class="v">{{ $fundName }}</td>
         </tr>
+        {{-- Offline gifts only. A cash/cheque gift has no card charge behind it,
+             so the document states what it IS evidence of. Absent for Stripe
+             gifts, whose receipt is unchanged. --}}
+        @if (!empty($paymentMethod))
+            <tr>
+                <td class="k">Received by</td>
+                <td class="v">{{ $paymentMethod }}</td>
+            </tr>
+        @endif
         <tr>
             <td class="k">Amount donated</td>
             <td class="v">{{ $currency }} {{ $grossAmount }}</td>

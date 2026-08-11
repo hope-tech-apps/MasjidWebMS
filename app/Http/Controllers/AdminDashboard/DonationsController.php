@@ -9,6 +9,7 @@ use App\Models\Donation;
 use App\Models\Fund;
 use App\Models\Masjid;
 use App\Services\Receipts\DonationReceiptPdfService;
+use App\Services\Receipts\ReceiptService;
 use App\Support\DonationMetrics;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -25,8 +26,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DonationsController extends Controller
 {
-    public function __construct(private DonationReceiptPdfService $receiptPdfs)
-    {
+    public function __construct(
+        private DonationReceiptPdfService $receiptPdfs,
+        private ReceiptService $receipts,
+    ) {
     }
 
     public function index(Request $request, $masjid_id)
@@ -135,9 +138,10 @@ class DonationsController extends Controller
     /**
      * Record a manual OFFLINE donation (cash/check/Zelle/…). Stripe donations are
      * still webhook-only; this path exists for gifts that never touch Stripe. The
-     * row is booked succeeded, source=offline, dated to when it was given, with no
-     * receipt (an offline gift isn't a Stripe-verified event). Tenant-scoped:
-     * fund/contact are validated to belong to this masjid before the write.
+     * row is booked succeeded, source=offline, dated to when it was given, and
+     * issues NO receipt — recording a gift and issuing a tax document are two
+     * different decisions (see issueReceipt below). Tenant-scoped: fund/contact
+     * are validated to belong to this masjid before the write.
      */
     public function store(StoreOfflineDonationRequest $request, $masjid_id)
     {
@@ -187,6 +191,67 @@ class DonationsController extends Controller
             'status' => 'success',
             'data' => $donation,
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Issue the official tax receipt for an OFFLINE gift (T-007b).
+     *
+     * WHY THIS IS AN ADMIN ACTION AND NOT AUTOMATIC ON store().
+     * A Stripe gift is receipted automatically because a signature-verified
+     * webhook proves the money settled — the machine has evidence. An offline
+     * gift has none: a human typed "$5,000, cheque". Auto-issuing on that
+     * keystroke would mint a serialled, gap-free tax document — a number the
+     * masjid can never reuse and a receipt the donor may already have filed —
+     * from a value that is still being typed, mis-keyed, pasted from the wrong
+     * row of a spreadsheet, or entered before the cheque has cleared. The two
+     * decisions genuinely differ in time as well: gifts get recorded the evening
+     * of a fundraiser, and receipted once the deposit clears. So recording is the
+     * bookkeeping act and issuing is the treasurer's, taken per gift, once.
+     * Everything downstream is unchanged by the wait — offline gifts already
+     * count toward annual statements through AnnualStatementService's
+     * charged_amount fallback whether or not a receipt row exists.
+     *
+     * Issuance goes through the SAME ReceiptService as the webhook, so the serial
+     * is the next one in the masjid's single gap-free sequence (a cash gift and a
+     * card gift interleave in one run) and a double-click is idempotent: the
+     * second call returns the SAME receipt at 200 instead of 201, never a second
+     * serial. Stripe gifts are refused here — their receipt is the webhook's job,
+     * and that path must stay the only one that touches it.
+     *
+     * `manage donations` like the offline store route: this writes a financial
+     * record and consumes a serial. Tenant-checked the same way as receiptPdf —
+     * a foreign masjid in the route is a 403, a foreign donation id a 404.
+     */
+    public function issueReceipt($masjid_id, $donation_id)
+    {
+        $donation = Donation::findOrFail($donation_id);
+
+        if ($donation->source !== 'offline') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Receipts for Stripe donations are issued automatically when the payment is confirmed.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $existing = $donation->receipt()->first();
+
+        $receipt = $this->receipts->issueFor($donation);
+
+        // issueFor declines rather than throws. Say which rule declined it, so an
+        // admin staring at a missing receipt is not left guessing.
+        if (! $receipt) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $donation->isSucceeded()
+                    ? 'This gift is designated to a fund that does not issue tax receipts.'
+                    : 'Only a succeeded donation can be receipted.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $receipt,
+        ], $existing ? Response::HTTP_OK : Response::HTTP_CREATED);
     }
 
     /**

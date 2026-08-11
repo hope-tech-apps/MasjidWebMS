@@ -28,6 +28,24 @@ use Illuminate\Support\Carbon;
  */
 class DonationReceiptPdfService
 {
+    /**
+     * How each stored payment_method is spelled on a tax document. The stored
+     * value is the machine token (StoreOfflineDonationRequest's enum); the donor
+     * reads the label. An unknown token falls back to a title-cased form rather
+     * than disappearing — a receipt must never silently drop its provenance.
+     */
+    private const METHOD_LABELS = [
+        'cash' => 'Cash',
+        'check' => 'Check',
+        'zelle' => 'Zelle transfer',
+        'venmo' => 'Venmo transfer',
+        'paypal' => 'PayPal',
+        'square' => 'Square',
+        'credit' => 'Credit card',
+        'giftcard' => 'Gift card',
+        'other' => 'Other',
+    ];
+
     public function __construct(private Letterhead $letterhead)
     {
     }
@@ -62,11 +80,33 @@ class DonationReceiptPdfService
             'eligibleAmount' => $money((int) $receipt->eligible_amount),
             'jurisdiction' => (string) $receipt->jurisdiction,
             'reference' => (string) ($donation?->uuid ?? ''),
+            // Provenance line, read off the receipt row like every other figure —
+            // present only for an offline gift, absent (and therefore invisible)
+            // for a Stripe one, whose document is unchanged.
+            'paymentMethod' => $this->methodLabel($receipt->payment_method, $receipt->payment_reference),
         ]);
 
         return Pdf::loadView('pdf.donation-receipt', $data)
             ->setPaper('letter')
             ->output();
+    }
+
+    /**
+     * "Check no. 1189" / "Cash" / null. Null is the signal the blade uses to omit
+     * the row entirely, which is what keeps the online receipt byte-identical.
+     */
+    private function methodLabel(?string $method, ?string $reference = null): ?string
+    {
+        $method = trim((string) $method);
+
+        if ($method === '') {
+            return null;
+        }
+
+        $label = self::METHOD_LABELS[$method] ?? ucfirst(str_replace('_', ' ', $method));
+        $reference = trim((string) $reference);
+
+        return $reference === '' ? $label : $label . ' no. ' . $reference;
     }
 
     /**
