@@ -21,7 +21,9 @@ use App\Http\Controllers\AdminDashboard\FlyersController;
 use App\Http\Controllers\AdminDashboard\FlyerTemplatesController;
 use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
+use App\Http\Controllers\AdminDashboard\RegistrationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
+use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
@@ -41,6 +43,7 @@ use App\Http\Controllers\AdminDashboard\MasjidsController;
 use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
+use App\Http\Controllers\AdminDashboard\OfferingsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
 use App\Http\Controllers\AdminDashboard\FormInsightsController;
@@ -640,6 +643,82 @@ Route::prefix('admin')->group(function () {
                     Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
                     Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
                 });
+
+                // Registration + billing engine (T-006d admin surface) —
+                // offerings, their IMMUTABLE fee plans, and the roster of one
+                // offering with the three explicit admin actions on a
+                // registration. See docs/t006-registration-billing-design.md.
+                // Same guardrail as everything above: {masjid_id} stays in the
+                // path by convention, isolation comes from `tenant` +
+                // BelongsToMasjid, and the controllers never hand-filter.
+                //
+                // TWO permission families on purpose, and the split is where
+                // the MONEY is:
+                //   - An OFFERING is a program structure over the member
+                //     directory — a semester, a halaqa, an admission round. It
+                //     holds no price of its own, so it takes the CONTACTS
+                //     permissions, the same call groups and appointment
+                //     requests already made. Reading a roster and promoting
+                //     somebody off the waitlist are likewise roster
+                //     administration, not money.
+                //   - A FEE PLAN *is* a price, an ADJUSTMENT waives part of
+                //     one, and CANCEL stops a live Stripe subscription — those
+                //     take the DONATIONS permissions, the same trust level as
+                //     RecurringDonationsController::cancel, which is the
+                //     closest existing precedent for "an admin stopping money".
+                // Reusing both families rather than minting `view/manage
+                // offerings` keeps the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin
+                // (Permission::count() === 8) unchanged, exactly as the groups
+                // and credentials slices did before this one.
+                Route::prefix('{masjid_id}/offerings')->controller(OfferingsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{offering_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{offering_id}', 'update')->middleware('permission:manage contacts');
+                    // Soft-delete, and refused outright while live registrations
+                    // would be stranded — deactivate (is_active=false) instead.
+                    Route::delete('/{offering_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Fee plans — CREATE and DEACTIVATE only. Plans are IMMUTABLE:
+                // registrations snapshot their price at intake, so editing a
+                // live plan would retroactively restate what somebody agreed to
+                // pay. `update` exists solely to REFUSE with a clear 422 rather
+                // than accept an edit and silently ignore the fields.
+                Route::prefix('{masjid_id}/offerings/{offering_id}/fee-plans')
+                    ->controller(FeePlansController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view donations');
+                        Route::post('/', 'store')->middleware('permission:manage donations');
+                        Route::put('/{fee_plan_id}', 'update')->middleware('permission:manage donations');
+                        Route::patch('/{fee_plan_id}', 'update')->middleware('permission:manage donations');
+                        // Deactivate, never delete: registrations reference the
+                        // plan with a RESTRICT FK and read their currency
+                        // through it.
+                        Route::delete('/{fee_plan_id}', 'destroy')->middleware('permission:manage donations');
+                    });
+
+                // The roster of one offering + the explicit admin actions.
+                // Registrations are created by the PUBLIC endpoints (T-006c)
+                // and advanced by webhooks; there is deliberately no store or
+                // update route here.
+                Route::prefix('{masjid_id}/offerings/{offering_id}/registrations')
+                    ->controller(RegistrationsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::get('/{registration_id}', 'show')->middleware('permission:view contacts');
+                        // Granting aid decides what a family is charged.
+                        Route::post('/{registration_id}/adjustments', 'storeAdjustment')
+                            ->middleware('permission:manage donations');
+                        // Seat administration: capacity is re-checked under the
+                        // offering's row lock, so this can never oversell.
+                        Route::post('/{registration_id}/promote', 'promote')
+                            ->middleware('permission:manage contacts');
+                        // Cancels the Stripe subscription too when one exists.
+                        Route::post('/{registration_id}/cancel', 'cancel')
+                            ->middleware('permission:manage donations');
+                    });
 
                 // Rental properties + rent payments. A separate component from the
                 // donor CRM (rent is not a gift). Viewing is `view properties`;
