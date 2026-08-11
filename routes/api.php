@@ -14,6 +14,7 @@ use App\Http\Controllers\Mobile\NotificationsController;
 use App\Http\Controllers\Mobile\PrayersController;
 use App\Http\Controllers\Mobile\AppConfigController;
 use App\Http\Controllers\Mobile\ServicesController;
+use App\Http\Controllers\Mobile\SignageController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
 use App\Http\Controllers\ProvisioningCallbackController;
@@ -66,6 +67,13 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // Splash / in-app announcement — single active row, 204 when nothing's live.
         // Web (Nuxt) reads this; mobile apps get the same content via OneSignal IAM.
         Route::get('/{masjid_id}/splash', [SplashAnnouncementsController::class, 'current']);
+
+        // tvOS signage board. The tvOS client has always asked for a board
+        // endpoint that did not exist (docs/recon-2026-08-11.md); this is it.
+        // Serves the broadcasts whose signage channel was selected and whose
+        // display window is open — see App\Services\Broadcast\Channels\SignageChannel.
+        // Additive: no existing endpoint changes shape or behaviour.
+        Route::get('/{masjid_id}/signage', [SignageController::class, 'index']);
 
         // Contact form: writes to DB, public to anonymous callers — strict throttle.
         Route::prefix('{masjid_id}/contact-us')->controller(ContactUsController::class)->group(function () {
