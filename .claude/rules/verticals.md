@@ -133,10 +133,13 @@ A vertical is a feature bundle + a terminology pack. It is **not** a filtered
 section-type list. `PageSectionsController@sectionTypes` maps
 `SectionType::cases()` with no filter, and `config/verticals.php` carries no
 `section_types` key — every tenant is offered every type, including the school
-types added in T-010 (`staff_directory`, `programs`, `admissions_tuition`).
+types added in T-010 (`staff_directory`, `programs`, `admissions_tuition`) and
+the community types added in T-020 (`services_eligibility`,
+`providers_directory`, `impact_stats`).
 
 Do not add gating as a side effect of shipping a vertical feature. A masjid with
-a weekend school has a tuition table and a teaching staff. If per-vertical
+a weekend school has a tuition table and a teaching staff, and one running a
+food pantry has services with eligibility rules and numbers for its funders. If per-vertical
 offering is ever genuinely wanted, `.claude/rules/section-types.md` names the
 one place to do it and why validation must stay ungated.
 

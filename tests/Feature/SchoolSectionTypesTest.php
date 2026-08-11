@@ -74,6 +74,19 @@ class SchoolSectionTypesTest extends TestCase
         'admissions_tuition',
     ];
 
+    /**
+     * Types added to the palette AFTER this suite was written. Every value pinned
+     * above is still pinned unchanged — this list exists only so the "nothing else
+     * moved" count below stays an exact count instead of being loosened to a
+     * minimum, which would stop catching a type that quietly disappears.
+     * CommunitySectionTypesTest owns these three; see T-020.
+     */
+    private const LATER_TYPES = [
+        'services_eligibility',
+        'providers_directory',
+        'impact_stats',
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -537,9 +550,9 @@ class SchoolSectionTypesTest extends TestCase
         }
 
         $this->assertCount(
-            count(self::PRE_EXISTING_TYPES) + count(self::SCHOOL_TYPES),
+            count(self::PRE_EXISTING_TYPES) + count(self::SCHOOL_TYPES) + count(self::LATER_TYPES),
             $values,
-            'The palette gained or lost a type beyond the three school types'
+            'The palette gained or lost a type beyond the school types and the ones added since'
         );
     }
 

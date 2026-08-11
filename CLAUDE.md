@@ -194,6 +194,33 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   `.claude/rules/section-types.md` + `resources/vue-app/components/sections/
   editors/CLAUDE.md`. **Not visible to the public yet:** the Nuxt renderer
   (separate repo) needs one component per new `section_type`.
+- **Community section types — DONE** (T-020, uncommitted). Three page-builder
+  types for the Community vertical, modelled on the pages the pilot tenant
+  al-aqsaclinic.org publishes today: `services_eligibility` (services + who
+  qualifies, with the highlighted "Yellow Card" block), `providers_directory`
+  (name, credential suffix, specialty, photo, department label) and
+  `impact_stats` (the "6,000+ patient visits" / "$6.3M in services" numbers
+  funders ask for). Same EXISTING mechanism as T-010 and nothing else — enum
+  case with every arm, a `content` JSON shape, image-field entries in BOTH
+  controllers' `getImageFieldsForSectionType`, TS types, a Vue editor in the
+  `editorMap`. **The palette stays GLOBAL**: no `org_type` filter was added
+  anywhere, so a masjid running a food pantry is offered these too. Load-bearing
+  shape decisions: `providers[]` is FLAT with a `department` grouping label and
+  `services[]` is one level deep (the upload pipeline matches ONE array index —
+  a nested tree drops every photo silently); the eligibility block is a fixed
+  object with no image, so that limit does not bind it; `impact_stats.value` is
+  DISPLAY TEXT ("6,000+", "$6.3M"), never a number to format, because rounding
+  and the currency are part of an audited claim; and all three are editorial —
+  `usesExternalData()` is false, so a published figure stays a reported figure
+  rather than a live query (data-driven aggregation would be a separate,
+  separately-classified type). Purely additive — the twenty original types and
+  the three school types are pinned value-for-value and default-content
+  byte-for-byte. Proven by `tests/Feature/CommunitySectionTypesTest.php` (19);
+  suite **686/686, 1923 assertions** on the droplet copy. Vue build green
+  (`artifacts/vue_build_t020_20260811-002306.log`), `tsc --noEmit` unchanged at
+  29 pre-existing errors, none in the new files. **Not visible to the public
+  yet:** the Nuxt renderer (separate repo) needs one component per new
+  `section_type` — it silently omits unknown types.
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via
