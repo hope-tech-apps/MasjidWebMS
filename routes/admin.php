@@ -6,6 +6,7 @@ use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
+use App\Http\Controllers\AdminDashboard\ContactCredentialsController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\ContactsController;
@@ -426,6 +427,37 @@ Route::prefix('admin')->group(function () {
                     // Merge a placeholder (unidentified-card) contact into a member.
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
                 });
+
+                // Volunteer credentials (T-023, Community vertical) — a
+                // contact's medical licenses, background checks and
+                // certifications, nested under the contact they belong to.
+                // Same guardrail as contacts: isolation comes from `tenant` +
+                // BelongsToMasjid, and the controller re-resolves the
+                // masjid -> contact -> credential chain so a foreign id
+                // anywhere in it is a 404.
+                //
+                // Gated by the CONTACTS permissions on purpose: a credential is
+                // an attribute OF the member directory, and anyone trusted to
+                // see or manage a person's record is trusted to see or manage
+                // what they are licensed to do. Minting `view/manage
+                // credentials` would change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin
+                // (Permission::count() === 8), which this additive slice must
+                // not do — the same call .claude/rules/groups.md records for
+                // groups. The document download sits behind the SAME stack
+                // (auth:sanctum + admin + tenant + crm + permission): a scanned
+                // license is PII and never gets a public URL
+                // (.claude/rules/private-uploads.md).
+                Route::prefix('{masjid_id}/contacts/{contact_id}/credentials')
+                    ->controller(ContactCredentialsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{credential_id}', 'show')->middleware('permission:view contacts');
+                        Route::put('/{credential_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{credential_id}', 'destroy')->middleware('permission:manage contacts');
+                        Route::get('/{credential_id}/document', 'downloadDocument')->middleware('permission:view contacts');
+                    });
 
                 // Groups — the second scoping level of the core (org -> group ->
                 // member): classrooms for a School, halaqat / weekend-school
