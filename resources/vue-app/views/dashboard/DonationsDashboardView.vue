@@ -20,6 +20,16 @@
             </template>
 
             <div class="container w-100">
+                <!--
+                    Stripe Connect health, above the money figures and OUTSIDE the
+                    v-if chain below: whether online giving can happen at all is
+                    prior to how much of it happened, and the brand-new tenant with
+                    zero gifts (the empty state below) is exactly the admin this
+                    panel exists for. It self-hides on 403, so a view-only admin
+                    still gets the ordinary dashboard.
+                -->
+                <StripeConnectPanel />
+
                 <!-- First paint: nothing to show yet, not even a shape -->
                 <div v-if="bootstrapping" class="text-center py-5">
                     <div class="spinner-border text-primary" role="status">
@@ -282,6 +292,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
+import StripeConnectPanel from '@/components/StripeConnectPanel.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { Donation, DonationStatus } from '@/core/types/data/masjid-related/Donation';
 import { Fund } from '@/core/types/data/masjid-related/Fund';

@@ -31,6 +31,8 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/donations?page=${number}` |
     `/api/admin/masjids/${string}/donations/${string}` |
     `/api/admin/masjids/${string}/donation-link` |
+    `/api/admin/masjids/${string}/connect/onboarding` |
+    `/api/admin/masjids/${string}/connect/status` |
     `/api/admin/masjids/${string}/forms` |
     `/api/admin/masjids/${string}/forms?page=${number}` |
     `/api/admin/masjids/${string}/forms/options` |
