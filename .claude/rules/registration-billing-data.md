@@ -43,3 +43,31 @@ MUST build on these, not re-decide them:
   `Offering::kind()` → 'event', which is presentation-only).
 - Fee plans are deactivate-and-replace: no softDeletes, no updates once
   referenced; `registrations.fee_plan_id` is a RESTRICT FK on purpose.
+
+T-006b (`App\Services\Registrations\RegistrationService`) fixed these where
+the doc left detail open — T-006c..f build on them:
+
+- **`list_total_minor` per plan kind**: free → 0; one_time → `amount_minor`;
+  installment → `amount_minor × installment_count` (the full commitment);
+  recurring → `amount_minor` (per-interval charge; open-ended has no finite
+  total). Unknown kinds throw (`RegistrationService::listTotalFor`).
+- **One registration = one seat.** `registration_count` counts registrations,
+  not registrants; a household with three children takes one seat.
+- **`idempotency_key` is minted at INTAKE for paid pendings**
+  (`reg_checkout_…`, the RegistrationFactory default state) — the
+  create_registrations_table migration's "minted only at session creation"
+  comment is superseded. T-006c keys the Session create with the stored key;
+  the re-mint endpoint rotates it. Free/waitlisted rows keep it null.
+- **The checkout window** is
+  `config('services.stripe.registration_checkout_window_minutes')` (default
+  30) — set on paid pendings at intake, consumed by T-006c's expired handler
+  and T-006f's reaper.
+- **`RegistrationService::confirm()` is the single confirmation seam**
+  (idempotent, pending-only; writes the roster + guardian edges). The free
+  path and 100%-waiver adjustments route through its outcome now; T-006c's
+  webhook handlers must call it rather than flipping `status` themselves.
+  Waitlisted rows never confirm through it — promotion is T-006d's explicit
+  admin action.
+- **Adjustment grants are refused once any Stripe leg exists** (session /
+  subscription / schedule id, or payment_status beyond none|awaiting) —
+  strictly pre-checkout, enforced in the service, not just the controller.
