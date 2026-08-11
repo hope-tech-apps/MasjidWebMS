@@ -98,12 +98,22 @@ trait ValidatesEmbedContent
      * The tenant this section belongs to — needed only by the `site_page` provider,
      * whose allowed host is the masjid's own registered website.
      *
-     * Every section route carries {masjid_id}; TenantContext is the fallback for a
-     * caller that reaches these requests another way.
+     * TENANT FIRST, route parameter as the fallback. The two always agree on
+     * every route this can be reached from — ResolveMasjidTenant 403s an admin
+     * aiming at a masjid they hold no membership in, and binds a SuperAdmin to
+     * the masjid the URL names — so the order is a no-op today. It is inverted
+     * anyway (docs/multi-tenant-admin-design.md, "Binding, fail-closed")
+     * because only one of the two is server-derived: the bound tenant was
+     * verified by the middleware, while the route parameter is a number the
+     * client typed. Reading the client's number first is how a request ends up
+     * validating an embed against a masjid other than the one it is writing to.
+     *
+     * Every section route carries {masjid_id}; the fallback is for a caller
+     * that reaches these requests another way.
      */
     private function embedMasjid(): ?Masjid
     {
-        $masjidId = $this->route('masjid_id') ?? app(TenantContext::class)->get();
+        $masjidId = app(TenantContext::class)->get() ?? $this->route('masjid_id');
 
         return $masjidId === null ? null : Masjid::find((int) $masjidId);
     }
