@@ -31,6 +31,11 @@ paths:
   - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
   - "database/migrations/*_create_behavior_skills_table.php"
   - "database/migrations/*_create_behavior_awards_table.php"
+  - "app/Models/HifzEntry.php"
+  - "app/Support/HifzProgress.php"
+  - "app/Support/QuranIndex.php"
+  - "app/Http/Controllers/AdminDashboard/HifzEntriesController.php"
+  - "database/migrations/*_create_hifz_entries_table.php"
 ---
 # Groups — the org → group → member primitive
 
@@ -142,10 +147,12 @@ should reuse the machinery below rather than re-decide it.
    group's leaders and to a contact's own guardians — never to the whole tenant
    because they happen to be a Contact. See "Disclosure" below.
 
-T-005c (messaging) and T-013 (behaviour points) each discharged 3 and 4 again
-for their own surface, reusing this machinery rather than re-deciding it. Both
-carry no bytes, so obligation 1 does not arise for them; see their sections
-below for what each one *did* have to decide.
+T-005c (messaging), T-013 (behaviour points) and T-014 (ḥifẓ) each discharged 3
+and 4 again for their own surface, reusing this machinery rather than
+re-deciding it. None of them carries bytes, so obligation 1 does not arise; see
+their sections below for what each one *did* have to decide. T-014 is the one
+that answers obligation 3 with a **different** policy — bounded by the roster
+rather than by a clock — and says why.
 
 ## Disclosure is not administration
 
@@ -319,6 +326,124 @@ positioning, not its configuration.
   `forceDelete()`, as it is for threads.
 - **Permissions**: `view contacts` / `manage contacts`, minting nothing.
   `Permission::count() === 8` stays pinned.
+
+## Ḥifẓ tracking — Qur'an memorization (T-014)
+
+`hifz_entries` is one recitation heard from ONE student, on the same primitive:
+a **ḥalaqa IS a group**, and the student is their `group_memberships` row — the
+same explicit edge a guardian names its ward with and an award names its subject
+with. This section lives here, and not in a `hifz.md` of its own, because the
+only question that could be answered twice — *who may read a record about a
+child* — is answered ONCE, by the same `GroupAudience` code the awards use.
+Splitting the two across two documents is exactly the drift `GroupAudience`
+exists to prevent.
+
+### The domain, which is not negotiable
+
+The classical daily cycle is the schema. `HifzEntry::KINDS`:
+
+- **`sabak`** — the NEW lesson memorised today;
+- **`sabqi`** — recent memorisation under active revision (the last juz or so);
+- **`manzil`** — older, consolidated memorisation on a long rotation.
+
+**ONLY SABAK ADVANCES A STUDENT.** A manzil entry over al-Baqarah does not mean a
+child memorising juz 30 went backwards; it means they revised what they already
+hold. Any future code that treats a revision entry as progress is wrong.
+
+**PROGRESS IS A POSITION, NEVER A PERCENTAGE.** Everything is reported as surah +
+ayah + juz. "62% memorised" is a number no ḥalaqa uses and no ijāza recognises;
+do not add one, including as a convenience field.
+
+The classical names are kept as-is rather than translated to "new/recent/old" —
+they are what every ḥifẓ teacher already says. What a UI *labels* them is
+presentation, exactly as with `GroupMembership::ROLES`.
+
+### Position is DERIVED, and that is the load-bearing decision
+
+There is no `current_surah` / `current_ayah` column anywhere. A student's
+position IS their sabak history:
+
+- **current** position = the end of the LATEST sabak entry (not the furthest —
+  a child sent back over earlier material is at that lesson today, and reporting
+  the high-water mark would tell a parent their child is somewhere they are not.
+  Both are served, because they are different facts);
+- **how much** is memorised = the union of every sabak range, merged;
+- **juz completed** = per-juz COVERAGE, never position ÷ juz length — ḥifẓ is
+  commonly memorised from juz 30 backwards, and a linear reading would report
+  thirty completed juz for a beginner at an-Naba.
+
+A denormalised column would need every writer guarded the way
+`registrations.registration_count` had to be, and would still be wrong in the
+case that matters most: striking a mis-recorded sabak must move the position
+BACK. `App\Support\HifzProgress` is the one place the derivation lives; it is
+handed an ALREADY audience-constrained query and never decides access itself.
+
+### The range, and why there is no juz or page column
+
+`(from_surah, from_ayah) .. (to_surah, to_ayah)` — a closed interval that may
+cross surahs, because revision does ("revise juz 26" is 46:1 .. 51:30).
+
+- **No `juz` column**: juz is a function of (surah, ayah), so storing it would be
+  a second writer for one fact. `QuranIndex::juzFor()` derives it.
+- **No `page` column**: a page number is meaningless without naming which muṣḥaf
+  it refers to — Madani 15-line, Indo-Pak 16-line and regional printings
+  paginate differently, so a bare integer is a number two teachers in one school
+  read differently. Ayah-precise ranges are edition-independent and convert into
+  any pagination later; a stored page never converts back.
+
+`App\Support\QuranIndex` is a **PHP constant table, not a seeded DB table** — 114
+ayah counts (Kufan/Ḥafṣ counting, checksum 6236) plus the 30 juz boundaries.
+Reference data fixed for fourteen centuries that no tenant may edit belongs in
+code, for the same reason `Masjid::ORG_TYPES` does; a seeded table would make
+every validation a query and a half-seeded tenant would validate nothing. It
+carries NO Qur'an text, no translation and no page map, and must not grow one.
+
+### Privacy — the same rule, the same code
+
+A ḥifẓ record reaches the ḥalaqa's **leaders**, the **student**, and **that
+student's own guardians**. Never another guardian in the same ḥalaqa, never the
+whole tenant, never a class-wide ranking of who has memorised most.
+
+- `GroupAudience::mayReceiveHifzAbout()` / `readableHifzQuery()` both delegate to
+  the private `mayReceiveRecordAbout()` / `constrainToOwnStudents()` that T-013's
+  award methods now also use. One implementation, two named entry points — a
+  future slice that genuinely needs a different rule has an obvious place to put
+  it, and until then the two cannot disagree.
+- Enforced at **QUERY level** as well as at the endpoint: a forbidden entry is
+  never fetched, so it cannot surface in a page, a paginator total, or a
+  memorisation aggregate. Every model routed through `constrainToOwnStudents()`
+  MUST expose its subject as a `membership` relation.
+- There is deliberately **no group-wide progress endpoint**. A leader's listing
+  is per-student rows they are already entitled to; a "top memorisers" board is
+  T-013's public shaming aimed at Qur'an.
+- Consent gates broadcasts, not a parent's view of their own child — the same
+  call T-005c and T-013 made.
+
+### Retention — a DELIBERATE departure from every other group surface
+
+**`hifz_entries` has no `retained_until` and is NOT in `groups:purge-feed`.** Do
+not "finish the job" by adding it. The feed, the threads and the awards describe
+a *moment*, so bounding them by default is right. A ḥifẓ record is an **academic
+record**: it is the only evidence of what a student has memorised, a school that
+loses last year's sabak entries cannot tell a new teacher where the child is, and
+— decisively — the position is DERIVED, so a sweep that removed the newest sabak
+would silently move a child backwards in the muṣḥaf. The record's lifetime is
+bounded by the **roster** instead: `group_membership_id` cascades, so a student's
+entries go with them, which is also what keeps obligation 4 satisfied (a dangling
+entry would be unreadable data about a minor, kept forever).
+
+**Correction is the soft delete**, as revocation is for an award: `deleted_at`
+drops the entry from every listing, every total and every derivation at once, and
+`corrected_by_user_id` records who did it. There is no update endpoint on
+purpose — striking and re-recording leaves an audit trail where an in-place edit
+would quietly rewrite what a teacher said they heard.
+
+**Permissions**: `view contacts` / `manage contacts`, minting nothing.
+`Permission::count() === 8` stays pinned. Nothing here is paywalled.
+
+Proven by `tests/Feature/HifzTrackingTest.php` (endpoint AND listing-query
+halves) + `tests/Feature/HifzTenantIsolationTest.php` +
+`tests/Unit/QuranIndexTest.php`.
 
 ## Tenant isolation
 

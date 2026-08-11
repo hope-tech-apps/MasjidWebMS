@@ -159,6 +159,24 @@ class GroupMembership extends Model
         return $this->hasMany(BehaviorAward::class, 'group_membership_id');
     }
 
+    /**
+     * On a PARTICIPANT row, this student's ḥifẓ recitation records (T-014).
+     * Guardian edges never carry entries of their own — a recitation is heard
+     * from a person, and a guardian row is a relationship.
+     *
+     * A student's current position in the muṣḥaf is DERIVED from the sabak rows
+     * here (App\Support\HifzProgress); there is deliberately no position column
+     * on this model to fall out of step with them.
+     *
+     * Never serialized with the membership: who may see these is decided per
+     * request by App\Support\GroupAudience, and a roster listing is read by
+     * people who may not see any of them.
+     */
+    public function hifzEntries(): HasMany
+    {
+        return $this->hasMany(HifzEntry::class, 'group_membership_id');
+    }
+
     public function isGuardian(): bool
     {
         return $this->role === self::ROLE_GUARDIAN;

@@ -32,6 +32,7 @@ use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
+use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
@@ -628,6 +629,44 @@ Route::prefix('admin')->group(function () {
                         Route::get('/members/{membership_id}/awards/summary', 'summary')
                             ->middleware('permission:view contacts');
                         Route::get('/members/{membership_id}/awards', 'forMember')
+                            ->middleware('permission:view contacts');
+                    });
+
+                // Qur'an memorization — hifz tracking (T-014).
+                //
+                // The halaqa's daily record: sabak (the new lesson), sabqi
+                // (recent memorisation under revision), manzil (the long
+                // rotation). Same two gates as the awards above: WRITING
+                // (record/strike) is `manage contacts`, teaching the halaqa;
+                // READING additionally requires standing in the group, decided
+                // by App\Support\GroupAudience — through the SAME code path the
+                // awards use, so a child's Qur'an record and their behaviour
+                // record can never disagree about who may see them.
+                //
+                // A CHILD'S RECORD IS PRIVATE: an entry reaches the halaqa's
+                // leaders, the student, and THAT student's own guardians —
+                // never another guardian in the same halaqa. There is
+                // deliberately no group-wide progress or "top memorisers"
+                // route, and the listings are constrained by the audience query
+                // so a forbidden entry is never fetched. Nothing here is
+                // paywalled. See .claude/rules/groups.md.
+                //
+                // The per-student routes sit under .../members/{membership_id}
+                // because a student IS their membership edge — the same shape a
+                // guardian edge, a participant thread and an award already use.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(HifzEntriesController::class)
+                    ->group(function () {
+                        Route::get('/hifz', 'index')->middleware('permission:view contacts');
+                        Route::post('/hifz', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/hifz/{entry_id}', 'destroy')->middleware('permission:manage contacts');
+
+                        // Per-student. The progress route is registered FIRST so
+                        // the more specific path wins the match — the same
+                        // ordering discipline as the awards block above.
+                        Route::get('/members/{membership_id}/hifz/progress', 'progress')
+                            ->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}/hifz', 'forMember')
                             ->middleware('permission:view contacts');
                     });
 
