@@ -115,6 +115,29 @@ class User extends Authenticatable implements HasMedia
     }
 
     /**
+     * Every organisation this user holds a membership in (`masjid_user`).
+     *
+     * The pivot that S3 will resolve the tenant from — one human, many org
+     * affiliations, which `masjid()` above (a `hasOne`) cannot express.
+     *
+     * **Nothing consumes this yet, and `masjid()` is untouched.** S2 adds the
+     * table, the backfill and this relation only; tenant resolution still runs
+     * entirely off `masjids.user_id`, so behaviour is identical to before. At most
+     * one of these rows may carry `is_default = 1`, enforced by a unique index
+     * rather than by convention — see `create_masjid_user_table`.
+     *
+     * `hasMany(MasjidUser)` rather than `belongsToMany(Masjid)` on purpose: the
+     * design's resolver takes the MEMBERSHIP itself
+     * (`TenantContext::setFromMembership(MasjidUser)`), so the row — with its
+     * `role` and `is_default` — has to be the thing that is returned, not a masjid
+     * with a pivot bag hanging off it.
+     */
+    public function memberships()
+    {
+        return $this->hasMany(MasjidUser::class);
+    }
+
+    /**
      * True once the user has CONFIRMED TOTP enrollment. This — and only this —
      * is what makes the login flow require a 2FA code. Users who never enrolled
      * return false and log in exactly as before (no extra step, no lockout).

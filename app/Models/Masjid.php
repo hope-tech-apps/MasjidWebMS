@@ -196,6 +196,19 @@ class Masjid extends Model implements HasMedia
         return $this->belongsTo(User::class, 'user_id', 'id');
     }
 
+    /**
+     * Everyone holding a membership in this masjid (`masjid_user`) — the inverse
+     * of `User::memberships()`.
+     *
+     * Distinct from `admin()` above, and not a replacement for it: `user_id`
+     * remains the single ownership/billing pointer (unique among live rows since
+     * S0), while memberships are the many-to-many AUTHORIZATION grants S3 will
+     * resolve the tenant from. Nothing consumes this relation in S2.
+     */
+    public function memberships() {
+        return $this->hasMany(MasjidUser::class);
+    }
+
     public function country() {
         return $this->belongsTo(Country::class, 'country_id', 'id');
     }
