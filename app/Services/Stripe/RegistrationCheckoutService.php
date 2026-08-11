@@ -50,6 +50,20 @@ use Stripe\StripeClient;
  * (a genuinely abandoned session) ROTATES the key — a new Session is the point
  * there (.claude/rules/registration-billing-data.md).
  *
+ * SUBSCRIPTIONS (T-006e): an installment or recurring plan opens the SAME
+ * hosted Checkout page in `mode=subscription`, still a direct charge on the
+ * org's account. Two differences and no others:
+ *   - the platform's cut is `application_fee_percent` (the amount-based param
+ *     does not exist for subscriptions), still omitted entirely when 0;
+ *   - the metadata that routes the webhooks is written into
+ *     `subscription_data.metadata`, so it lands on the SUBSCRIPTION and every
+ *     `invoice.*` event it raises carries it.
+ * An installment plan additionally gets a Subscription SCHEDULE
+ * (`end_behavior=cancel` after N iterations) attached once Stripe has told us
+ * the subscription id. **STRIPE owns the billing clock, the retries and the
+ * dunning** — this codebase has no scheduler, no retry loop and no dunning
+ * engine, by doctrine (.claude/rules/stripe-payments.md).
+ *
  * $0 IS NOT A CHECKOUT: a free plan, or aid that waives the total to 0, is the
  * declared free-path carve-out and confirms in-request (T-006b). This class
  * refuses such a registration loudly rather than minting a zero session.
@@ -88,13 +102,75 @@ class RegistrationCheckoutService
     }
 
     /**
+     * The platform's application fee for a SUBSCRIPTION, as a PERCENT (2.0 for
+     * 2%). Subscriptions have no `application_fee_amount`: Stripe applies
+     * `application_fee_percent` to every invoice instead. config stores the
+     * platform cut as a fraction (0.02); Stripe wants the percent, rounded to
+     * the 2 dp its API accepts.
+     *
+     * This is not a deviation from the locked rule — the ratified design calls
+     * it out explicitly, and zero is still OMITTED rather than sent as 0.
+     * Restated here rather than reaching into the locked DonationService, for
+     * the same reason the whole class is a sibling and not an abstraction.
+     */
+    public static function applicationFeePercent(?float $platformPct = null): float
+    {
+        $platformPct ??= (float) config('services.stripe.platform_fee_percentage', 0);
+
+        return round($platformPct * 100, 2);
+    }
+
+    /**
+     * What ONE Stripe charge is worth for this registration, integer minor
+     * units — derived from the registration's own `adjusted_total_minor`
+     * snapshot, never re-read from the plan.
+     *
+     *  - one_time / recurring → the snapshot itself (T-006b snapshots a
+     *    recurring plan's per-interval amount, since an open-ended plan has no
+     *    finite total).
+     *  - installment → the snapshot divided by N, because the snapshot IS the
+     *    full commitment for that kind. Aid granted pre-checkout therefore
+     *    reduces every installment, which is the whole point of granting it
+     *    before the Stripe leg exists.
+     *
+     * ROUNDING FAVOURS THE PAYER, by cents. `list_total = amount × N` divides
+     * exactly, so a remainder can only appear once an admin has granted aid;
+     * when it does, integer division drops up to N−1 minor units off what the
+     * org collects. The alternative (rounding up) would charge a family more
+     * than the total they were quoted, and the alternative to THAT (a
+     * multi-phase schedule with an odd first payment) is complexity nobody
+     * asked for. Never a float, in either direction.
+     */
+    public static function perChargeMinor(Registration $registration, FeePlan $feePlan): int
+    {
+        $total = (int) $registration->adjusted_total_minor;
+
+        if ($feePlan->kind !== FeePlan::KIND_INSTALLMENT) {
+            return $total;
+        }
+
+        $count = (int) $feePlan->installment_count;
+
+        if ($count < 1) {
+            throw RegistrationException::installmentCountMissing();
+        }
+
+        return intdiv($total, $count);
+    }
+
+    /**
      * Open (or re-mint) the hosted Checkout Session for a pending, paid
      * registration and return its URL.
      *
-     * Refuses anything that is not a live, chargeable, one-time seat: the free
-     * path has no Stripe leg, a confirmed/cancelled/waitlisted registration has
-     * nothing to pay, subscription-shaped plans are T-006e, and an org that has
-     * not finished Connect onboarding cannot be paid at all.
+     * Refuses anything that is not a live, chargeable seat: the free path has
+     * no Stripe leg, a confirmed/cancelled/waitlisted registration has nothing
+     * to pay, an unrecognized money kind never degrades into a guess, and an
+     * org that has not finished Connect onboarding cannot be paid at all.
+     *
+     * The plan's kind decides the SHAPE of the session (one-time payment vs
+     * subscription) and nothing else — the account, the hosted surface, the
+     * positive-only platform fee, the snapshot pricing and the
+     * webhooks-are-the-truth contract are identical either way.
      *
      * @param  array{success_url?:string,cancel_url?:string}  $options
      * @return array{registration: Registration, checkout_url: string, session_id: ?string}
@@ -128,10 +204,15 @@ class RegistrationCheckoutService
             throw RegistrationException::crossTenant('offering');
         }
 
-        // T-006c ships ONE-TIME only. Money kinds never degrade: an installment
-        // or recurring plan needs a subscription + schedule (T-006e), so it
-        // fails loudly here rather than being charged in the wrong shape.
-        if ($feePlan->kind !== FeePlan::KIND_ONE_TIME) {
+        // Money kinds never degrade (.claude/rules/registration-billing-data.md).
+        // `free` has no Stripe leg at all and anything unrecognized is a data
+        // error — both fail loudly here rather than being charged in some
+        // guessed shape.
+        if (! in_array($feePlan->kind, [
+            FeePlan::KIND_ONE_TIME,
+            FeePlan::KIND_INSTALLMENT,
+            FeePlan::KIND_RECURRING,
+        ], true)) {
             throw RegistrationException::checkoutKindUnsupported((string) $feePlan->kind);
         }
 
@@ -143,9 +224,17 @@ class RegistrationCheckoutService
             throw RegistrationException::orgCannotCollectPayments();
         }
 
-        $amount = (int) $registration->adjusted_total_minor;
         $currency = strtolower((string) ($feePlan->currency ?: config('services.stripe.currency', 'usd')));
-        $applicationFee = self::applicationFee($amount);
+
+        // What ONE charge is worth. For a subscription plan this is the
+        // per-interval amount derived from the snapshot; for one_time it IS the
+        // snapshot. Aid that floors an installment to nothing is the free-path
+        // carve-out's problem, never a $0 subscription.
+        $amount = self::perChargeMinor($registration, $feePlan);
+
+        if ($amount <= 0) {
+            throw RegistrationException::nothingToCharge();
+        }
 
         $idempotencyKey = $this->keyFor($registration);
         $expiresAt = $this->resolveExpiresAt($registration);
@@ -167,27 +256,16 @@ class RegistrationCheckoutService
             'offering_id' => (string) $registration->offering_id,
         ];
 
-        $paymentIntentData = ['metadata' => $metadata];
-
-        // Only attach a positive application fee — Stripe rejects a zero fee.
-        if ($applicationFee > 0) {
-            $paymentIntentData['application_fee_amount'] = $applicationFee;
-        }
+        $priceData = [
+            'currency' => $currency,
+            'unit_amount' => $amount,
+            'product_data' => [
+                'name' => (string) $offering->name,
+            ],
+        ];
 
         $params = [
-            'mode' => 'payment',
             'client_reference_id' => $registration->uuid,
-            'line_items' => [[
-                'quantity' => 1,
-                'price_data' => [
-                    'currency' => $currency,
-                    'unit_amount' => $amount,
-                    'product_data' => [
-                        'name' => (string) $offering->name,
-                    ],
-                ],
-            ]],
-            'payment_intent_data' => $paymentIntentData,
             'metadata' => $metadata,
             // Stripe expires the session at the same instant the seat hold ends,
             // and the resulting checkout.session.expired releases the seat.
@@ -197,6 +275,52 @@ class RegistrationCheckoutService
             'cancel_url' => $options['cancel_url']
                 ?? rtrim((string) config('app.url'), '/') . '/registrations/cancelled',
         ];
+
+        if ($feePlan->isSubscriptionBased()) {
+            $interval = (string) $feePlan->billing_interval;
+
+            // A subscription plan without a valid interval cannot be billed at
+            // all; guessing "month" would invent a billing cadence nobody
+            // agreed to. Money kinds never degrade.
+            if (! in_array($interval, FeePlan::BILLING_INTERVALS, true)) {
+                throw RegistrationException::planIntervalMissing();
+            }
+
+            $priceData['recurring'] = ['interval' => $interval];
+
+            // Written onto the SUBSCRIPTION, which is what makes every
+            // `invoice.*` event it later raises carry our routing signal —
+            // there is no payment intent to hang it on here.
+            $subscriptionData = ['metadata' => $metadata];
+
+            $feePercent = self::applicationFeePercent();
+
+            // Positive-only, exactly like the one-time fee: Stripe rejects a
+            // zero application_fee_percent, so the key is ABSENT, never 0.
+            if ($feePercent > 0) {
+                $subscriptionData['application_fee_percent'] = $feePercent;
+            }
+
+            $params['mode'] = 'subscription';
+            $params['subscription_data'] = $subscriptionData;
+        } else {
+            $paymentIntentData = ['metadata' => $metadata];
+
+            // Only attach a positive application fee — Stripe rejects a zero fee.
+            $applicationFee = self::applicationFee($amount);
+
+            if ($applicationFee > 0) {
+                $paymentIntentData['application_fee_amount'] = $applicationFee;
+            }
+
+            $params['mode'] = 'payment';
+            $params['payment_intent_data'] = $paymentIntentData;
+        }
+
+        $params['line_items'] = [[
+            'quantity' => 1,
+            'price_data' => $priceData,
+        ]];
 
         $session = $this->createCheckoutSession(
             $params,
@@ -257,14 +381,98 @@ class RegistrationCheckoutService
     }
 
     /**
-     * Cancel the Stripe subscription behind a registration, if it has one —
-     * the money half of T-006d's explicit admin cancel.
+     * Attach the Subscription SCHEDULE that makes an installment plan STOP
+     * after N payments — the object that turns "bill monthly forever" into
+     * "bill monthly nine times, then cancel".
      *
-     * Subscription legs are created in T-006e (installment/recurring); this
-     * branch exists now so that cancelling a seat never silently leaves a live
-     * subscription charging a family every month once they do. A registration
-     * with no subscription id is a no-op: the one-time and free paths have
-     * nothing recurring to stop.
+     * Stripe cannot create a schedule from inside Checkout, so it is attached
+     * the moment Stripe first tells us the subscription id. Both inbound events
+     * that can carry it call this (`checkout.session.completed` and the first
+     * `invoice.payment_succeeded`), so ORDER DOES NOT MATTER and a dropped
+     * session event does not leave an installment plan billing forever.
+     *
+     * IDEMPOTENT and self-guarding: a registration that already has a schedule
+     * id, is not on an installment plan, or has no subscription id yet, makes
+     * no API call at all. `end_behavior=cancel` + `iterations=N` is the whole
+     * mechanism — STRIPE counts the payments and stops; nothing local schedules
+     * anything (.claude/rules/stripe-payments.md).
+     *
+     * FAILURE IS NOT FATAL: this runs inside a webhook, and throwing would make
+     * Stripe retry the delivery forever over an object that is an optimisation
+     * of the money path, not the money path itself. The local ledger
+     * independently reaches `paid` once N invoices have settled.
+     *
+     * @return ?string  the schedule id, or null when nothing was attached
+     */
+    public function ensureInstallmentSchedule(Registration $registration, ?string $subscriptionId = null): ?string
+    {
+        if ($registration->stripe_subscription_schedule_id !== null) {
+            return (string) $registration->stripe_subscription_schedule_id;
+        }
+
+        $subscriptionId ??= $registration->stripe_subscription_id;
+
+        if (! is_string($subscriptionId) || $subscriptionId === '') {
+            return null;
+        }
+
+        $feePlan = FeePlan::query()->whereKey($registration->fee_plan_id)->first();
+
+        // Only installments are finite. An open-ended recurring plan has
+        // nothing to schedule, and cancelling it is the admin's action.
+        if (! $feePlan || $feePlan->kind !== FeePlan::KIND_INSTALLMENT) {
+            return null;
+        }
+
+        $iterations = (int) $feePlan->installment_count;
+
+        if ($iterations < 1) {
+            return null;
+        }
+
+        $masjid = Masjid::find($registration->masjid_id);
+
+        try {
+            $scheduleId = $this->createInstallmentSchedule(
+                $subscriptionId,
+                $iterations,
+                (string) ($masjid?->stripe_account_id ?? ''),
+                [
+                    'registration_uuid' => $registration->uuid,
+                    'masjid_id' => (string) $registration->masjid_id,
+                ]
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Stripe installment schedule attach failed; the local ledger still terminates at N payments.', [
+                'registration_id' => $registration->id,
+                'stripe_subscription_id' => $subscriptionId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        if (! is_string($scheduleId) || $scheduleId === '') {
+            return null;
+        }
+
+        $registration->stripe_subscription_schedule_id = $scheduleId;
+        $registration->save();
+
+        return $scheduleId;
+    }
+
+    /**
+     * Cancel the Stripe subscription behind a registration, if it has one —
+     * the money half of T-006d's explicit admin cancel, and the reason
+     * cancelling a seat can never leave a family being charged every month for
+     * a place they no longer hold. A registration with no subscription id is a
+     * no-op: the one-time and free paths have nothing recurring to stop.
+     *
+     * Cancelling stops FUTURE billing only. Invoices that already settled keep
+     * their `succeeded` ledger rows untouched — v1 refunds are the org's own
+     * action in its own Stripe dashboard (the org is merchant of record), and
+     * restating a settled row would be a fabrication.
      *
      * A subscription managed by a Subscription Schedule is cancelled with it,
      * so there is deliberately no second call for the schedule id.
@@ -329,6 +537,58 @@ class RegistrationCheckoutService
                 ? $session->payment_intent
                 : ($session->payment_intent?->id ?? null),
         ];
+    }
+
+    /**
+     * Create the Subscription Schedule that bounds an installment plan to N
+     * payments, ON the connected account.
+     *
+     * Two SDK calls, one seam: `from_subscription` lifts the live subscription
+     * into a schedule (its single phase mirrors the current period), then the
+     * phase is given `iterations = N` and the schedule `end_behavior = cancel`
+     * — so Stripe bills exactly N times, counting the invoice Checkout already
+     * settled, and then cancels the subscription itself.
+     *
+     * @param  array<string,string>  $metadata  routing signal for schedule events
+     */
+    protected function createInstallmentSchedule(
+        string $stripeSubscriptionId,
+        int $iterations,
+        string $connectedAccountId,
+        array $metadata = []
+    ): ?string {
+        $opts = $connectedAccountId !== '' ? ['stripe_account' => $connectedAccountId] : [];
+
+        $schedule = $this->stripe->subscriptionSchedules->create(
+            ['from_subscription' => $stripeSubscriptionId],
+            $opts
+        );
+
+        // Carry the subscription's own line items forward; only the iteration
+        // count and the end behaviour are ours to state.
+        $items = [];
+
+        foreach (($schedule->phases[0]->items ?? []) as $item) {
+            $price = is_string($item->price ?? null) ? $item->price : ($item->price->id ?? null);
+
+            if ($price !== null) {
+                $items[] = ['price' => $price, 'quantity' => (int) ($item->quantity ?? 1)];
+            }
+        }
+
+        $phase = ['iterations' => $iterations];
+
+        if ($items !== []) {
+            $phase['items'] = $items;
+        }
+
+        $updated = $this->stripe->subscriptionSchedules->update($schedule->id, [
+            'end_behavior' => 'cancel',
+            'phases' => [$phase],
+            'metadata' => $metadata,
+        ], $opts);
+
+        return $updated->id ?? $schedule->id;
     }
 
     /**

@@ -103,6 +103,53 @@ quote/register/checkout endpoints) fixed these — T-006d..f build on them:
   move a price — aid is an admin grant (T-006d). The payer's email is required
   because a Contact is keyed on (masjid, email); registrants may have none.
 
+T-006e (installments + recurring: the subscription legs and the `invoice.*` /
+subscription-lifecycle handlers) fixed these:
+
+- **The per-invoice ledger key is `reg_invoice_{stripe_invoice_id}`**
+  (`RegistrationPaymentService::invoicePaymentKey`). A subscription is N
+  charges, so the uuid is the wrong grain; the invoice id is the natural key and
+  the prefix cannot collide with T-006c's `reg_payment_{uuid}`. EVERY event
+  about one invoice — the failure, the retry, the eventual success, any
+  redelivery — derives the same key and therefore the same single row. A
+  succeeded row is never downgraded by a stale failure.
+- **Order independence across the subscription permutation is achieved by
+  DIVIDING THE WORK, not by ordering it.** `invoice.payment_succeeded` owns the
+  ledger row; `checkout.session.completed` owns the subscription link; BOTH
+  confirm the seat through `RegistrationService::confirm()` and both may attach
+  the installment schedule. Invoice-first self-heals `stripe_subscription_id`
+  off the invoice. Either order ⇒ one confirmed registration, one roster, no
+  duplicate rows (`RegistrationInstallmentTest` proves both arms).
+- **A subscription-mode `checkout.session.completed` books NO payment row.**
+  Money for a subscription arrives per invoice; booking here would double-count
+  the first installment.
+- **`payment_status` for subscriptions is DERIVED FROM THE LEDGER, never
+  assumed**: `active` while a subscription is live, `paid` once an installment
+  plan's succeeded rows reach its `installment_count` (also set by
+  `subscription_schedule.completed`). Open-ended `recurring` never reaches
+  `paid` — there is no finite commitment to finish.
+- **DUNNING NEVER TOUCHES `status`.** `invoice.payment_failed` writes
+  `payment_status` only. This is the whole reason T-006f's reaper excludes
+  `past_due`, and the two halves must stay consistent: nothing may eject a payer
+  for a declined card. A later successful retry lifts `past_due` back to
+  `active` on its own — Stripe owns the retry cadence, this codebase has no
+  scheduler, retry loop or dunning engine.
+- **`past_due` is for PAYERS.** A registration that has never settled a payment
+  AND is not confirmed stays `awaiting` on a failed invoice: marking an unpaid
+  hold `past_due` would make it permanently immune to the reaper — an immortal
+  seat nobody is paying for.
+- **The installment per-charge amount is `intdiv(adjusted_total_minor,
+  installment_count)`** (`RegistrationCheckoutService::perChargeMinor`), so
+  pre-checkout aid reduces every installment. `list_total = amount × N` divides
+  exactly, so a remainder only appears once aid is granted, and **the rounding
+  is dropped in the PAYER's favour** — never charge a family more than the total
+  they were quoted, and never a float.
+- **`customer.subscription.deleted` and `subscription_schedule.completed` are
+  MONEY events**: a fully-settled installment plan ends `paid`, anything else
+  ends `canceled`, and the seat is untouched in both cases. Cancelling stops
+  FUTURE billing only — settled `succeeded` rows are never restated, because v1
+  refunds are the org's own action in its own Stripe dashboard.
+
 T-006f (`registrations:reap-expired`, `App\Console\Commands\ReapExpiredCheckouts`)
 fixed these:
 
