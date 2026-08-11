@@ -202,44 +202,64 @@ class FamilyTenantBindingTest extends TestCase
     // ------------------------------------------------------------- the control
 
     #[Test]
-    public function control_the_staff_tenant_middleware_would_leave_a_contact_unbound(): void
+    public function control_the_staff_tenant_middleware_refuses_a_contact_outright(): void
     {
-        // THE REASON `family.tenant` EXISTS, demonstrated rather than asserted.
-        // `ResolveMasjidTenant` matches on `users.type`: MasjidAdmin, then
-        // SuperAdmin, then nothing. A Contact carries no `type`, so it falls
-        // through both branches and reaches the route with NO tenant bound —
-        // and unbound means unfiltered, i.e. this parent would read every
-        // masjid's contacts, groups and children's records.
+        // THE REASON `family.tenant` EXISTS — but the reason CHANGED under it,
+        // and this control is rewritten rather than deleted so the history is
+        // legible.
+        //
+        // As written for T-015c, this test demonstrated a LEAK: `ResolveMasjidTenant`
+        // matched on `users.type` (MasjidAdmin, then SuperAdmin, then nothing), a
+        // Contact carries no `type`, so it fell through every branch and reached the
+        // route with NO tenant bound — and unbound means unfiltered, i.e. a parent
+        // reading every masjid's contacts, groups and children's records. The test
+        // asserted exactly that, and warned the next reader to check it before
+        // deleting it.
+        //
+        // Admin S3 then made that final branch fail closed: a principal that is not
+        // an admin at all is now a 403, not a pass-through. The two slices were built
+        // in parallel and neither could see the other; this is the integration point
+        // where they meet.
+        //
+        // So the counterfactual is no longer "reusing the staff middleware would leak"
+        // but "reusing it would REFUSE". `family.tenant` therefore exists to BIND a
+        // family principal to its own organisation — work the staff middleware will
+        // never do for a Contact — rather than to plug a hole. Both facts are pinned
+        // below, because the leak being closed by a different slice is exactly the
+        // kind of thing that silently regresses.
         $own = $this->makeMasjid();
         $foreign = $this->makeMasjid();
 
         $contact = $this->makeContactWithLogin($own);
         Contact::factory()->create(['masjid_id' => $foreign->id]);
 
-        $reached = false;
-
         $this->authenticateOnFamilyGuard($contact);
 
         $request = Request::create($this->meUrl($own), 'GET');
         $request->setUserResolver(fn () => Auth::user());
 
-        app(ResolveMasjidTenant::class)->handle($request, function () use (&$reached) {
-            $reached = true;
+        $reached = false;
+        $status = null;
 
-            $this->assertNull(
-                $this->tenant()->get(),
-                'if the staff middleware started binding a Contact, this control is stale — '
-                . 'read it before deleting it, because family.tenant was written for this.'
-            );
+        try {
+            app(ResolveMasjidTenant::class)->handle($request, function () use (&$reached) {
+                $reached = true;
 
-            // Two tenants' contacts, visible to one parent. This is the failure
-            // `family.tenant` prevents, quantified.
-            $this->assertSame(2, Contact::count());
+                return response('ok');
+            });
+        } catch (HttpException $e) {
+            $status = $e->getStatusCode();
+        }
 
-            return response('ok');
-        });
+        $this->assertFalse(
+            $reached,
+            'the staff middleware admitted a Contact — S3\'s fail-closed else branch has regressed, '
+            . 'and an unbound context is an UNFILTERED one'
+        );
+        $this->assertSame(403, $status, 'a non-admin principal must be refused, not passed through unbound');
 
-        $this->assertTrue($reached, 'the staff middleware admits a Contact — it does not refuse it');
+        // And it never bound anything on the way out.
+        $this->assertNull($this->tenant()->get());
     }
 
     // ------------------------------------------------ middleware test harness
