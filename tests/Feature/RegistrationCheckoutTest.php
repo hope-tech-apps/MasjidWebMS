@@ -365,25 +365,153 @@ class RegistrationCheckoutTest extends TestCase
         $this->postCheckout($registration)->assertStatus(422);
     }
 
+    // ------------------------------------------- T-006e: subscription shapes
+
     #[Test]
-    public function checkout_refuses_a_subscription_shaped_plan(): void
+    public function an_installment_plan_opens_a_subscription_session_priced_per_installment(): void
+    {
+        $this->stubSession('cs_inst', 'https://checkout.stripe.test/cs_inst', null);
+
+        [$offering, $registration] = $this->subscriptionRegistration(
+            FeePlan::factory()->installment(9, 10000)
+        );
+
+        $this->postCheckout($registration)->assertOk();
+
+        $params = $this->captured['params'];
+
+        // Still a DIRECT charge on the org's own account — the shape of the
+        // session changes, the money path does not.
+        $this->assertSame('acct_A', $this->captured['account']);
+        $this->assertSame('subscription', $params['mode']);
+        $this->assertArrayNotHasKey('payment_intent_data', $params);
+        $this->assertArrayNotHasKey('transfer_data', $params);
+        $this->assertArrayNotHasKey('on_behalf_of', $params);
+
+        // The snapshot is the FULL commitment ($900); one charge is a ninth of
+        // it, in integer minor units.
+        $this->assertSame(90000, (int) $registration->adjusted_total_minor);
+        $this->assertSame(10000, $params['line_items'][0]['price_data']['unit_amount']);
+        $this->assertSame('month', $params['line_items'][0]['price_data']['recurring']['interval']);
+
+        // Written onto the SUBSCRIPTION, so every invoice it raises carries the
+        // routing signal the webhook dispatches on.
+        $this->assertSame(
+            $registration->uuid,
+            $params['subscription_data']['metadata']['registration_uuid']
+        );
+    }
+
+    #[Test]
+    public function a_recurring_plan_opens_an_open_ended_subscription_at_the_interval_price(): void
+    {
+        $this->stubSession('cs_rec', 'https://checkout.stripe.test/cs_rec', null);
+
+        [$offering, $registration] = $this->subscriptionRegistration(
+            FeePlan::factory()->recurring(FeePlan::INTERVAL_YEAR, 2500)
+        );
+
+        $this->postCheckout($registration)->assertOk();
+
+        $params = $this->captured['params'];
+
+        $this->assertSame('subscription', $params['mode']);
+        // Open-ended has no finite total: the snapshot IS the per-interval charge.
+        $this->assertSame(2500, (int) $registration->adjusted_total_minor);
+        $this->assertSame(2500, $params['line_items'][0]['price_data']['unit_amount']);
+        $this->assertSame('year', $params['line_items'][0]['price_data']['recurring']['interval']);
+    }
+
+    #[Test]
+    public function a_subscription_sends_no_application_fee_percent_when_the_platform_takes_nothing(): void
+    {
+        config(['services.stripe.platform_fee_percentage' => 0]);
+        $this->stubSession('cs_sub_fee_0', 'https://checkout.stripe.test/cs_sub_fee_0', null);
+
+        [, $registration] = $this->subscriptionRegistration(FeePlan::factory()->installment(4, 5000));
+
+        $this->postCheckout($registration)->assertOk();
+
+        // Stripe rejects a zero application_fee_percent — absent, never 0.
+        $this->assertArrayNotHasKey(
+            'application_fee_percent',
+            $this->captured['params']['subscription_data']
+        );
+    }
+
+    #[Test]
+    public function a_subscription_sends_a_positive_application_fee_percent(): void
+    {
+        config(['services.stripe.platform_fee_percentage' => 0.02]);
+        $this->stubSession('cs_sub_fee_2', 'https://checkout.stripe.test/cs_sub_fee_2', null);
+
+        [, $registration] = $this->subscriptionRegistration(FeePlan::factory()->installment(4, 5000));
+
+        $this->postCheckout($registration)->assertOk();
+
+        // A PERCENT, not an amount: subscriptions have no application_fee_amount.
+        $this->assertSame(
+            2.0,
+            $this->captured['params']['subscription_data']['application_fee_percent']
+        );
+    }
+
+    #[Test]
+    public function aid_reduces_every_installment_and_rounding_favours_the_payer(): void
+    {
+        $this->stubSession('cs_aid', 'https://checkout.stripe.test/cs_aid', null);
+
+        [, $registration] = $this->subscriptionRegistration(FeePlan::factory()->installment(3, 10000));
+
+        // $300 commitment, $100.01 waived → $199.99 over three payments.
+        app(RegistrationService::class)->grantAdjustment(
+            $registration,
+            RegistrationAdjustment::KIND_AID,
+            10001,
+            'Need-based aid'
+        );
+
+        $this->postCheckout($registration->fresh())->assertOk();
+
+        // 19999 / 3 = 6666.33 → 6666 per charge. The 1¢ remainder is forgiven:
+        // rounding never charges a family more than they were quoted.
+        $this->assertSame(6666, $this->captured['params']['line_items'][0]['price_data']['unit_amount']);
+    }
+
+    #[Test]
+    public function a_subscription_plan_with_no_billing_interval_refuses_loudly(): void
     {
         $service = Mockery::mock(RegistrationCheckoutService::class)->makePartial();
         $service->shouldAllowMockingProtectedMethods();
         $service->shouldNotReceive('createCheckoutSession');
         $this->app->instance(RegistrationCheckoutService::class, $service);
 
-        $offering = Offering::factory()->forMasjid($this->masjid)->create();
-        $plan = FeePlan::factory()->installment(9, 10000)->create([
-            'masjid_id' => $this->masjid->id,
-            'offering_id' => $offering->id,
-        ]);
+        [, $registration] = $this->subscriptionRegistration(
+            FeePlan::factory()->recurring()->state(['billing_interval' => null])
+        );
 
-        $registration = $this->registerThrough($offering, $plan);
-
-        // Installments need a subscription + schedule (T-006e). Money kinds
-        // never degrade — they refuse rather than charge the wrong shape.
+        // Money kinds never degrade: guessing "month" would invent a billing
+        // cadence nobody agreed to.
         $this->postCheckout($registration)->assertStatus(422);
+    }
+
+    #[Test]
+    public function a_created_subscription_session_alone_confirms_and_pays_nothing(): void
+    {
+        $this->stubSession('cs_sub_noop', 'https://checkout.stripe.test/cs_sub_noop', null);
+
+        [, $registration] = $this->subscriptionRegistration(FeePlan::factory()->installment(9, 10000));
+
+        $this->postCheckout($registration)->assertOk();
+
+        // The trust boundary is identical for subscriptions: only a
+        // signature-verified webhook advances anything.
+        $fresh = $registration->fresh();
+        $this->assertSame(Registration::STATUS_PENDING, $fresh->status);
+        $this->assertSame(Registration::PAYMENT_AWAITING, $fresh->payment_status);
+        $this->assertNull($fresh->stripe_subscription_id);
+        $this->assertNull($fresh->stripe_subscription_schedule_id);
+        $this->assertDatabaseCount('registration_payments', 0);
     }
 
     #[Test]
@@ -474,6 +602,24 @@ class RegistrationCheckoutTest extends TestCase
         ]);
 
         return [$offering, $plan];
+    }
+
+    /**
+     * An offering + a subscription-shaped plan + a pending registration on it.
+     *
+     * @param  \Illuminate\Database\Eloquent\Factories\Factory  $planFactory
+     * @return array{0: Offering, 1: Registration}
+     */
+    private function subscriptionRegistration($planFactory): array
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+
+        $plan = $planFactory->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        return [$offering, $this->registerThrough($offering, $plan)];
     }
 
     /** Register through the T-006b service (no HTTP, no Stripe). */

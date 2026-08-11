@@ -56,6 +56,14 @@ use Symfony\Component\HttpFoundation\Response;
  * registration event can therefore never book a Donation, and a donation event
  * can never touch a registration. Pinned by RegistrationWebhookTest alongside
  * the untouched DonationFlowTest suite.
+ *
+ * T-006e widens that ONE branch and nothing else. `invoice.payment_succeeded`
+ * and `customer.subscription.deleted` were already dispatched to the donation
+ * path; they now ask the same question first, and a payload without our uuid
+ * takes the identical route it took before. `invoice.payment_failed` and
+ * `subscription_schedule.completed` are new arms whose non-registration case is
+ * `null` — precisely what `default` did with them yesterday. No donation
+ * behaviour is altered; DonationFlowTest passes untouched.
  */
 class StripeWebhookController extends Controller
 {
@@ -194,8 +202,25 @@ class StripeWebhookController extends Controller
             'checkout.session.expired' => $isRegistration
                 ? $this->registrationPayments->handleCheckoutExpired($object, $account)
                 : null,
-            'invoice.payment_succeeded' => $this->handleInvoicePaid($object, $account),
-            'customer.subscription.deleted' => $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? '')),
+            // Shared with the recurring-DONATION path, which owns this event
+            // today. The registration branch is additive: an invoice without
+            // our uuid anywhere in it books a donation exactly as it always
+            // has (T-006e).
+            'invoice.payment_succeeded' => $isRegistration
+                ? $this->registrationPayments->handleInvoicePaid($object, $account)
+                : $this->handleInvoicePaid($object, $account),
+            // New for T-006e: the dunning event. Donations never handled it, so
+            // a non-registration failure is acked and ignored exactly as before.
+            'invoice.payment_failed' => $isRegistration
+                ? $this->registrationPayments->handleInvoiceFailed($object, $account)
+                : null,
+            'customer.subscription.deleted' => $isRegistration
+                ? $this->registrationPayments->handleSubscriptionDeleted($object, $account)
+                : $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? '')),
+            // New for T-006e: an installment commitment billed out in full.
+            'subscription_schedule.completed' => $isRegistration
+                ? $this->registrationPayments->handleScheduleCompleted($object, $account)
+                : null,
             'account.updated' => $this->connect->syncAccountStatus($object),
             default => null, // unhandled event types are acked and ignored.
         };

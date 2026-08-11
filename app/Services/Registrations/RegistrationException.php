@@ -90,12 +90,35 @@ class RegistrationException extends RuntimeException
     }
 
     /**
-     * Installment/recurring plans need a subscription + schedule (T-006e).
-     * Money kinds never degrade: refuse rather than charge the wrong shape.
+     * `free` has no Stripe leg at all, and an unrecognized kind is a data
+     * error. Money kinds never degrade: refuse rather than charge the wrong
+     * shape (T-006e added the installment/recurring shapes, so those no longer
+     * land here).
      */
     public static function checkoutKindUnsupported(string $kind): self
     {
-        return new self("Fee plan kind '{$kind}' cannot be checked out yet — one-time payments only.");
+        return new self("Fee plan kind '{$kind}' cannot be checked out.");
+    }
+
+    // ------------------------------------------ T-006e (installments/recurring)
+
+    /**
+     * A subscription-shaped plan with no valid `billing_interval` cannot be
+     * billed: guessing "month" would invent a cadence nobody agreed to.
+     */
+    public static function planIntervalMissing(): self
+    {
+        return new self('This plan bills on a schedule but names no valid billing interval.');
+    }
+
+    /**
+     * An installment plan with no positive `installment_count` has no finite
+     * commitment to divide — dividing by it would be a guess about how much a
+     * family owes per payment.
+     */
+    public static function installmentCountMissing(): self
+    {
+        return new self('This installment plan names no number of payments.');
     }
 
     public static function orgCannotCollectPayments(): self
