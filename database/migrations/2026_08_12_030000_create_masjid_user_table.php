@@ -74,16 +74,28 @@ use Illuminate\Support\Facades\Schema;
  *    so the predicate is written literally.
  *  - **MySQL** (production, 8.4 on DigitalOcean's managed cluster) has NO partial
  *    indexes at any version. The equivalent — and the technique the design names
- *    for this table, already proven by S0's `active_owner_user_id` — is a STORED
+ *    for this table, already proven by S0's `active_owner_user_id` — is a VIRTUAL
  *    generated column that collapses "not a default" to NULL:
  *        default_key = CASE WHEN is_default = 1 THEN user_id ELSE NULL END
  *    MySQL treats NULLs as distinct in a unique index, so non-default rows never
  *    collide and exactly the same set of rows ends up constrained as under
- *    SQLite's partial index. The column is STORED (not VIRTUAL) because MySQL
- *    cannot index a VIRTUAL column in a UNIQUE index, and it recomputes itself on
- *    UPDATE — so moving a user's default from masjid A to masjid B is an ordinary
- *    two-row update, not a constraint violation, provided the old default is
- *    cleared in the same transaction.
+ *    SQLite's partial index.
+ *
+ *    The column is VIRTUAL, and that is load-bearing. The claim that MySQL
+ *    "cannot index a VIRTUAL column in a UNIQUE index" is FALSE — 8.0+ supports
+ *    unique secondary indexes on virtual generated columns, verified against the
+ *    production engine. What MySQL genuinely cannot do is add a STORED generated
+ *    column to a table that has foreign keys: STORED forces ALGORITHM=COPY, a
+ *    full rebuild, and the rebuild fails with "1215 Cannot add foreign key
+ *    constraint". That is exactly what happened here on 2026-08-11 — this table
+ *    was created, then its own ALTER failed, leaving the migration half-applied.
+ *    S0's ALTER on `masjids` failed the same way for the same reason. VIRTUAL is
+ *    metadata-only and applies cleanly.
+ *
+ *    A virtual column still recomputes on UPDATE, so moving a user's default from
+ *    masjid A to masjid B remains an ordinary two-row update rather than a
+ *    constraint violation, provided the old default is cleared in the same
+ *    transaction.
  *    The unique index is on `(user_id, default_key)` as the design writes it;
  *    `default_key` alone would be equivalent, but leading with `user_id` keeps the
  *    index usable for the plain by-user lookups the resolver will make.
@@ -214,7 +226,7 @@ return new class extends Migration
         if (DB::getDriverName() === 'mysql') {
             DB::statement(
                 'ALTER TABLE ' . self::TABLE . ' ADD COLUMN ' . self::DEFAULT_KEY . ' BIGINT UNSIGNED'
-                . ' GENERATED ALWAYS AS (CASE WHEN is_default = 1 THEN user_id ELSE NULL END) STORED'
+                . ' GENERATED ALWAYS AS (CASE WHEN is_default = 1 THEN user_id ELSE NULL END) VIRTUAL'
             );
 
             DB::statement(
