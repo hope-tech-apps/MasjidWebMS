@@ -8,6 +8,7 @@ use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
 use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
 use App\Http\Controllers\AdminDashboard\BehaviorSkillsController;
+use App\Http\Controllers\AdminDashboard\BroadcastsController;
 use App\Http\Controllers\AdminDashboard\ContactCredentialsController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
@@ -164,6 +165,29 @@ Route::prefix('admin')->group(function () {
                 Route::delete('/{annoncement_id}', 'destroy');
                 Route::delete('/{annoncement_id}/trash', 'moveToTrash');
             }));
+
+            // Unified publish composer (T-008). ONE compose action reaching the
+            // announcements feed, push, the TV signage board and email — each
+            // channel opt-in per send, each with its own recorded outcome.
+            //
+            // It ORCHESTRATES the routes above and below; it does not replace
+            // them. Every existing announcement / notification / splash endpoint
+            // keeps working byte-for-byte as it does today
+            // (BroadcastChannelRegressionTest pins that).
+            //
+            // Deliberately OUTSIDE the `crm` group and with NO `permission:`
+            // gate — same reasoning as the Flyer Studio further down: publishing
+            // a Jumu'ah notice is content authoring, not the CRM money path, and
+            // gating it on masjids.crm_enabled would take announcements and push
+            // away from every masjid that has not bought the CRM. The one
+            // channel that DOES read the CRM (email, whose recipients are
+            // contacts) is checked inside the controller, up front, and 403s the
+            // whole request rather than half-sending.
+            Route::prefix('{masjid_id}/broadcasts')->controller(BroadcastsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{broadcast_id}', 'show');
+            });
 
             // Masjid splash announcements (in-app message / splash modal)
             Route::prefix('{masjid_id}/splash-announcements')->controller(SplashAnnouncementsController::class)->group(function () {
