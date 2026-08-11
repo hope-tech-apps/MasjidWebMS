@@ -142,6 +142,33 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   administration", "Consent") + `.claude/rules/private-uploads.md` (third
   implementation; soft-delete vs force-delete). **OUT on purpose:** messaging
   threads (T-005c), behavior points, ḥifẓ, mobile app, admin Vue screens.
+- **Group messaging threads — DONE** (T-005c, on `wt/t005c-messaging`). The
+  teacher↔parent channel: `group_threads` (string `scope` from
+  `GroupThread::SCOPES` = group|participant; a participant thread names the
+  member it concerns via `about_membership_id` → the member's participant
+  membership, `nullOnDelete` so roster removal degrades the thread to
+  leaders-only instead of destroying it) + `group_messages` (author is a `users`
+  row, text ONLY — attachments deferred, the feed owns media) +
+  `group_thread_reads` (one `last_read_at` per thread×user; unread = bookmark
+  older than latest message, no counters/push). All three `BelongsToMasjid`.
+  Access lives in `GroupAudience`: group-wide threads = the FEED disclosure;
+  participant threads = leaders + the specific member/guardian, consent
+  deliberately NOT consulted there (consent gates broadcasts, not conversations
+  a guardian is a named party to about their own ward); the list endpoint
+  pre-filters with `readableThreadsQuery()` so it never advertises a refused
+  thread. Writing a MESSAGE requires read entitlement + `manage contacts` (the
+  one non-mirrored spot of the feed's read/write asymmetry — opening a thread
+  keeps it). Routes `.../groups/{id}/threads` (+ `/{id}/messages`, `/close`,
+  `/reopen`) in the `crm` group under the CONTACTS permissions (set stays at 8).
+  Threads soft-delete; retention mirrors the feed
+  (`config('groups.messaging.retention_days')`, swept by the SAME
+  `groups:purge-feed` — rows only, so the DB cascade suffices where the feed
+  needed model-walking). Purely additive: three new tables, no existing
+  route/payload touched. Proven by `tests/Feature/GroupMessagingTest.php` +
+  `GroupMessagingTenantIsolationTest.php`; conventions in
+  `.claude/rules/groups.md` ("Messaging threads"). **OUT on purpose:**
+  attachments, push, Vue screens, parent-side auth (T-015), read receipts
+  beyond `last_read_at`.
 - **School section types — DONE** (T-010, uncommitted). Three page-builder types
   so a School tenant can publish the pages alrazischool.org hardcodes today:
   `staff_directory`, `programs`, `admissions_tuition`. Added on the EXISTING

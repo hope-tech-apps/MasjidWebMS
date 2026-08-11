@@ -25,6 +25,7 @@ use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
@@ -496,6 +497,29 @@ Route::prefix('admin')->group(function () {
                             ->middleware('permission:view contacts');
                         Route::put('/{post_id}', 'update')->middleware('permission:manage contacts');
                         Route::delete('/{post_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Group messaging threads — the teacher <-> parent channel
+                // (T-005c). Same permission arrangement as the feed above,
+                // with one deliberate addition: posting a MESSAGE carries
+                // `manage contacts` here AND a read-entitlement check in the
+                // controller (App\Support\GroupAudience::mayReceiveThread) —
+                // a conversation is only writable by people who may see it,
+                // unlike an announcement, which an off-roster admin may
+                // publish without being able to read back. A
+                // participant-scoped thread is readable ONLY by the group's
+                // leaders and the specific member/guardian it concerns; the
+                // list endpoint pre-filters to the same rule.
+                Route::prefix('{masjid_id}/groups/{group_id}/threads')
+                    ->controller(GroupThreadsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{thread_id}', 'show')->middleware('permission:view contacts');
+                        Route::post('/{thread_id}/messages', 'storeMessage')->middleware('permission:manage contacts');
+                        Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
+                        Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');
+                        Route::delete('/{thread_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`

@@ -3,14 +3,17 @@
 namespace App\Console\Commands;
 
 use App\Models\GroupPost;
+use App\Models\GroupThread;
 use Illuminate\Console\Command;
 
 /**
- * Retention purge for group feeds (PLAN T-005b).
+ * Retention purge for group feeds and messaging threads (PLAN T-005b/T-005c).
  *
  * .claude/rules/groups.md, obligation 3: retention is "a nullable
  * `retained_until` plus a purge that reaches the disk (a DB cascade fires no
- * model events, so it orphans bytes forever)". This is that purge.
+ * model events, so it orphans bytes forever)". This is that purge, and T-005c
+ * folded the messaging threads into the SAME sweep rather than a parallel
+ * command: retention over a group's content is one policy, not one per table.
  *
  * It force-deletes every post whose retention window has closed — soft-deleted
  * ones included, because a post an admin removed last month is exactly the one
@@ -18,6 +21,11 @@ use Illuminate\Console\Command;
  * removes the attachment rows and each attachment's own hook removes the bytes.
  * A `DELETE FROM group_posts WHERE ...` would be faster and would leave every
  * photograph on disk forever.
+ *
+ * Threads sweep on the same window. Their messages and read markers go by DB
+ * cascade off GroupThread::purge(), which is SAFE for them in a way it is not
+ * for posts: a thread message is rows only (attachments are deliberately out of
+ * T-005c), so a cascade that fires no model events orphans nothing.
  *
  * Runs UNBOUND (no tenant on a console request), so the sweep is deliberately
  * explicit about crossing organizations via withoutMasjidScope() rather than
@@ -31,11 +39,11 @@ use Illuminate\Console\Command;
 class PurgeGroupFeed extends Command
 {
     protected $signature = 'groups:purge-feed
-                            {--before= : Purge posts retained only until this date (default: today)}
+                            {--before= : Purge posts/threads retained only until this date (default: today)}
                             {--masjid= : Limit the sweep to one organization}
                             {--dry-run : Report what would go without deleting anything}';
 
-    protected $description = 'Force-delete group feed posts past their retention date, including their images on the private disk.';
+    protected $description = 'Force-delete group feed posts and messaging threads past their retention date, including feed images on the private disk.';
 
     public function handle(): int
     {
@@ -68,11 +76,39 @@ class PurgeGroupFeed extends Command
             }
         });
 
+        // The thread sweep, on the same window and the same unbound-but-
+        // explicit footing. Counted before deletion so a dry run reports the
+        // same numbers the real run would.
+        $threadQuery = GroupThread::withoutMasjidScope()
+            ->dueForPurge($before)
+            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->orderBy('id');
+
+        $threads = 0;
+        $messages = 0;
+
+        $threadQuery->chunkById(100, function ($due) use (&$threads, &$messages, $dryRun) {
+            foreach ($due as $thread) {
+                $messageCount = $thread->messages()->count();
+
+                if (! $dryRun) {
+                    // purge() -> forceDelete(); messages and read markers go by
+                    // DB cascade — rows only, nothing on disk to reach.
+                    $thread->purge();
+                }
+
+                $threads++;
+                $messages += $messageCount;
+            }
+        });
+
         $this->info(sprintf(
-            '%s %d post(s) and %d image(s)%s.',
+            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
             $posts,
             $images,
+            $threads,
+            $messages,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
 

@@ -127,6 +127,17 @@ class Group extends Model
     }
 
     /**
+     * This group's messaging threads (T-005c) — the teacher <-> parent channel.
+     * Like the feed, never a public surface: who may read each thread is
+     * decided per request by App\Support\GroupAudience, which is also why there
+     * is no eager "conversations" payload on the group itself.
+     */
+    public function threads(): HasMany
+    {
+        return $this->hasMany(GroupThread::class);
+    }
+
+    /**
      * The people in this group. Guardians appear here too (they hold a
      * membership); read the pivot's `role` to tell them apart.
      */
