@@ -263,6 +263,64 @@ class RegistrationService
     }
 
     /**
+     * Release a held seat: the counterpart of the reserve-at-pending increment,
+     * and the ONLY other place the guarded `registration_count` is written.
+     *
+     * Called by T-006c's `checkout.session.expired` handler when a checkout
+     * window closes unpaid (and, later, by T-006f's reaper for the holds whose
+     * webhook never arrived). Same lock discipline as intake: the offering row
+     * is taken with lockForUpdate and decremented under it, so a release racing
+     * a registration cannot lose a seat or double-return one.
+     *
+     * IDEMPOTENT, and that is load-bearing — Stripe redelivers. Only a PENDING
+     * seat releases: a confirmed (paid) registration keeps its seat, a
+     * waitlisted one never held one, and an already-cancelled one has already
+     * given it back, so a second expired event for the same session changes
+     * nothing and the counter is decremented exactly once.
+     */
+    public function releaseSeat(Registration $registration): Registration
+    {
+        return DB::transaction(function () use ($registration): Registration {
+            $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
+
+            if (! $locked) {
+                return $registration;
+            }
+
+            if ($locked->status !== Registration::STATUS_PENDING) {
+                return $locked;
+            }
+
+            // Belt and braces: money that has already landed keeps its seat
+            // even if an expiry event arrives afterwards out of order.
+            if (in_array($locked->payment_status, [
+                Registration::PAYMENT_PAID,
+                Registration::PAYMENT_ACTIVE,
+            ], true)) {
+                return $locked;
+            }
+
+            $offering = Offering::query()->whereKey($locked->offering_id)->lockForUpdate()->first();
+
+            if ($offering && $offering->registration_count > 0) {
+                // Atomic UPDATE … SET registration_count = registration_count - 1
+                // under the row lock, mirroring the intake increment.
+                $offering->decrement('registration_count');
+            }
+
+            $locked->status = Registration::STATUS_CANCELLED;
+            $locked->payment_status = Registration::PAYMENT_CANCELED;
+            $locked->checkout_expires_at = null;
+            $locked->save();
+
+            // Keep the caller's instance current (it may be mid-request).
+            $registration->refresh();
+
+            return $locked;
+        });
+    }
+
+    /**
      * Grant one auditable reduction (aid / discount / code) and re-derive the
      * snapshot: adjusted_total_minor = list_total_minor − Σ adjustments,
      * floored at 0. STRICTLY PRE-CHECKOUT — once a Stripe leg exists there is
