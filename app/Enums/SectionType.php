@@ -57,6 +57,14 @@ enum SectionType: string
     case STAFF_DIRECTORY = 'staff_directory';
     case PROGRAMS = 'programs';
     case ADMISSIONS_TUITION = 'admissions_tuition';
+    // Manara Community (T-020). Modelled on the pages al-aqsaclinic.org already
+    // publishes: what we do and who qualifies, who provides the care, and the
+    // numbers a funder asks for. The palette is GLOBAL — like the school types
+    // these are offered to every tenant, not gated on org_type; see the class
+    // docblock and .claude/rules/section-types.md.
+    case SERVICES_ELIGIBILITY = 'services_eligibility';
+    case PROVIDERS_DIRECTORY = 'providers_directory';
+    case IMPACT_STATS = 'impact_stats';
 
     /**
      * Get all section type values
@@ -95,6 +103,9 @@ enum SectionType: string
             self::STAFF_DIRECTORY => 'Staff & Faculty Directory',
             self::PROGRAMS => 'Programs & Curriculum',
             self::ADMISSIONS_TUITION => 'Admissions & Tuition',
+            self::SERVICES_ELIGIBILITY => 'Services & Eligibility',
+            self::PROVIDERS_DIRECTORY => 'Providers & Care Team',
+            self::IMPACT_STATS => 'Impact Numbers',
         };
     }
 
@@ -127,6 +138,9 @@ enum SectionType: string
             self::STAFF_DIRECTORY => 'The people who work here — photo, role and department, with contact details only if you choose to publish them',
             self::PROGRAMS => 'Programs or courses of study — grade level, schedule, and what each one covers',
             self::ADMISSIONS_TUITION => 'Tuition rates, additional fees, payment plans, and the steps to enrol',
+            self::SERVICES_ELIGIBILITY => 'The services you offer and who qualifies for them — criteria, plus one highlighted card for the programme people ask about most',
+            self::PROVIDERS_DIRECTORY => 'The people who provide care — photo, credentials and specialty, grouped by department',
+            self::IMPACT_STATS => 'Headline numbers for funders and visitors — visits served, value of care, volunteer hours',
         };
     }
 
@@ -172,6 +186,17 @@ enum SectionType: string
             self::STAFF_DIRECTORY,
             self::PROGRAMS,
             self::ADMISSIONS_TUITION => false,
+            // The community types are author-supplied for the same reason. A
+            // providers directory is editorial, never a query over `contacts` —
+            // same rule as staff_directory above. `impact_stats` is deliberately
+            // typed in too: the numbers a clinic publishes to funders are audited
+            // figures for a stated reporting period, not a live count of whatever
+            // rows happen to be in our tables today. If aggregation is ever wanted
+            // it is a new, separately-classified type — flipping this flag would
+            // silently repoint a published number at a different source.
+            self::SERVICES_ELIGIBILITY,
+            self::PROVIDERS_DIRECTORY,
+            self::IMPACT_STATS => false,
         };
     }
 
@@ -421,6 +446,100 @@ enum SectionType: string
                 'button_text' => '',
                 'button_page_id' => null,
                 'button_link' => null,
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // Manara Community (T-020)
+            // ---------------------------------------------------------------
+            // What we do, and who qualifies. Each service is
+            //   ['name' => '', 'description' => '', 'image_url' => null]
+            //
+            // ONE flat list, for the same reason staff_directory is flat: the
+            // section image pipeline matches a SINGLE array index
+            // (`services.*.image_url` → `services_0_image_url`), so grouping the
+            // services into a nested tree would silently drop every uploaded
+            // photo. See SectionsController::handleArrayImageUploads.
+            //
+            // `eligibility` is a single OBJECT, not a list, and carries no image:
+            // a page states its rules once. `criteria` is a plain list of strings
+            // ("Household income at or below 200% of the Federal Poverty Level").
+            // `highlight` is the one card the page leads with — the free clinic's
+            // "Yellow Card" — kept as its own block so the renderer can style it
+            // differently from the criteria bullets without guessing which bullet
+            // matters. It is a fixed object with no upload, so the one-array-level
+            // limit above does not apply to it.
+            //
+            // `button_page_id` points the call to action at a page in this same
+            // builder (an application form built with the `form` type, say). It
+            // resolves to `button_page_url` at read time — Section::
+            // getContentAttribute — so renaming the target page cannot rot it.
+            self::SERVICES_ELIGIBILITY => [
+                'heading' => '',
+                'description' => '',
+                'services' => [],
+                'layout' => 'cards', // cards | list
+                'columns' => 3,
+                'eligibility' => [
+                    'heading' => '',
+                    'intro' => '',
+                    'criteria' => [],
+                    'note' => '',
+                    'highlight' => [
+                        'badge' => '',
+                        'title' => '',
+                        'subtitle' => '',
+                        'body' => '',
+                    ],
+                ],
+                'button_text' => '',
+                'button_page_id' => null,
+                'button_link' => null,
+                'background_color' => '#ffffff',
+            ],
+            // The people who provide the care. Each provider is
+            //   ['name' => '', 'credential' => '', 'specialty' => '',
+            //    'department' => '', 'photo_url' => null]
+            //
+            // `credential` is the suffix after the name — "MD", "DO", "FNP-C",
+            // "PharmD" — free text, because the list of post-nominals a clinic
+            // publishes has no closed set and differs by state and profession.
+            // `department` is a free grouping LABEL on a FLAT list ("Primary
+            // Care", "Dental", "Behavioral Health"), exactly as
+            // staff_directory.members[].department is, and for exactly the same
+            // reason: a departments[].providers[] tree would nest the photo two
+            // array levels deep and every upload would vanish without an error.
+            //
+            // Editorial content, like staff_directory: these names are typed into
+            // the section, never read out of `contacts` or any other private table.
+            self::PROVIDERS_DIRECTORY => [
+                'heading' => '',
+                'description' => '',
+                'providers' => [],
+                'layout' => 'grid', // grid | list
+                'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // The headline numbers. Each stat is
+            //   ['value' => '', 'label' => '', 'description' => '']
+            //
+            // `value` is DISPLAY TEXT and never a number to format: the figures a
+            // clinic puts in front of funders read "6,000+", "$6.3M" and "1 in 4",
+            // and the rounding, the plus sign and the currency are part of what is
+            // being claimed. Formatting a stored decimal here would change a
+            // published, audited figure. `stats.value` and
+            // `admissions_tuition.tiers[].amount` make the same call.
+            //
+            // `period` is the reporting-period caption ("In 2025", "Since 2010")
+            // shown once for the whole block. An impact number without the window
+            // it covers is not a fact, and a funder will ask; it is optional
+            // because a running total legitimately has none.
+            self::IMPACT_STATS => [
+                'heading' => '',
+                'description' => '',
+                'period' => '',
+                'stats' => [],
+                'layout' => 'row', // row | grid
+                'columns' => 3,
                 'background_color' => '#ffffff',
             ],
         };

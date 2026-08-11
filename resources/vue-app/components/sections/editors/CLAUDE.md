@@ -36,17 +36,19 @@ maps it back through `getImageFieldsForSectionType`. Two consequences:
   one level deep — flat list + a grouping label beats a nested tree.
 - **Reorder/delete MUST re-key the queue.** Files are queued by index before
   they are uploaded, so moving row 3 above row 2 without re-keying uploads the
-  photo onto the wrong record. `CarouselSectionEditor` and
-  `StaffDirectorySectionEditor` carry the `remap*Files` helper to copy: clear
+  photo onto the wrong record. `CarouselSectionEditor`,
+  `StaffDirectorySectionEditor` and `ProvidersDirectorySectionEditor` carry the
+  `remap*Files` helper to copy: clear
   every pending entry first (so a swap cannot overwrite its own counterpart),
   then re-add at the new index; return `null` from the mapper to drop one.
 
 ## Arrays of plain strings
 
-`programs[].highlights` and `tiers[].includes` are `string[]`. Bind `:value` and
-write back by index from an `@input` handler
-(`onHighlightInput`/`onIncludeInput`) rather than relying on `v-model` into an
-array slot — it keeps the mutation and the `emitUpdate()` in one place.
+`programs[].highlights`, `tiers[].includes` and `eligibility.criteria` are
+`string[]`. Bind `:value` and write back by index from an `@input` handler
+(`onHighlightInput`/`onIncludeInput`/`onCriterionInput`) rather than relying on
+`v-model` into an array slot — it keeps the mutation and the `emitUpdate()` in
+one place.
 
 ## Import path for UploadedImageInfo
 

@@ -23,7 +23,12 @@ export type SectionType =
     // nothing filters section types by org_type. See App\Enums\SectionType.
     | 'staff_directory'
     | 'programs'
-    | 'admissions_tuition';
+    | 'admissions_tuition'
+    // Manara Community (T-020). Offered to every tenant for the same reason —
+    // the palette is global. See App\Enums\SectionType.
+    | 'services_eligibility'
+    | 'providers_directory'
+    | 'impact_stats';
 
 // Base Section
 export type PageSection = {
@@ -67,7 +72,10 @@ export type SectionContent =
     | EmbedSectionContent
     | StaffDirectorySectionContent
     | ProgramsSectionContent
-    | AdmissionsTuitionSectionContent;
+    | AdmissionsTuitionSectionContent
+    | ServicesEligibilitySectionContent
+    | ProvidersDirectorySectionContent
+    | ImpactStatsSectionContent;
 
 // Individual Section Content Types
 
@@ -405,5 +413,109 @@ export type AdmissionsTuitionSectionContent = {
     button_page_id: number | null;
     button_page_url?: string | null; // Auto-generated from button_page_id
     button_link: string | null;
+    background_color: string;
+};
+
+/* -------------------------------------------------------------------------
+ * Manara Community (T-020)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * One service the organisation offers. The list stays FLAT — the section image
+ * pipeline can only re-key one array index (`services.*.image_url`), so grouping
+ * services into a nested tree would silently drop every uploaded photo.
+ */
+export type ServiceItem = {
+    name: string;
+    description: string;
+    image_url: string | null;
+};
+
+/**
+ * The card the eligibility block leads with — a free clinic's "Yellow Card", a
+ * food pantry's referral pass. Its own block rather than one more bullet, so the
+ * renderer can style it without guessing which criterion matters.
+ */
+export type EligibilityHighlight = {
+    /** Small pill above the title, e.g. "Yellow Card". */
+    badge: string;
+    title: string;
+    subtitle: string;
+    body: string;
+};
+
+/**
+ * Who qualifies. A single object, not a list: a page states its rules once.
+ * `criteria` is plain strings — "Household income at or below 200% of the
+ * Federal Poverty Level". Carries no image, so the one-array-level upload limit
+ * that keeps `services` flat does not constrain it.
+ */
+export type EligibilityBlock = {
+    heading: string;
+    intro: string;
+    criteria: string[];
+    note: string;
+    highlight: EligibilityHighlight;
+};
+
+export type ServicesEligibilitySectionContent = {
+    heading: string;
+    description: string;
+    services: ServiceItem[];
+    layout: 'cards' | 'list';
+    columns: number;
+    eligibility: EligibilityBlock;
+    button_text: string;
+    button_page_id: number | null;
+    button_page_url?: string | null; // Auto-generated from button_page_id
+    button_link: string | null;
+    background_color: string;
+};
+
+/**
+ * One published clinician. EDITORIAL content typed into the section, never a row
+ * out of the contacts/CRM tables. `credential` is the post-nominal suffix ("MD",
+ * "DO", "FNP-C") — free text, since no closed set covers every profession and
+ * state. `department` is a free grouping label on a FLAT list, exactly as
+ * `StaffMember.department` is: a departments[].providers[] tree would nest the
+ * photo two array levels deep and every upload would vanish silently.
+ */
+export type ProviderItem = {
+    name: string;
+    credential: string;
+    specialty: string;
+    department: string;
+    photo_url: string | null;
+};
+
+export type ProvidersDirectorySectionContent = {
+    heading: string;
+    description: string;
+    providers: ProviderItem[];
+    layout: 'grid' | 'list';
+    columns: number;
+    background_color: string;
+};
+
+/**
+ * One headline number. `value` is DISPLAY TEXT and never a number to format: the
+ * figures a clinic puts in front of funders read "6,000+", "$6.3M" and "1 in 4",
+ * and the rounding, the plus sign and the currency are part of the claim.
+ * Formatting a stored decimal here would change a published, audited figure.
+ */
+export type ImpactStat = {
+    value: string;
+    label: string;
+    description: string;
+};
+
+export type ImpactStatsSectionContent = {
+    heading: string;
+    description: string;
+    /** Reporting-period caption for the whole block, e.g. "In 2025". */
+    period: string;
+    stats: ImpactStat[];
+    layout: 'row' | 'grid';
+    columns: number;
     background_color: string;
 };

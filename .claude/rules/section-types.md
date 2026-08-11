@@ -80,11 +80,13 @@ filter**. Every tenant is offered every type regardless of `org_type`, and
 "which page-builder section types are offered" — carries no `section_types`
 key. The comment describes the intent; the code does not implement it.
 
-The school types (`staff_directory`, `programs`, `admissions_tuition`) are
-therefore visible to masjid and community tenants. **That is deliberate.** A
-masjid with a weekend school has a tuition table and a teaching staff; gating
-the palette would invent a mechanism to keep a real tenant away from a section
-it wants.
+The school types (`staff_directory`, `programs`, `admissions_tuition`) and the
+community types (`services_eligibility`, `providers_directory`, `impact_stats`)
+are therefore visible to every tenant whatever its `org_type`. **That is
+deliberate.** A masjid with a weekend school has a tuition table and a teaching
+staff, and a masjid running a food pantry has services with eligibility rules
+and numbers for its funders; gating the palette would invent a mechanism to keep
+a real tenant away from a section it wants.
 
 If per-vertical offering is ever actually wanted:
 
@@ -96,9 +98,11 @@ If per-vertical offering is ever actually wanted:
 
 ## Money in section content is display text
 
-`admissions_tuition.tiers[].amount` and `stats.value` are strings. A real
-tuition table mixes `$8,000`, `Included` and `Contact us` in one column, and
-nothing in this app charges from a section — the Stripe path is donations only.
+`admissions_tuition.tiers[].amount`, `stats.value` and
+`impact_stats.stats[].value` are strings. A real tuition table mixes `$8,000`,
+`Included` and `Contact us` in one column; a real impact line reads `$6.3M` or
+`6,000+`, where the rounding and the plus sign are part of the claim. Nothing in
+this app charges or computes from a section — the Stripe path is donations only.
 A string says "this is what the page says"; a decimal implies a machine reads
 it. Do not "fix" these into numbers without a billing engine behind them
 (PLAN T-006).
