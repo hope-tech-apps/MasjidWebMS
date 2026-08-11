@@ -2,6 +2,7 @@
 
 
 use App\Http\Controllers\Api\V1\AnnouncementsController;
+use App\Http\Controllers\Api\V1\AppointmentRequestsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
@@ -40,6 +41,13 @@ Route::prefix('v1')->group(function () {
     // anything that writes.
     Route::post('/forms/{form_id}/responses', [FormSubmissionsController::class, 'store'])
         ->middleware('throttle:form-submit');
+
+    // Public appointment requests (Community vertical, T-021) — the free
+    // clinic's intake. An unauthenticated DB write like the form submissions
+    // above, so it is throttled by name for the same reason; the tenant comes
+    // from the masjid-id header inside the controller.
+    Route::post('/appointment-requests', [AppointmentRequestsController::class, 'store'])
+        ->middleware('throttle:appointment-request');
 
     // Photo Gallery routes
     Route::prefix('gallery')->controller(PhotoGalleryController::class)->group(function () {
