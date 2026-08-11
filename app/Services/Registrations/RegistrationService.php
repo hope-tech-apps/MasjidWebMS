@@ -77,6 +77,23 @@ class RegistrationService
     public const DEFAULT_CHECKOUT_WINDOW_MINUTES = 30;
 
     /**
+     * Why a seat is being released — the two callers of `releaseSeat()`, which
+     * stays the single writer of `offerings.registration_count` besides intake
+     * (.claude/rules/registration-billing-data.md).
+     *
+     *  - EXPIRY (the default, unchanged): an unpaid checkout window closed —
+     *    T-006c's `checkout.session.expired` handler and T-006f's reaper.
+     *    Pending-only, and money that already landed keeps its seat, because a
+     *    redelivered or out-of-order event must never evict a paying family.
+     *  - ADMIN (T-006d): a human deliberately cancelled this registration. A
+     *    CONFIRMED seat releases too — freeing it for the waitlist is the whole
+     *    point — and a settled charge keeps its `paid` money status.
+     */
+    public const RELEASE_EXPIRY = 'expiry';
+
+    public const RELEASE_ADMIN = 'admin';
+
+    /**
      * The intake transaction. Returns the Registration in its post-intake
      * state: confirmed (free path), pending+awaiting with the checkout window
      * open (paid path), or waitlisted (offering full).
@@ -272,28 +289,47 @@ class RegistrationService
      * is taken with lockForUpdate and decremented under it, so a release racing
      * a registration cannot lose a seat or double-return one.
      *
-     * IDEMPOTENT, and that is load-bearing — Stripe redelivers. Only a PENDING
-     * seat releases: a confirmed (paid) registration keeps its seat, a
-     * waitlisted one never held one, and an already-cancelled one has already
-     * given it back, so a second expired event for the same session changes
-     * nothing and the counter is decremented exactly once.
+     * IDEMPOTENT, and that is load-bearing — Stripe redelivers. In the default
+     * EXPIRY mode only a PENDING seat releases: a confirmed (paid) registration
+     * keeps its seat, a waitlisted one never held one, and an already-cancelled
+     * one has already given it back, so a second expired event for the same
+     * session changes nothing and the counter is decremented exactly once.
+     *
+     * RELEASE_ADMIN (T-006d's explicit cancel) widens exactly two things and
+     * nothing else: a CONFIRMED seat may release (an admin cancelling a seat
+     * means to free it), and money that already settled keeps its `paid` status
+     * rather than being restated as `canceled` — v1 refunds are the org's own
+     * action in its Stripe dashboard, so rewriting a settled ledger row would
+     * be a lie. The seat/money split is the point of the two state machines.
+     *
+     * @param  string  $mode  self::RELEASE_EXPIRY (webhook/reaper) or
+     *                        self::RELEASE_ADMIN (explicit admin cancel)
      */
-    public function releaseSeat(Registration $registration): Registration
+    public function releaseSeat(Registration $registration, string $mode = self::RELEASE_EXPIRY): Registration
     {
-        return DB::transaction(function () use ($registration): Registration {
+        return DB::transaction(function () use ($registration, $mode): Registration {
             $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
 
             if (! $locked) {
                 return $registration;
             }
 
-            if ($locked->status !== Registration::STATUS_PENDING) {
+            $byAdmin = $mode === self::RELEASE_ADMIN;
+
+            // Which seat states this release may act on. Both pending and
+            // confirmed HOLD a seat; only an admin may take back a confirmed one.
+            $releasable = $byAdmin
+                ? [Registration::STATUS_PENDING, Registration::STATUS_CONFIRMED]
+                : [Registration::STATUS_PENDING];
+
+            if (! in_array($locked->status, $releasable, true)) {
                 return $locked;
             }
 
             // Belt and braces: money that has already landed keeps its seat
-            // even if an expiry event arrives afterwards out of order.
-            if (in_array($locked->payment_status, [
+            // even if an expiry event arrives afterwards out of order. An
+            // explicit admin cancel is not an out-of-order event, so it passes.
+            if (! $byAdmin && in_array($locked->payment_status, [
                 Registration::PAYMENT_PAID,
                 Registration::PAYMENT_ACTIVE,
             ], true)) {
@@ -309,11 +345,144 @@ class RegistrationService
             }
 
             $locked->status = Registration::STATUS_CANCELLED;
-            $locked->payment_status = Registration::PAYMENT_CANCELED;
             $locked->checkout_expires_at = null;
+
+            // A settled charge stays `paid` on an admin cancel (see above);
+            // everything else — nothing charged, or a subscription the caller
+            // has just cancelled at Stripe — becomes `canceled`.
+            if (! ($byAdmin && $locked->payment_status === Registration::PAYMENT_PAID)) {
+                $locked->payment_status = Registration::PAYMENT_CANCELED;
+            }
+
             $locked->save();
 
             // Keep the caller's instance current (it may be mid-request).
+            $registration->refresh();
+
+            return $locked;
+        });
+    }
+
+    /**
+     * Cancel a registration outright — T-006d's explicit admin action, and the
+     * ONLY way a confirmed seat ever comes back.
+     *
+     * Seat-holding rows (pending, confirmed) go through `releaseSeat()` in
+     * ADMIN mode, so the guarded `registration_count` still has exactly one
+     * writer besides intake. A WAITLISTED row never held a seat, so it is
+     * simply marked cancelled — decrementing for it would hand out a seat that
+     * was never taken. IDEMPOTENT: cancelling a cancelled registration is a
+     * no-op success.
+     *
+     * The Stripe subscription leg is NOT cancelled here — that is an outbound
+     * API call and lives in RegistrationCheckoutService::cancelSubscription(),
+     * which the admin controller invokes alongside this. This service makes no
+     * Stripe calls, ever.
+     *
+     * Group memberships are deliberately left in place. A confirmed
+     * registration materialises its registrants into offerings.group_id, but
+     * `writeRosterMemberships()` skips anyone who is ALREADY a participant —
+     * so a membership that predates this registration is indistinguishable
+     * from one it created, and removing it could evict a child from a class
+     * they belong to for another reason. Roster removal stays an explicit act
+     * through the group-membership endpoint.
+     */
+    public function cancel(Registration $registration): Registration
+    {
+        return DB::transaction(function () use ($registration): Registration {
+            $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
+
+            if (! $locked) {
+                return $registration;
+            }
+
+            if ($locked->status === Registration::STATUS_CANCELLED) {
+                return $locked;
+            }
+
+            if ($locked->status === Registration::STATUS_WAITLISTED) {
+                $locked->status = Registration::STATUS_CANCELLED;
+                $locked->payment_status = Registration::PAYMENT_CANCELED;
+                $locked->checkout_expires_at = null;
+                $locked->save();
+
+                $registration->refresh();
+
+                return $locked;
+            }
+
+            return $this->releaseSeat($locked, self::RELEASE_ADMIN);
+        });
+    }
+
+    /**
+     * Promote a waitlisted registration into a real seat — MANUAL admin action
+     * only. The ratified design defers automatic promotion (and the payment
+     * window it would need) to its own task; nothing in this codebase promotes
+     * anybody on its own.
+     *
+     * CAPACITY IS NEVER EXCEEDED: the offering is re-read under `lockForUpdate`
+     * and re-checked before the counter moves, exactly as intake does, so an
+     * admin clicking promote while a public registration takes the last seat
+     * cannot oversell it. A full offering refuses.
+     *
+     * The promoted row lands where intake would have put it had a seat been
+     * free: total 0 → confirmed synchronously through `confirm()` (the single
+     * confirmation seam, so the roster materialises through the exact same
+     * code); total > 0 → pending + awaiting with a fresh checkout window and a
+     * fresh idempotency key, so the registrant can pay through the public
+     * re-mint endpoint. Nothing here talks to Stripe.
+     */
+    public function promoteFromWaitlist(Registration $registration): Registration
+    {
+        return DB::transaction(function () use ($registration): Registration {
+            $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
+
+            if (! $locked) {
+                throw RegistrationException::crossTenant('registration');
+            }
+
+            if ($locked->status !== Registration::STATUS_WAITLISTED) {
+                throw RegistrationException::notPromotable($locked->status);
+            }
+
+            // Same lock discipline as intake: read the counter under the lock
+            // the increment will run in.
+            $offering = Offering::query()->whereKey($locked->offering_id)->lockForUpdate()->first();
+
+            if (! $offering || ! $offering->is_active) {
+                throw RegistrationException::offeringClosed();
+            }
+
+            // NOTE: the opens_at/closes_at window is deliberately NOT re-checked.
+            // It governs PUBLIC intake; promoting someone who queued while the
+            // offering was open is an administrative act on an existing line,
+            // and refusing it after the window closed would strand the waitlist.
+            if ($offering->capacity !== null && $offering->registration_count >= $offering->capacity) {
+                throw RegistrationException::offeringFull();
+            }
+
+            $offering->increment('registration_count');
+
+            if ((int) $locked->adjusted_total_minor === 0) {
+                // The free-path carve-out: no Stripe leg, so the seat confirms
+                // in-request through the single confirmation seam (which is
+                // pending-only — hence the transition through pending here).
+                $locked->status = Registration::STATUS_PENDING;
+                $locked->payment_status = Registration::PAYMENT_NONE;
+                $locked->checkout_expires_at = null;
+                $locked->idempotency_key = null;
+                $locked->save();
+
+                $this->confirm($locked);
+            } else {
+                $locked->status = Registration::STATUS_PENDING;
+                $locked->payment_status = Registration::PAYMENT_AWAITING;
+                $locked->checkout_expires_at = now()->addMinutes($this->checkoutWindowMinutes());
+                $locked->idempotency_key = 'reg_checkout_' . Str::uuid();
+                $locked->save();
+            }
+
             $registration->refresh();
 
             return $locked;

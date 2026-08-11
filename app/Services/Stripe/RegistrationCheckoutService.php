@@ -8,6 +8,7 @@ use App\Models\Offering;
 use App\Models\Registration;
 use App\Services\Registrations\RegistrationException;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Stripe\StripeClient;
 
@@ -255,9 +256,55 @@ class RegistrationCheckoutService
         return $wanted->gt($ceiling) ? $ceiling : $wanted;
     }
 
+    /**
+     * Cancel the Stripe subscription behind a registration, if it has one —
+     * the money half of T-006d's explicit admin cancel.
+     *
+     * Subscription legs are created in T-006e (installment/recurring); this
+     * branch exists now so that cancelling a seat never silently leaves a live
+     * subscription charging a family every month once they do. A registration
+     * with no subscription id is a no-op: the one-time and free paths have
+     * nothing recurring to stop.
+     *
+     * A subscription managed by a Subscription Schedule is cancelled with it,
+     * so there is deliberately no second call for the schedule id.
+     *
+     * FAILURE IS NOT FATAL, mirroring DonationService::cancelSubscription: a
+     * Stripe outage must not block the admin from cancelling the seat locally,
+     * so the error is logged and the caller proceeds. The return value says
+     * whether Stripe was actually told.
+     */
+    public function cancelSubscription(Registration $registration): bool
+    {
+        $subscriptionId = $registration->stripe_subscription_id;
+
+        if (! is_string($subscriptionId) || $subscriptionId === '') {
+            return false;
+        }
+
+        $masjid = Masjid::find($registration->masjid_id);
+
+        try {
+            $this->cancelStripeSubscription(
+                $subscriptionId,
+                (string) ($masjid?->stripe_account_id ?? '')
+            );
+
+            return true;
+        } catch (\Throwable $e) {
+            Log::warning('Stripe registration subscription cancel failed; cancelling the seat locally anyway.', [
+                'registration_id' => $registration->id,
+                'stripe_subscription_id' => $subscriptionId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
     // ---------------------------------------------------------------------
-    // Stripe seam (thin wrapper; stubbed in tests). The ONLY method here that
-    // touches the live API.
+    // Stripe seams (thin wrappers; stubbed in tests). The ONLY methods here
+    // that touch the live API.
     // ---------------------------------------------------------------------
 
     /**
@@ -282,5 +329,16 @@ class RegistrationCheckoutService
                 ? $session->payment_intent
                 : ($session->payment_intent?->id ?? null),
         ];
+    }
+
+    /**
+     * Cancel a subscription ON the connected account (direct-charge model, so
+     * the subscription lives on the org's account, never the platform's).
+     */
+    protected function cancelStripeSubscription(string $stripeSubscriptionId, string $connectedAccountId): void
+    {
+        $opts = $connectedAccountId !== '' ? ['stripe_account' => $connectedAccountId] : [];
+
+        $this->stripe->subscriptions->cancel($stripeSubscriptionId, [], $opts);
     }
 }

@@ -102,4 +102,43 @@ class RegistrationException extends RuntimeException
     {
         return new self('This organization is not able to accept online payments yet.');
     }
+
+    // -------------------------------------------------- T-006d (admin surface)
+
+    /**
+     * Promotion moves someone OFF the waitlist; a pending/confirmed/cancelled
+     * registration is not on it, so there is nothing to promote.
+     */
+    public static function notPromotable(string $status): self
+    {
+        return new self("Only a waitlisted registration can be promoted (status: {$status}).");
+    }
+
+    /**
+     * The capacity invariant, re-checked under the offering's row lock: an
+     * admin promoting off the waitlist can never oversell the offering.
+     */
+    public static function offeringFull(): self
+    {
+        return new self('This offering is full — free a seat before promoting from the waitlist.');
+    }
+
+    /**
+     * Fee plans are IMMUTABLE once created (deactivate-and-replace): T-006a/b
+     * snapshot the price onto every registration, so editing a live plan would
+     * retroactively restate what somebody already agreed to pay.
+     */
+    public static function feePlanImmutable(): self
+    {
+        return new self('Fee plans are immutable — deactivate this plan and create a replacement instead of editing it.');
+    }
+
+    /**
+     * Deleting an offering that still has live registrations would strand
+     * people who hold seats (and, for paid ones, money already collected).
+     */
+    public static function offeringHasLiveRegistrations(int $count): self
+    {
+        return new self("This offering still has {$count} live registration(s) — deactivate it instead of deleting it.");
+    }
 }
