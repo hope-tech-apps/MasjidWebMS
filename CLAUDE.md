@@ -110,6 +110,38 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   follow-on slice: `.claude/rules/groups.md`. **OUT of this slice on purpose:**
   group feed, messaging, group media, behavior points, ḥifẓ tracking, mobile app
   (T-013/T-014/T-015).
+- **Group feed + private group media — DONE** (T-005b, uncommitted). The "class
+  story": `group_posts` (author is a `users` row — a Contact cannot authenticate
+  anywhere here, so attributing a post to one would record an unverified claim;
+  `nullOnDelete` so retiring a teacher's login keeps the history) +
+  `group_post_attachments`, both `BelongsToMasjid`, plus two nullable consent
+  columns added additively to `group_memberships`. Admin CRUD +
+  soft-delete at `.../groups/{id}/posts`, consent at
+  `.../groups/{id}/members/{id}/consent`, inside the `crm` group under the
+  existing CONTACTS permissions (still no new permission — the set stays at 8).
+  **Disclosure ≠ administration:** writing is `manage contacts`; READING
+  additionally requires being in the group, decided by `App\Support\GroupAudience`
+  (the caller's person = the tenant Contact with their login email, exactly one
+  match or no identity). **Consent** lives on the guardian EDGE
+  (`consent_granted_at` + `consent_scope` from `GroupMembership::CONSENT_SCOPES`
+  = feed|media, a hierarchy) and is checked at the point of disclosure — a
+  guardian with no record gets neither feed nor image; with `feed` gets the words
+  and no attachment list at all (`media_withheld`, because a filename is itself a
+  disclosure). Images go to the PRIVATE disk under
+  `group-media/{masjid}/{group}/{random}.{ext}` via `App\Support\GroupPostAttachments`
+  (`config/groups.php`: jpeg/png/webp, 8MB, 8 per post), readable only through
+  the chain-resolving `.../posts/{id}/attachments/{id}` endpoint. **Retention:**
+  `group_posts.retained_until` (stamped on create from config, default 365d) +
+  `php artisan groups:purge-feed` — force-deletes THROUGH the model so the bytes
+  go; soft delete deliberately keeps them; `Group`'s force-delete hook covers the
+  DB cascade that fires no events. Purely additive: two new tables, two nullable
+  columns, no existing route/payload/behaviour touched. Proven by
+  `tests/Feature/GroupFeedTenantIsolationTest.php` (23) +
+  `tests/Feature/GroupFeedTest.php` (30); full suite **497/497, 1403 assertions**
+  on the droplet copy. Conventions: `.claude/rules/groups.md` ("Disclosure is not
+  administration", "Consent") + `.claude/rules/private-uploads.md` (third
+  implementation; soft-delete vs force-delete). **OUT on purpose:** messaging
+  threads (T-005c), behavior points, ḥifẓ, mobile app, admin Vue screens.
 - **School section types — DONE** (T-010, uncommitted). Three page-builder types
   so a School tenant can publish the pages alrazischool.org hardcodes today:
   `staff_directory`, `programs`, `admissions_tuition`. Added on the EXISTING

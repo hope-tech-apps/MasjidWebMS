@@ -2,17 +2,23 @@
 paths:
   - "app/Http/Controllers/**"
   - "app/Support/FormAttachments.php"
+  - "app/Support/GroupPostAttachments.php"
   - "app/Models/FormResponseAttachment.php"
+  - "app/Models/GroupPostAttachment.php"
   - "config/forms.php"
   - "config/flyer.php"
+  - "config/groups.php"
 ---
 # Private uploads
 
 Some files this platform accepts are **not content**. A janazah photo being worked
 on, a résumé on a Schools careers form, a document attached to an admissions
-request — these must not be readable by anyone who guesses a URL. There are now two
-implementations of the same arrangement (`FlyerCutoutController`, form attachments
-via `FormResponsesController::downloadAttachment`), and any third one must match it.
+request, a photograph of a child on a classroom feed — these must not be readable
+by anyone who guesses a URL. There are now three implementations of the same
+arrangement (`FlyerCutoutController`; form attachments via
+`FormResponsesController::downloadAttachment`; group media via
+`App\Support\GroupPostAttachments` + `GroupPostsController::downloadAttachment`),
+and any fourth one must match them rather than invent a fourth shape.
 
 ## The arrangement
 
@@ -55,6 +61,12 @@ A DB-level `ON DELETE CASCADE` fires no model events. If the parent row's deleti
 is what removes the child rows, the bytes are orphaned forever. Delete attachments
 through the model in the parent's **`deleting`** hook (before the cascade can beat
 you to it), and remove the file in the attachment's own `deleting` hook.
+
+When the parent **soft-deletes**, the two must be told apart: a soft delete is the
+mis-click guard and must NOT destroy bytes, so gate the hook on
+`isForceDeleting()` and let a retention purge be the only thing that reaches the
+disk. `GroupPost` (and `Group`, whose force-delete would otherwise cascade past
+every hook) is the reference; `groups:purge-feed` is the purge.
 
 ## Not medialibrary
 

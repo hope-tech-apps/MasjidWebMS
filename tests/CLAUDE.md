@@ -17,11 +17,14 @@ This directory holds PHPUnit / Pest tests for the Laravel API. Conventions are c
 - For routes behind `auth:sanctum`, use `Laravel\Sanctum\Sanctum::actingAs($user)`. Plain `$this->actingAs($user)` does NOT authenticate Sanctum-guarded routes.
 - For tests that touch `OnesignalInAppMessageService`, set the three `onesignal.*` config keys in setup so the service is configured, and use `Http::fake()` to intercept every outbound call.
 - For tests that upload media, call `Storage::fake('public')` in setup.
-- For tests that upload a **form attachment** (or any other private file), fake the
-  disk the feature's config names — `Storage::fake(config('forms.attachments.disk'))`
-  — not `'public'`. See `FormAttachmentTest` and `.claude/rules/private-uploads.md`.
+- For tests that upload a **form attachment**, **group media**, or any other
+  private file, fake the disk the FEATURE's config names —
+  `Storage::fake(config('forms.attachments.disk'))`,
+  `Storage::fake(config('groups.media.disk'))` — not `'public'`. See
+  `FormAttachmentTest` / `GroupFeedTest` and `.claude/rules/private-uploads.md`.
   `UploadedFile::fake()->create($name, $kb, $mime)` reports that mime and size
-  without writing the bytes, so an "oversized" case costs nothing.
+  without writing the bytes, so an "oversized" case costs nothing — and unlike
+  `->image()` it needs no GD, so it works on the droplet.
 
 ## Run a single suite
 
@@ -61,6 +64,26 @@ model. The Groups slice is the reference shape for a model with a roster:
 
 Both must force sqlite-in-memory, and any suite acting as a `MasjidAdmin` on a
 CRM route must seed `RolesAndPermissionsSeeder` AND set `crm_enabled => true`.
+
+`GroupFeedTenantIsolationTest` / `GroupFeedTest` extend that shape for a model
+that also owns BYTES and a DISCLOSURE RULE. Two things to copy:
+
+- **A suite whose subject is who-may-see-what needs deterministic identities.**
+  `App\Support\GroupAudience` resolves a caller's person by matching their login
+  email to exactly one tenant Contact, so every contact that must NOT be the
+  caller is created with `'email' => null`. `ContactFactory` uses a non-unique
+  `fake()->safeEmail()`, and a chance collision would silently flip an
+  authorization assertion into a pass.
+- **Assert on the disk, not only the row.** A soft delete must leave the bytes
+  (`assertExists`) and the purge must remove them (`assertMissing`) — deleting
+  the row while orphaning the file is exactly the bug the model-layer hooks
+  exist to prevent, and it is invisible to `assertDatabaseMissing`.
+
+## The baseline number in STATE.md goes stale
+
+Quote a test count only after re-measuring. STATE.md said 427/1179 while the
+branch was actually at 444/1302 (commit `d3c4782` landed in between), which makes
+a clean run look like it grew 17 phantom tests.
 
 ## Seeding reference data in a test
 

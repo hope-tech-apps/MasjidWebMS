@@ -21,7 +21,9 @@ use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FundsController;
+use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
+use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
@@ -456,6 +458,44 @@ Route::prefix('admin')->group(function () {
                         Route::get('/', 'index')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Guardian consent, recorded against ONE guardian edge — the
+                // obligation .claude/rules/groups.md records: "a guardian edge
+                // records a relationship, NOT consent." Written here, CHECKED at
+                // the point of disclosure by App\Support\GroupAudience. Managing
+                // consent is roster administration, so it takes the same
+                // `manage contacts` permission the roster does.
+                Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/consent')
+                    ->controller(GroupConsentController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:view contacts');
+                        Route::put('/', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The group's PRIVATE activity feed — the "class story". Two
+                // different questions, two different gates:
+                //   - WRITING is `manage contacts`, like the roster beside it;
+                //     the post records which account published it.
+                //   - READING additionally requires being IN the group, decided
+                //     by App\Support\GroupAudience. `view contacts` is necessary
+                //     but NOT sufficient: these posts are about children, and
+                //     .claude/rules/groups.md forbids a group-scoped read from
+                //     reaching the whole tenant.
+                // Images live on the PRIVATE disk with no public URL; the
+                // attachment route is the only way to read one, and it refuses a
+                // guardian whose consent does not cover media.
+                Route::prefix('{masjid_id}/groups/{group_id}/posts')
+                    ->controller(GroupPostsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{post_id}', 'show')->middleware('permission:view contacts');
+                        Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment')
+                            ->middleware('permission:view contacts');
+                        Route::put('/{post_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{post_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`

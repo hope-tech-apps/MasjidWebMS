@@ -87,10 +87,43 @@ class Group extends Model
         return in_array($kind, self::KINDS, true) ? $kind : self::KIND_GENERAL;
     }
 
+    /**
+     * Force-deleting a group must reach the disk (T-005b).
+     *
+     * `group_posts` and `group_post_attachments` cascade off `groups` at the DB
+     * level, and a DB cascade fires NO model events — so without this hook a
+     * hard-deleted group would leave every classroom photograph it ever carried
+     * on disk forever, unreferenced and unpurgeable. See
+     * .claude/rules/private-uploads.md.
+     *
+     * Only on a FORCE delete. The ordinary destroy path soft-deletes on purpose:
+     * a mis-click must not destroy a roster, and it must not destroy the class
+     * story either. Bytes go when the retention purge says they go.
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (self $group): void {
+            if (! $group->isForceDeleting()) {
+                return;
+            }
+
+            $group->posts()->withTrashed()->get()->each->purge();
+        });
+    }
+
     /** Every membership row in this group, guardian edges included. */
     public function memberships(): HasMany
     {
         return $this->hasMany(GroupMembership::class);
+    }
+
+    /**
+     * This group's PRIVATE activity feed (T-005b). Never a public surface: who
+     * may read it is decided per request by App\Support\GroupAudience.
+     */
+    public function posts(): HasMany
+    {
+        return $this->hasMany(GroupPost::class);
     }
 
     /**

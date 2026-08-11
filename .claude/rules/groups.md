@@ -2,11 +2,22 @@
 paths:
   - "app/Models/Group.php"
   - "app/Models/GroupMembership.php"
+  - "app/Models/GroupPost.php"
+  - "app/Models/GroupPostAttachment.php"
   - "app/Http/Controllers/AdminDashboard/GroupsController.php"
   - "app/Http/Controllers/AdminDashboard/GroupMembershipsController.php"
+  - "app/Http/Controllers/AdminDashboard/GroupPostsController.php"
+  - "app/Http/Controllers/AdminDashboard/GroupConsentController.php"
   - "app/Http/Requests/Admin/Groups/**"
+  - "app/Support/GroupAudience.php"
+  - "app/Support/GroupPostAttachments.php"
+  - "app/Console/Commands/PurgeGroupFeed.php"
+  - "config/groups.php"
   - "database/migrations/*_create_groups_table.php"
   - "database/migrations/*_create_group_memberships_table.php"
+  - "database/migrations/*_create_group_posts_table.php"
+  - "database/migrations/*_create_group_post_attachments_table.php"
+  - "database/migrations/*_add_guardian_consent_to_group_memberships_table.php"
 ---
 # Groups — the org → group → member primitive
 
@@ -88,27 +99,91 @@ with the seeder, a re-run migration, and that test updated together.
 ## Minors' data — what every FOLLOW-ON slice must honour
 
 These rosters hold children. The schema was shaped so the next slices are
-**additive** (no destructive migration), and they are obligations, not options:
+**additive** (no destructive migration), and they are obligations, not options.
+T-005b (the group feed) discharged the first three for the feed surface; a new
+group-scoped surface — messaging, points, ḥifẓ — must discharge them again, and
+should reuse the machinery below rather than re-decide it.
 
-1. **Private media.** Group media goes to its own table with its own
-   `masjid_id`, bytes on the PRIVATE disk under a randomised name, served only
-   through an authenticated endpoint that re-resolves the whole ownership chain.
-   Follow `.claude/rules/private-uploads.md` exactly — the public `gallery`
-   model and `spatie/laravel-medialibrary` are for public images and must NOT be
-   used for anything a group produces.
-2. **Guardian consent.** A guardian edge records a *relationship*, NOT consent.
-   Before any slice publishes a child's photo, name, or progress to anyone, it
-   must record consent against the guardian edge (a nullable
-   `consent_granted_at` + `consent_scope`, or its own table) and check it at the
-   point of disclosure. Absence of a record means no consent.
-3. **Retention.** `groups` soft-deletes and memberships are retained with it, on
-   purpose: a mis-click must not destroy a roster. That makes retention a
-   *policy* decision that still has to be built — a nullable `retained_until`
-   plus a purge that reaches the disk (a DB cascade fires no model events, so it
-   orphans bytes forever; see `.claude/rules/private-uploads.md`).
+1. **Private media.** ✅ *Built (T-005b).* Group media goes to its own table with
+   its own `masjid_id`, bytes on the PRIVATE disk under a randomised name,
+   served only through an authenticated endpoint that re-resolves the whole
+   ownership chain. Follow `.claude/rules/private-uploads.md` exactly — the
+   public `gallery` model and `spatie/laravel-medialibrary` are for public
+   images and must NOT be used for anything a group produces. The
+   implementation is `group_post_attachments` + `App\Support\GroupPostAttachments`
+   + `GroupPostsController::downloadAttachment`; a fourth private-file feature
+   copies that, it does not invent a fourth arrangement.
+2. **Guardian consent.** ✅ *Built (T-005b).* A guardian edge records a
+   *relationship*, NOT consent. Before any slice publishes a child's photo,
+   name, or progress to anyone, it must record consent against the guardian edge
+   and check it at the point of disclosure. Absence of a record means no
+   consent. See "Consent" below.
+3. **Retention.** ✅ *Built for the feed (T-005b).* `groups` soft-deletes and
+   memberships are retained with it, on purpose: a mis-click must not destroy a
+   roster. `group_posts.retained_until` + `groups:purge-feed` is the pattern —
+   a nullable window plus a purge that reaches the disk THROUGH THE MODEL,
+   because a DB cascade fires no model events and orphans bytes forever (see
+   `.claude/rules/private-uploads.md`). `groups` and `group_memberships`
+   themselves still have no retention policy; that remains to be decided.
 4. **Least disclosure by default.** A new group-scoped read is visible to the
    group's leaders and to a contact's own guardians — never to the whole tenant
-   because they happen to be a Contact.
+   because they happen to be a Contact. See "Disclosure" below.
+
+## Disclosure is not administration
+
+`App\Support\GroupAudience` is the ONLY place that answers "may this caller
+receive this disclosure about this group?", so the feed listing, one post and an
+image download cannot drift apart. Any new group-scoped read goes through it.
+
+The split it enforces, and the reason a `permission:` middleware alone was not
+enough:
+
+- **Writing** a group-scoped record is `permission:manage contacts` — the
+  accountable roster administrator, same gate as the roster endpoints.
+- **Reading** additionally requires being IN the group. `view contacts` is held
+  by every masjid admin, so gating a child's photograph on it would publish the
+  class story to the whole tenant, which obligation 4 forbids.
+
+An admin who is not on the roster can therefore publish to a group and NOT read
+it back. That asymmetry is deliberate; do not "fix" it by adding a staff bypass.
+
+**Which person is the caller.** A `Contact` cannot authenticate anywhere in this
+application — there is no congregant guard, and the parent/teacher app is T-015.
+So the caller's person is resolved by matching their login email to a Contact of
+the **bound tenant**, case-insensitively, and only when it resolves to EXACTLY
+ONE contact: an ambiguity about identity resolves to no identity. This is an
+identity *bridge*, not an escalation (an admin who wanted in could add themselves
+to the roster, which they may already do), and it is the seam to replace on the
+day contacts get their own login — `GroupAudience::identitiesFor()` and nothing
+else.
+
+## Consent
+
+Recorded on the guardian edge as `consent_granted_at` + `consent_scope`
+(nullable, added additively; every pre-existing row correctly reads as "no
+consent"). Because the edge already says guardian-of-WHOM-in-WHICH-group,
+consent cannot leak sideways to a parent's other children or their other groups:
+a parent with two children in one classroom consents twice, because those are
+two decisions.
+
+- `GroupMembership::CONSENT_SCOPES` = `feed`, `media` — PHP constants, not a DB
+  enum, for the same reason as `ROLES`.
+- The scopes are a **hierarchy**: `media` covers `feed`. A photograph is a
+  sharper disclosure than a note, so it takes its own explicit grant.
+- Consent is meaningful ONLY on a guardian row. A leader/member IS the person,
+  and nobody consents on their behalf — `consentCovers()` returns false on a
+  participant row even if the columns are somehow populated.
+- Written by `GroupConsentController`, checked by `GroupAudience`. Both halves
+  are mandatory: a recorded consent nobody reads is paperwork, and a check with
+  nothing to read is a guess.
+- Withdrawal nulls both columns, returning the row to the never-consented state
+  — "absence of a record means no consent" only works if that state is
+  reachable.
+
+Least disclosure is applied to the PAYLOAD, not just the download: a reader
+without media consent gets no attachment list at all, because a filename and a
+file size are themselves a disclosure about a child. The response says
+`media_withheld` so "no photos this week" is not confused with "not allowed".
 
 ## Tenant isolation
 

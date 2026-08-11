@@ -57,6 +57,35 @@ class GroupMembership extends Model
         self::ROLE_MEMBER,
     ];
 
+    /**
+     * What a guardian's recorded consent covers (T-005b).
+     *
+     * A guardian EDGE records a relationship; consent is a separate act, and
+     * .claude/rules/groups.md requires it to be recorded against the edge and
+     * checked at the point of disclosure. Absence of a record means NO consent —
+     * never "unknown, assume yes".
+     *
+     * The two scopes are a hierarchy, not a set: `media` covers everything
+     * `feed` covers. A photograph of a child is the sharper disclosure than a
+     * note about the lesson, so it takes its own explicit grant rather than
+     * riding along with permission to read the feed.
+     *
+     * PHP constants, not a DB enum — same reasoning as ROLES above.
+     */
+    public const CONSENT_FEED = 'feed';
+    public const CONSENT_MEDIA = 'media';
+
+    public const CONSENT_SCOPES = [
+        self::CONSENT_FEED,
+        self::CONSENT_MEDIA,
+    ];
+
+    /** Which scopes satisfy a request for a given disclosure. */
+    private const CONSENT_COVERAGE = [
+        self::CONSENT_FEED => [self::CONSENT_FEED, self::CONSENT_MEDIA],
+        self::CONSENT_MEDIA => [self::CONSENT_MEDIA],
+    ];
+
     protected $fillable = [
         'masjid_id',
         'group_id',
@@ -64,12 +93,15 @@ class GroupMembership extends Model
         'role',
         'guardian_of_contact_id',
         'joined_at',
+        'consent_granted_at',
+        'consent_scope',
     ];
 
     protected function casts(): array
     {
         return [
             'joined_at' => 'date',
+            'consent_granted_at' => 'datetime',
         ];
     }
 
@@ -117,8 +149,50 @@ class GroupMembership extends Model
         return $this->role === self::ROLE_GUARDIAN;
     }
 
+    /**
+     * Has consent been recorded on this edge at all?
+     *
+     * BOTH columns must be meaningful. A granted_at with an unrecognised scope
+     * grants nothing: a value nobody can interpret must not be read as
+     * permission, the same defensive read as Group::kind() degrading an unknown
+     * kind rather than letting it behave as one nobody granted.
+     */
+    public function hasConsent(): bool
+    {
+        return $this->consent_granted_at !== null
+            && in_array($this->consent_scope, self::CONSENT_SCOPES, true);
+    }
+
+    /**
+     * Does this edge's recorded consent cover the disclosure being asked for?
+     *
+     * Only meaningful on a guardian row — a leader/member row is the person
+     * themselves, and a person needs no consent to be shown their own group.
+     * This is the check that .claude/rules/groups.md requires at the point of
+     * disclosure; App\Support\GroupAudience is the only caller.
+     */
+    public function consentCovers(string $disclosure): bool
+    {
+        if (! $this->isGuardian() || ! $this->hasConsent()) {
+            return false;
+        }
+
+        $accepted = self::CONSENT_COVERAGE[$disclosure] ?? null;
+
+        // An unknown disclosure is never covered — a typo must fail closed.
+        return $accepted !== null && in_array($this->consent_scope, $accepted, true);
+    }
+
     public function scopeParticipants($query)
     {
         return $query->whereIn('role', self::PARTICIPANT_ROLES);
+    }
+
+    /** Guardian edges with consent recorded (in any scope). */
+    public function scopeConsented($query)
+    {
+        return $query->where('role', self::ROLE_GUARDIAN)
+            ->whereNotNull('consent_granted_at')
+            ->whereIn('consent_scope', self::CONSENT_SCOPES);
     }
 }
