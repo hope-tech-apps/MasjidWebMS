@@ -10,6 +10,7 @@ use App\Models\Fund;
 use App\Models\Masjid;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Support\DonationMetrics;
+use App\Support\ZakatDesignation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
@@ -72,6 +73,9 @@ class DonationsController extends Controller
             'search' => ['nullable', 'string', 'max:255'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date'],
+            // Zakat-only (or zakat-excluded) view of the ledger, and therefore
+            // of the CSV the treasurer reconciles the restricted pot against.
+            'zakat' => ['nullable', 'boolean'],
         ];
 
         // Compare the two ends only when `from` actually carries a date. Laravel
@@ -129,6 +133,17 @@ class DonationsController extends Controller
             $donations->whereRaw($windowSql, $windowBindings);
         }
 
+        // Applied only when the caller actually sent a value. `when()` cannot be
+        // used: it treats a legitimate `zakat=0` ("show me the NON-zakat gifts")
+        // as absent and returns the unfiltered ledger. The empty string gets the
+        // same treatment `from` does above — a cleared filter input means no
+        // filter, not "false".
+        $zakat = $query['zakat'] ?? null;
+
+        if ($zakat !== null && (! is_string($zakat) || trim($zakat) !== '')) {
+            $donations->where('is_zakat', filter_var($zakat, FILTER_VALIDATE_BOOLEAN));
+        }
+
         return $donations;
     }
 
@@ -150,10 +165,23 @@ class DonationsController extends Controller
 
         $cents = (int) round(((float) $request->validated('amount')) * 100);
 
+        // SOURCE_ADMIN: an administrator recorded the designation on the giver's
+        // behalf, which is a weaker provenance than the giver typing it into the
+        // donation form themselves. The distinction is stored rather than
+        // flattened — a treasurer auditing the restricted pot should be able to
+        // see which zakat gifts rest on a staff member's note.
+        $zakat = ZakatDesignation::resolve(
+            $request->has('zakat') ? $request->boolean('zakat') : null,
+            $fund,
+            ZakatDesignation::SOURCE_ADMIN
+        );
+
         $donation = Donation::create([
             'contact_id' => $contactId,
             'fund_id' => $fund->id,
             'type' => 'one_time',
+            'is_zakat' => $zakat['is_zakat'],
+            'zakat_source' => $zakat['zakat_source'],
             'source' => 'offline',
             'payment_method' => $request->validated('payment_method'),
             'check_number' => $request->validated('payment_method') === 'check' ? $request->input('check_number') : null,

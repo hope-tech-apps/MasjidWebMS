@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
 use App\Http\Controllers\Api\V1\ServicesController;
 use App\Http\Controllers\Api\V1\SettingController;
+use App\Http\Controllers\Api\V1\ZakatCalculatorController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -72,6 +73,22 @@ Route::prefix('v1')->group(function () {
 
     Route::post('/registrations/{uuid}/checkout', [OfferingRegistrationsController::class, 'checkout'])
         ->middleware('throttle:registration-intake');
+
+    // Public zakat calculator (T-031). The odd one out among the public POSTs
+    // here: it WRITES NOTHING. It is a POST anyway because its body is a
+    // person's net worth, which must not travel in a query string and from
+    // there into access logs — while `nisab`, which carries nothing personal,
+    // is an ordinary GET.
+    //
+    // Throttled by name like every other public endpoint in this file, on the
+    // looser 'registration-quote' shape rather than the intake shape: a donor
+    // legitimately recalculates a dozen times while filling the form in, and
+    // there is no row at the end of it to abuse. The tenant comes from the
+    // masjid-id header inside the controller.
+    Route::prefix('zakat')->controller(ZakatCalculatorController::class)->group(function () {
+        Route::get('/nisab', 'nisab')->middleware('throttle:zakat-calculator');
+        Route::post('/calculate', 'calculate')->middleware('throttle:zakat-calculator');
+    });
 
     // Photo Gallery routes
     Route::prefix('gallery')->controller(PhotoGalleryController::class)->group(function () {

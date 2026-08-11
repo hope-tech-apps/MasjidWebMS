@@ -30,6 +30,10 @@ class Donation extends Model
         'contact_id',
         'fund_id',
         'type',
+        // The giver's zakat restriction on THIS gift, and how it was arrived at.
+        // Not derived from the fund — see App\Support\ZakatDesignation.
+        'is_zakat',
+        'zakat_source',
         'source',
         'payment_method',
         'check_number',
@@ -58,6 +62,7 @@ class Donation extends Model
     {
         return [
             'donated_at' => 'date',
+            'is_zakat' => 'boolean',
             'intended_amount' => 'integer',
             'charged_amount' => 'integer',
             'donor_covers_fees' => 'boolean',

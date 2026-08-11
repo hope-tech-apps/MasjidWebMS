@@ -54,6 +54,11 @@ class DonationsController extends Controller
         $options = array_filter([
             'success_url' => $request->input('success_url'),
             'cancel_url' => $request->input('cancel_url'),
+            // has() not boolean(): an ABSENT `zakat` must stay absent so the
+            // fund's type supplies the default, while a present `false` is the
+            // donor actively declining the designation. array_filter drops nulls
+            // and keeps false, which is exactly the distinction needed here.
+            'zakat' => $request->has('zakat') ? $request->boolean('zakat') : null,
         ], fn ($v) => $v !== null);
 
         try {
@@ -77,6 +82,10 @@ class DonationsController extends Controller
                         'currency' => $result['subscription']->currency,
                         'interval' => $result['subscription']->interval,
                         'recurring' => true,
+                        // Echoed so the giver can see the designation that was
+                        // actually recorded — including the one inferred from
+                        // the fund when they were never asked.
+                        'is_zakat' => $result['subscription']->is_zakat,
                     ],
                 ], Response::HTTP_CREATED);
             }
@@ -97,6 +106,7 @@ class DonationsController extends Controller
                     'charged_amount' => $result['donation']->charged_amount,
                     'currency' => $result['donation']->currency,
                     'recurring' => false,
+                    'is_zakat' => $result['donation']->is_zakat,
                 ],
             ], Response::HTTP_CREATED);
         } catch (\Throwable $e) {
