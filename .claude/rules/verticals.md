@@ -113,6 +113,20 @@ Terms are plural nouns ("Congregants", "Families"). There is no singular form in
 the pack, so leave singular strings ("Add Member") hardcoded until one exists
 rather than inventing one by trimming an "s".
 
+## Vertical form templates (T-011)
+
+`config/form_templates.php` seeds starter FORMS at provisioning time, exactly
+as `feature_keys` seeds toggles: templates are data keyed by org_type, applied
+by `App\Support\FormTemplates::applyTo()` inside
+`OnboardingController@provision`. Schools get Admissions Interest / Careers
+Application / Withdrawal Request; masjid and community list NONE — their
+provisioning path must stay byte-identical (`FormTemplateTest` pins it, along
+with every template validating against `ValidFormSchema`). A seeded form is an
+ordinary `forms` row, indistinguishable from an admin-built one. Re-apply to an
+existing tenant with `php artisan form:apply-templates {masjid}` — idempotent
+and never destructive: any slug the tenant already holds (edited or
+soft-deleted) is skipped and reported, never overwritten or resurrected.
+
 ## The page-builder palette is NOT per-vertical
 
 A vertical is a feature bundle + a terminology pack. It is **not** a filtered
