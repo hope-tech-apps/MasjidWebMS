@@ -43,7 +43,55 @@ return [
         'api' => [
             'driver' => 'sanctum',
             'provider' => 'users'
-        ]
+        ],
+
+        /*
+        | SECURITY — this entry exists to PIN the provider. Do not remove it and
+        | do not set `provider` to null.
+        |
+        | Sanctum does not require an `auth.guards.sanctum` entry: when one is
+        | absent, `SanctumServiceProvider::register()` synthesises the guard with
+        | `'provider' => null` (vendor/laravel/sanctum/src/SanctumServiceProvider.php:23-28),
+        | and that null is handed to the guard as its provider name
+        | (SanctumServiceProvider.php:105-116). `Guard::hasValidProvider()` then
+        | short-circuits to `true` for a null provider
+        | (vendor/laravel/sanctum/src/Guard.php:145-154), so the "does this token's
+        | owner belong to this guard" check never actually runs.
+        |
+        | The consequence of leaving it unpinned: EVERY model that uses
+        | `HasApiTokens` is admissible on EVERY `auth:sanctum` route. Today
+        | `App\Models\User` is the only tokenable model in the app, so nothing is
+        | exploitable — but the moment a second tokenable exists (e.g. a `Contact`
+        | gaining a parent/guardian login, T-015c), its token would authenticate on
+        | the admin API and be stopped only by `UserAdminMiddleware`'s `type` check.
+        |
+        | Pinning it to `users` makes `hasValidProvider()` compare the token's
+        | tokenable against `auth.providers.users.model` (App\Models\User). A
+        | non-User tokenable resolves to null — i.e. unauthenticated — inside
+        | vendor code, BEFORE any application middleware runs. That is a structural
+        | barrier rather than a policy one, which is why it ships on its own.
+        |
+        | KNOWN SIDE EFFECT, already paid for — do not rediscover it the hard way.
+        | Adding this entry broke every `permission:`-gated CRM route until
+        | `App\Models\User` was given an explicit `$guard_name = 'web'`.
+        | `spatie/laravel-permission` derives a model's guard name from the
+        | `auth.guards` entries whose provider model matches, preferring
+        | `config('auth.defaults.guard')` when it is among them — and
+        | `AuthManager::shouldUse()` REWRITES that config value to `sanctum` on
+        | every authenticated request. Before this entry existed, `sanctum` was
+        | not a declared guard and so could never match; declaring it made the
+        | permission layer start looking for permissions under guard `sanctum`,
+        | where none are seeded. See the comment on `User::$guard_name` and
+        | tests/Feature/StaffAuthGuardPinTest.php. Any FURTHER guard pointed at
+        | the users provider inherits the same hazard.
+        |
+        | Pinned by T-015a. See .claude/rules/auth-permissions.md and
+        | docs/t015-parent-identity-design.md §5.
+        */
+        'sanctum' => [
+            'driver' => 'sanctum',
+            'provider' => 'users',
+        ],
     ],
 
     /*
