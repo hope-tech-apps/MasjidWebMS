@@ -19,7 +19,8 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 - `STATE.md` — 60-second snapshot of where the project is.
 - `PLAN.md` / `LOG.md` / `NOTES.md` — plan, changelog, scratch notes.
 - `.claude/rules/` — path-scoped conventions (`tenant-scoping.md`,
-  `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`).
+  `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`,
+  `private-uploads.md`).
 
 ## Status
 
@@ -61,6 +62,28 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   hardcoded (static, resolved before the masjid loads). Vue build green
   (`artifacts/vue_build_t003_20260810-213021.log`); PHP suite 366/366 on the
   droplet copy. Convention: `.claude/rules/verticals.md` ("In the SPA").
+- **Forms accept file uploads — DONE** (T-004, uncommitted). A `file` question
+  (`FormSchema::FIELD_TYPES`) whose upload arrives in its own top-level `files`
+  bag keyed by field name — NOT nested in `data`, because a multipart body cannot
+  carry both shapes under one key. `SubmitFormResponseRequest` (BaseFormRequest)
+  enforces the type/size ceiling at the boundary from `config/forms.php`
+  (`mimetypes:` against the SNIFFED type + `max:` KB, both env-overridable),
+  rejecting with the legacy `{status:'failed'}` 422; required/optional stays with
+  the schema, so a missing résumé reports under its own field name. Files land on
+  the PRIVATE `local` disk under `form-attachments/{masjid}/{form}/{random}.{ext}`
+  and are recorded in `form_response_attachments` (denormalised `masjid_id`); the
+  respondent's filename goes into `data` so the admin table and CSV still have a
+  cell. The ONLY way back out is
+  `GET .../responses/{id}/attachments/{id}` → `FormResponsesController::
+  downloadAttachment`, in the existing forms middleware group (auth:sanctum +
+  admin + tenant, no `permission:` gate — the whole forms surface has none), which
+  re-resolves masjid → form → response → attachment so another tenant is a 404.
+  File fields are refused inside a repeatable section (`ValidFormSchema`).
+  Behaviour-neutral: a form with no file field sends no `files`, writes no rows,
+  touches no disk. SPA: `file` in the builder palette + an Attachments block in the
+  responses detail modal that blob-fetches with the bearer token. Convention:
+  `.claude/rules/private-uploads.md`. Proven by `tests/Feature/FormAttachmentTest.php`
+  (15 tests); full suite 381/381, 1106 assertions on the droplet copy.
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via

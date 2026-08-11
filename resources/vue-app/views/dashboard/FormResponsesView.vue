@@ -423,6 +423,32 @@
                                     </div>
                                 </template>
 
+                                <!-- Uploaded files. Fetched with the bearer token rather than
+                                     linked: these sit on a private disk with no public URL. -->
+                                <template v-if="detail.attachments?.length">
+                                    <h6 class="text-muted mb-2">Attachments</h6>
+                                    <ul class="list-group list-group-flush mb-4">
+                                        <li
+                                            v-for="attachment in detail.attachments"
+                                            :key="attachment.id"
+                                            class="list-group-item d-flex align-items-center justify-content-between px-0"
+                                        >
+                                            <span class="text-truncate me-3">
+                                                <span class="d-block">{{ attachment.file_name }}</span>
+                                                <small class="text-muted">{{ attachmentLabel(attachment) }}</small>
+                                            </span>
+                                            <button
+                                                type="button"
+                                                class="btn btn-sm btn-outline-primary flex-shrink-0"
+                                                :disabled="downloadingAttachmentId === attachment.id"
+                                                @click="downloadAttachment(attachment)"
+                                            >
+                                                {{ downloadingAttachmentId === attachment.id ? 'Downloading…' : 'Download' }}
+                                            </button>
+                                        </li>
+                                    </ul>
+                                </template>
+
                                 <!-- Safety net: a form whose schema produced no columns (or
                                      answers saved under a question since removed) still has
                                      to be readable. -->
@@ -475,6 +501,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     FormOption,
+    FormResponseAttachment,
     FormResponseColumn,
     FormResponseDetail,
     FormResponseFilters,
@@ -839,6 +866,47 @@ const confirmDelete = async (response: FormResponseRow) => {
         Swal.fire({ icon: 'success', title: 'Deleted!', text: 'The response has been removed.', timer: 2000, showConfirmButton: false });
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to delete the response.' });
+    }
+};
+
+// --- Attachments -------------------------------------------------------------
+const downloadingAttachmentId = ref<number | null>(null);
+
+/** "PDF · 240 KB" — enough to tell a scan from a document before opening it. */
+const attachmentLabel = (attachment: FormResponseAttachment): string => {
+    const kb = Math.max(1, Math.round(attachment.size_bytes / 1024));
+    const size = kb < 1024 ? `${kb} KB` : `${(kb / 1024).toFixed(1)} MB`;
+    const type = attachment.mime_type.split('/').pop()?.split('.').pop()?.toUpperCase() ?? 'FILE';
+
+    return `${type} · ${size}`;
+};
+
+/**
+ * Same blob fetch the CSV export uses, and for the same reason: the file lives on a
+ * private disk behind auth:sanctum + admin + tenant, so the Authorization header has
+ * to travel with the request. A plain link would 401.
+ */
+const downloadAttachment = async (attachment: FormResponseAttachment) => {
+    downloadingAttachmentId.value = attachment.id;
+    try {
+        const token = localStorage.getItem(LOCAL_STORAGE_KEYS.token);
+        const resp = await fetch(attachment.download_url, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!resp.ok) throw new Error('attachment');
+
+        const url = URL.createObjectURL(await resp.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = attachment.file_name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not download the attachment.' });
+    } finally {
+        downloadingAttachmentId.value = null;
     }
 };
 

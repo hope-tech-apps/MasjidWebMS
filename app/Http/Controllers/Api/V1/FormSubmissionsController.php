@@ -3,12 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Forms\SubmitFormResponseRequest;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Support\Errors;
+use App\Support\FormAttachments;
 use App\Support\FormNotifier;
 use App\Support\FormSchema;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -27,6 +28,11 @@ use Illuminate\Support\Facades\DB;
  *  - The window and capacity are re-checked here, inside the same transaction that
  *    writes the row, because a page can sit open in a tab long after a form closed.
  *  - A honeypot field catches the naive bots; `throttle:form-submit` catches the rest.
+ *  - Uploads (a `file` question — the Schools careers form's résumé) arrive in their
+ *    own `files` bag and are type/size-checked at the boundary by
+ *    SubmitFormResponseRequest before anything here runs. They are written to a
+ *    PRIVATE disk inside the same transaction as the response, so a submission that
+ *    loses the race for the last place leaves no bytes behind.
  *
  * Once a submission is accepted it also notifies the masjid's coordinators and sends the
  * submitter a receipt (App\Support\FormNotifier) — a registration nobody is told about is
@@ -37,7 +43,7 @@ class FormSubmissionsController extends Controller
     /**
      * POST /api/v1/forms/{form_id}/responses
      */
-    public function store(Request $request, $form_id)
+    public function store(SubmitFormResponseRequest $request, $form_id)
     {
         try {
             $masjidId = (int) $request->header('masjid-id');
@@ -78,7 +84,15 @@ class FormSubmissionsController extends Controller
 
             $schema = FormSchema::for($form);
 
-            $validator = $schema->validator($submitted);
+            // Only the uploads this form actually asked for; anything else in the
+            // bag is dropped, exactly as undeclared answers are. Empty for every
+            // form without a `file` question, which leaves the rest untouched.
+            $uploads = $schema->uploads($request->file(FormSchema::UPLOAD_KEY));
+
+            // Validated together with the answers so a missing REQUIRED résumé
+            // reports under its own field name, alongside every other error, in one
+            // field bag — rather than as a second, differently shaped rejection.
+            $validator = $schema->validator(array_merge($submitted, $uploads));
 
             if ($validator->fails()) {
                 // Field bag under `data`, matching how the SPA and the Nuxt site already
@@ -91,7 +105,7 @@ class FormSubmissionsController extends Controller
 
             $clean = $schema->only($submitted);
 
-            $response = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId) {
+            $response = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads) {
                 // Re-read inside the transaction and lock, so two submissions racing for
                 // the last place cannot both pass the capacity check. The counter is the
                 // thing capacity is enforced against, so it must be read under the lock
@@ -102,7 +116,7 @@ class FormSubmissionsController extends Controller
                     return null;
                 }
 
-                return FormResponse::create(array_merge(
+                $created = FormResponse::create(array_merge(
                     [
                         'form_id' => $locked->id,
                         'masjid_id' => $masjidId,
@@ -117,6 +131,22 @@ class FormSubmissionsController extends Controller
                     ],
                     $schema->identity($clean)
                 ));
+
+                // Inside the transaction, and only once the row exists: a submission
+                // that arrives after the last place is taken returns above without
+                // ever touching the disk, and a write that fails here rolls the
+                // response back (FormAttachments removes what it had written).
+                $names = FormAttachments::store($created, $uploads);
+
+                if ($names !== []) {
+                    // The respondent's filenames go back into `data` under their
+                    // field names, so the admin table and the CSV export have a cell
+                    // to render — the bytes stay on the private disk, reachable only
+                    // through the authenticated download endpoint.
+                    $created->update(['data' => array_merge($clean, $names)]);
+                }
+
+                return $created;
             });
 
             if ($response === null) {

@@ -291,6 +291,11 @@ Route::prefix('admin')->group(function () {
                 Route::get('/roster', 'roster');
                 Route::get('/', 'index');
                 Route::get('/{response_id}', 'show');
+                // Uploaded files (a careers form's résumé) live on a PRIVATE disk with
+                // no public URL; this is the only way to read one. Same middleware as
+                // the rest of the group — auth:sanctum + admin + tenant — so an admin
+                // can only ever download an attachment their own masjid collected.
+                Route::get('/{response_id}/attachments/{attachment_id}', 'downloadAttachment');
                 Route::put('/{response_id}', 'update');
                 Route::delete('/{response_id}', 'destroy');
             });

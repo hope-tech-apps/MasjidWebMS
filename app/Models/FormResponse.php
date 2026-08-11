@@ -13,9 +13,14 @@ use Illuminate\Database\Eloquent\Model;
  * are copies of three values out of `data` so the admin list can search and sort
  * across the whole result set — see the create_form_responses_table migration.
  *
- * These rows are PII (names, emails, phones, and for camp forms, minors' medical
- * details). Treat them accordingly: they are excluded from any payload that is not
- * behind admin auth, and are never sent to a third-party API unaggregated.
+ * A `file` question stores the respondent's ORIGINAL FILENAME in `data` under the
+ * field's name, so the admin table and the CSV export have something to show; the
+ * bytes live on a private disk and are reached only through `attachments()`.
+ *
+ * These rows are PII (names, emails, phones, for camp forms minors' medical details,
+ * and for a careers form an entire résumé). Treat them accordingly: they are excluded
+ * from any payload that is not behind admin auth, and are never sent to a third-party
+ * API unaggregated.
  */
 class FormResponse extends Model
 {
@@ -65,6 +70,16 @@ class FormResponse extends Model
             Form::whereKey($response->form_id)->increment('response_count');
         });
 
+        // BEFORE the row goes, not after: the FK on form_response_attachments
+        // cascades, so by the time a `deleted` hook ran the attachment rows would
+        // already be gone — silently, without firing a single model event — and
+        // every résumé ever submitted would still be sitting on the volume. Deleting
+        // them through the model here is what makes each one's `deleting` hook run
+        // and remove its bytes from disk.
+        static::deleting(function (FormResponse $response) {
+            $response->attachments()->get()->each->delete();
+        });
+
         static::deleted(function (FormResponse $response) {
             Form::whereKey($response->form_id)
                 ->where('response_count', '>', 0)
@@ -75,6 +90,15 @@ class FormResponse extends Model
     public function form()
     {
         return $this->belongsTo(Form::class);
+    }
+
+    /**
+     * Files uploaded with this submission. Empty for every form without a `file`
+     * field, which is every form that existed before T-004.
+     */
+    public function attachments()
+    {
+        return $this->hasMany(FormResponseAttachment::class, 'form_response_id');
     }
 
     public function masjid()

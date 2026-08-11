@@ -63,9 +63,29 @@ export type FormResponseRow = {
     submitted_at: string | null;
 };
 
+/**
+ * A file uploaded with a submission (a careers form's résumé).
+ *
+ * There is NO public URL for one. `download_url` points back at the authenticated
+ * admin endpoint, which re-checks the tenant before streaming anything off the
+ * private disk — so it must be fetched with the bearer token, never dropped into an
+ * <a href>.
+ */
+export type FormResponseAttachment = {
+    id: number;
+    field: string;
+    file_name: string;
+    mime_type: string;
+    size_bytes: number;
+    uploaded_at: string | null;
+    download_url: string;
+};
+
 /** The single-response payload: the row plus the full submitted answers. */
 export type FormResponseDetail = FormResponseRow & {
     data: Record<string, any> | null;
+    /** Absent on a form with no file questions, which is most of them. */
+    attachments?: FormResponseAttachment[];
 };
 
 /** The `meta` block served alongside the paginated list. */
@@ -123,7 +143,8 @@ export type FormFieldType =
     'select' |
     'radio' |
     'checkbox' |
-    'checkboxGroup';
+    'checkboxGroup' |
+    'file';
 
 /** Types whose answer must be one of the field's declared options. */
 export const CHOICE_FIELD_TYPES: FormFieldType[] = ['select', 'radio', 'checkboxGroup'];
@@ -264,6 +285,18 @@ export type FormFieldTypeInfo = {
     value: FormFieldType;
     label: string;
     has_options: boolean;
+    /**
+     * Present only on `file`. The server is the authority on what may be uploaded
+     * (config('forms.attachments')), so the builder reads the limits rather than
+     * restating them — a stale copy here would promise something the submit
+     * endpoint then rejects.
+     */
+    upload?: {
+        mime_types: string[];
+        max_size_kb: number;
+        /** A file question needs one upload per row, which the payload cannot carry. */
+        allowed_in_repeatable: boolean;
+    } | null;
 };
 
 /**
@@ -281,6 +314,7 @@ export const FORM_FIELD_TYPES: FormFieldTypeInfo[] = [
     { value: 'radio', label: 'Choose one', has_options: true },
     { value: 'checkbox', label: 'Single checkbox', has_options: false },
     { value: 'checkboxGroup', label: 'Choose any', has_options: true },
+    { value: 'file', label: 'File upload', has_options: false },
 ];
 
 /**

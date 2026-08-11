@@ -35,10 +35,23 @@ class FormSchema
         'radio',
         'checkbox',
         'checkboxGroup',
+        'file',
     ];
 
     /** Types whose value must be one of the field's declared options. */
     private const CHOICE_TYPES = ['select', 'radio'];
+
+    /**
+     * Uploads arrive in their own top-level bag, keyed by field name:
+     *
+     *   POST multipart …  data[registrantName]=Amal   files[resume]=<binary>
+     *
+     * They are NOT nested inside `data`, because `data` is a JSON object of scalar
+     * answers and a multipart body cannot carry both shapes under one key —
+     * `$request->input('data')` never contains files. Keeping them apart is what
+     * lets a form WITHOUT file fields post exactly the JSON it always did.
+     */
+    public const UPLOAD_KEY = 'files';
 
     public function __construct(private readonly Form $form)
     {
@@ -139,6 +152,14 @@ class FormSchema
         $rules[] = $required ? 'required' : 'nullable';
 
         switch ($type) {
+            case 'file':
+                // Presence only. WHAT may be uploaded — allowed types and the size
+                // ceiling — is settled at the request boundary in
+                // SubmitFormResponseRequest from config('forms.attachments'), so
+                // one form's schema can never widen what the server accepts.
+                $rules[] = 'file';
+                break;
+
             case 'email':
                 $rules[] = 'email:rfc';
                 $rules[] = 'max:255';
@@ -336,6 +357,63 @@ class FormSchema
         return $out;
     }
 
+    /**
+     * The `file` questions this form declares, keyed by field name.
+     *
+     * Empty for every form built before T-004, which is what makes the whole
+     * upload path inert for them: no file fields means no uploads are read, no
+     * attachment rows are written, and nothing about the submission changes.
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    public function fileFields(): array
+    {
+        $out = [];
+
+        foreach ($this->allFields() as [, $repeatable, $field]) {
+            // A repeatable section is rejected at save time if it contains a file
+            // question (App\Rules\ValidFormSchema); skipping here too means a
+            // schema stored before that rule existed still cannot reach the disk.
+            if ($repeatable || ($field['type'] ?? null) !== 'file') {
+                continue;
+            }
+
+            $out[$field['name']] = $field;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The uploads this form actually asked for, pulled out of the request's
+     * `files` bag and keyed by field name.
+     *
+     * Anything the schema does not declare is dropped, exactly as `only()` drops
+     * undeclared answers — a caller cannot make us write a file for a question
+     * that does not exist.
+     *
+     * @param  mixed  $files  whatever came in under FormSchema::UPLOAD_KEY
+     * @return array<string,\Illuminate\Http\UploadedFile>
+     */
+    public function uploads($files): array
+    {
+        if (! is_array($files)) {
+            return [];
+        }
+
+        $out = [];
+
+        foreach (array_keys($this->fileFields()) as $name) {
+            $file = $files[$name] ?? null;
+
+            if ($file instanceof \Illuminate\Http\UploadedFile) {
+                $out[$name] = $file;
+            }
+        }
+
+        return $out;
+    }
+
     /** @return array<int,string> */
     private function optionValues(array $field): array
     {
@@ -451,6 +529,12 @@ class FormSchema
         foreach ($this->form->sections() as $section) {
             $sectionId = $section['id'] ?? null;
             $names = collect($section['fields'] ?? [])
+                // File fields are excluded: their submitted value is an
+                // UploadedFile, and json_encoding one into `data` would store a
+                // temp path instead of a document. The controller writes the
+                // respondent's ORIGINAL FILENAME back under this key once the
+                // upload is on disk, so the admin table still has a cell to show.
+                ->reject(fn ($field) => is_array($field) && ($field['type'] ?? null) === 'file')
                 ->pluck('name')
                 ->filter()
                 ->all();

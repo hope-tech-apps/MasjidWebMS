@@ -17,6 +17,11 @@ This directory holds PHPUnit / Pest tests for the Laravel API. Conventions are c
 - For routes behind `auth:sanctum`, use `Laravel\Sanctum\Sanctum::actingAs($user)`. Plain `$this->actingAs($user)` does NOT authenticate Sanctum-guarded routes.
 - For tests that touch `OnesignalInAppMessageService`, set the three `onesignal.*` config keys in setup so the service is configured, and use `Http::fake()` to intercept every outbound call.
 - For tests that upload media, call `Storage::fake('public')` in setup.
+- For tests that upload a **form attachment** (or any other private file), fake the
+  disk the feature's config names — `Storage::fake(config('forms.attachments.disk'))`
+  — not `'public'`. See `FormAttachmentTest` and `.claude/rules/private-uploads.md`.
+  `UploadedFile::fake()->create($name, $kb, $mime)` reports that mime and size
+  without writing the bytes, so an "oversized" case costs nothing.
 
 ## Run a single suite
 
@@ -39,7 +44,8 @@ directory. Two traps, both of which look like "I broke 48 tests":
 - **Delete the `/tmp` copy when done** — it holds a copy of production `.env`.
 
 `ExampleTest` ("Vite manifest not found") is the one expected failure: a
-source-only copy has no `public/build`. Anything else is a regression.
+source-only copy has no `public/build`. Run `npm run build` before the rsync and it
+passes with everything else. Anything else is a regression.
 
 ## Seeding reference data in a test
 

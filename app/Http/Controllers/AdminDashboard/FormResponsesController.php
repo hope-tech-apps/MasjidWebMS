@@ -25,6 +25,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * These rows are PII. Nothing here is reachable without auth + tenant scoping, and the
  * form is always resolved through `$masjid->forms()` so one masjid cannot read another's
  * registrations by guessing a form id.
+ *
+ * The same chain is what makes downloadAttachment() safe: a résumé is reached only as
+ * this masjid's form's response's attachment, so every link has to belong to the caller
+ * before any bytes leave the private disk.
  */
 class FormResponsesController extends Controller
 {
@@ -246,6 +250,50 @@ class FormResponsesController extends Controller
         }
     }
 
+    /**
+     * GET .../responses/{response_id}/attachments/{attachment_id}
+     *
+     * Streams one uploaded file — a résumé on a Schools careers form — off the PRIVATE
+     * disk. This endpoint is the reason those files are not in the public root: it runs
+     * behind auth:sanctum + admin + tenant, and resolves the attachment through
+     * masjid → form → response → attachment, so the only way to read one is to be an
+     * admin of the masjid that collected it. Another masjid's id anywhere in that chain
+     * is a 404.
+     *
+     * findOrFail is deliberately NOT inside a try/catch: the app's JSON renderer turns
+     * ModelNotFoundException into a clean 404, whereas catching it here would report a
+     * missing attachment as a 500. Same arrangement as export() above.
+     */
+    public function downloadAttachment($masjid_id, $form_id, $response_id, $attachment_id)
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+        $form = $masjid->forms()->findOrFail($form_id);
+        $response = $form->responses()->where('masjid_id', $masjid->id)->findOrFail($response_id);
+        $attachment = $response->attachments()->findOrFail($attachment_id);
+
+        if (! $attachment->exists()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This attachment is no longer stored on the server.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        return $attachment->storage()->download(
+            $attachment->path,
+            $attachment->original_name,
+            [
+                // The type was sniffed from the bytes at upload and constrained to the
+                // configured allowlist, so it is ours to state rather than the
+                // respondent's. Attachment disposition (set by download()) plus the
+                // global nosniff header keeps a document from ever being rendered.
+                'Content-Type' => $attachment->mime_type,
+                // Private and uncached: an intermediate proxy must never hold one
+                // masjid's résumé and hand it to the next admin who asks for the URL.
+                'Cache-Control' => 'private, no-store, max-age=0',
+            ],
+        );
+    }
+
     /** PUT /api/admin/masjids/{masjid_id}/forms/{form_id}/responses/{response_id} */
     public function update(UpdateFormResponseRequest $request, $masjid_id, $form_id, $response_id)
     {
@@ -463,8 +511,33 @@ class FormResponsesController extends Controller
 
         if ($withData) {
             $row['data'] = $response->data;
+            // Only on the detail view, for the same reason `data` is: the list would
+            // otherwise issue a query per row for something no list column shows. The
+            // filename itself already appears in `data` under the field's own name.
+            $row['attachments'] = $this->attachments($response);
         }
 
         return $row;
+    }
+
+    /**
+     * The uploaded files on one response, each with the authenticated URL that serves
+     * it. There is no public URL to give — the link points back at
+     * downloadAttachment(), which re-checks the tenant before streaming anything.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function attachments(FormResponse $response): array
+    {
+        $base = url("/api/admin/masjids/{$response->masjid_id}/forms/{$response->form_id}/responses/{$response->id}/attachments");
+
+        return $response->attachments()
+            ->orderBy('id')
+            ->get()
+            ->map(fn ($attachment) => array_merge(
+                $attachment->toAdminArray(),
+                ['download_url' => "{$base}/{$attachment->id}"],
+            ))
+            ->all();
     }
 }

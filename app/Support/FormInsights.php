@@ -126,8 +126,9 @@ class FormInsights
     /**
      * Counts per option for every CHOICE field, and buckets for every NUMBER field.
      *
-     * Nothing else is read. Text, textarea, email, tel and date fields are skipped
-     * entirely — that is what keeps allergies and medications out of this payload.
+     * Nothing else is read. Text, textarea, email, tel, date and file fields are
+     * skipped entirely — that is what keeps allergies, medications and the name of
+     * somebody's résumé out of this payload.
      *
      * @param  Collection<int,\App\Models\FormResponse>  $responses
      */
@@ -154,7 +155,7 @@ class FormInsights
                 } elseif ($type === 'number') {
                     $breakdown = $this->numberBreakdown($values);
                 } else {
-                    // text / textarea / email / tel / date — never summarised.
+                    // text / textarea / email / tel / date / file — never summarised.
                     continue;
                 }
 
