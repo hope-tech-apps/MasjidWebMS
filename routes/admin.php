@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
+use App\Http\Controllers\AdminDashboard\AppointmentRequestsController;
 use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
@@ -457,6 +458,26 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
                     });
+
+                // Appointment requests (Community vertical, T-021) — the free
+                // clinic's triage queue. Same guardrail as contacts/groups:
+                // {masjid_id} stays in the path by convention, isolation comes
+                // from `tenant` + BelongsToMasjid, and the controller never
+                // hand-filters. date_of_birth / reason / note bodies are
+                // encrypted at rest and surface ONLY here, never publicly.
+                //
+                // Gated by the CONTACTS permissions on purpose, the same
+                // precedent as groups above: these are people records in the
+                // member directory's trust domain, and minting `view/manage
+                // appointments` would change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin.
+                // Splitting them out is a deliberate later step.
+                Route::prefix('{masjid_id}/appointment-requests')->controller(AppointmentRequestsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::get('/{appointment_request_id}', 'show')->middleware('permission:view contacts');
+                    Route::patch('/{appointment_request_id}/status', 'updateStatus')->middleware('permission:manage contacts');
+                    Route::post('/{appointment_request_id}/notes', 'storeNote')->middleware('permission:manage contacts');
+                });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
                 // middleware + BelongsToMasjid — controllers never hand-filter by

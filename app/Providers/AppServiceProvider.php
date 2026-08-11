@@ -111,6 +111,21 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public appointment requests (Community vertical, T-021). Same shape as
+        // 'form-submit': an unauthenticated DB write, a legitimate person submits
+        // once. Keyed by IP AND target organization so flooding one clinic's
+        // intake cannot lock a visitor out of another tenant's.
+        RateLimiter::for('appointment-request', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(8)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
