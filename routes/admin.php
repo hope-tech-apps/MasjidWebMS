@@ -33,6 +33,7 @@ use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
+use App\Http\Controllers\AdminDashboard\ImpactMetricsController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
@@ -773,6 +774,26 @@ Route::prefix('admin')->group(function () {
                         Route::post('/{registration_id}/cancel', 'cancel')
                             ->middleware('permission:manage donations');
                     });
+
+                // Impact report (T-024) — the numbers a grant application or a
+                // funder report asks for, computed from the rows this
+                // organization already holds. READ-ONLY, and it writes nothing
+                // anywhere: the `impact_stats` page section (T-020) stays the
+                // authoritative source of what is PUBLISHED, and its values
+                // stay display text an admin typed. An admin who wants a
+                // computed figure on the public page copies it across by hand.
+                //
+                // Gated by `view contacts`: the report is mostly about people
+                // and program activity, and the CONTACTS family is the same
+                // call groups, credentials and appointment requests already
+                // made. The MONEY-bearing metrics inside it additionally
+                // require `view donations`, checked in the controller — a
+                // caller without it gets the report with those metrics listed
+                // in `meta.omitted`. Reusing both families rather than minting
+                // `view impact` keeps the pinned Permission::count() === 8.
+                Route::prefix('{masjid_id}/impact')->controller(ImpactMetricsController::class)->group(function () {
+                    Route::get('/report', 'report')->middleware('permission:view contacts');
+                });
 
                 // Rental properties + rent payments. A separate component from the
                 // donor CRM (rent is not a gift). Viewing is `view properties`;
