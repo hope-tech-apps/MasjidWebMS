@@ -625,6 +625,11 @@ Route::prefix('admin')->group(function () {
                     // remain webhook-only; this is the only write path for donations.
                     Route::post('/', 'store')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
+                    // Printable copy of the receipt this gift already issued.
+                    // Read-only rendering of the stored receipt row, so it is
+                    // `view donations` like the rest of the ledger's read side.
+                    Route::get('/{donation_id}/receipt/pdf', 'receiptPdf')
+                        ->middleware('permission:view donations');
                 });
 
                 // Recurring donations (standing commitments). Read side is

@@ -8,6 +8,7 @@ use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Fund;
 use App\Models\Masjid;
+use App\Services\Receipts\DonationReceiptPdfService;
 use App\Support\DonationMetrics;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -24,6 +25,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class DonationsController extends Controller
 {
+    public function __construct(private DonationReceiptPdfService $receiptPdfs)
+    {
+    }
+
     public function index(Request $request, $masjid_id)
     {
         $donations = self::filteredQuery($request)
@@ -182,5 +187,39 @@ class DonationsController extends Controller
             'status' => 'success',
             'data' => $donation,
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Download the printable PDF of the receipt this donation already issued —
+     * the same document the donor received by email, for the admin who has to
+     * re-hand it to a donor who lost it.
+     *
+     * Resolution is a chain, and every link is tenant-checked: the route masjid
+     * is bound by ResolveMasjidTenant (naming someone else's masjid is a 403),
+     * the tenant-scoped findOrFail 404s on a donation belonging to another
+     * masjid, and the receipt is read through the donation's own relation — so a
+     * foreign id at any position resolves to nothing rather than leaking a
+     * document. Nothing is issued or recomputed here: the PDF is rendered from
+     * the stored receipt row.
+     */
+    public function receiptPdf($masjid_id, $donation_id)
+    {
+        $donation = Donation::findOrFail($donation_id);
+        $receipt = $donation->receipt()->first();
+
+        if (! $receipt) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No receipt has been issued for this donation.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        return response($this->receiptPdfs->pdfFor($receipt), Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $this->receiptPdfs->filename($receipt) . '"',
+            // A tax document naming a donor: never cached by a proxy, never
+            // written to disk by the browser.
+            'Cache-Control' => 'private, no-store',
+        ]);
     }
 }
