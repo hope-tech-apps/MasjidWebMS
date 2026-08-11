@@ -85,6 +85,35 @@ the same predicate is spelled on each driver).
   detaches all but each owner's first-created masjid. Run it before migrating
   any environment whose data did not come from the admin API.
 
+## `masjid_user` is the membership table — it must NOT use `BelongsToMasjid`
+
+Since S2 there is a `masjid_user` pivot (`App\Models\MasjidUser`, reachable as
+`User::memberships()` / `Masjid::memberships()`): one row per (user, masjid) with
+a per-tenant `role` string and an `is_default` flag. It is the table the tenant
+will eventually be derived FROM, so it is the one table carrying `masjid_id` that
+must **not** get the global scope:
+
+- Scoping it would make "which masjids may this user act on?" answerable only
+  from inside a masjid the user is already bound to — a multi-tenant admin could
+  never see or switch to their second membership.
+- Its `creating` hook would stamp `masjid_id` from the bound tenant and silently
+  write memberships into the wrong organisation.
+
+Isolation for memberships is an authorization concern (the resolver + the API
+surface), not a global-scope one.
+
+- **At most one `is_default` row per user, enforced by the database** — a partial
+  unique index on SQLite, the `default_key` STORED generated column on MySQL (see
+  .claude/rules/migrations.md). It is what makes the single-tenant fallback
+  deterministic; do not weaken it to an application check. Moving the default is
+  an ordinary update as long as the old row is cleared in the same transaction.
+- `pivot.role` mirrors the values of `User::TYPE_ROLE_MAP` and is **advisory**:
+  authorization still runs on the `users.type` bridge, and spatie's `teams`
+  feature stays off (flipping it ALTERs `model_has_roles`' primary key).
+- `masjids.user_id` remains the ownership/billing pointer and, until the resolver
+  slice lands, remains the ONLY thing `ResolveMasjidTenant` reads. A membership
+  row grants nothing on its own.
+
 ## `TenantContext` is `scoped()`, and every queued job starts UNBOUND
 
 It was a `singleton()`, which is fine for one request and wrong for `queue:work`

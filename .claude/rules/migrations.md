@@ -71,8 +71,17 @@ enforces nothing at all.
 
 The generated column exists on one driver and not the other, which is a real
 schema divergence: add it to the model's `$hidden` so serialized payloads stay
-identical on both, and say so in the migration docblock. Worked example:
-`add_owner_uniqueness_to_masjids_table`.
+identical on both, and say so in the migration docblock. Worked examples:
+`add_owner_uniqueness_to_masjids_table` (`masjids.active_owner_user_id`, unique
+owner among live rows) and `create_masjid_user_table`
+(`masjid_user.default_key`, one `is_default` membership per user). The generated
+column must be **STORED**, not `VIRTUAL` — MySQL cannot put a virtual column in
+a UNIQUE index.
+
+**Create the index BEFORE an in-migration backfill**, not after. If the data
+being inserted could ever violate it, that ordering aborts the migration loudly
+instead of admitting the rows and leaving a constraint that can no longer be
+added.
 
 **Pre-flight a uniqueness migration.** Adding the index to data that already
 violates it aborts `migrate` mid-deploy with a constraint error naming only a
