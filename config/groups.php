@@ -38,6 +38,43 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Group messaging threads (T-005c)
+    |--------------------------------------------------------------------------
+    |
+    | The teacher <-> parent channel: group-wide announcement discussions and
+    | participant-scoped private conversations about one member. Like the feed,
+    | never a public surface — who may read a thread is decided per request by
+    | App\Support\GroupAudience. Text only: attachments are deliberately out of
+    | this slice (the feed owns media).
+    |
+    */
+
+    'messaging' => [
+
+        /*
+         * Retention window, in days, applied to a thread that does not carry an
+         * explicit `retained_until` — the same default-bounded stance as the
+         * feed, and for the same reason: these conversations are about
+         * children. The model stamps `retained_until = now + this` on create,
+         * and the `groups:purge-feed` sweep removes the thread AND its messages
+         * (rows only; no bytes are involved) once it passes.
+         *
+         * Set to 0 (or a negative number) to keep threads indefinitely unless a
+         * caller sets `retained_until` itself.
+         */
+        'retention_days' => (int) env('GROUP_MESSAGING_RETENTION_DAYS', 365),
+
+        /*
+         * Ceiling on one message body, enforced at the request boundary. A
+         * thread message is a note between a teacher and a parent, not a
+         * document store.
+         */
+        'max_message_length' => (int) env('GROUP_MESSAGE_MAX_LENGTH', 5000),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Group media
     |--------------------------------------------------------------------------
     |

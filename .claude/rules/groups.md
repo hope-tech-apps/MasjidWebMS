@@ -8,7 +8,11 @@ paths:
   - "app/Http/Controllers/AdminDashboard/GroupMembershipsController.php"
   - "app/Http/Controllers/AdminDashboard/GroupPostsController.php"
   - "app/Http/Controllers/AdminDashboard/GroupConsentController.php"
+  - "app/Http/Controllers/AdminDashboard/GroupThreadsController.php"
   - "app/Http/Requests/Admin/Groups/**"
+  - "app/Models/GroupThread.php"
+  - "app/Models/GroupMessage.php"
+  - "app/Models/GroupThreadRead.php"
   - "app/Support/GroupAudience.php"
   - "app/Support/GroupPostAttachments.php"
   - "app/Console/Commands/PurgeGroupFeed.php"
@@ -18,6 +22,9 @@ paths:
   - "database/migrations/*_create_group_posts_table.php"
   - "database/migrations/*_create_group_post_attachments_table.php"
   - "database/migrations/*_add_guardian_consent_to_group_memberships_table.php"
+  - "database/migrations/*_create_group_threads_table.php"
+  - "database/migrations/*_create_group_messages_table.php"
+  - "database/migrations/*_create_group_thread_reads_table.php"
 ---
 # Groups — the org → group → member primitive
 
@@ -184,6 +191,45 @@ Least disclosure is applied to the PAYLOAD, not just the download: a reader
 without media consent gets no attachment list at all, because a filename and a
 file size are themselves a disclosure about a child. The response says
 `media_withheld` so "no photos this week" is not confused with "not allowed".
+
+## Messaging threads (T-005c)
+
+`group_threads` + `group_messages` + `group_thread_reads` are the leader ↔
+members/guardians channel. What a follow-on slice must not re-decide:
+
+- **The thread's `scope` is the disclosure shape.** `group` = the feed
+  audience (the decision IS `GroupAudience::mayReceive(..., feed)` — one
+  decision, not a parallel one); `participant` = the group's leaders plus the
+  ONE member/guardian the thread concerns, named explicitly by
+  `about_membership_id` — an edge to the member's participant membership,
+  mirroring how a guardian row names its ward. All of it is decided in
+  `GroupAudience::mayReceiveThread()` / `readableThreadsQuery()`, never inline
+  in a controller.
+- **Consent gates broadcasts, not conversations.** A guardian with no consent
+  record still reads (and writes in) a participant thread about their own
+  ward — requiring feed consent there would block a parent from talking to
+  the teacher about their own child. Group-wide threads stay consent-gated
+  exactly like the feed.
+- **Writing a message requires being able to READ the thread** on top of
+  `manage contacts` — the one place the feed's read/write asymmetry does NOT
+  carry over, because speaking in a conversation is not publishing an
+  announcement. Opening/closing/soft-deleting a thread is plain roster
+  administration (`manage contacts`, no read gate).
+- **Fail closed.** An unrecognized stored scope degrades to participant
+  (leaders-only), and a participant thread whose target membership was removed
+  from the roster (`about_membership_id` nulls on delete) is readable by
+  leaders only — the record survives, the audience shrinks.
+- **Text only, rows only.** Attachments are deliberately deferred; the feed
+  owns media. That is why `GroupThread::purge()` may rely on the DB cascade
+  (nothing on disk to orphan) where `GroupPost::purge()` must not. Retention
+  is the same pattern (`retained_until` from `config('groups.messaging')`),
+  swept by the SAME `groups:purge-feed` command.
+- **Unread is a bookmark, not a receipt**: one `last_read_at` per
+  (thread, user) in `group_thread_reads`, moved on view/write. It is never an
+  authorization record.
+
+Proven by `tests/Feature/GroupMessagingTest.php` +
+`tests/Feature/GroupMessagingTenantIsolationTest.php`.
 
 ## Tenant isolation
 

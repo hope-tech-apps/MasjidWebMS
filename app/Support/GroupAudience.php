@@ -5,7 +5,9 @@ namespace App\Support;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupThread;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 
 /**
@@ -126,5 +128,193 @@ class GroupAudience
         }
 
         return false;
+    }
+
+    /**
+     * May this user read `$thread` in `$group`? (T-005c)
+     *
+     * Two shapes, and the thread's scope picks between them:
+     *
+     *   - GROUP-WIDE thread: announcement-discussion. Same audience as the
+     *     feed, so it IS the feed disclosure — one decision, not a second one
+     *     that could drift.
+     *   - PARTICIPANT thread: a private conversation about ONE member. Readable
+     *     by the group's leaders, by that member themselves, and by a guardian
+     *     whose edge names that member as their ward. Nobody else — another
+     *     guardian in the same group is exactly who this scope exists to
+     *     exclude.
+     *
+     * Consent is deliberately NOT consulted on a participant thread. The
+     * feed/media consent scopes gate BROADCASTS of a child's data to the
+     * guardian audience; a participant thread is a conversation the guardian is
+     * a named party to about their own ward, not a broadcast — requiring feed
+     * consent here would block a parent from discussing their own child with
+     * the teacher, which inverts what consent protects.
+     *
+     * An unrecognized stored scope lands in the participant branch
+     * (GroupThread::threadScope() degrades that way on purpose), and a thread
+     * whose target membership has been removed from the roster has a null
+     * target — both fail CLOSED to leaders-only.
+     */
+    public function mayReceiveThread(?User $user, Group $group, GroupThread $thread): bool
+    {
+        if ($thread->isGroupWide()) {
+            return $this->mayReceive($user, $group, self::DISCLOSURE_FEED);
+        }
+
+        $standing = $this->standingIn($user, $group);
+
+        if ($standing['leader']) {
+            return true;
+        }
+
+        $target = $thread->aboutMembership?->contact_id;
+
+        if ($target === null) {
+            return false;
+        }
+
+        return in_array((int) $target, $standing['participant_contact_ids'], true)
+            || in_array((int) $target, $standing['ward_contact_ids'], true);
+    }
+
+    /**
+     * The threads of `$group` this user may read, as a constrained query —
+     * or null when the caller has no standing in the group at all.
+     *
+     * Query-shaped so the LIST endpoint filters with the same decision
+     * mayReceiveThread() makes row-by-row, in one place; a thread the listing
+     * shows is a thread show() will serve, and vice versa. The clauses:
+     *
+     *   - feed disclosure  -> group-wide threads;
+     *   - leader           -> every non-group-wide thread as well (including
+     *     one with an unrecognized stored scope — fail closed to the teachers);
+     *   - otherwise        -> participant threads whose target membership names
+     *     the caller's own contact or one of their wards. Consent is not
+     *     consulted, for the reason documented on mayReceiveThread().
+     *
+     * Null (rather than an empty query) distinguishes "not in this group" —
+     * which the controller answers with 403, mirroring the feed — from "in the
+     * group with nothing to see", which is an empty 200.
+     */
+    public function readableThreadsQuery(?User $user, Group $group): ?Builder
+    {
+        $standing = $this->standingIn($user, $group);
+
+        if (! $standing['in_group']) {
+            return null;
+        }
+
+        // getQuery(): the relation's underlying Eloquent builder, group
+        // constraint already applied. The relation object itself only
+        // DECORATES the builder (fluent calls return the relation), and this
+        // method promises a Builder to its callers.
+        return $group->threads()->getQuery()->where(function (Builder $query) use ($standing): void {
+            $granted = false;
+
+            if ($standing['feed']) {
+                $query->orWhere('scope', GroupThread::SCOPE_GROUP);
+                $granted = true;
+            }
+
+            if ($standing['leader']) {
+                $query->orWhere('scope', '!=', GroupThread::SCOPE_GROUP);
+                $granted = true;
+            } else {
+                $targets = array_merge(
+                    $standing['participant_contact_ids'],
+                    $standing['ward_contact_ids']
+                );
+
+                if ($targets !== []) {
+                    $query->orWhere(function (Builder $participant) use ($targets): void {
+                        $participant->where('scope', GroupThread::SCOPE_PARTICIPANT)
+                            ->whereHas('aboutMembership', function (Builder $membership) use ($targets): void {
+                                $membership->whereIn('contact_id', $targets);
+                            });
+                    });
+                    $granted = true;
+                }
+            }
+
+            // Unreachable while every membership row is a participant or a
+            // warded guardian edge, but a WHERE group with no clauses would
+            // constrain NOTHING — the one failure mode this class must never
+            // have — so it is pinned shut rather than assumed.
+            if (! $granted) {
+                $query->whereRaw('1 = 0');
+            }
+        });
+    }
+
+    /**
+     * The caller's whole footing in one group, resolved once: which of their
+     * contact identities hold memberships, in what roles, over which wards.
+     * Shared by the thread decisions above so the single-thread check and the
+     * list constraint cannot disagree about who the caller is.
+     *
+     * @return array{
+     *     in_group: bool,
+     *     leader: bool,
+     *     feed: bool,
+     *     participant_contact_ids: array<int,int>,
+     *     ward_contact_ids: array<int,int>,
+     * }
+     */
+    private function standingIn(?User $user, Group $group): array
+    {
+        $none = [
+            'in_group' => false,
+            'leader' => false,
+            'feed' => false,
+            'participant_contact_ids' => [],
+            'ward_contact_ids' => [],
+        ];
+
+        $contactIds = $this->identitiesFor($user);
+
+        if ($contactIds === []) {
+            return $none;
+        }
+
+        $memberships = $group->memberships()
+            ->whereIn('contact_id', $contactIds)
+            ->get();
+
+        if ($memberships->isEmpty()) {
+            return $none;
+        }
+
+        $leader = false;
+        $feed = false;
+        $participantContactIds = [];
+        $wardContactIds = [];
+
+        foreach ($memberships as $membership) {
+            if (in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true)) {
+                // A participant IS the person: they hold the feed disclosure
+                // outright, and participant threads about themselves.
+                $feed = true;
+                $participantContactIds[] = (int) $membership->contact_id;
+                $leader = $leader || $membership->role === GroupMembership::ROLE_LEADER;
+
+                continue;
+            }
+
+            if ($membership->isGuardian() && $membership->guardian_of_contact_id !== null) {
+                $wardContactIds[] = (int) $membership->guardian_of_contact_id;
+                // The feed remains consent-gated for guardians — only the
+                // participant-thread channel about their own ward is not.
+                $feed = $feed || $membership->consentCovers(self::DISCLOSURE_FEED);
+            }
+        }
+
+        return [
+            'in_group' => true,
+            'leader' => $leader,
+            'feed' => $feed,
+            'participant_contact_ids' => array_values(array_unique($participantContactIds)),
+            'ward_contact_ids' => array_values(array_unique($wardContactIds)),
+        ];
     }
 }
