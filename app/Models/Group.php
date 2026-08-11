@@ -138,6 +138,21 @@ class Group extends Model
     }
 
     /**
+     * This group's behaviour/recognition records (T-013).
+     *
+     * Deliberately NOT a surface anyone reads whole: an award is private to the
+     * group's leaders, the student, and that student's own guardians, and there
+     * is no class-wide tally by design. Every read goes through
+     * App\Support\GroupAudience::readableAwardsQuery(), which constrains this
+     * relation per caller — this accessor exists for leaders' listings and for
+     * the retention sweep, not as a payload. See .claude/rules/groups.md.
+     */
+    public function behaviorAwards(): HasMany
+    {
+        return $this->hasMany(BehaviorAward::class);
+    }
+
+    /**
      * The people in this group. Guardians appear here too (they hold a
      * membership); read the pivot's `role` to tell them apart.
      */

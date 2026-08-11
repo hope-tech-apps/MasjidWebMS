@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\BehaviorAward;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
 use Illuminate\Console\Command;
@@ -39,11 +40,11 @@ use Illuminate\Console\Command;
 class PurgeGroupFeed extends Command
 {
     protected $signature = 'groups:purge-feed
-                            {--before= : Purge posts/threads retained only until this date (default: today)}
+                            {--before= : Purge posts/threads/awards retained only until this date (default: today)}
                             {--masjid= : Limit the sweep to one organization}
                             {--dry-run : Report what would go without deleting anything}';
 
-    protected $description = 'Force-delete group feed posts and messaging threads past their retention date, including feed images on the private disk.';
+    protected $description = 'Force-delete group feed posts, messaging threads and behaviour awards past their retention date, including feed images on the private disk.';
 
     public function handle(): int
     {
@@ -102,13 +103,37 @@ class PurgeGroupFeed extends Command
             }
         });
 
+        // Behaviour awards (T-013) join the SAME sweep for the same reason the
+        // threads did: retention over a group's content is one policy, not one
+        // per table. Rows only — an award carries nothing on disk — so
+        // BehaviorAward::purge() is a plain forceDelete, as it is for threads.
+        // Revoked (soft-deleted) awards are included, because an award a teacher
+        // withdrew last month is exactly the one that should not linger.
+        $awardQuery = BehaviorAward::withoutMasjidScope()
+            ->dueForPurge($before)
+            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->orderBy('id');
+
+        $awards = 0;
+
+        $awardQuery->chunkById(100, function ($due) use (&$awards, $dryRun) {
+            foreach ($due as $award) {
+                if (! $dryRun) {
+                    $award->purge();
+                }
+
+                $awards++;
+            }
+        });
+
         $this->info(sprintf(
-            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s)%s.',
+            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
             $posts,
             $images,
             $threads,
             $messages,
+            $awards,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
 

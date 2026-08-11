@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * GroupMembership — one person's place in one group.
@@ -142,6 +143,20 @@ class GroupMembership extends Model
     public function guardianOf(): BelongsTo
     {
         return $this->belongsTo(Contact::class, 'guardian_of_contact_id');
+    }
+
+    /**
+     * On a PARTICIPANT row, this student's behaviour/recognition records
+     * (T-013). Guardian edges never carry awards of their own — an award is
+     * given to a person, and a guardian row is a relationship.
+     *
+     * Never serialized with the membership: who may see these is decided per
+     * request by App\Support\GroupAudience, and a roster listing is read by
+     * people who may not see any of them.
+     */
+    public function behaviorAwards(): HasMany
+    {
+        return $this->hasMany(BehaviorAward::class, 'group_membership_id');
     }
 
     public function isGuardian(): bool
