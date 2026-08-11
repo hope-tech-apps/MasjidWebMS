@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { DonationSectionContent } from '@/core/types/data/masjid-related/PageSection';
-import { UploadedImageInfo } from '@/core/types/data/interfaces/UploadedImageInfo';
+import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
 import { ref, watch, inject } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';

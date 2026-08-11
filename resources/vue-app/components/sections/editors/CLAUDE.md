@@ -48,10 +48,11 @@ write back by index from an `@input` handler
 (`onHighlightInput`/`onIncludeInput`) rather than relying on `v-model` into an
 array slot — it keeps the mutation and the `emitUpdate()` in one place.
 
-## Known wart
+## Import path for UploadedImageInfo
 
-Most editors import `UploadedImageInfo` from
-`@/core/types/data/interfaces/UploadedImageInfo`, **which does not exist**. It
-builds only because esbuild elides an import used solely in type position. The
-real path is `@/core/types/elements/ImageInput`; the T-010 editors use it. Use
-the real one in new files, and do not copy the broken path forward.
+`UploadedImageInfo` lives in `@/core/types/elements/ImageInput` (which also
+exports `DraggableImageType`). All editors now import it from there — fixed
+2026-08-11. Eleven editors used to point at a nonexistent
+`@/core/types/data/interfaces/UploadedImageInfo` path and only built because
+esbuild elides type-only imports; that path must never come back, and a
+typecheck step (vue-tsc) would now pass these files.
