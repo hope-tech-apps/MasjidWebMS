@@ -9,6 +9,7 @@ use App\Models\GroupMembership;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
 use App\Models\User;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 
@@ -52,6 +53,32 @@ use Illuminate\Support\Str;
  * a group could simply add themselves to its roster, which they may already do.
  * What the bridge buys is that the decision is expressed against a person in the
  * group, so it stays correct on the day contacts do get their own login.
+ *
+ * ## Why every signature says ?Authenticatable and not ?User (T-015b)
+ *
+ * DO NOT NARROW THESE BACK TO `?App\Models\User`. The parameter type is the
+ * whole point of the slice.
+ *
+ * `docs/t015-parent-identity-design.md` gives a `Contact` its own Sanctum guard
+ * so a parent can read their own child's record. Every one of the methods below
+ * had to be reachable with that parent as the caller, and there are THIRTEEN of
+ * them — not one seam. While they said `?User`, a family principal could not be
+ * PASSED to the disclosure logic at all: the refusal happened at the PHP type
+ * boundary, in a TypeError, which is not a decision this class ever made and
+ * not one anybody could test. Widening moves the refusal INTO the class, where
+ * it is a resolved-to-nobody answer like any other, and unblocks T-015c/T-015e.
+ *
+ * Widening the type changed no rule. Every method here reasons in CONTACT IDS,
+ * which `identitiesFor()` hands it; only `identitiesFor()` ever touches the
+ * principal object, and it narrows explicitly with `instanceof User` before
+ * reading anything a `users` row has. So a staff caller's behaviour is
+ * byte-identical to before, and the existing group, messaging, behaviour and
+ * ḥifẓ suites are the proof — they were not modified.
+ *
+ * Until T-015e adds the Contact branch to `identitiesFor()`, a principal that
+ * is not a `User` resolves to NO identity and therefore NO standing anywhere in
+ * this class. That is deliberate: an actor this class cannot place in the
+ * roster must be refused, never assumed.
  */
 class GroupAudience
 {
@@ -66,17 +93,43 @@ class GroupAudience
     }
 
     /**
-     * The contact ids this authenticated user speaks for in the bound tenant.
+     * The contact ids this authenticated principal speaks for in the bound
+     * tenant.
+     *
+     * THE ONLY METHOD IN THIS CLASS THAT TOUCHES THE PRINCIPAL OBJECT. Every
+     * other one takes the contact ids this returns and reasons in those, which
+     * is exactly why widening all thirteen signatures to `?Authenticatable`
+     * (T-015b) needed one `instanceof` and no rule changes.
      *
      * @return array<int,int>
      */
-    public function identitiesFor(?User $user): array
+    public function identitiesFor(?Authenticatable $principal): array
     {
-        if ($user === null || ! $this->tenant->hasTenant()) {
+        if ($principal === null || ! $this->tenant->hasTenant()) {
             return [];
         }
 
-        $email = Str::lower(trim((string) $user->email));
+        // THE NARROWING. `$principal` is only typed as Authenticatable, so the
+        // email bridge below — which reads a `users` column — must not be
+        // reached by an actor that is not a `users` row.
+        //
+        // Today `App\Models\User` is still the only model in this application
+        // that can authenticate, so this branch refuses nothing that exists yet
+        // and staff behaviour is unchanged. T-015c gives `App\Models\Contact`
+        // its own guard and T-015e adds the branch that returns that contact's
+        // OWN id here (with its revoked / trashed / cross-tenant liveness
+        // checks) instead of guessing a person from an admin's email.
+        //
+        // Until then, an actor this class cannot place on a roster resolves to
+        // NO identity, which every other method here turns into no standing. That is
+        // the safe direction: the content behind these decisions is
+        // photographs of children and their academic records, so an
+        // unrecognized principal is refused rather than assumed.
+        if (! $principal instanceof User) {
+            return [];
+        }
+
+        $email = Str::lower(trim((string) $principal->email));
 
         if ($email === '') {
             return [];
@@ -108,9 +161,9 @@ class GroupAudience
      *      disclosure. No record means no consent, so a guardian who has never
      *      consented receives neither the feed nor an image of their child.
      */
-    public function mayReceive(?User $user, Group $group, string $disclosure): bool
+    public function mayReceive(?Authenticatable $principal, Group $group, string $disclosure): bool
     {
-        $contactIds = $this->identitiesFor($user);
+        $contactIds = $this->identitiesFor($principal);
 
         if ($contactIds === []) {
             return false;
@@ -159,13 +212,13 @@ class GroupAudience
      * whose target membership has been removed from the roster has a null
      * target — both fail CLOSED to leaders-only.
      */
-    public function mayReceiveThread(?User $user, Group $group, GroupThread $thread): bool
+    public function mayReceiveThread(?Authenticatable $principal, Group $group, GroupThread $thread): bool
     {
         if ($thread->isGroupWide()) {
-            return $this->mayReceive($user, $group, self::DISCLOSURE_FEED);
+            return $this->mayReceive($principal, $group, self::DISCLOSURE_FEED);
         }
 
-        $standing = $this->standingIn($user, $group);
+        $standing = $this->standingIn($principal, $group);
 
         if ($standing['leader']) {
             return true;
@@ -200,9 +253,9 @@ class GroupAudience
      * which the controller answers with 403, mirroring the feed — from "in the
      * group with nothing to see", which is an empty 200.
      */
-    public function readableThreadsQuery(?User $user, Group $group): ?Builder
+    public function readableThreadsQuery(?Authenticatable $principal, Group $group): ?Builder
     {
-        $standing = $this->standingIn($user, $group);
+        $standing = $this->standingIn($principal, $group);
 
         if (! $standing['in_group']) {
             return null;
@@ -278,9 +331,9 @@ class GroupAudience
      * Fails closed: a subject with no resolvable contact, a caller with no
      * identity, or a guardian edge with no ward all land on false.
      */
-    public function mayReceiveAwardsAbout(?User $user, Group $group, GroupMembership $subject): bool
+    public function mayReceiveAwardsAbout(?Authenticatable $principal, Group $group, GroupMembership $subject): bool
     {
-        return $this->mayReceiveRecordAbout($user, $group, $subject);
+        return $this->mayReceiveRecordAbout($principal, $group, $subject);
     }
 
     /**
@@ -297,20 +350,20 @@ class GroupAudience
      * clearly and so a future slice that genuinely needs a different rule has an
      * obvious place to put it.
      */
-    public function mayReceiveHifzAbout(?User $user, Group $group, GroupMembership $subject): bool
+    public function mayReceiveHifzAbout(?Authenticatable $principal, Group $group, GroupMembership $subject): bool
     {
-        return $this->mayReceiveRecordAbout($user, $group, $subject);
+        return $this->mayReceiveRecordAbout($principal, $group, $subject);
     }
 
     /**
      * May this user read one specific ḥifẓ entry? Delegates to the rule above so
      * a single entry and a listing cannot disagree about the same row.
      */
-    public function mayReceiveHifzEntry(?User $user, Group $group, HifzEntry $entry): bool
+    public function mayReceiveHifzEntry(?Authenticatable $principal, Group $group, HifzEntry $entry): bool
     {
         $subject = $entry->membership;
 
-        return $subject !== null && $this->mayReceiveHifzAbout($user, $group, $subject);
+        return $subject !== null && $this->mayReceiveHifzAbout($principal, $group, $subject);
     }
 
     /**
@@ -329,7 +382,7 @@ class GroupAudience
      * why the two modules share one implementation rather than two that agree
      * today.
      */
-    private function mayReceiveRecordAbout(?User $user, Group $group, GroupMembership $subject): bool
+    private function mayReceiveRecordAbout(?Authenticatable $principal, Group $group, GroupMembership $subject): bool
     {
         // A record is kept about a person. A guardian row is a relationship, so
         // it is never a subject — refusing here means a mis-targeted record can
@@ -344,7 +397,7 @@ class GroupAudience
             return false;
         }
 
-        $standing = $this->standingIn($user, $group);
+        $standing = $this->standingIn($principal, $group);
 
         if ($standing['leader']) {
             return true;
@@ -364,11 +417,11 @@ class GroupAudience
      * subject could not be resolved is refused rather than assumed readable —
      * the one failure direction this class must never have.
      */
-    public function mayReceiveAward(?User $user, Group $group, BehaviorAward $award): bool
+    public function mayReceiveAward(?Authenticatable $principal, Group $group, BehaviorAward $award): bool
     {
         $subject = $award->membership;
 
-        return $subject !== null && $this->mayReceiveAwardsAbout($user, $group, $subject);
+        return $subject !== null && $this->mayReceiveAwardsAbout($principal, $group, $subject);
     }
 
     /**
@@ -390,11 +443,11 @@ class GroupAudience
      * which the controller answers with 403, mirroring the feed and the threads
      * — from "in the group with nothing to see", which is an empty 200.
      */
-    public function readableAwardsQuery(?User $user, Group $group): ?Builder
+    public function readableAwardsQuery(?Authenticatable $principal, Group $group): ?Builder
     {
         // getQuery(): the relation's underlying Eloquent builder, group
         // constraint already applied — this method promises a Builder.
-        return $this->constrainToOwnStudents($user, $group, $group->behaviorAwards()->getQuery());
+        return $this->constrainToOwnStudents($principal, $group, $group->behaviorAwards()->getQuery());
     }
 
     /**
@@ -407,9 +460,9 @@ class GroupAudience
      * memorisation aggregate. Same constraint as the awards listing, from the
      * same code.
      */
-    public function readableHifzQuery(?User $user, Group $group): ?Builder
+    public function readableHifzQuery(?Authenticatable $principal, Group $group): ?Builder
     {
-        return $this->constrainToOwnStudents($user, $group, $group->hifzEntries()->getQuery());
+        return $this->constrainToOwnStudents($principal, $group, $group->hifzEntries()->getQuery());
     }
 
     /**
@@ -436,9 +489,9 @@ class GroupAudience
      * relation to a `group_memberships` row; BehaviorAward and HifzEntry both
      * do, on purpose.
      */
-    private function constrainToOwnStudents(?User $user, Group $group, Builder $query): ?Builder
+    private function constrainToOwnStudents(?Authenticatable $principal, Group $group, Builder $query): ?Builder
     {
-        $standing = $this->standingIn($user, $group);
+        $standing = $this->standingIn($principal, $group);
 
         if (! $standing['in_group']) {
             return null;
@@ -483,7 +536,7 @@ class GroupAudience
      *     ward_contact_ids: array<int,int>,
      * }
      */
-    private function standingIn(?User $user, Group $group): array
+    private function standingIn(?Authenticatable $principal, Group $group): array
     {
         $none = [
             'in_group' => false,
@@ -493,7 +546,7 @@ class GroupAudience
             'ward_contact_ids' => [],
         ];
 
-        $contactIds = $this->identitiesFor($user);
+        $contactIds = $this->identitiesFor($principal);
 
         if ($contactIds === []) {
             return $none;
