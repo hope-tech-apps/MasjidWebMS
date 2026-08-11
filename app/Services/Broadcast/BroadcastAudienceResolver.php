@@ -6,6 +6,7 @@ use App\Enums\BroadcastAudience;
 use App\Models\Broadcast;
 use App\Models\Contact;
 use App\Models\Masjid;
+use App\Services\Sms\SmsConsentService;
 use Illuminate\Support\Collection;
 
 /**
@@ -37,6 +38,10 @@ use Illuminate\Support\Collection;
  */
 class BroadcastAudienceResolver
 {
+    public function __construct(private readonly SmsConsentService $consent)
+    {
+    }
+
     /**
      * Email recipients for this broadcast.
      *
@@ -71,6 +76,110 @@ class BroadcastAudienceResolver
         }
 
         return $query->orderBy('id')->get();
+    }
+
+    /**
+     * SMS recipients for this broadcast — filtered on CONSENT, never on
+     * "has a phone number" (T-009).
+     *
+     * This method is the reason T-008 refused to ship an SMS channel. `contacts`
+     * carried a `phone` column and nothing else, and a resolver that read
+     * `whereNotNull('phone')` would have texted every number an admissions form
+     * ever collected. A phone number is a fact about a person; consent is a
+     * decision they made. Only the second one authorises a bulk message.
+     *
+     * Four filters, in order of authority:
+     *
+     *  1. `Contact::hasSmsConsent()`'s columns, in SQL: the opt-in flag AND a
+     *     consent timestamp AND a source AND no opt-out. Every clause matters —
+     *     a flag with no provenance is not a defensible record, so it does not
+     *     count as consent here either.
+     *  2. A number that normalises to E.164 (App\Services\Sms\PhoneNumber). One
+     *     that does not is REFUSED rather than guessed at, because a wrong
+     *     normalisation produces a plausible number that matches no suppression
+     *     row and reaches a stranger.
+     *  3. The suppression list, which outlives the contact row and is therefore
+     *     the final say. A contact re-imported with a fresh consent record is
+     *     still suppressed if that NUMBER ever said STOP.
+     *  4. Placeholders, excluded exactly as the email resolver excludes them:
+     *     stubs the donation importer mints for an unmatched card are not people
+     *     who agreed to hear from anyone.
+     *
+     * Everyone excluded is COUNTED (SmsAudience), because "sent to 40 of 800" is
+     * information the admin needs and a silent 40 looks like a bug.
+     *
+     * Tenant scoping is the bound TenantContext's, exactly as for email — the
+     * dispatcher binds it before any driver runs, so both the contacts and the
+     * suppressions seen here belong to this masjid alone.
+     */
+    public function smsRecipients(Broadcast $broadcast): SmsAudience
+    {
+        $query = Contact::query()
+            ->where(function ($q) {
+                $q->where('is_placeholder', false)->orWhereNull('is_placeholder');
+            });
+
+        if ($broadcast->audienceType() === BroadcastAudience::CONTACTS) {
+            $ids = array_values(array_filter(array_map('intval', (array) $broadcast->audience_contact_ids)));
+
+            // An empty explicit set addresses nobody — the same guard the email
+            // resolver makes, for the same reason.
+            if ($ids === []) {
+                return new SmsAudience(recipients: []);
+            }
+
+            $query->whereIn('id', $ids);
+        }
+
+        $candidates = $query->orderBy('id')->get();
+
+        $consenting = [];
+        $withoutConsent = 0;
+        $unusableNumber = 0;
+        $withoutPhone = 0;
+
+        foreach ($candidates as $contact) {
+            if (blank($contact->phone)) {
+                $withoutPhone++;
+
+                continue;
+            }
+
+            if (! $contact->hasSmsConsent()) {
+                $withoutConsent++;
+
+                continue;
+            }
+
+            $number = $contact->smsNumber();
+
+            if ($number === null) {
+                $unusableNumber++;
+
+                continue;
+            }
+
+            $consenting[] = ['contact' => $contact, 'number' => $number];
+        }
+
+        // One query for the whole audience rather than one per recipient.
+        $suppressed = $this->consent->suppressedAmong(
+            (int) $broadcast->masjid_id,
+            array_map(fn (array $row) => $row['number'], $consenting),
+        );
+
+        $recipients = array_values(array_filter(
+            $consenting,
+            fn (array $row) => ! in_array($row['number'], $suppressed, true),
+        ));
+
+        return new SmsAudience(
+            recipients: $recipients,
+            withoutConsent: $withoutConsent,
+            suppressed: count($consenting) - count($recipients),
+            unusableNumber: $unusableNumber,
+            withoutPhone: $withoutPhone,
+        );
     }
 
     /**

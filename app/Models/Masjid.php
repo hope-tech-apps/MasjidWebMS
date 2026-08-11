@@ -297,6 +297,17 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(MasjidAppPublishing::class);
     }
 
+    /**
+     * Per-masjid SMS sender identity + its A2P 10DLC registration state (T-009).
+     *
+     * Null — or present but not `approved` — means this organisation CANNOT send
+     * text messages, and the SMS channel refuses in words rather than falling
+     * back to a shared number. See App\Models\MasjidSmsSender.
+     */
+    public function smsSender() {
+        return $this->hasOne(MasjidSmsSender::class);
+    }
+
     public function pages() {
         return $this->hasMany(Page::class);
     }

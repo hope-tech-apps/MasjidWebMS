@@ -10,6 +10,7 @@ use App\Services\Broadcast\Channels\AnnouncementChannel;
 use App\Services\Broadcast\Channels\EmailChannel;
 use App\Services\Broadcast\Channels\PushChannel;
 use App\Services\Broadcast\Channels\SignageChannel;
+use App\Services\Broadcast\Channels\SmsChannel;
 use App\Support\Errors;
 use App\Support\TenantContext;
 use Illuminate\Support\Carbon;
@@ -67,8 +68,10 @@ class BroadcastDispatcher
 {
     /**
      * Channel -> driver class. Registering a driver here is the entire cost of
-     * adding a channel (see BroadcastChannelDriver for the seam, and
-     * .claude/rules/broadcasts.md for what SMS specifically still needs).
+     * adding a channel (see BroadcastChannelDriver for the seam). SMS proved
+     * that in T-009: this line and an enum case were the whole composer-side
+     * change — everything else it needed was consent infrastructure that had to
+     * exist beneath the channel, not inside it (.claude/rules/broadcasts.md).
      *
      * @var array<string, class-string<BroadcastChannelDriver>>
      */
@@ -77,6 +80,11 @@ class BroadcastDispatcher
         'signage' => SignageChannel::class,
         'push' => PushChannel::class,
         'email' => EmailChannel::class,
+        // Last on purpose (T-009): it is the only channel that can refuse for a
+        // reason outside this request — an unregistered A2P 10DLC sender or an
+        // unconfigured provider — and the surfaces a congregant may already be
+        // looking at should not wait behind it.
+        'sms' => SmsChannel::class,
     ];
 
     /**

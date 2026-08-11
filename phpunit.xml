@@ -28,6 +28,14 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
+        <!--
+            No test may put a message on a carrier network. `none` pins the
+            refusing null SMS adapter regardless of what credentials the ambient
+            environment happens to carry. The value is `none` and not `null`
+            because env() converts the literal string "null" to PHP null, which
+            would read as "unset" and re-enable provider auto-detection.
+        -->
+        <env name="SMS_DRIVER" value="none"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
     </php>
 </phpunit>

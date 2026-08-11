@@ -24,11 +24,16 @@ use App\Models\Masjid;
  *
  * Adding a channel is: one case on App\Enums\BroadcastChannel, one class here,
  * one line in BroadcastDispatcher::DRIVERS. Nothing about the composer service,
- * the request, the endpoint, or the storage schema changes. SMS is the channel
- * this seam was shaped around — no provider is installed today, so no SMS driver
- * exists (a channel that reports "sent" while sending nothing is worse than an
- * absent one), and .claude/rules/broadcasts.md records exactly what wiring one
- * up requires.
+ * the request, the endpoint, or the storage schema changes.
+ *
+ * SMS is the channel this seam was shaped around, and T-009 held it to exactly
+ * those three steps. What SMS additionally needed — a consent record on
+ * `contacts`, a suppression list that outlives a deleted contact, a per-tenant
+ * A2P 10DLC sender identity and a signature-verified inbound webhook — lives
+ * BENEATH the channel rather than inside it, which is why none of it appears in
+ * this interface. A driver's job is still to deliver or throw; deciding who may
+ * lawfully be delivered to belongs to the audience resolver
+ * (.claude/rules/broadcasts.md).
  */
 interface BroadcastChannelDriver
 {
