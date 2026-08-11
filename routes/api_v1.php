@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\AppointmentRequestsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
+use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
 use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
 use App\Http\Controllers\Api\V1\ServicesController;
@@ -48,6 +49,29 @@ Route::prefix('v1')->group(function () {
     // from the masjid-id header inside the controller.
     Route::post('/appointment-requests', [AppointmentRequestsController::class, 'store'])
         ->middleware('throttle:appointment-request');
+
+    // Public registrations (T-006c). The paid intake for offerings: a
+    // server-priced quote, the registration itself, and a re-mint of an
+    // abandoned Stripe Checkout Session.
+    //
+    // `register` and `checkout` are unauthenticated DB writes / money paths, so
+    // they are throttled by name exactly like the form submissions above;
+    // `quote` writes nothing and gets a looser limit because a registrant
+    // legitimately re-prices while choosing a plan. The tenant comes from the
+    // masjid-id header inside the controller.
+    //
+    // NOTE what is absent: no endpoint here can confirm a registration or mark
+    // it paid. That happens ONLY in the signature-verified Stripe webhook
+    // (.claude/rules/stripe-payments.md) — the browser redirect off Stripe's
+    // hosted page proves nothing.
+    Route::post('/offerings/{slug}/quote', [OfferingRegistrationsController::class, 'quote'])
+        ->middleware('throttle:registration-quote');
+
+    Route::post('/offerings/{slug}/register', [OfferingRegistrationsController::class, 'register'])
+        ->middleware('throttle:registration-intake');
+
+    Route::post('/registrations/{uuid}/checkout', [OfferingRegistrationsController::class, 'checkout'])
+        ->middleware('throttle:registration-intake');
 
     // Photo Gallery routes
     Route::prefix('gallery')->controller(PhotoGalleryController::class)->group(function () {

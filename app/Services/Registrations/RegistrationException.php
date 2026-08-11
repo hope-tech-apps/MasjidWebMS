@@ -71,4 +71,35 @@ class RegistrationException extends RuntimeException
     {
         return new self("Unrecognized adjustment kind '{$kind}'.");
     }
+
+    // ----------------------------------------------------- T-006c (checkout)
+
+    public static function notCheckoutable(string $status): self
+    {
+        return new self("Only a pending registration can be checked out (status: {$status}).");
+    }
+
+    /**
+     * The $0 branch of the ratified design: a free plan, or aid that waived the
+     * total, has NO Stripe leg — it confirms in-request. Minting a zero-amount
+     * Checkout Session is never the answer.
+     */
+    public static function nothingToCharge(): self
+    {
+        return new self('This registration has nothing left to pay — it does not use Stripe Checkout.');
+    }
+
+    /**
+     * Installment/recurring plans need a subscription + schedule (T-006e).
+     * Money kinds never degrade: refuse rather than charge the wrong shape.
+     */
+    public static function checkoutKindUnsupported(string $kind): self
+    {
+        return new self("Fee plan kind '{$kind}' cannot be checked out yet — one-time payments only.");
+    }
+
+    public static function orgCannotCollectPayments(): self
+    {
+        return new self('This organization is not able to accept online payments yet.');
+    }
 }

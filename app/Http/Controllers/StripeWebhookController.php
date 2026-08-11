@@ -12,6 +12,7 @@ use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
+use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
 use Illuminate\Http\Request;
@@ -41,6 +42,20 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * Direct-charge note: for events on a connected account, Stripe includes the
  * connected `account` id at the top level; we pass it through to Stripe reads.
+ *
+ * TWO SIGNING SECRETS (T-006c). Registration charges are direct charges on the
+ * ORG's connected account, and Stripe delivers those through a CONNECT
+ * endpoint, which signs with its own secret. Both secrets are tried, both
+ * fail-closed: an unset secret verifies nothing rather than waving anything
+ * through, and a payload matching neither is a 401.
+ *
+ * DISPATCH SAFETY (the highest-risk touchpoint of T-006c, and the reason the
+ * additions here are strictly additive): an object carrying
+ * `metadata.registration_uuid` routes to RegistrationPaymentService; EVERYTHING
+ * ELSE falls through to today's donation handling, byte-for-byte unchanged. A
+ * registration event can therefore never book a Donation, and a donation event
+ * can never touch a registration. Pinned by RegistrationWebhookTest alongside
+ * the untouched DonationFlowTest suite.
  */
 class StripeWebhookController extends Controller
 {
@@ -50,6 +65,7 @@ class StripeWebhookController extends Controller
         private DonationReceiptPdfService $receiptPdfs,
         private StripeConnectService $connect,
         private DonorContactService $donorContacts,
+        private RegistrationPaymentService $registrationPayments,
     ) {
     }
 
@@ -95,30 +111,49 @@ class StripeWebhookController extends Controller
     /**
      * Verify the Stripe signature against the raw body and return the event as
      * a plain array, or null when verification fails / is not configured.
+     *
+     * Two endpoints feed this route and they sign differently: the PLATFORM
+     * endpoint (donations on the platform's own account) and the CONNECT
+     * endpoint (every event raised on a connected account — which is every
+     * registration charge, since those are direct charges on the ORG). A
+     * payload authentic under EITHER configured secret is accepted; one
+     * authentic under neither is rejected.
+     *
+     * FAIL CLOSED, in both directions: with no secrets configured at all
+     * nothing is ever accepted, and an unconfigured Connect secret simply means
+     * connect deliveries fail verification — it never becomes a bypass.
      */
     private function verifiedEvent(Request $request): ?array
     {
-        $secret = config('services.stripe.webhook_secret');
-        if (! $secret) {
+        $secrets = array_values(array_filter([
+            config('services.stripe.webhook_secret'),
+            config('services.stripe.connect_webhook_secret'),
+        ]));
+
+        if ($secrets === []) {
             // Fail closed — never accept an unverified webhook.
             return null;
         }
 
         $payload = $request->getContent();
-        $signature = $request->header('Stripe-Signature');
+        $signature = (string) $request->header('Stripe-Signature');
 
-        try {
-            // Authenticates the raw payload (throws on bad signature / timestamp
-            // outside tolerance). We then decode the same raw payload we just
-            // proved authentic.
-            \Stripe\Webhook::constructEvent($payload, (string) $signature, $secret);
-        } catch (\Throwable $e) {
-            return null;
+        foreach ($secrets as $secret) {
+            try {
+                // Authenticates the raw payload (throws on bad signature /
+                // timestamp outside tolerance). We then decode the same raw
+                // payload we just proved authentic.
+                \Stripe\Webhook::constructEvent($payload, $signature, $secret);
+            } catch (\Throwable $e) {
+                continue;   // try the other endpoint's secret.
+            }
+
+            $event = json_decode($payload, true);
+
+            return is_array($event) && isset($event['id'], $event['type']) ? $event : null;
         }
 
-        $event = json_decode($payload, true);
-
-        return is_array($event) && isset($event['id'], $event['type']) ? $event : null;
+        return null;
     }
 
     /**
@@ -141,9 +176,24 @@ class StripeWebhookController extends Controller
         $object = $event['data']['object'] ?? [];
         $account = $event['account'] ?? null;
 
+        // The ONE branch that decides whose event this is. Registration objects
+        // carry metadata.registration_uuid; everything else keeps today's
+        // donation behaviour exactly.
+        $isRegistration = RegistrationPaymentService::isRegistrationEvent($object);
+
         match ($event['type']) {
-            'checkout.session.completed' => $this->handleCheckoutCompleted($object),
-            'payment_intent.succeeded' => $this->handlePaymentIntentSucceeded($object, $account),
+            'checkout.session.completed' => $isRegistration
+                ? $this->registrationPayments->handleCheckoutCompleted($object, $account)
+                : $this->handleCheckoutCompleted($object),
+            'payment_intent.succeeded' => $isRegistration
+                ? $this->registrationPayments->handlePaymentIntentSucceeded($object, $account)
+                : $this->handlePaymentIntentSucceeded($object, $account),
+            // New event type for this slice: the seat-release trigger. A
+            // donation has no expiry semantics, so a non-registration expiry is
+            // acked and ignored exactly as it was before.
+            'checkout.session.expired' => $isRegistration
+                ? $this->registrationPayments->handleCheckoutExpired($object, $account)
+                : null,
             'invoice.payment_succeeded' => $this->handleInvoicePaid($object, $account),
             'customer.subscription.deleted' => $this->donations->cancelSubscriptionByStripeId((string) ($object['id'] ?? '')),
             'account.updated' => $this->connect->syncAccountStatus($object),

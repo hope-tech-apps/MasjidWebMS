@@ -129,6 +129,15 @@ return [
         // Signing secret used to verify inbound webhooks (the ONLY gate on the
         // webhook route — it is intentionally outside auth/throttle).
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        // The CONNECT endpoint's own signing secret. Events raised on a
+        // connected account (every registration charge — direct charges live on
+        // the ORG's account) are delivered by a separate Stripe webhook
+        // endpoint, which signs with a DIFFERENT secret than the platform
+        // endpoint above. Both are verified fail-closed by
+        // StripeWebhookController; an unset secret simply verifies nothing, it
+        // never waves an event through (docs/t006-registration-billing-design.md
+        // flagged this as a latent gap in all three proposals).
+        'connect_webhook_secret' => env('STRIPE_CONNECT_WEBHOOK_SECRET'),
 
         // Stripe's standard processing fee. Used ONLY to gross up a charge when
         // the donor elects to cover fees so the org still nets the intended

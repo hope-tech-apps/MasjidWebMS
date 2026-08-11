@@ -71,3 +71,34 @@ the doc left detail open — T-006c..f build on them:
 - **Adjustment grants are refused once any Stripe leg exists** (session /
   subscription / schedule id, or payment_status beyond none|awaiting) —
   strictly pre-checkout, enforced in the service, not just the controller.
+
+T-006c (`RegistrationCheckoutService`, `RegistrationPaymentService`, the public
+quote/register/checkout endpoints) fixed these — T-006d..f build on them:
+
+- **The convergence key is `reg_payment_{registration_uuid}`**
+  (`RegistrationPaymentService::paymentKey`). A one_time plan is exactly ONE
+  charge by construction, so `checkout.session.completed` and
+  `payment_intent.succeeded` derive the SAME key: whichever lands first creates
+  the single `registration_payments` row, the other MERGES into it (never
+  overwriting a recorded identifier, never blanking one). T-006e's installments
+  must key per INVOICE — a different prefix, which cannot collide with this one.
+- **Handlers never flip `status` themselves.** They call
+  `RegistrationService::confirm()`, so the paid path materialises its roster
+  through the exact code the free path uses. Money that lands on a non-pending
+  seat is recorded in the ledger and logged; it never throws (a 500 would have
+  Stripe retry forever) and never resurrects a cancelled seat.
+- **`RegistrationService::releaseSeat()` is the seat-release seam** — the only
+  writer of `offerings.registration_count` besides intake. Pending-only,
+  idempotent, decrements under `lockForUpdate`, and sets seat `cancelled` +
+  money `canceled`. T-006f's reaper must call THIS, not its own decrement.
+- **A superseded session never releases a seat.** `checkout.session.expired` is
+  ignored unless the expiring session id IS the registration's current
+  `stripe_checkout_session_id` — otherwise an abandoned first session would
+  cancel a seat the registrant is actively paying for through the re-minted one.
+- **The checkout window is clamped to Stripe's [30 min, 24 h] expiry bounds** and
+  the clamped value is written back to `checkout_expires_at`, so the deadline we
+  sweep against and the one Stripe expires against are the same instant.
+- **Public pricing is server-side, always.** `quote` writes nothing; a
+  client-supplied `code` is reported back as `code_applied: false` and can never
+  move a price — aid is an admin grant (T-006d). The payer's email is required
+  because a Contact is keyed on (masjid, email); registrants may have none.

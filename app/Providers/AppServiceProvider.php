@@ -126,6 +126,35 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public registration intake (T-006c) — an unauthenticated DB write
+        // that also opens a Stripe Checkout Session, so it is the tightest of
+        // the public writes. Keyed by IP AND target organization so flooding
+        // one masjid's signup cannot lock a visitor out of another's.
+        RateLimiter::for('registration-intake', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(8)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many registration attempts from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
+        // Price quotes write NOTHING, and a registrant legitimately re-prices
+        // while comparing fee plans — looser than the intake limit above, still
+        // bounded so the endpoint cannot be used to enumerate offerings.
+        RateLimiter::for('registration-quote', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(60)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });

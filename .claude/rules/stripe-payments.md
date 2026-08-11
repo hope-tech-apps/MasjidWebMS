@@ -33,6 +33,13 @@ holds funds and who bears liability.
   (like the Pusher webhook). The HMAC signature verified against
   `STRIPE_WEBHOOK_SECRET` is the ONLY gate — **fail closed** if the secret is
   unset.
+- **TWO signing secrets** (added by T-006c, not a deviation). Events raised on a
+  CONNECTED account are delivered by a separate Stripe *Connect* endpoint, which
+  signs with `STRIPE_CONNECT_WEBHOOK_SECRET`. `verifiedEvent()` accepts a payload
+  authentic under EITHER configured secret and rejects one authentic under
+  neither. Fail-closed in both directions: no secrets configured accepts
+  nothing, and an unset Connect secret makes connect deliveries fail
+  verification — it is never a bypass.
 - **Idempotent + dedup + order-independent.** Every event id is recorded in
   `stripe_webhook_events` (unique). Re-fetch/guard on current status; receipt
   issuance is idempotent per donation (unique `donation_id` + in-transaction
@@ -52,6 +59,30 @@ holds funds and who bears liability.
   allocated transaction-safely (`lockForUpdate` + unique `(masjid_id,
   serial_number)`). `eligible_amount = gross_amount − advantage_amount`
   (advantage 0 for a plain cash gift). Jurisdiction 'US' for now.
+
+## Registrations reuse this doctrine, they do not refactor it (T-006c)
+
+`App\Services\Stripe\RegistrationCheckoutService` (outbound) and
+`RegistrationPaymentService` (inbound webhooks) are a DELIBERATE SIBLING of
+`DonationService`, per docs/t006-registration-billing-design.md — shared-helper
+extraction between the two is explicitly deferred to its own task. They mirror
+every rule above: Connect Standard + direct charge on `stripe_account`,
+hosted-only, positive-only `application_fee_amount`, integer minor units,
+pending-before-redirect with an idempotency key, webhook-only advancement.
+
+- The charged amount is the registration's `adjusted_total_minor` SNAPSHOT.
+  A total of 0 is the free-path carve-out and **never** a $0 Session.
+- `metadata.registration_uuid` is the dispatch signal in
+  `StripeWebhookController`. Objects carrying it route to the registration
+  handlers; **everything without it keeps today's donation behaviour, unchanged**
+  — pinned by `RegistrationWebhookTest` plus the untouched `DonationFlowTest`.
+- Tenancy on inbound events is derived from `event.account` matched against
+  `masjids.stripe_account_id`, then the uuid is looked up WITHIN that masjid.
+  Metadata alone never decides tenancy.
+- Registration payments record fee/net ONLY from a balance transaction expanded
+  on the payload. No read-back, and no fee-formula estimate: a registration
+  issues no receipt, so a guessed fee would be a fabricated number in a
+  financial ledger (contrast the donation fallback, which backs a receipt).
 
 ## Tenancy note
 
