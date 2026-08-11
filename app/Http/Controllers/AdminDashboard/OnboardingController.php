@@ -17,6 +17,7 @@ use App\Models\MasjidMobileAppFeature;
 use App\Models\MasjidSocialMediaLink;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
+use App\Support\FormTemplates;
 use App\Support\MobileCache;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -187,6 +188,16 @@ class OnboardingController extends Controller
                         'is_available' => in_array($feature->key, $selected, true),
                     ]);
                 }
+
+                // ---- Vertical form templates (T-011) ----
+                // Ready-to-edit starter forms for the tenant's vertical
+                // (config/form_templates.php): a school is born with its
+                // Admissions Interest / Careers Application / Withdrawal
+                // Request forms. Masjid and community list NO templates, so
+                // this is a no-op for them — provisioning stays byte-identical.
+                // Seeded rows are ordinary forms (same table, same schema
+                // vocabulary), indistinguishable from admin-built ones.
+                FormTemplates::applyTo($masjid);
 
                 // ---- App-publishing config (platform selection + managed/BYO) ----
                 // `platforms` (the Platforms step) is the source of truth for WHICH
