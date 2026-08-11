@@ -2,6 +2,25 @@
 
 namespace App\Enums;
 
+/**
+ * The page-builder palette.
+ *
+ * A section type is three things and nothing more: this case, the `content` JSON
+ * shape returned by defaultContent(), and a Vue editor keyed off the value in
+ * resources/vue-app/components/sections/editors. There is no per-type table, no
+ * per-type controller and no registry class — see .claude/rules/section-types.md
+ * for the full list of places one change has to land.
+ *
+ * **The palette is GLOBAL, not per-vertical.** `sectionTypes()` hands every tenant
+ * every case, and nothing here or in config/verticals.php filters by `org_type`.
+ * The school types below are therefore visible to masjid and community tenants too.
+ * That is the status quo being preserved deliberately, not an oversight: gating the
+ * palette would be a new mechanism, and a masjid that wants a staff directory or a
+ * weekend-school tuition table is a real tenant, not a mistake. If per-vertical
+ * offering is ever wanted, add it in ONE place (PageSectionsController@sectionTypes)
+ * keyed off `config/verticals.php`, and keep validation ungated so existing rows
+ * never stop loading.
+ */
 enum SectionType: string
 {
     case PAGE_TITLE = 'page_title';
@@ -30,6 +49,14 @@ enum SectionType: string
     // a YouTube khutbah, a map. See App\Support\EmbedProviders for why the URL is
     // allowlisted by provider rather than free text.
     case EMBED = 'embed';
+    // Manara Schools (T-010). A school's public site has three pages the masjid types
+    // cannot express: who teaches here, what is taught, and what it costs to enrol.
+    // Modelled on the pages alrazischool.org already publishes. The palette is GLOBAL —
+    // these are offered to every tenant, not gated on org_type; see the class docblock
+    // and .claude/rules/section-types.md.
+    case STAFF_DIRECTORY = 'staff_directory';
+    case PROGRAMS = 'programs';
+    case ADMISSIONS_TUITION = 'admissions_tuition';
 
     /**
      * Get all section type values
@@ -65,6 +92,9 @@ enum SectionType: string
             self::LINK_LIST => 'Link Buttons',
             self::CAROUSEL => 'Image Carousel',
             self::EMBED => 'Embedded Widget',
+            self::STAFF_DIRECTORY => 'Staff & Faculty Directory',
+            self::PROGRAMS => 'Programs & Curriculum',
+            self::ADMISSIONS_TUITION => 'Admissions & Tuition',
         };
     }
 
@@ -94,6 +124,9 @@ enum SectionType: string
             self::LINK_LIST => 'A row or stack of link buttons — email, phone, website, external registration links',
             self::CAROUSEL => 'A rotating slideshow of images with optional titles, captions and links',
             self::EMBED => 'A widget from another site — your existing events calendar, a YouTube video, a Google Map or Form',
+            self::STAFF_DIRECTORY => 'The people who work here — photo, role and department, with contact details only if you choose to publish them',
+            self::PROGRAMS => 'Programs or courses of study — grade level, schedule, and what each one covers',
+            self::ADMISSIONS_TUITION => 'Tuition rates, additional fees, payment plans, and the steps to enrol',
         };
     }
 
@@ -131,6 +164,14 @@ enum SectionType: string
             // browser. Nothing is pulled from our tables, so this is false — the flag
             // means "this renderer needs data from another endpoint of OURS".
             self::EMBED => false,
+            // The school types are author-supplied too. A staff directory in
+            // particular is NOT a view onto `contacts` or `group_memberships` —
+            // those are private CRM records about families and congregants, and a
+            // public page must never be a window onto them. Publishing a person is
+            // an editorial act, so the names on the page are typed into the section.
+            self::STAFF_DIRECTORY,
+            self::PROGRAMS,
+            self::ADMISSIONS_TUITION => false,
         };
     }
 
@@ -301,6 +342,85 @@ enum SectionType: string
                 'height' => null,
                 'aspect' => null,
                 'fallback_text' => '',
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // Manara Schools (T-010)
+            // ---------------------------------------------------------------
+            // The people who work here. Each member is
+            //   ['name' => '', 'role' => '', 'department' => '', 'credentials' => '',
+            //    'bio' => '', 'email' => '', 'phone' => '', 'photo_url' => null]
+            //
+            // ONE flat list, with `department` as a free grouping label the renderer
+            // buckets by ("Administration", "Lower School", "Specialists"), rather
+            // than a nested departments[].members[] tree. That is not a simplification
+            // for its own sake: the section image pipeline matches a SINGLE array
+            // index (`members.*.photo_url` → `members_0_photo_url`), so a second level
+            // of nesting would silently drop every uploaded photo. See
+            // SectionsController::handleArrayImageUploads.
+            //
+            // `show_contact` defaults to FALSE. Publishing a teacher's email address
+            // to the open web is a decision someone has to make on purpose; the
+            // default must not make it for them.
+            self::STAFF_DIRECTORY => [
+                'heading' => '',
+                'description' => '',
+                'members' => [],
+                'layout' => 'grid', // grid | list
+                'columns' => 3,
+                'show_contact' => false,
+                'background_color' => '#ffffff',
+            ],
+            // Courses of study. Each program is
+            //   ['name' => '', 'level' => '', 'schedule' => '', 'summary' => '',
+            //    'highlights' => [], 'image_url' => null, 'link_url' => '', 'link_text' => '']
+            //
+            // `level` (the grade or age band) and `schedule` (the meeting pattern) are
+            // free text on purpose — "Pre-K", "Grades 1–2", "Ages 4–6" and "Mon–Fri,
+            // 8:00 AM–3:00 PM" are all things a real school writes, and no enum
+            // covers them across schools. `highlights` is a plain list of strings:
+            // the curriculum bullets under each program.
+            self::PROGRAMS => [
+                'heading' => '',
+                'description' => '',
+                'programs' => [],
+                'layout' => 'cards', // cards | list | accordion
+                'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // The tuition and fee schedule plus how to apply.
+            //
+            //   tiers[]         ['name' => '', 'badge' => '', 'amount' => '',
+            //                    'period' => '', 'note' => '', 'includes' => []]
+            //   fees[]          ['label' => '', 'amount' => '', 'note' => '']
+            //   payment_plans[] ['label' => '', 'detail' => '']
+            //   steps[]         ['title' => '', 'description' => '']
+            //
+            // Every money value is DISPLAY TEXT, never a number. A real schedule mixes
+            // "$8,000", "Included", "Contact us" and "$250 discount/child" in the same
+            // table, and nothing in this app charges from these values — tuition
+            // billing does not exist here, and the Stripe path is for donations only.
+            // A string says "this is what the page says"; a decimal would imply a
+            // machine reads it. `stats.value` makes the same call for the same reason.
+            //
+            // This section is the PRICE LIST, not the application. Collecting an
+            // applicant's details is the `form` section type over the forms tables
+            // (T-011) — `button_page_id` is how the two are joined: it resolves to
+            // `button_page_url` on read (Section::getContentAttribute), so the apply
+            // button points at a registration page built in the same builder without
+            // anyone typing a URL that can rot.
+            self::ADMISSIONS_TUITION => [
+                'heading' => '',
+                'description' => '',
+                'school_year' => '',
+                'tiers' => [],
+                'fees' => [],
+                'payment_plans' => [],
+                'steps' => [],
+                'disclaimer' => '',
+                'button_text' => '',
+                'button_page_id' => null,
+                'button_link' => null,
                 'background_color' => '#ffffff',
             ],
         };

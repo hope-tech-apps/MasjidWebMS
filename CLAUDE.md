@@ -20,7 +20,7 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 - `PLAN.md` / `LOG.md` / `NOTES.md` — plan, changelog, scratch notes.
 - `.claude/rules/` — path-scoped conventions (`tenant-scoping.md`,
   `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`,
-  `private-uploads.md`, `groups.md`).
+  `private-uploads.md`, `groups.md`, `section-types.md`).
 
 ## Status
 
@@ -110,6 +110,31 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   follow-on slice: `.claude/rules/groups.md`. **OUT of this slice on purpose:**
   group feed, messaging, group media, behavior points, ḥifẓ tracking, mobile app
   (T-013/T-014/T-015).
+- **School section types — DONE** (T-010, uncommitted). Three page-builder types
+  so a School tenant can publish the pages alrazischool.org hardcodes today:
+  `staff_directory`, `programs`, `admissions_tuition`. Added on the EXISTING
+  mechanism only — a `SectionType` case (+ `label`/`description`/
+  `usesExternalData`/`defaultContent`, all still exhaustive `match` with no
+  default arm), a `content` JSON shape, a Vue editor in the `editorMap`. **No
+  migration, no new table, no registry**: section types are data, and
+  `new Enum(SectionType::class)` is already the allowlist every request uses.
+  **The palette stays GLOBAL** — `sectionTypes()` maps `SectionType::cases()`
+  with no filter and `config/verticals.php` has no `section_types` key, so these
+  are offered to masjid and community tenants too; gating would have been a new
+  mechanism, and a masjid with a weekend school legitimately wants a tuition
+  table. Shape decisions that are load-bearing: `members[]` is FLAT with a
+  `department` label (the upload pipeline matches one array index, so a nested
+  departments→members tree would silently drop every photo); money is DISPLAY
+  TEXT (`$8,000` / `Included` / `Contact us` in one column, nothing charges from
+  a section); `show_contact` defaults FALSE; and a staff directory is editorial
+  content, never a query over `contacts`. Purely additive — the twenty existing
+  types are pinned value-for-value and default-content byte-for-byte. Proven by
+  `tests/Feature/SchoolSectionTypesTest.php` (17); suite **444/444, 1302
+  assertions** on the droplet copy. Vue build green
+  (`artifacts/vue_build_t010_20260810-223941.log`). Convention:
+  `.claude/rules/section-types.md` + `resources/vue-app/components/sections/
+  editors/CLAUDE.md`. **Not visible to the public yet:** the Nuxt renderer
+  (separate repo) needs one component per new `section_type`.
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via

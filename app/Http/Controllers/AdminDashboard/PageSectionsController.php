@@ -388,6 +388,10 @@ class PageSectionsController extends Controller
             SectionType::MISSION_VISION => ['items.*.icon_url'],
             SectionType::IMAGE => ['image_url'],
             SectionType::CAROUSEL => ['slides.*.image_url'],
+            // School types: one array index deep, which is all handleArrayImageUploads
+            // can re-key. admissions_tuition carries no images at all.
+            SectionType::STAFF_DIRECTORY => ['members.*.photo_url'],
+            SectionType::PROGRAMS => ['programs.*.image_url'],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };

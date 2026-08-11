@@ -18,7 +18,12 @@ export type SectionType =
     | 'image'
     | 'link_list'
     | 'carousel'
-    | 'embed';
+    | 'embed'
+    // Manara Schools (T-010). Offered to every tenant — the palette is global,
+    // nothing filters section types by org_type. See App\Enums\SectionType.
+    | 'staff_directory'
+    | 'programs'
+    | 'admissions_tuition';
 
 // Base Section
 export type PageSection = {
@@ -59,7 +64,10 @@ export type SectionContent =
     | ImageSectionContent
     | LinkListSectionContent
     | CarouselSectionContent
-    | EmbedSectionContent;
+    | EmbedSectionContent
+    | StaffDirectorySectionContent
+    | ProgramsSectionContent
+    | AdmissionsTuitionSectionContent;
 
 // Individual Section Content Types
 
@@ -286,4 +294,116 @@ export type EmbedSectionContent = {
         allow: string;
         default_aspect: string | null;
     } | null;
+};
+
+/* -------------------------------------------------------------------------
+ * Manara Schools (T-010)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * One published person. This is EDITORIAL content typed into the section, not a
+ * row from the contacts/CRM tables — those hold private records about families
+ * and must never become a public page. `department` is a free grouping label
+ * ("Administration", "Lower School"); the list stays flat because the section
+ * image pipeline can only re-key one array index (`members.*.photo_url`).
+ */
+export type StaffMember = {
+    name: string;
+    role: string;
+    department: string;
+    credentials: string;
+    bio: string;
+    email: string;
+    phone: string;
+    photo_url: string | null;
+};
+
+export type StaffDirectorySectionContent = {
+    heading: string;
+    description: string;
+    members: StaffMember[];
+    layout: 'grid' | 'list';
+    columns: number;
+    /** Publish each person's email/phone. Defaults to false — opting in is a decision. */
+    show_contact: boolean;
+    background_color: string;
+};
+
+/**
+ * One course of study. `level` (grade or age band) and `schedule` (meeting
+ * pattern) are free text: "Pre-K", "Grades 1-2" and "Ages 4-6" are all real, and
+ * no two schools band them the same way. `highlights` is the curriculum bullets.
+ */
+export type ProgramItem = {
+    name: string;
+    level: string;
+    schedule: string;
+    summary: string;
+    highlights: string[];
+    image_url: string | null;
+    link_url: string;
+    link_text: string;
+};
+
+export type ProgramsSectionContent = {
+    heading: string;
+    description: string;
+    programs: ProgramItem[];
+    layout: 'cards' | 'list' | 'accordion';
+    columns: number;
+    background_color: string;
+};
+
+/**
+ * A priced option in the tuition table. `amount` and `period` are DISPLAY TEXT,
+ * not numbers: a real schedule mixes "$8,000", "Included" and "Contact us" in one
+ * table, and nothing in this app charges from these values. A string says what
+ * the page says; a decimal would imply a machine reads it.
+ */
+export type TuitionTier = {
+    name: string;
+    badge: string;
+    amount: string;
+    period: string;
+    note: string;
+    includes: string[];
+};
+
+export type AdmissionsFee = {
+    label: string;
+    amount: string;
+    note: string;
+};
+
+export type AdmissionsPaymentPlan = {
+    label: string;
+    detail: string;
+};
+
+export type AdmissionsStep = {
+    title: string;
+    description: string;
+};
+
+/**
+ * The price list and how to apply — NOT the application itself. Collecting an
+ * applicant's details is the `form` section type over the forms tables;
+ * `button_page_id` joins the two, resolving to `button_page_url` on read so the
+ * apply button points at a page in the same builder rather than a URL that rots.
+ */
+export type AdmissionsTuitionSectionContent = {
+    heading: string;
+    description: string;
+    /** Eyebrow above the heading, e.g. "2026-2027 School Year". */
+    school_year: string;
+    tiers: TuitionTier[];
+    fees: AdmissionsFee[];
+    payment_plans: AdmissionsPaymentPlan[];
+    steps: AdmissionsStep[];
+    disclaimer: string;
+    button_text: string;
+    button_page_id: number | null;
+    button_page_url?: string | null; // Auto-generated from button_page_id
+    button_link: string | null;
+    background_color: string;
 };

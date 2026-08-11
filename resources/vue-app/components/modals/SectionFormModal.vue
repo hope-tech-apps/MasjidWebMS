@@ -299,6 +299,9 @@ import ImageSectionEditor from '@/components/sections/editors/ImageSectionEditor
 import LinkListSectionEditor from '@/components/sections/editors/LinkListSectionEditor.vue';
 import CarouselSectionEditor from '@/components/sections/editors/CarouselSectionEditor.vue';
 import EmbedSectionEditor from '@/components/sections/editors/EmbedSectionEditor.vue';
+import StaffDirectorySectionEditor from '@/components/sections/editors/StaffDirectorySectionEditor.vue';
+import ProgramsSectionEditor from '@/components/sections/editors/ProgramsSectionEditor.vue';
+import AdmissionsTuitionSectionEditor from '@/components/sections/editors/AdmissionsTuitionSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -373,6 +376,13 @@ const editorMap: Record<SectionType, any> = {
     'link_list': LinkListSectionEditor,
     'carousel': CarouselSectionEditor,
     'embed': EmbedSectionEditor,
+    // Manara Schools (T-010). `editorMap` is keyed by the SectionType union, so a
+    // type added to the backend enum and to PageSection.ts without an entry here
+    // is a compile error — which is the point: the dropdown would otherwise offer
+    // the type (it comes from the backend) and render an empty editor pane.
+    'staff_directory': StaffDirectorySectionEditor,
+    'programs': ProgramsSectionEditor,
+    'admissions_tuition': AdmissionsTuitionSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

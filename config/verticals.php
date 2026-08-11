@@ -7,8 +7,14 @@
 |
 | Manara runs three verticals on ONE core (DECISIONS.md, 2026-08-10):
 | Masjids, Schools, Community. A vertical is CONFIGURATION, not a fork — it is
-| (a) a default feature bundle, (b) a terminology pack for admin-facing labels,
-| and (c) which page-builder section types are offered.
+| (a) a default feature bundle and (b) a terminology pack for admin-facing
+| labels. Both live in this file.
+|
+| It is NOT the page-builder palette. There is no `section_types` key here and
+| `PageSectionsController@sectionTypes` applies no filter: every tenant is
+| offered every `SectionType`, school types included. That is deliberate — see
+| `.claude/rules/section-types.md` for why, and for the one place to change if
+| per-vertical offering is ever actually wanted.
 |
 | `feature_keys` are seeded onto a tenant at provisioning time and remain
 | individually togglable afterwards (`mobile_app_features` pivot + the existing
