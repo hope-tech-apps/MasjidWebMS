@@ -7,6 +7,7 @@ use App\Enums\Madhab;
 use App\Enums\PrayerCalculationMethod;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\City;
+use App\Models\Masjid;
 use App\Models\User;
 use Illuminate\Validation\Rule;
 
@@ -25,12 +26,35 @@ use Illuminate\Validation\Rule;
  */
 class ProvisionMasjidRequest extends BaseFormRequest
 {
+    /**
+     * An omitted vertical means `masjid`.
+     *
+     * The wizard predates verticals and every existing caller posts no
+     * org_type, so normalizing here — rather than defaulting in the controller
+     * — keeps one answer to "which vertical is this" for both validation and
+     * provisioning. An empty string is treated as absent for the same reason:
+     * multipart serialization of an unset select sends "".
+     */
+    protected function prepareForValidation(): void
+    {
+        if (! $this->filled('org_type')) {
+            $this->merge(['org_type' => Masjid::ORG_TYPE_MASJID]);
+        }
+    }
+
     public function rules(): array
     {
         // Hex color, optional alpha — same shape as SaveThemeSettingsRequest.
         $hex = ['nullable', 'string', 'regex:/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/', 'max:9'];
 
         return [
+            // ---- Vertical (Manara org_type) ----
+            // Masjid::ORG_TYPES — not a DB enum — is the authority on the
+            // allowed set (.claude/rules/verticals.md), so a new vertical needs
+            // no migration and no change here. Always present by the time this
+            // runs; see prepareForValidation.
+            'org_type' => ['required', 'string', Rule::in(Masjid::ORG_TYPES)],
+
             // ---- Identity (mirrors StoreMasjidRequest) ----
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:masjids,email',

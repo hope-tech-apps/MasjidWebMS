@@ -31,15 +31,31 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   tenants all read as masjids and keep the worship modules
   (adhkar/hadith/qibla/quran/tasbih), which are masjid-bundle-only. Proven by
   `tests/Feature/OrgTypeTest.php` (9/9). Convention: `.claude/rules/verticals.md`.
+- **Manara verticals — provisioning + admin payload DONE** (T-002, uncommitted).
+  A School/Community tenant is now actually creatable: `ProvisionMasjidRequest`
+  takes an optional `org_type` (absent ⇒ `masjid`, normalized in
+  `prepareForValidation`; invalid ⇒ the legacy `{status:'failed'}` 422),
+  `OnboardingController@provision` persists it and seeds the feature toggles
+  from `$masjid->defaultFeatureKeys()` instead of "everything on" — an explicit
+  `feature_keys_provided` selection still wins. The admin payload
+  (`MasjidsController@index/@show`, the provision echo) appends
+  `Masjid::ADMIN_APPENDS` = a `vertical` block (`org_type`, `label`, `plural`,
+  `terminology`); the public/mobile API is untouched. Behaviour-neutral: the
+  masjid bundle IS the full seeded catalog. Proven by
+  `tests/Feature/ProvisionOrgTypeTest.php` (8/8). Next: T-003 (Vue reads the
+  labels).
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via
   `routes/web.php` (`connect.return`/`connect.refresh`), not the admin API. The
   authed JSON endpoint is now `GET .../connect/status`. Proven by
   `tests/Feature/ConnectOnboardingLandingTest.php` (8/8).
-- **Live Stripe — BLOCKED on production.** Live keys were set on the stale
-  droplet; production still runs TEST keys, so the live Connect webhook cannot
-  verify signatures. See `STATE.md` → Blocked.
+- **Live Stripe — LIVE and verified** (2026-08-11). Live keys on production
+  586894889; Connect webhook `we_1U34AGCvsApMECsnKybrkQSX` created FROM
+  production so its signing secret is in the serving `.env`. Proven with a real
+  event: Stripe POST → HTTP 200, `evt_1U34Ai…` recorded in
+  `stripe_webhook_events`. Burlington `acct_1U2y2o…` charges=1, payouts=0
+  (held by Stripe's own `listed` review, `currently_due: none`).
 
 - **CRM Phase 0 — tenant-isolation guardrail scaffolded** (branch
   `feat/crm-phase0-tenancy`, off `main`, local only — not pushed). Adds

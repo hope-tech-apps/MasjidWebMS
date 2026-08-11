@@ -142,6 +142,35 @@ class Masjid extends Model implements HasMedia
         return $this->verticalConfig()['feature_keys'] ?? [];
     }
 
+    /**
+     * Attributes the ADMIN payload carries on top of the raw columns.
+     *
+     * Attached per-request with `append(Masjid::ADMIN_APPENDS)` by the admin
+     * controllers instead of being declared in `$appends`, because `$appends`
+     * would also widen the public/mobile API responses — which have no business
+     * knowing about verticals in this slice.
+     */
+    public const ADMIN_APPENDS = ['vertical'];
+
+    /**
+     * This tenant's vertical as the admin SPA consumes it: the discriminator
+     * plus the labels it should render instead of hardcoded "Masjid" /
+     * "Congregants" (PLAN T-003).
+     */
+    public function getVerticalAttribute(): array
+    {
+        $config = $this->verticalConfig();
+
+        return [
+            // orgType(), not the raw column: an unrecognized stored value must
+            // reach the UI as a masjid, not as the vertical it claims to be.
+            'org_type' => $this->orgType(),
+            'label' => $config['label'] ?? '',
+            'plural' => $config['plural'] ?? '',
+            'terminology' => $config['terminology'] ?? [],
+        ];
+    }
+
     /** Limit a query to one vertical. */
     public function scopeOfOrgType($query, string $orgType)
     {

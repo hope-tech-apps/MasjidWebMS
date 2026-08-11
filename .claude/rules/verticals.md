@@ -3,6 +3,7 @@ paths:
   - "config/verticals.php"
   - "app/Models/Masjid.php"
   - "app/Http/Controllers/AdminDashboard/**"
+  - "app/Http/Requests/Admin/**"
   - "app/Http/Controllers/Api/**"
 ---
 # Manara verticals (org_type)
@@ -35,6 +36,29 @@ for what a tenant actually has, and per-tenant gates (`crm_enabled`,
 Every key listed in a bundle MUST exist in `mobile_app_features.key`, or
 provisioning silently enables nothing for it. `OrgTypeTest` asserts this.
 
+`OnboardingController@provision` seeds from `$masjid->defaultFeatureKeys()`, and
+an explicit wizard selection (`feature_keys_provided` + `feature_keys`) still
+overrides it — a school admin may deliberately switch a worship module on. It
+writes a `masjid_mobile_app_features` row for EVERY catalog feature, just with
+`is_available = false` for the ones outside the bundle, so a later toggle needs
+no repair script.
+
+**The masjid bundle must stay equal to the full seeded catalog.** Provisioning a
+masjid used to force every feature on; it now goes through the bundle, so the
+day the two diverge, existing-tenant behaviour silently changes. Add a new
+`mobile_app_features` key ⇒ add it to the masjid bundle in the same change.
+`ProvisionOrgTypeTest` pins the set.
+
+## Accepting a vertical at the request boundary
+
+Anything that creates a tenant validates `org_type` with
+`Rule::in(Masjid::ORG_TYPES)` and treats an **absent or empty** value as
+`masjid`, normalized in `prepareForValidation()` — not defaulted downstream in
+the controller — so validation and persistence can never disagree. The request
+must extend `BaseFormRequest`, or a rejection escapes as a raw
+`ValidationException` and this app's JSON renderer turns it into a 500 instead
+of the legacy `{status:'failed'}` 422.
+
 ## Islamic worship modules are masjid-only
 
 `adhkar`, `hadith`, `qibla`, `quran`, `tasbih` belong to the masjid bundle
@@ -52,6 +76,15 @@ Admin-facing labels come from the vertical's `terminology` pack via
 school. Do not hardcode "Masjid" or "Congregants" in new admin UI or API
 payloads. `term()` falls back to a humanized key, so a missing entry degrades to
 something readable rather than a blank label.
+
+The Vue SPA gets the pack in the masjid payload as a `vertical` block
+(`org_type`, `label`, `plural`, `terminology`). It is attached per-request with
+`->append(Masjid::ADMIN_APPENDS)` in the ADMIN controllers
+(`MasjidsController@index/@show`, `OnboardingController@provision`) and is
+deliberately NOT in the model's `$appends`: that would widen the public/mobile
+API payloads too, and those have no vertical awareness yet. Add the append to
+any new admin endpoint that serializes a masjid; do not add it to `routes/api.php`
+controllers without a decision to expose verticals publicly.
 
 ## Adding a vertical
 

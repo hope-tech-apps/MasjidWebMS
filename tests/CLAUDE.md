@@ -24,6 +24,29 @@ This directory holds PHPUnit / Pest tests for the Laravel API. Conventions are c
 php artisan test --filter="Feature\\\\Splash"
 ```
 
+## Running the suite on the droplet (there is no PHP on the dev Mac)
+
+Tests run against an **isolated rsync'd copy** under `/tmp`, never the live app
+directory. Two traps, both of which look like "I broke 48 tests":
+
+- **`rm -f bootstrap/cache/*.php` after EVERY rsync, not just the first.** The
+  repo carries a checked-out `bootstrap/cache/packages.php` that predates
+  `spatie/laravel-permission`, so the discovered-package list omits its service
+  provider. The `permission:` middleware then throws `UnauthorizedException` on
+  every gated CRM route — ~48 failures across ContactCrud / FundCrud /
+  DonationRead / CrmFeatureGate / RolePermissionBridge / SuperAdminExportScope,
+  in files that alphabetically precede whatever you just changed.
+- **Delete the `/tmp` copy when done** — it holds a copy of production `.env`.
+
+`ExampleTest` ("Vite manifest not found") is the one expected failure: a
+source-only copy has no `public/build`. Anything else is a regression.
+
+## Seeding reference data in a test
+
+`Country` and `City` declare no `$fillable`, so `Country::create([...])` throws
+`MassAssignmentException`. Insert them with the query builder
+(`DB::table('countries')->insertGetId([...])`) — see `ProvisionOrgTypeTest`.
+
 ## Style
 
 - Class-based PHPUnit with `#[Test]` attribute (preferred for new feature suites). Pest functional style is also OK if a file is already in that style — don't mix within a single file.
