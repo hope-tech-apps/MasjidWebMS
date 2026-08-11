@@ -144,6 +144,14 @@ return [
 
         // Default settlement currency (ISO-4217, lower-case) for new donations.
         'currency' => env('STRIPE_CURRENCY', 'usd'),
+
+        // How long a paid PENDING registration holds its reserved seat while
+        // its Checkout is outstanding (minutes). Set on registrations at
+        // intake (T-006b, RegistrationService); consumed by the
+        // checkout.session.expired handler (T-006c) and the seat-release
+        // reaper (T-006f). The free path never sets a window — it has no
+        // Stripe leg to wait on.
+        'registration_checkout_window_minutes' => (int) env('STRIPE_REGISTRATION_CHECKOUT_WINDOW_MINUTES', 30),
     ],
 
     /*
