@@ -722,6 +722,13 @@ Route::prefix('admin')->group(function () {
                     // remain webhook-only; this is the only write path for donations.
                     Route::post('/', 'store')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
+                    // Issue the tax receipt for an OFFLINE gift — a deliberate
+                    // treasurer action, never automatic on entry (see the
+                    // controller). Consumes a serial from the masjid's gap-free
+                    // sequence, so it is `manage donations` like the offline
+                    // store route above. Stripe gifts stay webhook-only.
+                    Route::post('/{donation_id}/receipt', 'issueReceipt')
+                        ->middleware('permission:manage donations');
                     // Printable copy of the receipt this gift already issued.
                     // Read-only rendering of the stored receipt row, so it is
                     // `view donations` like the rest of the ledger's read side.

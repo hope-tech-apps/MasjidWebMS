@@ -31,6 +31,10 @@ class DonationReceipt extends Model
         'advantage_amount',
         'eligible_amount',
         'currency',
+        // Provenance of an OFFLINE gift, snapshotted at issuance (T-007b). Null
+        // for Stripe gifts, whose settlement is proved by the webhook event.
+        'payment_method',
+        'payment_reference',
         'jurisdiction',
         'status',
     ];
