@@ -108,8 +108,16 @@ fixed these:
 
 - **The reaper owns no seat arithmetic.** It selects and calls
   `RegistrationService::releaseSeat()`; there is deliberately no decrement in
-  the command. `offerings.registration_count` still has exactly two writers
-  (intake's increment, the release seam's decrement).
+  the command.
+- **`offerings.registration_count` is written in exactly three places, all in
+  `RegistrationService`, all under the offering row lock with capacity
+  re-checked inside it, and always as a RELATIVE `± 1` update — never a
+  read-modify-write:** `register()` (intake increment),
+  `promoteFromWaitlist()` (admin promotion increment, added by T-006d), and
+  `releaseSeat()` (the single decrement seam). Nothing outside that class may
+  touch the counter. If you add a fourth writer, it takes the same lock, the
+  same in-lock capacity re-check, and a relative update — or capacity can be
+  oversold, which means charging two families for one seat.
 - **The sweep set is `Registration::scopeCheckoutExpiredBefore($deadline)`** —
   `pending` + `awaiting` + non-null `checkout_expires_at <= deadline`.
   `past_due` is EXCLUDED on purpose (dunning never ejects, T-006e), and `none`
