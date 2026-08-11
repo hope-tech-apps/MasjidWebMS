@@ -3,11 +3,13 @@
 namespace App\Providers;
 
 use App\Events\SendMasjidNotificationEvent;
+use App\Listeners\ResetTenantContextBetweenJobs;
 use App\Listeners\SentMasjidNotificationLitener;
 use App\Models\User;
 use App\Observers\UserObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Response;
@@ -19,9 +21,16 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         // Request-scoped tenant holder shared by ResolveMasjidTenant middleware
-        // and every BelongsToMasjid model. No Octane here, so singleton == per
-        // request. See App\Support\TenantContext.
-        $this->app->singleton(\App\Support\TenantContext::class);
+        // and every BelongsToMasjid model. See App\Support\TenantContext.
+        //
+        // scoped(), NOT singleton(): in a web request the two are identical (no
+        // Octane here, and nothing calls forgetScopedInstances() mid-request), but
+        // `queue:work` is a long-lived process that resets the container scope
+        // before reserving each job — so scoped() is what stops one job's tenant
+        // binding from surviving into the next job, which may belong to another
+        // masjid. See App\Listeners\ResetTenantContextBetweenJobs for the other
+        // half of that fix and the full reasoning.
+        $this->app->scoped(\App\Support\TenantContext::class);
 
         // Shared Stripe SDK client for the CRM donation services. Constructed
         // lazily, so an empty STRIPE_SECRET (keys not added yet) is fine until a
@@ -44,6 +53,12 @@ class AppServiceProvider extends ServiceProvider
             SendMasjidNotificationEvent::class,
             SentMasjidNotificationLitener::class,
         );
+
+        // Every queued job starts with an UNBOUND tenant. Without this, a job
+        // that binds a masjid leaks that binding to the next job the same worker
+        // process picks up. Exempts the sync driver, which runs jobs inside the
+        // dispatching request. See App\Listeners\ResetTenantContextBetweenJobs.
+        Event::listen(JobProcessing::class, ResetTenantContextBetweenJobs::class);
 
         // Keep the additive Spatie role mirrored to the legacy `users.type` on
         // every user save. See App\Observers\UserObserver + User::syncRoleFromType().
