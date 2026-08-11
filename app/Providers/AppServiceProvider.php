@@ -2,9 +2,7 @@
 
 namespace App\Providers;
 
-use App\Events\SendMasjidNotificationEvent;
 use App\Listeners\ResetTenantContextBetweenJobs;
-use App\Listeners\SentMasjidNotificationLitener;
 use App\Models\User;
 use App\Observers\UserObserver;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -49,15 +47,24 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Event::listen(
-            SendMasjidNotificationEvent::class,
-            SentMasjidNotificationLitener::class,
-        );
+        // NOTE ON REGISTRATION: everything under app/Listeners with a typed
+        // handle() is ALREADY registered by Laravel's event discovery —
+        // Application::configure() calls withEvents() unconditionally, which is
+        // invisible from bootstrap/app.php. An Event::listen here therefore
+        // registers a SECOND time and the handler runs twice per dispatch, with
+        // no error. Do not add one. See .claude/rules/events-listeners.md.
+        //
+        // The single deliberate exception below is allowlisted in
+        // tests/Feature/ListenerRegistrationTest.php, which fails if any other
+        // listener acquires a duplicate.
 
         // Every queued job starts with an UNBOUND tenant. Without this, a job
         // that binds a masjid leaks that binding to the next job the same worker
         // process picks up. Exempts the sync driver, which runs jobs inside the
-        // dispatching request. See App\Listeners\ResetTenantContextBetweenJobs.
+        // dispatching request. Registered explicitly ON PURPOSE: this is a
+        // correctness invariant that must not stop working if discovery is ever
+        // disabled, and forgetTenant() is idempotent so the duplicate is a
+        // genuine no-op. See App\Listeners\ResetTenantContextBetweenJobs.
         Event::listen(JobProcessing::class, ResetTenantContextBetweenJobs::class);
 
         // Keep the additive Spatie role mirrored to the legacy `users.type` on
