@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -124,6 +125,34 @@ class Registration extends Model
             ->where('uuid', $uuid)
             ->where('masjid_id', $masjidId)
             ->first();
+    }
+
+    /**
+     * The reaper's sweep set (T-006f): seats still HELD for a checkout that
+     * closed on or before $deadline, where $deadline is `now minus the grace
+     * margin` — never a bare `now()`.
+     *
+     * Every clause is load-bearing:
+     *  - `pending` only, because that is the only state that holds a seat AND
+     *    can still lose it (confirmed keeps its seat, waitlisted never had one,
+     *    cancelled already gave it back). It is also releaseSeat()'s exact
+     *    precondition, so nothing this scope returns can be un-releasable.
+     *  - `awaiting` only. `none` is the free path (no Stripe leg, nothing to
+     *    expire); `paid`/`active` are settled money; and `past_due` is
+     *    deliberately EXCLUDED — a failed installment never ejects an enrolled
+     *    child, that is an explicit admin action
+     *    (docs/t006-registration-billing-design.md).
+     *  - a NON-NULL window. Null means "no deadline was ever set", not "expired
+     *    long ago" — and settlement nulls it on purpose so a paid seat can
+     *    never be swept even if some other clause were relaxed.
+     */
+    public function scopeCheckoutExpiredBefore(Builder $query, $deadline): Builder
+    {
+        return $query
+            ->where('status', self::STATUS_PENDING)
+            ->where('payment_status', self::PAYMENT_AWAITING)
+            ->whereNotNull('checkout_expires_at')
+            ->where('checkout_expires_at', '<=', $deadline);
     }
 
     public function offering(): BelongsTo
