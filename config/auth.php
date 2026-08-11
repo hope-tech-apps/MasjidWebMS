@@ -92,6 +92,55 @@ return [
             'driver' => 'sanctum',
             'provider' => 'users',
         ],
+
+        /*
+        | The parent/guardian realm (T-015c). A SEPARATE guard over a SEPARATE
+        | provider — never a loosened `sanctum`.
+        |
+        | This is the shape .claude/rules/auth-permissions.md mandates for a
+        | second realm, and it buys the separation in BOTH directions inside
+        | vendor code, before any application middleware runs:
+        |
+        |   - a Contact token presented on an `auth:sanctum` route is compared
+        |     against `auth.providers.users.model` and resolves to null;
+        |   - a staff User token presented on an `auth:family` route is compared
+        |     against `auth.providers.contacts.model` and resolves to null.
+        |
+        | Both directions matter. The reverse one is not hypothetical: staff
+        | tokens were minted `['*']` until T-015a, so an ability check alone
+        | would never have fenced staff out of the family surface.
+        |
+        | WHAT THIS GUARD DOES NOT DO, and why `family.active` exists.
+        | Sanctum checks `config('sanctum.guard')` — `['web']` here — BEFORE it
+        | looks at the bearer token, and returns any user it finds on those
+        | guards as-is, with no provider check at all. A staff member with a
+        | live admin SPA session therefore SATISFIES `auth:family`. The
+        | `family.active` middleware refuses a principal that is not a Contact
+        | for exactly that reason; the provider pin is not sufficient on its own
+        | and must not be treated as if it were. See
+        | App\Http\Middleware\EnsureFamilyLoginActive and
+        | docs/t015-parent-identity-design.md §5 (Q4).
+        |
+        | THE SPATIE HAZARD, and why this guard does not re-open it. Declaring
+        | `sanctum` cost one real regression, because spatie derives a model's
+        | permission guard from the `auth.guards` entries whose provider model
+        | matches that model, preferring `config('auth.defaults.guard')` — which
+        | `AuthManager::shouldUse()` rewrites on every authenticated request.
+        | `auth:family` rewrites it to `family`. This entry is safe from that
+        | because its provider model is `Contact`, NOT `User`: it can never join
+        | the candidate list for `User`, whose `$guard_name` is pinned to `web`
+        | anyway. A THIRD guard pointed back at the `users` provider WOULD
+        | re-open it. `App\Models\Contact` holds no spatie roles; if it is ever
+        | given any, it must declare its own `$guard_name` first.
+        |
+        | Expiry is the one thing this cannot express: Sanctum builds every
+        | guard with the single global `config('sanctum.expiration')`, so the
+        | family realm shares staff's 8 hours. See Contact::createFamilyToken().
+        */
+        'family' => [
+            'driver' => 'sanctum',
+            'provider' => 'contacts',
+        ],
     ],
 
     /*
@@ -115,6 +164,22 @@ return [
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', App\Models\User::class),
+        ],
+
+        /*
+        | The parent/guardian principal (T-015c). Consumed by the `family` guard
+        | above and by NOTHING else — in particular not by `sanctum`, `web` or
+        | `api`, which stay pinned to `users`.
+        |
+        | No `env()` override on purpose. The users provider carries one for
+        | historical reasons; here the model class is a security boundary (it is
+        | the value `Guard::hasValidProvider()` compares a tokenable against),
+        | and a boundary that a stray environment variable can move is not a
+        | boundary.
+        */
+        'contacts' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\Contact::class,
         ],
 
         // 'users' => [
