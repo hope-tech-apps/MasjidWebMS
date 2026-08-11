@@ -25,6 +25,12 @@ paths:
   - "database/migrations/*_create_group_threads_table.php"
   - "database/migrations/*_create_group_messages_table.php"
   - "database/migrations/*_create_group_thread_reads_table.php"
+  - "app/Models/BehaviorSkill.php"
+  - "app/Models/BehaviorAward.php"
+  - "app/Http/Controllers/AdminDashboard/BehaviorSkillsController.php"
+  - "app/Http/Controllers/AdminDashboard/BehaviorAwardsController.php"
+  - "database/migrations/*_create_behavior_skills_table.php"
+  - "database/migrations/*_create_behavior_awards_table.php"
 ---
 # Groups — the org → group → member primitive
 
@@ -136,6 +142,11 @@ should reuse the machinery below rather than re-decide it.
    group's leaders and to a contact's own guardians — never to the whole tenant
    because they happen to be a Contact. See "Disclosure" below.
 
+T-005c (messaging) and T-013 (behaviour points) each discharged 3 and 4 again
+for their own surface, reusing this machinery rather than re-deciding it. Both
+carry no bytes, so obligation 1 does not arise for them; see their sections
+below for what each one *did* have to decide.
+
 ## Disclosure is not administration
 
 `App\Support\GroupAudience` is the ONLY place that answers "may this caller
@@ -230,6 +241,84 @@ members/guardians channel. What a follow-on slice must not re-decide:
 
 Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php`.
+
+## Behaviour / recognition — the Classroom module (T-013)
+
+`behavior_skills` (per-tenant vocabulary) + `behavior_awards` (one skill given
+to ONE student) are the behaviour layer on top of the Groups primitive. They add
+no new group system: the student is named by their `group_memberships` row, the
+same explicit edge a guardian names its ward with.
+
+**Two constraints below are design constraints, not preferences.** They come
+from the two loudest, most-documented complaints about ClassDojo, the product
+this module answers (`docs/recon-2026-08-11.md`, DECISIONS.md 2026-08-10), and
+being the opposite on both is the differentiator. Do not "add an option" for
+either.
+
+### 1. Points are PRIVATE. There is no leaderboard.
+
+A child's record is disclosed to the group's **leaders**, to the **student**,
+and to **that student's own guardians**. Never to another guardian in the same
+group; never to the whole tenant; never as a class-wide ranking.
+
+- The decision is `GroupAudience::mayReceiveAwardsAbout()` and
+  `GroupAudience::readableAwardsQuery()` — in `GroupAudience`, never in a
+  controller, for the same reason the feed and threads are.
+- It is enforced at **QUERY level**, exactly as `readableThreadsQuery()` does:
+  a forbidden award is never fetched, so it cannot surface in a page, in a
+  paginator total, or inside an aggregate. The endpoint 403 and the query
+  constraint are both required — the 403 is honest to a parent who mistyped an
+  id, and the constraint is what makes the honesty safe.
+- Every aggregate is **per student**. There is deliberately no class-wide
+  endpoint, no rank column, and no comparison payload. If a future slice wants
+  a teacher's overview, it is a list of per-student rows a leader is already
+  entitled to — not a ranking, and not something a guardian can reach.
+- **Consent gates broadcasts, not a parent's view of their own child** — the
+  same call T-005c made for participant threads. A guardian with no consent
+  record still reads their own ward's awards; requiring feed consent there
+  would lock a parent out of the record most obviously theirs.
+
+Proven by `tests/Feature/BehaviorAwardsTest.php` (endpoint AND listing-query
+halves) + `tests/Feature/BehaviorTenantIsolationTest.php`.
+
+### 2. Nothing in this module is paywalled.
+
+No `plan`, `tier` or `is_premium` column exists on either table, no controller
+checks one, and there is no cap on how many skills a tenant may define or how
+many awards it may give. Behaviour points, notes, the per-student summary and
+the retention sweep are all base product. The `crm` middleware these routes sit
+behind is the pre-existing per-tenant module toggle (`masjids.crm_enabled`) that
+every group surface already uses — it is not a plan gate, and no new gate was
+introduced. A future contributor adding one is changing the product's
+positioning, not its configuration.
+
+### What else this slice re-decided, and why
+
+- **Point values are SNAPSHOTTED** onto the award (`skill_label`,
+  `skill_polarity`, `points`), the same reasoning as the fee-plan snapshots on
+  `registrations`: renaming or re-weighting a skill describes next term, it does
+  not retroactively restate what a child was told in October.
+  `behavior_awards.behavior_skill_id` is provenance only and nulls on delete;
+  nothing on the read path re-reads the skill for a value.
+- **`behavior_skills` does NOT soft-delete**, deliberately breaking with groups
+  and posts. The mis-click guard exists to protect records ABOUT CHILDREN, and
+  the vocabulary holds none — deleting a skill removes a drop-down entry and
+  nothing else. Retiring one is `is_active = false`.
+- **`behavior_awards.group_membership_id` CASCADES**, where
+  `group_threads.about_membership_id` nulls. A thread is a conversation between
+  adults that survives with a shrunken audience; an award's ENTIRE audience is
+  derived from the membership row, so a dangling award would be unreadable data
+  about a minor, retained forever. Least disclosure says it goes with them.
+- **Revocation IS the soft delete.** `deleted_at` is the revocation clock, so
+  one mechanism drops an award from every listing and every total; there is no
+  parallel `is_revoked` flag a query could forget. `revoked_by_user_id` records
+  who corrected the record.
+- **Retention** joins the existing story (obligation 3): `retained_until` from
+  `config('groups.behavior.retention_days')`, swept by the SAME
+  `groups:purge-feed` command. Rows only — no bytes — so `purge()` is a plain
+  `forceDelete()`, as it is for threads.
+- **Permissions**: `view contacts` / `manage contacts`, minting nothing.
+  `Permission::count() === 8` stays pinned.
 
 ## Tenant isolation
 

@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\BehaviorAward;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
@@ -15,8 +16,9 @@ use Illuminate\Support\Str;
  *
  * This class answers exactly one question — "may this authenticated caller
  * receive THIS disclosure about THIS group?" — and it is the only place that
- * answers it, so the feed listing, a single post, and an image download cannot
- * drift apart.
+ * answers it, so the feed listing, a single post, an image download, a
+ * messaging thread (T-005c) and a child's behaviour record (T-013) cannot drift
+ * apart.
  *
  * .claude/rules/groups.md, obligation 4: a group-scoped read is visible to the
  * group's leaders and to a contact's own guardians, "never to the whole tenant
@@ -244,6 +246,132 @@ class GroupAudience
             if (! $granted) {
                 $query->whereRaw('1 = 0');
             }
+        });
+    }
+
+    /**
+     * May this user read the behaviour record of `$subject` — one PARTICIPANT
+     * membership in `$group`? (T-013)
+     *
+     * A CHILD'S BEHAVIOUR RECORD IS PRIVATE. Three ways in, and no fourth:
+     *
+     *   1. a LEADER of the group — the teacher who keeps the record;
+     *   2. the student THEMSELVES, when the subject membership is one of the
+     *      caller's own participant memberships;
+     *   3. a GUARDIAN of that student, i.e. a guardian edge in this group whose
+     *      ward is the subject's contact.
+     *
+     * ANOTHER GUARDIAN IN THE SAME GROUP IS EXACTLY WHO THIS EXCLUDES. "Guardian
+     * here" never meant "guardian of this child" — the same reasoning that made
+     * guardianship an explicit edge in the first place, and the same rule
+     * mayReceiveThread() applies to a participant thread. There is deliberately
+     * no branch that widens this to the group, because a class-wide view of who
+     * has how many points is the public shaming this module exists to refuse.
+     *
+     * CONSENT IS NOT CONSULTED, for the same reason as a participant thread:
+     * the feed/media scopes gate BROADCASTS of a child's data to the guardian
+     * audience, and a parent reading their own child's record is not a
+     * broadcast. Requiring feed consent here would lock a parent out of the one
+     * record that is most obviously theirs to see.
+     *
+     * Fails closed: a subject with no resolvable contact, a caller with no
+     * identity, or a guardian edge with no ward all land on false.
+     */
+    public function mayReceiveAwardsAbout(?User $user, Group $group, GroupMembership $subject): bool
+    {
+        // An award is given to a person. A guardian row is a relationship, so it
+        // is never a subject — refusing here means a mis-targeted award can
+        // never be read by anyone, rather than quietly by the wrong person.
+        if (! in_array($subject->role, GroupMembership::PARTICIPANT_ROLES, true)) {
+            return false;
+        }
+
+        // The subject must belong to the group being asked about, or the
+        // caller's standing in THIS group would be answering for another one.
+        if ((int) $subject->group_id !== (int) $group->id) {
+            return false;
+        }
+
+        $standing = $this->standingIn($user, $group);
+
+        if ($standing['leader']) {
+            return true;
+        }
+
+        $student = (int) $subject->contact_id;
+
+        return in_array($student, $standing['participant_contact_ids'], true)
+            || in_array($student, $standing['ward_contact_ids'], true);
+    }
+
+    /**
+     * May this user read one specific award? Delegates to the rule above so a
+     * single award and a listing cannot disagree about the same row.
+     *
+     * A null membership cannot happen while the FK cascades, but an award whose
+     * subject could not be resolved is refused rather than assumed readable —
+     * the one failure direction this class must never have.
+     */
+    public function mayReceiveAward(?User $user, Group $group, BehaviorAward $award): bool
+    {
+        $subject = $award->membership;
+
+        return $subject !== null && $this->mayReceiveAwardsAbout($user, $group, $subject);
+    }
+
+    /**
+     * The awards of `$group` this user may read, as a constrained query — or
+     * null when the caller has no standing in the group at all.
+     *
+     * Query-shaped for the same reason as readableThreadsQuery(): the listing
+     * must filter with the SAME decision mayReceiveAwardsAbout() makes row by
+     * row, in one place, so a forbidden award is never even fetched — a guardian
+     * cannot learn what another family's child was marked for by counting rows,
+     * reading a paginator total, or summing an aggregate. The clauses:
+     *
+     *   - leader   -> every award in the group;
+     *   - anyone
+     *     else     -> only awards whose subject membership names the caller's
+     *                 own contact or one of their wards.
+     *
+     * Null (rather than an empty query) distinguishes "not in this group" —
+     * which the controller answers with 403, mirroring the feed and the threads
+     * — from "in the group with nothing to see", which is an empty 200.
+     */
+    public function readableAwardsQuery(?User $user, Group $group): ?Builder
+    {
+        $standing = $this->standingIn($user, $group);
+
+        if (! $standing['in_group']) {
+            return null;
+        }
+
+        // getQuery(): the relation's underlying Eloquent builder, group
+        // constraint already applied — this method promises a Builder.
+        $query = $group->behaviorAwards()->getQuery();
+
+        if ($standing['leader']) {
+            return $query;
+        }
+
+        $targets = array_merge(
+            $standing['participant_contact_ids'],
+            $standing['ward_contact_ids']
+        );
+
+        if ($targets === []) {
+            // A guardian edge with no ward is the only way to reach this. It
+            // grants nothing, and an unconstrained WHERE would grant everything
+            // — so it is pinned shut rather than assumed unreachable.
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereHas('membership', function (Builder $membership) use ($targets): void {
+            $membership->whereIn('contact_id', $targets)
+                // Belt and braces with the audience rule above: an award
+                // mis-attached to a guardian edge must not become readable
+                // because that guardian's own contact is in the target list.
+                ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);
         });
     }
 

@@ -75,6 +75,63 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Behaviour / recognition — the Classroom module (T-013)
+    |--------------------------------------------------------------------------
+    |
+    | Points a leader awards to ONE student against a skill the tenant defined.
+    |
+    | TWO DESIGN CONSTRAINTS LIVE HERE, and neither is a preference:
+    |
+    |   1. A CHILD'S RECORD IS PRIVATE. It is disclosed to the group's leaders,
+    |      to the student, and to that student's own guardians — never to
+    |      another guardian, and never as a class-wide ranking. There is no
+    |      leaderboard setting in this block because there is no leaderboard;
+    |      the decision is enforced in App\Support\GroupAudience and applied as
+    |      a query constraint, not a UI choice a tenant could flip.
+    |   2. NOTHING HERE IS PAYWALLED. No key in this file gates a feature behind
+    |      a plan, and none should ever be added. Behaviour points, notes, the
+    |      per-student summary and the retention sweep are all part of the base
+    |      product. See .claude/rules/groups.md.
+    |
+    */
+
+    'behavior' => [
+
+        /*
+         * Retention window, in days, applied to an award that does not carry an
+         * explicit `retained_until` — the same default-bounded stance as the
+         * feed and the messaging threads, and for the same reason: a behaviour
+         * record about a child should not outlive its usefulness by accident.
+         * The model stamps `retained_until = now + this` on create, and the
+         * shared `groups:purge-feed` sweep force-deletes the row (rows only; no
+         * bytes are involved) once it passes.
+         *
+         * Set to 0 (or a negative number) to keep awards indefinitely unless a
+         * caller sets `retained_until` itself.
+         */
+        'retention_days' => (int) env('GROUP_BEHAVIOR_RETENTION_DAYS', 365),
+
+        /*
+         * Ceiling on the note attached to one award, enforced at the request
+         * boundary. A note is a sentence of context ("helped a new student
+         * settle in"), not a case file — anything longer belongs in a
+         * conversation with the guardian, which the messaging threads already
+         * carry.
+         */
+        'max_note_length' => (int) env('GROUP_BEHAVIOR_MAX_NOTE_LENGTH', 1000),
+
+        /*
+         * Bound on the magnitude of a single award's point value, enforced at
+         * the request boundary in BOTH directions (-N..N). Not a policy about
+         * how a school should weight its skills — it is a guard against a
+         * fat-fingered 100000 silently dominating every summary a parent reads.
+         */
+        'max_points' => (int) env('GROUP_BEHAVIOR_MAX_POINTS', 100),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Group media
     |--------------------------------------------------------------------------
     |

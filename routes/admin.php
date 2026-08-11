@@ -6,6 +6,8 @@ use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
+use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
+use App\Http\Controllers\AdminDashboard\BehaviorSkillsController;
 use App\Http\Controllers\AdminDashboard\ContactCredentialsController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
@@ -572,6 +574,58 @@ Route::prefix('admin')->group(function () {
                         Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
                         Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');
                         Route::delete('/{thread_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Behaviour / recognition — the Classroom module (T-013).
+                //
+                // The VOCABULARY first: per-tenant skills ("Participation",
+                // "Kindness", "Disruption"). Not group-scoped and not about any
+                // child, so it takes the plain contacts permissions with no
+                // GroupAudience check — reading a drop-down discloses nothing.
+                Route::prefix('{masjid_id}/behavior-skills')
+                    ->controller(BehaviorSkillsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{skill_id}', 'show')->middleware('permission:view contacts');
+                        Route::put('/{skill_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{skill_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The AWARDS themselves — a child's behaviour record. Same two
+                // gates as the feed: WRITING (award/revoke) is `manage
+                // contacts`, roster administration; READING additionally
+                // requires standing in the group, decided by
+                // App\Support\GroupAudience.
+                //
+                // A CHILD'S RECORD IS PRIVATE BY DESIGN, and that is the point
+                // of this slice: an award reaches the group's leaders, the
+                // student, and THAT student's own guardians — never another
+                // guardian in the same group, and never a class-wide ranking.
+                // There is deliberately no leaderboard route below, and the
+                // listings are constrained by the audience query so a forbidden
+                // award is never fetched. Nothing here is paywalled. See
+                // .claude/rules/groups.md.
+                //
+                // The per-student routes sit under .../members/{membership_id}
+                // because a student IS their membership edge — the same shape a
+                // guardian edge and a participant thread already use.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(BehaviorAwardsController::class)
+                    ->group(function () {
+                        Route::get('/awards', 'index')->middleware('permission:view contacts');
+                        Route::post('/awards', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/awards/{award_id}', 'destroy')->middleware('permission:manage contacts');
+
+                        // Per-student. The summary route is registered FIRST, so
+                        // the more specific path wins the match — the same
+                        // ordering discipline as the donations/stats block
+                        // above, where a `/{id}` pattern would otherwise
+                        // swallow a named sub-resource.
+                        Route::get('/members/{membership_id}/awards/summary', 'summary')
+                            ->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}/awards', 'forMember')
+                            ->middleware('permission:view contacts');
                     });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
