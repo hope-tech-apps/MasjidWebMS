@@ -38,9 +38,20 @@ use Illuminate\Support\Facades\DB;
  *  - **MySQL** (production runs 8.4 on DigitalOcean's managed cluster) has NO
  *    partial indexes at any version, so `WHERE …` is simply not available. The
  *    equivalent, and the same technique the design already commits to for the S2
- *    pivot's one-default-per-user rule, is a STORED generated column that
+ *    pivot's one-default-per-user rule, is a VIRTUAL generated column that
  *    collapses "not applicable" to NULL, indexed uniquely:
  *        active_owner_user_id = CASE WHEN deleted_at IS NULL THEN user_id END
+ *    VIRTUAL, NOT STORED, and that distinction is load-bearing. A STORED
+ *    generated column cannot be added in place: it forces ALGORITHM=COPY, a full
+ *    table rebuild, and `masjids` is the parent of FIFTY-FOUR foreign keys.
+ *    MySQL 8.4 refuses the rebuild with "General error: 1215 Cannot add foreign
+ *    key constraint" — which is what it actually did, mid-deploy, on
+ *    2026-08-11. A VIRTUAL column is a metadata-only change, and MySQL 8.0+
+ *    fully supports a UNIQUE secondary index on one (verified against the
+ *    production engine: duplicate live owner rejected, multiple soft-deleted
+ *    and multiple unowned rows accepted). The column is computed on read, which
+ *    costs nothing here because it is only ever read through the index.
+ *
  *    Rows that are soft-deleted or unowned generate NULL, and MySQL also treats
  *    NULLs as distinct in a UNIQUE index — so exactly the same set of rows is
  *    constrained as under SQLite's partial index.
@@ -83,7 +94,7 @@ return new class extends Migration
         if (DB::getDriverName() === 'mysql') {
             DB::statement(
                 'ALTER TABLE masjids ADD COLUMN ' . self::COLUMN . ' BIGINT UNSIGNED'
-                . ' GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN user_id ELSE NULL END) STORED'
+                . ' GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN user_id ELSE NULL END) VIRTUAL'
             );
 
             DB::statement('CREATE UNIQUE INDEX ' . self::INDEX . ' ON masjids (' . self::COLUMN . ')');
