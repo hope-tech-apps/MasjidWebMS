@@ -388,6 +388,15 @@ class PageSectionsController extends Controller
             SectionType::MISSION_VISION => ['items.*.icon_url'],
             SectionType::IMAGE => ['image_url'],
             SectionType::CAROUSEL => ['slides.*.image_url'],
+            // School types: one array index deep, which is all handleArrayImageUploads
+            // can re-key. admissions_tuition carries no images at all.
+            SectionType::STAFF_DIRECTORY => ['members.*.photo_url'],
+            SectionType::PROGRAMS => ['programs.*.image_url'],
+            // Community types: one array index deep, same limit. The eligibility
+            // block on services_eligibility is a fixed object with no image, and
+            // impact_stats carries no images at all.
+            SectionType::SERVICES_ELIGIBILITY => ['services.*.image_url'],
+            SectionType::PROVIDERS_DIRECTORY => ['providers.*.photo_url'],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };

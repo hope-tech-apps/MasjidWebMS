@@ -17,6 +17,7 @@ use App\Models\MasjidMobileAppFeature;
 use App\Models\MasjidSocialMediaLink;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
+use App\Support\FormTemplates;
 use App\Support\MobileCache;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -80,6 +81,7 @@ class OnboardingController extends Controller
                 // ---- Masjid record (mirrors MasjidsController@store, + timezone) ----
                 $masjid = Masjid::create([
                     'name' => $request->input('name'),
+                    'org_type' => $request->input('org_type'),
                     'email' => $request->input('email'),
                     'phone' => $request->input('phone'),
                     'address' => $request->input('address'),
@@ -170,19 +172,32 @@ class OnboardingController extends Controller
                 // chosen keys (an all-unchecked selection legitimately enables
                 // none — the flag disambiguates it from an absent field, since
                 // multipart serialization drops empty arrays). Without the flag
-                // (defensive / non-wizard callers) every feature is on, matching
-                // MasjidsController@store.
+                // the tenant falls back to its VERTICAL's bundle
+                // (config/verticals.php), so a school never has the worship
+                // modules switched on. For a masjid that bundle is the whole
+                // seeded catalog, which is the previous "everything on"
+                // behaviour unchanged.
                 $explicitFeatures = $request->has('feature_keys_provided');
-                $selected = $request->input('feature_keys', []);
+                $selected = $explicitFeatures
+                    ? $request->input('feature_keys', [])
+                    : $masjid->defaultFeatureKeys();
                 foreach (MobileAppFeature::all() as $feature) {
                     MasjidMobileAppFeature::create([
                         'masjid_id' => $masjid->id,
                         'feature_id' => $feature->id,
-                        'is_available' => $explicitFeatures
-                            ? in_array($feature->key, $selected, true)
-                            : true,
+                        'is_available' => in_array($feature->key, $selected, true),
                     ]);
                 }
+
+                // ---- Vertical form templates (T-011) ----
+                // Ready-to-edit starter forms for the tenant's vertical
+                // (config/form_templates.php): a school is born with its
+                // Admissions Interest / Careers Application / Withdrawal
+                // Request forms. Masjid and community list NO templates, so
+                // this is a no-op for them — provisioning stays byte-identical.
+                // Seeded rows are ordinary forms (same table, same schema
+                // vocabulary), indistinguishable from admin-built ones.
+                FormTemplates::applyTo($masjid);
 
                 // ---- App-publishing config (platform selection + managed/BYO) ----
                 // `platforms` (the Platforms step) is the source of truth for WHICH
@@ -221,6 +236,7 @@ class OnboardingController extends Controller
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
 
             $masjid->load('logo', 'footer_logo', 'country', 'city', 'appPublishing');
+            $masjid->append(Masjid::ADMIN_APPENDS);
 
             return response()->json([
                 'status' => 'success',

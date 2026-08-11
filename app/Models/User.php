@@ -38,6 +38,33 @@ class User extends Authenticatable implements HasMedia
     ];
 
     /**
+     * The spatie guard this model's roles and permissions are registered under.
+     *
+     * This states explicitly what was previously being INFERRED — and inferred
+     * correctly only by accident. Spatie derives a model's guard name from
+     * `Spatie\Permission\Guard::getDefaultName()`, which prefers
+     * `config('auth.defaults.guard')` whenever that guard also appears in the
+     * list of `auth.guards` entries whose provider model is this class.
+     *
+     * The trap: `AuthManager::shouldUse()` REWRITES `auth.defaults.guard` in the
+     * config repository at runtime, and both `auth:sanctum` and
+     * `Sanctum::actingAs()` call it. So inside any authenticated admin request
+     * the "default guard" is literally `sanctum`. Before T-015a pinned
+     * `auth.guards.sanctum`, `sanctum` was not a declared guard, so it could
+     * never match and resolution fell through to `web` — which is where
+     * RolesAndPermissionsSeeder registers all 8 permissions. Declaring the
+     * sanctum guard made `sanctum` matchable, and every `permission:`-gated CRM
+     * route began 403ing with "There is no permission named `view contacts` for
+     * guard `sanctum`".
+     *
+     * Pinning it here restores exactly the previous resolution (`web`, in every
+     * context — console, web session and token request alike) and makes it
+     * independent of how many guards point at this model, which the family guard
+     * in T-015c will add more of. Keep it in step with the seeder's guard.
+     */
+    protected $guard_name = 'web';
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var list<string>
@@ -85,6 +112,29 @@ class User extends Authenticatable implements HasMedia
     public function masjid()
     {
         return $this->hasOne(Masjid::class);
+    }
+
+    /**
+     * Every organisation this user holds a membership in (`masjid_user`).
+     *
+     * The pivot that S3 will resolve the tenant from — one human, many org
+     * affiliations, which `masjid()` above (a `hasOne`) cannot express.
+     *
+     * **Nothing consumes this yet, and `masjid()` is untouched.** S2 adds the
+     * table, the backfill and this relation only; tenant resolution still runs
+     * entirely off `masjids.user_id`, so behaviour is identical to before. At most
+     * one of these rows may carry `is_default = 1`, enforced by a unique index
+     * rather than by convention — see `create_masjid_user_table`.
+     *
+     * `hasMany(MasjidUser)` rather than `belongsToMany(Masjid)` on purpose: the
+     * design's resolver takes the MEMBERSHIP itself
+     * (`TenantContext::setFromMembership(MasjidUser)`), so the row — with its
+     * `role` and `is_default` — has to be the thing that is returned, not a masjid
+     * with a pivot bag hanging off it.
+     */
+    public function memberships()
+    {
+        return $this->hasMany(MasjidUser::class);
     }
 
     /**

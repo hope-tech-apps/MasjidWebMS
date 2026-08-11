@@ -25,6 +25,14 @@ use Illuminate\Support\Facades\DB;
  * Runs in the UNBOUND webhook context, so masjid_id is set/filtered explicitly
  * (the BelongsToMasjid creating hook only stamps when a tenant is bound). All
  * amounts are integer minor units.
+ *
+ * ONE seam, TWO callers (T-007b). The Stripe webhook calls this when an event
+ * proves a charge settled; an admin calls it (via AdminDashboard\DonationsController
+ * ::issueReceipt) for an OFFLINE gift a treasurer recorded by hand. Both go
+ * through here on purpose: the serial sequence is per MASJID, not per channel, so
+ * a cash gift and a card gift interleave in one gap-free 1, 2, 3, … run and the
+ * idempotency guarantee is the same code for both. A second issuance path would
+ * mean a second sequence — the exact hole regulators look for.
  */
 class ReceiptService
 {
@@ -86,6 +94,16 @@ class ReceiptService
                 'advantage_amount' => $advantage,
                 'eligible_amount' => $eligible,
                 'currency' => $donation->currency,
+                // Provenance SNAPSHOT. A Stripe gift leaves both null — its proof
+                // is the signed webhook event, and donations.payment_method is an
+                // offline-only column, so the online receipt row is unchanged. An
+                // offline gift carries what the treasurer asserted (cash, cheque
+                // no. 1189, …) onto the document itself, because that is the only
+                // evidence the receipt rests on. Copied rather than joined so
+                // correcting the donation later cannot rewrite a receipt a donor
+                // already filed.
+                'payment_method' => $donation->payment_method,
+                'payment_reference' => $donation->check_number,
                 'jurisdiction' => 'US',
                 'status' => 'issued',
             ]);

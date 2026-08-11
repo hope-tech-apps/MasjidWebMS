@@ -1,10 +1,15 @@
 <?php
 
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
+use App\Http\Controllers\AdminDashboard\AppointmentRequestsController;
 use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
+use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
+use App\Http\Controllers\AdminDashboard\BehaviorSkillsController;
+use App\Http\Controllers\AdminDashboard\BroadcastsController;
+use App\Http\Controllers\AdminDashboard\ContactCredentialsController;
 use App\Http\Controllers\AdminDashboard\ContactReasonsController;
 use App\Http\Controllers\AdminDashboard\ContactRequestsController;
 use App\Http\Controllers\AdminDashboard\ContactsController;
@@ -19,9 +24,18 @@ use App\Http\Controllers\AdminDashboard\FlyersController;
 use App\Http\Controllers\AdminDashboard\FlyerTemplatesController;
 use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
+use App\Http\Controllers\AdminDashboard\RegistrationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
+use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
+use App\Http\Controllers\AdminDashboard\GroupConsentController;
+use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
+use App\Http\Controllers\AdminDashboard\GroupPostsController;
+use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\GroupThreadsController;
+use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
+use App\Http\Controllers\AdminDashboard\ImpactMetricsController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
@@ -34,6 +48,7 @@ use App\Http\Controllers\AdminDashboard\MasjidsController;
 use App\Http\Controllers\AdminDashboard\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\AdminDashboard\MasjidOneSignalController;
 use App\Http\Controllers\AdminDashboard\NotificationsController;
+use App\Http\Controllers\AdminDashboard\OfferingsController;
 use App\Http\Controllers\AdminDashboard\OnboardingController;
 use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
 use App\Http\Controllers\AdminDashboard\FormInsightsController;
@@ -150,6 +165,29 @@ Route::prefix('admin')->group(function () {
                 Route::delete('/{annoncement_id}', 'destroy');
                 Route::delete('/{annoncement_id}/trash', 'moveToTrash');
             }));
+
+            // Unified publish composer (T-008). ONE compose action reaching the
+            // announcements feed, push, the TV signage board and email — each
+            // channel opt-in per send, each with its own recorded outcome.
+            //
+            // It ORCHESTRATES the routes above and below; it does not replace
+            // them. Every existing announcement / notification / splash endpoint
+            // keeps working byte-for-byte as it does today
+            // (BroadcastChannelRegressionTest pins that).
+            //
+            // Deliberately OUTSIDE the `crm` group and with NO `permission:`
+            // gate — same reasoning as the Flyer Studio further down: publishing
+            // a Jumu'ah notice is content authoring, not the CRM money path, and
+            // gating it on masjids.crm_enabled would take announcements and push
+            // away from every masjid that has not bought the CRM. The one
+            // channel that DOES read the CRM (email, whose recipients are
+            // contacts) is checked inside the controller, up front, and 403s the
+            // whole request rather than half-sending.
+            Route::prefix('{masjid_id}/broadcasts')->controller(BroadcastsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::get('/{broadcast_id}', 'show');
+            });
 
             // Masjid splash announcements (in-app message / splash modal)
             Route::prefix('{masjid_id}/splash-announcements')->controller(SplashAnnouncementsController::class)->group(function () {
@@ -291,6 +329,11 @@ Route::prefix('admin')->group(function () {
                 Route::get('/roster', 'roster');
                 Route::get('/', 'index');
                 Route::get('/{response_id}', 'show');
+                // Uploaded files (a careers form's résumé) live on a PRIVATE disk with
+                // no public URL; this is the only way to read one. Same middleware as
+                // the rest of the group — auth:sanctum + admin + tenant — so an admin
+                // can only ever download an attachment their own masjid collected.
+                Route::get('/{response_id}/attachments/{attachment_id}', 'downloadAttachment');
                 Route::put('/{response_id}', 'update');
                 Route::delete('/{response_id}', 'destroy');
             });
@@ -417,14 +460,253 @@ Route::prefix('admin')->group(function () {
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
                 });
 
+                // Volunteer credentials (T-023, Community vertical) — a
+                // contact's medical licenses, background checks and
+                // certifications, nested under the contact they belong to.
+                // Same guardrail as contacts: isolation comes from `tenant` +
+                // BelongsToMasjid, and the controller re-resolves the
+                // masjid -> contact -> credential chain so a foreign id
+                // anywhere in it is a 404.
+                //
+                // Gated by the CONTACTS permissions on purpose: a credential is
+                // an attribute OF the member directory, and anyone trusted to
+                // see or manage a person's record is trusted to see or manage
+                // what they are licensed to do. Minting `view/manage
+                // credentials` would change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin
+                // (Permission::count() === 8), which this additive slice must
+                // not do — the same call .claude/rules/groups.md records for
+                // groups. The document download sits behind the SAME stack
+                // (auth:sanctum + admin + tenant + crm + permission): a scanned
+                // license is PII and never gets a public URL
+                // (.claude/rules/private-uploads.md).
+                Route::prefix('{masjid_id}/contacts/{contact_id}/credentials')
+                    ->controller(ContactCredentialsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{credential_id}', 'show')->middleware('permission:view contacts');
+                        Route::put('/{credential_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{credential_id}', 'destroy')->middleware('permission:manage contacts');
+                        Route::get('/{credential_id}/document', 'downloadDocument')->middleware('permission:view contacts');
+                    });
+
+                // Groups — the second scoping level of the core (org -> group ->
+                // member): classrooms for a School, halaqat / weekend-school
+                // circles for a Masjid, volunteer teams for a Community org.
+                // Same guardrail as contacts: {masjid_id} stays in the path by
+                // convention, isolation comes from `tenant` + BelongsToMasjid,
+                // and the controllers never hand-filter.
+                //
+                // Gated by the CONTACTS permissions on purpose. A group is a
+                // structure OVER the member directory — it holds no data of its
+                // own beyond names and roles, and anyone trusted to manage the
+                // directory is trusted to arrange it. Minting `view/manage
+                // groups` would also change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin,
+                // which this additive slice must not do. Splitting the two is a
+                // deliberate later step. See .claude/rules/groups.md.
+                Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{group_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{group_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Group rosters. A membership links an existing Contact to a
+                // group with a role; a guardian membership additionally names the
+                // member it is a guardian OF, within that group.
+                Route::prefix('{masjid_id}/groups/{group_id}/members')
+                    ->controller(GroupMembershipsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Guardian consent, recorded against ONE guardian edge — the
+                // obligation .claude/rules/groups.md records: "a guardian edge
+                // records a relationship, NOT consent." Written here, CHECKED at
+                // the point of disclosure by App\Support\GroupAudience. Managing
+                // consent is roster administration, so it takes the same
+                // `manage contacts` permission the roster does.
+                Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/consent')
+                    ->controller(GroupConsentController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:view contacts');
+                        Route::put('/', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The group's PRIVATE activity feed — the "class story". Two
+                // different questions, two different gates:
+                //   - WRITING is `manage contacts`, like the roster beside it;
+                //     the post records which account published it.
+                //   - READING additionally requires being IN the group, decided
+                //     by App\Support\GroupAudience. `view contacts` is necessary
+                //     but NOT sufficient: these posts are about children, and
+                //     .claude/rules/groups.md forbids a group-scoped read from
+                //     reaching the whole tenant.
+                // Images live on the PRIVATE disk with no public URL; the
+                // attachment route is the only way to read one, and it refuses a
+                // guardian whose consent does not cover media.
+                Route::prefix('{masjid_id}/groups/{group_id}/posts')
+                    ->controller(GroupPostsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{post_id}', 'show')->middleware('permission:view contacts');
+                        Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment')
+                            ->middleware('permission:view contacts');
+                        Route::put('/{post_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{post_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Appointment requests (Community vertical, T-021) — the free
+                // clinic's triage queue. Same guardrail as contacts/groups:
+                // {masjid_id} stays in the path by convention, isolation comes
+                // from `tenant` + BelongsToMasjid, and the controller never
+                // hand-filters. date_of_birth / reason / note bodies are
+                // encrypted at rest and surface ONLY here, never publicly.
+                //
+                // Gated by the CONTACTS permissions on purpose, the same
+                // precedent as groups above: these are people records in the
+                // member directory's trust domain, and minting `view/manage
+                // appointments` would change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin.
+                // Splitting them out is a deliberate later step.
+                Route::prefix('{masjid_id}/appointment-requests')->controller(AppointmentRequestsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::get('/{appointment_request_id}', 'show')->middleware('permission:view contacts');
+                    Route::patch('/{appointment_request_id}/status', 'updateStatus')->middleware('permission:manage contacts');
+                    Route::post('/{appointment_request_id}/notes', 'storeNote')->middleware('permission:manage contacts');
+                });
+                // Group messaging threads — the teacher <-> parent channel
+                // (T-005c). Same permission arrangement as the feed above,
+                // with one deliberate addition: posting a MESSAGE carries
+                // `manage contacts` here AND a read-entitlement check in the
+                // controller (App\Support\GroupAudience::mayReceiveThread) —
+                // a conversation is only writable by people who may see it,
+                // unlike an announcement, which an off-roster admin may
+                // publish without being able to read back. A
+                // participant-scoped thread is readable ONLY by the group's
+                // leaders and the specific member/guardian it concerns; the
+                // list endpoint pre-filters to the same rule.
+                Route::prefix('{masjid_id}/groups/{group_id}/threads')
+                    ->controller(GroupThreadsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{thread_id}', 'show')->middleware('permission:view contacts');
+                        Route::post('/{thread_id}/messages', 'storeMessage')->middleware('permission:manage contacts');
+                        Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
+                        Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');
+                        Route::delete('/{thread_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Behaviour / recognition — the Classroom module (T-013).
+                //
+                // The VOCABULARY first: per-tenant skills ("Participation",
+                // "Kindness", "Disruption"). Not group-scoped and not about any
+                // child, so it takes the plain contacts permissions with no
+                // GroupAudience check — reading a drop-down discloses nothing.
+                Route::prefix('{masjid_id}/behavior-skills')
+                    ->controller(BehaviorSkillsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::get('/{skill_id}', 'show')->middleware('permission:view contacts');
+                        Route::put('/{skill_id}', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/{skill_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The AWARDS themselves — a child's behaviour record. Same two
+                // gates as the feed: WRITING (award/revoke) is `manage
+                // contacts`, roster administration; READING additionally
+                // requires standing in the group, decided by
+                // App\Support\GroupAudience.
+                //
+                // A CHILD'S RECORD IS PRIVATE BY DESIGN, and that is the point
+                // of this slice: an award reaches the group's leaders, the
+                // student, and THAT student's own guardians — never another
+                // guardian in the same group, and never a class-wide ranking.
+                // There is deliberately no leaderboard route below, and the
+                // listings are constrained by the audience query so a forbidden
+                // award is never fetched. Nothing here is paywalled. See
+                // .claude/rules/groups.md.
+                //
+                // The per-student routes sit under .../members/{membership_id}
+                // because a student IS their membership edge — the same shape a
+                // guardian edge and a participant thread already use.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(BehaviorAwardsController::class)
+                    ->group(function () {
+                        Route::get('/awards', 'index')->middleware('permission:view contacts');
+                        Route::post('/awards', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/awards/{award_id}', 'destroy')->middleware('permission:manage contacts');
+
+                        // Per-student. The summary route is registered FIRST, so
+                        // the more specific path wins the match — the same
+                        // ordering discipline as the donations/stats block
+                        // above, where a `/{id}` pattern would otherwise
+                        // swallow a named sub-resource.
+                        Route::get('/members/{membership_id}/awards/summary', 'summary')
+                            ->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}/awards', 'forMember')
+                            ->middleware('permission:view contacts');
+                    });
+
+                // Qur'an memorization — hifz tracking (T-014).
+                //
+                // The halaqa's daily record: sabak (the new lesson), sabqi
+                // (recent memorisation under revision), manzil (the long
+                // rotation). Same two gates as the awards above: WRITING
+                // (record/strike) is `manage contacts`, teaching the halaqa;
+                // READING additionally requires standing in the group, decided
+                // by App\Support\GroupAudience — through the SAME code path the
+                // awards use, so a child's Qur'an record and their behaviour
+                // record can never disagree about who may see them.
+                //
+                // A CHILD'S RECORD IS PRIVATE: an entry reaches the halaqa's
+                // leaders, the student, and THAT student's own guardians —
+                // never another guardian in the same halaqa. There is
+                // deliberately no group-wide progress or "top memorisers"
+                // route, and the listings are constrained by the audience query
+                // so a forbidden entry is never fetched. Nothing here is
+                // paywalled. See .claude/rules/groups.md.
+                //
+                // The per-student routes sit under .../members/{membership_id}
+                // because a student IS their membership edge — the same shape a
+                // guardian edge, a participant thread and an award already use.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(HifzEntriesController::class)
+                    ->group(function () {
+                        Route::get('/hifz', 'index')->middleware('permission:view contacts');
+                        Route::post('/hifz', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/hifz/{entry_id}', 'destroy')->middleware('permission:manage contacts');
+
+                        // Per-student. The progress route is registered FIRST so
+                        // the more specific path wins the match — the same
+                        // ordering discipline as the awards block above.
+                        Route::get('/members/{membership_id}/hifz/progress', 'progress')
+                            ->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}/hifz', 'forMember')
+                            ->middleware('permission:view contacts');
+                    });
+
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
                 // middleware + BelongsToMasjid — controllers never hand-filter by
                 // masjid_id. See .claude/rules/stripe-payments.md.
 
                 // Stripe Connect (Standard account) onboarding for this masjid.
+                // NOTE: Stripe's own redirect targets are the PUBLIC landings in
+                // routes/web.php (connect.return / connect.refresh) — the admin's
+                // browser arrives there with no token. `/status` is the authed
+                // JSON view of the same state, for the SPA.
                 Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
                     Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
-                    Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
+                    Route::get('/status', 'status')->middleware('permission:manage donations');
                 });
 
                 // Donation funds (designations). Viewing is gated by
@@ -464,6 +746,18 @@ Route::prefix('admin')->group(function () {
                     // remain webhook-only; this is the only write path for donations.
                     Route::post('/', 'store')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
+                    // Issue the tax receipt for an OFFLINE gift — a deliberate
+                    // treasurer action, never automatic on entry (see the
+                    // controller). Consumes a serial from the masjid's gap-free
+                    // sequence, so it is `manage donations` like the offline
+                    // store route above. Stripe gifts stay webhook-only.
+                    Route::post('/{donation_id}/receipt', 'issueReceipt')
+                        ->middleware('permission:manage donations');
+                    // Printable copy of the receipt this gift already issued.
+                    // Read-only rendering of the stored receipt row, so it is
+                    // `view donations` like the rest of the ledger's read side.
+                    Route::get('/{donation_id}/receipt/pdf', 'receiptPdf')
+                        ->middleware('permission:view donations');
                 });
 
                 // Recurring donations (standing commitments). Read side is
@@ -473,6 +767,102 @@ Route::prefix('admin')->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
                     Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
+                });
+
+                // Registration + billing engine (T-006d admin surface) —
+                // offerings, their IMMUTABLE fee plans, and the roster of one
+                // offering with the three explicit admin actions on a
+                // registration. See docs/t006-registration-billing-design.md.
+                // Same guardrail as everything above: {masjid_id} stays in the
+                // path by convention, isolation comes from `tenant` +
+                // BelongsToMasjid, and the controllers never hand-filter.
+                //
+                // TWO permission families on purpose, and the split is where
+                // the MONEY is:
+                //   - An OFFERING is a program structure over the member
+                //     directory — a semester, a halaqa, an admission round. It
+                //     holds no price of its own, so it takes the CONTACTS
+                //     permissions, the same call groups and appointment
+                //     requests already made. Reading a roster and promoting
+                //     somebody off the waitlist are likewise roster
+                //     administration, not money.
+                //   - A FEE PLAN *is* a price, an ADJUSTMENT waives part of
+                //     one, and CANCEL stops a live Stripe subscription — those
+                //     take the DONATIONS permissions, the same trust level as
+                //     RecurringDonationsController::cancel, which is the
+                //     closest existing precedent for "an admin stopping money".
+                // Reusing both families rather than minting `view/manage
+                // offerings` keeps the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin
+                // (Permission::count() === 8) unchanged, exactly as the groups
+                // and credentials slices did before this one.
+                Route::prefix('{masjid_id}/offerings')->controller(OfferingsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{offering_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{offering_id}', 'update')->middleware('permission:manage contacts');
+                    // Soft-delete, and refused outright while live registrations
+                    // would be stranded — deactivate (is_active=false) instead.
+                    Route::delete('/{offering_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Fee plans — CREATE and DEACTIVATE only. Plans are IMMUTABLE:
+                // registrations snapshot their price at intake, so editing a
+                // live plan would retroactively restate what somebody agreed to
+                // pay. `update` exists solely to REFUSE with a clear 422 rather
+                // than accept an edit and silently ignore the fields.
+                Route::prefix('{masjid_id}/offerings/{offering_id}/fee-plans')
+                    ->controller(FeePlansController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view donations');
+                        Route::post('/', 'store')->middleware('permission:manage donations');
+                        Route::put('/{fee_plan_id}', 'update')->middleware('permission:manage donations');
+                        Route::patch('/{fee_plan_id}', 'update')->middleware('permission:manage donations');
+                        // Deactivate, never delete: registrations reference the
+                        // plan with a RESTRICT FK and read their currency
+                        // through it.
+                        Route::delete('/{fee_plan_id}', 'destroy')->middleware('permission:manage donations');
+                    });
+
+                // The roster of one offering + the explicit admin actions.
+                // Registrations are created by the PUBLIC endpoints (T-006c)
+                // and advanced by webhooks; there is deliberately no store or
+                // update route here.
+                Route::prefix('{masjid_id}/offerings/{offering_id}/registrations')
+                    ->controller(RegistrationsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::get('/{registration_id}', 'show')->middleware('permission:view contacts');
+                        // Granting aid decides what a family is charged.
+                        Route::post('/{registration_id}/adjustments', 'storeAdjustment')
+                            ->middleware('permission:manage donations');
+                        // Seat administration: capacity is re-checked under the
+                        // offering's row lock, so this can never oversell.
+                        Route::post('/{registration_id}/promote', 'promote')
+                            ->middleware('permission:manage contacts');
+                        // Cancels the Stripe subscription too when one exists.
+                        Route::post('/{registration_id}/cancel', 'cancel')
+                            ->middleware('permission:manage donations');
+                    });
+
+                // Impact report (T-024) — the numbers a grant application or a
+                // funder report asks for, computed from the rows this
+                // organization already holds. READ-ONLY, and it writes nothing
+                // anywhere: the `impact_stats` page section (T-020) stays the
+                // authoritative source of what is PUBLISHED, and its values
+                // stay display text an admin typed. An admin who wants a
+                // computed figure on the public page copies it across by hand.
+                //
+                // Gated by `view contacts`: the report is mostly about people
+                // and program activity, and the CONTACTS family is the same
+                // call groups, credentials and appointment requests already
+                // made. The MONEY-bearing metrics inside it additionally
+                // require `view donations`, checked in the controller — a
+                // caller without it gets the report with those metrics listed
+                // in `meta.omitted`. Reusing both families rather than minting
+                // `view impact` keeps the pinned Permission::count() === 8.
+                Route::prefix('{masjid_id}/impact')->controller(ImpactMetricsController::class)->group(function () {
+                    Route::get('/report', 'report')->middleware('permission:view contacts');
                 });
 
                 // Rental properties + rent payments. A separate component from the

@@ -2,6 +2,25 @@
 
 namespace App\Enums;
 
+/**
+ * The page-builder palette.
+ *
+ * A section type is three things and nothing more: this case, the `content` JSON
+ * shape returned by defaultContent(), and a Vue editor keyed off the value in
+ * resources/vue-app/components/sections/editors. There is no per-type table, no
+ * per-type controller and no registry class — see .claude/rules/section-types.md
+ * for the full list of places one change has to land.
+ *
+ * **The palette is GLOBAL, not per-vertical.** `sectionTypes()` hands every tenant
+ * every case, and nothing here or in config/verticals.php filters by `org_type`.
+ * The school types below are therefore visible to masjid and community tenants too.
+ * That is the status quo being preserved deliberately, not an oversight: gating the
+ * palette would be a new mechanism, and a masjid that wants a staff directory or a
+ * weekend-school tuition table is a real tenant, not a mistake. If per-vertical
+ * offering is ever wanted, add it in ONE place (PageSectionsController@sectionTypes)
+ * keyed off `config/verticals.php`, and keep validation ungated so existing rows
+ * never stop loading.
+ */
 enum SectionType: string
 {
     case PAGE_TITLE = 'page_title';
@@ -30,6 +49,22 @@ enum SectionType: string
     // a YouTube khutbah, a map. See App\Support\EmbedProviders for why the URL is
     // allowlisted by provider rather than free text.
     case EMBED = 'embed';
+    // Manara Schools (T-010). A school's public site has three pages the masjid types
+    // cannot express: who teaches here, what is taught, and what it costs to enrol.
+    // Modelled on the pages alrazischool.org already publishes. The palette is GLOBAL —
+    // these are offered to every tenant, not gated on org_type; see the class docblock
+    // and .claude/rules/section-types.md.
+    case STAFF_DIRECTORY = 'staff_directory';
+    case PROGRAMS = 'programs';
+    case ADMISSIONS_TUITION = 'admissions_tuition';
+    // Manara Community (T-020). Modelled on the pages al-aqsaclinic.org already
+    // publishes: what we do and who qualifies, who provides the care, and the
+    // numbers a funder asks for. The palette is GLOBAL — like the school types
+    // these are offered to every tenant, not gated on org_type; see the class
+    // docblock and .claude/rules/section-types.md.
+    case SERVICES_ELIGIBILITY = 'services_eligibility';
+    case PROVIDERS_DIRECTORY = 'providers_directory';
+    case IMPACT_STATS = 'impact_stats';
 
     /**
      * Get all section type values
@@ -65,6 +100,12 @@ enum SectionType: string
             self::LINK_LIST => 'Link Buttons',
             self::CAROUSEL => 'Image Carousel',
             self::EMBED => 'Embedded Widget',
+            self::STAFF_DIRECTORY => 'Staff & Faculty Directory',
+            self::PROGRAMS => 'Programs & Curriculum',
+            self::ADMISSIONS_TUITION => 'Admissions & Tuition',
+            self::SERVICES_ELIGIBILITY => 'Services & Eligibility',
+            self::PROVIDERS_DIRECTORY => 'Providers & Care Team',
+            self::IMPACT_STATS => 'Impact Numbers',
         };
     }
 
@@ -94,6 +135,12 @@ enum SectionType: string
             self::LINK_LIST => 'A row or stack of link buttons — email, phone, website, external registration links',
             self::CAROUSEL => 'A rotating slideshow of images with optional titles, captions and links',
             self::EMBED => 'A widget from another site — your existing events calendar, a YouTube video, a Google Map or Form',
+            self::STAFF_DIRECTORY => 'The people who work here — photo, role and department, with contact details only if you choose to publish them',
+            self::PROGRAMS => 'Programs or courses of study — grade level, schedule, and what each one covers',
+            self::ADMISSIONS_TUITION => 'Tuition rates, additional fees, payment plans, and the steps to enrol',
+            self::SERVICES_ELIGIBILITY => 'The services you offer and who qualifies for them — criteria, plus one highlighted card for the programme people ask about most',
+            self::PROVIDERS_DIRECTORY => 'The people who provide care — photo, credentials and specialty, grouped by department',
+            self::IMPACT_STATS => 'Headline numbers for funders and visitors — visits served, value of care, volunteer hours',
         };
     }
 
@@ -131,6 +178,25 @@ enum SectionType: string
             // browser. Nothing is pulled from our tables, so this is false — the flag
             // means "this renderer needs data from another endpoint of OURS".
             self::EMBED => false,
+            // The school types are author-supplied too. A staff directory in
+            // particular is NOT a view onto `contacts` or `group_memberships` —
+            // those are private CRM records about families and congregants, and a
+            // public page must never be a window onto them. Publishing a person is
+            // an editorial act, so the names on the page are typed into the section.
+            self::STAFF_DIRECTORY,
+            self::PROGRAMS,
+            self::ADMISSIONS_TUITION => false,
+            // The community types are author-supplied for the same reason. A
+            // providers directory is editorial, never a query over `contacts` —
+            // same rule as staff_directory above. `impact_stats` is deliberately
+            // typed in too: the numbers a clinic publishes to funders are audited
+            // figures for a stated reporting period, not a live count of whatever
+            // rows happen to be in our tables today. If aggregation is ever wanted
+            // it is a new, separately-classified type — flipping this flag would
+            // silently repoint a published number at a different source.
+            self::SERVICES_ELIGIBILITY,
+            self::PROVIDERS_DIRECTORY,
+            self::IMPACT_STATS => false,
         };
     }
 
@@ -301,6 +367,179 @@ enum SectionType: string
                 'height' => null,
                 'aspect' => null,
                 'fallback_text' => '',
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // Manara Schools (T-010)
+            // ---------------------------------------------------------------
+            // The people who work here. Each member is
+            //   ['name' => '', 'role' => '', 'department' => '', 'credentials' => '',
+            //    'bio' => '', 'email' => '', 'phone' => '', 'photo_url' => null]
+            //
+            // ONE flat list, with `department` as a free grouping label the renderer
+            // buckets by ("Administration", "Lower School", "Specialists"), rather
+            // than a nested departments[].members[] tree. That is not a simplification
+            // for its own sake: the section image pipeline matches a SINGLE array
+            // index (`members.*.photo_url` → `members_0_photo_url`), so a second level
+            // of nesting would silently drop every uploaded photo. See
+            // SectionsController::handleArrayImageUploads.
+            //
+            // `show_contact` defaults to FALSE. Publishing a teacher's email address
+            // to the open web is a decision someone has to make on purpose; the
+            // default must not make it for them.
+            self::STAFF_DIRECTORY => [
+                'heading' => '',
+                'description' => '',
+                'members' => [],
+                'layout' => 'grid', // grid | list
+                'columns' => 3,
+                'show_contact' => false,
+                'background_color' => '#ffffff',
+            ],
+            // Courses of study. Each program is
+            //   ['name' => '', 'level' => '', 'schedule' => '', 'summary' => '',
+            //    'highlights' => [], 'image_url' => null, 'link_url' => '', 'link_text' => '']
+            //
+            // `level` (the grade or age band) and `schedule` (the meeting pattern) are
+            // free text on purpose — "Pre-K", "Grades 1–2", "Ages 4–6" and "Mon–Fri,
+            // 8:00 AM–3:00 PM" are all things a real school writes, and no enum
+            // covers them across schools. `highlights` is a plain list of strings:
+            // the curriculum bullets under each program.
+            self::PROGRAMS => [
+                'heading' => '',
+                'description' => '',
+                'programs' => [],
+                'layout' => 'cards', // cards | list | accordion
+                'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // The tuition and fee schedule plus how to apply.
+            //
+            //   tiers[]         ['name' => '', 'badge' => '', 'amount' => '',
+            //                    'period' => '', 'note' => '', 'includes' => []]
+            //   fees[]          ['label' => '', 'amount' => '', 'note' => '']
+            //   payment_plans[] ['label' => '', 'detail' => '']
+            //   steps[]         ['title' => '', 'description' => '']
+            //
+            // Every money value is DISPLAY TEXT, never a number. A real schedule mixes
+            // "$8,000", "Included", "Contact us" and "$250 discount/child" in the same
+            // table, and nothing in this app charges from these values — tuition
+            // billing does not exist here, and the Stripe path is for donations only.
+            // A string says "this is what the page says"; a decimal would imply a
+            // machine reads it. `stats.value` makes the same call for the same reason.
+            //
+            // This section is the PRICE LIST, not the application. Collecting an
+            // applicant's details is the `form` section type over the forms tables
+            // (T-011) — `button_page_id` is how the two are joined: it resolves to
+            // `button_page_url` on read (Section::getContentAttribute), so the apply
+            // button points at a registration page built in the same builder without
+            // anyone typing a URL that can rot.
+            self::ADMISSIONS_TUITION => [
+                'heading' => '',
+                'description' => '',
+                'school_year' => '',
+                'tiers' => [],
+                'fees' => [],
+                'payment_plans' => [],
+                'steps' => [],
+                'disclaimer' => '',
+                'button_text' => '',
+                'button_page_id' => null,
+                'button_link' => null,
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // Manara Community (T-020)
+            // ---------------------------------------------------------------
+            // What we do, and who qualifies. Each service is
+            //   ['name' => '', 'description' => '', 'image_url' => null]
+            //
+            // ONE flat list, for the same reason staff_directory is flat: the
+            // section image pipeline matches a SINGLE array index
+            // (`services.*.image_url` → `services_0_image_url`), so grouping the
+            // services into a nested tree would silently drop every uploaded
+            // photo. See SectionsController::handleArrayImageUploads.
+            //
+            // `eligibility` is a single OBJECT, not a list, and carries no image:
+            // a page states its rules once. `criteria` is a plain list of strings
+            // ("Household income at or below 200% of the Federal Poverty Level").
+            // `highlight` is the one card the page leads with — the free clinic's
+            // "Yellow Card" — kept as its own block so the renderer can style it
+            // differently from the criteria bullets without guessing which bullet
+            // matters. It is a fixed object with no upload, so the one-array-level
+            // limit above does not apply to it.
+            //
+            // `button_page_id` points the call to action at a page in this same
+            // builder (an application form built with the `form` type, say). It
+            // resolves to `button_page_url` at read time — Section::
+            // getContentAttribute — so renaming the target page cannot rot it.
+            self::SERVICES_ELIGIBILITY => [
+                'heading' => '',
+                'description' => '',
+                'services' => [],
+                'layout' => 'cards', // cards | list
+                'columns' => 3,
+                'eligibility' => [
+                    'heading' => '',
+                    'intro' => '',
+                    'criteria' => [],
+                    'note' => '',
+                    'highlight' => [
+                        'badge' => '',
+                        'title' => '',
+                        'subtitle' => '',
+                        'body' => '',
+                    ],
+                ],
+                'button_text' => '',
+                'button_page_id' => null,
+                'button_link' => null,
+                'background_color' => '#ffffff',
+            ],
+            // The people who provide the care. Each provider is
+            //   ['name' => '', 'credential' => '', 'specialty' => '',
+            //    'department' => '', 'photo_url' => null]
+            //
+            // `credential` is the suffix after the name — "MD", "DO", "FNP-C",
+            // "PharmD" — free text, because the list of post-nominals a clinic
+            // publishes has no closed set and differs by state and profession.
+            // `department` is a free grouping LABEL on a FLAT list ("Primary
+            // Care", "Dental", "Behavioral Health"), exactly as
+            // staff_directory.members[].department is, and for exactly the same
+            // reason: a departments[].providers[] tree would nest the photo two
+            // array levels deep and every upload would vanish without an error.
+            //
+            // Editorial content, like staff_directory: these names are typed into
+            // the section, never read out of `contacts` or any other private table.
+            self::PROVIDERS_DIRECTORY => [
+                'heading' => '',
+                'description' => '',
+                'providers' => [],
+                'layout' => 'grid', // grid | list
+                'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // The headline numbers. Each stat is
+            //   ['value' => '', 'label' => '', 'description' => '']
+            //
+            // `value` is DISPLAY TEXT and never a number to format: the figures a
+            // clinic puts in front of funders read "6,000+", "$6.3M" and "1 in 4",
+            // and the rounding, the plus sign and the currency are part of what is
+            // being claimed. Formatting a stored decimal here would change a
+            // published, audited figure. `stats.value` and
+            // `admissions_tuition.tiers[].amount` make the same call.
+            //
+            // `period` is the reporting-period caption ("In 2025", "Since 2010")
+            // shown once for the whole block. An impact number without the window
+            // it covers is not a fact, and a funder will ask; it is optional
+            // because a running total legitimately has none.
+            self::IMPACT_STATS => [
+                'heading' => '',
+                'description' => '',
+                'period' => '',
+                'stats' => [],
+                'layout' => 'row', // row | grid
+                'columns' => 3,
                 'background_color' => '#ffffff',
             ],
         };

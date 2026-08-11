@@ -1,6 +1,7 @@
 import { Admin } from "@/core/types/data/Admin"
 import { Media } from "./Media"
 import { City, Country } from "./Country"
+import { Vertical } from "./Vertical"
 
 export type Masjid = {
     id: number;
@@ -35,6 +36,12 @@ export type Masjid = {
     website_link: string;
     crm_enabled: boolean;
     assistant_enabled: boolean;
+    /**
+     * This tenant's vertical and its terminology pack. Optional because only the
+     * ADMIN endpoints append it — a payload from anywhere else, or one cached
+     * from before it existed, simply has no vertical and reads as a masjid.
+     */
+    vertical?: Vertical;
 }
 
 export const masjid: Masjid = {

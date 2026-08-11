@@ -29,6 +29,9 @@ class MobileCache
     public const CONTACT_REASONS = 'contact_reasons';
     public const SPLASH = 'splash';
     public const APP_CONFIG = 'app.config';   // per-masjid emergency app-version gate
+    // Signage board payload (tvOS). Written by the unified composer's signage
+    // channel, read by GET /mobile/masjids/{id}/signage. See T-008.
+    public const SIGNAGE = 'signage';
 
     // Global resources — change when an admin edits library content (azkar/hadith/tasabih).
     public const AZKAR_ALL = 'azkar.all';
@@ -77,7 +80,7 @@ class MobileCache
         foreach ([
             self::SHOW, self::ABOUT, self::DONATION_LINK, self::GALLERY, self::FEATURES,
             self::ANNOUNCEMENTS, self::EVENTS, self::SERVICES, self::PRAYERS_SETTINGS,
-            self::CONTACT_REASONS, self::SPLASH, self::APP_CONFIG,
+            self::CONTACT_REASONS, self::SPLASH, self::APP_CONFIG, self::SIGNAGE,
         ] as $resource) {
             self::flushMasjid($masjidId, $resource);
         }

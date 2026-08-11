@@ -129,6 +129,15 @@ return [
         // Signing secret used to verify inbound webhooks (the ONLY gate on the
         // webhook route — it is intentionally outside auth/throttle).
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        // The CONNECT endpoint's own signing secret. Events raised on a
+        // connected account (every registration charge — direct charges live on
+        // the ORG's account) are delivered by a separate Stripe webhook
+        // endpoint, which signs with a DIFFERENT secret than the platform
+        // endpoint above. Both are verified fail-closed by
+        // StripeWebhookController; an unset secret simply verifies nothing, it
+        // never waves an event through (docs/t006-registration-billing-design.md
+        // flagged this as a latent gap in all three proposals).
+        'connect_webhook_secret' => env('STRIPE_CONNECT_WEBHOOK_SECRET'),
 
         // Stripe's standard processing fee. Used ONLY to gross up a charge when
         // the donor elects to cover fees so the org still nets the intended
@@ -144,6 +153,31 @@ return [
 
         // Default settlement currency (ISO-4217, lower-case) for new donations.
         'currency' => env('STRIPE_CURRENCY', 'usd'),
+
+        // How long a paid PENDING registration holds its reserved seat while
+        // its Checkout is outstanding (minutes). Set on registrations at
+        // intake (T-006b, RegistrationService); consumed by the
+        // checkout.session.expired handler (T-006c) and the seat-release
+        // reaper (T-006f). The free path never sets a window — it has no
+        // Stripe leg to wait on.
+        'registration_checkout_window_minutes' => (int) env('STRIPE_REGISTRATION_CHECKOUT_WINDOW_MINUTES', 30),
+
+        // GRACE MARGIN for the expired-checkout reaper (T-006f,
+        // registrations:reap-expired), minutes ON TOP OF checkout_expires_at.
+        // The reaper only sweeps holds older than expiry + this.
+        //
+        // Why 15, and why a margin at all: a donor can complete payment in the
+        // final second of their checkout window. Stripe then has to DELIVER
+        // checkout.session.completed / payment_intent.succeeded to us, and that
+        // delivery can lag or need a retry (Stripe's retries start minutes
+        // apart). Sweeping inside that gap cancels a seat somebody has already
+        // paid for, and the only fix is a human refund from the org's own
+        // Stripe dashboard — the org is merchant of record. Holding a dead seat
+        // 15 minutes longer merely delays a waitlist opening. Asymmetric costs,
+        // so the margin is generous. 15 also stays BELOW the 30-minute minimum
+        // checkout window, so a stale hold is never held for more than double
+        // its window.
+        'registration_reaper_grace_minutes' => (int) env('STRIPE_REGISTRATION_REAPER_GRACE_MINUTES', 15),
     ],
 
     /*

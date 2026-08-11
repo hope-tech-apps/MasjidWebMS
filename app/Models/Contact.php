@@ -38,6 +38,28 @@ class Contact extends Model
         ];
     }
 
+    /**
+     * A hard-deleted contact must take its credential DOCUMENTS with it.
+     *
+     * Soft deletes (the normal destroy path) keep credential rows and bytes on
+     * purpose — a mis-click must not destroy a provider's credential history.
+     * But the merge flow force-deletes absorbed placeholder contacts, and on a
+     * hard delete the DB cascade would remove contact_credentials rows without
+     * firing a single model event, orphaning the scans on the private disk
+     * forever (.claude/rules/private-uploads.md). Deleting each credential
+     * through the model here lets its own `deleting` hook reach the disk first.
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (Contact $contact) {
+            if (! $contact->isForceDeleting()) {
+                return;
+            }
+
+            $contact->credentials()->get()->each->delete();
+        });
+    }
+
     /** Card last-4 records for this contact (historical lookup + placeholder merge). */
     public function cards()
     {
@@ -48,5 +70,34 @@ class Contact extends Model
     public function donations()
     {
         return $this->hasMany(Donation::class);
+    }
+
+    /**
+     * This person's places in groups — their own leader/member rows AND the
+     * guardian edges they hold over someone else. Additive: groups reference a
+     * contact, they never duplicate one. See .claude/rules/groups.md.
+     */
+    public function groupMemberships()
+    {
+        return $this->hasMany(GroupMembership::class);
+    }
+
+    /** The groups this contact appears in, in any role. */
+    public function groups()
+    {
+        return $this->belongsToMany(Group::class, 'group_memberships')
+            ->withPivot(['role', 'guardian_of_contact_id', 'joined_at'])
+            ->withTimestamps();
+    }
+
+    /**
+     * This person's credentials — a Community org's volunteer licenses,
+     * background checks and certifications (T-023). Additive: credentials
+     * reference a contact, they never duplicate one. See
+     * .claude/rules/credentials.md.
+     */
+    public function credentials()
+    {
+        return $this->hasMany(ContactCredential::class);
     }
 }

@@ -14,10 +14,10 @@ use App\Http\Controllers\Mobile\NotificationsController;
 use App\Http\Controllers\Mobile\PrayersController;
 use App\Http\Controllers\Mobile\AppConfigController;
 use App\Http\Controllers\Mobile\ServicesController;
+use App\Http\Controllers\Mobile\SignageController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
 use App\Http\Controllers\ProvisioningCallbackController;
-use App\Http\Controllers\PusherWebhookController;
 use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
 
@@ -67,6 +67,13 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // Web (Nuxt) reads this; mobile apps get the same content via OneSignal IAM.
         Route::get('/{masjid_id}/splash', [SplashAnnouncementsController::class, 'current']);
 
+        // tvOS signage board. The tvOS client has always asked for a board
+        // endpoint that did not exist (docs/recon-2026-08-11.md); this is it.
+        // Serves the broadcasts whose signage channel was selected and whose
+        // display window is open — see App\Services\Broadcast\Channels\SignageChannel.
+        // Additive: no existing endpoint changes shape or behaviour.
+        Route::get('/{masjid_id}/signage', [SignageController::class, 'index']);
+
         // Contact form: writes to DB, public to anonymous callers — strict throttle.
         Route::prefix('{masjid_id}/contact-us')->controller(ContactUsController::class)->group(function () {
             Route::get('/reasons', 'reasonsList');
@@ -104,16 +111,8 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
 });
 
 /*
- * Pusher webhook — signature-verified inside the controller. No throttle here
- * because Pusher is the legitimate caller and signature already gates abuse.
- */
-Route::prefix('pusher')->group(function () {
-    Route::post('notified', [PusherWebhookController::class, 'afterNotificationBroadcasted']);
-});
-
-/*
  * Stripe webhook — the SOURCE OF TRUTH for donation state. Registered OUTSIDE
- * auth + throttle (like the Pusher webhook above): the HMAC signature verified
+ * auth + throttle: the HMAC signature verified
  * inside the controller against STRIPE_WEBHOOK_SECRET is the only gate, and
  * Stripe is the legitimate caller. Handler is idempotent + dedups event ids.
  */
@@ -136,12 +135,21 @@ Route::prefix('provisioning')->group(function () {
 });
 
 /*
- * The /api/spa/broadcast debug endpoint that fired TestNotificationEvent without
- * authentication was REMOVED in the security sweep. It allowed any unauthenticated
- * caller to broadcast arbitrary messages to a private Pusher channel. If you need
- * it during development, re-add it under a `local` env guard:
+ * The Pusher realtime path was REMOVED on 2026-08-11 after an audit found every
+ * part of it inert: no event was ever dispatched (the /api/spa/broadcast debug
+ * endpoint that fired one had already been deleted in the security sweep, for
+ * allowing unauthenticated broadcasts to a private channel); the webhook that
+ * confirmed delivery could never authenticate, because PUSHER_WEBHOOK_SECRET was
+ * never set in production and it fails closed; and the flag it wrote,
+ * `notifications.is_broadcasted`, does not exist as a column and was not
+ * fillable, so Eloquent silently dropped the write while the endpoint answered
+ * "Notification broadcast confirmed".
  *
- *   if (app()->environment('local')) { Route::post('/spa/broadcast', ...); }
+ * Per-channel delivery is now recorded properly by T-008: see `broadcasts` and
+ * `broadcast_deliveries`, and .claude/rules/broadcasts.md.
+ *
+ * Production still has BROADCAST_CONNECTION=pusher and PUSHER_* credentials in
+ * its .env; nothing reads them any more, so they can be retired at leisure.
  */
 
 require 'api_v1.php';

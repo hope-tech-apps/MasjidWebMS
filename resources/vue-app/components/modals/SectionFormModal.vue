@@ -299,6 +299,12 @@ import ImageSectionEditor from '@/components/sections/editors/ImageSectionEditor
 import LinkListSectionEditor from '@/components/sections/editors/LinkListSectionEditor.vue';
 import CarouselSectionEditor from '@/components/sections/editors/CarouselSectionEditor.vue';
 import EmbedSectionEditor from '@/components/sections/editors/EmbedSectionEditor.vue';
+import StaffDirectorySectionEditor from '@/components/sections/editors/StaffDirectorySectionEditor.vue';
+import ProgramsSectionEditor from '@/components/sections/editors/ProgramsSectionEditor.vue';
+import AdmissionsTuitionSectionEditor from '@/components/sections/editors/AdmissionsTuitionSectionEditor.vue';
+import ServicesEligibilitySectionEditor from '@/components/sections/editors/ServicesEligibilitySectionEditor.vue';
+import ProvidersDirectorySectionEditor from '@/components/sections/editors/ProvidersDirectorySectionEditor.vue';
+import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -373,6 +379,19 @@ const editorMap: Record<SectionType, any> = {
     'link_list': LinkListSectionEditor,
     'carousel': CarouselSectionEditor,
     'embed': EmbedSectionEditor,
+    // Manara Schools (T-010). `editorMap` is keyed by the SectionType union, so a
+    // type added to the backend enum and to PageSection.ts without an entry here
+    // is a compile error — which is the point: the dropdown would otherwise offer
+    // the type (it comes from the backend) and render an empty editor pane.
+    'staff_directory': StaffDirectorySectionEditor,
+    'programs': ProgramsSectionEditor,
+    'admissions_tuition': AdmissionsTuitionSectionEditor,
+    // Manara Community (T-020). Same rule as the school types above: the backend
+    // enum puts these in the dropdown whether or not they are keyed here, so the
+    // entry and the import land in the same change or the admin gets a blank pane.
+    'services_eligibility': ServicesEligibilitySectionEditor,
+    'providers_directory': ProvidersDirectorySectionEditor,
+    'impact_stats': ImpactStatsSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

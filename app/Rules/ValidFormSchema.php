@@ -155,6 +155,17 @@ class ValidFormSchema implements ValidationRule
                     return;
                 }
 
+                // A file question inside a repeatable section would mean one upload
+                // per ROW — a résumé per attendee — which the submitted payload has
+                // no shape for (uploads are a flat bag keyed by field name) and the
+                // responses table has no cell to show. Rejected at save time so the
+                // submit endpoint never meets one.
+                if ($type === 'file' && ! empty($section['repeatable'])) {
+                    $fail("{$label}: \"{$name}\" is a file upload, which cannot go inside a repeatable section.");
+
+                    return;
+                }
+
                 if (in_array($type, ['select', 'radio', 'checkboxGroup'], true)) {
                     $options = $field['options'] ?? null;
 

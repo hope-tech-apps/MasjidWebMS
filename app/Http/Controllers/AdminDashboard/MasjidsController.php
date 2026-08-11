@@ -24,7 +24,9 @@ class MasjidsController extends Controller
      */
     public function index()
     {
-        $masjids = Masjid::with('logo', 'footer_logo', 'admin.avatar', 'country', 'city')->get();
+        $masjids = Masjid::with('logo', 'footer_logo', 'admin.avatar', 'country', 'city')
+            ->get()
+            ->append(Masjid::ADMIN_APPENDS);
         return response()->json([
             'status' => 'success',
             'data' => $masjids
@@ -100,7 +102,11 @@ class MasjidsController extends Controller
      */
     public function show(string $id)
     {
-        $masjid = Masjid::with('admin.avatar', 'logo', 'footer_logo', 'country', 'city')->findOrFail($id);
+        // The SPA's masjidStore loads the tenant from here, so this is where the
+        // vertical + terminology pack has to ride along.
+        $masjid = Masjid::with('admin.avatar', 'logo', 'footer_logo', 'country', 'city')
+            ->findOrFail($id)
+            ->append(Masjid::ADMIN_APPENDS);
         return response()->json([
             'status' => 'success',
             'data' => $masjid

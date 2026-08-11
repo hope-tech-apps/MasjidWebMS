@@ -13,9 +13,27 @@ class Masjid extends Model implements HasMedia
 {
     use InteractsWithMedia, SoftDeletes, SearchableTrait;
 
+    /**
+     * Manara vertical discriminator values (DECISIONS.md 2026-08-10).
+     *
+     * This constant — not a DB enum — is the authority on the allowed set, so
+     * adding a vertical never requires an ALTER on a live table. See the
+     * `add_org_type_to_masjids_table` migration for why.
+     */
+    public const ORG_TYPE_MASJID = 'masjid';
+    public const ORG_TYPE_SCHOOL = 'school';
+    public const ORG_TYPE_COMMUNITY = 'community';
+
+    public const ORG_TYPES = [
+        self::ORG_TYPE_MASJID,
+        self::ORG_TYPE_SCHOOL,
+        self::ORG_TYPE_COMMUNITY,
+    ];
+
     protected $fillable = [
         'user_id',
         'name',
+        'org_type',
         'email',
         'email_verified_at',
         'phone',
@@ -43,6 +61,21 @@ class Masjid extends Model implements HasMedia
         'deleted_by'
     ];
 
+    /**
+     * `active_owner_user_id` is the MySQL STORED generated column that carries
+     * the S0 ownership-uniqueness index — see
+     * `add_owner_uniqueness_to_masjids_table`. It is derived by the database from
+     * `user_id`/`deleted_at`, never written, and exists only on that driver (the
+     * SQLite test suite uses a native partial index and has no such column).
+     *
+     * Hiding it keeps the raw masjid payload the admin SPA reads
+     * (`MasjidsController::show`, no Resource) identical on both drivers, and
+     * identical to what it was before this slice.
+     */
+    protected $hidden = [
+        'active_owner_user_id',
+    ];
+
     protected $searchableFields = ['name', 'email', 'address'];
 
     protected function casts(): array
@@ -56,8 +89,124 @@ class Masjid extends Model implements HasMedia
         ];
     }
 
+    // ------------------------------------------------------------------
+    // Manara verticals
+    // ------------------------------------------------------------------
+
+    /**
+     * The tenant's vertical, falling back to masjid.
+     *
+     * Rows predating the org_type column read as NULL through a stale model
+     * cache, and an unknown value must never silently grant a different
+     * vertical's behaviour — so anything unrecognized degrades to masjid, which
+     * is what every existing tenant already is.
+     */
+    public function orgType(): string
+    {
+        $type = (string) ($this->attributes['org_type'] ?? '');
+
+        return in_array($type, self::ORG_TYPES, true) ? $type : self::ORG_TYPE_MASJID;
+    }
+
+    public function isMasjid(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_MASJID;
+    }
+
+    public function isSchool(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_SCHOOL;
+    }
+
+    public function isCommunity(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_COMMUNITY;
+    }
+
+    /**
+     * This vertical's configuration block (label, default feature bundle,
+     * terminology pack) from `config/verticals.php`.
+     */
+    public function verticalConfig(): array
+    {
+        return config('verticals.' . $this->orgType(), []);
+    }
+
+    /**
+     * Admin-facing label for a domain concept in this tenant's language —
+     * "Congregants" for a masjid, "Families" for a school.
+     *
+     * Falls back to the given key humanized so a missing entry degrades to
+     * something readable rather than an empty label in the UI.
+     */
+    public function term(string $key): string
+    {
+        $terms = $this->verticalConfig()['terminology'] ?? [];
+
+        return $terms[$key] ?? ucfirst(str_replace('_', ' ', $key));
+    }
+
+    /**
+     * Feature keys this vertical enables BY DEFAULT at provisioning time.
+     *
+     * Not an authorization check: the `mobile_app_features` pivot's
+     * `is_available` remains the runtime source of truth for what a tenant has.
+     */
+    public function defaultFeatureKeys(): array
+    {
+        return $this->verticalConfig()['feature_keys'] ?? [];
+    }
+
+    /**
+     * Attributes the ADMIN payload carries on top of the raw columns.
+     *
+     * Attached per-request with `append(Masjid::ADMIN_APPENDS)` by the admin
+     * controllers instead of being declared in `$appends`, because `$appends`
+     * would also widen the public/mobile API responses — which have no business
+     * knowing about verticals in this slice.
+     */
+    public const ADMIN_APPENDS = ['vertical'];
+
+    /**
+     * This tenant's vertical as the admin SPA consumes it: the discriminator
+     * plus the labels it should render instead of hardcoded "Masjid" /
+     * "Congregants" (PLAN T-003).
+     */
+    public function getVerticalAttribute(): array
+    {
+        $config = $this->verticalConfig();
+
+        return [
+            // orgType(), not the raw column: an unrecognized stored value must
+            // reach the UI as a masjid, not as the vertical it claims to be.
+            'org_type' => $this->orgType(),
+            'label' => $config['label'] ?? '',
+            'plural' => $config['plural'] ?? '',
+            'terminology' => $config['terminology'] ?? [],
+        ];
+    }
+
+    /** Limit a query to one vertical. */
+    public function scopeOfOrgType($query, string $orgType)
+    {
+        return $query->where('org_type', $orgType);
+    }
+
     public function admin() {
         return $this->belongsTo(User::class, 'user_id', 'id');
+    }
+
+    /**
+     * Everyone holding a membership in this masjid (`masjid_user`) — the inverse
+     * of `User::memberships()`.
+     *
+     * Distinct from `admin()` above, and not a replacement for it: `user_id`
+     * remains the single ownership/billing pointer (unique among live rows since
+     * S0), while memberships are the many-to-many AUTHORIZATION grants S3 will
+     * resolve the tenant from. Nothing consumes this relation in S2.
+     */
+    public function memberships() {
+        return $this->hasMany(MasjidUser::class);
     }
 
     public function country() {

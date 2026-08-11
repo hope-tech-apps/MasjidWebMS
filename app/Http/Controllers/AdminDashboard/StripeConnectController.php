@@ -26,15 +26,20 @@ class StripeConnectController extends Controller
     /**
      * Begin (or resume) onboarding: ensure the connected account exists and
      * return a hosted Account Link the admin is redirected to.
+     *
+     * `return_url` / `refresh_url` point at the PUBLIC landings in
+     * ConnectOnboardingLandingController, not at this authenticated API group:
+     * Stripe redirects the admin's browser there with no Sanctum token, so an
+     * authed target renders a raw error envelope and reads as a failed
+     * onboarding (observed 2026-08-10).
      */
     public function startOnboarding(Request $request, $masjid_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
-            $base = rtrim((string) config('app.url'), '/');
-            $refreshUrl = $base . "/api/admin/masjids/{$masjid->id}/connect/onboarding";
-            $returnUrl = $base . "/api/admin/masjids/{$masjid->id}/connect/return";
+            $refreshUrl = route('connect.refresh', ['masjid_id' => $masjid->id]);
+            $returnUrl = route('connect.return', ['masjid_id' => $masjid->id]);
 
             $url = $this->connect->createOnboardingLink($masjid, $refreshUrl, $returnUrl);
 
@@ -51,11 +56,16 @@ class StripeConnectController extends Controller
     }
 
     /**
-     * Onboarding return landing: opportunistically refresh capability flags
-     * from Stripe (the authoritative refresh still arrives via account.updated)
-     * and report current connect status.
+     * Authenticated connect status for the admin SPA: opportunistically refresh
+     * capability flags from Stripe (the authoritative refresh still arrives via
+     * account.updated) and report current connect status as JSON.
+     *
+     * This is NOT Stripe's redirect target — that is the public landing in
+     * ConnectOnboardingLandingController. This endpoint exists so the portal can
+     * poll/display connection state for a masjid it is already authorized for,
+     * and unlike the public landing it may safely include the account id.
      */
-    public function onboardingReturn(Request $request, $masjid_id)
+    public function status(Request $request, $masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
 

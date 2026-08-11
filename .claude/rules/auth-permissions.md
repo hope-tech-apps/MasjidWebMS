@@ -3,11 +3,68 @@
 Scope: `app/Models/User.php`, `app/Http/Controllers/AdminDashboard/AuthController.php`,
 `app/Http/Controllers/AdminDashboard/TwoFactorController.php`, `app/Http/Middleware/*`,
 `routes/admin.php`, `database/seeders/RolesAndPermissionsSeeder.php`,
-`config/permission.php`, `config/crm.php`.
+`config/auth.php`, `config/permission.php`, `config/crm.php`.
 
 The permission + 2FA layer is **strictly additive**. It must never change how an
 existing admin logs in or is authorized. If a change here would alter behavior
 for a non-2FA user or a pre-existing endpoint, it is wrong.
+
+## `auth.guards.sanctum.provider` is PINNED to `users` — never unpin it
+
+- Sanctum does not require an `auth.guards.sanctum` entry. When one is absent,
+  `SanctumServiceProvider::register()` synthesizes the guard with
+  `provider => null`, and `Guard::hasValidProvider()` returns `true` for a null
+  provider — the "does this token's owner belong to this guard" check never runs.
+  **Unpinned, every model using `HasApiTokens` is admissible on every
+  `auth:sanctum` route**, with only `UserAdminMiddleware`'s `type` string check
+  behind it.
+- `config/auth.php` therefore defines `sanctum` explicitly with
+  `provider => 'users'`. A non-`User` tokenable then resolves to **null**
+  (unauthenticated) inside vendor code, **before any application middleware
+  runs**. This is a structural barrier, not a policy one, and it is what makes
+  a second tokenable model (a parent/guardian `Contact`, T-015c) safe to add.
+- Do not delete that guard entry and do not set its provider to null. A second
+  realm gets its **own** guard + provider (e.g. `family` → `contacts`), never a
+  loosened `sanctum`.
+- **Declaring the guard cost one real regression — it is fixed, don't re-open
+  it.** `App\Models\User` now declares `protected $guard_name = 'web'`. Spatie
+  derives a model's guard name from the `auth.guards` entries whose provider
+  model matches, preferring `config('auth.defaults.guard')` when it is among
+  them — and `AuthManager::shouldUse()` **rewrites that config value to
+  `sanctum`** on every authenticated request (both `auth:sanctum` and
+  `Sanctum::actingAs()` call it). Before the guard was declared, `sanctum` could
+  never match and resolution fell through to `web`; declaring it made every
+  `permission:`-gated CRM route 403 with *"There is no permission named
+  `view contacts` for guard `sanctum`"*. The model-level `$guard_name` states
+  what was previously inferred by accident and must stay in step with
+  `RolesAndPermissionsSeeder`'s guard. **Any additional guard pointed at the
+  `users` provider inherits this hazard** — and any NEW model given spatie roles
+  must declare its own `$guard_name` too.
+- `tests/Feature/StaffAuthGuardPinTest.php` pins the provider value, the
+  `web` permission-guard resolution under a rewritten default, and
+  `Permission::count() === 8` together.
+- **The two admin middleware are the independent second layer**, and must stay
+  that way: `UserAdminMiddleware` and `SuperAdminMiddleware` require
+  `Auth::user() instanceof App\Models\User` **and** compare `type` strictly.
+  The guard pin does not make this redundant — a non-sanctum guard (a session,
+  or a future `family` guard, which rebinds the default guard `Auth::user()`
+  reads) reaches these middleware without passing the sanctum provider check.
+  Their 401 envelope (`{status: failed, data: 'Unauthorized.'}`) is what the
+  admin SPA switches on; do not change its shape.
+
+## Staff tokens are minted with a named ability, not `*`
+
+- `AuthController::login()` mints with `AuthController::STAFF_TOKEN_ABILITIES`
+  (`['staff']`). Previously it used `createToken()`'s default, `['*']`, which
+  satisfies any ability check — including one written later to fence a staff
+  token OUT of a parent/guardian surface.
+- This is **inert today**: `tokenCan` and the sanctum `abilities`/`ability`
+  middleware appear nowhere in `app/`, `routes/`, or the framework/spatie paths
+  this app uses, so no request outcome depends on it. Naming the realm now is
+  what lets a later slice add enforcement without invalidating live tokens.
+- If you add ability enforcement to a route, remember every token issued before
+  that change carries whatever abilities it was minted with — check the
+  `personal_access_tokens` backlog before relying on it as a gate.
 
 ## `users.type` is the source of truth — spatie roles are a bridge
 

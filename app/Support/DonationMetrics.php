@@ -59,6 +59,21 @@ use Illuminate\Database\Query\JoinClause;
  * are also reported on their own as `anonymous_gift_count`, so the gap between
  * donor_count and gift_count is always explainable rather than looking like a
  * bug.
+ *
+ * ## Zakat is a SUBSET of every bucket, not a fourth bucket (T-031)
+ *
+ * `zakat_gross_cents` / `zakat_net_cents` / `zakat_gift_count` are conditional
+ * aggregates over the SAME rows as the figures beside them, so they are always
+ * ≤ their unqualified counterpart and the two can never describe different
+ * windows or different filters. They are ADDITIVE: no pre-existing key changed
+ * meaning, and a caller that ignores them reads the same numbers it always did.
+ *
+ * What they are computed on is `donations.is_zakat` — the restriction the GIVER
+ * placed on the gift — and NOT `funds.type = 'zakat'`. The difference is the
+ * whole point of the column and is stated in the payload itself, in
+ * `meta.zakat.definition`, because a zakat total an organization shows its
+ * donors is worth nothing if the reader has to guess which of the two it means.
+ * See App\Support\ZakatDesignation.
  */
 class DonationMetrics
 {
@@ -102,7 +117,7 @@ class DonationMetrics
      * is therefore "everything in the filtered range", not everything ever.
      *
      * @param  array{from?:?string,to?:?string,source?:?string,status?:?string}  $filters
-     * @return array<string, array{gross_cents:int,net_cents:int,donor_count:int,gift_count:int,average_gift_cents:int,anonymous_gift_count:int}>
+     * @return array<string, array{gross_cents:int,net_cents:int,donor_count:int,gift_count:int,average_gift_cents:int,anonymous_gift_count:int,zakat_gross_cents:int,zakat_net_cents:int,zakat_gift_count:int}>
      */
     public function summary(array $filters = []): array
     {
@@ -124,6 +139,11 @@ class DonationMetrics
                 "COUNT(DISTINCT CASE WHEN {$inBucket} THEN donations.contact_id END) AS {$key}_donors",
                 "SUM(CASE WHEN {$inBucket} THEN 1 ELSE 0 END) AS {$key}_gifts",
                 "SUM(CASE WHEN ({$inBucket}) AND donations.contact_id IS NULL THEN 1 ELSE 0 END) AS {$key}_anonymous",
+                // Zakat, as a subset of the same scan — so the restricted total
+                // can never describe a different window than the total above it.
+                "SUM(CASE WHEN ({$inBucket}) AND donations.is_zakat = 1 THEN donations.charged_amount ELSE 0 END) AS {$key}_zakat_gross",
+                "SUM(CASE WHEN ({$inBucket}) AND donations.is_zakat = 1 THEN COALESCE(donations.net_amount, donations.charged_amount) ELSE 0 END) AS {$key}_zakat_net",
+                "SUM(CASE WHEN ({$inBucket}) AND donations.is_zakat = 1 THEN 1 ELSE 0 END) AS {$key}_zakat_gifts",
             ];
 
             foreach ($fragments as $fragment) {
@@ -156,6 +176,9 @@ class DonationMetrics
                 // division by zero.
                 'average_gift_cents' => $gifts > 0 ? intdiv($gross, $gifts) : 0,
                 'anonymous_gift_count' => (int) $row->{"{$key}_anonymous"},
+                'zakat_gross_cents' => (int) $row->{"{$key}_zakat_gross"},
+                'zakat_net_cents' => (int) $row->{"{$key}_zakat_net"},
+                'zakat_gift_count' => (int) $row->{"{$key}_zakat_gifts"},
             ];
         }
 
@@ -169,8 +192,15 @@ class DonationMetrics
      *
      * One grouped query, so nothing iterates funds.
      *
+     * Each row also carries the fund's `fund_type` and the zakat MONEY inside it.
+     * Those two answer different questions and are reported side by side on
+     * purpose: `fund_type` is the bucket the org set up, `zakat_gross_cents` is
+     * how much of what landed in it the givers actually restricted as zakat. A
+     * zakat-typed fund whose zakat total is short of its gross is not a bug —
+     * it is the reconciliation an org needs to see (see the class docblock).
+     *
      * @param  array{from?:?string,to?:?string,source?:?string,status?:?string}  $filters
-     * @return array<int, array{fund_id:int,fund_name:string,is_active:bool,gross_cents:int,net_cents:int,gift_count:int,donor_count:int,last_gift_at:?string}>
+     * @return array<int, array{fund_id:int,fund_name:string,fund_type:string,is_active:bool,gross_cents:int,net_cents:int,zakat_gross_cents:int,zakat_gift_count:int,gift_count:int,donor_count:int,last_gift_at:?string}>
      */
     public function byFund(array $filters = []): array
     {
@@ -191,13 +221,16 @@ class DonationMetrics
                     $join->where('donations.source', '=', $filters['source']);
                 }
             })
-            ->groupBy('funds.id', 'funds.name', 'funds.is_active')
+            ->groupBy('funds.id', 'funds.name', 'funds.type', 'funds.is_active')
             ->selectRaw(
                 'funds.id AS fund_id,
                  funds.name AS fund_name,
+                 funds.type AS fund_type,
                  funds.is_active AS is_active,
                  COALESCE(SUM(donations.charged_amount), 0) AS gross_cents,
                  COALESCE(SUM(COALESCE(donations.net_amount, donations.charged_amount)), 0) AS net_cents,
+                 COALESCE(SUM(CASE WHEN donations.is_zakat = 1 THEN donations.charged_amount ELSE 0 END), 0) AS zakat_gross_cents,
+                 COALESCE(SUM(CASE WHEN donations.is_zakat = 1 THEN 1 ELSE 0 END), 0) AS zakat_gift_count,
                  COUNT(donations.id) AS gift_count,
                  COUNT(DISTINCT donations.contact_id) AS donor_count,
                  MAX(COALESCE(donations.donated_at, donations.created_at)) AS last_gift_at'
@@ -210,9 +243,12 @@ class DonationMetrics
         return $rows->map(fn ($row) => [
             'fund_id' => (int) $row->fund_id,
             'fund_name' => (string) $row->fund_name,
+            'fund_type' => (string) $row->fund_type,
             'is_active' => (bool) $row->is_active,
             'gross_cents' => (int) $row->gross_cents,
             'net_cents' => (int) $row->net_cents,
+            'zakat_gross_cents' => (int) $row->zakat_gross_cents,
+            'zakat_gift_count' => (int) $row->zakat_gift_count,
             'gift_count' => (int) $row->gift_count,
             'donor_count' => (int) $row->donor_count,
             // Reported as a plain calendar date: half these gifts only ever had
@@ -245,6 +281,24 @@ class DonationMetrics
                 'to' => $normalized['to']?->toDateString(),
                 'source' => $normalized['source'],
                 'status' => $normalized['status'],
+            ],
+            // Provenance for the zakat figures, the T-024 discipline applied to
+            // the one number on this page a donor may be shown as evidence
+            // (.claude/rules/impact-metrics.md: a definition is the deliverable,
+            // not the number). Stated in the payload rather than only in a
+            // docblock, because the reader who most needs it is looking at the
+            // dashboard, not at this file.
+            'zakat' => [
+                'source' => 'donations.is_zakat',
+                'definition' => ZakatDesignation::definition(),
+                'keys' => [
+                    'zakat_gross_cents' => 'Gross of the zakat-designated gifts inside this bucket, '
+                        . 'integer minor units. A SUBSET of gross_cents, never a separate population.',
+                    'zakat_net_cents' => 'The same gifts after processor fees, with the same '
+                        . 'COALESCE(net_amount, charged_amount) fallback net_cents uses — an offline '
+                        . 'gift and an unsettled Stripe gift both fall back to what was charged.',
+                    'zakat_gift_count' => 'How many of gift_count carried the designation.',
+                ],
             ],
         ];
     }

@@ -25,12 +25,24 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/contacts` |
     `/api/admin/masjids/${string}/contacts?page=${number}` |
     `/api/admin/masjids/${string}/contacts/${string}` |
+    // Groups — the org -> group -> member level, and everything hung off it
+    // (roster, class story, threads, behaviour awards, hifz). One `${string}`
+    // pattern per endpoint SHAPE rather than per id: the ids are interpolated at
+    // runtime, and the query strings are appended after the fact, so the call
+    // sites assert to this type the way donationsStore already does.
+    `/api/admin/masjids/${string}/groups` |
+    `/api/admin/masjids/${string}/groups?${string}` |
+    `/api/admin/masjids/${string}/groups/${string}` |
+    `/api/admin/masjids/${string}/behavior-skills` |
+    `/api/admin/masjids/${string}/behavior-skills?${string}` |
     `/api/admin/masjids/${string}/funds` |
     `/api/admin/masjids/${string}/funds/${string}` |
     `/api/admin/masjids/${string}/donations` |
     `/api/admin/masjids/${string}/donations?page=${number}` |
     `/api/admin/masjids/${string}/donations/${string}` |
     `/api/admin/masjids/${string}/donation-link` |
+    `/api/admin/masjids/${string}/connect/onboarding` |
+    `/api/admin/masjids/${string}/connect/status` |
     `/api/admin/masjids/${string}/forms` |
     `/api/admin/masjids/${string}/forms?page=${number}` |
     `/api/admin/masjids/${string}/forms/options` |

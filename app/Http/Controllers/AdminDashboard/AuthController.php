@@ -13,6 +13,26 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AuthController extends Controller
 {
+    /**
+     * Abilities stamped on every staff login token.
+     *
+     * Previously `createToken()` was called with its default, `['*']` — a
+     * wildcard that satisfies any future `tokenCan()` check. That is fine while
+     * `App\Models\User` is the only tokenable model, but it means staff tokens
+     * would also satisfy an ability check written to fence off a SECOND realm
+     * (the parent/guardian surface of T-015c onwards). Naming the realm now,
+     * while there is exactly one, is what makes such a check possible later
+     * without a flag day for every already-issued token.
+     *
+     * This is INERT today, deliberately: `tokenCan` / the `abilities` middleware
+     * appear nowhere in this application, nor in the framework or spatie code
+     * paths this app uses, so no request outcome changes. Route-level ability
+     * enforcement is assigned to a later slice.
+     *
+     * See docs/t015-parent-identity-design.md §5 (layer 3).
+     */
+    public const STAFF_TOKEN_ABILITIES = ['staff'];
+
     public function login(LoginRequest $request)
     {
         $user = User::where('email', $request->input('email'))->with('avatar')->first();
@@ -49,7 +69,7 @@ class AuthController extends Controller
         }
         // -----------------------------------------------------------------------
 
-        $token = $user->createToken('login-token')->plainTextToken;
+        $token = $user->createToken('login-token', self::STAFF_TOKEN_ABILITIES)->plainTextToken;
 
         if ($user->type === 'MasjidAdmin') {
             $user->masjid;

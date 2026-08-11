@@ -47,6 +47,49 @@ skipping on SQLite is correct rather than convenient: SQLite is dynamically type
 enforces no `VARCHAR` length, so the widening the migration performs is already true
 there. Say which it is in the docblock.
 
+## A CONDITIONAL unique index needs a different shape on each driver
+
+"Unique, but only over the rows that still count" — unique among non-soft-deleted
+rows, one default row per owner — cannot be written the same way twice:
+
+- **SQLite** (the suite) has real partial indexes:
+  `CREATE UNIQUE INDEX … ON t (col) WHERE deleted_at IS NULL`.
+- **MySQL** (production is 8.4 on DigitalOcean's managed cluster) has **no
+  partial indexes at any version**, so `WHERE …` is unavailable. Use a **STORED
+  generated column** that collapses "not applicable" to `NULL`, with a plain
+  unique index on it:
+  `GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN col END) STORED`.
+  MySQL treats `NULL`s as distinct in a unique index, so exactly the same rows
+  end up constrained as under SQLite's partial index. A functional key part
+  (`UNIQUE ((expr))`, 8.0.13+) also works on today's server, but the generated
+  column keeps the predicate visible in `SHOW CREATE TABLE` and stays valid on
+  MySQL 5.7 and MariaDB.
+
+Do not reach for `unique(['col', 'deleted_at'])` as a shortcut. `NULL`s never
+collide, so two live rows both sharing `deleted_at IS NULL` still pass — it
+enforces nothing at all.
+
+The generated column exists on one driver and not the other, which is a real
+schema divergence: add it to the model's `$hidden` so serialized payloads stay
+identical on both, and say so in the migration docblock. Worked examples:
+`add_owner_uniqueness_to_masjids_table` (`masjids.active_owner_user_id`, unique
+owner among live rows) and `create_masjid_user_table`
+(`masjid_user.default_key`, one `is_default` membership per user). The generated
+column must be **STORED**, not `VIRTUAL` — MySQL cannot put a virtual column in
+a UNIQUE index.
+
+**Create the index BEFORE an in-migration backfill**, not after. If the data
+being inserted could ever violate it, that ordering aborts the migration loudly
+instead of admitting the rows and leaving a constraint that can no longer be
+added.
+
+**Pre-flight a uniqueness migration.** Adding the index to data that already
+violates it aborts `migrate` mid-deploy with a constraint error naming only a
+column. Query for the duplicates in `up()` first and throw a message that names
+the offending ids and the command that resolves them
+(`masjids:reconcile-owners`). Choosing which duplicate survives is an operator's
+decision, not a migration's.
+
 ## Portability
 
 - Guard MySQL-only column features (collation, `MODIFY`, fulltext) with

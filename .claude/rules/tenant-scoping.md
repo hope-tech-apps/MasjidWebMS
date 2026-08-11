@@ -65,6 +65,78 @@ group only) binds `TenantContext` to a MasjidAdmin's masjid. The masjid is
 resolved from the authenticated user (`users.masjid_id` if present, else the
 masjid the admin owns via `masjids.user_id` -> `User::masjid()`).
 
+## `masjids.user_id` is UNIQUE among live rows — keep it that way
+
+`User::masjid()` is a `hasOne`. If a user owned two masjids it would not error,
+it would return **one arbitrary row**, and the middleware above would bind the
+tenant to whichever one the database felt like returning. Since S0 that is a
+database fact, not a convention: a unique index over non-deleted, owned rows
+(`add_owner_uniqueness_to_masjids_table`; see .claude/rules/migrations.md for how
+the same predicate is spelled on each driver).
+
+- Every write path that sets `masjids.user_id` must carry
+  `unique:masjids,user_id` — `StoreMasjidRequest`, `ProvisionMasjidRequest` and
+  `UpdateMasjidRequest` all do. On update it must be
+  `Rule::unique(...)->ignore($this->route('masjid_id'))->whereNull('deleted_at')`,
+  or the ordinary save that re-submits a masjid's own owner starts 422ing.
+- Two states stay legal and must not be "fixed": a **trashed** masjid does not
+  pin its former owner, and a masjid may have **no owner at all**.
+- `php artisan masjids:reconcile-owners` reports duplicate owners; `--fix`
+  detaches all but each owner's first-created masjid. Run it before migrating
+  any environment whose data did not come from the admin API.
+
+## `masjid_user` is the membership table — it must NOT use `BelongsToMasjid`
+
+Since S2 there is a `masjid_user` pivot (`App\Models\MasjidUser`, reachable as
+`User::memberships()` / `Masjid::memberships()`): one row per (user, masjid) with
+a per-tenant `role` string and an `is_default` flag. It is the table the tenant
+will eventually be derived FROM, so it is the one table carrying `masjid_id` that
+must **not** get the global scope:
+
+- Scoping it would make "which masjids may this user act on?" answerable only
+  from inside a masjid the user is already bound to — a multi-tenant admin could
+  never see or switch to their second membership.
+- Its `creating` hook would stamp `masjid_id` from the bound tenant and silently
+  write memberships into the wrong organisation.
+
+Isolation for memberships is an authorization concern (the resolver + the API
+surface), not a global-scope one.
+
+- **At most one `is_default` row per user, enforced by the database** — a partial
+  unique index on SQLite, the `default_key` STORED generated column on MySQL (see
+  .claude/rules/migrations.md). It is what makes the single-tenant fallback
+  deterministic; do not weaken it to an application check. Moving the default is
+  an ordinary update as long as the old row is cleared in the same transaction.
+- `pivot.role` mirrors the values of `User::TYPE_ROLE_MAP` and is **advisory**:
+  authorization still runs on the `users.type` bridge, and spatie's `teams`
+  feature stays off (flipping it ALTERs `model_has_roles`' primary key).
+- `masjids.user_id` remains the ownership/billing pointer and, until the resolver
+  slice lands, remains the ONLY thing `ResolveMasjidTenant` reads. A membership
+  row grants nothing on its own.
+
+## `TenantContext` is `scoped()`, and every queued job starts UNBOUND
+
+It was a `singleton()`, which is fine for one request and wrong for `queue:work`
+— one long-lived process, many jobs, one container. A job that bound masjid A
+left it bound for the next job off the queue, which then read and wrote through
+the global scope under someone else's tenant, silently.
+
+- The binding is registered with `scoped()` in `AppServiceProvider`. The worker
+  calls `forgetScopedInstances()` before reserving each job, so each job rebuilds
+  it from nothing. **Do not change it back to `singleton()`.**
+- `App\Listeners\ResetTenantContextBetweenJobs` clears it on `JobProcessing` for
+  the worker paths that do not reset the container scope (`queue:work --once`,
+  `queue:listen`). It **exempts the `sync` driver on purpose**: a sync job runs
+  inside the dispatching request, under that request's tenant, and clearing it
+  there would unbind the rest of the request. The suite runs `sync`.
+- Anything under `app/Listeners` with a typed `handle(SomeEvent $e)` is **also
+  auto-registered by Laravel's event discovery** (`Application::configure()`
+  calls `withEvents()`), on top of any explicit `Event::listen`. Keep such
+  listeners idempotent, and do not conclude a listener is unregistered just
+  because you cannot find an `Event::listen` for it.
+- A job that needs a tenant must bind it itself (`ImpactMetrics::withTenant()` is
+  the pattern) rather than assuming the dispatcher's binding survived the queue.
+
 ## Testing is not optional
 
 Because there is no DB-level backstop, **every new tenant-scoped model MUST ship

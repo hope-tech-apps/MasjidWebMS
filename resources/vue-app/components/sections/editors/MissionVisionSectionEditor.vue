@@ -86,7 +86,7 @@
 
 <script setup lang="ts">
 import { MissionVisionSectionContent } from '@/core/types/data/masjid-related/PageSection';
-import { UploadedImageInfo } from '@/core/types/data/interfaces/UploadedImageInfo';
+import { UploadedImageInfo } from '@/core/types/elements/ImageInput';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
 import { ref, watch } from 'vue';
 

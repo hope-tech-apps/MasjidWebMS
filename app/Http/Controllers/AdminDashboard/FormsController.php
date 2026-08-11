@@ -100,12 +100,24 @@ class FormsController extends Controller
                 'radio' => 'Choose one',
                 'checkbox' => 'Single checkbox',
                 'checkboxGroup' => 'Choose any',
+                'file' => 'File upload',
             ];
 
             $types = collect(FormSchema::FIELD_TYPES)->map(fn ($type) => [
                 'value' => $type,
                 'label' => $labels[$type] ?? $type,
                 'has_options' => in_array($type, ['select', 'radio', 'checkboxGroup'], true),
+                // The builder has to know what an upload field may accept, and the
+                // server is the only authority on it — these come straight from
+                // config('forms.attachments'), the same values the submit endpoint
+                // enforces, so the two cannot drift apart.
+                'upload' => $type === 'file' ? [
+                    'mime_types' => array_values((array) config('forms.attachments.mime_types', [])),
+                    'max_size_kb' => (int) config('forms.attachments.max_size_kb', 0),
+                    // A file question would need one upload per row inside a
+                    // repeatable section, which the submit payload has no shape for.
+                    'allowed_in_repeatable' => false,
+                ] : null,
             ])->values();
 
             return response()->json([

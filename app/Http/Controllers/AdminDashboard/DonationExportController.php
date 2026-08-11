@@ -48,8 +48,13 @@ class DonationExportController extends Controller
         return response()->stream(function () use ($query) {
             $out = fopen('php://output', 'w');
 
+            // Zakat sits next to Fund on purpose: they look like the same fact
+            // and are not, so an accountant reading the sheet sees the gift's
+            // designation immediately beside the bucket it landed in and can
+            // tell the two apart (App\Support\ZakatDesignation).
             fputcsv($out, [
-                'Date', 'Donor', 'Donor email', 'Fund', 'Amount', 'Net',
+                'Date', 'Donor', 'Donor email', 'Fund', 'Zakat', 'Zakat source',
+                'Amount', 'Net',
                 'Currency', 'Source', 'Payment method', 'Check number', 'Status', 'Note',
             ]);
 
@@ -82,6 +87,12 @@ class DonationExportController extends Controller
             $this->csvCell($contact ? trim($contact->first_name . ' ' . $contact->last_name) : ''),
             $this->csvCell((string) ($contact->email ?? '')),
             $this->csvCell((string) ($donation->fund->name ?? '')),
+            // Words, not 1/0: this column decides whether money is restricted,
+            // and a bare 1 in a spreadsheet next to a dollar figure is the kind
+            // of cell that gets summed by accident.
+            $donation->is_zakat ? 'yes' : 'no',
+            // Blank for a non-zakat gift — there is no designation to attribute.
+            $this->csvCell((string) ($donation->zakat_source ?? '')),
             $this->dollars($donation->charged_amount),
             $this->net($donation),
             strtoupper((string) $donation->currency),

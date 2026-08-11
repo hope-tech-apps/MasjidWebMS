@@ -35,6 +35,11 @@ export type MasjidDashboardRoute =
     '/masjid/jumaa' |
     '/masjid/notifications' |
     '/masjid/contacts' |
+    // The tenant's groups: classrooms for a School, halaqat for a Masjid,
+    // volunteer teams for a Community org. The path stays neutral — what the
+    // screen is CALLED comes from the terminology pack, never the URL.
+    '/masjid/groups' |
+    `/masjid/groups/${number}` |
     '/masjid/funds' |
     '/masjid/donations' |
     '/masjid/recurring-donations' |
