@@ -38,6 +38,33 @@ class User extends Authenticatable implements HasMedia
     ];
 
     /**
+     * The spatie guard this model's roles and permissions are registered under.
+     *
+     * This states explicitly what was previously being INFERRED — and inferred
+     * correctly only by accident. Spatie derives a model's guard name from
+     * `Spatie\Permission\Guard::getDefaultName()`, which prefers
+     * `config('auth.defaults.guard')` whenever that guard also appears in the
+     * list of `auth.guards` entries whose provider model is this class.
+     *
+     * The trap: `AuthManager::shouldUse()` REWRITES `auth.defaults.guard` in the
+     * config repository at runtime, and both `auth:sanctum` and
+     * `Sanctum::actingAs()` call it. So inside any authenticated admin request
+     * the "default guard" is literally `sanctum`. Before T-015a pinned
+     * `auth.guards.sanctum`, `sanctum` was not a declared guard, so it could
+     * never match and resolution fell through to `web` — which is where
+     * RolesAndPermissionsSeeder registers all 8 permissions. Declaring the
+     * sanctum guard made `sanctum` matchable, and every `permission:`-gated CRM
+     * route began 403ing with "There is no permission named `view contacts` for
+     * guard `sanctum`".
+     *
+     * Pinning it here restores exactly the previous resolution (`web`, in every
+     * context — console, web session and token request alike) and makes it
+     * independent of how many guards point at this model, which the family guard
+     * in T-015c will add more of. Keep it in step with the seeder's guard.
+     */
+    protected $guard_name = 'web';
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var list<string>

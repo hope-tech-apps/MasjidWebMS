@@ -219,6 +219,38 @@ class TwoFactorTest extends TestCase
         $this->assertNotEmpty($response->json('data.token'));
     }
 
+    /**
+     * The enrolled-login path end to end THROUGH THE REAL SANCTUM GUARD.
+     *
+     * Every other test here authenticates with `Sanctum::actingAs()`, which sets
+     * the user on the guard directly and never enters
+     * `Laravel\Sanctum\Guard::__invoke()`. The `auth.guards.sanctum.provider`
+     * pin added by T-015a is only consulted on that path, so no `actingAs` test
+     * would notice if a real 2FA-issued token stopped being accepted. This one
+     * would. See tests/Feature/StaffAuthGuardPinTest.php for the rest of the
+     * real-token sweep.
+     */
+    #[Test]
+    public function the_token_issued_after_a_2fa_login_authenticates_on_an_admin_route(): void
+    {
+        $secret = $this->google2fa()->generateSecretKey();
+        $admin = $this->makeEnrolledAdmin($secret);
+
+        $token = $this->postJson('/api/admin/login', [
+            'email' => $admin->email,
+            'password' => 'password',
+            'two_factor_code' => $this->google2fa()->getCurrentOtp($secret),
+        ])->assertOk()->json('data.token');
+
+        $this->assertNotEmpty($token);
+
+        $this->withHeader('Authorization', 'Bearer ' . $token)
+            ->getJson('/api/admin/user')
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.id', $admin->id);
+    }
+
     /** A 6-digit code guaranteed to differ from the current valid one. */
     private function wrongCodeFor(string $secret): string
     {
