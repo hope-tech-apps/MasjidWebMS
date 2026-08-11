@@ -2,6 +2,8 @@
 
 use App\Http\Middleware\EnsureAssistantEnabled;
 use App\Http\Middleware\EnsureCrmEnabled;
+use App\Http\Middleware\EnsureFamilyLoginActive;
+use App\Http\Middleware\ResolveFamilyTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
@@ -29,6 +31,16 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::prefix('api')
                 ->middleware('api')
                 ->group(base_path('routes/admin.php'));
+
+            // The parent/guardian realm (T-015c), mounted the same way and kept
+            // in its OWN file on purpose: routes/admin.php has exactly one
+            // `auth:sanctum` group and it always carries `admin`, and the only
+            // way to keep that true is for the second realm never to be a
+            // sibling inside it. Its own guard, its own middleware, its own
+            // file. See routes/family.php.
+            Route::prefix('api')
+                ->middleware('api')
+                ->group(base_path('routes/family.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
@@ -46,6 +58,18 @@ return Application::configure(basePath: dirname(__DIR__))
             // is true. Runs after `tenant`, so the target masjid is resolved. The
             // SuperAdmin crm-access toggle and the 2FA endpoints are NOT gated.
             'crm' => EnsureCrmEnabled::class,
+            // The parent/guardian realm's two gates (T-015c). Applied ONLY to
+            // routes/family.php, never to the admin tree.
+            //
+            // `family.active` is the layer that refuses a staff principal on a
+            // family route: Sanctum's guard admits a live `web` session BEFORE
+            // it checks any token provider, so `auth:family` alone does not
+            // exclude staff. `family.tenant` binds TenantContext from the
+            // authenticated contact and aborts rather than ever passing an
+            // authenticated request through UNBOUND — unbound means unfiltered
+            // for every BelongsToMasjid model (.claude/rules/tenant-scoping.md).
+            'family.active' => EnsureFamilyLoginActive::class,
+            'family.tenant' => ResolveFamilyTenant::class,
             // Same shape for the Masjid Assistant: 403s unless masjids.assistant_enabled.
             // The SuperAdmin assistant-access toggle is NOT gated (it opens the gate).
             'assistant' => EnsureAssistantEnabled::class,

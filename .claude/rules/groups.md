@@ -172,15 +172,25 @@ enough:
 An admin who is not on the roster can therefore publish to a group and NOT read
 it back. That asymmetry is deliberate; do not "fix" it by adding a staff bypass.
 
-**Which person is the caller.** A `Contact` cannot authenticate anywhere in this
-application — there is no congregant guard, and the parent/teacher app is T-015.
-So the caller's person is resolved by matching their login email to a Contact of
-the **bound tenant**, case-insensitively, and only when it resolves to EXACTLY
-ONE contact: an ambiguity about identity resolves to no identity. This is an
-identity *bridge*, not an escalation (an admin who wanted in could add themselves
-to the roster, which they may already do), and it is the seam to replace on the
-day contacts get their own login — `GroupAudience::identitiesFor()` and nothing
-else.
+**Which person is the caller.** For a STAFF caller, resolved by matching their
+login email to a Contact of the **bound tenant**, case-insensitively, and only
+when it resolves to EXACTLY ONE contact: an ambiguity about identity resolves to
+no identity. This is an identity *bridge*, not an escalation (an admin who wanted
+in could add themselves to the roster, which they may already do), and it lives
+in `GroupAudience::identitiesFor()` and nothing else.
+
+> **Amended by T-015c.** This paragraph used to open "A `Contact` cannot
+> authenticate anywhere in this application — there is no congregant guard".
+> That is no longer true: a contact can now hold a login and authenticate on the
+> `family` guard (`.claude/rules/auth-permissions.md`). What has NOT changed is
+> anything in this file. `identitiesFor()` narrows with `instanceof User` and
+> returns `[]` for every other principal, so an authenticated parent resolves to
+> NO identity and therefore no standing, no feed, no thread and no record —
+> every rule below still holds by construction, and its existing tests still
+> prove it. The Contact branch that changes this (with its revoked / trashed /
+> cross-tenant liveness checks) is **T-015e**, and it is the ONLY place that
+> should change when it lands. `tests/Feature/FamilyAuthGuardTest.php` pins the
+> no-standing state until then.
 
 ## Consent
 

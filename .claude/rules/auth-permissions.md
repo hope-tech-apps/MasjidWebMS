@@ -52,6 +52,79 @@ for a non-2FA user or a pre-existing endpoint, it is wrong.
   Their 401 envelope (`{status: failed, data: 'Unauthorized.'}`) is what the
   admin SPA switches on; do not change its shape.
 
+## There are now TWO realms — read this before adding a THIRD guard
+
+T-015c added the parent/guardian realm. The map is now:
+
+| guard | driver | provider | model | who |
+|---|---|---|---|---|
+| `web` | session | `users` | `User` | staff (SPA session) |
+| `api` | sanctum | `users` | `User` | staff (legacy, unused) |
+| `sanctum` | sanctum | `users` | `User` | **staff tokens — the pin above** |
+| `family` | sanctum | `contacts` | `Contact` | **parents/guardians** |
+
+`App\Models\Contact` is authenticatable and tokenable (`HasApiTokens`), holds no
+password column, and is reachable ONLY through `routes/family.php`
+(`/api/family/masjids/{masjid_id}/…`).
+
+**A third realm gets its own guard AND its own provider. Never point a new guard
+at `users`.** Two separate things break if you do:
+
+- It re-opens the spatie regression documented above. Spatie picks a model's
+  permission guard from the `auth.guards` entries whose provider model matches
+  that model, preferring `config('auth.defaults.guard')` — which
+  `AuthManager::shouldUse()` rewrites on every authenticated request. `family`
+  is safe because its provider model is `Contact`; a guard over `users` would
+  join the candidate list for `User` and the only thing standing between you and
+  403s on every CRM route is `User::$guard_name`. Any NEW model given spatie
+  roles must declare its own `$guard_name` before it is given any.
+- It is a second door to the same tokens. The `sanctum` pin works by comparing
+  the tokenable against the provider's model; two guards over the same provider
+  are two guards that accept the same tokens.
+
+**The guard alone does NOT separate the realms — `family.active` does.**
+`Laravel\Sanctum\Guard::__invoke()` walks `config('sanctum.guard')` (`['web']`
+here) FIRST and returns whatever user it finds on those guards with **no
+provider comparison at all**. A staff member with a live admin SPA session
+therefore satisfies `auth:family`. `App\Http\Middleware\EnsureFamilyLoginActive`
+(`family.active`) is what refuses them, and it is also where revocation is
+enforced — `login_enabled_at` set, `login_revoked_at` null, not trashed, checked
+on **every** request rather than at mint time, so a token already sitting in a
+phone dies on the next request. Do not "simplify" it away on the strength of the
+provider pin.
+
+**`family.tenant` binds or aborts — never reuse `tenant` for a non-staff
+principal.** `ResolveMasjidTenant` branches on `users.type` and lets anything
+else fall through UNBOUND, which tenant-scoping.md defines as *no filter*. On an
+authenticated family route that is a cross-tenant read of children's records.
+`App\Http\Middleware\ResolveFamilyTenant` binds `TenantContext` from
+`$contact->masjid_id` — the token's tokenable, never the URL and never a header
+— and 403s if the route names a different masjid or if binding is impossible.
+There is no path through it that reaches the route unbound.
+
+**No `permission:` and no `admin`/`super` in the family tree.** Those gates read
+`users.type` or a spatie role, and a `Contact` has neither. Authorization for a
+parent is the roster (`GroupAudience`), not a permission string. `permission:`
+applied to a Contact would ask the permission layer to resolve a guard for a
+model that holds no roles — the T-015a regression in a new costume.
+`Permission::count()` stays 8.
+
+**Family token abilities are `Contact::FAMILY_TOKEN_ABILITIES` (`['family']`)**,
+distinct from staff's `['staff']`, and inert for the same reason (see below).
+
+**Family tokens cannot outlive staff ones.** The design asks for 30 days;
+Sanctum builds *every* guard with the single global `config('sanctum.expiration')`
+(`SanctumServiceProvider::createGuard`) and enforces it against `created_at`, so
+a per-token `expires_at` can only ever SHORTEN a token. Raising the global value
+would move staff sessions too, which the rule at the top of this file forbids. A
+longer family session needs a per-guard expiration, which is a change to how the
+guard is constructed — not an `expiresAt` argument.
+
+Pinned by `tests/Feature/FamilyAuthGuardTest.php` (both directions of refusal,
+each with a control that reproduces the vulnerable configuration) and
+`tests/Feature/FamilyTenantBindingTest.php` (bound-or-refused, with a control
+that demonstrates `ResolveMasjidTenant` falling through unbound).
+
 ## Staff tokens are minted with a named ability, not `*`
 
 - `AuthController::login()` mints with `AuthController::STAFF_TOKEN_ABILITIES`

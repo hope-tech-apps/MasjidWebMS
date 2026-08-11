@@ -94,6 +94,7 @@ class AppServiceProvider extends ServiceProvider
      *
      *  - "login"   — 5 attempts per minute per email+IP (slow brute-force defense)
      *  - "contact" — 10 messages per hour per IP (spam control on the public contact form)
+     *  - "family"  — 60 requests per minute per authenticated CONTACT (T-015c)
      *  - "mobile"  — 60 requests per minute per IP (generous, but bounded)
      *  - "device"  — 10 device registrations per hour per IP (anti-abuse)
      */
@@ -190,6 +191,29 @@ class AppServiceProvider extends ServiceProvider
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
+        // The parent/guardian realm (T-015c, routes/family.php). Unlike every
+        // limiter above it is applied to an AUTHENTICATED tree, so it is keyed
+        // on the contact rather than the IP: a whole household — or a whole
+        // school run sharing one mosque wifi NAT — must not be able to lock
+        // each other out, and a stolen token must not be able to hide behind a
+        // fresh IP. `throttle` sorts AFTER `auth` in Laravel's middleware
+        // priority, so the principal is always resolved by the time this runs;
+        // the IP fallback covers the refusal paths, where there is no contact.
+        RateLimiter::for('family', function (Request $request) {
+            $principal = $request->user();
+
+            $key = $principal instanceof \App\Models\Contact
+                ? 'contact:' . $principal->getKey()
+                : 'ip:' . $request->ip();
+
+            return Limit::perMinute(60)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests. Please try again in a minute.',
                 ], 429);
             });
         });
