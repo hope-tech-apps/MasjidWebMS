@@ -20,7 +20,7 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 - `PLAN.md` / `LOG.md` / `NOTES.md` — plan, changelog, scratch notes.
 - `.claude/rules/` — path-scoped conventions (`tenant-scoping.md`,
   `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`,
-  `private-uploads.md`).
+  `private-uploads.md`, `groups.md`).
 
 ## Status
 
@@ -84,6 +84,32 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   responses detail modal that blob-fetches with the bearer token. Convention:
   `.claude/rules/private-uploads.md`. Proven by `tests/Feature/FormAttachmentTest.php`
   (15 tests); full suite 381/381, 1106 assertions on the droplet copy.
+- **Groups primitive — FOUNDATION DONE** (T-005, uncommitted). The second
+  scoping level of the core, org → group → member, shared by classrooms
+  (Schools), ḥalaqāt / weekend school (Masjids) and volunteer teams (Community).
+  `groups` (name, per-masjid-unique `slug`, string `kind` from `Group::KINDS`,
+  description, `is_active`, `starts_on`/`ends_on`, soft-deletes) +
+  `group_memberships` (denormalised `masjid_id`, `group_id`, `contact_id`,
+  string `role` from `GroupMembership::ROLES` = leader|member|guardian,
+  `guardian_of_contact_id`, `joined_at`). Both `BelongsToMasjid`; kinds and roles
+  are PHP constants, never DB enums. **Guardianship is an explicit edge**: a
+  guardian row NAMES its ward, one row per (guardian, ward, group), required on
+  guardian rows and prohibited on every other role; the ward must already hold a
+  participant membership in that group; removing a participant removes the
+  guardian edges over them (`GroupMembership::booted()` `deleting` hook).
+  Admin CRUD at `/api/admin/masjids/{id}/groups` +
+  `.../groups/{id}/members`, inside the existing `crm` group and gated by the
+  CONTACTS permissions (no new permission — `RolePermissionBridgeTest` pins the
+  set at 8). Naming is vertical-aware: `meta.group_label` comes from
+  `$masjid->term('groups')` ("Halaqat"/"Classrooms"/"Teams"), nothing hardcodes
+  "Classroom". Groups reference `Contact`, never duplicate a person. Purely
+  additive — two new tables, no existing column, model, route or payload
+  touched. Proven by `tests/Feature/GroupTenantIsolationTest.php` (13) +
+  `tests/Feature/GroupCrudTest.php` (33); full suite 427/427, 1179 assertions on
+  the droplet copy. Convention + the minors'-data obligations for every
+  follow-on slice: `.claude/rules/groups.md`. **OUT of this slice on purpose:**
+  group feed, messaging, group media, behavior points, ḥifẓ tracking, mobile app
+  (T-013/T-014/T-015).
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via

@@ -21,6 +21,8 @@ use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FundsController;
+use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
+use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
@@ -421,6 +423,40 @@ Route::prefix('admin')->group(function () {
                     // Merge a placeholder (unidentified-card) contact into a member.
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
                 });
+
+                // Groups — the second scoping level of the core (org -> group ->
+                // member): classrooms for a School, halaqat / weekend-school
+                // circles for a Masjid, volunteer teams for a Community org.
+                // Same guardrail as contacts: {masjid_id} stays in the path by
+                // convention, isolation comes from `tenant` + BelongsToMasjid,
+                // and the controllers never hand-filter.
+                //
+                // Gated by the CONTACTS permissions on purpose. A group is a
+                // structure OVER the member directory — it holds no data of its
+                // own beyond names and roles, and anyone trusted to manage the
+                // directory is trusted to arrange it. Minting `view/manage
+                // groups` would also change the seeded permission set that
+                // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin,
+                // which this additive slice must not do. Splitting the two is a
+                // deliberate later step. See .claude/rules/groups.md.
+                Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{group_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{group_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Group rosters. A membership links an existing Contact to a
+                // group with a role; a guardian membership additionally names the
+                // member it is a guardian OF, within that group.
+                Route::prefix('{masjid_id}/groups/{group_id}/members')
+                    ->controller(GroupMembershipsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
 
                 // CRM money path (Phase-0 spike). All tenant-scoped by the `tenant`
                 // middleware + BelongsToMasjid — controllers never hand-filter by

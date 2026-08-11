@@ -49,4 +49,22 @@ class Contact extends Model
     {
         return $this->hasMany(Donation::class);
     }
+
+    /**
+     * This person's places in groups — their own leader/member rows AND the
+     * guardian edges they hold over someone else. Additive: groups reference a
+     * contact, they never duplicate one. See .claude/rules/groups.md.
+     */
+    public function groupMemberships()
+    {
+        return $this->hasMany(GroupMembership::class);
+    }
+
+    /** The groups this contact appears in, in any role. */
+    public function groups()
+    {
+        return $this->belongsToMany(Group::class, 'group_memberships')
+            ->withPivot(['role', 'guardian_of_contact_id', 'joined_at'])
+            ->withTimestamps();
+    }
 }

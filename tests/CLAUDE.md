@@ -47,6 +47,21 @@ directory. Two traps, both of which look like "I broke 48 tests":
 source-only copy has no `public/build`. Run `npm run build` before the rsync and it
 passes with everything else. Anything else is a regression.
 
+## A new tenant-scoped model needs BOTH kinds of suite
+
+`.claude/rules/tenant-scoping.md` makes a cross-tenant Feature test mandatory per
+model. The Groups slice is the reference shape for a model with a roster:
+
+- `GroupTenantIsolationTest` — model layer, binds `TenantContext` directly
+  (scope, creating hook, `withoutMasjidScope()`), plus the invariants the MODEL
+  owns rather than the controller (here: a guardian edge never outliving the
+  membership it was granted over).
+- `GroupCrudTest` — the same guarantee end to end over HTTP: another tenant's id
+  under your own route is a **404**, their masjid in the route is a **403**.
+
+Both must force sqlite-in-memory, and any suite acting as a `MasjidAdmin` on a
+CRM route must seed `RolesAndPermissionsSeeder` AND set `crm_enabled => true`.
+
 ## Seeding reference data in a test
 
 `Country` and `City` declare no `$fillable`, so `Country::create([...])` throws
