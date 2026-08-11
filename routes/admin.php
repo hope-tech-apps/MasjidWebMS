@@ -422,9 +422,13 @@ Route::prefix('admin')->group(function () {
                 // masjid_id. See .claude/rules/stripe-payments.md.
 
                 // Stripe Connect (Standard account) onboarding for this masjid.
+                // NOTE: Stripe's own redirect targets are the PUBLIC landings in
+                // routes/web.php (connect.return / connect.refresh) — the admin's
+                // browser arrives there with no token. `/status` is the authed
+                // JSON view of the same state, for the SPA.
                 Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
                     Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
-                    Route::get('/return', 'onboardingReturn')->middleware('permission:manage donations');
+                    Route::get('/status', 'status')->middleware('permission:manage donations');
                 });
 
                 // Donation funds (designations). Viewing is gated by

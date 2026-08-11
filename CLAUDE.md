@@ -1,18 +1,45 @@
 # MasjidWebMS — working memory
 
-Laravel 11 + PHP 8.2 backend (Vue admin SPA) for the Burlington Masjid system.
-Multi-tenant by `masjid_id` over one MySQL DB (utf8mb4_bin) on DigitalOcean
-droplet 480119186. Auth = Laravel Sanctum. **MySQL has NO row-level security** —
-tenant isolation is app-layer only.
+Laravel 11 + PHP 8.2 backend (Vue admin SPA), branded **Manara**. Multi-tenant
+by `masjid_id` over one managed MySQL DB (utf8mb4_bin). Auth = Laravel Sanctum.
+**MySQL has NO row-level security** — tenant isolation is app-layer only.
+
+**Production is DigitalOcean droplet 586894889 (`masjid-backend-24-04`,
+159.65.239.51, reserved IP 164.90.253.138).** Droplet 480119186 is STALE and
+serves no traffic despite older docs naming it; both share the same database, so
+a mistake is invisible from the data. Verify with
+`getent hosts masjid.hopetechapps.com`. See `NOTES.md`.
+
+Manara is a **three-vertical platform on one core** — Masjids · Schools ·
+Community — keyed by `masjids.org_type`. Verticals are configuration, not forks;
+see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 
 ## Detailed state lives in
 
 - `STATE.md` — 60-second snapshot of where the project is.
 - `PLAN.md` / `LOG.md` / `NOTES.md` — plan, changelog, scratch notes.
-- `.claude/rules/` — path-scoped conventions (see `tenant-scoping.md`,
-  `stripe-payments.md`, and `testing.md` in the coordination root).
+- `.claude/rules/` — path-scoped conventions (`tenant-scoping.md`,
+  `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`).
 
 ## Status
+
+- **Manara verticals — `org_type` foundation DONE** (T-001). `masjids.org_type`
+  (`masjid`|`school`|`community`, default `masjid`, indexed) + `config/verticals.php`
+  (per-vertical default feature bundle + terminology pack) + `Masjid::ORG_TYPES`,
+  `orgType()`, `isMasjid()/isSchool()/isCommunity()`, `term()`,
+  `defaultFeatureKeys()`, `ofOrgType()` scope. Behaviour-neutral: existing
+  tenants all read as masjids and keep the worship modules
+  (adhkar/hadith/qibla/quran/tasbih), which are masjid-bundle-only. Proven by
+  `tests/Feature/OrgTypeTest.php` (9/9). Convention: `.claude/rules/verticals.md`.
+- **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
+  Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
+  Sanctum token, so those now hit `ConnectOnboardingLandingController` via
+  `routes/web.php` (`connect.return`/`connect.refresh`), not the admin API. The
+  authed JSON endpoint is now `GET .../connect/status`. Proven by
+  `tests/Feature/ConnectOnboardingLandingTest.php` (8/8).
+- **Live Stripe — BLOCKED on production.** Live keys were set on the stale
+  droplet; production still runs TEST keys, so the live Connect webhook cannot
+  verify signatures. See `STATE.md` → Blocked.
 
 - **CRM Phase 0 — tenant-isolation guardrail scaffolded** (branch
   `feat/crm-phase0-tenancy`, off `main`, local only — not pushed). Adds

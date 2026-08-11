@@ -13,9 +13,27 @@ class Masjid extends Model implements HasMedia
 {
     use InteractsWithMedia, SoftDeletes, SearchableTrait;
 
+    /**
+     * Manara vertical discriminator values (DECISIONS.md 2026-08-10).
+     *
+     * This constant — not a DB enum — is the authority on the allowed set, so
+     * adding a vertical never requires an ALTER on a live table. See the
+     * `add_org_type_to_masjids_table` migration for why.
+     */
+    public const ORG_TYPE_MASJID = 'masjid';
+    public const ORG_TYPE_SCHOOL = 'school';
+    public const ORG_TYPE_COMMUNITY = 'community';
+
+    public const ORG_TYPES = [
+        self::ORG_TYPE_MASJID,
+        self::ORG_TYPE_SCHOOL,
+        self::ORG_TYPE_COMMUNITY,
+    ];
+
     protected $fillable = [
         'user_id',
         'name',
+        'org_type',
         'email',
         'email_verified_at',
         'phone',
@@ -54,6 +72,80 @@ class Masjid extends Model implements HasMedia
             'crm_enabled' => 'boolean',
             'assistant_enabled' => 'boolean',
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // Manara verticals
+    // ------------------------------------------------------------------
+
+    /**
+     * The tenant's vertical, falling back to masjid.
+     *
+     * Rows predating the org_type column read as NULL through a stale model
+     * cache, and an unknown value must never silently grant a different
+     * vertical's behaviour — so anything unrecognized degrades to masjid, which
+     * is what every existing tenant already is.
+     */
+    public function orgType(): string
+    {
+        $type = (string) ($this->attributes['org_type'] ?? '');
+
+        return in_array($type, self::ORG_TYPES, true) ? $type : self::ORG_TYPE_MASJID;
+    }
+
+    public function isMasjid(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_MASJID;
+    }
+
+    public function isSchool(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_SCHOOL;
+    }
+
+    public function isCommunity(): bool
+    {
+        return $this->orgType() === self::ORG_TYPE_COMMUNITY;
+    }
+
+    /**
+     * This vertical's configuration block (label, default feature bundle,
+     * terminology pack) from `config/verticals.php`.
+     */
+    public function verticalConfig(): array
+    {
+        return config('verticals.' . $this->orgType(), []);
+    }
+
+    /**
+     * Admin-facing label for a domain concept in this tenant's language —
+     * "Congregants" for a masjid, "Families" for a school.
+     *
+     * Falls back to the given key humanized so a missing entry degrades to
+     * something readable rather than an empty label in the UI.
+     */
+    public function term(string $key): string
+    {
+        $terms = $this->verticalConfig()['terminology'] ?? [];
+
+        return $terms[$key] ?? ucfirst(str_replace('_', ' ', $key));
+    }
+
+    /**
+     * Feature keys this vertical enables BY DEFAULT at provisioning time.
+     *
+     * Not an authorization check: the `mobile_app_features` pivot's
+     * `is_available` remains the runtime source of truth for what a tenant has.
+     */
+    public function defaultFeatureKeys(): array
+    {
+        return $this->verticalConfig()['feature_keys'] ?? [];
+    }
+
+    /** Limit a query to one vertical. */
+    public function scopeOfOrgType($query, string $orgType)
+    {
+        return $query->where('org_type', $orgType);
     }
 
     public function admin() {

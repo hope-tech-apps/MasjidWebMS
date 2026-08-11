@@ -1,0 +1,61 @@
+---
+paths:
+  - "config/verticals.php"
+  - "app/Models/Masjid.php"
+  - "app/Http/Controllers/AdminDashboard/**"
+  - "app/Http/Controllers/Api/**"
+---
+# Manara verticals (org_type)
+
+Manara runs three verticals on ONE core: **Masjids · Schools · Community**
+(`DECISIONS.md`, 2026-08-10). A vertical is CONFIGURATION, never a fork.
+
+## The discriminator
+
+`masjids.org_type` — `masjid` | `school` | `community`, default `masjid`.
+
+- **`Masjid::ORG_TYPES` is the authority on the allowed set, not a DB enum.**
+  Adding a vertical must never require `ALTER TABLE … MODIFY` on a live table —
+  see `.claude/rules/migrations.md` for what that did to the SQLite test run.
+- Read it through `Masjid::orgType()`, never `$masjid->org_type` directly.
+  An unrecognized or missing value **degrades to masjid**: unknown input must
+  never silently grant a different vertical's behaviour.
+- The table is still named `masjids` and the column `masjid_id`. Renaming the
+  tenant root to `organizations` is deliberate, tracked tech debt (PLAN T-002),
+  not an oversight — do not start that rename as a side effect of other work.
+
+## Feature bundles are defaults, not authorization
+
+`config/verticals.php` `feature_keys` are the set seeded onto a tenant **at
+provisioning time**. They are NOT a runtime permission check. The
+`mobile_app_features` pivot's `is_available` remains the single source of truth
+for what a tenant actually has, and per-tenant gates (`crm_enabled`,
+`assistant_enabled`) are unchanged.
+
+Every key listed in a bundle MUST exist in `mobile_app_features.key`, or
+provisioning silently enables nothing for it. `OrgTypeTest` asserts this.
+
+## Islamic worship modules are masjid-only
+
+`adhkar`, `hadith`, `qibla`, `quran`, `tasbih` belong to the masjid bundle
+alone. A school or community tenant must never load them. Everything else
+(`about_us`, `announcements`, `contact_us`, `donate`, `gallery`, `services`) is
+org-generic and shared.
+
+When you add a masjid-specific capability, gate it on `isMasjid()` or a feature
+key — never assume the tenant is a masjid.
+
+## Terminology
+
+Admin-facing labels come from the vertical's `terminology` pack via
+`$masjid->term('members')` — "Congregants" for a masjid, "Families" for a
+school. Do not hardcode "Masjid" or "Congregants" in new admin UI or API
+payloads. `term()` falls back to a humanized key, so a missing entry degrades to
+something readable rather than a blank label.
+
+## Adding a vertical
+
+1. Add the constant to `Masjid::ORG_TYPES`.
+2. Add its block to `config/verticals.php` (label, plural, feature_keys,
+   terminology) — `OrgTypeTest` fails if any part is missing.
+3. No migration is needed. That is the point.
