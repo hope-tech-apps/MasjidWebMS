@@ -54,13 +54,25 @@ is a loaded gun with the safety on.
 
 If a listener has no work to do, delete it. Git remembers.
 
-## Related live defect (separate from this rule)
+## The Pusher realtime path was removed (2026-08-11)
 
-While auditing the above we found that `notifications.is_broadcasted` **does not
-exist as a column**, yet `PusherWebhookController` writes it on every delivery
-confirmation. Because the attribute is also absent from `Notification::$fillable`,
-Eloquent's mass-assignment protection drops it silently: the webhook responds
-`{"status":"success","message":"Notification broadcast confirmed."}` and records
-nothing. The whole broadcast-confirmation feature is inert — the event is never
-dispatched either. Finish it or remove it deliberately; do not assume the flag
-means anything today.
+The audit that produced this rule found the whole broadcast-confirmation feature
+inert in three independent ways, so it was deleted rather than finished:
+
+- **No event was ever dispatched.** `SendMasjidNotificationEvent` had no
+  producer, and the debug endpoint that fired `TestNotificationEvent` had already
+  been removed in the security sweep.
+- **The webhook could never authenticate.** `PUSHER_WEBHOOK_SECRET` was never set
+  in production and the controller fails closed, so every call was rejected.
+- **The flag it wrote does not exist.** `notifications.is_broadcasted` is not a
+  column and was not in `$fillable`, so mass-assignment protection dropped the
+  write silently while the endpoint answered *"Notification broadcast
+  confirmed."*
+
+Deleted: `SendMasjidNotificationEvent`, `TestNotificationEvent`,
+`PusherWebhookController` and its route. Per-channel delivery is now recorded
+properly by T-008 (`broadcasts` + `broadcast_deliveries`, see
+`.claude/rules/broadcasts.md`), which supersedes this half-built mechanism.
+
+Production still carries `BROADCAST_CONNECTION=pusher` and `PUSHER_*`
+credentials; nothing reads them now, so they can be retired at leisure.

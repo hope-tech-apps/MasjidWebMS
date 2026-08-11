@@ -130,16 +130,25 @@ class ListenerRegistrationTest extends TestCase
     }
 
     #[Test]
-    public function the_deleted_notification_listener_has_not_come_back(): void
+    public function the_deleted_pusher_realtime_path_has_not_come_back(): void
     {
-        // It was inert only because its body was commented out, and what it
-        // would have done was already wrong: it set is_broadcasted at DISPATCH
-        // time, whereas that flag means "Pusher confirmed delivery" and is owned
-        // by PusherWebhookController.
-        $this->assertFalse(
-            class_exists(\App\Listeners\SentMasjidNotificationLitener::class),
-            'SentMasjidNotificationLitener was deleted deliberately — see .claude/rules/events-listeners.md.'
-        );
+        // The listener was inert only because its body was commented out, and
+        // what it would have done was already wrong: it set is_broadcasted at
+        // DISPATCH time, whereas that flag meant "Pusher confirmed delivery".
+        // The audit then found the whole path dead — no producer, a webhook that
+        // could never authenticate, and a column that does not exist — so it was
+        // removed. T-008's broadcasts/broadcast_deliveries supersede it.
+        foreach ([
+            \App\Listeners\SentMasjidNotificationLitener::class,
+            \App\Events\SendMasjidNotificationEvent::class,
+            \App\Events\TestNotificationEvent::class,
+            \App\Http\Controllers\PusherWebhookController::class,
+        ] as $gone) {
+            $this->assertFalse(
+                class_exists($gone),
+                $gone . ' was deleted deliberately — see .claude/rules/events-listeners.md.'
+            );
+        }
     }
 
     /**
