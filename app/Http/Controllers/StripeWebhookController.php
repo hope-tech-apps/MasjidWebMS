@@ -9,6 +9,7 @@ use App\Models\DonationReceipt;
 use App\Models\Masjid;
 use App\Models\StripeWebhookEvent;
 use App\Services\Crm\DonorContactService;
+use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\StripeConnectService;
@@ -46,6 +47,7 @@ class StripeWebhookController extends Controller
     public function __construct(
         private DonationService $donations,
         private ReceiptService $receipts,
+        private DonationReceiptPdfService $receiptPdfs,
         private StripeConnectService $connect,
         private DonorContactService $donorContacts,
     ) {
@@ -251,6 +253,23 @@ class StripeWebhookController extends Controller
         $fund = $donation->fund()->withoutGlobalScopes()->first();
         $donorName = trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? ''));
 
+        // Printable copy of the receipt, attached to the same email. Rendered
+        // OUTSIDE the send's try/catch and tolerated on failure on purpose: the
+        // receipt is already issued, and a dompdf hiccup must not cost the donor
+        // the HTML receipt they got before this attachment existed.
+        $pdf = null;
+        $pdfName = null;
+        try {
+            $pdf = $this->receiptPdfs->pdfFor($receipt);
+            $pdfName = $this->receiptPdfs->filename($receipt);
+        } catch (\Throwable $e) {
+            Log::warning('Receipt PDF render failed; sending receipt without the attachment', [
+                'donation_id' => $donation->id,
+                'receipt_id' => $receipt->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         try {
             Mail::to($email)->send(new DonationReceiptMail(
                 masjidName: $masjid?->name ?? 'Your masjid',
@@ -263,6 +282,8 @@ class StripeWebhookController extends Controller
                 eligibleAmount: number_format(((int) $receipt->eligible_amount) / 100, 2),
                 reference: (string) $donation->uuid,
                 recurring: $donation->type === 'recurring',
+                pdf: $pdf,
+                pdfName: $pdfName,
             ));
 
             $donation->forceFill(['receipt_delivered_at' => now()])->save();
