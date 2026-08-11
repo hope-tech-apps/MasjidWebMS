@@ -1,8 +1,15 @@
 import { MasjidDashboardRoute, SuperDashboardRoute } from "@/core/types/config/SystemRoutes"
 import { UserType } from "@/core/types/data/User";
+import { TerminologyKey } from "@/core/types/data/Vertical";
 
 export type AsideMenuItem = {
     title: string;
+    // When set, the label is built from the tenant's own vocabulary instead of
+    // `title` — the terminology term for this key, followed by `title_suffix`
+    // if one is given ("Congregants Directory" for a masjid, "Families
+    // Directory" for a school). `title` stays the authored default.
+    title_term?: TerminologyKey;
+    title_suffix?: string;
     svg_icon: string;
     to: MasjidDashboardRoute | SuperDashboardRoute;
     allowed_types: UserType[];

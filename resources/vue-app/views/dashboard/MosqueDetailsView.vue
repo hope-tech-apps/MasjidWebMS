@@ -2,7 +2,7 @@
     <Form :validation-schema="validationSchema" @submit="updateMasjidDetails" class="card border-0 py-4 px-3">
         <div class="card-header bg-white border-0">
             <div class="card-title fs-4 fw-semibold">
-                Mosque Details
+                {{ masjidStore.term('organization') }} Details
             </div>
         </div>
 

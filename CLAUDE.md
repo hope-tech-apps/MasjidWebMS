@@ -44,6 +44,23 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   masjid bundle IS the full seeded catalog. Proven by
   `tests/Feature/ProvisionOrgTypeTest.php` (8/8). Next: T-003 (Vue reads the
   labels).
+- **Manara verticals — terminology in the admin SPA DONE** (T-003, uncommitted).
+  `core/types/data/Vertical.ts` types the `vertical` block (`OrgType`,
+  `TerminologyKey`, `Terminology`) and carries `MASJID_TERMINOLOGY`, a mirror of
+  the PHP masjid pack; `Masjid.ts` gains an optional `vertical`. `masjidStore`
+  exposes `vertical`/`orgType`/`organizationLabel`/`terminology` + **`term(key)`**,
+  the Vue counterpart of `Masjid::term()` — unknown key ⇒ humanized, absent
+  `vertical` block ⇒ the masjid pack, so a stale payload can't blank a label.
+  Sidebar items opt in via `title_term` (+ `title_suffix`) resolved in
+  `DashboardAside.vue`; converted so far: "Mosque Details" → `{organization}
+  Details`, "Member Directory" → `{members} Directory`, plus the headers of
+  `MosqueDetailsView`/`MosqueDetailsTabsView` and `ContactsView`. A masjid admin
+  now reads "Masjid Details" / "Congregants Directory" (was "Mosque Details" /
+  "Member Directory") — the deliberate cost of the pack; a school reads "School
+  Details" / "Families Directory". Router `meta.pageTitle` strings are still
+  hardcoded (static, resolved before the masjid loads). Vue build green
+  (`artifacts/vue_build_t003_20260810-213021.log`); PHP suite 366/366 on the
+  droplet copy. Convention: `.claude/rules/verticals.md` ("In the SPA").
 - **Stripe Connect onboarding landings — public pages** (written, NOT deployed).
   Stripe redirects an admin's browser to `return_url`/`refresh_url` with no
   Sanctum token, so those now hit `ConnectOnboardingLandingController` via

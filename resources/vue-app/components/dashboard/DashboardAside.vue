@@ -32,7 +32,7 @@
                             <span v-html="menuItem.svg_icon"></span>
                         </div>
                         <div class="menu-item-text">
-                            {{ menuItem.title }}
+                            {{ menuItemTitle(menuItem) }}
                         </div>
                     </router-link>
                 </template>
@@ -43,6 +43,7 @@
 </template>
 
 <script setup lang="ts">
+import { AsideMenuItem } from '@/core/types/config/AsideMenuItem';
 import { UserType } from '@/core/types/data/User';
 import { useAuthStore } from '@/stores/authStore';
 import { useDashboardAsideStore } from '@/stores/config/dashboardAsideStore';
@@ -87,6 +88,19 @@ const route = useRoute();
 const dashboardAsideStore = useDashboardAsideStore();
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+
+/**
+ * A nav label in the tenant's own vocabulary when the item opts in with
+ * `title_term`, and the authored `title` otherwise. `term()` carries its own
+ * masjid fallback, so this reads correctly before the masjid has loaded too.
+ */
+const menuItemTitle = (menuItem: AsideMenuItem): string => {
+    if (!menuItem.title_term) return menuItem.title;
+
+    const term = masjidStore.term(menuItem.title_term);
+
+    return menuItem.title_suffix ? `${term} ${menuItem.title_suffix}` : term;
+};
 
 // Html refs
 const dashboardLayout = ref<HTMLElement | null>();

@@ -2,7 +2,7 @@
     <div class="card border-0">
         <div class="card-header bg-white border-0">
             <div class="card-title fs-4 fw-semibold">
-                Mosque Settings
+                {{ masjidStore.term('organization') }} Settings
             </div>
         </div>
         <div class="card-body p-0">
@@ -78,6 +78,10 @@ import PrayerCalculationSettingsView from './PrayerCalculationSettingsView.vue';
 import IqamaTimeSettingsView from './IqamaTimeSettingsView.vue';
 import JumaaSettingsView from './JumaaSettingsView.vue';
 import ThemeSettingsView from './ThemeSettingsView.vue';
+import { useMasjidStore } from '@/stores/masjidStore';
+
+// Stores
+const masjidStore = useMasjidStore();
 </script>
 
 <style scoped>

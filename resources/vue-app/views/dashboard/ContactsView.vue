@@ -1,7 +1,7 @@
 <template>
     <div>
         <PageDataContainer
-            title="Member Directory"
+            :title="`${membersTerm} Directory`"
             :paginationOptions="paginationOptions"
             :buttonProps="{ title: 'Add Member', type: 'button', class: 'btn btn-success', disabled: false }"
             @headerButtonClick="openCreateModal"
@@ -16,7 +16,7 @@
                                 <i class="bi bi-people-fill"></i>
                             </div>
                             <div class="stats-content">
-                                <div class="stats-label">Total Members</div>
+                                <div class="stats-label">Total {{ membersTerm }}</div>
                                 <div class="stats-value">{{ paginationOptions?.itemsTotal || 0 }}</div>
                             </div>
                         </div>
@@ -56,7 +56,7 @@
                 <!-- Empty State -->
                 <div v-else-if="contacts.length === 0" class="text-center py-5 text-muted">
                     <i class="bi bi-person-x fs-1 d-block mb-3"></i>
-                    <p>No members yet</p>
+                    <p>No {{ membersTerm.toLowerCase() }} yet</p>
                 </div>
 
                 <!-- Members Table -->
@@ -338,6 +338,9 @@ const emptyForm = (): ContactPayload => ({ first_name: '', last_name: '', email:
 const form = ref<ContactPayload>(emptyForm());
 
 // Computed
+/** Whom this directory holds in the tenant's own words — "Congregants", "Families". */
+const membersTerm = computed<string>(() => masjidStore.term('members'));
+
 const contacts = computed<Contact[]>(() => (contactsStore.contactsPaginated?.data as Contact[]) || []);
 
 const paginationOptions = computed<PaginationOptions | undefined>(() => {

@@ -5,6 +5,10 @@ paths:
   - "app/Http/Controllers/AdminDashboard/**"
   - "app/Http/Requests/Admin/**"
   - "app/Http/Controllers/Api/**"
+  - "resources/vue-app/core/types/data/Vertical.ts"
+  - "resources/vue-app/stores/masjidStore.ts"
+  - "resources/vue-app/core/constants/dashboardAsideMenuItems.ts"
+  - "resources/vue-app/views/dashboard/**"
 ---
 # Manara verticals (org_type)
 
@@ -85,6 +89,29 @@ deliberately NOT in the model's `$appends`: that would widen the public/mobile
 API payloads too, and those have no vertical awareness yet. Add the append to
 any new admin endpoint that serializes a masjid; do not add it to `routes/api.php`
 controllers without a decision to expose verticals publicly.
+
+### In the SPA (T-003)
+
+`useMasjidStore().term(key)` is the Vue counterpart of PHP's `Masjid::term()`
+and the ONLY way admin UI should name a tenant concept. It degrades the same
+way — a key the pack does not carry humanizes rather than blanking — and adds
+one more fallback the backend does not need: **a payload with no `vertical`
+block at all falls back wholesale to `MASJID_TERMINOLOGY`** in
+`core/types/data/Vertical.ts`. Every tenant that exists today is a masjid, so a
+stale or non-admin payload must never blank a label. That constant MIRRORS the
+`masjid` pack in `config/verticals.php` — change one, change the other.
+
+`TerminologyKey` is a union of the keys the config ships, so adding a key in PHP
+and using it in Vue is a compile error until both sides agree. Keep it that way;
+do not widen it to `string`.
+
+Sidebar labels are data, not markup: an `AsideMenuItem` opts into the vocabulary
+with `title_term` (+ optional `title_suffix`), and `DashboardAside.vue` resolves
+it. `title` stays as the authored default for items that are vertical-neutral.
+
+Terms are plural nouns ("Congregants", "Families"). There is no singular form in
+the pack, so leave singular strings ("Add Member") hardcoded until one exists
+rather than inventing one by trimming an "s".
 
 ## Adding a vertical
 
