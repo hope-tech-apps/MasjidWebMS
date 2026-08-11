@@ -61,6 +61,21 @@ class Masjid extends Model implements HasMedia
         'deleted_by'
     ];
 
+    /**
+     * `active_owner_user_id` is the MySQL STORED generated column that carries
+     * the S0 ownership-uniqueness index — see
+     * `add_owner_uniqueness_to_masjids_table`. It is derived by the database from
+     * `user_id`/`deleted_at`, never written, and exists only on that driver (the
+     * SQLite test suite uses a native partial index and has no such column).
+     *
+     * Hiding it keeps the raw masjid payload the admin SPA reads
+     * (`MasjidsController::show`, no Resource) identical on both drivers, and
+     * identical to what it was before this slice.
+     */
+    protected $hidden = [
+        'active_owner_user_id',
+    ];
+
     protected $searchableFields = ['name', 'email', 'address'];
 
     protected function casts(): array

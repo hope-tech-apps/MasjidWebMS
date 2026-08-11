@@ -65,6 +65,49 @@ group only) binds `TenantContext` to a MasjidAdmin's masjid. The masjid is
 resolved from the authenticated user (`users.masjid_id` if present, else the
 masjid the admin owns via `masjids.user_id` -> `User::masjid()`).
 
+## `masjids.user_id` is UNIQUE among live rows — keep it that way
+
+`User::masjid()` is a `hasOne`. If a user owned two masjids it would not error,
+it would return **one arbitrary row**, and the middleware above would bind the
+tenant to whichever one the database felt like returning. Since S0 that is a
+database fact, not a convention: a unique index over non-deleted, owned rows
+(`add_owner_uniqueness_to_masjids_table`; see .claude/rules/migrations.md for how
+the same predicate is spelled on each driver).
+
+- Every write path that sets `masjids.user_id` must carry
+  `unique:masjids,user_id` — `StoreMasjidRequest`, `ProvisionMasjidRequest` and
+  `UpdateMasjidRequest` all do. On update it must be
+  `Rule::unique(...)->ignore($this->route('masjid_id'))->whereNull('deleted_at')`,
+  or the ordinary save that re-submits a masjid's own owner starts 422ing.
+- Two states stay legal and must not be "fixed": a **trashed** masjid does not
+  pin its former owner, and a masjid may have **no owner at all**.
+- `php artisan masjids:reconcile-owners` reports duplicate owners; `--fix`
+  detaches all but each owner's first-created masjid. Run it before migrating
+  any environment whose data did not come from the admin API.
+
+## `TenantContext` is `scoped()`, and every queued job starts UNBOUND
+
+It was a `singleton()`, which is fine for one request and wrong for `queue:work`
+— one long-lived process, many jobs, one container. A job that bound masjid A
+left it bound for the next job off the queue, which then read and wrote through
+the global scope under someone else's tenant, silently.
+
+- The binding is registered with `scoped()` in `AppServiceProvider`. The worker
+  calls `forgetScopedInstances()` before reserving each job, so each job rebuilds
+  it from nothing. **Do not change it back to `singleton()`.**
+- `App\Listeners\ResetTenantContextBetweenJobs` clears it on `JobProcessing` for
+  the worker paths that do not reset the container scope (`queue:work --once`,
+  `queue:listen`). It **exempts the `sync` driver on purpose**: a sync job runs
+  inside the dispatching request, under that request's tenant, and clearing it
+  there would unbind the rest of the request. The suite runs `sync`.
+- Anything under `app/Listeners` with a typed `handle(SomeEvent $e)` is **also
+  auto-registered by Laravel's event discovery** (`Application::configure()`
+  calls `withEvents()`), on top of any explicit `Event::listen`. Keep such
+  listeners idempotent, and do not conclude a listener is unregistered just
+  because you cannot find an `Event::listen` for it.
+- A job that needs a tenant must bind it itself (`ImpactMetrics::withTenant()` is
+  the pattern) rather than assuming the dispatcher's binding survived the queue.
+
 ## Testing is not optional
 
 Because there is no DB-level backstop, **every new tenant-scoped model MUST ship
