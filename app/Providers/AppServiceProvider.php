@@ -149,6 +149,32 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public contact-us intake. The OLDEST unauthenticated DB write in the
+        // app and, until 2026-08-11, the only one with no limiter at all —
+        // routes/api_v1.php even claimed in a comment that form-submit was the
+        // only public write, which was wrong. One request creates up to four
+        // rows (MobileAppUser, ContactUsAccount, ContactUsReason, and the
+        // message), and `contact_us_reasons` is a GLOBAL table joined into every
+        // tenant's admin inbox, so an unbounded loop here is both storage growth
+        // and attacker-chosen text in every organisation's UI.
+        //
+        // Same shape and allowance as 'appointment-request': a real person
+        // contacts a masjid a handful of times, and the key includes the target
+        // organization so flooding one masjid cannot lock a visitor out of
+        // another's contact form.
+        RateLimiter::for('contact-us', function (Request $request) {
+            // The V1 endpoint names its tenant in the header, the mobile one in
+            // the route — take whichever is present so both are keyed per-org.
+            $tenant = (string) ($request->route('masjid_id') ?? $request->header('masjid-id'));
+
+            return Limit::perHour(8)->by($request->ip() . '|' . $tenant)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         // Public registration intake (T-006c) — an unauthenticated DB write
         // that also opens a Stripe Checkout Session, so it is the tightest of
         // the public writes. Keyed by IP AND target organization so flooding

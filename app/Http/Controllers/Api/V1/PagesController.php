@@ -5,8 +5,24 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\PageResource;
 use App\Models\Page;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 
+/**
+ * NOTE on the `catch (HttpResponseException)` re-throws below.
+ *
+ * `Page::filterByMasjid()` REFUSES a request that names no tenant, and it does
+ * so by throwing an HttpResponseException carrying a 400 (see
+ * App\Traits\SearchableTrait). Every method here wraps its query in a blanket
+ * `catch (\Exception)`, and HttpResponseException is an \Exception — so without
+ * these re-throws the refusal is swallowed and reissued as a 500 by index/menu,
+ * and as a **404** by show(), which would read as "no such page" for what is
+ * really "you did not say which organisation". Caught by
+ * PublicApiTenantScopingTest, which asserts 400 on all three.
+ *
+ * HttpResponseException carries its own response and is Laravel's way of saying
+ * "this answer is final"; it must always reach the handler unaltered.
+ */
 class PagesController extends Controller
 {
     /**
@@ -26,6 +42,8 @@ class PagesController extends Controller
 
             return response()->api(200, __('api.success'), PageResource::collection($pages));
 
+        } catch (HttpResponseException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }
@@ -48,6 +66,8 @@ class PagesController extends Controller
 
             return response()->api(200, __('api.success'), new PageResource($page));
 
+        } catch (HttpResponseException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->api(404, __('api.page_not_found'), null);
         }
@@ -79,6 +99,8 @@ class PagesController extends Controller
                 'button_items' => $buttonPages,
             ]);
 
+        } catch (HttpResponseException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->api(500, \App\Support\Errors::publicMessage($e), null);
         }

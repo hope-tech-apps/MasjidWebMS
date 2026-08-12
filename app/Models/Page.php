@@ -74,17 +74,13 @@ class Page extends Model implements HasMedia
         return $this->hasMany(PageSection::class)->orderBy('order');
     }
 
-    /**
-     * Scope to filter by masjid
+    /*
+     * scopeFilterByMasjid intentionally lives ONLY in SearchableTrait, which
+     * this model already uses. A copy here used to shadow it with the
+     * fail-open version (no header => no WHERE => every tenant's pages), so
+     * hardening the trait alone would have left this model leaking. One
+     * implementation, one place to get it right.
      */
-    public function scopeFilterByMasjid($query)
-    {
-        $masjidId = request()->header('masjid-id');
-        if ($masjidId) {
-            return $query->where('masjid_id', $masjidId);
-        }
-        return $query;
-    }
 
     /**
      * Scope to get only active pages

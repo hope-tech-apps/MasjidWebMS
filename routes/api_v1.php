@@ -30,17 +30,22 @@ Route::prefix('v1')->group(function () {
         Route::get('/{id}', 'show');
     });
 
-    // Contact Us routes
+    // Contact Us routes.
+    //
+    // `storeMessage` is an unauthenticated DB write, and it went a long time
+    // without a limiter — the comment below used to claim form-submit was the
+    // only public write in this file, which was simply wrong. See the
+    // 'contact-us' limiter in AppServiceProvider for what one request creates.
     Route::prefix('contact-us')->controller(ContactUsController::class)->group(function () {
         Route::get('/reasons', 'reasonsList');
-        Route::post('/', 'storeMessage');
+        Route::post('/', 'storeMessage')->middleware('throttle:contact-us');
     });
 
     // Public form submissions.
     //
-    // The only unauthenticated DB write in this feature, so it is throttled by name.
-    // The rest of /api/v1 carries no middleware at all; do not follow that example for
-    // anything that writes.
+    // An unauthenticated DB write, so it is throttled by name — as is every
+    // other public write in this file. Anything added here that writes must
+    // carry a named limiter too.
     Route::post('/forms/{form_id}/responses', [FormSubmissionsController::class, 'store'])
         ->middleware('throttle:form-submit');
 
