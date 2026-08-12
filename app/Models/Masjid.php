@@ -76,6 +76,61 @@ class Masjid extends Model implements HasMedia
         'active_owner_user_id',
     ];
 
+    /**
+     * Columns that must NEVER reach an unauthenticated caller.
+     *
+     * `Mobile/MasjidsController` returned the whole `masjids` row to anonymous
+     * callers — `$hidden` held one column and everything else went out as-is.
+     * Measured against production on 2026-08-12 with a bare curl and no
+     * credentials: Burlington's `google_maps_key` (billable to them), its
+     * `stripe_account_id`, `tax_id` and `statement_signatory`, plus every
+     * organisation's internal actor ids. Pre-existing, and it survived earlier
+     * passes because they reviewed the row COUNT and not the row CONTENTS.
+     *
+     * A DENYLIST applied at the public boundary rather than on the model,
+     * because putting these in `$hidden` would also blank them for the admin
+     * surfaces that legitimately read and edit them. What makes a denylist
+     * defensible is the companion guard in PublicMasjidDirectoryTest, which
+     * fails when a NEW column appears in the public payload without being
+     * classified — the same self-enforcing shape as the tenancy meta-test,
+     * and the only thing that stops a list like this going quietly stale.
+     *
+     * `email` and `phone` deliberately REMAIN. A masjid's contact details are
+     * the point of a public directory, and the shipped iOS build decodes
+     * `email: String` NON-optionally (`Masjid.swift`) — dropping it would break
+     * the masjid list in every installed copy. That is a hard constraint, not a
+     * preference.
+     *
+     * @var list<string>
+     */
+    public const PUBLIC_DIRECTORY_DENYLIST = [
+        // Credentials and money identifiers.
+        'google_maps_key',
+        'stripe_account_id',
+        'stripe_charges_enabled',
+        'stripe_payouts_enabled',
+        'tax_id',
+        'statement_signatory',
+        // Internal actors and lifecycle. Verified optional in BOTH the iOS and
+        // Android decoders before removal.
+        'user_id',
+        'created_by',
+        'updated_by',
+        'deleted_by',
+        'deleted_at',
+        'email_verified_at',
+        'phone_verified_at',
+        // Plan/feature flags — they describe the organisation's account, not its
+        // public identity.
+        'crm_enabled',
+        'assistant_enabled',
+        // An internal delivery preference for receipts and statements. Neither
+        // app decodes it and it is not part of an organisation's public
+        // identity, so it stays in — classified deliberately rather than
+        // published by default, which is the whole point of the guard.
+        'mailing_locale',
+    ];
+
     protected $searchableFields = ['name', 'email', 'address'];
 
     protected function casts(): array

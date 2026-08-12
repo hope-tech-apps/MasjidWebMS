@@ -14,7 +14,12 @@ class MasjidsController extends Controller
         $masjids = Cache::remember(
             MobileCache::globalKey(MobileCache::MASJIDS_LIST),
             MobileCache::TTL_DAY,
+            // makeHidden at the boundary, not $hidden on the model: these columns
+            // are legitimately read by the admin surfaces, and this is the one
+            // place the row meets an anonymous caller. See
+            // Masjid::PUBLIC_DIRECTORY_DENYLIST for what was being published.
             fn() => Masjid::with('logo')->get()
+                ->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST)
         );
 
         return response()->json([
@@ -39,6 +44,9 @@ class MasjidsController extends Controller
                     'socialMediaLinks',
                     'themeSettings'
                 )->findOrFail($masjid_id);
+
+                // Same boundary rule as index().
+                $masjid->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST);
 
                 // Per-masjid color theme, baked into the cached payload so the apps
                 // read it from the same SHOW structure they already fetch. Same
