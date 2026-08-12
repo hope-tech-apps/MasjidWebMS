@@ -86,3 +86,53 @@ Schedule::command('registrations:reap-expired')->everyFifteenMinutes()->withoutO
 // growing record of which addresses tried to sign in to which organisation and
 // from where. 03:25 UTC, clear of the 03:10 group sweep.
 Schedule::command('family:prune-login-codes')->dailyAt('03:25')->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Cross-tenant canary
+|--------------------------------------------------------------------------
+|
+| Everything above this line deletes or sends. This one only LOOKS: it probes
+| the running public API for the shape of the two cross-tenant holes that were
+| live in production on 2026-08-11 (SearchableTrait's fail-open scope, and the
+| gallery's unresolved tenant escaping as a 500). See App\Console\Commands\
+| TenancyCanary for what each probe is and why it is read-only.
+|
+| WHY HOURLY, AND NOT EVERY FIVE MINUTES
+|
+| A tighter cadence buys nothing and costs something real. The exposure it
+| watches for is introduced by a DEPLOY, not by traffic, and the last two
+| instances were live for weeks and months respectively — the difference
+| between finding one in five minutes and finding it in an hour is noise
+| against that. Meanwhile /api/mobile is limited to 60 requests per minute per
+| IP; a canary firing every five minutes takes a standing bite out of that
+| bucket from whatever address it runs on, twelve times an hour, forever. The
+| command already paces itself to a third of the bucket and rotates the mobile
+| surface, and hourly keeps the whole arrangement to roughly one probe every
+| three seconds for two or three minutes an hour.
+|
+| Deploys are the other half of the cadence and do not belong in a cron: the
+| deploy script should run `php artisan tenancy:canary --all --json` after the
+| release is live and fail the deploy on a non-zero exit. That is when a new
+| hole actually appears; this schedule is the backstop for the one that appears
+| some other way — a config change, a cache rule, a route added by a migration
+| of somebody else's making.
+|
+| :47 so it never shares a minute with the quarter-hourly checkout reaper
+| (:00/:15/:30/:45), the 03:10 group sweep, the 03:25 code prune or the 07:00
+| prayer resync.
+|
+| withoutOverlapping(15) rather than the bare call the sweeps above use, and
+| the deviation is deliberate: the bare form holds its lock for 24 hours, so a
+| single killed run would silence the canary for a day. A watchdog whose
+| failure mode is "stops watching, says nothing" is the failure mode it exists
+| to prevent. Fifteen minutes comfortably exceeds a full --all run and expires
+| well inside the hour.
+|
+| It exits non-zero on a finding AND on an incomplete run, so whatever watches
+| cron exit codes is the alert path; the command also writes exactly one log
+| line per run (info when clean, error with the reproducing curl when not),
+| because schedule:run discards stdout and a canary you cannot prove ran is a
+| canary that can stop running unnoticed.
+*/
+Schedule::command('tenancy:canary --json')->hourlyAt(47)->withoutOverlapping(15);

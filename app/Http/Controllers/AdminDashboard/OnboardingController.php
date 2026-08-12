@@ -36,14 +36,43 @@ class OnboardingController extends Controller
 {
     /**
      * Catalog the wizard needs to render its selects in a single fetch:
-     * the mobile-feature catalog (for the Content step's toggles), the prayer
-     * calculation option lists, and the countries list.
+     * the vertical picker, the mobile-feature catalog (for the Content step's
+     * toggles), the prayer calculation option lists, and the countries list.
      */
     public function options()
     {
         return response()->json([
             'status' => 'success',
             'data' => [
+                // ---- Verticals (the wizard's Organization-type picker) ----
+                // Served straight from config/verticals.php so the SPA renders
+                // what provisioning will actually DO — the default feature
+                // bundle and the terminology pack — instead of a second copy of
+                // the same facts that can drift. Masjid::ORG_TYPES is the
+                // authority on the allowed set (.claude/rules/verticals.md), and
+                // it is the same constant ProvisionMasjidRequest validates
+                // against, so a new vertical appears in the wizard with no SPA
+                // change at all.
+                'verticals' => collect(Masjid::ORG_TYPES)->map(function (string $orgType) {
+                    $config = config("verticals.{$orgType}", []);
+
+                    return [
+                        'org_type' => $orgType,
+                        'label' => $config['label'] ?? '',
+                        'plural' => $config['plural'] ?? '',
+                        // DEFAULTS seeded at provisioning time, not an
+                        // authorization list — the wizard says as much.
+                        'feature_keys' => array_values($config['feature_keys'] ?? []),
+                        'terminology' => $config['terminology'] ?? [],
+                    ];
+                })->values(),
+                // The vertical an omitted org_type resolves to. Read from the
+                // SAME constant ProvisionMasjidRequest::prepareForValidation()
+                // merges, so the wizard's pre-selection and the request's
+                // fallback cannot disagree — OnboardingVerticalPickerTest pins
+                // that they agree by provisioning without an org_type and
+                // comparing.
+                'default_org_type' => Masjid::ORG_TYPE_MASJID,
                 'features' => MobileAppFeature::orderBy('name')->get(['id', 'key', 'name']),
                 'prayer' => [
                     'methods' => collect(PrayerCalculationMethod::cases())->map(fn($c) => [

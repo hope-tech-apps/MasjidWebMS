@@ -65,6 +65,13 @@ enum SectionType: string
     case SERVICES_ELIGIBILITY = 'services_eligibility';
     case PROVIDERS_DIRECTORY = 'providers_directory';
     case IMPACT_STATS = 'impact_stats';
+    // The public front door for the registration engine (T-006g). Holds a
+    // REFERENCE to an Offering, exactly as `form` holds one to a Form — the
+    // price, the window, the places left and the intake questions live on the
+    // offering and its fee plans, never in this section's JSON. Offered to every
+    // tenant like every other type: a masjid taking iftar RSVPs and a school
+    // taking tuition are the same mechanism.
+    case OFFERING = 'offering';
 
     /**
      * Get all section type values
@@ -106,6 +113,7 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY => 'Services & Eligibility',
             self::PROVIDERS_DIRECTORY => 'Providers & Care Team',
             self::IMPACT_STATS => 'Impact Numbers',
+            self::OFFERING => 'Registration & Payment',
         };
     }
 
@@ -141,6 +149,7 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY => 'The services you offer and who qualifies for them — criteria, plus one highlighted card for the programme people ask about most',
             self::PROVIDERS_DIRECTORY => 'The people who provide care — photo, credentials and specialty, grouped by department',
             self::IMPACT_STATS => 'Headline numbers for funders and visitors — visits served, value of care, volunteer hours',
+            self::OFFERING => 'Sign-ups and payment for one program, class, event or admission round — its fee plans, the places left, and the registration form. Create it first under Programs.',
         };
     }
 
@@ -197,6 +206,13 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY,
             self::PROVIDERS_DIRECTORY,
             self::IMPACT_STATS => false,
+            // FALSE, like `form`, and for the same reason. This flag means "the
+            // renderer must call another endpoint of ours to draw this" — and it
+            // must not, because SectionContentBinder::bindOffering INLINES the
+            // offering's public payload into the section when the page is
+            // served. One fetch, and no window in which the page has rendered
+            // and the price has not.
+            self::OFFERING => false,
         };
     }
 
@@ -540,6 +556,40 @@ enum SectionType: string
                 'stats' => [],
                 'layout' => 'row', // row | grid
                 'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // The registration front door (T-006g)
+            // ---------------------------------------------------------------
+            // A REFERENCE and page-level wording — nothing else. The name, the
+            // description, the fee plans, the registration window and the places
+            // remaining all live on the Offering and its FeePlans;
+            // SectionContentBinder::bindOffering inlines them under
+            // `content.offering` at serve time, through the same presenter the
+            // public GET /api/v1/offerings/{slug} uses.
+            //
+            // COPYING ANY OF THEM IN HERE WOULD BE A SECOND PRICE. Section
+            // content is a JSON blob an admin edits by hand; a fee copied into
+            // it would go stale the moment a fee plan was replaced, and the page
+            // would advertise one number while Stripe charged another. This is
+            // the same call `form` makes (a reference, never the schema) and the
+            // reason `admissions_tuition.tiers[].amount` is display TEXT: that
+            // section is a price list nothing charges from, this one is the
+            // actual checkout, and the two must not be confused.
+            //
+            // `title` and `intro` are page-level wording drawn AROUND the
+            // offering; the offering's own name and description come from the
+            // offering, so renaming a program does not leave the page stale.
+            self::OFFERING => [
+                'offering_id' => null,
+                'title' => '',
+                'intro' => '',
+                // Show the price table above the form. An organization whose
+                // single plan is free legitimately turns this off.
+                'show_fee_plans' => true,
+                // Wording only — it never decides whether registration is open.
+                // `content.offering.registration_state` does.
+                'button_text' => 'Register',
                 'background_color' => '#ffffff',
             ],
         };

@@ -1,3 +1,9 @@
+import {
+    BillingInterval,
+    FeePlanKind,
+    OfferingKind
+} from '@/core/types/data/masjid-related/Offering';
+
 export type SectionType =
     | 'page_title'
     | 'prayer_times'
@@ -28,7 +34,10 @@ export type SectionType =
     // the palette is global. See App\Enums\SectionType.
     | 'services_eligibility'
     | 'providers_directory'
-    | 'impact_stats';
+    | 'impact_stats'
+    // The registration front door (T-006g). Offered to every tenant like every
+    // other type. See App\Enums\SectionType.
+    | 'offering';
 
 // Base Section
 export type PageSection = {
@@ -75,7 +84,8 @@ export type SectionContent =
     | AdmissionsTuitionSectionContent
     | ServicesEligibilitySectionContent
     | ProvidersDirectorySectionContent
-    | ImpactStatsSectionContent;
+    | ImpactStatsSectionContent
+    | OfferingSectionContent;
 
 // Individual Section Content Types
 
@@ -518,4 +528,115 @@ export type ImpactStatsSectionContent = {
     layout: 'row' | 'grid';
     columns: number;
     background_color: string;
+};
+
+/* -------------------------------------------------------------------------
+ * The registration front door (T-006g)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * One way to pay, as the PUBLIC payload states it — a narrower shape than the
+ * admin `FeePlan` in `@/core/types/data/masjid-related/Offering`, which is the
+ * point: the public copy carries no `masjid_id`, no `offering_id` and no
+ * timestamps.
+ *
+ * `id` is here because POST /api/v1/offerings/{slug}/register takes
+ * `fee_plan_id` — it is the only internal id the public payload publishes.
+ *
+ * BOTH amounts are INTEGER MINOR UNITS and both are computed server-side.
+ * `amount_minor` is one charge; `total_minor` is the whole commitment
+ * (`amount x installment_count` for an installment plan). Nothing in a browser
+ * may derive one from the other — the server's `listTotalFor()` is the only
+ * implementation, and it is the same one that snapshots what a family is
+ * actually charged.
+ */
+export type PublicFeePlan = {
+    id: number;
+    kind: FeePlanKind;
+    label: string;
+    /** Lowercase ISO-4217 as stored (`usd`). Never render an amount without it. */
+    currency: string;
+    /** INTEGER MINOR UNITS — one charge. */
+    amount_minor: number;
+    /** INTEGER MINOR UNITS — the whole commitment. Server-computed. */
+    total_minor: number;
+    billing_interval: BillingInterval | null;
+    installment_count: number | null;
+    /** false is the free path: confirmed in-request, no Stripe leg, never a $0 session. */
+    requires_payment: boolean;
+};
+
+/**
+ * The intake questions and the wording drawn around them. No id and no slug: a
+ * registration is posted to the OFFERING's endpoint, so neither is needed. No
+ * fee rule either — money for an offering comes from its fee plans and nowhere
+ * else.
+ */
+export type PublicOfferingForm = {
+    name: string;
+    description: string | null;
+    schema: Record<string, any> | null;
+    settings: {
+        submitButtonLabel: string;
+        successTitle: string | null;
+        successBody: string | null;
+        successNextSteps: string[];
+        intro: string | null;
+    };
+};
+
+/**
+ * What an anonymous visitor is served about one offering — by
+ * `GET /api/v1/offerings/{slug}` and, identically, inlined under
+ * `content.offering` when a page carrying an `offering` section is fetched.
+ * `App\Support\OfferingPublicPayload` builds both.
+ *
+ * `registration_state` is the field to switch on, not `is_open`: a FULL offering
+ * is still accepting sign-ups (they are waitlisted, not refused), and an
+ * offering whose intake form has been deleted is closed even though `is_open`
+ * reports true. The server decides all of that in one place on purpose.
+ *
+ * There is no `capacity` and no registrant count here, deliberately:
+ * `seats.remaining` is a property of the offering, not of the people in it.
+ */
+export type PublicOffering = {
+    slug: string;
+    name: string;
+    description: string | null;
+    kind: OfferingKind;
+    opens_at: string | null;
+    closes_at: string | null;
+    /** is_active AND inside the window — the model's own accessor, verbatim. */
+    is_open: boolean;
+    closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
+    seats: {
+        is_full: boolean;
+        /** null = unlimited, which is unknown rather than 0. */
+        remaining: number | null;
+    };
+    registration_state: 'open' | 'waitlist' | 'closed';
+    fee_plans: PublicFeePlan[];
+    intake_form: PublicOfferingForm | null;
+};
+
+/**
+ * The `offering` page section: a REFERENCE plus page-level wording, exactly as
+ * `form` is. The price, the window, the places left and the questions live on
+ * the offering; copying any of them in here would be a second price that goes
+ * stale the moment a fee plan is replaced.
+ *
+ * `offering` is READ-ONLY and server-supplied: SectionContentBinder inlines it
+ * when the site fetches the page, and it is null when the id is unset, points at
+ * nothing, belongs to another masjid, is deleted, or is switched off. The editor
+ * never sets it — the same contract `EmbedSectionContent.iframe` has.
+ */
+export type OfferingSectionContent = {
+    offering_id: number | null;
+    title: string;
+    intro: string;
+    show_fee_plans: boolean;
+    /** Wording only. It never decides whether registration is open. */
+    button_text: string;
+    background_color: string;
+    offering?: PublicOffering | null;
 };

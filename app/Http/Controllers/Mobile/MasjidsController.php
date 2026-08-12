@@ -9,12 +9,29 @@ use Illuminate\Support\Facades\Cache;
 
 class MasjidsController extends Controller
 {
+    /**
+     * The public organisation directory the apps open with.
+     *
+     * Gated on `masjids.listed_at` (Masjid::scopeListed): this used to return
+     * EVERY row, so creating a tenant published it to every app user inside the
+     * one-day cache window whether anyone was ready or not. An organisation is
+     * offered here only once a SuperAdmin has listed it.
+     *
+     * Anything that changes listing state must flush MASJIDS_LIST — the cache
+     * outlives the decision by a day otherwise.
+     */
     public function index()
     {
         $masjids = Cache::remember(
             MobileCache::globalKey(MobileCache::MASJIDS_LIST),
             MobileCache::TTL_DAY,
-            fn() => Masjid::with('logo')->get()
+            // makeHidden at the boundary, not $hidden on the model: these
+            // columns are legitimately read by the admin surfaces, and this is
+            // the one place the row meets an anonymous caller. See
+            // Masjid::PUBLIC_DIRECTORY_DENYLIST for what was being published
+            // and why email/phone stay.
+            fn() => Masjid::listed()->with('logo')->get()
+                ->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST)
         );
 
         return response()->json([
@@ -39,6 +56,10 @@ class MasjidsController extends Controller
                     'socialMediaLinks',
                     'themeSettings'
                 )->findOrFail($masjid_id);
+
+                // Same boundary rule as index() — an anonymous caller gets the
+                // organisation's public identity, never its credentials.
+                $masjid->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST);
 
                 // Per-masjid color theme, baked into the cached payload so the apps
                 // read it from the same SHOW structure they already fetch. Same

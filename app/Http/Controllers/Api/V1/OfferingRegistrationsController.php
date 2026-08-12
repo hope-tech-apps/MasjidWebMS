@@ -13,12 +13,13 @@ use App\Services\Registrations\RegistrationException;
 use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
 use App\Support\Errors;
+use App\Support\OfferingPublicPayload;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 /**
- * The PUBLIC registration endpoints — quote, register, checkout (T-006c,
- * docs/t006-registration-billing-design.md).
+ * The PUBLIC registration endpoints — read, quote, register, checkout (T-006c
+ * and T-006g, docs/t006-registration-billing-design.md).
  *
  * These are unauthenticated writes, so they follow the public form-submission
  * idiom (FormSubmissionsController) defensively:
@@ -53,6 +54,49 @@ class OfferingRegistrationsController extends Controller
         private RegistrationService $registrations,
         private RegistrationCheckoutService $checkout,
     ) {
+    }
+
+    /**
+     * GET /api/v1/offerings/{slug}
+     *
+     * The PUBLIC FRONT DOOR (T-006g): everything a family needs in order to
+     * decide to register, and nothing else. WRITES NOTHING.
+     *
+     * Until this existed, an organization could be fully configured — offering,
+     * fee plans, intake form, connected Stripe account — and still have no way
+     * for anyone to reach it: nothing in resources/ called the registration
+     * endpoints, so a registration could only be created by a caller who already
+     * knew the API.
+     *
+     * The payload, and the reasoning for every field in and every field out,
+     * lives in App\Support\OfferingPublicPayload — the SAME presenter
+     * SectionContentBinder uses when an `offering` page section is served, so
+     * the standalone page and the published section can never disagree about
+     * what is safe to publish.
+     *
+     * The tenant comes from the masjid-id header and is filtered explicitly, and
+     * a foreign / missing / switched-off offering is the same 404: no probing
+     * for which offerings live where.
+     */
+    public function show(Request $request, string $slug)
+    {
+        try {
+            $masjidId = (int) $request->header('masjid-id');
+
+            if ($masjidId <= 0) {
+                return response()->api(400, 'A masjid must be specified.', null);
+            }
+
+            $payload = OfferingPublicPayload::forSlug($masjidId, $slug);
+
+            if (! $payload) {
+                return response()->api(404, 'This offering is not available.', null);
+            }
+
+            return response()->api(200, 'Offering loaded.', $payload);
+        } catch (\Throwable $e) {
+            return response()->api(500, Errors::publicMessage($e), null);
+        }
     }
 
     /**

@@ -268,6 +268,21 @@
                                         </select>
                                     </div>
                                     <div class="col-12">
+                                        <label class="form-label">Description</label>
+                                        <textarea
+                                            class="form-control"
+                                            rows="4"
+                                            v-model="form.description"
+                                            placeholder="What this is, who it is for, what to bring."
+                                        ></textarea>
+                                        <div class="form-text">
+                                            Shown to anyone reading the sign-up page — write it for a
+                                            family deciding whether to register, not for staff. Leave it
+                                            empty and the page simply omits the block.
+                                        </div>
+                                    </div>
+
+                                    <div class="col-12">
                                         <label class="form-label">Slug <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control font-monospace" v-model.trim="form.slug" required>
                                         <div class="form-text">
@@ -276,20 +291,27 @@
                                             offering breaks any link already shared.
                                             <br>
                                             <!--
-                                                Deliberately NOT "the public address people register at".
-                                                Nothing in this application publishes a registration page:
-                                                the only intake is POST /api/v1/offerings/{slug}/register,
-                                                and no section type, page or public route calls it. An
-                                                admin told this slug was a public address reasonably
-                                                publishes the intake FORM instead — which writes a
+                                                STILL deliberately not "the public address people register
+                                                at". T-006g added the backend half of the front door — the
+                                                public read GET /api/v1/offerings/{slug} and the `offering`
+                                                page section, which inlines that same payload when a page
+                                                is served — but the thing that DRAWS a registration form
+                                                lives in the Nuxt site repo and is not shipped. Until it
+                                                is, adding the section to a page publishes the data and
+                                                nothing renders it, and an admin told otherwise reasonably
+                                                publishes the intake FORM instead: that writes a
                                                 FormResponse and never a Registration, so no seat is taken
                                                 and no money moves while every screen agrees nothing
-                                                happened.
+                                                happened. Delete this note when the renderer ships.
                                             -->
                                             <span class="text-warning-emphasis">
-                                                Note: the public sign-up page for offerings is not live yet.
-                                                Registrations reach this screen through the registration API,
-                                                not by publishing the sign-up form on a page.
+                                                Note: the public sign-up page is not drawn yet. This
+                                                organisation's data is now served to the website
+                                                (the "Registration &amp; Payment" page section carries it),
+                                                but the website cannot render the form until that half
+                                                ships — so do not tell families to visit it, and do not
+                                                publish the intake form on a page as a substitute: form
+                                                submissions take no seat and move no money.
                                             </span>
                                         </div>
                                     </div>
@@ -491,6 +513,7 @@ const filters = reactive<OfferingFilters>({
 
 const emptyForm = (): OfferingPayload => ({
     name: '',
+    description: '',
     slug: '',
     kind: 'program',
     intake_form_id: null,
@@ -693,6 +716,7 @@ const openEditModal = async (offering: Offering) => {
     groupSearch.value = '';
     form.value = {
         name: offering.name ?? '',
+        description: offering.description ?? '',
         slug: offering.slug ?? '',
         kind: offering.kind ?? 'program',
         intake_form_id: offering.intake_form_id ?? null,

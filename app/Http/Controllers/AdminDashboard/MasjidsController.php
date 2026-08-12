@@ -5,6 +5,7 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Masjids\SetAssistantAccessRequest;
 use App\Http\Requests\Admin\Masjids\SetCrmAccessRequest;
+use App\Http\Requests\Admin\Masjids\SetDirectoryListingRequest;
 use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
 use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
 use App\Models\IqamaTimeSetting;
@@ -142,6 +143,49 @@ class MasjidsController extends Controller
         $masjid->crm_enabled = $request->boolean('enabled');
         $masjid->updated_by = Auth::id();
         $masjid->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only: publish/unpublish this organisation in the mobile app's
+     * public directory (masjids.listed_at).
+     *
+     * This is the only way the gate added by add_listed_at_to_masjids_table gets
+     * opened. Provisioning deliberately leaves a new organisation unlisted, so
+     * without this endpoint a newly created school would be invisible forever.
+     *
+     * Super-ness is enforced here with abort(403) rather than the `super`
+     * middleware, matching setCrmAccess above: a MasjidAdmin must never be able
+     * to publish their own tenant, and the answer for them is a clean forbidden
+     * rather than the middleware's 401.
+     *
+     * Listing an already-listed organisation keeps its original timestamp — the
+     * column answers "live since when", and a no-op toggle must not rewrite it.
+     */
+    public function setDirectoryListing(SetDirectoryListingRequest $request, string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change directory listing.');
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+
+        if ($request->boolean('listed')) {
+            $masjid->listed_at = $masjid->listed_at ?? now();
+        } else {
+            $masjid->listed_at = null;
+        }
+
+        $masjid->updated_by = Auth::id();
+        $masjid->save();
+
+        // The directory is cached for a day; without this flush the decision
+        // does not reach the apps until the entry expires.
+        MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
 
         return response()->json([
             'status' => 'success',

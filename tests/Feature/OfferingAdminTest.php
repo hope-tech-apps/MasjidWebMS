@@ -162,6 +162,143 @@ class OfferingAdminTest extends TestCase
             ->assertOk()->json('data.total'));
     }
 
+    // ---------- options (the page-builder picker, T-006g) ----------
+
+    #[Test]
+    public function options_lists_only_this_organizations_offerings(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        $options = $this->getJson($this->offeringsUrl() . '/options')->assertOk()->json('data');
+
+        $slugs = array_column($options, 'slug');
+
+        $this->assertCount(2, $options);
+        $this->assertContains('weekend-school-2026', $slugs);
+        $this->assertContains('eid-dinner', $slugs);
+
+        // B holds an offering with the IDENTICAL slug (the (masjid_id, slug)
+        // index is per-tenant), so a leak here shows up as a third row rather
+        // than as an obviously foreign name — which is why this asserts on the
+        // ID, not on the slug.
+        $this->assertSame('weekend-school-2026', $this->offeringB->slug);
+        $this->assertNotContains($this->offeringB->id, array_column($options, 'id'));
+    }
+
+    #[Test]
+    public function an_offerings_public_description_round_trips_through_the_admin_api(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        // The prose an anonymous visitor is served (T-006g). It has no home
+        // anywhere else: `settings` is an unvalidated knob bag the admin form
+        // does not write, and the intake FORM's description is the wording above
+        // the questions and can be shared by several offerings.
+        $prose = "Qur'an, Arabic and Islamic studies.\nSaturdays, 10am to 1pm.";
+
+        $created = $this->postJson($this->offeringsUrl(), [
+            'name' => 'Weekend School 2027',
+            'description' => $prose,
+            'slug' => 'weekend-school-2027',
+            'kind' => Offering::KIND_PROGRAM,
+            'intake_form_id' => $this->offeringA->intake_form_id,
+        ])->assertStatus(201)->json('data');
+
+        $this->assertSame($prose, $created['description']);
+
+        // And it can be cleared again — an admin who published copy by mistake
+        // must be able to take it down without deleting the offering.
+        $this->putJson($this->offeringsUrl() . '/' . $created['id'], ['description' => ''])
+            ->assertOk();
+
+        $this->assertNull(Offering::withoutMasjidScope()->find($created['id'])->description);
+    }
+
+    #[Test]
+    public function options_is_not_a_window_onto_the_roster(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        $option = collect($this->getJson($this->offeringsUrl() . '/options')->assertOk()->json('data'))
+            ->firstWhere('slug', 'weekend-school-2026');
+
+        // A page-builder picker has no business with the CRM.
+        // `registration_count` is a count of PEOPLE; the roster screens are
+        // where those numbers live.
+        $this->assertArrayNotHasKey('registration_count', $option);
+        $this->assertArrayNotHasKey('capacity', $option);
+        $this->assertArrayNotHasKey('registrations_count', $option);
+
+        // What it DOES carry is the four facts that decide whether a published
+        // registration block will actually work.
+        $this->assertSame(
+            ['id', 'name', 'slug', 'kind', 'is_active', 'is_open', 'closed_reason', 'is_full', 'active_fee_plan_count'],
+            array_keys($option)
+        );
+    }
+
+    #[Test]
+    public function options_reports_the_derived_open_state_and_the_active_plan_count(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        // A window that has already shut, on an offering that is still
+        // is_active — the exact trap Offering::is_open exists for. An admin
+        // attaching this to a page must see it here, not from a family who
+        // could not sign up.
+        $this->offeringA->update([
+            'opens_at' => now()->subMonths(3),
+            'closes_at' => now()->subMonth(),
+        ]);
+
+        FeePlan::create([
+            'masjid_id' => $this->masjidA->id,
+            'offering_id' => $this->offeringA->id,
+            'kind' => FeePlan::KIND_ONE_TIME,
+            'amount_minor' => 15000,
+            'currency' => 'usd',
+            'label' => 'Standard',
+            'is_active' => true,
+        ]);
+        FeePlan::create([
+            'masjid_id' => $this->masjidA->id,
+            'offering_id' => $this->offeringA->id,
+            'kind' => FeePlan::KIND_ONE_TIME,
+            'amount_minor' => 12000,
+            'currency' => 'usd',
+            'label' => 'Early bird (ended)',
+            'is_active' => false,
+        ]);
+
+        $option = collect($this->getJson($this->offeringsUrl() . '/options')->assertOk()->json('data'))
+            ->firstWhere('slug', 'weekend-school-2026');
+
+        $this->assertTrue($option['is_active']);
+        $this->assertFalse($option['is_open']);
+        $this->assertSame('closed', $option['closed_reason']);
+
+        // ACTIVE plans only. The public register endpoint takes a fee_plan_id
+        // and refuses an inactive plan, so a deactivated one is not a plan a
+        // family can use — counting it would tell the admin the block works.
+        $this->assertSame(1, $option['active_fee_plan_count']);
+    }
+
+    #[Test]
+    public function options_refuses_another_organizations_route(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        // Same guardrail as every other admin route: naming B's masjid in the
+        // path is a 403 from ResolveMasjidTenant, not an empty list.
+        $this->getJson($this->offeringsUrl($this->masjidB) . '/options')->assertStatus(403);
+    }
+
+    #[Test]
+    public function options_rejects_unauthenticated_requests(): void
+    {
+        $this->getJson($this->offeringsUrl() . '/options')->assertStatus(401);
+    }
+
     #[Test]
     public function the_offering_label_follows_the_tenants_vertical(): void
     {

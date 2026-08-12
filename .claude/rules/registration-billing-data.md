@@ -1,6 +1,7 @@
 ---
 paths:
   - "app/Models/Offering.php"
+  - "app/Support/OfferingPublicPayload.php"
   - "app/Models/FeePlan.php"
   - "app/Models/Registration.php"
   - "app/Models/Registrant.php"
@@ -187,3 +188,56 @@ fixed these:
   as an inert SQL comment to prove the locked read and the relative counter
   write share one transaction. SQLite cannot prove mutual exclusion; that limit
   is stated in the test, not papered over with sequential calls.
+
+T-006g (the public front door: `GET /api/v1/offerings/{slug}`, the `offering`
+page section) fixed these:
+
+- **`App\Support\OfferingPublicPayload` is the ONE definition of what an
+  anonymous visitor may see about an offering**, and it has two consumers:
+  `Api\V1\OfferingRegistrationsController@show` and
+  `SectionContentBinder::bindOffering`. Do not hand-roll a second public shape
+  anywhere. Two copies of that judgement is how a private field reaches a
+  published page — the one that gets reviewed is tightened and the one nobody
+  remembered is not. `OfferingSectionTypeTest` asserts the two payloads are
+  byte-identical.
+- **`is_active = false` is the UNPUBLISH switch, on the read as well as the
+  write.** The public read uses exactly the predicate
+  `OfferingRegistrationsController::findOffering` uses, so a draft is never
+  discoverable and a page can never render a Register button that `register`
+  would 404. A window that has merely closed is a different thing: it is served,
+  with `is_open: false` and `closed_reason`.
+- **`registration_state` (`open|waitlist|closed`) is the field a renderer
+  switches on, not `is_open`.** Full is NOT closed — `register()` waitlists
+  rather than refusing — and an offering whose intake form has been soft-deleted
+  IS closed even though `is_open` reports true, because `register()` throws
+  `offeringClosed()` when it cannot load the form. `is_open` / `closed_reason`
+  are still reported verbatim from the model accessors; this field is the one
+  that accounts for everything the write path checks.
+- **Seats are published as `remaining` + `is_full`, never as `capacity` or
+  `registration_count`.** `remaining` is a property of the OFFERING (how many
+  more places it will accept); `registration_count` is a count of PEOPLE, and a
+  public page is never a window onto the CRM. Publishing capacity as well would
+  hand out the subtraction, which is the same number by another name.
+- **The only internal id in the public payload is `fee_plans[].id`**, because
+  `POST offerings/{slug}/register` takes `fee_plan_id`. Not the offering id, not
+  `masjid_id`, not the intake form's id or slug — the public API is addressed by
+  slug and uuid.
+- **Fee plans are filtered to `is_active` AND to `FeePlan::KINDS`.** An
+  unrecognized money kind is withheld rather than guessed at: `listTotalFor()`
+  throws on one, and `FeePlan` has no degrade helper on purpose. Withholding is
+  the fail-closed answer; crashing the public page is not, and guessing would
+  waive or misquote a fee.
+- **`total_minor` is `RegistrationService::listTotalFor()`, never a
+  multiplication done anywhere else** — the same function that snapshots
+  `list_total_minor` at intake, so the number on the page and the number charged
+  have one implementation.
+- **The intake form's own `fee` rule and its `accepting`/`closed_reason` are NOT
+  published on this payload.** Money for an offering comes from its fee plans and
+  nowhere else (`register()` prices from the plan and leaves
+  `form_responses.amount_due` null), and a second "is this open" flag beside the
+  offering's is how the two drift and one starts lying.
+- **`offerings.description` is a column, not a `settings` key.** It is the one
+  field a public registration page cannot do without; burying it in the
+  unvalidated knob bag would make it the only public field with no schema. It is
+  not the intake form's `description` either — one form can be the intake for
+  several offerings.

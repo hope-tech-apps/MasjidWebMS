@@ -131,14 +131,6 @@ export type FeePlan = {
     installment_count: number | null;
     label: string;
     is_active: boolean;
-    /**
-     * DERIVED server-side: is_active AND inside the opens_at/closes_at window —
-     * i.e. what the public register path actually enforces. Read this, never
-     * is_active, for anything that claims an offering is accepting sign-ups.
-     */
-    is_open: boolean;
-    /** Why it is not open: 'inactive' | 'not_yet_open' | 'closed'; null when open. */
-    closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
     created_at: string;
     updated_at: string;
 };
@@ -197,6 +189,12 @@ export type Offering = {
     masjid_id: number;
     kind: OfferingKind;
     name: string;
+    /**
+     * The public prose a family reads before deciding to register — served
+     * verbatim to anonymous visitors by GET /api/v1/offerings/{slug}. Null is a
+     * legitimate state; the public renderer omits the block.
+     */
+    description: string | null;
     slug: string;
     intake_form_id: number;
     group_id: number | null;
@@ -207,6 +205,23 @@ export type Offering = {
     opens_at: string | null;
     closes_at: string | null;
     is_active: boolean;
+    /**
+     * DERIVED server-side and APPENDED to every offering payload: is_active AND
+     * inside the opens_at/closes_at window — i.e. what the public register path
+     * actually enforces. Read this, never `is_active`, for anything that claims
+     * an offering is accepting sign-ups: an offering whose `closes_at` has
+     * passed is still `is_active: true` and refuses every registration.
+     *
+     * These two were declared on `FeePlan` above until 2026-08-12, where nothing
+     * ever set them, while OfferingsView and OfferingDetailView had already been
+     * reading `offering.is_open` / `offering.closed_reason` off this type — a
+     * type error `npm run build` does not catch, because it is `vite build` with
+     * no typecheck (.claude/rules/section-types.md documents the same trap for
+     * the section editor map).
+     */
+    is_open: boolean;
+    /** Why it is not open: 'inactive' | 'not_yet_open' | 'closed'; null when open. */
+    closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
     settings: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
@@ -219,9 +234,38 @@ export type Offering = {
     group?: OfferingGroupRef | null;
 };
 
+/**
+ * One row of the page-builder's offering picker
+ * (GET /api/admin/masjids/{id}/offerings/options).
+ *
+ * Deliberately NOT the full `Offering`: attaching a program to a page needs the
+ * name and the four facts that decide whether the published block will actually
+ * work, and nothing about the people registered. There are no seat numbers and
+ * no roster counts here on purpose — `registration_count` is a count of people,
+ * and a page builder has no business with the CRM.
+ *
+ * `active_fee_plan_count` is the one an admin cannot see from the name: the
+ * public register endpoint takes a `fee_plan_id`, so an offering with zero
+ * ACTIVE plans cannot take a single registration however open its window is.
+ */
+export type OfferingOption = {
+    id: number;
+    name: string;
+    slug: string;
+    kind: OfferingKind;
+    is_active: boolean;
+    /** is_active AND the window — never is_active alone. */
+    is_open: boolean;
+    closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
+    /** Every seat taken: a sign-up is waitlisted, not refused. */
+    is_full: boolean;
+    active_fee_plan_count: number;
+};
+
 /** What the create/edit form sends. `registration_count` is deliberately absent. */
 export type OfferingPayload = {
     name: string;
+    description: string;
     slug: string;
     kind: OfferingKind;
     intake_form_id: number | null;

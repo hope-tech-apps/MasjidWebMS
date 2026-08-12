@@ -201,12 +201,51 @@ the global scope under someone else's tenant, silently.
 - A job that needs a tenant must bind it itself (`ImpactMetrics::withTenant()` is
   the pattern) rather than assuming the dispatcher's binding survived the queue.
 
-## Testing is not optional
+## Testing is not optional — and it is no longer on your memory
 
 Because there is no DB-level backstop, **every new tenant-scoped model MUST ship
 a cross-tenant Feature test** (seed masjids A and B, assert A cannot read/update/
 delete B's rows and that create stamps the bound tenant). Mirror
 `tests/Feature/TenantIsolationTest.php`. Run: `php artisan test --filter=TenantIsolation`.
+
+**That sentence was already here, and it was silently unmet for six models while
+two cross-tenant holes ran in production.** A rule a human has to remember is
+documentation, not a control. Since 2026-08-12 it is enforced mechanically by
+`tests/Feature/TenantScopingCoverageTest.php`, which fails the build rather than
+trusting anyone to read this file:
+
+```bash
+php artisan test --filter=TenantScopingCoverage
+```
+
+It **discovers** the tenant-scoped models by reflection over `app/Models`
+(`class_uses_recursive` for `BelongsToMasjid`) — there is no list to update and
+no count to bump — and then enforces four things:
+
+1. **The scope is really wired**, dynamically: the global scope is registered,
+   the table really has `masjid_id`, binding a tenant really changes the SQL and
+   really binds the tenant id, and the `creating` hook is really listening. This
+   is the airtight layer; it catches a scope that fails OPEN, which is precisely
+   what `SearchableTrait::filterByMasjid()` did.
+2. **Somebody wrote the cross-tenant test.** A static proxy: the model must be
+   named inside a test METHOD that also asserts a refusal (403/404, a null
+   `find()`, a zero row/affected-row count, `assertDatabaseMissing`), in a file
+   that builds two masjids. It is lexical and it is a floor, not a ceiling — its
+   weaknesses are written out in `coversModel()`'s docblock, read them before
+   you trust it. `assertFalse` deliberately does NOT count.
+3. **Exemptions are explicit.** `MasjidUser` and `StripeWebhookEvent` are the
+   only two, each with its reason and a falsifiable claim about its table, in
+   `self::DECLINED`. Adding a model there is not how you fix a failure unless
+   the model genuinely should not be tenant-scoped.
+4. **Nothing new escapes.** A model whose table carries `masjid_id` and which
+   does not use the trait must be in `DECLINED` or in the frozen
+   `HAND_SCOPED_LEGACY` inventory below. A new one fails the build.
+
+A fifth check asserts that no docblock in `app/` cites a test file that does not
+exist. `app/Models/ContactLoginCode.php` once named `FamilyPortalTenantIsolationTest`
+as its mandatory cross-tenant test; the file was never written, so the rule read
+as satisfied to every reader of that model. A false claim of coverage is worse
+than no claim.
 
 ## Do NOT retrofit blindly
 
@@ -214,3 +253,11 @@ Existing pre-CRM models (Announcement, Event, Service, …) are scoped manually 
 controllers today. Do not add `BelongsToMasjid` to them without a dedicated task
 + tests — a global scope silently changes every existing query and can break live
 public endpoints.
+
+The 25 of them are inventoried in `TenantScopingCoverageTest::HAND_SCOPED_LEGACY`,
+one line of reason each. **That roster is a debt ledger, not a clean bill of
+health: no entry on it is asserted to be correctly isolated**, and four of them
+(Announcement, Page, Section, Service) are exactly where the fail-open
+`SearchableTrait` leak lived. Its only job is to stop the set growing in silence.
+Retrofitting one means: add the trait, write `<Model>TenantIsolationTest`, delete
+the line.

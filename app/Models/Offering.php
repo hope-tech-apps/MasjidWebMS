@@ -62,6 +62,11 @@ class Offering extends Model
         'masjid_id',
         'kind',
         'name',
+        // Public prose — what this is, who it is for, what to bring. Served to
+        // anonymous visitors by App\Support\OfferingPublicPayload; see the
+        // add_description_to_offerings_table migration for why it is a column
+        // rather than a `settings` key or the intake form's own description.
+        'description',
         'slug',
         'intake_form_id',
         'group_id',

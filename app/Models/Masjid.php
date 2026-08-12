@@ -59,6 +59,10 @@ class Masjid extends Model implements HasMedia
         'created_by',
         'updated_by',
         'deleted_by'
+        // `listed_at` is deliberately ABSENT: publishing an organisation to the
+        // public directory is a SuperAdmin decision made through one endpoint
+        // (MasjidsController::setDirectoryListing), never something a mass
+        // assignment on some other write path can turn on by accident.
     ];
 
     /**
@@ -76,6 +80,61 @@ class Masjid extends Model implements HasMedia
         'active_owner_user_id',
     ];
 
+    /**
+     * Columns that must NEVER reach an unauthenticated caller.
+     *
+     * `Mobile/MasjidsController` returned the whole `masjids` row to anonymous
+     * callers — `$hidden` held one column and everything else went out as-is.
+     * Measured against production on 2026-08-12 with a bare curl and no
+     * credentials: Burlington's `google_maps_key` (billable to them), its
+     * `stripe_account_id`, `tax_id` and `statement_signatory`, plus every
+     * organisation's internal actor ids. Pre-existing, and it survived earlier
+     * passes because they reviewed the row COUNT and not the row CONTENTS.
+     *
+     * A DENYLIST applied at the public boundary rather than on the model,
+     * because putting these in `$hidden` would also blank them for the admin
+     * surfaces that legitimately read and edit them. What makes a denylist
+     * defensible is the companion guard in PublicMasjidDirectoryTest, which
+     * fails when a NEW column appears in the public payload without being
+     * classified — the same self-enforcing shape as the tenancy meta-test,
+     * and the only thing that stops a list like this going quietly stale.
+     *
+     * `email` and `phone` deliberately REMAIN. A masjid's contact details are
+     * the point of a public directory, and the shipped iOS build decodes
+     * `email: String` NON-optionally (`Masjid.swift`) — dropping it would break
+     * the masjid list in every installed copy. That is a hard constraint, not a
+     * preference.
+     *
+     * @var list<string>
+     */
+    public const PUBLIC_DIRECTORY_DENYLIST = [
+        // Credentials and money identifiers.
+        'google_maps_key',
+        'stripe_account_id',
+        'stripe_charges_enabled',
+        'stripe_payouts_enabled',
+        'tax_id',
+        'statement_signatory',
+        // Internal actors and lifecycle. Verified optional in BOTH the iOS and
+        // Android decoders before removal.
+        'user_id',
+        'created_by',
+        'updated_by',
+        'deleted_by',
+        'deleted_at',
+        'email_verified_at',
+        'phone_verified_at',
+        // Plan/feature flags — they describe the organisation's account, not its
+        // public identity.
+        'crm_enabled',
+        'assistant_enabled',
+        // An internal delivery preference for receipts and statements. Neither
+        // app decodes it and it is not part of an organisation's public
+        // identity, so it stays in — classified deliberately rather than
+        // published by default, which is the whole point of the guard.
+        'mailing_locale',
+    ];
+
     protected $searchableFields = ['name', 'email', 'address'];
 
     protected function casts(): array
@@ -86,7 +145,39 @@ class Masjid extends Model implements HasMedia
             // Per-masjid CRM feature gate; default false = CRM off (SuperAdmin-only toggle).
             'crm_enabled' => 'boolean',
             'assistant_enabled' => 'boolean',
+            // Public directory listing gate — see scopeListed() below.
+            'listed_at' => 'datetime',
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // Public directory listing
+    // ------------------------------------------------------------------
+
+    /**
+     * Organisations the mobile app's picker is allowed to show.
+     *
+     * NULL `listed_at` means "exists, but not published to the public directory"
+     * — which is how every organisation is born, so creating a tenant no longer
+     * publishes it (see the add_listed_at_to_masjids_table migration). A
+     * SuperAdmin lists it deliberately once it is ready.
+     *
+     * This gates GET /mobile/masjids (the directory) and NOT
+     * GET /mobile/masjids/{id}. Unlisting is a discoverability decision, not a
+     * revocation: apps already installed hold a masjid id and keep working, so
+     * an operator can pull an organisation out of the picker without breaking
+     * the people already using it. Anything genuinely private is scoped by
+     * tenant elsewhere — this is not an authorization boundary.
+     */
+    public function scopeListed($query)
+    {
+        return $query->whereNotNull('listed_at');
+    }
+
+    /** True when this organisation appears in the public directory. */
+    public function isListed(): bool
+    {
+        return $this->listed_at !== null;
     }
 
     // ------------------------------------------------------------------

@@ -305,6 +305,7 @@ import AdmissionsTuitionSectionEditor from '@/components/sections/editors/Admiss
 import ServicesEligibilitySectionEditor from '@/components/sections/editors/ServicesEligibilitySectionEditor.vue';
 import ProvidersDirectorySectionEditor from '@/components/sections/editors/ProvidersDirectorySectionEditor.vue';
 import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
+import OfferingSectionEditor from '@/components/sections/editors/OfferingSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -392,6 +393,12 @@ const editorMap: Record<SectionType, any> = {
     'services_eligibility': ServicesEligibilitySectionEditor,
     'providers_directory': ProvidersDirectorySectionEditor,
     'impact_stats': ImpactStatsSectionEditor,
+    // The registration front door (T-006g). Same rule as every entry above: the
+    // backend enum puts this in the dropdown whether or not it is keyed here, so
+    // the entry and the import land in the same change or the admin gets a blank
+    // editor pane — and here that pane would be the one thing standing between a
+    // family and a payment.
+    'offering': OfferingSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

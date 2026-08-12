@@ -63,6 +63,34 @@ must extend `BaseFormRequest`, or a rejection escapes as a raw
 `ValidationException` and this app's JSON renderer turns it into a 500 instead
 of the legacy `{status:'failed'}` 422.
 
+## Choosing the vertical: the onboarding wizard
+
+`OnboardingWizardView.vue` asks for the vertical as the FIRST thing on its
+Identity step, and everything it shows about that choice — the label, the
+default feature bundle, the terminology pack — is fetched from
+`GET /api/admin/onboarding/options` (`verticals` + `default_org_type`), which
+serves `config/verticals.php` verbatim. **Do not retype any of it in the SPA.**
+A fourth vertical must appear in the wizard with no Vue change at all;
+`OnboardingVerticalPickerTest` fails if a pack's labels or a worship feature key
+turn up as literals in that file.
+
+`default_org_type` is `Masjid::ORG_TYPE_MASJID` — the same constant
+`ProvisionMasjidRequest::prepareForValidation()` merges for an absent value — so
+the wizard's pre-selection and the request's fallback cannot disagree. The test
+proves it by provisioning without an `org_type` and comparing, rather than
+asserting the same literal twice.
+
+**The trap:** the wizard always posts `feature_keys_provided`, so its checkbox
+state OVERRIDES the vertical bundle the controller would otherwise seed. The
+checkboxes therefore have to carry the bundle themselves
+(`applyVerticalFeatureDefaults()`, re-run whenever `org_type` changes) — before
+that, picking "School" still provisioned Qur'an, Adhkar and Qibla, because the
+step pre-checked the whole catalog. If you touch either side of that, keep
+"what the operator saw" and "what got seeded" the same thing.
+
+Creating an organisation does NOT publish it — see
+`.claude/rules/directory-listing.md`.
+
 ## Islamic worship modules are masjid-only
 
 `adhkar`, `hadith`, `qibla`, `quran`, `tasbih` belong to the masjid bundle

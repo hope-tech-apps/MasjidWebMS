@@ -70,6 +70,20 @@ Route::prefix('v1')->group(function () {
     // it paid. That happens ONLY in the signature-verified Stripe webhook
     // (.claude/rules/stripe-payments.md) — the browser redirect off Stripe's
     // hosted page proves nothing.
+    // The public READ (T-006g) — one offering by slug, for rendering: its copy,
+    // its ACTIVE fee plans in integer minor units with their currency, how many
+    // places remain, and whether it is accepting registrations at all. This is
+    // the only thing that made the endpoints below reachable by a family rather
+    // than only by a caller who already knew the API.
+    //
+    // Throttled on the looser 'registration-quote' shape rather than the intake
+    // one, for the same reason the quote is: it WRITES NOTHING and a visitor
+    // legitimately re-reads the page while filling the form in. Still bounded —
+    // the endpoint must not become a way to enumerate an organization's
+    // offerings for free.
+    Route::get('/offerings/{slug}', [OfferingRegistrationsController::class, 'show'])
+        ->middleware('throttle:registration-quote');
+
     Route::post('/offerings/{slug}/quote', [OfferingRegistrationsController::class, 'quote'])
         ->middleware('throttle:registration-quote');
 

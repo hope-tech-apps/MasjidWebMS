@@ -48,9 +48,23 @@ Keep them that way.
 
 - **`editorMap` is typed `Record<SectionType, …>`.** Add to the union in
   `PageSection.ts` and forget `SectionFormModal.vue` and it is a type error —
-  but `npm run build` is `vite build` with **no typecheck**, so it builds
-  anyway and the admin gets the type in the dropdown with an empty editor pane.
-  That shipped twice already (`events`, `form`). Add both in the same change.
+  but `npm run build` is `vite build` with **no typecheck** (and this repo has
+  no `vue-tsc`), so it builds anyway and the admin gets the type in the dropdown
+  with an empty editor pane. That shipped twice already (`events`, `form`).
+
+  Since 2026-08-12 this is **enforced mechanically** rather than remembered:
+
+  ```bash
+  php artisan test --filter=every_section_type_is_wired_into_the_spa
+  ```
+
+  `OfferingSectionTypeTest` lints the SPA sources against `SectionType::cases()`
+  — every case must appear in the `SectionType` union in `PageSection.ts` and as
+  an `editorMap` key in `SectionFormModal.vue`, and every component the map names
+  must be imported and exist on disk. It is **lexical, and a floor rather than a
+  ceiling**: it proves the case is named and the file exists, not that the editor
+  is correct. Same reasoning as `TenantScopingCoverageTest` — a rule a human has
+  to remember is documentation, not a control.
 - **Uploads only reach ONE array level.** `handleArrayImageUploads` turns
   `items.*.image_url` into `items_(\d+)_image_url` and reads `$matches[1]`, so a
   pattern with two wildcards (`departments.*.members.*.photo_url`) silently
@@ -95,6 +109,28 @@ If per-vertical offering is ever actually wanted:
   tenant that switches `org_type`, or a section authored before the gate, never
   stops loading. The palette decides what is *offered*; it must never decide
   what is *readable*.
+
+## A section that CHARGES holds a reference, never a figure
+
+`offering` (T-006g) is the first type whose referenced row decides what somebody
+is charged, and it is the reason the next section reads the way it does.
+
+- Its content is `offering_id` plus page wording (`title`, `intro`,
+  `show_fee_plans`, `button_text`, `background_color`) — **no amount, no
+  currency, no capacity, no window**. All of those live on the `Offering` and its
+  `FeePlan`s, and `SectionContentBinder::bindOffering` inlines them under
+  `content.offering` at serve time through `App\Support\OfferingPublicPayload`,
+  the same presenter `GET /api/v1/offerings/{slug}` uses.
+- **Never copy a price into section JSON.** Fee plans are immutable and are
+  deactivated-and-replaced rather than edited, so a copied figure goes stale the
+  moment a price changes — and the page would then advertise one number while
+  Stripe charged another. `OfferingSectionTypeTest` asserts the shape carries no
+  `amount`/`currency`/`capacity` key at all.
+- `form` and `offering` must not converge. A `form` submission writes a
+  `FormResponse`: it takes no seat and moves no money. An `offering`
+  registration reserves a place and opens a Stripe Checkout Session. An admin who
+  reached for the wrong one would believe sign-ups were being collected when
+  nothing had been.
 
 ## Money in section content is display text
 

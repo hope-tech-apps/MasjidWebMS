@@ -79,6 +79,18 @@ class CommunitySectionTypesTest extends TestCase
         'impact_stats',
     ];
 
+    /**
+     * Types added to the palette AFTER this suite was written. Every value pinned
+     * above is still pinned unchanged — this list exists only so the "nothing else
+     * moved" count below stays an exact count instead of being loosened to a
+     * minimum, which would stop catching a type that quietly disappears. Same
+     * device as SchoolSectionTypesTest::LATER_TYPES.
+     * OfferingSectionTypeTest owns this one; see T-006g.
+     */
+    private const LATER_TYPES = [
+        'offering',
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -578,9 +590,9 @@ class CommunitySectionTypesTest extends TestCase
         }
 
         $this->assertCount(
-            count(self::PRE_EXISTING_TYPES) + count(self::COMMUNITY_TYPES),
+            count(self::PRE_EXISTING_TYPES) + count(self::COMMUNITY_TYPES) + count(self::LATER_TYPES),
             $values,
-            'The palette gained or lost a type beyond the three community types'
+            'The palette gained or lost a type beyond the community types and the ones added since'
         );
     }
 

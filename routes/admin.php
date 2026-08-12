@@ -428,6 +428,11 @@ Route::prefix('admin')->group(function () {
             // SuperAdmin-only Masjid Assistant gate toggle. Like crm-access, this is
             // deliberately OUTSIDE the `assistant` gate — it is how the gate is opened.
             Route::patch('{masjid_id}/assistant-access', [MasjidsController::class, 'setAssistantAccess']);
+            // SuperAdmin-only public-directory toggle (masjids.listed_at). A newly
+            // provisioned organisation is NOT listed, so this is how one is
+            // published to the mobile app's picker once it is actually ready.
+            // Same 403-for-non-super contract as the two toggles above.
+            Route::patch('{masjid_id}/directory-listing', [MasjidsController::class, 'setDirectoryListing']);
 
             // App-provisioning control plane (SuperAdmin only). "Generate apps"
             // dispatches a GitHub Actions workflow (self-hosted runner) that
@@ -828,6 +833,10 @@ Route::prefix('admin')->group(function () {
                 // and credentials slices did before this one.
                 Route::prefix('{masjid_id}/offerings')->controller(OfferingsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
+                    // Literal path BEFORE /{offering_id}, or it is captured as
+                    // an id — the same ordering routes/admin.php already keeps
+                    // for forms/options and forms/field-types.
+                    Route::get('/options', 'options')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
                     Route::get('/{offering_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{offering_id}', 'update')->middleware('permission:manage contacts');
