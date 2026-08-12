@@ -169,13 +169,7 @@ class PrayersController extends Controller
                 return [
                     'masjid_id' => $masjid->id,
                     'prayers_data' => json_encode($item),
-                    'iqama_times_data' => json_encode([
-                        'fajr' => Carbon::parse($item['fajr'])->addMinutes($iqamaSettings->fajr)->format("H:i:s"),
-                        'dhuhr' => Carbon::parse($item['dhuhr'])->addMinutes($iqamaSettings->dhuhr)->format("H:i:s"),
-                        'asr' => Carbon::parse($item['asr'])->addMinutes($iqamaSettings->asr)->format("H:i:s"),
-                        'maghrib' => Carbon::parse($item['maghrib'])->addMinutes($iqamaSettings->maghrib)->format("H:i:s"),
-                        'isha' => Carbon::parse($item['isha'])->addMinutes($iqamaSettings->isha)->format("H:i:s"),
-                    ]),
+                    'iqama_times_data' => json_encode(self::iqamaTimes($item, $iqamaSettings)),
                     'jumaa_data' => Carbon::parse($item['date'])->isFriday() ? json_encode($jumaaSettings) : null,
                     'date' => Carbon::parse($item['date'])->format("Y-m-d"),
                     'created_at' => Carbon::now(),
@@ -209,6 +203,64 @@ class PrayersController extends Controller
         } catch (\Exception $e) {
             throw $e;
         }
+    }
+
+    /**
+     * The five iqama times for one generated day, or null where the prayer the
+     * offset would be added to does not occur.
+     *
+     * ## `Carbon::parse(null)` RETURNS NOW
+     *
+     * Every value here used to be `Carbon::parse($item['fajr'])->addMinutes(...)`.
+     * Inside the polar circles the sun may never reach a given altitude, and the
+     * generator expresses that as `null` — deliberately, byte-for-byte as
+     * adhan-js did (see PrayerTimesGenerator::iso() and the INVALID TIMES note on
+     * App\Services\PrayerTimes\PrayerTimes). `Carbon::parse(null)` does not throw
+     * and does not return null: it returns the CURRENT INSTANT. So a prayer that
+     * does not occur produced an iqama time of "whenever the cache happened to
+     * fill, plus the offset" — a perfectly plausible-looking clock time, stored
+     * next to a `null` adhan time, and impossible to tell apart from a real one.
+     * Worse, it moved every time the row was regenerated.
+     *
+     * WHICH prayers are null is not a fixed set: it depends on the latitude, the
+     * date AND the masjid's calculation method — MoonsightingCommittee
+     * substitutes its own seasonal twilight where MuslimWorldLeague leaves fajr
+     * and isha unresolved — so this cannot be handled by special-casing a prayer.
+     * The rule is uniform: a null prayer yields a null iqama.
+     *
+     * Shape is otherwise unchanged for shipped clients — same five keys, same
+     * order, same `H:i:s` UTC wall-clock strings for every prayer that occurs, so
+     * a masjid outside the polar circles regenerates byte-identically.
+     *
+     * `SendDuePrayerNotifications` is unaffected and stays correct: it never
+     * reads `iqama_times_data` at all (that column loses its date, which is
+     * unsafe for a late-night iqama), computing iqama as adhan + offset from
+     * `prayers_data` and skipping any prayer for which `isset()` is false — and
+     * `isset()` is already false for null, so an unresolved prayer was never
+     * pushed. This change makes the stored column agree with what that command
+     * was doing all along.
+     *
+     * @param  array<string, mixed>  $item  One day of generated prayer times.
+     * @return array<string, string|null>
+     */
+    private static function iqamaTimes(array $item, $iqamaSettings): array
+    {
+        $times = [];
+
+        foreach (['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as $prayer) {
+            $adhan = $item[$prayer] ?? null;
+
+            // Offsets read the same way SendDuePrayerNotifications reads them,
+            // so a masjid missing a column is 0 minutes in both places rather
+            // than a warning here and a 0 there.
+            $times[$prayer] = $adhan === null
+                ? null
+                : Carbon::parse($adhan)
+                    ->addMinutes((int) ($iqamaSettings->{$prayer} ?? 0))
+                    ->format('H:i:s');
+        }
+
+        return $times;
     }
 
     public function prayersSettings($masjid_id)

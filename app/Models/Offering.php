@@ -30,6 +30,14 @@ class Offering extends Model
     use HasFactory, SoftDeletes, BelongsToMasjid;
 
     /**
+     * `is_open` and `closed_reason` are DERIVED — see the accessors. Appended so
+     * every payload that carries an offering carries the truth about whether it
+     * is accepting registrations, rather than each consumer re-deriving it from
+     * is_active and guessing about the window.
+     */
+    protected $appends = ['is_open', 'closed_reason'];
+
+    /**
      * What KIND of registerable thing this is — a presentation discriminator,
      * never an authorization check. PHP constants rather than a DB enum,
      * exactly like Masjid::ORG_TYPES and Group::KINDS: adding a kind must not
@@ -162,5 +170,46 @@ class Offering extends Model
     public function isAtCapacity(): bool
     {
         return $this->capacity !== null && $this->registration_count >= $this->capacity;
+    }
+
+    /**
+     * Whether this offering is ACTUALLY accepting registrations right now —
+     * the flag AND the window, which is what the public register path enforces.
+     *
+     * Exists because the admin UI had no way to say this. Every status surface
+     * (the list's Status column, the detail header badge, the "Open for
+     * registration only" filter) resolved to `is_active` alone, so an offering
+     * whose `closes_at` had passed showed a green "Open for registration" badge,
+     * survived the open-only filter, and refused every real registration. The
+     * window dates were on screen two columns away, which is not the same as the
+     * product telling the truth about its own state.
+     *
+     * Appended, not computed in the SPA: the browser would have to reimplement
+     * the null-bound convention and the server's clock, and two implementations
+     * of "is this open" is how they drift.
+     */
+    public function getIsOpenAttribute(): bool
+    {
+        return (bool) $this->is_active && $this->isWithinWindow();
+    }
+
+    /**
+     * Why it is not open, for a UI that has to explain itself. Null when it is.
+     */
+    public function getClosedReasonAttribute(): ?string
+    {
+        if (! $this->is_active) {
+            return 'inactive';
+        }
+
+        if ($this->opens_at && now()->lt($this->opens_at)) {
+            return 'not_yet_open';
+        }
+
+        if ($this->closes_at && now()->gt($this->closes_at)) {
+            return 'closed';
+        }
+
+        return null;
     }
 }

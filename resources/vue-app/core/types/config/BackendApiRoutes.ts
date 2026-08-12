@@ -33,6 +33,24 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/groups` |
     `/api/admin/masjids/${string}/groups?${string}` |
     `/api/admin/masjids/${string}/groups/${string}` |
+    // Appointment requests — the intake queue, one request, and the two writes
+    // hung off it (status, notes). One pattern per endpoint SHAPE, as above:
+    // `${string}` swallows the nested `/{id}/status` and `/{id}/notes` segments.
+    `/api/admin/masjids/${string}/appointment-requests` |
+    `/api/admin/masjids/${string}/appointment-requests?${string}` |
+    `/api/admin/masjids/${string}/appointment-requests/${string}` |
+    // Offerings + the two things nested under one: its IMMUTABLE fee plans and
+    // its registrations. One pattern per endpoint SHAPE, as above — the trailing
+    // `${string}` swallows the nested `/{id}/adjustments`, `/{id}/promote` and
+    // `/{id}/cancel` segments, and the `?${string}` variants carry the filters.
+    `/api/admin/masjids/${string}/offerings` |
+    `/api/admin/masjids/${string}/offerings?${string}` |
+    `/api/admin/masjids/${string}/offerings/${string}` |
+    `/api/admin/masjids/${string}/offerings/${string}/fee-plans` |
+    `/api/admin/masjids/${string}/offerings/${string}/fee-plans/${string}` |
+    `/api/admin/masjids/${string}/offerings/${string}/registrations` |
+    `/api/admin/masjids/${string}/offerings/${string}/registrations?${string}` |
+    `/api/admin/masjids/${string}/offerings/${string}/registrations/${string}` |
     `/api/admin/masjids/${string}/behavior-skills` |
     `/api/admin/masjids/${string}/behavior-skills?${string}` |
     `/api/admin/masjids/${string}/funds` |

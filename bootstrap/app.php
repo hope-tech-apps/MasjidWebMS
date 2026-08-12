@@ -3,6 +3,7 @@
 use App\Http\Middleware\EnsureAssistantEnabled;
 use App\Http\Middleware\EnsureCrmEnabled;
 use App\Http\Middleware\EnsureFamilyLoginActive;
+use App\Http\Middleware\ResolveFamilyGuestTenant;
 use App\Http\Middleware\ResolveFamilyTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
@@ -70,6 +71,14 @@ return Application::configure(basePath: dirname(__DIR__))
             // for every BelongsToMasjid model (.claude/rules/tenant-scoping.md).
             'family.active' => EnsureFamilyLoginActive::class,
             'family.tenant' => ResolveFamilyTenant::class,
+            // The UNAUTHENTICATED half of the family realm (T-015d): the two
+            // sign-in endpoints, which by definition have no token to bind a
+            // tenant from. `family.guest` binds it from the {masjid_id} in the
+            // URL — or 404s. It is NOT interchangeable with `family.tenant`:
+            // that one derives the tenant from the TOKEN and treats the URL as
+            // an assertion to verify, which is the stronger ordering and stays
+            // mandatory everywhere a token exists.
+            'family.guest' => ResolveFamilyGuestTenant::class,
             // Same shape for the Masjid Assistant: 403s unless masjids.assistant_enabled.
             // The SuperAdmin assistant-access toggle is NOT gated (it opens the gate).
             'assistant' => EnsureAssistantEnabled::class,

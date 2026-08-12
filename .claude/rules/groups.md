@@ -179,18 +179,44 @@ no identity. This is an identity *bridge*, not an escalation (an admin who wante
 in could add themselves to the roster, which they may already do), and it lives
 in `GroupAudience::identitiesFor()` and nothing else.
 
-> **Amended by T-015c.** This paragraph used to open "A `Contact` cannot
-> authenticate anywhere in this application — there is no congregant guard".
-> That is no longer true: a contact can now hold a login and authenticate on the
-> `family` guard (`.claude/rules/auth-permissions.md`). What has NOT changed is
-> anything in this file. `identitiesFor()` narrows with `instanceof User` and
-> returns `[]` for every other principal, so an authenticated parent resolves to
-> NO identity and therefore no standing, no feed, no thread and no record —
-> every rule below still holds by construction, and its existing tests still
-> prove it. The Contact branch that changes this (with its revoked / trashed /
-> cross-tenant liveness checks) is **T-015e**, and it is the ONLY place that
-> should change when it lands. `tests/Feature/FamilyAuthGuardTest.php` pins the
-> no-standing state until then.
+> **Amended by T-015c, then by T-015e.** This paragraph used to open "A
+> `Contact` cannot authenticate anywhere in this application — there is no
+> congregant guard". That stopped being true when T-015c gave a contact its own
+> `family` guard (`.claude/rules/auth-permissions.md`). T-015c's amendment then
+> said an authenticated parent resolved to NO identity; **that is now also
+> out of date, and this is the update it promised.**
+>
+> **A parent is now a caller.** `identitiesFor()` has a `Contact` branch: a
+> contact resolves to its OWN id — never its ward's — subject to three liveness
+> checks (`familyLoginIsActive()`, i.e. enabled + not revoked + not trashed, and
+> `masjid_id` equal to the BOUND tenant, re-checked here independently of
+> `family.tenant`). Anything that is neither a live `Contact` nor a `User` still
+> resolves to `[]`.
+>
+> **Nothing else in this file changed, and that is the point.** `identitiesFor()`
+> was the ONLY place T-015e touched in `GroupAudience`; `standingIn`,
+> `mayReceive`, `mayReceiveThread`, `mayReceiveRecordAbout`,
+> `readableThreadsQuery`, `readableAwardsQuery`, `readableHifzQuery` and
+> `constrainToOwnStudents` are untouched, so every rule below holds for a parent
+> BY CONSTRUCTION rather than by a second implementation that happens to agree.
+> A guardian still gets the feed only where consent covers it, still reads
+> participant threads / awards / ḥifẓ only about their own ward, and is still
+> excluded at QUERY level from another family's rows.
+>
+> The parent-facing endpoints are `routes/family.php` +
+> `app/Http/Controllers/Family/` — READ-ONLY, no `permission:`, no roster
+> listing, and attachments served as bytes through an authenticated endpoint
+> rather than as a signed URL (a signed URL would survive consent withdrawal).
+> Pinned by `tests/Feature/FamilyPortalTest.php`, whose whole fixture is TWO
+> families in ONE classroom, plus
+> `tests/Feature/ContactLoginCodeTenantIsolationTest.php` for the cross-tenant
+> half. `tests/Feature/FamilyAuthGuardTest.php` still pins the guard, the
+> liveness checks and the staff bridge.
+>
+> Still NOT built, deliberately: a parent writing a message or moving a read
+> bookmark (**T-015f** — `group_thread_reads.user_id` is NOT NULL and points at
+> `users`, so no Contact can be written there today and no `unread` flag is
+> served), and a parent withdrawing their own consent (**T-015h**).
 
 ## Consent
 

@@ -125,6 +125,62 @@ each with a control that reproduces the vulnerable configuration) and
 `tests/Feature/FamilyTenantBindingTest.php` (bound-or-refused, with a control
 that demonstrates `ResolveMasjidTenant` falling through unbound).
 
+## How a family token is MINTED (T-015d) — the only way
+
+`POST /api/family/masjids/{masjid_id}/auth/request-code` and `.../verify-code`
+are the **only unauthenticated routes in the family realm**, and the only source
+of a `family` credential. They sit behind `family.guest` + `crm` +
+`throttle:family-login` / `throttle:family-verify` — never `auth:family` (the
+caller has no token yet, which is the point), never `admin`/`super`/`tenant`,
+never `permission:`.
+
+- **`family.guest` (`ResolveFamilyGuestTenant`) binds the tenant from the URL, or
+  404s.** It exists because `family.tenant` binds from the TOKEN and there is no
+  token at sign-in. Do not "simplify" it away and let the controller filter by
+  hand: unbound means NO filter, so a `Contact` lookup would span every tenant
+  and mail a code to a parent at a different school — a cross-tenant existence
+  oracle delivered by SMTP.
+- **The credential is never stored and never logged.**
+  `contact_login_codes.code_hash` is `hash_hmac('sha256', $code, APP_KEY)`,
+  compared with `hash_equals`. Keyed, NOT a bare sha256: a bare digest of a
+  6-digit code is reversible by anyone holding the table, so "hashed at rest"
+  would be decoration. `FamilyLoginCodeMail` is the **one Mailable in this app
+  that is not `ShouldQueue`** — `QUEUE_CONNECTION=database`, so queueing would
+  spool the plaintext into `jobs.payload` and, on failure, into `failed_jobs`.
+- **Neither endpoint may become a directory.** `request-code` answers a fixed
+  202 for every well-formed address — live parent, revoked, never-enabled,
+  soft-deleted, or nobody — and `FamilyLoginService::issue()` returns `void` so
+  there is nothing for a controller to branch on. `verify-code` collapses six
+  failures (unknown address, no code, wrong, expired, replayed, locked out) into
+  one 410. **Never add `exists:` to the request rules** — docs §11 names the
+  staff login's `exists:users,email` as the oracle this realm must not copy. The
+  throttles are keyed on the SUBMITTED address, so a 429 is not an oracle either.
+- Three independent limits, and all three are required: `attempts` on the row (a
+  DB column, because a cache flush must not re-arm an attacker four guesses in),
+  the 10-minute TTL, and the rate limiters. `consumed_at` is written by a
+  compare-and-swap inside the same transaction that mints the token, so a
+  double-tap yields one token, not two.
+- **Delivery is email to `login_email`, and only that.** Not `contacts.email`
+  (imported, shared, unverified) and never SMS — see
+  `App\Models\ContactLoginCode::CHANNELS` and `.claude/rules/broadcasts.md`
+  ("a phone number is not consent"); even a fully consented number is consent to
+  bulk announcements, not permission to send a credential to a number that may
+  have been recycled.
+
+Pinned by `tests/Feature/FamilyLoginCodeTest.php` and
+`tests/Feature/ContactLoginCodeTenantIsolationTest.php`.
+
+## What an authenticated parent may READ (T-015e)
+
+`GroupAudience::identitiesFor()` resolves a live `Contact` to its own id, so the
+family read endpoints in `routes/family.php` (groups, feed + attachment bytes,
+threads, per-child awards and ḥifẓ) are authorized by **the roster**, never by a
+permission string. See `.claude/rules/groups.md` for the disclosure rules
+themselves — none of them changed. **The realm is read-only**: apart from the two
+sign-in POSTs there is no verb but GET, and
+`FamilyPortalTest::no_family_route_accepts_a_write_verb` fails if that stops
+being true.
+
 ## Staff tokens are minted with a named ability, not `*`
 
 - `AuthController::login()` mints with `AuthController::STAFF_TOKEN_ABILITIES`

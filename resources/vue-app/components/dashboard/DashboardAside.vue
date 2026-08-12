@@ -26,7 +26,8 @@
                 <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
                     <router-link v-if="menuItem.allowed_types.includes(authStore.user?.type as UserType)
                         && (!menuItem.requiresCrm || masjidStore.masjid?.crm_enabled)
-                        && (!menuItem.requiresAssistant || masjidStore.masjid?.assistant_enabled)"
+                        && (!menuItem.requiresAssistant || masjidStore.masjid?.assistant_enabled)
+                        && (!menuItem.requiresOrgTypes || menuItem.requiresOrgTypes.includes(masjidStore.orgType))"
                         :to="menuItem.to" class="dashboard-aside-menu-item">
                         <div class="menu-item-icon">
                             <span v-html="menuItem.svg_icon"></span>

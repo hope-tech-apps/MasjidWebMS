@@ -5,6 +5,8 @@ import generalDataManagementRoutes from "@/router/routes/generalDataManagementRo
 import eventsManagementRoutes from "@/router/routes/EventsManagementRoutes"
 import pagesManagementRoutes from "@/router/routes/pagesManagementRoutes"
 import splashAnnouncementsManagementRoutes from "@/router/routes/splashAnnouncementsManagementRoutes"
+import appointmentsManagementRoutes from "@/router/routes/appointmentsManagementRoutes"
+import offeringsManagementRoutes from "@/router/routes/offeringsManagementRoutes"
 
 const dashboardRoutes: RouteRecordRaw[] = [
     {
@@ -174,6 +176,16 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/GroupDetailView.vue")
             },
+            // The clinic's intake queue. Registered here, with the other
+            // per-feature route files, because these are children of the
+            // /masjid dashboard layout — see appointmentsManagementRoutes.ts.
+            ...appointmentsManagementRoutes,
+            // Offerings, their fee plans and their registrations. Sits between
+            // the roster screens above and the giving screens below because it
+            // spans both: an offering is a program structure over the member
+            // directory, and its fee plans are prices. See
+            // offeringsManagementRoutes.ts.
+            ...offeringsManagementRoutes,
             {
                 path: 'funds',
                 name: 'masjid.funds',

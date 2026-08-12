@@ -230,7 +230,13 @@ class ZakatDesignationTest extends TestCase
             'zakat' => true,
         ])->assertStatus(201)->assertJsonPath('data.is_zakat', true);
 
+        // The bypass is the correct read here — a public checkout runs UNBOUND,
+        // so there is no tenant to scope by — but it must not be allowed to hide
+        // WHERE the commitment landed. The tenant column is asserted explicitly;
+        // the cross-tenant guarantee itself lives in
+        // DonationSubscriptionTenantIsolationTest.
         $subscription = DonationSubscription::withoutMasjidScope()->firstOrFail();
+        $this->assertSame($this->masjid->id, (int) $subscription->masjid_id);
         $this->assertTrue($subscription->is_zakat);
 
         // The fund's type is edited afterwards; the booked charge must still

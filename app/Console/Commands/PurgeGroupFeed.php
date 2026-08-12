@@ -6,6 +6,7 @@ use App\Models\BehaviorAward;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Retention purge for group feeds and messaging threads (PLAN T-005b/T-005c).
@@ -33,9 +34,25 @@ use Illuminate\Console\Command;
  * relying on the absence of a binding — see .claude/rules/tenant-scoping.md.
  * `--masjid=` narrows it to one organization when a single tenant asks.
  *
- * Not scheduled by default. Retention is a policy an organization owns, so the
- * cadence is an operator's decision; add it to routes/console.php when the
- * policy is agreed.
+ * SCHEDULED DAILY in routes/console.php. It used to say "not scheduled by
+ * default; the cadence is an operator's decision", which sounds like deference
+ * and was in practice a configured-but-unenforced retention policy: three
+ * `retention_days` keys in config/groups.php, a `retained_until` stamped on
+ * every row about a child, and no cron anywhere in the system that would ever
+ * act on them. Deleting minors' records on a timer is the promise this codebase
+ * makes; a promise nothing executes is worse than no promise. `--before=`,
+ * `--masjid=` and `--dry-run` remain for a one-off operator run.
+ *
+ * IDEMPOTENT AND SAFE TO RUN TWICE, which is what makes a daily schedule
+ * harmless: the sweep selects strictly on `retained_until <= $before`, and a
+ * force-deleted row is gone from the table entirely, so a second run in the same
+ * day selects nothing and reports zeros. A run that dies half way leaves the
+ * rows it had not reached still due, and the next run takes them.
+ *
+ * Counts go to the LOG as well as stdout. Under `schedule:run` stdout is
+ * discarded, so the console line alone would mean a sweep that silently stopped
+ * finding rows — or silently deleted a term's worth — looks exactly like one
+ * that never ran.
  */
 class PurgeGroupFeed extends Command
 {
@@ -50,11 +67,20 @@ class PurgeGroupFeed extends Command
     {
         $before = (string) ($this->option('before') ?: now()->toDateString());
         $masjidId = $this->option('masjid');
+
+        // `!== null`, NOT truthiness. `--masjid=0` is a string "0", which is
+        // FALSY in PHP, so `when($masjidId, …)` skipped the narrowing entirely
+        // and swept EVERY tenant — on a command that force-deletes minors'
+        // records. Verified against two seeded tenants before the fix: both had
+        // their due rows deleted. `--masjid=abc` was always safe (truthy, casts
+        // to 0, matches nothing), which is precisely what made `0` the sharp
+        // edge: the one spelling that silently widens instead of narrowing.
+        $narrowToMasjid = $masjidId !== null;
         $dryRun = (bool) $this->option('dry-run');
 
         $query = GroupPost::withoutMasjidScope()
             ->dueForPurge($before)
-            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
             ->orderBy('id');
 
         $posts = 0;
@@ -82,7 +108,7 @@ class PurgeGroupFeed extends Command
         // same numbers the real run would.
         $threadQuery = GroupThread::withoutMasjidScope()
             ->dueForPurge($before)
-            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
             ->orderBy('id');
 
         $threads = 0;
@@ -111,7 +137,7 @@ class PurgeGroupFeed extends Command
         // withdrew last month is exactly the one that should not linger.
         $awardQuery = BehaviorAward::withoutMasjidScope()
             ->dueForPurge($before)
-            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
             ->orderBy('id');
 
         $awards = 0;
@@ -147,6 +173,22 @@ class PurgeGroupFeed extends Command
             $awards,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
+
+        // The scheduled run's only evidence. `schedule:run` throws stdout away,
+        // so without this a sweep that silently found nothing for a month —
+        // because a `retained_until` stopped being stamped, say — is
+        // indistinguishable from one working perfectly. Always emitted, zeros
+        // included, for exactly that reason.
+        Log::info('Group retention sweep completed.', [
+            'dry_run' => $dryRun,
+            'before' => $before,
+            'masjid_id' => $masjidId !== null ? (int) $masjidId : null,
+            'posts' => $posts,
+            'images' => $images,
+            'threads' => $threads,
+            'messages' => $messages,
+            'behavior_awards' => $awards,
+        ]);
 
         return self::SUCCESS;
     }

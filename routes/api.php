@@ -17,6 +17,7 @@ use App\Http\Controllers\Mobile\ServicesController;
 use App\Http\Controllers\Mobile\SignageController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
+use App\Http\Controllers\Mobile\TvConfigController;
 use App\Http\Controllers\ProvisioningCallbackController;
 use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -73,6 +74,15 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // display window is open — see App\Services\Broadcast\Channels\SignageChannel.
         // Additive: no existing endpoint changes shape or behaviour.
         Route::get('/{masjid_id}/signage', [SignageController::class, 'index']);
+
+        // tvOS display CONFIG — how the board renders, as opposed to /signage
+        // above, which is what it renders. The tvOS client has called this exact
+        // path since it was written (MasjidKit MasjidEndpoint.tvConfig) and got a
+        // 404, which SignageStore.refreshTVConfig() swallows while keeping
+        // TVConfig.defaults — so nothing an admin did could ever change a board.
+        // The payload matches TVConfig's Codable field-for-field; see the
+        // controller. Additive: /signage is unchanged.
+        Route::get('/{masjid_id}/tv-config', [TvConfigController::class, 'index']);
 
         // Contact form: writes to DB, public to anonymous callers — strict throttle.
         Route::prefix('{masjid_id}/contact-us')->controller(ContactUsController::class)->group(function () {

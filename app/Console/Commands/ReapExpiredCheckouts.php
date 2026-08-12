@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Registration;
 use App\Services\Registrations\RegistrationService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * The expired-checkout reaper (T-006f, docs/t006-registration-billing-design.md).
@@ -57,11 +58,16 @@ use Illuminate\Console\Command;
  * narrows it to one organization, and a narrowed run can never touch another
  * tenant's registration.
  *
- * NOT SCHEDULED BY DEFAULT, exactly like groups:purge-feed. How aggressively an
- * organization reclaims abandoned seats is an operator decision (it interacts
- * with the checkout window, the waitlist, and how much they trust their webhook
- * delivery), so the cadence belongs in routes/console.php once that policy is
- * agreed — not hard-wired here.
+ * SCHEDULED EVERY FIFTEEN MINUTES in routes/console.php. It used to say "not
+ * scheduled by default; the cadence is an operator decision", which left a
+ * backstop that never ran — and a backstop that never runs is not a backstop,
+ * it is a comment. `--grace=` and `--masjid=` still exist for a one-off run.
+ *
+ * The cadence is bounded below by the grace margin, not by taste: sweeping more
+ * often than the margin cannot reclaim anything sooner, because nothing is
+ * eligible until `checkout_expires_at + grace` has passed anyway. Fifteen
+ * minutes matches the default margin, so a genuinely abandoned seat comes back
+ * within about half an hour of expiring instead of never.
  */
 class ReapExpiredCheckouts extends Command
 {
@@ -90,13 +96,22 @@ class ReapExpiredCheckouts extends Command
         // "the instant the window closed" and the earliest defensible deadline.
         $grace = $graceOption === null ? $this->graceMinutes() : max(0, (int) $graceOption);
         $masjidId = $this->option('masjid');
+
+        // `!== null`, NOT truthiness. `--masjid=0` is a string "0", which is
+        // FALSY in PHP, so `when($masjidId, …)` skipped the narrowing entirely
+        // and swept EVERY tenant — on a command that force-deletes minors'
+        // records. Verified against two seeded tenants before the fix: both had
+        // their due rows deleted. `--masjid=abc` was always safe (truthy, casts
+        // to 0, matches nothing), which is precisely what made `0` the sharp
+        // edge: the one spelling that silently widens instead of narrowing.
+        $narrowToMasjid = $masjidId !== null;
         $dryRun = (bool) $this->option('dry-run');
 
         $deadline = now()->subMinutes($grace);
 
         $query = Registration::withoutMasjidScope()
             ->checkoutExpiredBefore($deadline)
-            ->when($masjidId, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+            ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
             ->orderBy('id');
 
         $swept = 0;
@@ -144,6 +159,21 @@ class ReapExpiredCheckouts extends Command
             $grace,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
+
+        // Now that this runs on a schedule, stdout goes nowhere: `schedule:run`
+        // discards it. A reaper that quietly stopped finding stale holds looks
+        // identical to one with nothing to do, and the symptom — an offering
+        // that slowly runs out of seats nobody took — surfaces weeks later as a
+        // complaint. Always emitted, zeros included.
+        Log::info('Expired-checkout reap completed.', [
+            'dry_run' => $dryRun,
+            'grace_minutes' => $grace,
+            'deadline' => $deadline->toIso8601String(),
+            'masjid_id' => $masjidId !== null ? (int) $masjidId : null,
+            'swept' => $swept,
+            'released' => $released,
+            'settled' => $settled,
+        ]);
 
         return self::SUCCESS;
     }

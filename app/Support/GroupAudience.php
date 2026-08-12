@@ -35,9 +35,16 @@ use Illuminate\Support\Str;
  *
  * ## Which person is the caller?
  *
- * A Contact cannot authenticate anywhere in this application — there is no
- * congregant guard, and the parent/teacher app is T-015. The only principal on
- * these routes is an admin `users` row. So the caller's PERSON is resolved by
+ * Two kinds of principal reach this class, and `identitiesFor()` is the only
+ * method that can tell them apart.
+ *
+ * A CONTACT (the `family` guard, T-015d/e) needs no resolution: it already IS
+ * the person the roster names, so it resolves to its own id, subject to the
+ * liveness and tenant checks documented on that method. THIS GRANTED NO NEW
+ * AUTHORITY — every rule below is unchanged, and a parent gets exactly the
+ * standing their `group_memberships` rows describe and nothing else.
+ *
+ * A STAFF `users` row has no such edge, so the caller's PERSON is resolved by
  * matching their login email to a Contact of the bound tenant:
  *
  *   - the tenant must be bound (it always is on /masjids/{id}/... — see
@@ -70,15 +77,31 @@ use Illuminate\Support\Str;
  *
  * Widening the type changed no rule. Every method here reasons in CONTACT IDS,
  * which `identitiesFor()` hands it; only `identitiesFor()` ever touches the
- * principal object, and it narrows explicitly with `instanceof User` before
- * reading anything a `users` row has. So a staff caller's behaviour is
- * byte-identical to before, and the existing group, messaging, behaviour and
- * ḥifẓ suites are the proof — they were not modified.
+ * principal object, and it narrows explicitly with `instanceof` before reading
+ * anything model-specific. So a staff caller's behaviour is byte-identical to
+ * before, and the existing group, messaging, behaviour and ḥifẓ suites are the
+ * proof — they were not modified.
  *
- * Until T-015e adds the Contact branch to `identitiesFor()`, a principal that
- * is not a `User` resolves to NO identity and therefore NO standing anywhere in
- * this class. That is deliberate: an actor this class cannot place in the
- * roster must be refused, never assumed.
+ * ## T-015e: the Contact branch, and what it deliberately did NOT touch
+ *
+ * `identitiesFor()` now resolves an authenticated parent. That is the WHOLE of
+ * the slice inside this class — `standingIn`, `mayReceive`, `mayReceiveThread`,
+ * `mayReceiveRecordAbout`, `readableThreadsQuery`, `readableAwardsQuery`,
+ * `readableHifzQuery` and `constrainToOwnStudents` are untouched, so every
+ * disclosure rule in .claude/rules/groups.md still holds BY CONSTRUCTION rather
+ * than by a second implementation that agrees today:
+ *
+ *   - a guardian reads the feed only where a recorded consent covers it;
+ *   - a guardian reads participant threads, awards and ḥifẓ ONLY about their own
+ *     ward — "guardian here" never meant "guardian of this child", and another
+ *     family's child in the same group is precisely who that excludes;
+ *   - the listing queries are constrained at QUERY level, so a forbidden row is
+ *     never fetched and cannot surface in a page, a paginator total or an
+ *     aggregate.
+ *
+ * A principal that is neither a `User` nor a live `Contact` still resolves to NO
+ * identity and therefore NO standing anywhere here. That is deliberate: an actor
+ * this class cannot place in the roster must be refused, never assumed.
  */
 class GroupAudience
 {
@@ -109,20 +132,86 @@ class GroupAudience
             return [];
         }
 
+        // ------------------------------------------------ the parent (T-015e)
+        //
+        // A contact does not need bridging: it IS the person the roster names.
+        // `group_memberships.contact_id`, `guardian_of_contact_id`,
+        // `behavior_awards.group_membership_id` and every guardian edge already
+        // point at contacts, and every other method in this class reasons in
+        // contact ids — so an authenticated parent resolves to their OWN id and
+        // nothing else. This branch adds an AUTHENTICATION fact and changes no
+        // AUTHORIZATION rule: what a parent may then read is decided entirely by
+        // the roster rules below, which are byte-identical to what they were
+        // when only staff could reach them.
+        //
+        // The three liveness checks are not decoration, and each closes a way a
+        // dead credential could still resolve to a live person:
+        //
+        //   - REVOKED. `family.active` already refuses a revoked contact on
+        //     every family request, but this class is also called from tests, from
+        //     future console/report paths, and from any endpoint that might one
+        //     day be mounted without that middleware. Disclosure must fail
+        //     closed on its own evidence, not on its caller's.
+        //   - TRASHED / NEVER ENABLED. `Contact` soft-deletes, and
+        //     `ContactsController::merge` FORCE-deletes the absorbed side —
+        //     which DB-cascades `group_memberships` with no model events. A
+        //     bare `contact_id` check would happily resolve a merged-away
+        //     parent, or a roster row that was never given a login at all.
+        //   - CROSS-TENANT. Compared against the BOUND tenant independently of
+        //     `family.tenant`, because tenant isolation in this application is
+        //     the bound context and nothing else (.claude/rules/tenant-scoping.md);
+        //     a second, independent check is what makes a single forgotten
+        //     middleware not a cross-organisation read of children's records.
+        //
+        // `familyLoginIsActive()` is the first two, and it is deliberately the
+        // SAME method `App\Http\Middleware\EnsureFamilyLoginActive` calls —
+        // liveness has one definition in this application, so revocation cannot
+        // mean one thing at the door and another at the disclosure. It is
+        // stricter than docs/t015-parent-identity-design.md §4 by one clause
+        // (that snippet omitted `login_enabled_at`); stricter is the safe
+        // direction and keeps the two doors identical.
+        //
+        // ------------------------------------------------------------------
+        // WHO MAY BE GIVEN A LOGIN IS NOT DECIDED HERE — and must not be
+        // ------------------------------------------------------------------
+        //
+        // This branch resolves whoever `login_enabled_at` was set on. It does
+        // NOT check that they are an adult or a guardian, and it CANNOT: the
+        // schema has no such flag, and a `member` row is an adult volunteer on
+        // a masjid's team exactly as often as it is a child in a classroom.
+        //
+        // The consequence is the one docs §7 refuses, so it is written here
+        // where someone might otherwise create it by accident: ENABLING A LOGIN
+        // ON A CHILD'S CONTACT ROW IS A STUDENT LOGIN. `standingIn()` sets
+        // `feed = true` outright for any participant, so that child would read
+        // the whole class feed — every classmate's photograph, with nobody's
+        // consent — plus the participant threads about themselves, which are
+        // where a teacher and a guardian discuss a safeguarding concern. A
+        // student login is not a flag on this design; it is a DIFFERENT standing
+        // computation (own-record-only, no group feed, no participant threads)
+        // and belongs to its own task.
+        //
+        // What keeps that shut today is that NOTHING in this application sets
+        // `login_enabled_at`: the four `login_*` columns are absent from
+        // `Contact::$fillable`, no controller writes them, and the admin
+        // "invite guardians" flow is not built. When it is, it must issue
+        // invites for GUARDIAN EDGES only. The behaviour is pinned, not left to
+        // be discovered, by
+        // FamilyPortalTest::a_login_enabled_participant_reads_the_whole_group_feed.
+        if ($principal instanceof Contact) {
+            return $principal->familyLoginIsActive()
+                && (int) $principal->masjid_id === (int) $this->tenant->get()
+                    ? [(int) $principal->id]
+                    : [];
+        }
+
         // THE NARROWING. `$principal` is only typed as Authenticatable, so the
         // email bridge below — which reads a `users` column — must not be
         // reached by an actor that is not a `users` row.
         //
-        // Today `App\Models\User` is still the only model in this application
-        // that can authenticate, so this branch refuses nothing that exists yet
-        // and staff behaviour is unchanged. T-015c gives `App\Models\Contact`
-        // its own guard and T-015e adds the branch that returns that contact's
-        // OWN id here (with its revoked / trashed / cross-tenant liveness
-        // checks) instead of guessing a person from an admin's email.
-        //
-        // Until then, an actor this class cannot place on a roster resolves to
-        // NO identity, which every other method here turns into no standing. That is
-        // the safe direction: the content behind these decisions is
+        // Everything that is neither a `User` nor a `Contact` resolves to NO
+        // identity, which every other method here turns into no standing. That
+        // is the safe direction: the content behind these decisions is
         // photographs of children and their academic records, so an
         // unrecognized principal is refused rather than assumed.
         if (! $principal instanceof User) {

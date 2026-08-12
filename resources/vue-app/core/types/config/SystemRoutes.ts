@@ -40,6 +40,16 @@ export type MasjidDashboardRoute =
     // screen is CALLED comes from the terminology pack, never the URL.
     '/masjid/groups' |
     `/masjid/groups/${number}` |
+    // The intake triage queue (Community vertical) and one request's own page.
+    '/masjid/appointment-requests' |
+    `/masjid/appointment-requests/${number}` |
+    // Offerings — the sellable things (a semester, a camp, a membership year),
+    // one offering with its fee plans and roster, and one registration. The path
+    // stays neutral: what an offering is CALLED comes from the terminology pack
+    // ("Programs", "Services"), never the URL.
+    '/masjid/offerings' |
+    `/masjid/offerings/${number}` |
+    `/masjid/offerings/${number}/registrations/${number}` |
     '/masjid/funds' |
     '/masjid/donations' |
     '/masjid/recurring-donations' |

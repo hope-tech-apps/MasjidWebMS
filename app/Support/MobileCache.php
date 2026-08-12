@@ -32,6 +32,12 @@ class MobileCache
     // Signage board payload (tvOS). Written by the unified composer's signage
     // channel, read by GET /mobile/masjids/{id}/signage. See T-008.
     public const SIGNAGE = 'signage';
+    // tvOS display configuration — GET /mobile/masjids/{id}/tv-config. A
+    // SEPARATE key from SIGNAGE on purpose: the two endpoints answer different
+    // questions (what to show vs. how to show it), refresh on different cadences
+    // in the client, and are invalidated by different admin actions. Publishing
+    // a broadcast must not blow away the config, and vice versa.
+    public const TV_CONFIG = 'tv_config';
 
     // Global resources — change when an admin edits library content (azkar/hadith/tasabih).
     public const AZKAR_ALL = 'azkar.all';
@@ -81,6 +87,7 @@ class MobileCache
             self::SHOW, self::ABOUT, self::DONATION_LINK, self::GALLERY, self::FEATURES,
             self::ANNOUNCEMENTS, self::EVENTS, self::SERVICES, self::PRAYERS_SETTINGS,
             self::CONTACT_REASONS, self::SPLASH, self::APP_CONFIG, self::SIGNAGE,
+            self::TV_CONFIG,
         ] as $resource) {
             self::flushMasjid($masjidId, $resource);
         }

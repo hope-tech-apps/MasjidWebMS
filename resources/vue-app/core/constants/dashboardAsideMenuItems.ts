@@ -225,6 +225,66 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        // Offerings — the things people register and pay for, and the roster and
+        // fee plans hung off each one.
+        //
+        // The label is the tenant's own word for a program plus an authored
+        // suffix: "Programs & Registration" for a masjid or a school, "Services
+        // & Registration" for a community org. The suffix is not decoration —
+        // `term('programs')` alone is literally "Services" for a community
+        // tenant, which is already the name of the CONTENT feature at
+        // /masjid/services further up this menu. Two identical nav labels
+        // pointing at unrelated screens is a real collision, and the suffix is
+        // what keeps them apart while still saying the tenant's word first.
+        //
+        // No `requiresOrgTypes`: every vertical sells places in something — a
+        // school's semester, a masjid's summer camp, a community org's
+        // membership year — and the public sign-up endpoints accept a
+        // registration from any tenant that has the offering on its site.
+        // Gating this item to schools would hide real money from the
+        // organizations that collected it.
+        title: "Programs",
+        title_term: 'programs',
+        title_suffix: '& Registration',
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 6C4 4.89543 4.89543 4 6 4H18C19.1046 4 20 4.89543 20 6V20L17 18L14 20L11 18L8 20L5 18L4 20V6Z" stroke="white" stroke-width="1.7" stroke-linejoin="round"/>
+                <path d="M8 9H16" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8 13H13" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/offerings',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
+        // The clinic's intake queue.
+        //
+        // `requiresOrgTypes: ['community']` keeps it out of a masjid's or a
+        // school's sidebar, where it would be a permanently empty screen for a
+        // workflow they do not run. That is a DEFAULT, not a boundary: the
+        // public intake endpoint accepts a request from any tenant, the route
+        // itself is not org-gated, and `permission:view contacts` + the CRM gate
+        // are what actually decide who may read one. Hiding the item is
+        // housekeeping; hiding data would be a bug.
+        //
+        // The title is authored rather than drawn from the terminology pack:
+        // "Appointment Requests" names the FEATURE, the way "Class Story" does,
+        // and the tenant's own vocabulary appears INSIDE the screen for the
+        // people it holds.
+        title: "Appointment Requests",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M3.5 4H20.5V21H3.5V4ZM5.3 5.8V19.2H18.7V5.8H5.3Z" fill="white"/>
+                <path d="M3.5 4H20.5V8H3.5V4Z" fill="white"/>
+                <path d="M7.6 2.2H9.4V6.2H7.6V2.2Z" fill="white"/>
+                <path d="M14.6 2.2H16.4V6.2H14.6V2.2Z" fill="white"/>
+                <path d="M9.95 14.4L7.66 12.1L6.88 12.88L9.95 16L16.55 9.35L15.77 8.57L9.95 14.4Z" fill="white"/>
+                </svg>`,
+        to: '/masjid/appointment-requests',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true,
+        requiresOrgTypes: ['community']
+    },
+    {
         // The overview sits above the ledger: totals first, individual gifts second.
         title: "Giving Dashboard",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -244,6 +244,53 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // The two UNAUTHENTICATED family endpoints (T-015d): request a sign-in
+        // code, and exchange one for a token. Both return TWO limits, because
+        // the two abuse shapes are different and either alone leaves the other
+        // open:
+        //
+        //   - per submitted ADDRESS  — stops one family's mailbox being flooded
+        //     with codes, and stops a distributed attacker grinding one account
+        //     from many IPs.
+        //   - per IP                 — stops one host walking a list of
+        //     addresses. Set higher than the address limit so a household or a
+        //     school-run NAT does not lock itself out.
+        //
+        // THE KEY IS ALWAYS THE VALUE THE CALLER SUBMITTED, never one we looked
+        // up. That is what keeps a 429 from being an existence oracle: an
+        // address that names a real parent and one that names nobody are
+        // throttled by the identical rule, so the response to the sixth attempt
+        // is the same either way. Hashed into the key so a cache dump is not a
+        // list of the families who tried to sign in, and salted with the masjid
+        // so two tenants never share a bucket.
+        RateLimiter::for('family-login', function (Request $request) {
+            return [
+                Limit::perHour((int) config('family.login.requests_per_hour_per_address', 5))
+                    ->by($this->familyLoginKey($request, 'addr'))
+                    ->response($this->tooManyLoginAttempts()),
+                Limit::perHour((int) config('family.login.requests_per_hour_per_ip', 20))
+                    ->by('family-login-ip:' . $request->ip())
+                    ->response($this->tooManyLoginAttempts()),
+            ];
+        });
+
+        // Verification. Layered ON TOP of `contact_login_codes.attempts`, which
+        // is the per-CODE lockout: the column stops one code being ground down
+        // and survives a cache flush because it is a fact about a record; these
+        // stop an attacker cycling fresh codes, which a per-code counter cannot
+        // see. Both are required — .claude/rules is explicit that a limiter in
+        // the cache is not a durable control.
+        RateLimiter::for('family-verify', function (Request $request) {
+            return [
+                Limit::perHour((int) config('family.login.verifications_per_hour_per_address', 10))
+                    ->by($this->familyLoginKey($request, 'verify'))
+                    ->response($this->tooManyLoginAttempts()),
+                Limit::perHour((int) config('family.login.verifications_per_hour_per_ip', 40))
+                    ->by('family-verify-ip:' . $request->ip())
+                    ->response($this->tooManyLoginAttempts()),
+            ];
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
@@ -256,6 +303,61 @@ class AppServiceProvider extends ServiceProvider
                 ], 429);
             });
         });
+    }
+
+    /**
+     * The throttle bucket for one submitted family sign-in address, in one
+     * organisation.
+     *
+     * Hashed, and salted with the masjid: the raw value is a family's email
+     * address, and a cache key is a place it would sit in plaintext in Redis or
+     * the cache table for an hour. The masjid comes from the ROUTE, the same
+     * place `ResolveFamilyGuestTenant` reads it, so one tenant's traffic can
+     * never consume another's allowance.
+     */
+    private function familyLoginKey(Request $request, string $prefix): string
+    {
+        // NORMALISE BOTH HALVES. This bucket is the only thing standing between a
+        // stranger who knows a parent's address and an unbounded stream of
+        // "your sign-in code" emails from their child's school, and it was
+        // bypassable twice over:
+        //
+        //  - The masjid was taken as the RAW route string, while
+        //    ResolveFamilyGuestTenant binds the tenant with `(int)`. So "1",
+        //    "01", "001", "1abc" and "1.0" all resolved to masjid 1 and each
+        //    minted a FRESH bucket — measured: 12 codes issued to one parent
+        //    against a documented ceiling of 5. Cast it the same way the
+        //    middleware does, so one tenant is one bucket. `routes/family.php`
+        //    now also constrains the segment with whereNumber(), which is the
+        //    structural half of the same fix; this is the half that does not
+        //    depend on a route file staying right.
+        //
+        //  - `(string)` on an array raises "Array to string conversion", which
+        //    Laravel escalates to an ErrorException — a 500 from an
+        //    unauthenticated endpoint, raised INSIDE the limiter, i.e. before
+        //    the counter increments and before FormRequest validation exists to
+        //    reject it. Unmetered error-log noise on the sign-in door.
+        //
+        // Non-scalar input collapses to the empty string rather than throwing:
+        // the request is going to fail validation a moment later anyway, and the
+        // limiter's job is to count it, not to judge it.
+        $submitted = $request->input('email');
+        $email = is_scalar($submitted) ? strtolower(trim((string) $submitted)) : '';
+
+        $masjidId = (int) $request->route('masjid_id');
+
+        return $prefix . ':' . hash('sha256', $masjidId . '|' . $email);
+    }
+
+    /** One 429 body for both family sign-in limiters — see the note above. */
+    private function tooManyLoginAttempts(): callable
+    {
+        return function () {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Too many sign-in attempts. Please try again later.',
+            ], 429);
+        };
     }
 
     private function responseMacro(): void

@@ -1,6 +1,6 @@
 import { MasjidDashboardRoute, SuperDashboardRoute } from "@/core/types/config/SystemRoutes"
 import { UserType } from "@/core/types/data/User";
-import { TerminologyKey } from "@/core/types/data/Vertical";
+import { OrgType, TerminologyKey } from "@/core/types/data/Vertical";
 
 export type AsideMenuItem = {
     title: string;
@@ -17,4 +17,15 @@ export type AsideMenuItem = {
     requiresCrm?: boolean;
     // When true, the item is only shown if the active masjid's assistant_enabled is true.
     requiresAssistant?: boolean;
+    // When set, the item is only shown to these verticals — for a workflow that
+    // belongs to one kind of organization (a clinic's intake queue) rather than
+    // to every tenant.
+    //
+    // This hides a MENU ITEM; it is not authorization and it must never be the
+    // only way to reach a screen that can hold real data. The route stays
+    // reachable and the server keeps deciding who may read what — the same
+    // relationship `requiresCrm` has with the `crm` middleware. A tenant whose
+    // vertical is unknown reads as `masjid` (Vertical.ts), so an item gated to
+    // another vertical stays hidden until the payload proves otherwise.
+    requiresOrgTypes?: OrgType[];
 }

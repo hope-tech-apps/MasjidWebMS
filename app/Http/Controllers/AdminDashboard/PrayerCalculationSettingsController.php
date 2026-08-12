@@ -33,11 +33,10 @@ class PrayerCalculationSettingsController extends Controller
     public function index($masjid_id)
     {
         $masjid = Masjid::findOrFail($masjid_id);
-        $settings = $masjid->prayerCalculationSettings;
 
         return response()->json([
             'status' => 'success',
-            'data' => $settings
+            'data' => self::readableSettings($masjid->prayerCalculationSettings),
         ], Response::HTTP_OK);
     }
 
@@ -109,7 +108,7 @@ class PrayerCalculationSettingsController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $settings,
+                'data' => self::readableSettings($settings),
                 // Reported rather than swallowed. The settings row is saved either
                 // way, but if the rebuild failed the cached rows still hold the
                 // PREVIOUS method's times, so the adhan push will keep firing on the
@@ -217,6 +216,69 @@ class PrayerCalculationSettingsController extends Controller
     private static function rebuildFrom(): string
     {
         return Carbon::now()->subDay()->format('Y-m-d');
+    }
+
+    /**
+     * The row as the admin screen may safely read it: identity + timestamps as
+     * stored, and the three settings AS THEY WILL ACTUALLY BE APPLIED.
+     *
+     * ## Why this is not just `$settings`
+     *
+     * Returning the model serialized it, and serializing reads the three columns
+     * THROUGH THEIR ENUM CASTS. Laravel resolves an enum cast with
+     * `BackedEnum::from()` (HasAttributes::getEnumCaseFromValue), which raises a
+     * `ValueError` — not a null — for a string that matches no case. Hydration is
+     * lazy, so a masjid whose row holds a bad value loads fine and detonates on
+     * the way out, as a 500 with an empty body. `ValueError` extends `Error`, so
+     * the `catch (\Exception)` in save() never saw it either.
+     *
+     * The result was a DEAD ADMIN SCREEN for a condition this very controller's
+     * write path can repair: the admin opens prayer calculation to fix the bad
+     * value, and the GET that populates the form 500s before they can. Exactly
+     * the failure PrayersController::prayersSettings() was fixed for on the
+     * mobile side, in the same way and for the same reason — one total accessor,
+     * SettingsCalculationParameters::effectiveTriple(), which reads the raw
+     * columns and degrades an unusable one to the historical default rather than
+     * throwing.
+     *
+     * REPORTING THE EFFECTIVE VALUES, not the raw ones, is the point rather than
+     * a side effect. A corrupt `madhab` is already being CALCULATED as Shafi
+     * everywhere else (the cached `prayers` rows, the mobile sync endpoint), so
+     * that is what the admin is shown, pre-selected in the form; pressing Save
+     * writes it down and the row is repaired. Echoing the corrupt string back
+     * would either fail the SPA's `Rule::in` validation on submit or hand the
+     * admin a blank select with no indication of what the server is doing.
+     *
+     * Shape is unchanged for the SPA — same keys in the same order the model
+     * serialized (PrayerCalculationSettingsView.vue reads method / madhab /
+     * high_latitude_rule) — and **null is still null**: a masjid with NO row
+     * keeps returning `data: null`, which is what leaves the form blank so an
+     * admin is asked to choose rather than being shown defaults they never set.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function readableSettings(?PrayerCalculationSetting $settings): ?array
+    {
+        if ($settings === null) {
+            return null;
+        }
+
+        $raw = $settings->getAttributes();
+
+        return array_merge(
+            [
+                'id' => $settings->getKey(),
+                'masjid_id' => $raw['masjid_id'] ?? null,
+            ],
+            SettingsCalculationParameters::effectiveTriple($settings),
+            [
+                // Read through the model so they serialize exactly as they did
+                // when the model itself was returned. Only the three enum-cast
+                // columns are dangerous; a datetime cast cannot throw.
+                'created_at' => $settings->created_at,
+                'updated_at' => $settings->updated_at,
+            ]
+        );
     }
 
     /**

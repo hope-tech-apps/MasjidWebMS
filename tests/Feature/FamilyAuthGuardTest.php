@@ -647,10 +647,25 @@ class FamilyAuthGuardTest extends TestCase
             ->assertStatus(403);
     }
 
-    // ------------------- 7. an authenticated parent STILL has no standing (T-015e)
+    // -------------------- 7. an authenticated parent's standing (T-015c → T-015e)
 
+    /**
+     * REWRITTEN BY T-015e, deliberately not deleted.
+     *
+     * As written for T-015c this method was named
+     * `an_authenticated_contact_still_resolves_to_no_standing_in_group_audience`
+     * and asserted the opposite of what it asserts now: `identitiesFor()`
+     * returned `[]` for every principal that was not a `User`, so an
+     * authenticated parent had no group, no feed and no record. That was the
+     * documented holding state — `.claude/rules/groups.md` said this test pinned
+     * it "until then" — and T-015e is the "then".
+     *
+     * What did NOT change is every rule underneath: the parent below holds a
+     * guardian edge with NO recorded consent, and still receives no feed. The
+     * branch added an AUTHENTICATION fact, not an authorization one.
+     */
     #[Test]
-    public function an_authenticated_contact_still_resolves_to_no_standing_in_group_audience(): void
+    public function an_authenticated_contact_resolves_to_its_own_identity_and_nothing_more(): void
     {
         $masjid = $this->makeMasjid();
         $parent = $this->makeContactWithLogin($masjid);
@@ -658,9 +673,6 @@ class FamilyAuthGuardTest extends TestCase
 
         $group = Group::factory()->create(['masjid_id' => $masjid->id]);
 
-        // The strongest version of the claim: this parent holds a REAL guardian
-        // edge over a real ward, and a leader row of their own. If the Contact
-        // branch of identitiesFor() existed, both would grant standing.
         GroupMembership::create([
             'masjid_id' => $masjid->id,
             'group_id' => $group->id,
@@ -678,16 +690,70 @@ class FamilyAuthGuardTest extends TestCase
         app(TenantContext::class)->set($masjid->id);
         $audience = app(GroupAudience::class);
 
-        $this->assertSame([], $audience->identitiesFor($parent));
-        $this->assertFalse($audience->mayReceive($parent, $group, GroupMembership::CONSENT_FEED));
-        $this->assertNull($audience->readableThreadsQuery($parent, $group));
-        $this->assertNull($audience->readableAwardsQuery($parent, $group));
+        // The parent is now a person this class can place on a roster — their
+        // OWN contact id, never their ward's.
+        $this->assertSame([$parent->id], $audience->identitiesFor($parent));
+        $this->assertNotContains($ward->id, $audience->identitiesFor($parent));
 
-        // CONTROL. The email bridge itself still works, so the emptiness above
-        // is specifically the missing Contact branch (T-015e) and not a broken
-        // GroupAudience or an unbound tenant.
+        // Standing, therefore queries rather than null: they are IN the group.
+        $this->assertNotNull($audience->readableThreadsQuery($parent, $group));
+        $this->assertNotNull($audience->readableAwardsQuery($parent, $group));
+
+        // AND CONSENT STILL HOLDS. No consent record on the guardian edge means
+        // no feed and no media — the single most important thing this slice must
+        // not have loosened while making the parent visible.
+        $this->assertFalse($audience->mayReceive($parent, $group, GroupMembership::CONSENT_FEED));
+        $this->assertFalse($audience->mayReceive($parent, $group, GroupMembership::CONSENT_MEDIA));
+
+        // CONTROL. The staff email bridge is untouched by the new branch.
         $staff = User::factory()->create(['email' => $parent->email, 'phone' => '+15550001111']);
         $this->assertSame([$parent->id], $audience->identitiesFor($staff));
+    }
+
+    #[Test]
+    public function a_revoked_or_foreign_contact_resolves_to_no_identity(): void
+    {
+        // The liveness clauses of the T-015e branch, at the model layer. Each is
+        // a way a dead credential could otherwise still resolve to a live
+        // person, and none of them is reachable through the HTTP stack (the
+        // guard and `family.active` refuse first) — which is exactly why they
+        // are exercised here. An untested fail-closed branch is a comment.
+        $masjid = $this->makeMasjid();
+        $other = $this->makeMasjid();
+
+        app(TenantContext::class)->set($masjid->id);
+        $audience = app(GroupAudience::class);
+
+        $revoked = $this->makeContactWithLogin($masjid, ['login_revoked_at' => now()]);
+        $this->assertSame([], $audience->identitiesFor($revoked));
+
+        $neverEnabled = $this->makeContactWithLogin($masjid, ['login_enabled_at' => null]);
+        $this->assertSame([], $audience->identitiesFor($neverEnabled));
+
+        $trashed = $this->makeContactWithLogin($masjid);
+        $trashed->delete();
+        $this->assertSame([], $audience->identitiesFor($trashed));
+
+        // A live, enabled contact of ANOTHER organisation, handed to a
+        // GroupAudience bound to this one. `family.tenant` would have refused
+        // the request; this proves the disclosure layer refuses independently.
+        //
+        // runWithout(): the tenant is already bound above, and BelongsToMasjid's
+        // creating hook OVERRIDES a supplied masjid_id with the bound one — so
+        // building this fixture inside the binding would silently produce a
+        // LOCAL contact and the assertion would be testing nothing. That
+        // override is the guardrail working (a bound admin cannot plant a row in
+        // another masjid); a cross-tenant fixture has to step outside it.
+        $foreign = app(TenantContext::class)->runWithout(
+            fn () => $this->makeContactWithLogin($other)
+        );
+        $this->assertSame($other->id, (int) $foreign->masjid_id);
+        $this->assertSame([], $audience->identitiesFor($foreign));
+
+        // Non-vacuity: the same call with a live local contact does resolve, so
+        // the four empties above are the checks and not a broken fixture.
+        $live = $this->makeContactWithLogin($masjid);
+        $this->assertSame([$live->id], $audience->identitiesFor($live));
     }
 
     // ------------------------------------------------ middleware test harness
