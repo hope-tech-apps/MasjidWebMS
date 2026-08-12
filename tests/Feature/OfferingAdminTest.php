@@ -229,10 +229,29 @@ class OfferingAdminTest extends TestCase
         $this->assertArrayNotHasKey('capacity', $option);
         $this->assertArrayNotHasKey('registrations_count', $option);
 
-        // What it DOES carry is the four facts that decide whether a published
-        // registration block will actually work.
+        // What it DOES carry is the VERDICT on whether a published registration
+        // block will actually work, plus the facts behind it.
+        //
+        // `registration_state` / `registration_state_reason` were added on
+        // 2026-08-12 and are the pair to switch on: the four fields after them
+        // are the detail, and recombining those in the browser is exactly how
+        // this picker, the offerings list, the offering detail header and the
+        // public payload came to give four different answers about one program
+        // (App\Support\OfferingRegistrationState, OfferingRegistrationStateTest).
+        // `has_intake_form` joined them because a soft-deleted intake form shuts
+        // an offering completely and appears in NO other field here — `is_open`
+        // still reports true and `closed_reason` still reports null.
+        //
+        // The list is asserted exactly, not loosely: this endpoint's whole
+        // constraint is that it is not a window onto the CRM, and a new key
+        // arriving unnoticed is how a roster count would get in.
         $this->assertSame(
-            ['id', 'name', 'slug', 'kind', 'is_active', 'is_open', 'closed_reason', 'is_full', 'active_fee_plan_count'],
+            [
+                'id', 'name', 'slug', 'kind', 'is_active',
+                'is_open', 'closed_reason', 'is_full',
+                'registration_state', 'registration_state_reason',
+                'active_fee_plan_count', 'has_intake_form',
+            ],
             array_keys($option)
         );
     }

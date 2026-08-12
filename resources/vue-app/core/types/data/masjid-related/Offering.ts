@@ -103,6 +103,38 @@ export type LedgerStatus = 'pending' | 'succeeded' | 'failed' | 'refunded';
 /** Mirrors `RegistrationAdjustment::KINDS`. */
 export type AdjustmentKind = 'aid' | 'discount' | 'code';
 
+/**
+ * The one verdict every offering surface renders its status from — public page,
+ * offerings list, offering detail header, page-builder picker.
+ *
+ * Mirrors `App\Support\OfferingRegistrationState`, which decides it server-side
+ * from what the WRITE path actually refuses on. `waitlist` is not a flavour of
+ * closed: `register()` queues a sign-up for a full offering rather than
+ * refusing it, so a surface that said "closed" would turn away people the
+ * organisation wants on its waitlist.
+ */
+export type OfferingRegistrationState = 'open' | 'waitlist' | 'closed';
+
+/**
+ * Why the state is `closed`; null when it is not.
+ *
+ * The first three come straight from `Offering::closed_reason` (the window).
+ * The last two are the ones NO other field reports — with either of them true,
+ * `is_open` still says true and `closed_reason` still says null:
+ *
+ *  - `no_intake_form` — the form registrations are validated against has been
+ *    soft-deleted; `register()` throws `offeringClosed()` on the spot.
+ *  - `no_fee_plan` — no active plan of a known kind, so there is nothing to put
+ *    in `register`'s `fee_plan_id`. A FREE offering still needs a `free` plan.
+ */
+export type OfferingRegistrationStateReason =
+    | 'inactive'
+    | 'not_yet_open'
+    | 'closed'
+    | 'no_intake_form'
+    | 'no_fee_plan'
+    | null;
+
 export const ADJUSTMENT_KINDS: AdjustmentKind[] = ['aid', 'discount', 'code'];
 
 // ---------------------------------------------------------------- fee plans
@@ -222,6 +254,31 @@ export type Offering = {
     is_open: boolean;
     /** Why it is not open: 'inactive' | 'not_yet_open' | 'closed'; null when open. */
     closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
+    /**
+     * CAN A FAMILY REGISTER FOR THIS RIGHT NOW — the field every status badge
+     * reads, and the one thing `is_open` above cannot tell you.
+     *
+     * `is_open` is the WINDOW: is_active AND inside opens_at/closes_at. Two
+     * other things shut registration just as completely and show up in neither
+     * `is_open` nor `closed_reason`, both of which go on reporting true/null:
+     * the intake form has been soft-deleted (`register()` throws the moment it
+     * cannot load one), or there is no active fee plan for `register`'s
+     * `fee_plan_id`. Both were live states rendering a green "Open" badge until
+     * 2026-08-12.
+     *
+     * Served by index / show / options and by the PUBLIC payload, all from
+     * App\Support\OfferingRegistrationState — one function, so an admin screen
+     * and the page a parent reads can never disagree.
+     */
+    registration_state: OfferingRegistrationState;
+    registration_state_reason: OfferingRegistrationStateReason;
+    /**
+     * Plans a registrant could actually name in `fee_plan_id`: active AND of a
+     * known money kind. Zero means nobody can register, however open the window.
+     */
+    active_fee_plan_count?: number;
+    /** False when the intake form has been soft-deleted out from under it. */
+    has_intake_form?: boolean;
     settings: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
@@ -259,7 +316,21 @@ export type OfferingOption = {
     closed_reason: 'inactive' | 'not_yet_open' | 'closed' | null;
     /** Every seat taken: a sign-up is waitlisted, not refused. */
     is_full: boolean;
+    /**
+     * Active AND of a known money kind — the same predicate the public payload
+     * publishes on, because a plan it withholds is not one a registrant can name
+     * in `fee_plan_id` either.
+     */
     active_fee_plan_count: number;
+    /** False when the intake form has been soft-deleted out from under it. */
+    has_intake_form: boolean;
+    /**
+     * THE VERDICT. Switch on this, not on the four fields above: they are the
+     * detail behind it, and recombining them in the browser is how the editor
+     * and the public page came to disagree in the first place.
+     */
+    registration_state: OfferingRegistrationState;
+    registration_state_reason: OfferingRegistrationStateReason;
 };
 
 /** What the create/edit form sends. `registration_count` is deliberately absent. */

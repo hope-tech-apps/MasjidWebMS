@@ -198,11 +198,28 @@
                                     </div>
                                 </td>
                                 <td class="text-center">
-                                    <!-- is_open, not is_active: a closed window still has is_active=true and used to show a green Open badge -->
-                                    <span v-if="offering.is_open" class="badge bg-success-subtle text-success">Open</span>
-                                    <span v-else-if="offering.closed_reason === 'not_yet_open'" class="badge bg-info-subtle text-info">Scheduled</span>
-                                    <span v-else-if="offering.closed_reason === 'closed'" class="badge bg-secondary-subtle text-secondary">Window closed</span>
-                                    <span v-else class="badge bg-secondary-subtle text-secondary">Closed</span>
+                                    <!--
+                                        registration_state, not is_open and certainly not
+                                        is_active. is_open is only the WINDOW: an offering whose
+                                        sign-up form has been deleted, or whose fee plans have all
+                                        been deactivated, still reports is_open=true and
+                                        closed_reason=null and still refuses every registration.
+                                        Both rendered a green "Open" here until 2026-08-12. The
+                                        server decides the verdict in one place
+                                        (App\Support\OfferingRegistrationState) and the public page
+                                        reads the same field.
+                                    -->
+                                    <span
+                                        class="badge"
+                                        :class="registrationStateBadge(offering.registration_state, offering.registration_state_reason)"
+                                        :title="registrationStateHint(offering.registration_state, offering.registration_state_reason)"
+                                    >
+                                        <i
+                                            v-if="registrationStateIsFault(offering.registration_state, offering.registration_state_reason)"
+                                            class="bi bi-exclamation-triangle-fill me-1"
+                                        ></i>
+                                        {{ registrationStateLabel(offering.registration_state, offering.registration_state_reason) }}
+                                    </span>
                                 </td>
                                 <td class="text-end">
                                     <div class="btn-group btn-group-sm">
@@ -229,6 +246,9 @@
                         <strong>Seats</strong> counts sign-ups that currently hold a place, which
                         is what capacity is measured against. <strong>Sign-ups</strong> counts
                         every registration ever attached, cancelled ones included.
+                        <strong>Status</strong> answers one question — could somebody register
+                        right now — so it accounts for the sign-up form and the fee plans as well
+                        as the dates. A red status is a misconfiguration, not a decision.
                     </p>
                 </div>
             </div>
@@ -296,22 +316,30 @@
                                                 public read GET /api/v1/offerings/{slug} and the `offering`
                                                 page section, which inlines that same payload when a page
                                                 is served — but the thing that DRAWS a registration form
-                                                lives in the Nuxt site repo and is not shipped. Until it
-                                                is, adding the section to a page publishes the data and
-                                                nothing renders it, and an admin told otherwise reasonably
-                                                publishes the intake FORM instead: that writes a
-                                                FormResponse and never a Registration, so no seat is taken
-                                                and no money moves while every screen agrees nothing
-                                                happened. Delete this note when the renderer ships.
+                                                lives in the Nuxt site repo and is not shipped.
+
+                                                This screen was the ONLY one saying so. The section type's
+                                                own description promised "its fee plans, the places left,
+                                                and the registration form", and the section editor previewed
+                                                the states the block would show — so an admin who never
+                                                opened this modal was told twice that it worked. The claim
+                                                now comes from the server (SectionType::rendererNote) and is
+                                                printed identically in the palette and in the section
+                                                editor; the sentence below is this screen's own wording of
+                                                the same fact, and it must not outlive it.
+
+                                                Delete this note when the renderer ships — the same commit
+                                                that removes OFFERING from SectionType::withoutRenderer().
                                             -->
                                             <span class="text-warning-emphasis">
                                                 Note: the public sign-up page is not drawn yet. This
                                                 organisation's data is now served to the website
                                                 (the "Registration &amp; Payment" page section carries it),
-                                                but the website cannot render the form until that half
-                                                ships — so do not tell families to visit it, and do not
-                                                publish the intake form on a page as a substitute: form
-                                                submissions take no seat and move no money.
+                                                but the website has no component to draw it with — so
+                                                publishing that section shows nothing on the page. Do not
+                                                tell families to visit it, and do not publish the intake
+                                                form on a page as a substitute: form submissions take no
+                                                seat and move no money.
                                             </span>
                                         </div>
                                     </div>
@@ -487,7 +515,15 @@ const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
 
 // Display helpers
-const { offeringKindLabel, describePlanTerms, formatDateTime } = useOfferingDisplay();
+const {
+    offeringKindLabel,
+    describePlanTerms,
+    formatDateTime,
+    registrationStateLabel,
+    registrationStateBadge,
+    registrationStateHint,
+    registrationStateIsFault
+} = useOfferingDisplay();
 
 // State
 const loading = ref(false);

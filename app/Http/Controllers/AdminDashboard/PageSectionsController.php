@@ -263,6 +263,14 @@ class PageSectionsController extends Controller
                 'label' => $type->label(),
                 'description' => $type->description(),
                 'uses_external_data' => $type->usesExternalData(),
+                // Whether the public SITE has a component that draws this type,
+                // and the one sentence saying so. Served rather than hardcoded
+                // in the SPA so the palette, the section editor and the type's
+                // own description print the SAME words — three surfaces telling
+                // three stories about `offering` is what this pair replaced
+                // (SectionType::withoutRenderer).
+                'has_renderer' => $type->hasRenderer(),
+                'renderer_note' => $type->rendererNote(),
                 'default_content' => $type->defaultContent(),
             ]);
 

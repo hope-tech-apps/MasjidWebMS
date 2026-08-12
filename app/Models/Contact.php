@@ -111,8 +111,20 @@ class Contact extends Model implements AuthenticatableContract
      * photographs — and every write path into this array is a CRM request body
      * (`ContactsController::store`/`update`, the roster import). Leaving them
      * out means no request payload can enable, re-address or un-revoke a login
-     * as a side effect of editing a phone number. They are set explicitly, by
-     * the invite flow (T-015d) and by revocation, and by nothing else.
+     * as a side effect of editing a phone number.
+     *
+     * They are written by `forceFill` in exactly TWO classes and nowhere else:
+     *
+     *   - `App\Services\Family\FamilyAccessService` — the admin ON-SWITCH.
+     *     `enable()` sets `login_email` + `login_enabled_at` and clears
+     *     `login_revoked_at`; `revoke()` sets `login_revoked_at`. Both append to
+     *     `contact_login_events` and both are reachable only through
+     *     `ContactFamilyLoginController`, behind `manage contacts`.
+     *   - `App\Services\Family\FamilyLoginService::consume()` — `last_login_at`,
+     *     which is operator visibility only and authorizes nothing.
+     *
+     * If a third writer ever appears, the audit trail stops being complete —
+     * which is the point of keeping the list this short.
      */
     protected $fillable = [
         'masjid_id',

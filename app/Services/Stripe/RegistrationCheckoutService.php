@@ -204,6 +204,50 @@ class RegistrationCheckoutService
             throw RegistrationException::crossTenant('offering');
         }
 
+        // THE PROGRAM MUST STILL BE RUNNING. Re-checked here, at the moment money
+        // moves, and not only at intake.
+        //
+        // A registration holds a PENDING seat and a payment link that a family
+        // keeps — in an open tab, in an email. Everything above proves the row is
+        // coherent; nothing asked whether the thing being paid for is still
+        // happening. Measured before this guard, with the org's real connected
+        // account: an offering switched to `is_active = false` still returned a
+        // live hosted URL for $150.00, as did one whose `closes_at` was a month
+        // in the past, as did a DEACTIVATED fee plan — while the public page for
+        // that same offering reported `registration_state: closed`.
+        //
+        // What that costs a real family: the registrar cancels the Ramadan camp
+        // using `is_active = false` — the exact non-destructive switch
+        // OfferingsController::destroy tells them to use instead of deleting —
+        // and every family still holding a pending seat can complete payment.
+        // The webhook then confirms them and materialises group memberships for
+        // a camp that is not happening. The organisation is merchant of record,
+        // so every refund is a manual act in their own Stripe dashboard.
+        //
+        // Deliberately the SAME predicate the intake path applies
+        // (App\Support\OfferingRegistrationState), so "can this be registered
+        // for" has one answer everywhere rather than one at the door and a
+        // different one at the till.
+        if (! $offering->is_open) {
+            throw RegistrationException::offeringClosed();
+        }
+
+        if (! $feePlan->is_active) {
+            throw RegistrationException::planInactive();
+        }
+
+        // AN EXPIRED HOLD IS DEAD, NOT LATE. resolveExpiresAt() treated a
+        // deadline in the past as "clamp up to the floor", so re-minting a
+        // checkout resurrected a hold that had already lapsed and pushed
+        // `checkout_expires_at` forward again — repeatable indefinitely, keeping
+        // a seat and its payment link alive forever. The only thing that ever
+        // closed that window was the `registrations:reap-expired` sweep, which
+        // made a scheduled job the sole gate on a money path.
+        if ($registration->checkout_expires_at !== null
+            && $registration->checkout_expires_at->isPast()) {
+            throw RegistrationException::notCheckoutable('expired');
+        }
+
         // Money kinds never degrade (.claude/rules/registration-billing-data.md).
         // `free` has no Stripe leg at all and anything unrecognized is a data
         // error — both fail loudly here rather than being charged in some

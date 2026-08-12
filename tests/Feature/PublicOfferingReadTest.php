@@ -588,6 +588,13 @@ class PublicOfferingReadTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // Stripe onboarding complete: these tests are about the OFFERING's
+            // state, and clause 5 (organisation cannot collect) would otherwise
+            // close every paid one for a reason the test is not exercising.
+            // OfferingRegistrationStateTest owns that clause.
+            'stripe_account_id' => 'acct_TEST'.uniqid(),
+            'stripe_charges_enabled' => true,
+            'stripe_payouts_enabled' => true,
         ], $overrides));
     }
 

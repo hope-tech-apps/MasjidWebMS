@@ -5,6 +5,8 @@ import {
     FeePlanKind,
     LedgerStatus,
     OfferingKind,
+    OfferingRegistrationState,
+    OfferingRegistrationStateReason,
     Registration,
     RegistrationPaymentStatus,
     RegistrationStatus
@@ -148,6 +150,83 @@ const ADJUSTMENT_KIND_LABELS: Partial<Record<AdjustmentKind, string>> = {
     code: 'Code'
 };
 
+/**
+ * CAN A FAMILY REGISTER — the one status vocabulary, so the offerings list, the
+ * offering detail header and the page-builder's picker cannot say three
+ * different things about one program.
+ *
+ * They did. Until 2026-08-12 the list and the detail header rendered `is_open`
+ * alone, which is the WINDOW and nothing else, so a program whose sign-up form
+ * had been deleted, or whose fee plans were all deactivated, showed a green
+ * "Open" while refusing every registration. The section editor was the only
+ * surface that warned, and it is the one a family never sees.
+ *
+ * The verdict is NOT computed here. The server decides it in
+ * `App\Support\OfferingRegistrationState`, from the clauses the write path
+ * actually refuses on, and serves it as `registration_state` +
+ * `registration_state_reason`. This file only spells it.
+ *
+ * The two MISCONFIGURATION reasons are deliberately styled `danger` rather than
+ * the neutral grey the window states get. "The window closed in March" is an
+ * organisation's own decision; "there is no fee plan" is a program nobody
+ * remembered to finish, and the difference is exactly what an admin needs to see
+ * at a glance.
+ */
+const REGISTRATION_STATE_LABELS: Record<string, string> = {
+    open: 'Open',
+    waitlist: 'Full — waitlisting',
+    'closed:inactive': 'Switched off',
+    'closed:not_yet_open': 'Scheduled',
+    'closed:closed': 'Window closed',
+    'closed:no_intake_form': 'No sign-up form',
+    'closed:no_fee_plan': 'No fee plan',
+    closed: 'Closed'
+};
+
+const REGISTRATION_STATE_BADGES: Record<string, string> = {
+    open: 'bg-success-subtle text-success',
+    waitlist: 'bg-warning-subtle text-warning-emphasis',
+    'closed:inactive': 'bg-secondary-subtle text-secondary',
+    'closed:not_yet_open': 'bg-info-subtle text-info',
+    'closed:closed': 'bg-secondary-subtle text-secondary',
+    // Not "closed on purpose" — broken. Coloured like the fault it is.
+    'closed:no_intake_form': 'bg-danger-subtle text-danger',
+    'closed:no_fee_plan': 'bg-danger-subtle text-danger',
+    closed: 'bg-secondary-subtle text-secondary'
+};
+
+/** What it means and, where there is one, what to do about it. */
+const REGISTRATION_STATE_HINTS: Record<string, string> = {
+    open: '',
+    waitlist: 'Every seat is taken. Sign-ups are still accepted — they join the waitlist rather than being refused.',
+    'closed:inactive': 'Switched off. It is not published anywhere and no registration is accepted.',
+    'closed:not_yet_open': 'Registration has not opened yet. It will start accepting sign-ups on its opening date.',
+    'closed:closed': 'The registration window has passed. Change the closing date to accept sign-ups again.',
+    'closed:no_intake_form': 'Its sign-up form has been deleted, so every registration is refused. Point it at a form that still exists.',
+    'closed:no_fee_plan': 'It has no active fee plan, so a registration has nothing to sign up FOR — even a free program needs a free plan. Add one under its Fee Plans tab.',
+    closed: 'Not accepting registrations.'
+};
+
+/**
+ * `open` / `waitlist` / `closed:<reason>` — the key the three maps above are
+ * read with. A reason is only ever meaningful on `closed`, and an unrecognised
+ * one falls back to the bare state rather than blanking the badge.
+ */
+function registrationStateKey(
+    state: OfferingRegistrationState | string | null | undefined,
+    reason?: OfferingRegistrationStateReason | string | null
+): string {
+    const value = String(state || 'closed');
+
+    if (value !== 'closed' || !reason) {
+        return value;
+    }
+
+    const key = `closed:${reason}`;
+
+    return key in REGISTRATION_STATE_LABELS ? key : value;
+}
+
 /** "one_time" -> "One time"; an unknown key still reads as words, never blank. */
 function humanize(value: string): string {
     const words = String(value || '').replace(/_/g, ' ');
@@ -198,6 +277,33 @@ export function useOfferingDisplay() {
 
     const adjustmentKindLabel = (kind: AdjustmentKind | string): string =>
         ADJUSTMENT_KIND_LABELS[kind as AdjustmentKind] || humanize(String(kind || ''));
+
+    // ------------------------------------------------ can a family register?
+
+    const registrationStateLabel = (
+        state: OfferingRegistrationState | string | null | undefined,
+        reason?: OfferingRegistrationStateReason | string | null
+    ): string => REGISTRATION_STATE_LABELS[registrationStateKey(state, reason)] || 'Closed';
+
+    const registrationStateBadge = (
+        state: OfferingRegistrationState | string | null | undefined,
+        reason?: OfferingRegistrationStateReason | string | null
+    ): string => REGISTRATION_STATE_BADGES[registrationStateKey(state, reason)] || 'bg-secondary-subtle text-secondary';
+
+    const registrationStateHint = (
+        state: OfferingRegistrationState | string | null | undefined,
+        reason?: OfferingRegistrationStateReason | string | null
+    ): string => REGISTRATION_STATE_HINTS[registrationStateKey(state, reason)] ?? '';
+
+    /**
+     * True when registration is shut for a reason that is a MISCONFIGURATION
+     * rather than a decision — no sign-up form, no fee plan. Surfaces use it to
+     * decide whether to shout; the words themselves come from the maps above.
+     */
+    const registrationStateIsFault = (
+        state: OfferingRegistrationState | string | null | undefined,
+        reason?: OfferingRegistrationStateReason | string | null
+    ): boolean => ['closed:no_intake_form', 'closed:no_fee_plan'].includes(registrationStateKey(state, reason));
 
     /**
      * The words that go AFTER a fee plan's own `amount_minor` — "once",
@@ -302,6 +408,10 @@ export function useOfferingDisplay() {
         ledgerStatusLabel,
         ledgerStatusBadge,
         adjustmentKindLabel,
+        registrationStateLabel,
+        registrationStateBadge,
+        registrationStateHint,
+        registrationStateIsFault,
         describePlanTerms,
         registrationChargeLabel,
         formatDateTime,

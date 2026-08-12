@@ -25,6 +25,10 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/contacts` |
     `/api/admin/masjids/${string}/contacts?page=${number}` |
     `/api/admin/masjids/${string}/contacts/${string}` |
+    // Family sign-in for one contact — the parent-portal ON-SWITCH (T-015d).
+    // One shape, three verbs: GET reads the state and the audit trail, POST
+    // enables/re-addresses, DELETE revokes. See ContactFamilyLoginController.
+    `/api/admin/masjids/${string}/contacts/${string}/family-login` |
     // Groups — the org -> group -> member level, and everything hung off it
     // (roster, class story, threads, behaviour awards, hifz). One `${string}`
     // pattern per endpoint SHAPE rather than per id: the ids are interpolated at

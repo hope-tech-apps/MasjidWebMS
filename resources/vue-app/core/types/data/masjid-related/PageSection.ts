@@ -276,8 +276,26 @@ export type CarouselSectionContent = {
 export type SectionTypeInfo = {
     value: SectionType;
     label: string;
+    /**
+     * What the type is. Already carries `renderer_note` on the end when
+     * `has_renderer` is false — the server appends it, so a surface that prints
+     * only the description still tells the truth.
+     */
     description: string;
     uses_external_data: boolean;
+    /**
+     * Whether the public SITE has a component that draws this type. False means
+     * publishing it stores and serves the data and the page shows nothing where
+     * it sits — the state `offering` is in until the Nuxt renderer ships.
+     */
+    has_renderer: boolean;
+    /**
+     * The one sentence explaining that, server-supplied and null when
+     * `has_renderer` is true. Printed verbatim rather than re-worded per screen:
+     * the palette, the section editor and the type description saying three
+     * different things is exactly what this replaced.
+     */
+    renderer_note: string | null;
     default_content: SectionContent;
 };
 
@@ -615,6 +633,24 @@ export type PublicOffering = {
         remaining: number | null;
     };
     registration_state: 'open' | 'waitlist' | 'closed';
+    /**
+     * WHY the state is `closed`; null when it is not. Decided by the same server
+     * call that produced `registration_state`, so the two cannot disagree.
+     *
+     * NOT a second `closed_reason`. That one answers "is the window open", which
+     * is the model's question, and reports null for an offering whose intake
+     * form has been deleted or whose fee plans have all been deactivated — both
+     * of which shut registration completely. This answers "would a registration
+     * be accepted", which is the write path's question, and it is the one a
+     * renderer explains itself from.
+     */
+    registration_state_reason:
+        | 'inactive'
+        | 'not_yet_open'
+        | 'closed'
+        | 'no_intake_form'
+        | 'no_fee_plan'
+        | null;
     fee_plans: PublicFeePlan[];
     intake_form: PublicOfferingForm | null;
 };

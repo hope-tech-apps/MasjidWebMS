@@ -170,6 +170,57 @@ never `permission:`.
 Pinned by `tests/Feature/FamilyLoginCodeTest.php` and
 `tests/Feature/ContactLoginCodeTenantIsolationTest.php`.
 
+## How a family login is TURNED ON — the admin half, and the only writer
+
+Minting a token needs a contact with `login_enabled_at` set. Until this slice
+**nothing in the application ever wrote that column**: the four `login_*`
+columns are deliberately not fillable, and no controller set them. Production
+carried 487 contacts, 0 with a `login_email`, 0 enabled — the whole portal was
+built and unreachable. `App\Services\Family\FamilyAccessService` is the door,
+exposed by `ContactFamilyLoginController` at
+`/api/admin/masjids/{masjid_id}/contacts/{contact_id}/family-login` (GET / POST
+/ DELETE), on the same `auth:sanctum` + `admin` + `tenant` + `crm` stack as the
+rest of the CRM.
+
+- **Gated by the CONTACTS permissions — no permission is minted.** `view
+  contacts` reads state and history, `manage contacts` enables and revokes. Same
+  call as the credentials routes: a login is an attribute OF the member
+  directory. `Permission::count()` stays 8.
+- **`login_email` is CHOSEN, never derived.** There is no fallback to
+  `contacts.email` in the request rules or in the service, and there must never
+  be one: that column is imported in bulk, is routinely a HOUSEHOLD address, was
+  verified by nobody, and `GroupAudience::identitiesFor()` already reads it as a
+  STAFF identity bridge. A blank field is a 422, not a default.
+- **Uniqueness is case-INSENSITIVE, per tenant, and spans soft-deleted
+  contacts.** `FamilyLoginService::resolveContact()` matches on
+  `LOWER(login_email)` and requires EXACTLY ONE row, answering an ambiguity with
+  the same silent 202 a stranger gets — so a duplicate produces a parent who can
+  never sign in and no error anybody sees. The `(masjid_id, login_email)` index
+  cannot prevent it alone, because production MySQL is utf8mb4_bin and
+  `Parent@x.com` beside `parent@x.com` satisfies the index while breaking the
+  lookup. The service therefore **normalises the stored address to lower case**
+  (so the index is computed over the form the lookup compares) *and* pre-checks
+  with a 422 naming the holder. Both halves stay.
+- **Revocation reaches a live session two ways, and neither is redundant.**
+  `family.active` re-reads liveness on every family request, so a token already
+  in a phone dies on its next request; and `revoke()` additionally DELETES the
+  contact's tokens, so the credential stops existing rather than merely being
+  refused. Changing the `login_email` deletes tokens too — a session opened
+  under the old address is one the change was meant to end. Re-typing the SAME
+  address does not.
+- **Every act appends to `contact_login_events`** (append-only at the model
+  layer; see the model for what that does and does not stop). The actor's name
+  and email are SNAPSHOT on the row, because `users` soft-deletes and a name
+  read back through the foreign key prints nothing for exactly the staff member
+  an audit is asked about. This grants a view of a child's records; "it was on"
+  is not an answer to "who turned it on?".
+
+Pinned by `tests/Feature/FamilyLoginEnablementTest.php` (round trip, the
+uniqueness rule, both revocation mechanisms tested separately, the audit trail,
+and an end-to-end pass from the admin switch through sign-in to one child's
+records and not another's) and
+`tests/Feature/ContactLoginEventTenantIsolationTest.php`.
+
 ## What an authenticated parent may READ (T-015e)
 
 `GroupAudience::identitiesFor()` resolves a live `Contact` to its own id, so the

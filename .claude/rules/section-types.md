@@ -132,6 +132,41 @@ is charged, and it is the reason the next section reads the way it does.
   reached for the wrong one would believe sign-ups were being collected when
   nothing had been.
 
+## A type whose renderer has not shipped says so, in ONE string
+
+The renderers live in the Nuxt site repo and ship separately, so the backend
+half of a type can land while the half that DRAWS it does not. `offering` is in
+exactly that state: the public read, the presenter, the section and the binder
+all exist; the component that draws a registration block does not.
+
+`SectionType::withoutRenderer()` is the one list that records it, and everything
+else is derived:
+
+- `hasRenderer()` / `rendererNote()` read it;
+- `description()` **appends `SectionType::RENDERER_PENDING_NOTE`** to any such
+  type's description, so a surface that prints only the description still tells
+  the truth;
+- `PageSectionsController@sectionTypes` serves `has_renderer` + `renderer_note`,
+  and `SectionFormModal` and the type's own editor print that string verbatim.
+
+**Do not write the caveat into a component.** Before 2026-08-12 there were three
+surfaces and three stories: this enum's description promised "its fee plans, the
+places left, and the registration form", `OfferingSectionEditor` previewed the
+states the published block would show, and the only surface saying the block is
+not drawn was a note on the Programs screen an admin need never open. An admin
+who believed the first two published a section that renders nothing and — as
+that note warns — reasonably published the intake FORM as a substitute, which
+takes no seat and moves no money.
+
+The type is **not** gated out of the palette. The data is genuinely served, a
+tenant may lay its page out ahead of the renderer, and per-type gating is the
+mechanism the section above says not to invent. What is forbidden is promising a
+rendering. **When the renderer ships, delete the case from `withoutRenderer()`**
+— every string flips with it — and delete the hand-written note in
+`OfferingsView.vue` in the same commit. `SectionTypeRendererTruthTest` fails if
+a type without a renderer has no note, if a description does not carry it, or if
+the payload omits the pair.
+
 ## Money in section content is display text
 
 `admissions_tuition.tiers[].amount`, `stats.value` and

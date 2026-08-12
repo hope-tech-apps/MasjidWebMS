@@ -207,12 +207,59 @@ page section) fixed these:
   would 404. A window that has merely closed is a different thing: it is served,
   with `is_open: false` and `closed_reason`.
 - **`registration_state` (`open|waitlist|closed`) is the field a renderer
-  switches on, not `is_open`.** Full is NOT closed — `register()` waitlists
-  rather than refusing — and an offering whose intake form has been soft-deleted
-  IS closed even though `is_open` reports true, because `register()` throws
-  `offeringClosed()` when it cannot load the form. `is_open` / `closed_reason`
-  are still reported verbatim from the model accessors; this field is the one
-  that accounts for everything the write path checks.
+  switches on, not `is_open`** — and `App\Support\OfferingRegistrationState` is
+  the ONE place it is decided, for the public payload and for every admin
+  surface alike. Full is NOT closed — `register()` waitlists rather than
+  refusing. Everything else that the write path refuses on IS closed, even
+  where `is_open` reports true and `closed_reason` reports null:
+  - the intake form has been soft-deleted (`register()` throws
+    `offeringClosed()` when it cannot load it) — reason `no_intake_form`;
+  - there is no ACTIVE fee plan of a known `FeePlan::KINDS` kind, so nothing can
+    go in `register`'s `fee_plan_id` — reason `no_fee_plan`. **A FREE offering
+    still needs a `free` plan.** This clause was missing until 2026-08-12:
+    `state()` checked the window and the form only, so an active offering with a
+    form and zero plans published `registration_state: "open"` beside
+    `fee_plans: []`, and the parent who filled the form in got a 404 "This fee
+    plan is not available." from `quote`. This paragraph claimed the field
+    "accounts for everything the write path checks" while it did not — the code
+    is now what the sentence says.
+  - `no_fee_plan` outranks `waitlist`: `findFeePlan()` refuses before capacity is
+    ever consulted, so "full" would be the wrong story.
+
+  `is_open` / `closed_reason` are still reported verbatim from the model
+  accessors — they answer "is the window open", which is a narrower question.
+  `registration_state_reason` (`inactive|not_yet_open|closed|no_intake_form|no_fee_plan`)
+  is served beside the verdict, decided by the same call, and is what a renderer
+  explains itself from. The admin `offerings` index / show / options payloads
+  carry the identical pair, so no admin screen can show a green "Open" for a
+  program nothing can register for.
+
+- **A soft-deleted MASJID takes nothing.** Hand-filtering `masjid_id` proves a
+  row belongs to the id in the `masjid-id` header; it never asks whether that id
+  still names an organisation, and `masjids` soft-deletes. Before 2026-08-12,
+  `$masjidA->delete()` left `GET /offerings/{slug}`, `POST …/quote` and
+  `POST …/register` all answering 200 — a confirmed registration, its form
+  response and an incremented seat counter, written for an offboarded
+  organisation. With a priced plan the Stripe leg refused one layer down
+  (`RegistrationCheckoutService` resolves the org with `Masjid::find()`, which
+  excludes trashed rows), so no Session opened and the family got a phantom
+  pending seat: one guard in the money layer doing work that belonged at the
+  boundary. Every public path now goes through
+  `App\Support\PublicTenant::exists()` (`OfferingPublicPayload::forSlug/forId`,
+  `OfferingRegistrationsController::resolveTenant`, and the sibling public
+  endpoints — see `PublicTenantLifecycleTest`, which walks every `/api/v1` route
+  against a deleted organisation).
+
+- **An offering's intake form cannot be deleted out from under it.**
+  `AdminDashboard\FormsController::destroy` refuses with a 422 while the form is
+  any live offering's `intake_form_id`, naming them. `offerings.intake_form_id`
+  is NOT NULL and there is no "no intake form" state to fall into, so the delete
+  used to leave a required reference dangling and silently close the program
+  while every admin screen went on reporting it open. The non-destructive paths
+  are `is_active = false` on the form (which does NOT break offering
+  registration — `register()` never consults it) or re-pointing the offering
+  first. The `no_intake_form` state above still exists for rows broken before
+  the guard.
 - **Seats are published as `remaining` + `is_full`, never as `capacity` or
   `registration_count`.** `remaining` is a property of the OFFERING (how many
   more places it will accept); `registration_count` is a count of PEOPLE, and a

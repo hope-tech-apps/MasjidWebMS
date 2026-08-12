@@ -214,6 +214,81 @@
                                     <p class="mb-0 small" style="white-space: pre-wrap;">{{ selectedContact.notes || '—' }}</p>
                                 </div>
                             </div>
+
+                            <!--
+                                Parent portal sign-in (T-015d).
+
+                                Three states, never two: "never enabled" and
+                                "revoked" are different facts about a family and
+                                collapsing them into one "off" would hide that
+                                somebody's access was withdrawn. The history
+                                below is part of the screen rather than a
+                                database question, because this grants a view of
+                                a child's records and "it was on" is not an
+                                answer to "who turned it on?".
+
+                                Hidden for placeholder card stubs: they name no
+                                person, and the server refuses them anyway.
+                            -->
+                            <div class="row mb-3" v-if="!(selectedContact as any).is_placeholder">
+                                <div class="col-12">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="text-muted mb-0">Parent portal sign-in</h6>
+                                        <span v-if="familyLogin" class="badge" :class="familyLoginBadgeClass">
+                                            {{ familyLoginLabel }}
+                                        </span>
+                                    </div>
+
+                                    <div v-if="familyLoginLoading" class="text-muted small">Checking…</div>
+
+                                    <template v-else-if="familyLogin">
+                                        <p class="mb-1 small">
+                                            <span class="text-muted me-1">Sign-in email:</span>
+                                            <span v-if="familyLogin.login_email" class="font-monospace">{{ familyLogin.login_email }}</span>
+                                            <span v-else class="text-muted">Not set</span>
+                                        </p>
+                                        <p class="mb-2 small text-muted">
+                                            <template v-if="familyLogin.last_login_at">
+                                                Last signed in {{ formatDate(familyLogin.last_login_at) }}.
+                                            </template>
+                                            <template v-else>Has never signed in.</template>
+                                        </p>
+
+                                        <div class="btn-group btn-group-sm mb-2">
+                                            <button type="button" class="btn btn-outline-success" @click="openFamilyLoginModal" :disabled="familyLoginSaving">
+                                                <i class="bi bi-key me-1"></i>
+                                                {{ familyLogin.state === 'enabled' ? 'Change sign-in email' : (familyLogin.state === 'revoked' ? 'Re-enable sign-in' : 'Enable sign-in') }}
+                                            </button>
+                                            <button
+                                                v-if="familyLogin.state === 'enabled'"
+                                                type="button"
+                                                class="btn btn-outline-danger"
+                                                @click="confirmRevokeFamilyLogin"
+                                                :disabled="familyLoginSaving"
+                                            >
+                                                <i class="bi bi-slash-circle me-1"></i> Revoke
+                                            </button>
+                                        </div>
+
+                                        <details v-if="familyLogin.events.length" class="small">
+                                            <summary class="text-muted" style="cursor: pointer;">
+                                                Access history ({{ familyLogin.events.length }})
+                                            </summary>
+                                            <ul class="list-unstyled mt-2 mb-0">
+                                                <li v-for="e in familyLogin.events" :key="e.id" class="mb-1">
+                                                    <span
+                                                        class="badge me-1"
+                                                        :class="e.action === 'revoked' ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'"
+                                                    >{{ e.action === 'revoked' ? 'Revoked' : 'Enabled' }}</span>
+                                                    <span class="font-monospace">{{ e.login_email || '—' }}</span>
+                                                    <span class="text-muted"> by {{ e.actor_name }} · {{ formatDateTime(e.created_at) }}</span>
+                                                </li>
+                                            </ul>
+                                        </details>
+                                    </template>
+                                </div>
+                            </div>
+
                             <h6 class="text-muted mb-2">Giving history</h6>
                             <div class="table-responsive" style="max-height:40vh; overflow-y:auto;">
                                 <table class="table table-sm align-middle mb-0">
@@ -239,6 +314,67 @@
                                 <i class="bi bi-pencil me-1"></i> Edit
                             </button>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!--
+            Enable / re-address parent portal sign-in.
+
+            Its own modal rather than a field on the member form, because it is
+            not a field on the member: the four login_* columns are not fillable
+            server-side precisely so that no save of a phone number can enable a
+            login as a side effect.
+        -->
+        <Teleport to="body">
+            <div v-if="showFamilyLoginModal && selectedContact" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);" @click.self="showFamilyLoginModal = false">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="bi bi-key me-2"></i>
+                                {{ familyLogin?.state === 'enabled' ? 'Change sign-in email' : 'Enable parent portal sign-in' }}
+                            </h5>
+                            <button type="button" class="btn-close" @click="showFamilyLoginModal = false"></button>
+                        </div>
+                        <form @submit.prevent="submitFamilyLogin">
+                            <div class="modal-body">
+                                <p class="text-muted small">
+                                    This lets <strong>{{ selectedContact.first_name }} {{ selectedContact.last_name }}</strong>
+                                    sign in and see the records of the children they are listed as a guardian for —
+                                    and only those children. They receive a one-time code at this address each time
+                                    they sign in; there is no password.
+                                </p>
+
+                                <label class="form-label">Sign-in email <span class="text-danger">*</span></label>
+                                <input
+                                    type="email"
+                                    class="form-control"
+                                    v-model.trim="familyLoginEmail"
+                                    placeholder="parent@example.com"
+                                    required
+                                >
+                                <div class="form-text">
+                                    Deliberately separate from the contact email on their record, which is often
+                                    imported and shared by a whole household. Use an address that belongs to this
+                                    parent alone — two members cannot share one sign-in address.
+                                </div>
+
+                                <div v-if="familyLoginError" class="alert alert-danger mt-3 mb-0 py-2 small">
+                                    {{ familyLoginError }}
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" @click="showFamilyLoginModal = false" :disabled="familyLoginSaving">
+                                    Cancel
+                                </button>
+                                <button type="submit" class="btn btn-success" :disabled="familyLoginSaving || !familyLoginEmail">
+                                    <span v-if="familyLoginSaving" class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                    {{ familyLogin?.state === 'enabled' ? 'Save address' : 'Enable sign-in' }}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -313,7 +449,7 @@
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
-import { Contact, ContactPayload } from '@/core/types/data/masjid-related/Contact';
+import { Contact, ContactPayload, FamilyLoginStatus } from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
@@ -413,6 +549,127 @@ const viewContact = async (contact: Contact) => {
         const full = await contactsStore.fetchContact(contact.id);   // hydrate cards + giving history
         if (full) selectedContact.value = full;
     } catch (e) { /* keep row-level data */ }
+
+    await loadFamilyLogin(contact.id);
+};
+
+// --- Parent portal sign-in (T-015d) ---
+//
+// The ON-SWITCH for the family realm. Everything the portal needs has existed
+// for several slices; nothing in the application ever wrote
+// `contacts.login_enabled_at`, so no parent could sign in. These four calls are
+// the admin surface for that, and they mirror the server exactly: three states,
+// two write verbs, one audit trail.
+const familyLogin = ref<FamilyLoginStatus | null>(null);
+const familyLoginLoading = ref(false);
+const familyLoginSaving = ref(false);
+const showFamilyLoginModal = ref(false);
+const familyLoginEmail = ref('');
+const familyLoginError = ref('');
+
+/** The three states, in the words an office uses. Never a boolean. */
+const familyLoginLabel = computed<string>(() => {
+    switch (familyLogin.value?.state) {
+        case 'enabled': return 'Enabled';
+        case 'revoked': return 'Revoked';
+        default: return 'Never enabled';
+    }
+});
+
+const familyLoginBadgeClass = computed<string>(() => {
+    switch (familyLogin.value?.state) {
+        case 'enabled': return 'bg-success-subtle text-success';
+        case 'revoked': return 'bg-danger-subtle text-danger';
+        default: return 'bg-secondary-subtle text-secondary';
+    }
+});
+
+const loadFamilyLogin = async (contactId: number | string) => {
+    familyLogin.value = null;
+    familyLoginLoading.value = true;
+    try {
+        familyLogin.value = await contactsStore.fetchFamilyLogin(contactId);
+    } catch (e) {
+        // A 403 here is an admin without `view contacts` — leave the panel blank
+        // rather than inventing a state for it.
+        familyLogin.value = null;
+    } finally {
+        familyLoginLoading.value = false;
+    }
+};
+
+const openFamilyLoginModal = () => {
+    // Pre-filled with the CURRENT sign-in address when there is one, and blank
+    // otherwise. Deliberately never pre-filled from `contact.email`: that column
+    // is imported, frequently a shared household address and verified by nobody,
+    // and a one-click default would be how a child's records reach whatever a
+    // spreadsheet happened to carry.
+    familyLoginEmail.value = familyLogin.value?.login_email ?? '';
+    familyLoginError.value = '';
+    showFamilyLoginModal.value = true;
+};
+
+const submitFamilyLogin = async () => {
+    if (!selectedContact.value || !familyLoginEmail.value) return;
+    familyLoginSaving.value = true;
+    familyLoginError.value = '';
+    try {
+        familyLogin.value = await contactsStore.enableFamilyLogin(
+            selectedContact.value.id,
+            familyLoginEmail.value
+        );
+        showFamilyLoginModal.value = false;
+        Swal.fire({
+            icon: 'success',
+            title: 'Sign-in enabled',
+            text: `${familyLogin.value?.login_email} can now request a sign-in code.`,
+            timer: 2500,
+            showConfirmButton: false
+        });
+    } catch (error: any) {
+        // 422 is a REFUSAL with a message written for the person reading it —
+        // the address is already used by a named member, or this is a
+        // placeholder card stub. Shown in the form, not as a generic failure.
+        const data = error?.response?.data;
+        familyLoginError.value = data?.message
+            ?? (data?.data && typeof data.data === 'object' ? Object.values(data.data).flat().join(' ') : '')
+            ?? '';
+        if (!familyLoginError.value) {
+            familyLoginError.value = 'Could not enable sign-in. Please try again.';
+        }
+    } finally {
+        familyLoginSaving.value = false;
+    }
+};
+
+const confirmRevokeFamilyLogin = async () => {
+    if (!selectedContact.value) return;
+
+    const result = await Swal.fire({
+        title: 'Revoke portal access?',
+        text: `${selectedContact.value.first_name} ${selectedContact.value.last_name} will be signed out immediately and will not be able to sign in again until access is re-enabled.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Yes, revoke access'
+    });
+
+    if (!result.isConfirmed) return;
+
+    familyLoginSaving.value = true;
+    try {
+        familyLogin.value = await contactsStore.revokeFamilyLogin(selectedContact.value.id);
+        Swal.fire({ icon: 'success', title: 'Revoked', text: 'Portal access has been withdrawn.', timer: 2000, showConfirmButton: false });
+    } catch (error: any) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Error!',
+            text: error?.response?.data?.message ?? 'Could not revoke access. Please try again.'
+        });
+    } finally {
+        familyLoginSaving.value = false;
+    }
 };
 
 const editFromView = () => {
@@ -482,6 +739,14 @@ const formatDate = (iso: string): string => {
     if (!iso) return '—';
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+/** Audit entries carry a TIME as well as a date — "who, and when exactly". */
+const formatDateTime = (iso: string): string => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+        ? iso
+        : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 
 const submitForm = async () => {

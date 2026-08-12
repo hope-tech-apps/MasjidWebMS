@@ -585,6 +585,12 @@ class OfferingSectionTypeTest extends TestCase
             'latitude' => 0.0,
             'longitude' => 0.0,
             'crm_enabled' => true,
+            // Stripe onboarding complete — this test is about the SECTION
+            // inlining the public payload, not about clause 5 (organisation
+            // cannot collect), which would otherwise close the paid offering.
+            'stripe_account_id' => 'acct_TEST'.uniqid(),
+            'stripe_charges_enabled' => true,
+            'stripe_payouts_enabled' => true,
         ], $overrides));
     }
 

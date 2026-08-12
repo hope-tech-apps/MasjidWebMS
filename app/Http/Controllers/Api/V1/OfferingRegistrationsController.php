@@ -14,6 +14,7 @@ use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
 use App\Support\Errors;
 use App\Support\OfferingPublicPayload;
+use App\Support\PublicTenant;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -24,13 +25,25 @@ use Illuminate\Validation\ValidationException;
  * These are unauthenticated writes, so they follow the public form-submission
  * idiom (FormSubmissionsController) defensively:
  *
- *  - The organization comes from the `masjid-id` header AND the offering must
- *    belong to it. Nothing here leans on the BelongsToMasjid global scope:
- *    /api/v1 never runs the tenant middleware, so an UNBOUND scope adds no
- *    filter and a caller could otherwise reach any tenant's rows. Every lookup
- *    filters masjid_id explicitly, and the uuid lookup goes through
+ *  - The organization comes from the `masjid-id` header, MUST STILL EXIST, and
+ *    the offering must belong to it. Nothing here leans on the BelongsToMasjid
+ *    global scope: /api/v1 never runs the tenant middleware, so an UNBOUND scope
+ *    adds no filter and a caller could otherwise reach any tenant's rows. Every
+ *    lookup filters masjid_id explicitly, and the uuid lookup goes through
  *    Registration::findByUuidForMasjid, which is masjid-filtered by
  *    construction (.claude/rules/registration-billing-data.md).
+ *
+ *    The existence half was missing until 2026-08-12, and `masjids` SOFT-deletes:
+ *    every lookup here matched an offboarded organisation's rows exactly as
+ *    happily as a live one's. Measured — offering under masjid A, then
+ *    `$masjidA->delete()`: show/quote/register all answered 200 and register
+ *    wrote a confirmed row with its form response and bumped the seat counter.
+ *    With a PRICED plan the Stripe leg refused one layer further down (the
+ *    checkout service resolves the org with `Masjid::find()`, which excludes
+ *    trashed rows), so no Session opened and the family got a phantom pending
+ *    seat instead — a single guard in the money layer doing work that belonged
+ *    at this boundary. Every method here now goes through resolveTenant()
+ *    (App\Support\PublicTenant), which is also what the public READ does.
  *  - The same 404 whether an offering does not exist, belongs to another
  *    masjid, or is inactive — no probing for which offerings live where.
  *  - Intake answers are validated by the offering's STORED schema inside
@@ -81,10 +94,10 @@ class OfferingRegistrationsController extends Controller
     public function show(Request $request, string $slug)
     {
         try {
-            $masjidId = (int) $request->header('masjid-id');
+            [$masjidId, $refusal] = $this->resolveTenant($request);
 
-            if ($masjidId <= 0) {
-                return response()->api(400, 'A masjid must be specified.', null);
+            if ($refusal) {
+                return $refusal;
             }
 
             $payload = OfferingPublicPayload::forSlug($masjidId, $slug);
@@ -108,10 +121,10 @@ class OfferingRegistrationsController extends Controller
     public function quote(QuoteRegistrationRequest $request, string $slug)
     {
         try {
-            $masjidId = (int) $request->header('masjid-id');
+            [$masjidId, $refusal] = $this->resolveTenant($request);
 
-            if ($masjidId <= 0) {
-                return response()->api(400, 'A masjid must be specified.', null);
+            if ($refusal) {
+                return $refusal;
             }
 
             $offering = $this->findOffering($masjidId, $slug);
@@ -182,10 +195,10 @@ class OfferingRegistrationsController extends Controller
     public function register(RegisterForOfferingRequest $request, string $slug)
     {
         try {
-            $masjidId = (int) $request->header('masjid-id');
+            [$masjidId, $refusal] = $this->resolveTenant($request);
 
-            if ($masjidId <= 0) {
-                return response()->api(400, 'A masjid must be specified.', null);
+            if ($refusal) {
+                return $refusal;
             }
 
             $offering = $this->findOffering($masjidId, $slug);
@@ -287,10 +300,10 @@ class OfferingRegistrationsController extends Controller
     public function checkout(Request $request, string $uuid)
     {
         try {
-            $masjidId = (int) $request->header('masjid-id');
+            [$masjidId, $refusal] = $this->resolveTenant($request, 'This registration is not available.');
 
-            if ($masjidId <= 0) {
-                return response()->api(400, 'A masjid must be specified.', null);
+            if ($refusal) {
+                return $refusal;
             }
 
             // Masjid-filtered by construction: another tenant's uuid is a miss,
@@ -321,9 +334,51 @@ class OfferingRegistrationsController extends Controller
     // ----------------------------------------------------------- resolution
 
     /**
+     * The organization this request is for — named by the header AND verified to
+     * still exist.
+     *
+     * Returns `[$masjidId, null]` on success and `[0, $response]` on refusal;
+     * exactly one of the two is meaningful. Returned rather than thrown because
+     * every method here wraps its body in a blanket `catch (\Throwable)` that
+     * would swallow an HttpResponseException and reissue it as a 500.
+     *
+     * TWO DIFFERENT REFUSALS, on purpose and matching the contract
+     * ZakatCalculatorController and ContactUsController already give:
+     *
+     *  - 400 when NO organisation is named. `(int)` makes a missing header, an
+     *    empty one and `masjid-id: 0` all 0, and the falsy-bypass spelling is
+     *    exactly how the 2026-08-11 SearchableTrait leak served 14 rows across
+     *    two tenants — so it is refused, never answered.
+     *  - 404 when the organisation named is not a live one, in the SAME words as
+     *    a missing offering. A caller cannot tell "no such organisation" from
+     *    "no such offering", so this is not a way to enumerate tenant ids.
+     *
+     * The existence check is the whole point: hand-filtering `masjid_id` proves
+     * a row BELONGS to the id, never that the id still names anybody
+     * (App\Support\PublicTenant).
+     *
+     * @return array{0:int, 1:mixed}
+     */
+    private function resolveTenant(Request $request, string $missingMessage = 'This offering is not available.'): array
+    {
+        $masjidId = (int) $request->header('masjid-id');
+
+        if ($masjidId <= 0) {
+            return [0, response()->api(400, 'A masjid must be specified.', null)];
+        }
+
+        if (! PublicTenant::exists($masjidId)) {
+            return [0, response()->api(404, $missingMessage, null)];
+        }
+
+        return [$masjidId, null];
+    }
+
+    /**
      * The offering for this tenant, or null. Explicit masjid filter (the scope
      * is unbound here) and active-only, so a closed or foreign offering is the
-     * same miss.
+     * same miss. The tenant itself has already been verified live by
+     * resolveTenant() — this filter proves ownership, not existence.
      */
     private function findOffering(int $masjidId, string $slug): ?Offering
     {

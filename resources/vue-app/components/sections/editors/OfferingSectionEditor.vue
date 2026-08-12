@@ -1,5 +1,18 @@
 <template>
     <div class="offering-section-editor">
+        <!--
+            THE FIRST THING THIS EDITOR SAYS, because it used to be the thing it never
+            said. Everything below previews what the published block will do; the site
+            has no component to draw it with yet, so today it does none of it. The
+            sentence is SERVER-SUPPLIED (SectionType::rendererNote) and printed verbatim
+            here, in the palette and in the type's own description — one string, so
+            these three surfaces cannot go on disagreeing.
+        -->
+        <div v-if="rendererNote" class="alert alert-warning py-2 px-3 small">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            {{ rendererNote }}
+        </div>
+
         <div class="row">
             <!-- Which offering this section takes registrations for -->
             <div class="col-12 mb-3">
@@ -13,11 +26,15 @@
                     :disabled="loadingOptions"
                 >
                     <option :value="null">-- Select one --</option>
+                    <!--
+                        One verdict per row, from the server. This used to combine is_open,
+                        is_full and active_fee_plan_count by hand here — a fourth
+                        reimplementation of "can somebody register", and the only one of the
+                        four that happened to be right.
+                    -->
                     <option v-for="option in options" :key="option.id" :value="option.id">
                         {{ option.name }} ({{ option.slug }})
-                        <template v-if="!option.is_open"> · not open</template>
-                        <template v-else-if="option.is_full"> · full, waitlisting</template>
-                        <template v-if="option.active_fee_plan_count === 0"> · no fee plan</template>
+                        · {{ registrationStateLabel(option.registration_state, option.registration_state_reason).toLowerCase() }}
                     </option>
                 </select>
                 <small class="form-text text-muted">
@@ -51,33 +68,50 @@
                     {{ offeringLabelSingular.toLowerCase() }}.
                 </div>
 
-                <div v-else class="alert alert-info mb-0">
+                <div
+                    v-else
+                    class="alert mb-0"
+                    :class="selectedIsFault ? 'alert-danger' : 'alert-info'"
+                >
                     <h6 class="alert-heading">
                         <i class="bi bi-ui-checks me-2"></i>{{ selected.name }}
                     </h6>
 
                     <p class="mb-1">
-                        <strong>Registration:</strong>
-                        <span :class="stateClass">{{ stateLabel }}</span>
+                        <!--
+                            "Will" and not "does": the block is not drawn yet (the banner at
+                            the top of this editor). This describes the offering's own state,
+                            which is real and which is what the block will report once the
+                            renderer ships.
+                        -->
+                        <strong>Registration state:</strong>
+                        <span class="badge" :class="selectedStateBadge">{{ selectedStateLabel }}</span>
                     </p>
 
-                    <p class="mb-0">
+                    <p class="mb-1">
                         <strong>Fee plans:</strong>
                         {{ selected.active_fee_plan_count }} active
                     </p>
 
-                    <!--
-                        The one misconfiguration an admin cannot see from the name. The public
-                        register endpoint takes a fee_plan_id, so with no ACTIVE plan the page
-                        renders and every submission is refused.
-                    -->
-                    <hr v-if="selected.active_fee_plan_count === 0" />
-                    <p v-if="selected.active_fee_plan_count === 0" class="mb-0">
-                        <i class="bi bi-cash-coin me-1"></i>
-                        <strong>No active fee plan.</strong> Nobody can register until this
-                        {{ offeringLabelSingular.toLowerCase() }} has one — even a free one. Add it
-                        under its Fee Plans tab.
+                    <p class="mb-1">
+                        <strong>Sign-up form:</strong>
+                        {{ selected.has_intake_form ? 'attached' : 'deleted' }}
                     </p>
+
+                    <!--
+                        The misconfigurations an admin cannot see from the name — no active fee
+                        plan for the register endpoint's `fee_plan_id`, or a sign-up form that has
+                        been deleted out from under the offering. Either one renders the page and
+                        refuses every submission. The wording is the SHARED one
+                        (useOfferingDisplay), so this editor, the offerings list and the offering
+                        detail header say the same sentence.
+                    -->
+                    <template v-if="selectedStateHint">
+                        <hr />
+                        <p class="mb-0">
+                            <i class="bi bi-info-circle me-1"></i>{{ selectedStateHint }}
+                        </p>
+                    </template>
                 </div>
             </div>
 
@@ -157,7 +191,9 @@
 <script setup lang="ts">
 import { OfferingSectionContent } from '@/core/types/data/masjid-related/PageSection';
 import { OfferingOption } from '@/core/types/data/masjid-related/Offering';
+import { useOfferingDisplay } from '@/composables/useOfferingDisplay';
 import { useOfferingsStore } from '@/stores/masjid/offeringsStore';
+import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { computed, onMounted, ref, watch } from 'vue';
 
 /**
@@ -173,11 +209,23 @@ import { computed, onMounted, ref, watch } from 'vue';
  * charged another. Only `offering_id`, `title`, `intro`, `show_fee_plans`,
  * `button_text` and `background_color` are ever stored here.
  *
- * The editor's real job is therefore to WARN. An offering can be attached and
- * look perfectly fine while being unable to take a single registration — a
- * closed window, or no active fee plan for the register endpoint's
- * `fee_plan_id`. Both are surfaced at the moment of attaching, because the
- * alternative is finding out from a family who could not sign up.
+ * The editor's real job is therefore to WARN, about two different things.
+ *
+ * 1. THIS SECTION TYPE IS NOT DRAWN YET. The banner at the top is the server's
+ *    own sentence (SectionType::rendererNote), printed verbatim here, in the
+ *    palette and inside the type's description. It used to be printed in none
+ *    of those places: this editor previewed the states the published block
+ *    would show, the type's description promised "its fee plans, the places
+ *    left, and the registration form", and the only surface telling the truth
+ *    was a note on the Programs screen an admin need never open.
+ *
+ * 2. THE OFFERING ITSELF MAY BE UNABLE TO TAKE A REGISTRATION. A closed window,
+ *    a sign-up form deleted out from under it, or no active fee plan for the
+ *    register endpoint's `fee_plan_id`. That verdict is the SERVER's
+ *    (`registration_state`, from App\Support\OfferingRegistrationState) and is
+ *    the same one the public payload publishes and the offerings list renders —
+ *    this editor used to compute its own, which is how four surfaces came to
+ *    disagree about one program.
  */
 const props = defineProps<{
     modelValue: OfferingSectionContent;
@@ -188,6 +236,14 @@ const emit = defineEmits<{
 }>();
 
 const offeringsStore = useOfferingsStore();
+const pagesStore = usePagesStore();
+
+const {
+    registrationStateLabel,
+    registrationStateBadge,
+    registrationStateHint,
+    registrationStateIsFault
+} = useOfferingDisplay();
 
 const options = ref<OfferingOption[]>([]);
 const loadingOptions = ref(false);
@@ -241,35 +297,40 @@ const selected = computed<OfferingOption | null>(() => {
 });
 
 /**
- * What the published block will actually do. Mirrors the server's
- * `registration_state`, which is what the renderer switches on: a FULL offering
- * still accepts sign-ups — they are waitlisted, not refused — so "full" must not
- * read as "closed" to the admin either.
+ * The server's sentence about this type's missing public renderer, or null once
+ * one exists. Read from the section-types payload rather than kept as a literal
+ * here — a copy is how this editor came to promise a rendering that the
+ * offerings screen was simultaneously warning did not exist.
  */
-const stateLabel = computed(() => {
-    const option = selected.value;
-    if (!option) return '';
+const rendererNote = computed<string | null>(
+    () => pagesStore.sectionTypes.find(t => t.value === 'offering')?.renderer_note ?? null
+);
 
-    if (!option.is_open) {
-        if (option.closed_reason === 'not_yet_open') return 'Opens later — the block will say so';
-        if (option.closed_reason === 'closed') return 'Window closed — the block will say so';
+/**
+ * What the published block will actually do — the SERVER's `registration_state`,
+ * spelled by the shared vocabulary in useOfferingDisplay.
+ *
+ * This block used to re-derive the verdict from is_open / is_full /
+ * active_fee_plan_count. It was the only surface that got the fee-plan clause
+ * right, and it was still a fourth copy of a judgement the write path owns: the
+ * public payload, the offerings list and the offering detail header each had
+ * their own, and all four disagreed. There is now one.
+ */
+const selectedStateLabel = computed(() => selected.value
+    ? registrationStateLabel(selected.value.registration_state, selected.value.registration_state_reason)
+    : '');
 
-        return 'Switched off — the block renders nothing';
-    }
+const selectedStateBadge = computed(() => selected.value
+    ? registrationStateBadge(selected.value.registration_state, selected.value.registration_state_reason)
+    : '');
 
-    return option.is_full
-        ? 'Full — sign-ups join the waitlist'
-        : 'Open for registration';
-});
+const selectedStateHint = computed(() => selected.value
+    ? registrationStateHint(selected.value.registration_state, selected.value.registration_state_reason)
+    : '');
 
-const stateClass = computed(() => {
-    const option = selected.value;
-    if (!option) return '';
-
-    if (!option.is_open) return 'text-danger';
-
-    return option.is_full ? 'text-warning-emphasis' : 'text-success';
-});
+/** A misconfiguration rather than a decision — worth colouring the whole panel. */
+const selectedIsFault = computed(() => !!selected.value
+    && registrationStateIsFault(selected.value.registration_state, selected.value.registration_state_reason));
 
 const onOfferingSelected = (value: string) => {
     localContent.value.offering_id = value ? Number(value) : null;
@@ -277,6 +338,14 @@ const onOfferingSelected = (value: string) => {
 };
 
 onMounted(async () => {
+    // The banner at the top of this editor must appear when it is opened from a
+    // saved section too, not only through the palette that happens to have
+    // loaded the list already. A caveat that shows on some entry paths and not
+    // others is the same defect one layer down.
+    if (pagesStore.sectionTypes.length === 0) {
+        await pagesStore.fetchSectionTypes();
+    }
+
     loadingOptions.value = true;
     optionsError.value = null;
 

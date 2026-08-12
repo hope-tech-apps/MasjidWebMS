@@ -6,6 +6,7 @@ use App\Models\FeePlan;
 use App\Models\Form;
 use App\Models\Offering;
 use App\Services\Registrations\RegistrationService;
+use App\Support\OfferingRegistrationState as State;
 
 /**
  * The PUBLIC shape of one offering — everything an anonymous visitor needs in
@@ -35,6 +36,18 @@ use App\Services\Registrations\RegistrationService;
  *   closed_reason       the model's accessor, verbatim
  *   seats               is_full + how many places remain
  *   registration_state  the single verdict a renderer switches on
+ *   registration_state_reason
+ *                       WHY that verdict, when it is `closed`. Null otherwise.
+ *                       Computed by the SAME call that produces the verdict
+ *                       (App\Support\OfferingRegistrationState), so the two
+ *                       cannot disagree. It is NOT a second `closed_reason`:
+ *                       `closed_reason` above answers "is the window open",
+ *                       which is the model's question, and reports null for an
+ *                       offering whose intake form is gone or whose fee plans
+ *                       are all deactivated. This one answers "would a
+ *                       registration be accepted", which is the write path's
+ *                       question, and it is the one a renderer explains itself
+ *                       from.
  *   fee_plans[]         id (needed to register), kind, label, currency, amounts
  *   intake_form         name, description, schema, the five wording settings
  *
@@ -74,18 +87,17 @@ use App\Services\Registrations\RegistrationService;
  */
 final class OfferingPublicPayload
 {
-    /** Accepting sign-ups right now. */
-    public const STATE_OPEN = 'open';
-
     /**
-     * Accepting sign-ups, but every seat is taken — register() waitlists rather
-     * than refusing (RegistrationService: `$hasSeat` false => STATUS_WAITLISTED).
-     * A renderer switching on this says "join the waitlist", not "closed".
+     * The verdict vocabulary. Aliases of App\Support\OfferingRegistrationState,
+     * which OWNS the decision — kept here so existing callers of
+     * `OfferingPublicPayload::STATE_*` keep resolving, and defined by reference
+     * so there is exactly one spelling of each word.
      */
-    public const STATE_WAITLIST = 'waitlist';
+    public const STATE_OPEN = State::STATE_OPEN;
 
-    /** register() would refuse. */
-    public const STATE_CLOSED = 'closed';
+    public const STATE_WAITLIST = State::STATE_WAITLIST;
+
+    public const STATE_CLOSED = State::STATE_CLOSED;
 
     /**
      * Resolve one offering by its public slug for this tenant.
@@ -97,17 +109,28 @@ final class OfferingPublicPayload
      * (.claude/rules/tenant-scoping.md). Every lookup in this class names the
      * masjid.
      *
+     * THE MASJID MUST STILL EXIST. Naming a tenant is not the same as verifying
+     * one: `masjids` soft-deletes, so an offboarded organisation's id goes on
+     * matching its own offerings forever, and this read is what makes those
+     * offerings reachable by a family at all. Measured on this branch before the
+     * fix — offering under masjid A, `$masjidA->delete()`, then GET / quote /
+     * register all answered 200 and wrote a confirmed registration, its form
+     * response and a seat, for an organisation that had been offboarded. See
+     * App\Support\PublicTenant for how far that got and for what the money layer
+     * refused on its own.
+     *
      * `is_active` is required, so this returns null for an offering another
-     * tenant owns, one that does not exist, and one that has been switched off —
-     * one indistinguishable miss, and no probing for which offerings live where.
-     * That predicate is deliberately the SAME one
-     * OfferingRegistrationsController::findOffering uses for quote/register: the
-     * read and the write agree on what "publicly available" means, so a page can
-     * never render a Register button that the write path would 404.
+     * tenant owns, one whose organisation is gone, one that does not exist, and
+     * one that has been switched off — one indistinguishable miss, and no
+     * probing for which offerings live where. That predicate is deliberately the
+     * SAME one OfferingRegistrationsController::findOffering uses for
+     * quote/register: the read and the write agree on what "publicly available"
+     * means, so a page can never render a Register button that the write path
+     * would 404.
      */
     public static function forSlug(int $masjidId, string $slug): ?array
     {
-        if ($masjidId <= 0 || $slug === '') {
+        if ($masjidId <= 0 || $slug === '' || ! PublicTenant::exists($masjidId)) {
             return null;
         }
 
@@ -123,13 +146,14 @@ final class OfferingPublicPayload
     /**
      * Resolve by internal id — the handle a page SECTION stores, since an admin
      * picks an offering from a list rather than typing a slug. Same tenant
-     * filter and the same `is_active` predicate as forSlug(): a section pointing
-     * at another masjid's offering, a deleted one, or a switched-off one all
+     * filter, the same live-organisation check and the same `is_active`
+     * predicate as forSlug(): a section pointing at another masjid's offering,
+     * an offboarded organisation's, a deleted one, or a switched-off one all
      * inline as null and the renderer draws nothing.
      */
     public static function forId(int $masjidId, int $offeringId): ?array
     {
-        if ($masjidId <= 0 || $offeringId <= 0) {
+        if ($masjidId <= 0 || $offeringId <= 0 || ! PublicTenant::exists($masjidId)) {
             return null;
         }
 
@@ -150,6 +174,24 @@ final class OfferingPublicPayload
     public static function build(Offering $offering): array
     {
         $form = self::intakeForm($offering);
+        $plans = self::feePlans($offering);
+
+        // The verdict is decided from the plans THIS payload publishes, not from
+        // a second query that could disagree with them: if a plan is withheld
+        // here (deactivated, or an unrecognised money kind) it is not something
+        // a registrant can name in `fee_plan_id`, so it must not count towards
+        // "there is something to buy" either.
+        // The organisation is passed so clause 5 can be answered here: a family
+        // must not be told a PAID program is open by an organisation that has
+        // not finished Stripe onboarding and therefore cannot charge them.
+        $organisation = \App\Models\Masjid::find($offering->masjid_id);
+
+        $state = State::decide(
+            $offering,
+            $form !== null,
+            count($plans),
+            $organisation?->canAcceptDonations()
+        );
 
         return [
             'slug' => $offering->slug,
@@ -179,33 +221,19 @@ final class OfferingPublicPayload
                     : max(0, (int) $offering->capacity - (int) $offering->registration_count),
             ],
 
-            'registration_state' => self::state($offering, $form),
+            // The one verdict a renderer switches on, so the browser never has
+            // to reimplement "full still means yes, closed means no". The
+            // clauses it accounts for — and the write-path refusal each one
+            // corresponds to — are enumerated in OfferingRegistrationState.
+            // `is_open` above still reports the MODEL's own answer unchanged;
+            // this pair is what accounts for everything the write path checks.
+            'registration_state' => $state['state'],
+            'registration_state_reason' => $state['reason'],
 
-            'fee_plans' => self::feePlans($offering),
+            'fee_plans' => $plans,
 
             'intake_form' => $form ? self::form($form) : null,
         ];
-    }
-
-    /**
-     * The one verdict a renderer switches on, decided here so the browser never
-     * has to reimplement "full still means yes, closed means no".
-     *
-     * A MISSING INTAKE FORM IS CLOSED. `offerings.intake_form_id` is NOT NULL,
-     * but forms soft-delete, and RegistrationService::register throws
-     * offeringClosed() when it cannot load the form. Reporting `open` for an
-     * offering whose intake has been deleted would put a Register button on a
-     * page that refuses every submission. `is_open` above still reports the
-     * model's own answer unchanged — this field is the one that accounts for
-     * everything the write path checks.
-     */
-    private static function state(Offering $offering, ?Form $form): string
-    {
-        if (! $offering->is_open || $form === null) {
-            return self::STATE_CLOSED;
-        }
-
-        return $offering->isAtCapacity() ? self::STATE_WAITLIST : self::STATE_OPEN;
     }
 
     /**

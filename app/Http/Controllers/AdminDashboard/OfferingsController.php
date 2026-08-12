@@ -11,6 +11,7 @@ use App\Models\Offering;
 use App\Models\Registration;
 use App\Services\Registrations\RegistrationException;
 use App\Support\Errors;
+use App\Support\OfferingRegistrationState;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -41,13 +42,22 @@ class OfferingsController extends Controller
     /**
      * Paginated list of this organization's offerings, optionally narrowed by
      * ?search= (name/slug), ?kind= and ?active_only=.
+     *
+     * Each row carries `registration_state` / `registration_state_reason` — the
+     * SAME verdict the public payload publishes, from the same function. The
+     * Status column used to render `is_open` alone, which says nothing about the
+     * intake form or the fee plans, so an offering that could not take a single
+     * registration showed a green "Open" (App\Support\OfferingRegistrationState).
      */
     public function index(Request $request, $masjid_id)
     {
         $search = $request->query('search');
 
         $offerings = Offering::query()
-            ->with(['feePlans' => fn ($q) => $q->orderBy('id')])
+            // Both relations are eager-loaded so the verdict below costs no
+            // per-row query: `intakeForm` resolves to null for a soft-deleted
+            // form, which is exactly the fact it is consulted for.
+            ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm'])
             ->withCount('registrations')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -58,7 +68,14 @@ class OfferingsController extends Controller
             ->when($request->filled('kind'), fn ($q) => $q->ofKind($request->query('kind')))
             ->when($request->boolean('active_only'), fn ($q) => $q->active())
             ->orderBy('name')
-            ->paginate($request->query('per_page', 15));
+            ->paginate($request->query('per_page', 15))
+            // through() keeps the paginator (and therefore the SPA's pagination
+            // block) intact; toArray() keeps every field, append and eager load
+            // the list already read, so this only ADDS.
+            ->through(fn (Offering $offering) => array_merge(
+                $offering->toArray(),
+                $this->registrationState($offering)
+            ));
 
         return response()->json([
             'status' => 'success',
@@ -74,14 +91,25 @@ class OfferingsController extends Controller
      * this organization has, with just enough beside each one for the editor to
      * WARN rather than let an admin publish a dead registration block:
      *
+     *  - `registration_state` / `registration_state_reason` — the WHOLE verdict,
+     *    identical to what the public payload publishes because it comes from
+     *    the same function (App\Support\OfferingRegistrationState). This is what
+     *    the editor should switch on; the three fields below are the detail
+     *    behind it, not three separate verdicts to re-combine in the browser.
      *  - `is_open` / `closed_reason`, so "published but the window shut in
      *    March" is visible at the moment of attaching, not after a family
      *    complains. Derived server-side (Offering::getIsOpenAttribute); the
      *    browser must not reimplement the null-bound window and the server clock.
      *  - `active_fee_plan_count`, because POST /offerings/{slug}/register takes a
-     *    `fee_plan_id` and an offering with no ACTIVE plan cannot take a single
-     *    registration. That is the one misconfiguration a page builder cannot
-     *    see from the offering's name.
+     *    `fee_plan_id` and an offering with no purchasable plan cannot take a
+     *    single registration. That is the one misconfiguration a page builder
+     *    cannot see from the offering's name. It counts plans that are active
+     *    AND of a known `FeePlan::KINDS` kind — the same predicate the public
+     *    payload publishes on, because a plan it withholds is not one a
+     *    registrant can name either.
+     *  - `has_intake_form`, because a soft-deleted intake form shuts an offering
+     *    just as completely and shows up in NO other field: `is_open` still
+     *    reports true and `closed_reason` still reports null.
      *  - `is_full`, so the editor can say the block will render a waitlist.
      *
      * NO SEAT NUMBERS AND NO ROSTER COUNTS. `registration_count` is a count of
@@ -96,22 +124,25 @@ class OfferingsController extends Controller
     {
         try {
             $offerings = Offering::query()
-                ->withCount(['feePlans as active_fee_plan_count' => fn ($q) => $q->where('is_active', true)])
+                ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm'])
                 ->orderBy('name')
                 ->get()
-                ->map(fn (Offering $offering) => [
-                    'id' => $offering->id,
-                    'name' => $offering->name,
-                    'slug' => $offering->slug,
-                    'kind' => $offering->kind(),
-                    'is_active' => (bool) $offering->is_active,
-                    // is_active AND the window — what the public register path
-                    // actually enforces, never is_active alone.
-                    'is_open' => (bool) $offering->is_open,
-                    'closed_reason' => $offering->closed_reason,
-                    'is_full' => $offering->isAtCapacity(),
-                    'active_fee_plan_count' => (int) $offering->active_fee_plan_count,
-                ]);
+                ->map(function (Offering $offering) {
+                    $state = $this->registrationState($offering);
+
+                    return array_merge([
+                        'id' => $offering->id,
+                        'name' => $offering->name,
+                        'slug' => $offering->slug,
+                        'kind' => $offering->kind(),
+                        'is_active' => (bool) $offering->is_active,
+                        // is_active AND the window — what the public register
+                        // path actually enforces, never is_active alone.
+                        'is_open' => (bool) $offering->is_open,
+                        'closed_reason' => $offering->closed_reason,
+                        'is_full' => $offering->isAtCapacity(),
+                    ], $state);
+                });
 
             return response()->json([
                 'status' => 'success',
@@ -166,7 +197,11 @@ class OfferingsController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $offering,
+            // The detail header's badge reads `registration_state`, not
+            // `is_open`: an offering whose intake form is gone or whose plans
+            // are all deactivated is still `is_open: true` and still refuses
+            // every registration.
+            'data' => array_merge($offering->toArray(), $this->registrationState($offering)),
             'meta' => $this->meta() + [
                 'seats' => [
                     'capacity' => $offering->capacity,
@@ -255,6 +290,56 @@ class OfferingsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * "Could a family register for this right now, and if not why" — the four
+     * fields every admin surface renders its status from.
+     *
+     * The verdict itself belongs to App\Support\OfferingRegistrationState, which
+     * the PUBLIC payload also calls, so an admin screen and the page a parent
+     * reads can never disagree about whether a program is open. Only the two
+     * INPUTS are gathered here, and both come from relations the callers eager
+     * load, so a page of offerings costs no extra query:
+     *
+     *  - the intake form must resolve AND belong to this organisation, matching
+     *    OfferingPublicPayload::intakeForm(); `intakeForm` is a plain belongsTo
+     *    with no tenant scope of its own, and a form soft-deleted underneath the
+     *    NOT NULL `intake_form_id` loads as null, which is the fact wanted;
+     *  - the plan count uses the predicate the public payload PUBLISHES on —
+     *    active, and a kind in FeePlan::KINDS. A plan withheld from the page is
+     *    not one a registrant can name in `fee_plan_id` either, so counting it
+     *    would report "open" for an offering nothing can be bought from.
+     *
+     * @return array{registration_state:string, registration_state_reason:?string, active_fee_plan_count:int, has_intake_form:bool}
+     */
+    private function registrationState(Offering $offering): array
+    {
+        $form = $offering->intakeForm;
+
+        $hasIntakeForm = $form !== null
+            && (int) $form->masjid_id === (int) $offering->masjid_id;
+
+        $purchasable = $offering->feePlans
+            ->filter(fn (FeePlan $plan) => (bool) $plan->is_active
+                && in_array($plan->kind, FeePlan::KINDS, true))
+            ->count();
+
+        // Same question the public payload asks, so the admin screen and the
+        // family's page cannot disagree about whether a program is open.
+        $state = OfferingRegistrationState::decide(
+            $offering,
+            $hasIntakeForm,
+            $purchasable,
+            $offering->masjid?->canAcceptDonations()
+        );
+
+        return [
+            'registration_state' => $state['state'],
+            'registration_state_reason' => $state['reason'],
+            'active_fee_plan_count' => $purchasable,
+            'has_intake_form' => $hasIntakeForm,
+        ];
     }
 
     /**

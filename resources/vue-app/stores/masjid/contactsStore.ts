@@ -4,7 +4,7 @@ import { useMasjidStore } from "../masjidStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
-import { Contact, ContactPayload } from "@/core/types/data/masjid-related/Contact";
+import { Contact, ContactPayload, FamilyLoginStatus } from "@/core/types/data/masjid-related/Contact";
 
 /**
  * Member directory store — CRUD over /api/admin/masjids/{masjid_id}/contacts.
@@ -112,12 +112,88 @@ export const useContactsStore = defineStore('contactsStore', () => {
         return false;
     }
 
+    // ------------------------------------------- family sign-in (T-015d)
+
+    /**
+     * Current parent-portal state for one contact, plus the audit trail.
+     *
+     * A separate call rather than a field on the contact payload: the trail is
+     * a list, and `state` is derived server-side so the SPA never re-implements
+     * the portal's liveness rule.
+     */
+    async function fetchFamilyLogin(contactId: number | string): Promise<FamilyLoginStatus | null> {
+        if (!masjidStore.masjid?.id) return null;
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${masjidStore.masjid.id}/contacts/${contactId}/family-login`
+        );
+
+        return res.data?.status === 'success' ? res.data.data : null;
+    }
+
+    /**
+     * Turn parent-portal sign-in ON at an address the admin typed.
+     *
+     * Also the way an address is CHANGED and the way a revoked login is
+     * re-opened. There is deliberately no default: `login_email` is a credential
+     * and is not `contacts.email`, which is imported, often a shared household
+     * address, and verified by nobody. The server refuses a blank one.
+     *
+     * A 422 here is a REFUSAL with a readable message (address already in use by
+     * a named member, or a placeholder card stub), not a crash — the caller
+     * shows `response.data.message`.
+     */
+    async function enableFamilyLogin(contactId: number | string, loginEmail: string): Promise<FamilyLoginStatus> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        const body = new URLSearchParams();
+        body.append('login_email', loginEmail);
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid.id}/contacts/${contactId}/family-login`,
+            body
+        );
+
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Failed to enable family sign-in.');
+    }
+
+    /**
+     * Withdraw parent-portal sign-in.
+     *
+     * The sign-in address is deliberately KEPT on the record: clearing it would
+     * free it for another member to inherit and would erase which mailbox used
+     * to open this child's file. Any session already holding a token stops
+     * working on its next request.
+     */
+    async function revokeFamilyLogin(contactId: number | string): Promise<FamilyLoginStatus> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        const res: AxiosResponse = await ApiService.delete(
+            `/api/admin/masjids/${masjidStore.masjid.id}/contacts/${contactId}/family-login`
+        );
+
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Failed to revoke family sign-in.');
+    }
+
     return {
         contactsPaginated,
         fetchContacts,
         fetchContact,
         createContact,
         updateContact,
-        deleteContact
+        deleteContact,
+        fetchFamilyLogin,
+        enableFamilyLogin,
+        revokeFamilyLogin
     }
 })

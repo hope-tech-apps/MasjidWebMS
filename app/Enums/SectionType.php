@@ -23,6 +23,33 @@ namespace App\Enums;
  */
 enum SectionType: string
 {
+    /**
+     * The one sentence about a type the SITE cannot draw yet — see
+     * withoutRenderer() below.
+     *
+     * A CONSTANT, and appended by description() rather than typed into each
+     * copy, because the product was telling three different stories about the
+     * `offering` type at once:
+     *
+     *   this enum's description   "…its fee plans, the places left, and the
+     *                              registration form" — a promise
+     *   OfferingSectionEditor     a preview of the states the block would show
+     *                              — a second promise
+     *   OfferingsView             "the public sign-up page is not drawn yet"
+     *                              — the truth, on a different screen
+     *
+     * An admin who read the first two and not the third would publish a section
+     * that renders nothing, and — exactly as OfferingsView warns — reasonably
+     * publish the intake FORM as a substitute, which writes a FormResponse and
+     * never a Registration: no seat taken, no money moved, and every screen
+     * agreeing that nothing happened.
+     */
+    public const RENDERER_PENDING_NOTE = 'NOT YET RENDERED: publishing this section stores the '
+        . 'reference and serves its data to the website, but the website has no component to draw '
+        . 'it with, so the page shows nothing where it sits. Do not point families at it, and do '
+        . 'not publish the sign-up form on a page instead — a form submission takes no seat and '
+        . 'moves no money.';
+
     case PAGE_TITLE = 'page_title';
     case PRAYER_TIMES = 'prayer_times';
     case TEXT = 'text';
@@ -118,11 +145,16 @@ enum SectionType: string
     }
 
     /**
-     * Get section type description
+     * Get section type description.
+     *
+     * A type the site cannot draw yet carries the RENDERER_PENDING_NOTE on the
+     * end of whatever it says about itself — appended here, once, so no
+     * description can promise a rendering that does not exist and no surface
+     * has to remember to add the caveat itself.
      */
     public function description(): string
     {
-        return match ($this) {
+        $description = match ($this) {
             self::PAGE_TITLE => 'Page header with background image and title',
             self::PRAYER_TIMES => 'Prayer times section with image, title, and subtitle',
             self::TEXT => 'Rich text content section',
@@ -149,8 +181,67 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY => 'The services you offer and who qualifies for them — criteria, plus one highlighted card for the programme people ask about most',
             self::PROVIDERS_DIRECTORY => 'The people who provide care — photo, credentials and specialty, grouped by department',
             self::IMPACT_STATS => 'Headline numbers for funders and visitors — visits served, value of care, volunteer hours',
-            self::OFFERING => 'Sign-ups and payment for one program, class, event or admission round — its fee plans, the places left, and the registration form. Create it first under Programs.',
+            // Describes what this section HOLDS — a reference to one offering —
+            // not what a page will show, because today a page shows nothing.
+            // The truth about that is appended below, from one constant, for
+            // every type in withoutRenderer().
+            self::OFFERING => 'A reference to one program, class, event or admission round, so its sign-ups and payment can be published on a page. Create it first under Programs.',
         };
+
+        return $this->hasRenderer()
+            ? $description
+            : $description . ' ' . self::RENDERER_PENDING_NOTE;
+    }
+
+    /**
+     * Whether the public SITE has a component that draws this type.
+     *
+     * The renderers live in the Nuxt site repo (`app/components/section/*`),
+     * which ships separately, so it is possible — and has happened — for the
+     * backend half of a type to land while the half that draws it does not.
+     * This is the one place that fact is recorded; `description()` above,
+     * `rendererNote()` below and the admin `section-types` payload all read it,
+     * so the palette, the section editor and the type's own description cannot
+     * tell three different stories.
+     *
+     * WHEN THE RENDERER SHIPS: delete the case from withoutRenderer(). Nothing
+     * else changes, and `SectionTypeRendererTruthTest` checks that every string
+     * flipped with it.
+     */
+    public function hasRenderer(): bool
+    {
+        return ! in_array($this, self::withoutRenderer(), true);
+    }
+
+    /**
+     * The caveat for this type, or null when there is nothing to caveat.
+     * Served to the SPA so the palette and the editors print the SAME sentence
+     * rather than each keeping a copy.
+     */
+    public function rendererNote(): ?string
+    {
+        return $this->hasRenderer() ? null : self::RENDERER_PENDING_NOTE;
+    }
+
+    /**
+     * Types whose public renderer does not exist yet.
+     *
+     * `offering` is here because T-006g built the backend front door — the
+     * public read, the presenter, the section, the binder — and the component
+     * that draws a registration block was explicitly out of its scope. Every
+     * other type in this enum is drawn today.
+     *
+     * NOT gated out of the palette. The data IS served (SectionContentBinder
+     * inlines it), a masjid can lay its page out ahead of the renderer, and
+     * removing a case from the palette would be a new per-type mechanism the
+     * class docblock above deliberately does not have. What it must never do is
+     * PROMISE a rendering, which is what it was doing.
+     *
+     * @return list<self>
+     */
+    public static function withoutRenderer(): array
+    {
+        return [self::OFFERING];
     }
 
     /**

@@ -495,6 +495,40 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
                     });
 
+                // Family sign-in for one contact (T-015d, admin half) — THE
+                // ON-SWITCH for the parent portal.
+                //
+                // Everything the portal needs has existed since T-015c/d/e: the
+                // `family` guard, `contact_login_codes`, the OTP endpoints,
+                // GroupAudience's guardian branch, the whole read surface. None
+                // of it was reachable, because nothing in the application ever
+                // wrote `contacts.login_enabled_at` — the four `login_*` columns
+                // are deliberately not fillable and no controller set them.
+                // These three routes are the only thing that does.
+                //
+                // Three verbs rather than a toggle, for the reason the
+                // sms-consent block above records: enabling and revoking are not
+                // inverses. Revoking additionally ends live sessions, and both
+                // append to an immutable trail (`contact_login_events`) because
+                // what is being granted is a stranger's view of a specific
+                // child's photographs and safeguarding conversations, and "it
+                // was on" is not an answer to "who turned it on?".
+                //
+                // Gated by the CONTACTS permissions, the same call the
+                // credentials routes below make: a login is an attribute OF the
+                // member directory, so whoever may manage a person's record may
+                // manage how that person signs in. READING is `view contacts`
+                // (the trail names staff and one family address); WRITING is
+                // `manage contacts`. No permission is minted — Permission::count()
+                // stays at 8 and StaffAuthGuardPinTest pins it.
+                Route::prefix('{masjid_id}/contacts/{contact_id}/family-login')
+                    ->controller(\App\Http\Controllers\AdminDashboard\ContactFamilyLoginController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
                 // Volunteer credentials (T-023, Community vertical) — a
                 // contact's medical licenses, background checks and
                 // certifications, nested under the contact they belong to.

@@ -82,6 +82,8 @@ final class KernelTransport implements ProbeTransport
             bytes: strlen($content),
             durationMs: $elapsed,
             rateLimitRemaining: is_numeric($remaining) ? (int) $remaining : null,
+            fingerprint: ResponseFacts::fingerprint($payload),
+            recordIds: ResponseFacts::recordIdentity($payload),
         );
     }
 

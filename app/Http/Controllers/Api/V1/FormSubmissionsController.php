@@ -10,6 +10,7 @@ use App\Support\Errors;
 use App\Support\FormAttachments;
 use App\Support\FormNotifier;
 use App\Support\FormSchema;
+use App\Support\PublicTenant;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -18,9 +19,16 @@ use Illuminate\Support\Facades\DB;
  * This is the only unauthenticated write in the forms feature, so it is written
  * defensively:
  *
- *  - The masjid comes from the `masjid-id` header AND the form must belong to it. It
- *    does NOT use Section::scopeFilterByMasjid, which no-ops when the header is absent
- *    and would let a caller submit against any tenant's form.
+ *  - The masjid comes from the `masjid-id` header, must STILL EXIST, and the form must
+ *    belong to it. It does NOT use Section::scopeFilterByMasjid, which no-ops when the
+ *    header is absent and would let a caller submit against any tenant's form.
+ *
+ *    The existence half was added on 2026-08-12 alongside the same omission on the
+ *    offering endpoints. Filtering `masjid_id` proves the form belongs to the id; it
+ *    never asks whether the id still names anybody, and `masjids` SOFT-deletes — so an
+ *    offboarded organisation's forms went on accepting public submissions, notifying
+ *    its former coordinators and emailing receipts on its behalf, indefinitely
+ *    (App\Support\PublicTenant).
  *  - Validation is derived from the stored schema (App\Support\FormSchema), never from
  *    the payload. The renderer validating client-side is a convenience; this decides.
  *  - Anything the schema does not declare is dropped before storage, so a caller cannot
@@ -50,6 +58,12 @@ class FormSubmissionsController extends Controller
 
             if ($masjidId <= 0) {
                 return response()->api(400, 'A masjid must be specified.', null);
+            }
+
+            // Same 404 as a missing form, so an offboarded organisation is
+            // indistinguishable from one that never had this form.
+            if (! PublicTenant::exists($masjidId)) {
+                return response()->api(404, 'This form is not available.', null);
             }
 
             $form = Form::query()
