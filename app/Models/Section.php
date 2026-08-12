@@ -73,17 +73,11 @@ class Section extends Model implements HasMedia
         return $query->where('section_type', $type);
     }
 
-    /**
-     * Scope to filter by masjid
+    /*
+     * scopeFilterByMasjid intentionally lives ONLY in SearchableTrait, which
+     * this model already uses — see the note in Page.php. The copy that used to
+     * sit here shadowed the trait with the fail-open version.
      */
-    public function scopeFilterByMasjid($query)
-    {
-        $masjidId = request()->header('masjid-id');
-        if ($masjidId) {
-            return $query->where('masjid_id', $masjidId);
-        }
-        return $query;
-    }
 
     /**
      * Get the section type label
