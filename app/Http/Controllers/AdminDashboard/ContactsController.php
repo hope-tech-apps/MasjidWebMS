@@ -103,6 +103,20 @@ class ContactsController extends Controller
      *
      * All queries run in the bound-tenant context, so BelongsToMasjid scopes every
      * move to this masjid — a merge can't reach across tenants.
+     *
+     * ## SMS consent is reconciled BEFORE the source is force-deleted (T-009)
+     *
+     * The `forceDelete()` below destroys everything held only on the source row,
+     * and consent is held only on the source row. So the survivor takes the MORE
+     * RESTRICTIVE of the two states — and only when the two contacts carry the
+     * SAME phone number, because consent belongs to a number rather than to a
+     * name, and transplanting it onto a survivor with a different number would
+     * manufacture permission to text somebody who never gave it. The full rule
+     * is on App\Services\Sms\SmsConsentService::reconcileOnMerge.
+     *
+     * The OPT-OUT needs no transplanting at all: it lives in `sms_suppressions`,
+     * keyed on the number with no foreign key to `contacts`, precisely so that
+     * this force-delete cannot un-say a STOP.
      */
     public function merge(\App\Http\Requests\Admin\Contacts\MergeContactRequest $request, $masjid_id, $contact_id)
     {
@@ -120,6 +134,10 @@ class ContactsController extends Controller
         }
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($source, $target) {
+            // Before anything is destroyed: the survivor takes the more
+            // restrictive SMS consent state (T-009).
+            app(\App\Services\Sms\SmsConsentService::class)->reconcileOnMerge($source, $target);
+
             \App\Models\Donation::where('contact_id', $source->id)
                 ->update(['contact_id' => $target->id]);
 

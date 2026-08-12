@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use App\Services\Sms\PhoneNumber;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -43,6 +44,18 @@ use Laravel\Sanctum\NewAccessToken;
  * This model deliberately does NOT use Spatie's HasRoles. If it ever does, it
  * must declare its own `$guard_name` — see the hazard recorded on
  * `User::$guard_name` and .claude/rules/auth-permissions.md.
+ * ## SMS consent (T-009) is a RECORD on this row, and it is mortal
+ *
+ * `phone` alone has never been permission to send anything. The four consent
+ * columns say whether, when, how and on what evidence this person agreed to
+ * receive bulk text messages, and `hasSmsConsent()` requires ALL of them — a
+ * flag set by a careless import with no timestamp and no source reads as NO
+ * consent rather than as permission.
+ *
+ * The OPT-OUT here (`sms_opted_out_at`) is only a mirror. The authority is
+ * `sms_suppressions`, keyed on the number rather than on this row, because this
+ * row can be merged away, force-deleted or re-imported and an opt-out must
+ * survive all three. See App\Models\SmsSuppression.
  */
 class Contact extends Model implements AuthenticatableContract
 {
@@ -65,6 +78,32 @@ class Contact extends Model implements AuthenticatableContract
     public const FAMILY_TOKEN_ABILITIES = ['family'];
 
     /**
+     * HOW consent was obtained. A constant set rather than free text: free text
+     * produces forty spellings of "website" and cannot answer "show me everyone
+     * whose consent came from the admissions form" three years later, which is
+     * the question a TCPA demand letter actually asks. The specific artifact
+     * goes in `sms_consent_evidence` beside it.
+     *
+     * Stored as a plain string column — adding a source must never mean
+     * `ALTER TABLE … MODIFY` on a live table (.claude/rules/migrations.md).
+     *
+     * `sms_reply_start` is the only value this application writes on its own:
+     * it is recorded when the subscriber texts START to the organisation's own
+     * registered number, which is express written consent given in the
+     * subscriber's own hand.
+     *
+     * @var array<int, string>
+     */
+    public const SMS_CONSENT_SOURCES = [
+        'web_form',
+        'paper_form',
+        'in_person',
+        'phone_call',
+        'sms_reply_start',
+        'imported_with_proof',
+    ];
+
+    /**
      * NOTE what is absent from $fillable: the four `login_*` columns.
      *
      * They are credentials-adjacent — `login_enabled_at` alone is the
@@ -84,6 +123,15 @@ class Contact extends Model implements AuthenticatableContract
         'notes',
         'is_placeholder',
         'import_batch',
+        // SMS consent (T-009). Fillable so an importer carrying real proof can
+        // seed it; every write path that an ADMIN can reach goes through
+        // App\Services\Sms\SmsConsentService, which stamps the timestamp
+        // server-side and refuses to consent a suppressed number.
+        'sms_opt_in',
+        'sms_consent_at',
+        'sms_consent_source',
+        'sms_consent_evidence',
+        'sms_opted_out_at',
     ];
 
     protected function casts(): array
@@ -93,7 +141,35 @@ class Contact extends Model implements AuthenticatableContract
             'login_enabled_at' => 'datetime',
             'login_revoked_at' => 'datetime',
             'last_login_at' => 'datetime',
+            'sms_opt_in' => 'boolean',
+            'sms_consent_at' => 'datetime',
+            'sms_opted_out_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Has this person agreed, provably, to receive bulk text messages?
+     *
+     * Every clause is load-bearing. The flag is the affirmative; the timestamp
+     * and source are what make it defensible; and the opt-out overrides all of
+     * them. A row missing any one of the first three is NOT consent — that is
+     * the difference between a record and a checkbox.
+     *
+     * This is necessary but not sufficient: the audience resolver additionally
+     * checks the number against `sms_suppressions`, which outlives this row.
+     */
+    public function hasSmsConsent(): bool
+    {
+        return $this->sms_opt_in === true
+            && $this->sms_consent_at !== null
+            && filled($this->sms_consent_source)
+            && $this->sms_opted_out_at === null;
+    }
+
+    /** This contact's number in E.164, or null when it cannot be resolved. */
+    public function smsNumber(): ?string
+    {
+        return PhoneNumber::e164($this->phone);
     }
 
     /**
@@ -106,6 +182,11 @@ class Contact extends Model implements AuthenticatableContract
      * firing a single model event, orphaning the scans on the private disk
      * forever (.claude/rules/private-uploads.md). Deleting each credential
      * through the model here lets its own `deleting` hook reach the disk first.
+     *
+     * Note what is deliberately NOT cleaned up here: this contact's SMS
+     * suppression. `sms_suppressions` has no foreign key to `contacts` and is
+     * keyed on the number, precisely so that force-deleting the row cannot
+     * un-say a STOP.
      */
     protected static function booted(): void
     {

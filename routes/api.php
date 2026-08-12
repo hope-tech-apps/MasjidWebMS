@@ -121,6 +121,28 @@ Route::prefix('stripe')->group(function () {
 });
 
 /*
+ * Inbound SMS webhook (T-009) — where STOP and START arrive. Registered OUTSIDE
+ * auth + throttle for the same reason as the Stripe webhook above: the provider
+ * is not a logged-in user, and the HMAC signature verified inside the controller
+ * against the account auth token is the only gate. It fails CLOSED — with no
+ * token configured nothing is ever accepted, because an unverified endpoint that
+ * takes opt-IN keywords would let an attacker re-subscribe numbers that opted
+ * out.
+ *
+ * Outside throttle deliberately: an opt-out that gets rate-limited is an
+ * unhonoured opt-out, which under the TCPA is a per-message statutory liability
+ * for the organisation. The handler is idempotent (suppressing a suppressed
+ * number updates one row), so provider retries cost nothing.
+ *
+ * Named so the operator checklist in .claude/rules/broadcasts.md can point at
+ * route('sms.webhook') as the URL to configure on the Messaging Service.
+ */
+Route::prefix('sms')->group(function () {
+    Route::post('webhook', [\App\Http\Controllers\SmsWebhookController::class, 'handle'])
+        ->name('sms.webhook');
+});
+
+/*
  * App-provisioning callback — the SELF-HOSTED RUNNER reports job progress here.
  * Registered OUTSIDE auth:sanctum/super (the runner is not a logged-in user),
  * like the Stripe/Pusher webhooks above. It is authenticated per-request by the

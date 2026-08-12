@@ -11,20 +11,19 @@ namespace App\Enums;
  * table and no per-channel endpoint — every case here delegates to a delivery
  * path that already existed before this slice and is left untouched by it.
  *
- * ## SMS is NOT a case here, on purpose
+ * ## SMS arrived in T-009, and it cost four tables' worth of obligations
  *
- * No SMS provider is installed or configured anywhere in this application:
- * `composer.json` requires none, `config/services.php` defines none, and
- * `.env.example` mentions none. A `Sms` case would therefore be a button that
- * silently does nothing, or worse, one that reports "sent". An admin who
- * believes a snowstorm cancellation went out by text when it did not is far
- * worse off than one who can see the channel does not exist yet.
+ * This enum previously carried a long note explaining why SMS was NOT a case
+ * here: no provider, no credentials, no per-tenant sender, and — the two that
+ * mattered — no consent record and no opt-out that survives a deleted contact.
+ * The case exists now because all five were built, not because the button was
+ * wanted. `SMS` is the only channel that can refuse to send while perfectly
+ * healthy: an organisation with no approved A2P 10DLC sender, or an audience
+ * with no recorded consent, is told so rather than quietly served.
  *
- * What adding it actually takes is written down in
- * .claude/rules/broadcasts.md — provider + credentials, a per-tenant sender
- * identity, and a consent/opt-out column on `contacts` that does not exist
- * today. The seam is ready: add the case, add a driver, register it. Nothing
- * else in the composer changes.
+ * Adding the sixth channel is still exactly three steps (see below). The
+ * obligations that came with this one are documented in
+ * .claude/rules/broadcasts.md and enforced in code, not in prose.
  */
 enum BroadcastChannel: string
 {
@@ -40,6 +39,16 @@ enum BroadcastChannel: string
     /** Email to the CRM contact audience, through the existing mail path. */
     case EMAIL = 'email';
 
+    /**
+     * SMS to the CONSENTING part of the CRM contact audience (T-009).
+     *
+     * Not "contacts with a phone number" — contacts with a dated, sourced,
+     * un-withdrawn opt-in whose number is not on the tenant's suppression list.
+     * Requires an approved per-tenant A2P 10DLC sender; refuses clearly when
+     * absent rather than borrowing a shared number.
+     */
+    case SMS = 'sms';
+
     /** @return array<int, string> Values, for validation rules. */
     public static function values(): array
     {
@@ -54,6 +63,7 @@ enum BroadcastChannel: string
             self::PUSH => 'Push notification',
             self::SIGNAGE => 'TV signage',
             self::EMAIL => 'Email',
+            self::SMS => 'Text message (SMS)',
         };
     }
 
@@ -68,19 +78,26 @@ enum BroadcastChannel: string
     {
         return match ($this) {
             self::ANNOUNCEMENT, self::SIGNAGE => false,
-            self::PUSH, self::EMAIL => true,
+            self::PUSH, self::EMAIL, self::SMS => true,
         };
     }
 
     /**
      * Whether this channel reads the CRM contact directory to find recipients.
      *
-     * Only email does today. Push targets DEVICES (`mobile_app_users`), which
-     * carry no contact link at all — that asymmetry is why the two channels
-     * cannot share an audience, and why it is checked rather than assumed.
+     * Email and SMS do. Push targets DEVICES (`mobile_app_users`), which carry
+     * no contact link at all — that asymmetry is why the two channels cannot
+     * share an audience, and why it is checked rather than assumed.
+     *
+     * SMS answering true here is load-bearing rather than incidental:
+     * BroadcastsController::authorizeChannels loops over this predicate, so the
+     * new channel INHERITED the up-front `crm_enabled` + `view contacts` 403
+     * that email already had, without the controller changing. That is exactly
+     * the reason T-008 wrote the check as a loop instead of an
+     * `if ($channel === EMAIL)`.
      */
     public function readsContacts(): bool
     {
-        return $this === self::EMAIL;
+        return $this === self::EMAIL || $this === self::SMS;
     }
 }

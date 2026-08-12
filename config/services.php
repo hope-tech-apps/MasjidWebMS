@@ -182,6 +182,82 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | SMS (broadcast channel — provider-agnostic settings)
+    |--------------------------------------------------------------------------
+    |
+    | Settings that belong to the CHANNEL rather than to any one provider. The
+    | provider itself is chosen by App\Services\Sms\SmsProviderFactory.
+    |
+    |  - driver : unset (the default, everywhere, until an operator provisions
+    |    credentials) means "twilio if its credentials are present, otherwise the
+    |    refusing null adapter". Explicit values are `twilio`, `log` (local
+    |    development — accepts and logs, sends nothing) and `none` (always
+    |    refuse). It is `none` and NOT `null` because Laravel's env() helper
+    |    turns the literal string "null" into PHP null, which would be
+    |    indistinguishable from unset and would silently re-enable auto-detect.
+    |    phpunit.xml and .env.testing pin `none`, so the suite can never select a
+    |    network adapter.
+    |  - default_country_code : the country assumed for a bare national number
+    |    when normalising to E.164 (App\Services\Sms\PhoneNumber). Numbers that
+    |    cannot be resolved with confidence are REFUSED, never guessed — a wrong
+    |    normalisation reaches a stranger and matches no suppression row.
+    |  - max_body_length : a cost and readability ceiling, not a protocol limit.
+    |    480 ~ three GSM-7 segments. The sender identity, the link and the
+    |    opt-out sentence are never what gets truncated to fit it.
+    |  - opt_out_language : appended by code to EVERY outbound message
+    |    (App\Services\Sms\SmsBodyComposer). Carrier rules require it and an
+    |    admin must not be able to compose it away.
+    |
+    | There is deliberately NO platform-wide "from" number here. Which number a
+    | tenant sends from is a per-tenant fact with a carrier registration behind
+    | it (App\Models\MasjidSmsSender); a shared default is exactly what gets a
+    | whole fleet's provider account suspended.
+    |
+    */
+    'sms' => [
+        'driver' => env('SMS_DRIVER'),
+        'default_country_code' => env('SMS_DEFAULT_COUNTRY_CODE', '1'),
+        'max_body_length' => (int) env('SMS_MAX_BODY_LENGTH', 480),
+        'opt_out_language' => env('SMS_OPT_OUT_LANGUAGE', 'Reply STOP to unsubscribe.'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Twilio (the first SMS provider adapter — US A2P 10DLC)
+    |--------------------------------------------------------------------------
+    |
+    | Machine-to-machine account credentials, in the same shape as the Stripe and
+    | OneSignal blocks: env-driven, UNSET by default, never hardcoded. Unset
+    | means the channel fails soft with a clear "not configured" message on the
+    | request that asked to send — it never errors at boot and never affects any
+    | other channel.
+    |
+    | The auth token does double duty, as it does at Twilio: it authenticates our
+    | outbound API calls AND it is the key their inbound webhook signature is
+    | computed with. Unset therefore also means the webhook rejects everything,
+    | which is the fail-closed posture the Stripe webhook already takes.
+    |
+    | `webhook_url` is an optional override for the URL the signature is verified
+    | against. Twilio signs the exact URL it dialled, so behind a load balancer
+    | that rewrites scheme or host, the URL this application reconstructs will
+    | not match and every delivery would fail verification. Set it to the public
+    | HTTPS URL of the route when that is the case; leave it unset otherwise.
+    |
+    | Only ACCOUNT-level credentials live here. A tenant's own number, messaging
+    | service and 10DLC registration state live per-masjid in
+    | `masjid_sms_senders`.
+    |
+    */
+    'twilio' => [
+        'account_sid' => env('TWILIO_ACCOUNT_SID'),
+        'auth_token' => env('TWILIO_AUTH_TOKEN'),
+        'api_base' => env('TWILIO_API_BASE', 'https://api.twilio.com/2010-04-01'),
+        'webhook_url' => env('TWILIO_WEBHOOK_URL'),
+        'timeout' => (int) env('TWILIO_HTTP_TIMEOUT', 15),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | OneSignal (org-level machine-to-machine — per-masjid app provisioning)
     |--------------------------------------------------------------------------
     |

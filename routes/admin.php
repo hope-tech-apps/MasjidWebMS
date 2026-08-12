@@ -277,6 +277,22 @@ Route::prefix('admin')->group(function () {
                 Route::post('/provision', 'provision');
             });
 
+            // Per-masjid SMS sender identity + A2P 10DLC registration state
+            // (T-009). SuperAdmin-only for the same reason as OneSignal above,
+            // only more so: 10DLC registration is a commercial act performed on
+            // the organisation's behalf using the platform's provider account,
+            // and a masjid admin who could self-declare "approved" would be
+            // putting unregistered traffic on the carriers in the platform's
+            // name. Nothing here calls a provider — registration is a human step
+            // with days of latency, and this records its outcome so the sending
+            // path can refuse until it says `approved`.
+            Route::prefix('{masjid_id}/sms-sender')->middleware('super')
+                ->controller(\App\Http\Controllers\AdminDashboard\MasjidSmsSenderController::class)
+                ->group(function () {
+                    Route::get('/', 'show');
+                    Route::put('/', 'update');
+                });
+
             // Pages & Sections Management
             Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
                 Route::get('/', 'index');
@@ -459,6 +475,20 @@ Route::prefix('admin')->group(function () {
                     // Merge a placeholder (unidentified-card) contact into a member.
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
                 });
+
+                // SMS consent for one contact (T-009). Two verbs rather than one
+                // boolean toggle, and deliberately so: granting refuses for a
+                // number that has opted out (only the subscriber can undo that,
+                // by texting START), while withdrawing additionally writes the
+                // durable suppression list so it survives a merge or a
+                // re-import. `manage contacts` — writing consent is editing the
+                // contact record. No permission is minted.
+                Route::prefix('{masjid_id}/contacts/{contact_id}/sms-consent')
+                    ->controller(\App\Http\Controllers\AdminDashboard\ContactSmsConsentController::class)
+                    ->group(function () {
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
 
                 // Volunteer credentials (T-023, Community vertical) — a
                 // contact's medical licenses, background checks and
