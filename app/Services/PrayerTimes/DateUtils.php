@@ -57,9 +57,18 @@ final class DateUtils
     }
 
     /**
-     * Snap to a whole minute. Only `Rounding::NEAREST` is reachable from this
-     * app (it is the adhan default and what every stored row was written
-     * with), but the other two are one line each and keep the port faithful.
+     * Snap to a whole minute.
+     *
+     * `Rounding::UP` IS REACHABLE AND IS LIVE — do not trim it as dead code. It
+     * used to be true that only NEAREST could occur, and this docblock used to
+     * say so; then `CalculationMethod::singapore()` was ported, which is the one
+     * adhan method that sets `rounding = up`, and a masjid can select Singapore
+     * from the admin UI. Deleting the branch would silently shift every prayer
+     * time at any masjid on that method (`up` is never earlier than `nearest`
+     * and differed on roughly half of a measured sample).
+     *
+     * `Rounding::NONE` is still unreachable through the settings UI — only the
+     * golden-vector fixture exercises it — and is kept for parity with adhan-js.
      */
     public static function roundedMinute(?int $instant, string $rounding = Rounding::NEAREST): ?int
     {

@@ -17,12 +17,22 @@ use PHPUnit\Framework\TestCase;
  * installed in production. A port is only worth anything if it agrees with the
  * original to the second, so this suite pins it two ways:
  *
- *  1. tests/fixtures/adhan-prayer-times.json — 612 payloads produced by
+ *  1. tests/fixtures/adhan-prayer-times.json - 2340 payloads produced by
  *     adhan-js v4.4.4 itself across 14 locations (equator, both poles, both
  *     sides of the International Date Line), 18 dates (both solstices, an
- *     equinox, a leap day) and 13 parameter combinations that between them
- *     reach every branch of the calculator. Regenerate it with adhan-js, never
- *     with this port, or it stops being evidence.
+ *     equinox, a leap day) and, across its three blocks, every
+ *     shafaq/rounding/manual-adjustment variant plus all 72 combinations of the
+ *     12 calculation methods x 2 madhabs x 3 high-latitude rules a masjid can
+ *     actually select. Regenerate it with tests/fixtures/generate-adhan-vectors.mjs
+ *     against adhan-js, never with this port, or it stops being evidence.
+ *
+ *     v4.4.4 and NOT the 4.4.3 the lockfile pins: 4.4.4's sole behavioural
+ *     change is the International-Date-Line fix in
+ *     Astronomical.approximateTransit, and the port's Astronomical.php already
+ *     implements it (4.4.3's does not). Three Suva vectors separate the two
+ *     versions and the port produces the 4.4.4 answer for all three, so a
+ *     fixture regenerated against 4.4.3 would turn this suite red against
+ *     correct code.
  *  2. Published civil sunrise/sunset times for real cities, which owe nothing
  *     to adhan in either language.
  *
@@ -234,12 +244,16 @@ class AdhanPrayerTimesTest extends TestCase
      */
     private function params(string $method, array $overrides): CalculationParameters
     {
-        $params = match ($method) {
-            'MoonsightingCommittee' => CalculationMethod::moonsightingCommittee(),
-            'MuslimWorldLeague' => CalculationMethod::muslimWorldLeague(),
-            'UmmAlQura' => CalculationMethod::ummAlQura(),
-            'Tehran' => CalculationMethod::tehran(),
-        };
+        // Resolved by NAME rather than by a match over a handful of accessors.
+        // The fixture now carries all twelve methods App\Enums\PrayerCalculationMethod
+        // offers, and a match that listed four of them turned "the fixture grew"
+        // into an UnhandledMatchError — an error that reads like a port bug and
+        // is not one. fromName() is the same lookup the application performs on
+        // a masjid's stored setting, so a method the app can select but the port
+        // cannot build fails here as a plain, legible assertion.
+        $params = CalculationMethod::fromName($method);
+
+        $this->assertNotNull($params, "The fixture names a method the port cannot build: {$method}.");
 
         foreach ($overrides as $key => $value) {
             if ($key === 'adjustments') {

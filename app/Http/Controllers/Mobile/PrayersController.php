@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Models\Prayer;
 use App\Services\PrayerTimes\PrayerTimesGenerator;
+use App\Services\PrayerTimes\SettingsCalculationParameters;
 use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -50,7 +51,24 @@ class PrayersController extends Controller
                 ]);
             }
 
-            // Store not-inserted prayers to the database
+            // Store not-inserted prayers to the database.
+            //
+            // The `addDay()` looks like an off-by-one against the SELECT below
+            // (which starts at `$rangeStartDate`, a day earlier) and it is NOT.
+            // `$rangeStartDate` carries a TIME component — `createFromFormat('Y-m-d')`
+            // leaves the current clock time on it — so `whereBetween` compares
+            // `'2025-12-14'` against `'2025-12-14 12:00:00'`, and the shorter string
+            // sorts first. The leading day is therefore excluded from the SELECT
+            // too, and generation and retrieval agree on `[start_date, end_date]`.
+            //
+            // Generating the extra leading day here was tried and reverted: it
+            // writes a row the endpoint never returns. The case it was meant to
+            // help — a method change leaving yesterday's row on the old method —
+            // is handled where it belongs, in
+            // PrayerCalculationSettingsController::rebuildCachedPrayerRows(),
+            // which rebuilds from yesterday. Making the SELECT honour its own
+            // documented `now-1` lower bound would change the response shape for
+            // shipped clients and is a separate decision.
             $this->store($masjid_id, $rangeStartDate->copy()->addDay()->format('Y-m-d'), $rangeEndDate->copy()->format('Y-m-d'));
 
             $prayers = Prayer::where('masjid_id', $masjid->id)
@@ -90,9 +108,11 @@ class PrayersController extends Controller
     public function store($masjid_id, $rangeStart, $rangeEnd)
     {
         try {
-            // Eager load iqamaTimeSettings + jumaaSettings so the JSON-building loop below
-            // doesn't trigger a query per prayer day.
-            $masjid = Masjid::with('iqamaTimeSettings', 'jumaaSettings')->findOrFail($masjid_id);
+            // Eager load iqamaTimeSettings + jumaaSettings + prayerCalculationSettings so
+            // neither the JSON-building loop below nor the parameter mapping triggers a
+            // query per prayer day.
+            $masjid = Masjid::with('iqamaTimeSettings', 'jumaaSettings', 'prayerCalculationSettings')
+                ->findOrFail($masjid_id);
 
             $longitude = $masjid->longitude;
             $latitude = $masjid->latitude;
@@ -105,8 +125,8 @@ class PrayersController extends Controller
             }
 
             // Prayer times are computed IN PROCESS by App\Services\PrayerTimes,
-            // a PHP port of the same `adhan` library (MoonsightingCommittee)
-            // that resources/js/fetchPrayerTimes.js used to run under Node.
+            // a PHP port of the same `adhan` library that
+            // resources/js/fetchPrayerTimes.js used to run under Node.
             //
             // That subprocess is gone on purpose: `node` is not installed on
             // the production droplet, so shell_exec() returned null and this
@@ -114,8 +134,21 @@ class PrayersController extends Controller
             // indistinguishable from "no prayer times", which is exactly the
             // failure mode you do not want in a cache-filling path.
             //
-            // The payload shape is unchanged — same keys, same order, same UTC
-            // ISO-8601 strings — because shipped app builds and
+            // The METHOD IS THE MASJID'S OWN, resolved from its
+            // `prayer_calculation_settings` row by SettingsCalculationParameters.
+            // It used to be hardcoded to MoonsightingCommittee while
+            // prayersSettings() below happily served the real setting to the
+            // apps — so a masjid on any other method got one set of times from
+            // its app's local adhan and a different set from these cached rows
+            // and from SendDuePrayerNotifications. MoonsightingCommittee / Shafi
+            // / MiddleOfTheNight is now only the FALLBACK (absent relation, or a
+            // stored string that resolves to nothing), which is what every
+            // existing row was generated with — so a masjid still on the
+            // defaults regenerates byte-identically. The mapper is total and
+            // never throws; this path is public and uncached-by-request.
+            //
+            // The payload shape is otherwise unchanged — same keys, same order,
+            // same UTC ISO-8601 strings — because shipped app builds and
             // SendDuePrayerNotifications read the rows this writes. The raw
             // masjid coordinates are passed through rather than cast, since
             // adhan echoes its constructor arguments into `coordinates` and the
@@ -125,6 +158,7 @@ class PrayersController extends Controller
                 $longitude,
                 $rangeStartDate,
                 $rangeEndDate,
+                SettingsCalculationParameters::fromSetting($masjid->prayerCalculationSettings),
             );
 
             $iqamaSettings = $masjid->iqamaTimeSettings;
@@ -195,12 +229,30 @@ class PrayersController extends Controller
                 return [
                     'iqama' => $masjid->iqamaTimeSettings,
                     'jumaa' => $masjid->jumaaSettings,
-                    'calculation' => $masjid->prayerCalculationSettings ?: [
-                        // Defaults match what MasjidsController::store seeds on new masjids.
-                        'method' => 'MoonsightingCommittee',
-                        'madhab' => 'Shafi',
-                        'high_latitude_rule' => 'MiddleOfTheNight',
-                    ],
+                    // What the server WILL ACTUALLY GENERATE WITH, not the raw row.
+                    //
+                    // A client calculating locally and the server filling the
+                    // `prayers` rows must not be able to drift apart — that
+                    // divergence is the whole reason store() now reads the masjid's
+                    // settings. Echoing the row back would leave one last way to
+                    // drift: a stored value the generator rejects and falls back on
+                    // would still be handed to the client as gospel, and the client
+                    // would calculate with something the server never used.
+                    //
+                    // It also stops a corrupt row from 500-ing this endpoint.
+                    // Serializing the model reads the columns through their enum
+                    // casts, and Laravel resolves those with BackedEnum::from(), so
+                    // one bad string raised a ValueError here — taking down the
+                    // single sync endpoint an app needs in order to schedule ANY
+                    // local notification. effectiveTriple() reads the raw columns.
+                    //
+                    // Shape is unchanged for clients: the three keys below are
+                    // exactly what MasjidKit's PrayerCalculation decodes
+                    // (method, madhab, high_latitude_rule). The model's id and
+                    // timestamps travelled in this payload but were never read.
+                    'calculation' => SettingsCalculationParameters::effectiveTriple(
+                        $masjid->prayerCalculationSettings
+                    ),
                     'masjid' => [
                         'id' => $masjid->id,
                         'timezone' => $masjid->timezone,
