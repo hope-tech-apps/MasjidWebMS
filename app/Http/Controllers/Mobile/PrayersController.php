@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Models\Prayer;
+use App\Services\PrayerTimes\PrayerTimesGenerator;
 use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -13,6 +14,10 @@ use Symfony\Component\HttpFoundation\Response;
 
 class PrayersController extends Controller
 {
+    public function __construct(private readonly PrayerTimesGenerator $prayerTimes)
+    {
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -99,44 +104,50 @@ class PrayersController extends Controller
                 return null;
             }
 
-            // Run resources/js/fetchPrayerTimes.js via the Node binary.
+            // Prayer times are computed IN PROCESS by App\Services\PrayerTimes,
+            // a PHP port of the same `adhan` library (MoonsightingCommittee)
+            // that resources/js/fetchPrayerTimes.js used to run under Node.
             //
-            // Security: every argument is escaped with escapeshellarg() so a
-            // malicious masjid coord / date couldn't break out of the shell
-            // word boundary and execute additional commands. Numeric inputs
-            // are also coerced to strings of the expected shape via Carbon /
-            // (float) casts.
-            $latArg = escapeshellarg((string) (float) $latitude);
-            $lonArg = escapeshellarg((string) (float) $longitude);
-            $startArg = escapeshellarg($rangeStartDate->format('Y-m-d H:i:s'));
-            $endArg = escapeshellarg($rangeEndDate->format('Y-m-d H:i:s'));
-            $scriptPath = escapeshellarg(base_path('resources/js/fetchPrayerTimes.js'));
-
-            $prayerTimesFromJs = shell_exec(
-                "node {$scriptPath} {$latArg} {$lonArg} {$startArg} {$endArg}",
+            // That subprocess is gone on purpose: `node` is not installed on
+            // the production droplet, so shell_exec() returned null and this
+            // endpoint 500'd on the array_map() below. A null return is also
+            // indistinguishable from "no prayer times", which is exactly the
+            // failure mode you do not want in a cache-filling path.
+            //
+            // The payload shape is unchanged — same keys, same order, same UTC
+            // ISO-8601 strings — because shipped app builds and
+            // SendDuePrayerNotifications read the rows this writes. The raw
+            // masjid coordinates are passed through rather than cast, since
+            // adhan echoes its constructor arguments into `coordinates` and the
+            // stored rows carry MySQL's decimal rendering of them.
+            $prayerTimes = $this->prayerTimes->forRange(
+                $latitude,
+                $longitude,
+                $rangeStartDate,
+                $rangeEndDate,
             );
 
             $iqamaSettings = $masjid->iqamaTimeSettings;
             $jumaaSettings = $masjid->jumaaSettings;
 
-            // Map prayers data from JS script with Prayer model schema
-            $prayersToCreate = array_map(function ($item) use ($masjid, $iqamaSettings, $jumaaSettings) {
+            // Map the calculated prayers data onto the Prayer model schema
+            $prayersToCreate = array_map(function (array $item) use ($masjid, $iqamaSettings, $jumaaSettings) {
                 return [
                     'masjid_id' => $masjid->id,
                     'prayers_data' => json_encode($item),
                     'iqama_times_data' => json_encode([
-                        'fajr' => Carbon::parse($item->fajr)->addMinutes($iqamaSettings->fajr)->format("H:i:s"),
-                        'dhuhr' => Carbon::parse($item->dhuhr)->addMinutes($iqamaSettings->dhuhr)->format("H:i:s"),
-                        'asr' => Carbon::parse($item->asr)->addMinutes($iqamaSettings->asr)->format("H:i:s"),
-                        'maghrib' => Carbon::parse($item->maghrib)->addMinutes($iqamaSettings->maghrib)->format("H:i:s"),
-                        'isha' => Carbon::parse($item->isha)->addMinutes($iqamaSettings->isha)->format("H:i:s"),
+                        'fajr' => Carbon::parse($item['fajr'])->addMinutes($iqamaSettings->fajr)->format("H:i:s"),
+                        'dhuhr' => Carbon::parse($item['dhuhr'])->addMinutes($iqamaSettings->dhuhr)->format("H:i:s"),
+                        'asr' => Carbon::parse($item['asr'])->addMinutes($iqamaSettings->asr)->format("H:i:s"),
+                        'maghrib' => Carbon::parse($item['maghrib'])->addMinutes($iqamaSettings->maghrib)->format("H:i:s"),
+                        'isha' => Carbon::parse($item['isha'])->addMinutes($iqamaSettings->isha)->format("H:i:s"),
                     ]),
-                    'jumaa_data' => Carbon::parse($item->date)->isFriday() ? json_encode($jumaaSettings) : null,
-                    'date' => Carbon::parse($item->date)->format("Y-m-d"),
+                    'jumaa_data' => Carbon::parse($item['date'])->isFriday() ? json_encode($jumaaSettings) : null,
+                    'date' => Carbon::parse($item['date'])->format("Y-m-d"),
                     'created_at' => Carbon::now(),
                     'updated_at' => Carbon::now(),
                 ];
-            }, json_decode($prayerTimesFromJs));
+            }, $prayerTimes);
 
             // Extract valid prayer time records (not replicated for same date and masjid)
             $validDataToCreate = [];
