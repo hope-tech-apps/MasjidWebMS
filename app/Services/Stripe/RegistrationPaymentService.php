@@ -968,7 +968,31 @@ class RegistrationPaymentService
         }
 
         // Masjid-filtered by construction — a cross-tenant uuid is a miss.
-        return Registration::findByUuidForMasjid($uuid, (int) $masjid->id);
+        $registration = Registration::findByUuidForMasjid($uuid, (int) $masjid->id);
+
+        if ($registration === null) {
+            // THE ONE BRANCH THAT USED TO BE SILENT, and the only one where the
+            // money has already moved and we are about to do nothing about it.
+            //
+            // Stripe receives a 200 for a return of null, so it never retries;
+            // the reaper then releases the seat the family paid for; and there
+            // was no log line anywhere, so the first anybody heard of it was the
+            // family. Every other refusal in this method already says so. The
+            // uuid is enough to find the charge in the organisation's own
+            // dashboard, which is where the refund has to happen.
+            Log::warning(
+                'Registration event named a registration that does not belong to the organisation holding '
+                . 'this connected account; NOTHING was recorded and Stripe will not retry. If money moved, '
+                . 'it is unrecorded here and the refund is the organisation\'s own action.',
+                [
+                    'registration_uuid' => $uuid,
+                    'masjid_id' => (int) $masjid->id,
+                    'account' => $account,
+                ]
+            );
+        }
+
+        return $registration;
     }
 
     /**

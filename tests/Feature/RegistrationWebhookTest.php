@@ -477,12 +477,21 @@ class RegistrationWebhookTest extends TestCase
     #[Test]
     public function a_live_organisation_is_preferred_over_a_trashed_one_on_the_same_account_id(): void
     {
-        // A Connect account belongs to exactly one organisation, so two rows
-        // sharing one is a data error — and routing a LIVE organisation's
-        // payment into an offboarded twin would be the expensive way to find
-        // out. The live row wins; withTrashed is a fallback, not a widening.
-        $ghost = $this->makeMasjid(['stripe_account_id' => 'acct_A', 'stripe_charges_enabled' => true]);
+        // A Connect account belongs to exactly one LIVE organisation, and
+        // `masjids_active_stripe_account_unique` now enforces that — so the
+        // ghost has to reach this state the way a real one does: it held the
+        // account, it was offboarded, and the account was later onboarded by
+        // somebody else. The index covers live rows only, precisely so that
+        // this remains possible; money arriving for an offboarded organisation
+        // must still be RECORDED, which is what the trashed fallback is for.
+        //
+        // Hence the order: live under its own account, soft-deleted, and only
+        // then moved onto acct_A — which the partial index permits because the
+        // row is no longer live. Creating it live on acct_A alongside the real
+        // organisation is the state the index exists to make unreachable.
+        $ghost = $this->makeMasjid(['stripe_account_id' => 'acct_GHOST', 'stripe_charges_enabled' => true]);
         $ghost->delete();
+        $ghost->forceFill(['stripe_account_id' => 'acct_A'])->saveQuietly();
 
         $registration = $this->paidPending();
 

@@ -11,6 +11,7 @@ use App\Models\GroupMembership;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Models\Registration;
+use App\Models\RegistrationPayment;
 use App\Services\Registrations\RegistrationException;
 use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
@@ -270,6 +271,13 @@ class OfferingRegistrationsController extends Controller
             // through to the list-price branch below.
             $registration = $this->quotedRegistration($masjidId, $offering, $request->input('registration_uuid'));
 
+            // Defaults for the list-price branch, where no registration exists:
+            // nothing has been paid and there is no Stripe door to be open or
+            // shut yet, so "can she pay now" is the same question as "is a
+            // payment expected", answered below.
+            $amountPaid = 0;
+            $canPayNow = null;
+
             if ($registration) {
                 // Its OWN plan, by ownership only. Purchasability gates NEW
                 // intake; re-deciding it here would be re-pricing a row that is
@@ -285,6 +293,17 @@ class OfferingRegistrationsController extends Controller
 
                 $listTotal = (int) $registration->list_total_minor;
                 $adjustedTotal = (int) $registration->adjusted_total_minor;
+
+                // WHAT SHE HAS ALREADY PAID, summed from the ledger rather than
+                // inferred from the status — an installment plan is `confirmed`
+                // from its first charge to its last, so the status says nothing
+                // about how far through it she is. Only SUCCEEDED rows count: a
+                // pending charge has not moved money and a refunded one moved it
+                // back. This is what makes `amount_due_minor` a balance instead
+                // of a restatement of the commitment.
+                $amountPaid = (int) $registration->payments()
+                    ->where('status', RegistrationPayment::STATUS_SUCCEEDED)
+                    ->sum('amount_minor');
 
                 // WHETHER STRIPE IS STILL EXPECTED, read off the registration's
                 // own money state rather than re-derived from its total.
@@ -342,8 +361,29 @@ class OfferingRegistrationsController extends Controller
                 // expected — it bills on its own clock and this endpoint is not
                 // the door — so mirroring the refusal there would report "no
                 // payment expected" to a family whose next invoice is real.
-                if ($requiresPayment && $registration->status === Registration::STATUS_PENDING) {
-                    $requiresPayment = $this->checkout->canOpenCheckout($registration);
+                // WHETHER SHE CAN PAY RIGHT NOW IS NOT WHETHER SHE OWES.
+                //
+                // This used to overwrite `$requiresPayment`, which made the
+                // read surface tell the opposite lie from the one it was fixing.
+                // Measured on one fixture, one instant:
+                //
+                //   live hold  quote 200  adjusted 15000  due 15000  requires TRUE
+                //   +31 min    status=pending pay=awaiting, SEAT STILL HELD
+                //              quote 200  adjusted 15000  due 0  requires FALSE
+                //              checkout 422 "The payment window … has closed"
+                //
+                // A lapsed thirty-minute hold is the single most common state on
+                // this surface — every abandoned checkout between T+30min and
+                // the reaper — and she was told she owed nothing while her seat
+                // was still held and $150 was still outstanding.
+                //
+                // So the two questions get two fields. `requires_payment` and
+                // `amount_due_minor` answer "what is outstanding", which does
+                // not change because a window lapsed. `can_pay_now` answers "is
+                // the Stripe door open", asked by RUNNING checkout's own
+                // refusal ladder rather than by restating its clauses here.
+                if ($registration->status === Registration::STATUS_PENDING) {
+                    $canPayNow = $requiresPayment && $this->checkout->canOpenCheckout($registration);
                 }
             } else {
                 // A UUID WAS NAMED AND DID NOT RESOLVE, and nothing else on the
@@ -401,8 +441,11 @@ class OfferingRegistrationsController extends Controller
                 $listTotal = $this->registrations->listTotalFor($feePlan);
                 $adjustedTotal = $listTotal;
                 // No registration exists yet, so "is there a Stripe leg" IS
-                // "is the total above zero" — the free-path carve-out.
+                // "is the total above zero" — the free-path carve-out — and it
+                // is also the answer to "could she pay", there being nothing yet
+                // that a window or an offboarding could have shut.
                 $requiresPayment = $adjustedTotal > 0;
+                $canPayNow = $requiresPayment;
             }
 
             return response()->api(200, 'Quote generated.', [
@@ -438,11 +481,28 @@ class OfferingRegistrationsController extends Controller
                 // a paid family she still owed $150. Costing information is not
                 // lost by fixing this: it is `adjusted_total_minor`, one line
                 // up, which is where it belonged all along.
-                'amount_due_minor' => $requiresPayment ? $adjustedTotal : 0,
-                // Whether Stripe is still expected. False is the free-path
-                // carve-out (confirmed in-request, never a $0 Session) and,
-                // for an existing registration, also a settled or cancelled one.
+                // …and it is a BALANCE, not the commitment. Measured on a 9 ×
+                // $100.00 installment plan before this: `amount_due_minor
+                // 90000` on a Session that charges 10000, and still 90000 after
+                // three of the nine had been paid, because nothing subtracted
+                // the ledger. A parent on a payment plan was told she owed $900
+                // six months and $600 in.
+                'amount_due_minor' => $requiresPayment ? max(0, $adjustedTotal - $amountPaid) : 0,
+                // What the ledger says has actually settled, so a renderer can
+                // show "$300 of $900" without arithmetic of its own.
+                'amount_paid_minor' => $amountPaid,
+                // Whether money is still owed. False is the free-path carve-out
+                // (confirmed in-request, never a $0 Session) and, for an
+                // existing registration, also a settled or cancelled one.
+                // NOT affected by whether the Stripe door happens to be open —
+                // that is the next field, and conflating them told a lapsed hold
+                // she owed nothing while her seat was still held.
                 'requires_payment' => $requiresPayment,
+                // Whether checkout would open RIGHT NOW, asked by running
+                // checkout's own refusal ladder. Null when there is no
+                // registration to open one for (a list-price preview), where the
+                // question is not yet meaningful.
+                'can_pay_now' => $canPayNow,
                 // Codes are validated server-side; nothing a client sends can
                 // reduce a price by itself. Aid is granted by an admin.
                 'code_applied' => false,

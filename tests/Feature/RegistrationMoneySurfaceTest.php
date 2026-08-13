@@ -566,12 +566,16 @@ class RegistrationMoneySurfaceTest extends TestCase
             $checkout = $this->postCheckout($registration);
 
             $promised = $quote->getStatusCode() === 200
-                && $quote->json('data.requires_payment') === true;
+                && $quote->json('data.can_pay_now') === true;
             $opened = $checkout->getStatusCode() === 200;
 
             // THE PROPERTY, in one line and in both directions: the read never
             // promises a payment the write refuses, and never withholds one the
-            // write would allow.
+            // write would allow. Carried by `can_pay_now`, which exists because
+            // this promise and the QUESTION OF WHAT SHE OWES are not the same
+            // question and were briefly answered by one field — which made a
+            // lapsed hold report "$0.00 due, no payment required" while her seat
+            // was still held and $150 was still outstanding. See below.
             $this->assertSame($opened, $promised, "{$label}: the quote and the checkout disagree");
 
             // The fixture actually produced the state it claims to.
@@ -583,14 +587,13 @@ class RegistrationMoneySurfaceTest extends TestCase
                 // answering after the window shuts and after the price rise.
                 $this->assertSame(15000, $quote->json('data.adjusted_total_minor'), "{$label}: cost");
 
-                // …and what is OWED follows the promise, so a renderer that
-                // prints the amount without switching on the boolean still
-                // cannot invent a bill. (M2.)
-                $this->assertSame(
-                    $payable ? 15000 : 0,
-                    $quote->json('data.amount_due_minor'),
-                    "{$label}: amount due"
-                );
+                // …and WHAT SHE OWES does not move because a door shut. Every
+                // cell here is a live pending hold on a $150 seat with nothing
+                // paid, so the debt is $150 in all of them — including the ones
+                // she cannot act on this minute. A shut window is not a receipt.
+                $this->assertTrue($quote->json('data.requires_payment'), "{$label}: still owed");
+                $this->assertSame(15000, $quote->json('data.amount_due_minor'), "{$label}: amount due");
+                $this->assertSame(0, $quote->json('data.amount_paid_minor'), "{$label}: nothing paid yet");
             }
 
             // Restore for the next cell.
@@ -625,9 +628,11 @@ class RegistrationMoneySurfaceTest extends TestCase
             // Still answered, and still says what her place cost: refusing the
             // read is not the fix, and would strand her worse.
             ->assertJsonPath('data.adjusted_total_minor', 15000)
-            // But no Pay button, because there is no payment to make.
-            ->assertJsonPath('data.requires_payment', false)
-            ->assertJsonPath('data.amount_due_minor', 0);
+            // She still owes it — the program stopping is not a receipt…
+            ->assertJsonPath('data.requires_payment', true)
+            ->assertJsonPath('data.amount_due_minor', 15000)
+            // …but no Pay button, because the door the checkout opens is shut.
+            ->assertJsonPath('data.can_pay_now', false);
 
         $this->postCheckout($registration)
             ->assertStatus(422)
@@ -657,8 +662,9 @@ class RegistrationMoneySurfaceTest extends TestCase
         $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
             ->assertOk()
             ->assertJsonPath('data.adjusted_total_minor', 15000)
-            ->assertJsonPath('data.requires_payment', false)
-            ->assertJsonPath('data.amount_due_minor', 0);
+            ->assertJsonPath('data.requires_payment', true)
+            ->assertJsonPath('data.amount_due_minor', 15000)
+            ->assertJsonPath('data.can_pay_now', false);
 
         $this->postCheckout($registration)
             ->assertStatus(422)
@@ -698,6 +704,79 @@ class RegistrationMoneySurfaceTest extends TestCase
             ->assertJsonPath('data.requires_payment', true)
             ->assertJsonPath('data.adjusted_total_minor', 90000)
             ->assertJsonPath('data.amount_due_minor', 90000);
+    }
+
+    /**
+     * A PAYMENT PLAN IS A BALANCE, and `amount_due_minor` has to decrement.
+     *
+     * Measured before this: a 9 × $100.00 plan quoted `amount_due_minor: 90000`
+     * on a Session that charges 10000, and STILL 90000 after three of the nine
+     * had settled — nothing subtracted the ledger, so a parent six months and
+     * $600 into her plan was told she owed $900. The commitment did not change
+     * and is not supposed to: that is `adjusted_total_minor`, which is what the
+     * place cost. What was missing is the difference between the two.
+     *
+     * Only SUCCEEDED rows count. A pending charge has not moved money and a
+     * refunded one moved it back, so neither reduces what is outstanding —
+     * asserted here because "sum the payments" is the obvious wrong version.
+     */
+    #[Test]
+    public function a_part_paid_installment_plan_owes_the_balance_and_not_the_commitment(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->installment(9, 10000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        $registration->forceFill([
+            'status' => Registration::STATUS_CONFIRMED,
+            'payment_status' => Registration::PAYMENT_ACTIVE,
+            'checkout_expires_at' => null,
+        ])->save();
+
+        // Three of nine settled…
+        foreach (range(1, 3) as $n) {
+            RegistrationPayment::withoutMasjidScope()->create([
+                'masjid_id' => $this->masjid->id,
+                'registration_id' => $registration->id,
+                'amount_minor' => 10000,
+                'currency' => 'usd',
+                'status' => RegistrationPayment::STATUS_SUCCEEDED,
+                'stripe_charge_id' => 'ch_paid_' . $n,
+            ]);
+        }
+
+        // …one still in flight, and one refunded. Neither is money she has paid.
+        RegistrationPayment::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'registration_id' => $registration->id,
+            'amount_minor' => 10000,
+            'currency' => 'usd',
+            'status' => RegistrationPayment::STATUS_PENDING,
+            'stripe_charge_id' => 'ch_pending',
+        ]);
+
+        RegistrationPayment::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'registration_id' => $registration->id,
+            'amount_minor' => 10000,
+            'currency' => 'usd',
+            'status' => RegistrationPayment::STATUS_REFUNDED,
+            'stripe_charge_id' => 'ch_refunded',
+        ]);
+
+        $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
+            ->assertOk()
+            // What it cost, unchanged and never restated.
+            ->assertJsonPath('data.adjusted_total_minor', 90000)
+            // What she has actually paid: $300, not $500.
+            ->assertJsonPath('data.amount_paid_minor', 30000)
+            // …so what she owes is $600.
+            ->assertJsonPath('data.amount_due_minor', 60000)
+            ->assertJsonPath('data.requires_payment', true);
     }
 
     /**
