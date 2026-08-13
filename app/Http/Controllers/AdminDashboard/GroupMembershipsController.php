@@ -216,6 +216,23 @@ class GroupMembershipsController extends Controller
         // on. And nothing NOT named is touched, whatever arrives mid-dialog.
         $ids = array_values(array_unique(array_map('intval', (array) $request->input('membership_ids', []))));
 
+        // BELT AND BRACES, and not redundant. `ConfirmGroupMembershipsRequest`
+        // makes `membership_ids` required, so this is unreachable through the
+        // route today — but the defect being fixed here WAS "an absent list
+        // means everything", and if that rule is ever relaxed the query below
+        // would silently go back to confirming the whole roster. A mutation test
+        // caught exactly that: replacing the unconditional `whereIn` with a
+        // conditional one changed nothing, because the request happened to
+        // guarantee the condition. The refusal belongs in both places, because
+        // only one of them is about disclosure.
+        if ($ids === []) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Name the roster entries to confirm. Confirming grants access to a child\'s '
+                    . 'records, so it applies only to the entries you were shown.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $pending = $group->memberships()
             ->pendingClaims()
             ->whereIn('id', $ids)

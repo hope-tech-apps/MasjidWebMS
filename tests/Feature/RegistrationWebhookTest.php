@@ -474,6 +474,56 @@ class RegistrationWebhookTest extends TestCase
         $this->assertSame(1, $offering->fresh()->registration_count);
     }
 
+    /**
+     * THE ONE BRANCH THAT USED TO BE SILENT.
+     *
+     * When an event names a registration that does not belong to the
+     * organisation holding the connected account, `resolve()` returns null and
+     * the handler returns — answering Stripe 200, so it never retries. If money
+     * moved, it is unrecorded here and the reaper will release the seat 45
+     * minutes later. There was no log line at all on that path, so the first
+     * anybody heard of it was the family.
+     *
+     * A mutation test is what put this test here: deleting the warning left the
+     * whole suite green, which meant the only evidence a payment had been
+     * dropped was constrained by nothing.
+     */
+    #[Test]
+    public function a_dropped_event_says_what_it_dropped(): void
+    {
+        Log::spy();
+
+        $registration = $this->paidPending();
+
+        // A second live organisation, its own Connect account, and an event
+        // whose account routes there while the uuid belongs to the first.
+        $other = $this->makeMasjid(['stripe_account_id' => 'acct_OTHER', 'stripe_charges_enabled' => true]);
+
+        $event = $this->completedEvent($registration);
+        $event['account'] = 'acct_OTHER';
+
+        $this->postWebhook($event)->assertOk();
+
+        $registration->refresh();
+
+        // Nothing was recorded — that is the behaviour, and it is why the line
+        // has to exist.
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame(
+            0,
+            RegistrationPayment::withoutMasjidScope()->where('registration_id', $registration->id)->count(),
+        );
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($registration, $other): bool {
+                return str_contains($message, 'does not belong to the organisation')
+                    && $context['registration_uuid'] === $registration->uuid
+                    && (int) $context['masjid_id'] === (int) $other->id
+                    && $context['account'] === 'acct_OTHER';
+            })
+            ->once();
+    }
+
     #[Test]
     public function a_live_organisation_is_preferred_over_a_trashed_one_on_the_same_account_id(): void
     {
