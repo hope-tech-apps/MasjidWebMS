@@ -76,6 +76,11 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         'readableHifzQuery',
         'constrainToOwnStudents',
         'standingIn',
+        // The fourteenth, added when the parent-portal read scope moved into
+        // this class: it narrows a family principal to their guardian edges, so
+        // it takes a principal and must refuse an unrecognized one exactly as
+        // the other thirteen do.
+        'membershipsFor',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -262,9 +267,11 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         sort($expected);
 
         // The count is load-bearing: the design review found thirteen seams
-        // where every proposal had assumed one.
+        // where every proposal had assumed one, and `membershipsFor()` made a
+        // fourteenth. A new seam must be ADDED to the list above deliberately —
+        // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(13, $seen);
+        $this->assertCount(14, $seen);
     }
 
     #[Test]
@@ -300,6 +307,13 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         );
         $this->assertFalse(
             $this->audience->mayReceiveHifzEntry($this->foreign, $this->group, $this->hifzEntry)
+        );
+
+        // The fourteenth seam. An unrecognized principal resolves to no
+        // identity, so it speaks through no roster row — which is what every
+        // refusal above is then computed from.
+        $this->assertTrue(
+            $this->audience->membershipsFor($this->foreign, $this->group)->isEmpty()
         );
 
         // Null, not an empty query: "no standing in this group at all", which

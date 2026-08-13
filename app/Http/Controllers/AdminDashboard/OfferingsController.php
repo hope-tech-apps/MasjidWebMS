@@ -54,10 +54,13 @@ class OfferingsController extends Controller
         $search = $request->query('search');
 
         $offerings = Offering::query()
-            // Both relations are eager-loaded so the verdict below costs no
-            // per-row query: `intakeForm` resolves to null for a soft-deleted
-            // form, which is exactly the fact it is consulted for.
-            ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm'])
+            // All THREE relations the verdict reads are eager-loaded so it costs
+            // no per-row query: `intakeForm` resolves to null for a soft-deleted
+            // form, which is exactly the fact it is consulted for, and `masjid`
+            // answers `canAcceptDonations()`. `masjid` was missing while
+            // registrationState() already read it — measured on a page of five
+            // offerings, six `select * from masjids` instead of two.
+            ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm', 'masjid'])
             ->withCount('registrations')
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {
@@ -124,7 +127,7 @@ class OfferingsController extends Controller
     {
         try {
             $offerings = Offering::query()
-                ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm'])
+                ->with(['feePlans' => fn ($q) => $q->orderBy('id'), 'intakeForm', 'masjid'])
                 ->orderBy('name')
                 ->get()
                 ->map(function (Offering $offering) {
@@ -192,7 +195,7 @@ class OfferingsController extends Controller
      */
     public function show($masjid_id, $offering_id)
     {
-        $offering = Offering::with(['feePlans', 'intakeForm', 'group'])
+        $offering = Offering::with(['feePlans', 'intakeForm', 'group', 'masjid'])
             ->findOrFail($offering_id);
 
         return response()->json([
@@ -298,18 +301,25 @@ class OfferingsController extends Controller
      *
      * The verdict itself belongs to App\Support\OfferingRegistrationState, which
      * the PUBLIC payload also calls, so an admin screen and the page a parent
-     * reads can never disagree about whether a program is open. Only the two
-     * INPUTS are gathered here, and both come from relations the callers eager
+     * reads can never disagree about whether a program is open. Only the INPUTS
+     * are gathered here, and all three come from relations the callers eager
      * load, so a page of offerings costs no extra query:
      *
      *  - the intake form must resolve AND belong to this organisation, matching
      *    OfferingPublicPayload::intakeForm(); `intakeForm` is a plain belongsTo
      *    with no tenant scope of its own, and a form soft-deleted underneath the
      *    NOT NULL `intake_form_id` loads as null, which is the fact wanted;
-     *  - the plan count uses the predicate the public payload PUBLISHES on —
-     *    active, and a kind in FeePlan::KINDS. A plan withheld from the page is
-     *    not one a registrant can name in `fee_plan_id` either, so counting it
-     *    would report "open" for an offering nothing can be bought from.
+     *  - the fee plans, handed over RAW. This method used to filter them itself
+     *    with an inline `is_active && in_array(kind, KINDS)` — a fourth copy of
+     *    a predicate that has now grown two more clauses, and the copy would
+     *    have been the one that missed them. `isPurchasable()` is applied inside
+     *    the decider instead;
+     *  - `masjid`, for `canAcceptDonations()`, CAST to a bool so a missing
+     *    organisation reads as "cannot collect" rather than as "not asked" (see
+     *    the line itself). That relation was NOT in the eager loads while this
+     *    line already read it, so `index` lazy-loaded one `select * from
+     *    masjids` PER ROW — measured at six on a page of five, under a docblock
+     *    promising "a page of offerings costs no extra query".
      *
      * @return array{registration_state:string, registration_state_reason:?string, active_fee_plan_count:int, has_intake_form:bool}
      */
@@ -320,24 +330,43 @@ class OfferingsController extends Controller
         $hasIntakeForm = $form !== null
             && (int) $form->masjid_id === (int) $offering->masjid_id;
 
-        $purchasable = $offering->feePlans
-            ->filter(fn (FeePlan $plan) => (bool) $plan->is_active
-                && in_array($plan->kind, FeePlan::KINDS, true))
-            ->count();
+        // CAST, so a MISS reads as "cannot collect" and not as "not asked".
+        // `masjid` is a belongsTo and `masjids` soft-deletes, so an offboarded
+        // organisation resolves the relation to null — and `decide()` treats
+        // null as no objection, deliberately, so that a caller who cannot answer
+        // the question does not start withholding plans that are on sale. That
+        // reading is right for a caller with no organisation handy and wrong
+        // here, where the organisation is the offering's own: the admin verdict
+        // read a green `open` for a program whose public page answers 404.
+        // `OfferingRegistrationsController::organisationCanCollect()` already
+        // casts the same miss to false, with the same argument — a miss is a
+        // race, not a state, and false is the safe reading of it. Unreachable
+        // today (the admin routes cannot bind an offboarded tenant); the two
+        // surfaces now read the fact identically, which is the point.
+        $canCollect = (bool) $offering->masjid?->canAcceptDonations();
 
-        // Same question the public payload asks, so the admin screen and the
-        // family's page cannot disagree about whether a program is open.
+        // Same question the public payload asks, of the same predicate, so the
+        // admin screen and the family's page cannot disagree about whether a
+        // program is open — nor about how many plans it can actually sell.
         $state = OfferingRegistrationState::decide(
             $offering,
             $hasIntakeForm,
-            $purchasable,
-            $offering->masjid?->canAcceptDonations()
+            $offering->feePlans,
+            $canCollect
         );
 
         return [
             'registration_state' => $state['state'],
             'registration_state_reason' => $state['reason'],
-            'active_fee_plan_count' => $purchasable,
+            // Plans a registrant could actually name in `fee_plan_id`, which is
+            // what this field has always claimed to be. It therefore reads 0 for
+            // an offering whose only plans are paid ones an un-onboarded
+            // organisation cannot collect for — and the reason beside it says
+            // `org_cannot_collect` rather than `no_fee_plan`, so an admin is
+            // sent to Stripe onboarding and not off looking for a missing plan.
+            'active_fee_plan_count' => count(
+                OfferingRegistrationState::purchasablePlans($offering->feePlans, $canCollect)
+            ),
             'has_intake_form' => $hasIntakeForm,
         ];
     }

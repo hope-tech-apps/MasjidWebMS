@@ -166,11 +166,20 @@ const ADJUSTMENT_KIND_LABELS: Partial<Record<AdjustmentKind, string>> = {
  * actually refuses on, and serves it as `registration_state` +
  * `registration_state_reason`. This file only spells it.
  *
- * The two MISCONFIGURATION reasons are deliberately styled `danger` rather than
- * the neutral grey the window states get. "The window closed in March" is an
- * organisation's own decision; "there is no fee plan" is a program nobody
+ * The three MISCONFIGURATION reasons are deliberately styled `danger` rather
+ * than the neutral grey the window states get. "The window closed in March" is
+ * an organisation's own decision; "there is no fee plan", "the sign-up form was
+ * deleted" and "online payments were never finished" are programs nobody
  * remembered to finish, and the difference is exactly what an admin needs to see
  * at a glance.
+ *
+ * EVERY MEMBER OF `OfferingRegistrationState::REASONS` NEEDS A KEY IN ALL THREE
+ * MAPS. `org_cannot_collect` had none: the server produced it, the admin
+ * payloads carried it, and every map here fell through to the bare `closed`
+ * entry — so the one reason a registrar can fix in two clicks rendered as a
+ * neutral grey "Closed — Not accepting registrations.", indistinguishable from a
+ * program they had switched off on purpose, with no warning icon because
+ * `registrationStateIsFault` did not list it either.
  */
 const REGISTRATION_STATE_LABELS: Record<string, string> = {
     open: 'Open',
@@ -180,6 +189,7 @@ const REGISTRATION_STATE_LABELS: Record<string, string> = {
     'closed:closed': 'Window closed',
     'closed:no_intake_form': 'No sign-up form',
     'closed:no_fee_plan': 'No fee plan',
+    'closed:org_cannot_collect': 'Payments not set up',
     closed: 'Closed'
 };
 
@@ -192,6 +202,7 @@ const REGISTRATION_STATE_BADGES: Record<string, string> = {
     // Not "closed on purpose" — broken. Coloured like the fault it is.
     'closed:no_intake_form': 'bg-danger-subtle text-danger',
     'closed:no_fee_plan': 'bg-danger-subtle text-danger',
+    'closed:org_cannot_collect': 'bg-danger-subtle text-danger',
     closed: 'bg-secondary-subtle text-secondary'
 };
 
@@ -204,6 +215,7 @@ const REGISTRATION_STATE_HINTS: Record<string, string> = {
     'closed:closed': 'The registration window has passed. Change the closing date to accept sign-ups again.',
     'closed:no_intake_form': 'Its sign-up form has been deleted, so every registration is refused. Point it at a form that still exists.',
     'closed:no_fee_plan': 'It has no active fee plan, so a registration has nothing to sign up FOR — even a free program needs a free plan. Add one under its Fee Plans tab.',
+    'closed:org_cannot_collect': 'Every one of its fee plans charges money, and online payments are not set up for this organisation yet, so a card payment has nowhere to land. Finish Stripe onboarding from the Donations screen — or add a free plan, which registers with no payment at all.',
     closed: 'Not accepting registrations.'
 };
 
@@ -297,13 +309,23 @@ export function useOfferingDisplay() {
 
     /**
      * True when registration is shut for a reason that is a MISCONFIGURATION
-     * rather than a decision — no sign-up form, no fee plan. Surfaces use it to
-     * decide whether to shout; the words themselves come from the maps above.
+     * rather than a decision — no sign-up form, no fee plan, or online payments
+     * never finished. Surfaces use it to decide whether to shout; the words
+     * themselves come from the maps above.
+     *
+     * The window reasons are deliberately absent: `inactive`, `not_yet_open` and
+     * `closed` are all things an organisation chose, and shouting about a
+     * program that closed on schedule is noise that teaches admins to ignore the
+     * icon.
      */
     const registrationStateIsFault = (
         state: OfferingRegistrationState | string | null | undefined,
         reason?: OfferingRegistrationStateReason | string | null
-    ): boolean => ['closed:no_intake_form', 'closed:no_fee_plan'].includes(registrationStateKey(state, reason));
+    ): boolean => [
+        'closed:no_intake_form',
+        'closed:no_fee_plan',
+        'closed:org_cannot_collect'
+    ].includes(registrationStateKey(state, reason));
 
     /**
      * The words that go AFTER a fee plan's own `amount_minor` — "once",

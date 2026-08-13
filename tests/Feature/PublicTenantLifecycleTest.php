@@ -510,6 +510,21 @@ class PublicTenantLifecycleTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // The offering endpoints below are the CRM's public face and now ask
+            // `masjids.crm_enabled` as well as "does this organisation still
+            // exist" (PublicTenant::crmEnabled). Without this every offering
+            // assertion here would pass for the WRONG reason — a 404 about the
+            // CRM gate rather than about the soft delete this file is measuring.
+            'crm_enabled' => true,
+            // Connect onboarding finished, for exactly the same reason and by
+            // the same argument the money-layer test below already makes in
+            // line: a paid fee plan is withheld from a public payload — and is
+            // the same 404 from quote and register — when the organisation
+            // cannot collect (OfferingRegistrationState::isPurchasable). Left
+            // off, the live-organisation control assertions in this file would
+            // 404 about Stripe onboarding and prove nothing about the delete.
+            'stripe_account_id' => 'acct_TEST' . uniqid(),
+            'stripe_charges_enabled' => true,
         ], $overrides));
     }
 

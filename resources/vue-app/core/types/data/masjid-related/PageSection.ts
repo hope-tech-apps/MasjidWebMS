@@ -1,7 +1,9 @@
 import {
     BillingInterval,
     FeePlanKind,
-    OfferingKind
+    OfferingKind,
+    OfferingRegistrationState,
+    OfferingRegistrationStateReason
 } from '@/core/types/data/masjid-related/Offering';
 
 export type SectionType =
@@ -632,7 +634,7 @@ export type PublicOffering = {
         /** null = unlimited, which is unknown rather than 0. */
         remaining: number | null;
     };
-    registration_state: 'open' | 'waitlist' | 'closed';
+    registration_state: OfferingRegistrationState;
     /**
      * WHY the state is `closed`; null when it is not. Decided by the same server
      * call that produced `registration_state`, so the two cannot disagree.
@@ -643,14 +645,13 @@ export type PublicOffering = {
      * of which shut registration completely. This answers "would a registration
      * be accepted", which is the write path's question, and it is the one a
      * renderer explains itself from.
+     *
+     * IMPORTED, not re-spelled. Both unions were hand-copied here and this copy
+     * was the one nobody remembered when `org_cannot_collect` was added — the
+     * same "two copies of one judgement" shape `OfferingPublicPayload` exists to
+     * prevent on the server. The vocabulary now has one definition per language.
      */
-    registration_state_reason:
-        | 'inactive'
-        | 'not_yet_open'
-        | 'closed'
-        | 'no_intake_form'
-        | 'no_fee_plan'
-        | null;
+    registration_state_reason: OfferingRegistrationStateReason;
     fee_plans: PublicFeePlan[];
     intake_form: PublicOfferingForm | null;
 };

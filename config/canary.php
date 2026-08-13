@@ -44,9 +44,16 @@ return [
     | mobile bucket, and a full run takes minutes rather than seconds — which is
     | fine, because it is scheduled hourly and guarded by withoutOverlapping().
     |
-    | `max_requests` and `max_seconds` are hard stops. Hitting either ends the
-    | run as INCOMPLETE (exit 2), never as clean — a canary that quietly reports
-    | green because it ran out of budget is worse than no canary.
+    | `max_requests` and `max_seconds` are hard stops. Hitting either can never
+    | end the run as clean — a canary that quietly reports green because it ran
+    | out of budget is worse than no canary. Which non-clean verdict it gets is
+    | decided by what the truncation actually COST: a cut that still left a
+    | majority of the graded surface reached is `partial` (exit 3, and the
+    | truncation named); a cut deep enough to lose that majority is `incomplete`
+    | (exit 2). Measured on this branch against a `--all` plan of 31 endpoints /
+    | 76 probes: `--max-requests=3` reaches 1 of 31 endpoints and is incomplete;
+    | `--max-requests=60` reaches 23 of 31 with all of /api/v1 seen and is
+    | partial. Both report the truncation; they differ in how loudly.
     |
     | `mobile_slice` rotates the /api/mobile surface: each run probes that many
     | mobile endpoints, chosen by a deterministic hourly offset, so the whole
@@ -61,12 +68,29 @@ return [
     | to anything. A two-tier rule would be faster and harder to reason about at
     | 3am.
     |
-    | Measured arithmetic at these defaults (2026-08-12): 49 probes per run — 36
-    | across the seven /api/v1 collection endpoints, 13 across one mobile slice —
-    | taking 2m26s. max_requests is set well above that ON PURPOSE. A ceiling
-    | that the normal plan grazes turns every new endpoint into an hourly
-    | "incomplete" alert, and an alarm that cries wolf gets silenced, which is
-    | the same outcome as not having built this.
+    | Measured arithmetic at these defaults, re-derived 2026-08-12 against the
+    | current route table:
+    |
+    |   scheduled run (rotating slice)   16 endpoints, 47-52 probes — the 8
+    |                                    /api/v1 endpoints are always 36 of
+    |                                    them; this hour's 8 mobile endpoints
+    |                                    are 8-16 more, since a global endpoint
+    |                                    is probed once and a tenant one twice
+    |   deploy gate (`--all`)            31 endpoints, 76 probes
+    |
+    | The slice makes the scheduled number hour-dependent; `--all` is fixed.
+    | Pacing at 20/minute puts the scheduled run at roughly 2m30s and `--all` at
+    | under four minutes, inside the 15-minute withoutOverlapping() window in the
+    | schedule.
+    |
+    | max_requests is set above the LARGER of those ON PURPOSE — the ceiling has
+    | to clear the `--all` plan, because that is what the deploy gate runs, and a
+    | ceiling the normal plan grazes turns every new endpoint into an hourly
+    | "incomplete" alert. An alarm that cries wolf gets silenced, which is the
+    | same outcome as not having built this. At 90 the headroom over `--all` is
+    | 14 probes ≈ 7 more tenant-in-path endpoints; raise it in the same commit
+    | that adds the eighth, or the deploy gate starts truncating instead of
+    | certifying.
     |
     */
 
@@ -96,6 +120,69 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | WHICH tenants — and, since 2026-08-13, WHOSE ROWS THOSE ARE
+    |--------------------------------------------------------------------------
+    |
+    | This list does TWO jobs. Both are about the same fact — these are the
+    | tables that back the graded surface — but the second one is newer and
+    | stricter, so read it before adding a name here.
+    |
+    | JOB 1: choosing the compared pair. `Masjid` relations the canary counts to
+    | pick the pair it compares. It takes the organisations with rows in the MOST
+    | of these (breadth first, then total rows, then lowest id — deterministic,
+    | and identical to the old "two lowest ids" whenever nothing has content).
+    |
+    | JOB 2: attributing a row to its owner. TenancyCanary::resolveOwnership()
+    | reads these tables to answer "who owns the rows this endpoint just served?"
+    | — the only positive assertion the canary makes, and the only detector that
+    | sees a total SWAP (masjid 1 served masjid 2's announcements and vice
+    | versa). Measured on this branch before it existed: a complete cross-tenant
+    | read of every announcement on the platform reported exit 0, status clean,
+    | zero findings, because `tenants-get-different-answers` proves only that the
+    | two answers DIFFER and a swap makes them differ perfectly.
+    |
+    | A relation can do job 1 and not job 2, and `gallery` is exactly that: it is
+    | `hasMany(Media::class, 'model_id')`, so its foreign key is a polymorphic
+    | owner id — `model_id = 5` means "row 5 of some model", not "masjid 5".
+    | Counting it to rank organisations is harmless; attributing through it would
+    | read an announcement's image as belonging to masjid 5 and accuse a correct
+    | endpoint. Only relations whose foreign key is one of `tenant_keys` below
+    | attribute; the rest are named, with the reason, in
+    | `coverage.row_ownership.tables_skipped` on every run.
+    |
+    | Attribution is also ANCHORED: a relation only attributes an endpoint that
+    | NAMES it — as a segment of the route URI (`api/v1/announcements`,
+    | `api/v1/__anything/announcements`) or as the key path of the list the ids
+    | came from (`/api/v1/home` returns buckets literally called `services` and
+    | `announcements`). Without that anchor the first cut of this turned a
+    | healthy `--all` run RED: `GET /api/mobile/masjids/2` returns the
+    | organisation's own row, `(root)` carried the id 2, and `announcements.id =
+    | 2` belongs to a different organisation. Adding a relation here therefore
+    | widens attribution only over the endpoints that already name it.
+    |
+    | This is not a tuning knob either. The cross-tenant comparison in
+    | TenancyCanary::checkTenantsGetDistinctAnswers() proves a leak by finding the
+    | same primary keys in two organisations' answers, and TWO EMPTY ANSWERS
+    | PROVE NOTHING: they are byte-identical whether the platform is scoped
+    | correctly or pinned to a single organisation. The pair used to be the two
+    | lowest ids, which is the two OLDEST organisations — not the two that
+    | publish. Measured 2026-08-12 with the real SearchableTrait pinned to one
+    | organisation: a pair holding rows exits 1 with five findings, a dormant
+    | pair exited 0 and called the platform clean.
+    |
+    | The list is the graded surface's own tables: announcements, services and
+    | pages back /api/v1/announcements, /services, /pages, /pages/menu and /home;
+    | gallery backs /api/v1/gallery. A name this model does not have is skipped
+    | rather than fatal, and an empty list falls back to the lowest ids.
+    |
+    | `--tenants=1,13` overrides it entirely, for when someone is chasing a
+    | specific pair.
+    */
+
+    'compare_by' => ['announcements', 'services', 'pages', 'gallery'],
+
+    /*
+    |--------------------------------------------------------------------------
     | What gets probed
     |--------------------------------------------------------------------------
     |
@@ -114,6 +201,91 @@ return [
     */
 
     'prefixes' => ['api/v1', 'api/mobile'],
+
+    /*
+    |--------------------------------------------------------------------------
+    | The graded surface — which endpoints the run-level verdict is computed on
+    |--------------------------------------------------------------------------
+    |
+    | A run is `incomplete` (exit 2, the loud one) rather than `partial` (exit 3,
+    | the quiet one) when it failed to reach a STRICT majority of THESE endpoints
+    | — `reached * 2 > planned`, so exactly half is a loss, because a run that saw
+    | as much as it missed is not a partial all-clear. Of the eight discovered
+    | /api/v1 endpoints, 5 reached is partial and 4 is incomplete.
+    | Everything outside this list can still take a run out of `clean`
+    | and is always named in `blind_spots`; it just cannot on its own turn a run
+    | that reached the platform into a run that did not.
+    |
+    | It is `api/v1` and not the whole plan for two reasons, and both are about
+    | this codebase rather than about taste:
+    |
+    |  1. `/api/mobile` is probed as a ROTATING SLICE chosen from the clock. A
+    |     floor computed over the whole plan therefore answers differently at
+    |     03:00 than at 04:00 for a platform that did not change. A threshold
+    |     that depends on the hour is not a threshold.
+    |  2. Blindness is normal on one surface and anomalous on the other.
+    |     Measured on a healthy `--all` run of this branch with two organisations
+    |     that publish: 14 `/api/mobile` endpoints and 1 `/api/v1` endpoint
+    |     (`gallery`) are legitimately BLIND to the cross-tenant comparison,
+    |     because a pair with no events, funds, notifications or photos gives two
+    |     empty answers that no comparison can tell apart. Grading blindness
+    |     there would put a permanent amber on a correct platform. That is what
+    |     this list keeps off the verdict.
+    |
+    |     WHAT THIS PARAGRAPH USED TO SAY, AND WHY IT WAS WRONG. It claimed much
+    |     of `/api/mobile` reads an OPTIONAL per-org singleton — donation-link,
+    |     about, app-config, splash, signage, tv-config — "where a 404 for a
+    |     valid tenant is the correct answer". Re-derived against the controllers
+    |     on 2026-08-13, none of the six behaves that way:
+    |
+    |       MasjidsController::about, ::donationLink   200 with `data: null`
+    |       SplashAnnouncementsController::current     204
+    |       AppConfigController::index                 200 (`{}` when no rows)
+    |       TvConfigController, SignageController      findOrFail the MASJID,
+    |                                                  not the singleton
+    |
+    |     All six answer 2xx for an organisation that exists, and a healthy
+    |     `--all` run reaches 31 of 31 endpoints with `blind_spots` empty. So
+    |     absence is NOT normal on `/api/mobile`; the expected number of
+    |     unreachable endpoints there is zero, exactly as on `/api/v1`.
+    |
+    |     The practical effect of the error was benign — fewer spurious ambers
+    |     than the doc predicted — but the sentence is load-bearing in the wrong
+    |     direction: it is the one a future reader would cite to put a majority
+    |     threshold on UNREACHABILITY here, which would buy silence for the
+    |     failure that does happen (one endpoint stops answering, and therefore
+    |     stops being watched for tenancy) while only speaking for the one every
+    |     other monitor also sees. See the argument at the `blindSpots` check in
+    |     TenancyCanary::assessCoverage().
+    |
+    | `/api/v1` is also the surface probed in full every run, the one carrying no
+    | throttle, and the one where both production holes actually were.
+    |
+    | This list also decides where BLINDNESS is graded — the second floor, where
+    | a run is degraded because the cross-tenant comparison could not tell two
+    | organisations' answers apart on a majority of the endpoints it reached
+    | (TenancyCanary::applyComparisonFloor) — and where ROW OWNERSHIP is graded,
+    | the third floor, which asks whether the rows an organisation was handed are
+    | that organisation's rows (TenancyCanary::applyOwnershipFloor). The reasons
+    | are the same two, and the second is sharper for both: the measurement in
+    | reason 2 above is 14 ungraded endpoints blind on a HEALTHY run.
+    |
+    | The three floors are not the same shape and deliberately so. Reachability
+    | and comparison take a strict majority; ownership takes a ZERO floor,
+    | because the endpoint list is discovered and grows, and every endpoint on a
+    | table outside `compare_by` is permanently unattributable — a ratio there
+    | would go amber as the route table grew, for a reason no operator can act on
+    | tonight. See applyOwnershipFloor() for the full argument.
+    |
+    | Adding a prefix here makes the run-level verdict STRICTER for it. Do not
+    | add `api/mobile` without first removing the optional-singleton endpoints
+    | from the plan, or every org missing a donation link will page hourly —
+    | which is the bug this setting exists to fix, reintroduced from the other
+    | end.
+    |
+    */
+
+    'core_prefixes' => ['api/v1'],
 
     /*
     | Named limiters the canary is allowed to spend. Everything else — the
@@ -152,6 +324,57 @@ return [
         'api/mobile/hadiths',
         'api/mobile/hadiths/today',
         'api/mobile/tasabih',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | ...and the same declaration for ONE LIST inside an otherwise tenant answer
+    |--------------------------------------------------------------------------
+    |
+    | `uri => [bucket key path, …]`. Empty today, and it is here because the
+    | list above is the wrong granularity for the shape it has to excuse.
+    |
+    | An endpoint that is perfectly scoped can still return a global lookup list
+    | beside its own rows — `categories`, `tags`, `types`, `statuses` — and those
+    | rows belong to nobody. Two organisations are correctly handed the SAME
+    | lookup ids, which is exactly what a pin looks like to the shared-id
+    | comparison; and if those ids happen to exist in a table the route names,
+    | the row-ownership assertion reads them as two organisations' rows in one
+    | answer. Measured 2026-08-13 against a correctly scoped endpoint returning
+    | `items` (its own services) plus `categories` (ids 1, 2, 3, owned by
+    | nobody, colliding with `services.id`):
+    |
+    |     exit=1 status=leak findings=3
+    |       same_rows_served_to_two_tenants   :: both answers contain categories ids 1, 2, 3
+    |       foreign_rows_for_requested_tenant :: masjid 1 … categories ids 3 (masjid 2)  [CRITICAL]
+    |       foreign_rows_for_requested_tenant :: masjid 2 … categories ids 1, 2          [CRITICAL]
+    |
+    | Three findings and a page, against correct code. The only hatch available
+    | was `global_endpoints` above — which is PER ENDPOINT, so silencing
+    | `categories` would also have stopped watching `items`, the list carrying
+    | the organisation's real rows. Turning a watch off to quiet a false alarm is
+    | how a canary becomes decoration.
+    |
+    | So the declaration is per bucket. A declared path is excluded from BOTH id
+    | detectors and from the ownership lookup, its siblings stay fully watched,
+    | and every run that honours a declaration SAYS SO in the check detail — a
+    | narrowed watch that goes quiet about being narrowed is the same defect one
+    | level down.
+    |
+    | The canary does not need this to avoid the false page: TenancyCanary::
+    | analyseBuckets() withdraws an inherited anchor when the answer contradicts
+    | it, so an undeclared lookup list lands as a NAMED, contested gap at exit 3
+    | rather than a finding at exit 1. This is how the gap is CLOSED rather than
+    | merely made quiet: declare it and the sibling list goes back to being
+    | compared and attributed.
+    |
+    | Same rule as `global_endpoints`: read the controller before adding an
+    | entry. A bucket named here stops being watched, and a per-tenant list
+    | misfiled here is a cross-tenant read nobody will ever see.
+    */
+
+    'global_buckets' => [
+        // 'api/v1/services' => ['categories'],
     ],
 
     /*

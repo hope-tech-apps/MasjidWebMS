@@ -11,6 +11,7 @@ use App\Models\HifzEntry;
 use App\Models\User;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 /**
@@ -119,10 +120,18 @@ class GroupAudience
      * The contact ids this authenticated principal speaks for in the bound
      * tenant.
      *
-     * THE ONLY METHOD IN THIS CLASS THAT TOUCHES THE PRINCIPAL OBJECT. Every
-     * other one takes the contact ids this returns and reasons in those, which
-     * is exactly why widening all thirteen signatures to `?Authenticatable`
-     * (T-015b) needed one `instanceof` and no rule changes.
+     * ONE OF EXACTLY TWO METHODS IN THIS CLASS THAT TOUCH THE PRINCIPAL OBJECT,
+     * and the only one that asks WHO the caller is. Every rule below takes the
+     * contact ids this returns and reasons in those, which is exactly why
+     * widening all thirteen signatures to `?Authenticatable` (T-015b) needed one
+     * `instanceof` and no rule changes.
+     *
+     * The second is `membershipsFor()`, which asks a different question — which
+     * of the caller's roster rows their credential CARRIES — and narrows a
+     * parent-portal principal to their guardian edges. It is deliberately not
+     * folded in here: this method answers identity, that one answers scope, and
+     * collapsing them would make "who is this?" depend on which group is being
+     * asked about.
      *
      * @return array<int,int>
      */
@@ -180,24 +189,28 @@ class GroupAudience
         // schema has no such flag, and a `member` row is an adult volunteer on
         // a masjid's team exactly as often as it is a child in a classroom.
         //
-        // The consequence is the one docs §7 refuses, so it is written here
-        // where someone might otherwise create it by accident: ENABLING A LOGIN
-        // ON A CHILD'S CONTACT ROW IS A STUDENT LOGIN. `standingIn()` sets
-        // `feed = true` outright for any participant, so that child would read
-        // the whole class feed — every classmate's photograph, with nobody's
-        // consent — plus the participant threads about themselves, which are
-        // where a teacher and a guardian discuss a safeguarding concern. A
-        // student login is not a flag on this design; it is a DIFFERENT standing
-        // computation (own-record-only, no group feed, no participant threads)
-        // and belongs to its own task.
+        // The consequence docs §7 refuses is that ENABLING A LOGIN ON A CHILD'S
+        // CONTACT ROW WOULD BE A STUDENT LOGIN. It used to follow from
+        // `standingIn()` setting `feed = true` outright for any participant, so
+        // such a login read the whole class feed — every classmate's photograph,
+        // with nobody's consent — plus the participant threads about themselves,
+        // which are where a teacher and a guardian discuss a safeguarding
+        // concern. Measured, and pinned at the time as a hazard.
         //
-        // What keeps that shut today is that NOTHING in this application sets
-        // `login_enabled_at`: the four `login_*` columns are absent from
-        // `Contact::$fillable`, no controller writes them, and the admin
-        // "invite guardians" flow is not built. When it is, it must issue
-        // invites for GUARDIAN EDGES only. The behaviour is pinned, not left to
-        // be discovered, by
-        // FamilyPortalTest::a_login_enabled_participant_reads_the_whole_group_feed.
+        // THAT NO LONGER FOLLOWS. `membershipsFor()` drops a family principal's
+        // own participant rows, so a credential reads through guardian edges
+        // only: a contact who is nobody's guardian resolves to no standing in
+        // any group, and one who is a guardian reads their wards and nothing
+        // about themselves. `FamilyAccessService::enable()` independently still
+        // refuses a contact who holds no guardian edge over a live ward, so the
+        // two halves agree — the door and the disclosure rule both say the same
+        // thing, rather than the door being the only thing saying it.
+        //
+        // A student login remains its own task: it is a DIFFERENT standing
+        // computation (own-record-only, no group feed, no participant threads),
+        // and what is here is the fail-closed placeholder — a family credential
+        // gets NOTHING from a participant row, rather than the narrow slice a
+        // student one eventually should.
         if ($principal instanceof Contact) {
             return $principal->familyLoginIsActive()
                 && (int) $principal->masjid_id === (int) $this->tenant->get()
@@ -252,17 +265,7 @@ class GroupAudience
      */
     public function mayReceive(?Authenticatable $principal, Group $group, string $disclosure): bool
     {
-        $contactIds = $this->identitiesFor($principal);
-
-        if ($contactIds === []) {
-            return false;
-        }
-
-        $memberships = $group->memberships()
-            ->whereIn('contact_id', $contactIds)
-            ->get();
-
-        foreach ($memberships as $membership) {
+        foreach ($this->membershipsFor($principal, $group) as $membership) {
             if (in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true)) {
                 return true;
             }
@@ -612,6 +615,131 @@ class GroupAudience
     }
 
     /**
+     * The rows in `$group` this principal actually speaks THROUGH.
+     *
+     * The second — and last — method in this class that touches the principal
+     * object, and it is not an identity question: `identitiesFor()` answers WHO
+     * the caller is, and this answers WHICH OF THEIR ROSTER ROWS THEIR
+     * CREDENTIAL CARRIES. Sharing it between `mayReceive()` and `standingIn()`
+     * is what keeps the feed decision and the thread/record decisions from
+     * disagreeing about the same caller.
+     *
+     * ------------------------------------------------------------------------
+     * A PARENT PORTAL CREDENTIAL SPEAKS FOR WARDS, AND FOR NOBODY ELSE
+     * ------------------------------------------------------------------------
+     *
+     * A `Contact` principal is somebody signed in to the PARENT PORTAL, and the
+     * only thing that portal was issued for is the children its holder is
+     * recorded as a guardian of. So their own `leader`/`member` rows are
+     * dropped here: through the family guard they buy no feed, no participant
+     * thread about themselves, no award, no ḥifẓ record, and no standing in a
+     * group they are merely a participant of (which therefore 403s, exactly as
+     * a group they are not in at all does).
+     *
+     * WHY THIS EXISTS. `standingIn()` sets `feed = true` outright for ANY
+     * participant — correct for a STAFF caller, who is the person themselves
+     * and needs nobody's consent to be shown their own group. Applied to a
+     * parent's credential it meant a login granted for one child's records also
+     * carried whatever class its holder happened to be enrolled on, including
+     * the participant threads about them: measured, a login-enabled participant
+     * read the whole class feed, an attachment's bytes and the safeguarding
+     * thread about themselves, with no consent recorded anywhere.
+     *
+     * `FamilyAccessService` used to answer that by REFUSING A CREDENTIAL to
+     * anybody holding a participant edge, and a `GroupMembership::created` hook
+     * destroyed one the moment its holder gained a roster row. Both are gone.
+     * They controlled what a credential may READ by controlling WHO MAY HOLD
+     * one, which comes apart on the two most ordinary adults a school has — a
+     * parent in the adult ḥalaqa, and a teacher who is also a parent — and the
+     * hook handed an anonymous caller the power to burn a working credential.
+     * Scoping the read refuses nobody, destroys nothing, and is re-evaluated
+     * from live roster rows on every request, so no ordering of two admin acts
+     * can walk around it.
+     *
+     * WHAT THIS IS NOT: it is not the student-login standing computation. That
+     * would give a student their OWN records through their own participant row;
+     * this gives a family credential nothing at all through one. A student login
+     * is still its own task, and this narrowing is the fail-closed placeholder
+     * until it exists.
+     *
+     * A `User` (staff) principal is untouched — every rule below holds for them
+     * exactly as it did — and anything that is neither resolves to no identity
+     * one call up, and so to no memberships here.
+     *
+     * PUBLIC because `Http\Controllers\Family\GroupsController` asks the same
+     * question — "is this parent in this group, and through which rows?" — to
+     * decide its listing, its 403 and what it serializes. It asked it of the
+     * `group_memberships` table directly, which was a SECOND definition of
+     * standing outside this class: the one thing `GroupAudience` exists to
+     * prevent, and the shape every drift bug in this area has had. One rule, one
+     * implementation, two callers.
+     *
+     * ------------------------------------------------------------------------
+     * ONLY A CONFIRMED ROW SPEAKS (provenance, 2026-08-13)
+     * ------------------------------------------------------------------------
+     *
+     * A roster row now records WHOSE AUTHORITY it exists on
+     * (`GroupMembership::PROVENANCES`), and this one `confirmed()` clause is the
+     * whole of how the read side honours it. It sits here rather than in the
+     * eight methods above for the reason this class exists at all: `mayReceive`,
+     * `standingIn` and therefore `mayReceiveThread`, `readableThreadsQuery`,
+     * `mayReceiveRecordAbout`, `readableAwardsQuery`, `readableHifzQuery` and
+     * `Family\GroupsController` all resolve standing THROUGH here, so one filter
+     * makes the rule true of every disclosure surface by construction instead of
+     * by eight implementations that agree today. That is the same argument
+     * T-015e made for putting the parent branch in `identitiesFor()` alone.
+     *
+     * A `self_asserted` row is a claim a public form made with no session, no
+     * token and no proof of control of any address. It is a ROSTER FACT — the
+     * person is listed, they count towards capacity, a teacher records their
+     * behaviour and ḥifẓ — and it is not a grant, so it buys its HOLDER nothing
+     * here: no feed, no thread, no award, no ḥifẓ record, no standing at all in
+     * the group (which therefore 403s, exactly as a group they are not in does).
+     *
+     * WHAT THIS REFUSES THAT USED TO WORK, said plainly. A family that signs up
+     * through the public form reads nothing in the parent portal until the
+     * office confirms the claim; and a STAFF caller whose contact was put on a
+     * roster by a public registration is no longer read INTO that group by it.
+     * The second is the point: `identitiesFor()` bridges a staff login to a
+     * Contact, so before this clause an anonymous POST naming a masjid admin's
+     * address wrote them a `member` row and handed them a class feed —
+     * photographs of children — that .claude/rules/groups.md obligation 4 exists
+     * to keep from the whole tenant. The office's way through is one click on
+     * the roster screen, in bulk, and the claims are listed there rather than
+     * discovered.
+     *
+     * SUBJECT PROVENANCE IS NOT CONSULTED, and must not be. This filters the
+     * CALLER's own rows. A child enrolled by a pending claim is still a child on
+     * the roster: their teacher — whose leader row is confirmed — still reads and
+     * writes their records, which is what lets a school take a register on the
+     * first morning of a camp rather than after 200 confirmations.
+     *
+     * @return \Illuminate\Support\Collection<int,GroupMembership>
+     */
+    public function membershipsFor(?Authenticatable $principal, Group $group): Collection
+    {
+        $contactIds = $this->identitiesFor($principal);
+
+        if ($contactIds === []) {
+            return collect();
+        }
+
+        $memberships = $group->memberships()
+            ->confirmed()
+            ->whereIn('contact_id', $contactIds)
+            ->get();
+
+        if (! $principal instanceof Contact) {
+            return $memberships;
+        }
+
+        return $memberships
+            ->filter(fn (GroupMembership $membership): bool => $membership->isGuardian()
+                && $membership->guardian_of_contact_id !== null)
+            ->values();
+    }
+
+    /**
      * The caller's whole footing in one group, resolved once: which of their
      * contact identities hold memberships, in what roles, over which wards.
      * Shared by the thread decisions above so the single-thread check and the
@@ -635,15 +763,7 @@ class GroupAudience
             'ward_contact_ids' => [],
         ];
 
-        $contactIds = $this->identitiesFor($principal);
-
-        if ($contactIds === []) {
-            return $none;
-        }
-
-        $memberships = $group->memberships()
-            ->whereIn('contact_id', $contactIds)
-            ->get();
+        $memberships = $this->membershipsFor($principal, $group);
 
         if ($memberships->isEmpty()) {
             return $none;

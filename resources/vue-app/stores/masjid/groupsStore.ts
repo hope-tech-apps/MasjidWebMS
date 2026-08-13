@@ -30,6 +30,8 @@ export const useGroupsStore = defineStore('groupsStore', () => {
     // State
     const groupsPaginated = ref<PaginatedData<Group>>();
     const memberships = ref<GroupMembership[]>([]);
+    /** How many rows on the loaded roster nobody at the organisation has confirmed. */
+    const pendingClaims = ref<number>(0);
     const groupsMeta = ref<GroupsMeta>();
 
     // Stores
@@ -149,18 +151,62 @@ export const useGroupsStore = defineStore('groupsStore', () => {
 
     // ------------------------------------------------------------------ roster
 
-    /** The roster of one group: participants and the guardian edges attached to them. */
+    /**
+     * The roster of one group: participants and the guardian edges attached to
+     * them.
+     *
+     * `pendingClaims` comes from the server's `meta` rather than being counted
+     * off `memberships` here. The count decides whether a banner appears saying
+     * children's records are being withheld, and a second implementation of
+     * "which rows are unconfirmed" in TypeScript is a copy that agrees today —
+     * the same call this codebase makes for the family-login state word.
+     */
     async function fetchMemberships(groupId: number | string): Promise<void> {
         if (!masjidStore.masjid?.id) return;
 
         memberships.value = [];
+        pendingClaims.value = 0;
 
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members` as BackendApiRoute
         );
         if (res.data?.status === 'success' && Array.isArray(res.data?.data)) {
             memberships.value = res.data.data;
+            pendingClaims.value = Number(res.data?.meta?.pending_claims ?? 0);
         }
+    }
+
+    /**
+     * Stand behind the roster claims a PUBLIC registration form asserted.
+     *
+     * `membershipIds` is REQUIRED by the endpoint and the caller must name every
+     * row it is vouching for. An absent list used to mean "everything pending in
+     * this group", which is not the set the operator read — a registration
+     * landing between the render and the click was confirmed by it. A school's
+     * 200-signup intake is still one button; it just carries 200 ids.
+     * Resolves to how many were confirmed.
+     */
+    async function confirmClaims(
+        groupId: number | string,
+        membershipIds: number[]
+    ): Promise<number> {
+        if (!masjidStore.masjid?.id || membershipIds.length === 0) return 0;
+
+        const body = new FormData();
+        membershipIds.forEach((id) => body.append('membership_ids[]', String(id)));
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/confirm` as BackendApiRoute,
+            body
+        );
+
+        if (res.data?.status !== 'success') {
+            throw new Error('Failed to confirm the roster entries.');
+        }
+
+        pendingClaims.value = Number(res.data?.data?.pending_claims ?? 0);
+
+        return Number(res.data?.data?.confirmed ?? 0);
     }
 
     /**
@@ -217,6 +263,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         groupsPaginated,
         groupsMeta,
         memberships,
+        pendingClaims,
         fetchGroups,
         fetchGroup,
         createGroup,
@@ -224,6 +271,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         deleteGroup,
         fetchMemberships,
         addMembership,
+        confirmClaims,
         removeMembership
     }
 })

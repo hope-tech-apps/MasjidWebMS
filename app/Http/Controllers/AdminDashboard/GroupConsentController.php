@@ -51,6 +51,27 @@ class GroupConsentController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // …AND ONLY AGAINST AN EDGE THIS ORGANISATION HAS STOOD BEHIND.
+        //
+        // A pending claim is an assertion a public form made — nobody has yet
+        // decided that this adult is that child's guardian. Recording consent
+        // against it banks a permission from a relationship the organisation has
+        // not accepted, and it is stored on the row itself: the moment the claim
+        // is confirmed, the class feed and the photograph bytes open in the same
+        // instant as the records, with no second decision in between.
+        //
+        // Withdrawal (`destroy`) is deliberately NOT gated — see its docblock. A
+        // refusal there would leave consent standing on a row the office was
+        // trying to undo, which is this area's one unacceptable direction.
+        if (! $membership->isConfirmed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This guardian entry is still an unconfirmed claim from a registration form. '
+                    . 'Confirm it on the roster first — consent has to be recorded against a relationship '
+                    . 'this organisation has stood behind.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $membership->update([
             'consent_scope' => $request->input('scope'),
             'consent_granted_at' => $request->filled('granted_at')

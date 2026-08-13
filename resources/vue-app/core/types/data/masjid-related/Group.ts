@@ -88,11 +88,28 @@ export type GroupMembership = {
      */
     consent_granted_at: string | null;
     consent_scope: ConsentScope | null;
+    /**
+     * ON WHOSE AUTHORITY THIS ROW EXISTS — mirrors `GroupMembership::PROVENANCES`.
+     *
+     * `confirmed` means a staff member stands behind it and it grants what a
+     * roster row has always granted. `self_asserted` means a public registration
+     * form claimed it, with no session and no proof of control of any address: it
+     * lists the person and opens nothing until the office confirms it. Read
+     * DEFENSIVELY here as everywhere — anything that is not exactly `confirmed`
+     * is a pending claim, so a value this build does not know about renders as
+     * unconfirmed rather than as a grant.
+     */
+    provenance: string;
+    confirmed_at: string | null;
+    confirmed_by_user_id: number | null;
+    source_registration_id: number | null;
     created_at: string;
     updated_at: string;
     contact: GroupContact | null;
     /** The ward this guardian edge points at; null on every participant row. */
     guardianOf: GroupContact | null;
+    /** The staff member who confirmed it, when the endpoint eager-loads them. */
+    confirmedBy?: { id: number; name: string } | null;
 };
 
 /** Shape submitted when adding someone to a roster. */

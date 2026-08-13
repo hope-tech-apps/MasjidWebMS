@@ -19,7 +19,46 @@
             <button class="btn btn-sm btn-outline-danger ms-3" @click="reload">Retry</button>
         </div>
 
-        <div v-else-if="memberships.length === 0" class="text-center py-5 text-muted">
+        <!--
+            UNCONFIRMED CLAIMS — the office's whole view of provenance.
+
+            A row a public registration form wrote says a person is on this
+            roster; it does NOT say anybody here agreed they are. Until a staff
+            member confirms it, a guardian entry among these opens none of that
+            child's records, and the parent cannot be given a portal sign-in. The
+            banner exists because the alternative is an office reading a normal
+            roster and never learning that a family's access is being withheld.
+
+            ONE BUTTON FOR THE WHOLE GROUP is the point: a school with 200 camp
+            signups must not face 200 dialogs, and the group is the smallest
+            scope in which the person clicking can actually see what they are
+            vouching for.
+        -->
+        <template v-else>
+        <div v-if="pendingClaims > 0" class="alert alert-warning d-flex align-items-start gap-3">
+            <i class="bi bi-patch-question fs-4 mt-1"></i>
+            <div class="flex-grow-1">
+                <div class="fw-semibold mb-1">
+                    {{ pendingClaims }} {{ pendingClaims === 1 ? 'entry' : 'entries' }} on this roster came from a
+                    registration form and {{ pendingClaims === 1 ? 'has' : 'have' }} not been confirmed
+                </div>
+                <div class="small mb-0">
+                    Whoever filled the form in was not signed in, so these are claims rather than records.
+                    They are listed and counted here, and a teacher can already work from them — but an
+                    unconfirmed <strong>guardian</strong> entry opens none of that child's behaviour, ḥifẓ or
+                    message history, and the parent cannot be given a sign-in until somebody here stands
+                    behind it. Check the names below, then confirm — or remove anything that should not be
+                    on this list.
+                </div>
+            </div>
+            <button class="btn btn-sm btn-warning text-nowrap" :disabled="confirming" @click="confirmAllClaims">
+                <span v-if="confirming" class="spinner-border spinner-border-sm me-1"></span>
+                <i v-else class="bi bi-patch-check me-1"></i>
+                Confirm all {{ pendingClaims }}
+            </button>
+        </div>
+
+        <div v-if="memberships.length === 0" class="text-center py-5 text-muted">
             <i class="bi bi-person-x fs-1 d-block mb-3"></i>
             <p class="mb-0">Nobody is on this roster yet</p>
         </div>
@@ -38,7 +77,12 @@
                     </thead>
                     <tbody>
                         <tr v-for="membership in participants" :key="membership.id">
-                            <td class="fw-semibold">{{ fullName(membership.contact) }}</td>
+                            <td class="fw-semibold">
+                                {{ fullName(membership.contact) }}
+                                <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
+                                    Unconfirmed
+                                </span>
+                            </td>
                             <td>
                                 <span
                                     class="badge text-capitalize"
@@ -49,6 +93,15 @@
                             </td>
                             <td class="text-muted small">{{ formatDate(membership.joined_at) }}</td>
                             <td class="text-end">
+                                <button
+                                    v-if="isPending(membership)"
+                                    class="btn btn-sm btn-outline-warning me-1"
+                                    :disabled="confirming"
+                                    title="Confirm this entry"
+                                    @click="confirmOne(membership)"
+                                >
+                                    <i class="bi bi-patch-check"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmRemove(membership)" title="Remove">
                                     <i class="bi bi-person-dash"></i>
                                 </button>
@@ -85,7 +138,20 @@
                     </thead>
                     <tbody>
                         <tr v-for="membership in guardians" :key="membership.id">
-                            <td class="fw-semibold">{{ fullName(membership.contact) }}</td>
+                            <td class="fw-semibold">
+                                {{ fullName(membership.contact) }}
+                                <!--
+                                    THE ROW THIS BADGE MATTERS MOST ON. An
+                                    unconfirmed guardian edge is a claim somebody
+                                    typed into a public form about a child, so it
+                                    opens nothing — and the office has to be able
+                                    to see which of these are records and which
+                                    are claims before deciding.
+                                -->
+                                <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
+                                    Unconfirmed claim
+                                </span>
+                            </td>
                             <td>
                                 <i class="bi bi-arrow-return-right text-muted me-1"></i>
                                 {{ fullName(membership.guardianOf) }}
@@ -106,6 +172,15 @@
                                 <span v-else class="badge bg-secondary-subtle text-secondary">Not given</span>
                             </td>
                             <td class="text-end">
+                                <button
+                                    v-if="isPending(membership)"
+                                    class="btn btn-sm btn-outline-warning me-1"
+                                    :disabled="confirming"
+                                    title="Confirm this guardian"
+                                    @click="confirmOne(membership)"
+                                >
+                                    <i class="bi bi-patch-check"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmRemove(membership)" title="Remove">
                                     <i class="bi bi-person-dash"></i>
                                 </button>
@@ -118,6 +193,7 @@
                 </table>
             </div>
         </div>
+        </template>
 
         <!-- Add to roster -->
         <Teleport to="body">
@@ -238,6 +314,7 @@ const masjidStore = useMasjidStore();
 // State
 const showAddModal = ref(false);
 const adding = ref(false);
+const confirming = ref(false);
 const contactSearch = ref('');
 const contactResults = ref<Contact[]>([]);
 /** Kept apart from `addForm` so switching away from `guardian` cannot leave a stale ward behind. */
@@ -268,9 +345,21 @@ const canAdd = computed<boolean>(() => {
     return addForm.value.role !== 'guardian' || guardianOfContactId.value !== null;
 });
 
+/** Served by the API, never recounted here — see groupsStore.fetchMemberships. */
+const pendingClaims = computed<number>(() => groupsStore.pendingClaims);
+
 // Methods
 const fullName = (contact: GroupContact | null): string =>
     contact ? `${contact.first_name} ${contact.last_name}`.trim() : '—';
+
+/**
+ * Has anybody at the organisation stood behind this row?
+ *
+ * Read defensively — ANYTHING that is not exactly `confirmed` is a pending
+ * claim, so a value this build does not know about renders as unconfirmed
+ * rather than as a grant. Same direction the server reads it in.
+ */
+const isPending = (membership: GroupMembership): boolean => membership.provenance !== 'confirmed';
 
 const formatDate = (iso: string | null): string => {
     if (!iso) return '—';
@@ -323,6 +412,64 @@ const submitAdd = async () => {
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to add to the roster.') });
     } finally {
         adding.value = false;
+    }
+};
+
+/**
+ * Stand behind every unconfirmed row ON THIS SCREEN.
+ *
+ * ASKED FIRST, and the question names what is being granted rather than how
+ * many rows are changing: this is the act that opens a child's behaviour, ḥifẓ
+ * and message history to the adults these rows name, and "Confirm 200 entries?"
+ * reads like a housekeeping chore.
+ *
+ * SENDS THE IDS IT DREW. This used to post an empty body, which the server read
+ * as "every pending claim at the moment the request lands" — a different set
+ * from the one rendered here. Measured: a registration arriving while this
+ * dialog was open was confirmed by a click on the eight rows above it, and that
+ * ninth row was a stranger's claim over a named child. The count in the prompt
+ * and the rows in the request now come from the same array.
+ */
+const confirmAllClaims = async () => {
+    const shown = props.memberships.filter(isPending).map((m) => m.id);
+
+    if (shown.length === 0) return;
+
+    const result = await Swal.fire({
+        title: `Confirm ${shown.length} roster ${shown.length === 1 ? 'entry' : 'entries'}?`,
+        html: 'You are recording that this organisation stands behind these entries. '
+            + 'Every <strong>guardian</strong> among them will then be able to read that '
+            + 'child\'s behaviour, ḥifẓ and message history through the parent portal, and can '
+            + 'be given a sign-in. Remove anything that should not be on this list first.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, confirm them'
+    });
+
+    if (!result.isConfirmed) return;
+
+    await runConfirm(shown);
+};
+
+const confirmOne = async (membership: GroupMembership) => {
+    await runConfirm([membership.id]);
+};
+
+const runConfirm = async (ids: number[]) => {
+    confirming.value = true;
+    try {
+        const confirmed = await groupsStore.confirmClaims(props.groupId, ids);
+        emit('changed');
+        Swal.fire({
+            icon: 'success',
+            title: confirmed === 1 ? '1 entry confirmed' : `${confirmed} entries confirmed`,
+            timer: 1800,
+            showConfirmButton: false
+        });
+    } catch (error) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to confirm the roster entries.') });
+    } finally {
+        confirming.value = false;
     }
 };
 

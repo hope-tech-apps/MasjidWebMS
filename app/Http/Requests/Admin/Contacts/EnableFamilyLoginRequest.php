@@ -43,6 +43,18 @@ class EnableFamilyLoginRequest extends BaseFormRequest
             // beside the normalisation that makes it hold — one door, not a
             // validator and a service that agree today.
             'login_email' => ['required', 'string', 'email', 'max:255'],
+
+            // The operator has read the refusal and confirmed taking the address
+            // off a member whose portal access has already ended. NOT a force
+            // flag: a holder who can sign in right now still refuses with this
+            // set, because two live logins on one address lock both parents out
+            // silently and no confirmation box may buy that. See
+            // FamilyAccessService::resolveAddressConflict().
+            //
+            // Absent by default and meaningless on its own — sending it when
+            // there is no conflict changes nothing — so it can never be the
+            // reason something happened, only the reason a refusal was lifted.
+            'reassign_address' => ['sometimes', 'boolean'],
         ];
     }
 

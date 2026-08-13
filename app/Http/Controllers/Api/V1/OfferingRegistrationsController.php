@@ -7,6 +7,8 @@ use App\Http\Requests\Api\V1\Registrations\QuoteRegistrationRequest;
 use App\Http\Requests\Api\V1\Registrations\RegisterForOfferingRequest;
 use App\Models\Contact;
 use App\Models\FeePlan;
+use App\Models\GroupMembership;
+use App\Models\Masjid;
 use App\Models\Offering;
 use App\Models\Registration;
 use App\Services\Registrations\RegistrationException;
@@ -14,8 +16,10 @@ use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
 use App\Support\Errors;
 use App\Support\OfferingPublicPayload;
+use App\Support\OfferingRegistrationState;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -25,8 +29,9 @@ use Illuminate\Validation\ValidationException;
  * These are unauthenticated writes, so they follow the public form-submission
  * idiom (FormSubmissionsController) defensively:
  *
- *  - The organization comes from the `masjid-id` header, MUST STILL EXIST, and
- *    the offering must belong to it. Nothing here leans on the BelongsToMasjid
+ *  - The organization comes from the `masjid-id` header, MUST STILL EXIST, MUST
+ *    HAVE ITS CRM SWITCHED ON, and the offering must belong to it. Nothing here
+ *    leans on the BelongsToMasjid
  *    global scope: /api/v1 never runs the tenant middleware, so an UNBOUND scope
  *    adds no filter and a caller could otherwise reach any tenant's rows. Every
  *    lookup filters masjid_id explicitly, and the uuid lookup goes through
@@ -44,8 +49,19 @@ use Illuminate\Validation\ValidationException;
  *    seat instead — a single guard in the money layer doing work that belonged
  *    at this boundary. Every method here now goes through resolveTenant()
  *    (App\Support\PublicTenant), which is also what the public READ does.
+ *
+ *    The CRM half was missing until 2026-08-12 as well, with the same shape and
+ *    a worse consequence: `masjids.crm_enabled` gates the offering, fee-plan and
+ *    registration ADMIN routes, and NO endpoint here consulted it — so with the
+ *    flag off this surface went on selling ($150 quotes, live Checkout Sessions,
+ *    Contact and Registration rows) for an organisation whose own staff got 403
+ *    from every screen that could have shown them. Why the gate belongs here
+ *    rather than being lifted off the admin routes is argued in full on
+ *    PublicTenant::crmEnabled().
  *  - The same 404 whether an offering does not exist, belongs to another
- *    masjid, or is inactive — no probing for which offerings live where.
+ *    masjid, is inactive, belongs to an offboarded organisation, or belongs to
+ *    one whose CRM is switched off — no probing for which offerings live where,
+ *    and no publishing an organisation's account standing to strangers.
  *  - Intake answers are validated by the offering's STORED schema inside
  *    RegistrationService, never from the payload's shape, and undeclared keys
  *    are dropped before storage.
@@ -115,8 +131,122 @@ class OfferingRegistrationsController extends Controller
     /**
      * POST /api/v1/offerings/{slug}/quote
      *
-     * A server-priced preview. WRITES NOTHING — no registration, no form
-     * response, no seat.
+     * A server-priced preview OF A REGISTRATION THIS OFFERING WOULD ACCEPT.
+     * WRITES NOTHING — no registration, no form response, no seat.
+     *
+     * ## It used to price anything with an id
+     *
+     * Until 2026-08-12 this method resolved the offering through
+     * `findOffering()` (`is_active` only) and went straight to the price,
+     * consulting neither the window, nor the intake form, nor capacity, nor the
+     * `registration_state` the page had just rendered from. Measured:
+     *
+     *   window closed a month ago   page `closed`             quote 200,
+     *                                                         amount_due_minor 15000,
+     *                                                         requires_payment true
+     *   intake form soft-deleted    page `closed/no_intake_form`
+     *                                                         quote 200 for $150,
+     *                                                         register 422
+     *
+     * A renderer that prices before it reads state quotes a parent $150 for a
+     * program their child cannot join, and the refusal arrives after the form is
+     * filled in — if it arrives at all.
+     *
+     * ## The verdict comes from the decider, not from a third opinion
+     *
+     * `App\Support\OfferingRegistrationState::for()` is the SAME call
+     * `OfferingPublicPayload` renders `registration_state` from, so the page and
+     * the quote cannot disagree — that class exists because this question had
+     * four disagreeing implementations once already.
+     *
+     * Three deliberate details:
+     *
+     *  - `waitlist` is NOT a refusal. `register()` QUEUES a sign-up for a full
+     *    offering rather than turning it away, so a family joining a waitlist is
+     *    entitled to know what the place will cost.
+     *  - The fee plan is resolved FIRST, so an unrecognised `fee_plan_id` keeps
+     *    its own 404 ("This fee plan is not available.") — which is exactly what
+     *    the write path answers for the `no_fee_plan` clause, and what
+     *    OfferingRegistrationStateTest pins as the parent-facing half of that
+     *    state. The state check then covers the clauses no plan lookup can see.
+     *  - A PREVIEW IS NEVER STRICTER THAN THE WRITE IT PREVIEWS. For a quote
+     *    that names no registration, the write it previews is `register()`, and
+     *    both are decided by the same two calls in the same order:
+     *    `findFeePlan()` (the per-plan predicate) and then the offering-level
+     *    verdict. Every clause of that verdict which is not a plan fact — the
+     *    window, the intake form — is one `register()` refuses on too.
+     *
+     * ## A quote that names a REGISTRATION previews `checkout()`, not `register()`
+     *
+     * That sentence went false on 2026-08-13 and this branch is what makes it
+     * true again. `checkout()` deliberately re-checks the clauses about the
+     * PROGRAM and NONE of the clauses about a NEW registration: not which plans
+     * are purchasable (this row already chose its plan and is charged from its
+     * own `adjusted_total_minor`), and not the opens_at/closes_at window (that
+     * is the deadline for SIGNING UP, and she signed up before it). Meanwhile
+     * this method resolved the plan through `findFeePlan()` — which gates on
+     * `isPurchasable()`, including `is_active` — BEFORE it ever looked at the
+     * uuid, and then applied the offering-level verdict on top. Measured on one
+     * fixture at one instant:
+     *
+     *   CHECKOUT  registration held on the deactivated plan -> 200, charged 15000
+     *   QUOTE     same registration, its OWN fee_plan_id    -> 404 "This fee plan
+     *                                                          is not available."
+     *   QUOTE     same registration, the NEW plan's id      -> 200, fee_plan_id=2,
+     *                                                          kind=recurring,
+     *                                                          amount_due=15000
+     *
+     * So the only plan id the quote would accept for an in-flight registration
+     * was one that is NOT its plan, and naming it reported that plan's identity
+     * beside this registration's snapshot — `recurring` for a one-time $150
+     * sign-up. Before round two removed `is_active` from the checkout side, both
+     * surfaces refused and therefore agreed; removing it from one of them left
+     * the preview strictly stricter than the write.
+     *
+     * A registration therefore answers from ITSELF: its own plan (resolved by
+     * OWNERSHIP, because purchasability is a question about new intake), its own
+     * snapshot, and no offering-level verdict at all. That is looser than
+     * `checkout()`, which is the only safe direction for a preview — it writes
+     * nothing, and every refusal still lands at the door where money moves. The
+     * uuid is masjid-filtered by construction, so this discloses one number to
+     * somebody who already holds the handle to that registration.
+     *
+     * A client may still send a `fee_plan_id` alongside; the registration's own
+     * plan wins. Pricing is server-side, always — a client can name a plan, it
+     * can never name a price, and it can never restate which plan a registration
+     * is on.
+     *
+     * ## "Looser than checkout" is only safe while it stays a PRICE, not a PROMISE
+     *
+     * The sentence above — a preview may be looser, never stricter — was written
+     * about what this endpoint REFUSES, and it is still right about that. It was
+     * then read as licence for what this endpoint ASSERTS, and that is where it
+     * broke on 2026-08-13. In the same pass that removed the offering-level
+     * verdict from this branch, `checkout()` gained two program-level refusals
+     * (the intake form must still resolve; the organisation must still be able
+     * to collect). Neither pass looked at the other, and in the two cells their
+     * intersection creates, a live hold was quoted `amount_due_minor: 15000,
+     * requires_payment: true` against a checkout that answered 422.
+     *
+     * Being looser cost nothing while the extra 200s were only ever a PRICE for
+     * a program somebody had already joined. It costs a family her seat the
+     * moment one of them is also a promise that a payment can be completed. So
+     * the refusals stay off this branch — she is still told what her place cost,
+     * after the window shuts and after her plan is superseded, which is the
+     * whole reason the verdict came off — and the promise, `requires_payment`,
+     * is answered by asking `checkout()` itself. See the
+     * `canOpenCheckout()` call below.
+     *
+     *    This paragraph used to say `for()` deliberately did NOT ask whether the
+     *    organisation could collect, because `register()` did not refuse on it.
+     *    Both halves were the defect rather than the reasoning: the page DID ask
+     *    (through `decide()`), so the page said `closed / org_cannot_collect`
+     *    while this method answered 200 with `amount_due_minor: 15000` and
+     *    `register` answered 200 "Your place is held while you complete
+     *    payment." with `checkout_url: null`. The question is now asked once,
+     *    per PLAN, inside `isPurchasable()` — so it reaches the page, this
+     *    quote and `register` through the same door, and the free tier of an
+     *    un-onboarded organisation goes on being quoted and registered.
      */
     public function quote(QuoteRegistrationRequest $request, string $slug)
     {
@@ -133,28 +263,146 @@ class OfferingRegistrationsController extends Controller
                 return response()->api(404, 'This offering is not available.', null);
             }
 
-            $feePlan = $this->findFeePlan($masjidId, $offering, (int) $request->input('fee_plan_id'));
+            // Resolved FIRST, because a registration changes which question is
+            // being asked. Masjid-filtered by construction, and required to be
+            // OF THIS OFFERING — another tenant's uuid, or one belonging to a
+            // different program, simply does not resolve and the quote falls
+            // through to the list-price branch below.
+            $registration = $this->quotedRegistration($masjidId, $offering, $request->input('registration_uuid'));
 
-            if (! $feePlan) {
-                return response()->api(404, 'This fee plan is not available.', null);
-            }
+            if ($registration) {
+                // Its OWN plan, by ownership only. Purchasability gates NEW
+                // intake; re-deciding it here would be re-pricing a row that is
+                // charged from its snapshot and already holds its seat.
+                $feePlan = $this->ownedFeePlan($masjidId, $offering, (int) $registration->fee_plan_id);
 
-            $listTotal = $this->registrations->listTotalFor($feePlan);
-            $adjustedTotal = $listTotal;
-
-            // Quoting an EXISTING registration reports its snapshot, which is
-            // where admin-granted aid actually lives. The lookup is
-            // masjid-filtered, so another tenant's uuid simply does not resolve
-            // and the quote falls back to list price.
-            $uuid = $request->input('registration_uuid');
-
-            if (is_string($uuid) && $uuid !== '') {
-                $registration = Registration::findByUuidForMasjid($uuid, $masjidId);
-
-                if ($registration && (int) $registration->offering_id === (int) $offering->id) {
-                    $listTotal = (int) $registration->list_total_minor;
-                    $adjustedTotal = (int) $registration->adjusted_total_minor;
+                if (! $feePlan) {
+                    // The FK is RESTRICT and fee plans do not soft-delete, so
+                    // this is unreachable through the schema; answered as a
+                    // plain miss rather than as an internal invariant.
+                    return response()->api(404, 'This fee plan is not available.', null);
                 }
+
+                $listTotal = (int) $registration->list_total_minor;
+                $adjustedTotal = (int) $registration->adjusted_total_minor;
+
+                // WHETHER STRIPE IS STILL EXPECTED, read off the registration's
+                // own money state rather than re-derived from its total.
+                //
+                // For a preview of a NEW registration the two are the same
+                // question, and `adjusted > 0` is the right answer. For an
+                // EXISTING one they come apart, in both directions: a settled
+                // registration still carries its `adjusted_total_minor` (that is
+                // what the place cost, and the snapshot is never restated), and
+                // a near-total waiver on an installment plan leaves a total
+                // above zero whose per-charge rounds to nothing — the free-path
+                // carve-out, `payment_status = none`, nothing to collect ever.
+                // Deriving from the total told a parent she still owed $150 she
+                // had already paid, and 5¢ nobody would ever ask her for.
+                $requiresPayment = in_array($registration->payment_status, [
+                    Registration::PAYMENT_AWAITING,
+                    Registration::PAYMENT_ACTIVE,
+                    Registration::PAYMENT_PAST_DUE,
+                ], true);
+
+                // ...AND, FOR A SEAT STILL HOLDING, WHETHER THE DOOR SHE WOULD
+                // PAY THROUGH IS ACTUALLY OPEN.
+                //
+                // A PENDING registration has exactly one way to pay: POST
+                // /registrations/{uuid}/checkout. So on that row, and only that
+                // row, `requires_payment: true` is a direct promise that the
+                // checkout endpoint will hand back a link — and the removal of
+                // the offering-level verdict from this branch (correct: see the
+                // method docblock) met two program-level refusals ADDED to
+                // `checkout()` in the same pass, in two cells nobody checked
+                // against each other. Measured, same fixture, same instant, a
+                // live 30-minute hold on a $150 seat:
+                //
+                //   intake form soft-deleted     page  closed / no_intake_form
+                //                                quote 200, 15000, TRUE
+                //                                checkout 422 offeringClosed
+                //   stripe_charges_enabled false page  closed / org_cannot_collect
+                //                                quote 200, 15000, TRUE
+                //                                checkout 422 orgCannotCollect
+                //
+                // She opens the payment link, the page renders "Amount due:
+                // $150.00 — Pay now", she clicks, she gets a 422, and her seat
+                // sits held until the reaper takes it.
+                //
+                // Asked by RUNNING checkout's own refusal ladder
+                // (`RegistrationCheckoutService::canOpenCheckout`), never by
+                // restating its clauses here — a second copy of that ladder is
+                // the defect, not the fix, and it would drift on the next round
+                // exactly as this pair did. Nothing is written: the predicate is
+                // the preflight half of `checkout()`, which persists nothing.
+                //
+                // Deliberately NOT applied to a non-pending row. `checkout()`
+                // refuses those with `notCheckoutable`, but for a CONFIRMED
+                // subscription (`active`, `past_due`) Stripe genuinely is still
+                // expected — it bills on its own clock and this endpoint is not
+                // the door — so mirroring the refusal there would report "no
+                // payment expected" to a family whose next invoice is real.
+                if ($requiresPayment && $registration->status === Registration::STATUS_PENDING) {
+                    $requiresPayment = $this->checkout->canOpenCheckout($registration);
+                }
+            } else {
+                // A UUID WAS NAMED AND DID NOT RESOLVE, and nothing else on the
+                // request names a price. `fee_plan_id` became
+                // `required_without:registration_uuid` in the same pass that
+                // taught this endpoint about registrations, so this request now
+                // validates and falls through to the list-price branch with
+                // `(int) null = 0` — a plan id that cannot exist. Measured:
+                //
+                //   POST .../quote {"registration_uuid":"not-a-real-uuid"}
+                //     -> 404 "This fee plan is not available."
+                //
+                // A parent whose payment link is stale, mistyped, or for a
+                // different program is told something about fee plans, a noun
+                // she was never shown and cannot act on. The sibling endpoint
+                // already has the right words for this exact miss, so they are
+                // reused verbatim (`checkout`: "This registration is not
+                // available.").
+                //
+                // NO NEW DISCRIMINATION. Every non-resolving uuid — another
+                // tenant's, another program's, a typo, one that never existed —
+                // gets this one answer, exactly as they all got the fee-plan one
+                // before; a resolving uuid already answered 200 and still does.
+                // The words changed, not what a caller can learn.
+                //
+                // A uuid alongside an explicit `fee_plan_id` deliberately still
+                // falls through and prices that plan's list price: there IS
+                // something to answer then, which is what a page showing "here
+                // is what it costs" asks for.
+                if (filled($request->input('registration_uuid'))
+                    && blank($request->input('fee_plan_id'))) {
+                    return response()->api(404, 'This registration is not available.', null);
+                }
+
+                $feePlan = $this->findFeePlan($masjidId, $offering, (int) $request->input('fee_plan_id'));
+
+                if (! $feePlan) {
+                    return response()->api(404, 'This fee plan is not available.', null);
+                }
+
+                // The acceptance check the price used to skip. One decider, one
+                // answer: whatever the page reports as `closed`, this refuses in
+                // the write path's own words — and it refuses BEFORE quoting a
+                // number, because a price for a program nobody can join is the
+                // misleading half of the pair.
+                //
+                // NOT applied to the branch above: every clause of this verdict
+                // is about accepting a NEW registration, and `checkout()` — the
+                // write an existing registration's quote previews — re-checks
+                // none of them that are not also properties of the program.
+                if (OfferingRegistrationState::for($offering)['state'] === OfferingRegistrationState::STATE_CLOSED) {
+                    throw RegistrationException::offeringClosed();
+                }
+
+                $listTotal = $this->registrations->listTotalFor($feePlan);
+                $adjustedTotal = $listTotal;
+                // No registration exists yet, so "is there a Stripe leg" IS
+                // "is the total above zero" — the free-path carve-out.
+                $requiresPayment = $adjustedTotal > 0;
             }
 
             return response()->api(200, 'Quote generated.', [
@@ -168,11 +416,33 @@ class OfferingRegistrationsController extends Controller
                 'currency' => $feePlan->currency,
                 // Integer minor units throughout — never a float.
                 'list_total_minor' => $listTotal,
+                // WHAT THE PLACE COST: the plan's list price for a preview, the
+                // registration's own snapshot for an existing row. Never
+                // restated — a settled registration still cost what it cost, and
+                // this is the field that says so.
                 'adjusted_total_minor' => $adjustedTotal,
-                'amount_due_minor' => $adjustedTotal,
-                // 0 means the free-path carve-out: confirmed in-request, no
-                // Stripe leg, never a $0 Checkout Session.
-                'requires_payment' => $adjustedTotal > 0,
+                // WHAT IS OWED, which is a different question and now gets a
+                // different answer. This was a second copy of
+                // `adjusted_total_minor`, under a name that says otherwise, and
+                // it was measured lying in three shapes at once: a settled
+                // registration quoted `amount_due_minor 15000` on money already
+                // paid, a cancelled one the same on a seat that no longer
+                // exists, and an aid-floored installment quoted
+                // `amount_due_minor: 5` — the 5¢ the docblock above already
+                // calls out as a number nobody would ever ask her for, still on
+                // the wire under the field named *amount due*.
+                //
+                // `requires_payment` was made to carry the whole truth and the
+                // amount was left carrying none of it, so every renderer that
+                // printed the amount without first switching on the boolean told
+                // a paid family she still owed $150. Costing information is not
+                // lost by fixing this: it is `adjusted_total_minor`, one line
+                // up, which is where it belonged all along.
+                'amount_due_minor' => $requiresPayment ? $adjustedTotal : 0,
+                // Whether Stripe is still expected. False is the free-path
+                // carve-out (confirmed in-request, never a $0 Session) and,
+                // for an existing registration, also a settled or cancelled one.
+                'requires_payment' => $requiresPayment,
                 // Codes are validated server-side; nothing a client sends can
                 // reduce a price by itself. Aid is granted by an admin.
                 'code_applied' => false,
@@ -225,11 +495,20 @@ class OfferingRegistrationsController extends Controller
             // Contacts-first (.claude/rules/groups.md): people are resolved to
             // Contacts BEFORE the service runs — RegistrationService creates no
             // Contact rows of its own.
-            $payer = $this->resolveContact($masjidId, [
+            // TWO RESOLVERS, NOT ONE, AND THEY ASK DIFFERENT QUESTIONS. A payer
+            // asserts their OWN address, so they are found by it. A registrant is
+            // a claim ABOUT somebody, and a child's identity is not an address —
+            // most children have none and the siblings who do share the household
+            // mailbox — so a registrant is found by NAME WITHIN THIS PAYER'S
+            // HOUSEHOLD. See resolveRegistrantContact() for the whole argument.
+            $submittedPayerEmail = $this->normaliseEmail($request->input('payer.email'));
+            $submittedPayerName = $this->normaliseName($request->input('payer.name'));
+
+            $payer = $this->resolvePayerContact($masjidId, [
                 'name' => $request->input('payer.name'),
                 'email' => $request->input('payer.email'),
                 'phone' => $request->input('payer.phone'),
-            ], 'Registrant');
+            ]);
 
             $registrants = [];
 
@@ -238,7 +517,13 @@ class OfferingRegistrationsController extends Controller
                     continue;
                 }
 
-                $registrants[] = $this->resolveContact($masjidId, $person, 'Registrant');
+                $registrants[] = $this->resolveRegistrantContact(
+                    $masjidId,
+                    $person,
+                    $payer,
+                    $submittedPayerName,
+                    $submittedPayerEmail,
+                );
             }
 
             $registration = $this->registrations->register(
@@ -335,7 +620,8 @@ class OfferingRegistrationsController extends Controller
 
     /**
      * The organization this request is for — named by the header AND verified to
-     * still exist.
+     * still exist AND to have the CRM this whole feature lives inside switched
+     * on.
      *
      * Returns `[$masjidId, null]` on success and `[0, $response]` on refusal;
      * exactly one of the two is meaningful. Returned rather than thrown because
@@ -349,13 +635,17 @@ class OfferingRegistrationsController extends Controller
      *    empty one and `masjid-id: 0` all 0, and the falsy-bypass spelling is
      *    exactly how the 2026-08-11 SearchableTrait leak served 14 rows across
      *    two tenants — so it is refused, never answered.
-     *  - 404 when the organisation named is not a live one, in the SAME words as
-     *    a missing offering. A caller cannot tell "no such organisation" from
-     *    "no such offering", so this is not a way to enumerate tenant ids.
+     *  - 404 when the organisation named is not a live one WITH ITS CRM ON, in
+     *    the SAME words as a missing offering. A caller cannot tell "no such
+     *    organisation" from "no such offering" from "that organisation has no
+     *    registration feature", so this is neither a way to enumerate tenant ids
+     *    nor a way to read an organisation's account standing.
      *
      * The existence check is the whole point: hand-filtering `masjid_id` proves
      * a row BELONGS to the id, never that the id still names anybody
-     * (App\Support\PublicTenant).
+     * (App\Support\PublicTenant). `crmEnabled()` asks that and one thing more —
+     * whether the organisation actually HAS this feature — and it subsumes the
+     * existence check, so this is still one query and one refusal.
      *
      * @return array{0:int, 1:mixed}
      */
@@ -367,7 +657,7 @@ class OfferingRegistrationsController extends Controller
             return [0, response()->api(400, 'A masjid must be specified.', null)];
         }
 
-        if (! PublicTenant::exists($masjidId)) {
+        if (! PublicTenant::crmEnabled($masjidId)) {
             return [0, response()->api(404, $missingMessage, null)];
         }
 
@@ -389,8 +679,72 @@ class OfferingRegistrationsController extends Controller
             ->first();
     }
 
-    /** An ACTIVE plan of THIS offering and tenant, or null. */
+    /**
+     * A PURCHASABLE plan belonging to THIS offering and tenant, or null.
+     *
+     * Ownership is a query (masjid + offering + key, explicit because /api/v1
+     * runs unbound); purchasability is `OfferingRegistrationState::isPurchasable`
+     * and NOTHING else — the identical call `OfferingPublicPayload::feePlans()`
+     * publishes on and the offering-level verdict is aggregated from. Restating
+     * its clauses as `where` conditions here is what produced the whole class of
+     * defect this method keeps being fixed for: the SQL and the predicate drift
+     * a clause apart and the page and the write path answer differently.
+     *
+     * `whereIn('kind', FeePlan::KINDS)` was the missing clause until 2026-08-12,
+     * and OfferingRegistrationState's docblock asserted it was here while it was
+     * not. Measured with a plan whose `kind` is `sliding_scale`: the page
+     * withheld it (`fee_plans: []`, `registration_state: closed / no_fee_plan`)
+     * but `POST /quote` naming its id got as far as
+     * `RegistrationService::listTotalFor()` and answered 422 "Unrecognized fee
+     * plan kind 'sliding_scale' — money kinds never degrade." — an internal
+     * invariant message, written for a developer reading a stack trace,
+     * delivered to an anonymous caller, and a positive confirmation that a plan
+     * row with that id and that kind exists. A NONEXISTENT id, meanwhile,
+     * correctly got 404 "This fee plan is not available."
+     *
+     * Two more clauses joined the predicate on the same evidence, and both close
+     * the same hole from the other end — a seat taken for a plan that could
+     * never be charged:
+     *
+     *   billing_interval NULL / 'fortnight'   page open, plan published at 2500,
+     *   installment_count 0                   quote 200, register 200 "your
+     *                                         place is held", checkout 422, seat 1
+     *
+     *   org with stripe_account_id = null     page closed/org_cannot_collect,
+     *                                         quote 200 for 15000, register 200
+     *                                         with checkout_url null, checkout 422
+     *
+     * Withholding a plan and refusing it are one fact: everything the page does
+     * not publish is the SAME 404 as a plan that never existed, so a public
+     * caller cannot tell an unpublished plan from a missing one, and the "money
+     * kinds never degrade" invariant fails where it belongs — loudly, in the
+     * logs, on the path an admin created the bad row from — instead of in a
+     * family's browser.
+     */
     private function findFeePlan(int $masjidId, Offering $offering, int $feePlanId): ?FeePlan
+    {
+        $plan = $this->ownedFeePlan($masjidId, $offering, $feePlanId);
+
+        if (! $plan) {
+            return null;
+        }
+
+        return OfferingRegistrationState::isPurchasable($plan, $this->organisationCanCollect($masjidId))
+            ? $plan
+            : null;
+    }
+
+    /**
+     * The OWNERSHIP half of the lookup above, on its own: a plan belonging to
+     * this tenant and this offering, whether or not it is still on sale.
+     *
+     * Used only where the plan is already the answer rather than a choice —
+     * quoting a registration that is HELD on it. `is_active` means "not offered
+     * to NEW registrants" (deactivate-and-replace is the only way to change a
+     * price), so asking it about a plan somebody already registered on is the
+     * question that made the preview stricter than the write.
+     */
+    private function ownedFeePlan(int $masjidId, Offering $offering, int $feePlanId): ?FeePlan
     {
         if ($feePlanId <= 0) {
             return null;
@@ -400,40 +754,352 @@ class OfferingRegistrationsController extends Controller
             ->where('masjid_id', $masjidId)
             ->where('offering_id', $offering->id)
             ->whereKey($feePlanId)
-            ->where('is_active', true)
             ->first();
     }
 
     /**
-     * Find-or-create the Contact for one person on this registration.
+     * The registration a quote is ABOUT, or null when it is a list-price
+     * preview.
      *
-     * Keyed on (masjid, email) when an email is given, so a family registering
-     * again attaches to the people already in the CRM instead of duplicating
-     * them. A registrant WITHOUT an email (a child on a guardian's form) gets a
-     * fresh Contact — there is no safe key to dedupe a bare name on, and
-     * merging is an admin action.
+     * `Registration::findByUuidForMasjid` is masjid-filtered by construction
+     * (.claude/rules/registration-billing-data.md — never resolve a registration
+     * from a client uuid alone, because the tenant scope adds no filter when
+     * unbound), and the offering is re-asserted on top: a uuid from another
+     * program of the same organisation prices that program's snapshot onto this
+     * page otherwise.
+     */
+    private function quotedRegistration(int $masjidId, Offering $offering, $uuid): ?Registration
+    {
+        if (! is_string($uuid) || $uuid === '') {
+            return null;
+        }
+
+        $registration = Registration::findByUuidForMasjid($uuid, $masjidId);
+
+        return $registration && (int) $registration->offering_id === (int) $offering->id
+            ? $registration
+            : null;
+    }
+
+    /**
+     * Whether this organisation has finished Connect onboarding — the one fact
+     * `isPurchasable()` cannot read off a plan row.
      *
-     * Deliberately local rather than reaching for the donor-CRM resolver: this
-     * is not a donation, and its defaults ("Registrant", not "Donor") belong to
-     * this path. masjid_id is set/filtered explicitly — /api/v1 runs unbound.
+     * `resolveTenant()` has already proved the organisation exists and is live,
+     * so a miss here would be a race, not a state: `false` is the safe reading
+     * of it, and it withholds only the CHARGEABLE plans, never the free ones.
+     */
+    private function organisationCanCollect(int $masjidId): bool
+    {
+        return (bool) Masjid::find($masjidId)?->canAcceptDonations();
+    }
+
+    /**
+     * ==========================================================================
+     * WHO THIS ANONYMOUS CALLER IS ALLOWED TO SAY THEY ARE
+     * ==========================================================================
+     *
+     * ONE RESOLVER, find-or-create on `(masjid_id, LOWER(email))`, for the payer
+     * and for every registrant alike — which is what this was before an earlier
+     * round split it, and what it is again.
+     *
+     * ------------------------------------------------------------------------
+     * WHY THE SPLIT IS GONE (it was the right defect on the wrong axis)
+     * ------------------------------------------------------------------------
+     *
+     * The split existed to stop an anonymous POST becoming the guardian of a
+     * child it merely named by email. Measured, no token and no session:
+     *
+     *     POST /api/v1/offerings/grade-5-enrichment/register   masjid-id: 1
+     *       { "payer":       {"name":"Bilal Attacker","email":"bilal@example.test"},
+     *         "registrants": [{"name":"Salma Other","email":"salma.other@school.test"}], … }
+     *     -> 200, and Bilal's own family credential then opened Salma's
+     *        behaviour record, her ḥifẓ and every participant thread naming her.
+     *
+     * That is real, and refusing to MATCH her row does stop that exact request.
+     * It stops nothing else, because the thing being defended is not a row — it
+     * is the ASSERTION "I am this child's guardian", and an assertion made
+     * through a different field is the same assertion. Three doors were found
+     * one at a time: the `registrants` array; the `payer` field, which is the
+     * same writer one field away and was never guarded; and
+     * `RosterMergeService::carry()`, an ordinary staff de-duplication that
+     * re-points the manufactured edge onto the real child. There was no reason
+     * to believe the enumeration was complete.
+     *
+     * The assertion is now recorded as an assertion. A roster row written from
+     * this endpoint carries `provenance = self_asserted`
+     * (`GroupMembership::PROVENANCES`), and a self-asserted row grants NOTHING —
+     * not a feed, not a thread, not an award, not a ḥifẓ record, not eligibility
+     * for a family credential — until a staff member confirms it. So matching a
+     * pre-existing contact is no longer a disclosure decision, and the three
+     * defects the split caused go with it:
+     *
+     *  1. A TEACHER 403'd OUT OF HER OWN CLASSROOM. `GroupAudience` resolves a
+     *     staff caller to a Contact by `LOWER(email)` and requires EXACTLY ONE
+     *     ("ambiguous identity is no identity"). A resolver that always creates
+     *     therefore let ONE anonymous POST naming a teacher's login address fork
+     *     the directory and shut her out of the class she teaches — measured,
+     *     her feed, threads, awards and ḥifẓ all 200 -> 403, permanently, with
+     *     nothing on any screen saying why, while she kept `manage contacts` and
+     *     could still publish into the group she could no longer read.
+     *  2. A RETURNING CHILD BECAME N PEOPLE ON ONE ROSTER. Measured, three
+     *     byte-identical registrations: the payer converged to one row and the
+     *     child forked into three, giving a Grade 5 roster six lines and the
+     *     parent portal the same child listed twice. `.claude/rules/groups.md`
+     *     promises `GroupMembershipsController` refuses duplicate participant
+     *     membership — "that check is the guarantee, not the index" — and a
+     *     writer that creates a new PERSON walks straight past it.
+     *  3. THE MERGE VERB AS THE PRESCRIBED REMEDY. The cost was written down as
+     *     "reconciled by the existing merge verb"; the merge is where a
+     *     manufactured edge got re-pointed onto the REAL child, and the UI has
+     *     no merge affordance on two duplicate children at all.
+     *
+     * ------------------------------------------------------------------------
+     * WHAT AN ADDRESS MAY AND MAY NOT DO HERE
+     * ------------------------------------------------------------------------
+     *
+     * Matching is on the address AND, for anybody who is not the payer, the
+     * name. Two rules, and the second is the one that is easy to lose:
+     *
+     *  - MATCH ON (address, name) -> the existing contact. A returning family
+     *    types the same two things it typed last season and attaches to the same
+     *    record, which is the whole reason the directory does not grow a row per
+     *    season. The PAYER is matched on the address alone, because they are
+     *    asserting their OWN address and a parent who writes "Bilal A." in one
+     *    box and "Bilal Attacker" in another is the same customer.
+     *  - NO MATCH -> a NEW contact, and it NEVER carries an address another
+     *    contact in this tenant already holds. `contacts.email` is routinely a
+     *    HOUSEHOLD mailbox — two siblings signed up on one address are two
+     *    people, and the second one gets a row with a null email, exactly as a
+     *    child with no address of their own already did. This is what makes the
+     *    teacher's address resolve to exactly one contact NO MATTER WHAT NAME the
+     *    caller pairs with it, which is the property (1) above actually needs;
+     *    keying on the name alone would leave the fork one wrong name away.
+     *
+     * A NULLED EMAIL IS NOT A REFUSAL AND NOT AN ORACLE. The endpoint answers
+     * the same 200 with the same body whether the address was known or not, it
+     * writes a contact either way, and no public response exposes a contact's
+     * columns — so it cannot be used to enumerate a school's families one
+     * address at a time, which is the objection that argued the split into
+     * existence. What the caller loses is the ability to put somebody else's
+     * mailbox on a record they authored, which nobody legitimate wants.
+     *
+     * masjid_id is set/filtered explicitly throughout — /api/v1 runs unbound, so
+     * the BelongsToMasjid scope adds no filter and the creating hook stamps
+     * nothing. Deliberately local rather than reaching for the donor-CRM
+     * resolver: this is not a donation, and its defaults belong to this path.
      *
      * @param  array{name?:?string,email?:?string,phone?:?string}  $person
      */
-    private function resolveContact(int $masjidId, array $person, string $fallbackFirst): Contact
+    private function resolvePayerContact(int $masjidId, array $person): Contact
     {
-        $email = isset($person['email']) ? trim((string) $person['email']) : '';
-        [$first, $last] = $this->splitName((string) ($person['name'] ?? ''), $fallbackFirst);
+        $existing = $this->findByAddress($masjidId, $this->normaliseEmail($person['email'] ?? null));
+
+        return $existing ?? $this->createContact($masjidId, $person);
+    }
+
+    /**
+     * The person a registration is FOR.
+     *
+     * Same table, same address rule, one extra clause: a registrant must match
+     * the stored NAME as well, because a registrant row is a claim about
+     * somebody and `contacts.email` is routinely one mailbox for a whole family.
+     * Keying on the address alone collapsed two siblings on `household@…` into
+     * one contact, and `RegistrationService::normalizeRegistrants()` then deduped
+     * the second away — a family that signed two children up got ONE enrolled,
+     * silently. See `resolvePayerContact()` above for the argument in full.
+     *
+     * THE PAYER REGISTERING THEMSELVES is compared FIRST, and on ADDRESS AND
+     * NAME rather than address alone — the documented shape where an adult fills
+     * the registrant row in with their own details, which must resolve to the
+     * payer rather than to a second copy of themselves that the payer is then
+     * made the guardian of. The address is compared against BOTH what they
+     * submitted and what is stored on the record it resolved to, because a
+     * matched payer's stored spelling need not be the one they just typed.
+     * Address alone is what collapsed the siblings: it made every child listed
+     * under the household mailbox resolve to the parent.
+     *
+     * @param  array{name?:?string,email?:?string,phone?:?string}  $person
+     */
+    private function resolveRegistrantContact(
+        int $masjidId,
+        array $person,
+        Contact $payer,
+        string $submittedPayerName,
+        string $submittedPayerEmail,
+    ): Contact {
+        $email = $this->normaliseEmail($person['email'] ?? null);
+
+        $addressMatchesPayer = $email !== '' && in_array($email, array_filter([
+            $this->normaliseEmail($payer->email),
+            $submittedPayerEmail,
+        ]), true);
+
+        $nameMatchesPayer = $submittedPayerName !== '' && in_array(
+            $this->normaliseName($person['name'] ?? null),
+            array_filter([
+                $submittedPayerName,
+                $this->normaliseName(trim($payer->first_name . ' ' . $payer->last_name)),
+            ]),
+            true,
+        );
+
+        if ($addressMatchesPayer && $nameMatchesPayer) {
+            return $payer;
+        }
+
+        // THE RETURNING CHILD, and the reason this clause sits ABOVE the address
+        // one. A child's identity is not an address: most have none, and the
+        // siblings who do share the household mailbox. Keyed on the address
+        // alone, exactly one person per address could ever be re-found — the
+        // payer — so every child was written fresh every season. Measured: seven
+        // contacts and twelve roster rows for a family of three over three
+        // seasons, with the child's ḥifẓ stranded on season one's row.
+        //
+        // It is above the address clause because a child whose own address the
+        // office typed in later must still be the same person when a later
+        // season lists them under the household mailbox again — matching by
+        // address there would find the PAYER, fail the name test, and fork.
+        if (($household = $this->matchInHousehold($masjidId, $payer, $person['name'] ?? null)) !== null) {
+            return $household;
+        }
+
+        $existing = $this->findByAddress($masjidId, $email);
+
+        // FAILING THIS TEST IS SAFE AND FAILING IT THE OTHER WAY IS NOT. A
+        // missed match writes a duplicate contact for a returning child whose
+        // name was typed differently this season — visible on the directory
+        // screen and reconciled by the merge verb — while a false match binds a
+        // registration to a person the caller merely named. And neither outcome
+        // is an authorization any more: both rows are `self_asserted` until the
+        // office says otherwise.
+        if ($existing !== null && $this->namesMatch($existing, $person['name'] ?? null)) {
+            return $existing;
+        }
+
+        return $this->createContact($masjidId, $person);
+    }
+
+    /**
+     * The one person in THIS PAYER'S HOUSEHOLD carrying this name, or null.
+     *
+     * The household is not a new table — it is read from rows the application
+     * already keeps: every contact this payer already holds a guardian edge
+     * over. A returning family therefore attaches to the records last season
+     * wrote, because those records are the ones the payer already stands for.
+     *
+     * WHY THIS IS NOT THE NAME-BASED RE-RUN OF THE HOLE R1–R4 KEPT RE-OPENING.
+     * The household is the PAYER'S OWN and is reached only through edges naming
+     * the payer as guardian, so a stranger typing a real child's name matches
+     * nothing and writes a new row. What the caller can reach by naming is
+     * exactly what they could already reach by being its guardian.
+     *
+     * PENDING EDGES COUNT. A family's first season writes `self_asserted` edges,
+     * and its second season routinely arrives before the office has worked the
+     * queue; counting only confirmed edges would make the returning-family
+     * property false for precisely the school this exists for. Attaching is an
+     * IDENTITY decision, never an authority one — the edge the new season writes
+     * is still a claim, and `writeRosterMemberships()` leaves an edge the office
+     * already confirmed exactly as it found it.
+     *
+     * AMBIGUITY RESOLVES TO NOBODY. Two wards of one payer sharing a name is not
+     * a match this can decide, so it writes a new row and leaves it to the merge
+     * verb — the same direction every other near-miss on this path takes, and
+     * the safe one: a duplicate is visible and reconcilable, a false match binds
+     * a registration to the wrong child.
+     */
+    private function matchInHousehold(int $masjidId, Contact $payer, ?string $submittedName): ?Contact
+    {
+        if ($this->normaliseName($submittedName) === '') {
+            return null;
+        }
+
+        $wardIds = GroupMembership::query()
+            ->where('masjid_id', $masjidId)
+            ->where('contact_id', $payer->id)
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->whereNotNull('guardian_of_contact_id')
+            ->pluck('guardian_of_contact_id')
+            ->unique()
+            ->all();
+
+        if ($wardIds === []) {
+            return null;
+        }
+
+        $matches = Contact::query()
+            ->where('masjid_id', $masjidId)
+            ->whereIn('id', $wardIds)
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (Contact $ward): bool => $this->namesMatch($ward, $submittedName))
+            ->values();
+
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    /** The one live contact of this tenant holding this address, or null. */
+    private function findByAddress(int $masjidId, string $email): ?Contact
+    {
+        if ($email === '') {
+            return null;
+        }
+
+        return Contact::query()
+            ->where('masjid_id', $masjidId)
+            ->whereNotNull('email')
+            // LOWER() on both sides rather than relying on the column collation:
+            // production is utf8mb4_bin (case-SENSITIVE) and the suite runs
+            // SQLite, and which record a family attaches to must not depend on
+            // which one it is talking to.
+            ->whereRaw('LOWER(TRIM(email)) = ?', [$email])
+            ->orderBy('id')
+            ->first();
+    }
+
+    /** Does this submitted name name the person on that record? */
+    private function namesMatch(Contact $contact, ?string $submitted): bool
+    {
+        $submitted = $this->normaliseName($submitted);
+
+        if ($submitted === '') {
+            return false;
+        }
+
+        return $submitted === $this->normaliseName(trim($contact->first_name . ' ' . $contact->last_name));
+    }
+
+    /**
+     * Write one new Contact for this registration. The ONLY contact-creating
+     * path on this endpoint, so "who did this row come from" has one answer.
+     *
+     * TWO THINGS THIS DOES THAT THE SHAPE OF THE ROW DEPENDS ON:
+     *
+     *  1. THE ADDRESS IS STORED LOWER-CASED, not merely trimmed. Every identity
+     *     comparison in this application — this file's `findByAddress()`,
+     *     `GroupAudience::identitiesFor()`, `FamilyAccessService` — is made on
+     *     `LOWER(email)`, so storing the caller's capitalisation meant
+     *     `" Salma.Other@School.test "`, `"SALMA.OTHER@SCHOOL.TEST"` and the
+     *     plain address each added another row for one child. Measured: four
+     *     contacts on one address.
+     *  2. IT NEVER TAKES AN ADDRESS ANOTHER CONTACT ALREADY HOLDS. A second row
+     *     carrying a live address is what makes a staff identity ambiguous, and
+     *     ambiguous identity is no identity — one anonymous POST could 403 a
+     *     teacher out of her own classroom for good. A household mailbox belongs
+     *     to the person who typed it; the sibling registered under it gets a row
+     *     with no address, which is what a child with no address of their own
+     *     has always had, and the office can type one in later.
+     *
+     * @param  array{name?:?string,email?:?string,phone?:?string}  $person
+     */
+    private function createContact(int $masjidId, array $person): Contact
+    {
+        $email = $this->normaliseEmail($person['email'] ?? null);
+        [$first, $last] = $this->splitName((string) ($person['name'] ?? ''), 'Registrant');
         $phone = isset($person['phone']) ? trim((string) $person['phone']) : '';
 
-        if ($email !== '') {
-            $existing = Contact::query()
-                ->where('masjid_id', $masjidId)
-                ->where('email', $email)
-                ->first();
-
-            if ($existing) {
-                return $existing;
-            }
+        if ($email !== '' && $this->findByAddress($masjidId, $email) !== null) {
+            $email = '';
         }
 
         $contact = new Contact([
@@ -448,6 +1114,22 @@ class OfferingRegistrationsController extends Controller
         $contact->save();
 
         return $contact;
+    }
+
+    /**
+     * Lower-cased and trimmed — the form the identity comparisons above are
+     * made in, rather than relying on a column collation that differs between
+     * production MySQL and the SQLite the suite runs on.
+     */
+    private function normaliseEmail(?string $email): string
+    {
+        return Str::lower(trim((string) $email));
+    }
+
+    /** Lower-cased with runs of whitespace collapsed, for the comparison above. */
+    private function normaliseName(?string $name): string
+    {
+        return Str::lower(trim((string) preg_replace('/\s+/u', ' ', (string) $name)));
     }
 
     /**

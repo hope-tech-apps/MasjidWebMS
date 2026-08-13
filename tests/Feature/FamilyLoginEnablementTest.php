@@ -123,7 +123,7 @@ class FamilyLoginEnablementTest extends TestCase
      * A contact who is somebody's GUARDIAN, with no login yet.
      *
      * Every test here enables a login, and family sign-in is guardian-only —
-     * see FamilyAccessService::assertHoldsAGuardianEdge() and
+     * see FamilyAccessService::ineligibilityReason() and
      * GuardianOnlyLoginTest for why (enabling a child's own row is a student
      * login, which grants the whole class feed).
      *

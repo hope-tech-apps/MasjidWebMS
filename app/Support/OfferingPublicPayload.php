@@ -119,18 +119,29 @@ final class OfferingPublicPayload
      * App\Support\PublicTenant for how far that got and for what the money layer
      * refused on its own.
      *
+     * THE ORGANISATION'S CRM MUST BE SWITCHED ON. Offerings, fee plans and
+     * rosters all live inside the `crm`-gated admin group, so an organisation
+     * with `crm_enabled = false` cannot see, price or staff a single thing this
+     * payload publishes — while this read is what makes the registration
+     * endpoints reachable by a family at all. Measured before the fix: with the
+     * flag off, the public read served `registration_state: "open"`, quote
+     * priced it at $150 and register opened a live Checkout Session on the
+     * organisation's connected account, and its own admins got 403 from every
+     * offerings and registrations endpoint. `PublicTenant::crmEnabled()` carries
+     * the whole argument for why the gate belongs on this side.
+     *
      * `is_active` is required, so this returns null for an offering another
-     * tenant owns, one whose organisation is gone, one that does not exist, and
-     * one that has been switched off — one indistinguishable miss, and no
-     * probing for which offerings live where. That predicate is deliberately the
-     * SAME one OfferingRegistrationsController::findOffering uses for
-     * quote/register: the read and the write agree on what "publicly available"
-     * means, so a page can never render a Register button that the write path
-     * would 404.
+     * tenant owns, one whose organisation is gone, one whose organisation has no
+     * CRM, one that does not exist, and one that has been switched off — one
+     * indistinguishable miss, and no probing for which offerings live where.
+     * That predicate is deliberately the SAME one
+     * OfferingRegistrationsController::findOffering uses for quote/register: the
+     * read and the write agree on what "publicly available" means, so a page can
+     * never render a Register button that the write path would 404.
      */
     public static function forSlug(int $masjidId, string $slug): ?array
     {
-        if ($masjidId <= 0 || $slug === '' || ! PublicTenant::exists($masjidId)) {
+        if ($masjidId <= 0 || $slug === '' || ! PublicTenant::crmEnabled($masjidId)) {
             return null;
         }
 
@@ -146,14 +157,20 @@ final class OfferingPublicPayload
     /**
      * Resolve by internal id — the handle a page SECTION stores, since an admin
      * picks an offering from a list rather than typing a slug. Same tenant
-     * filter, the same live-organisation check and the same `is_active`
-     * predicate as forSlug(): a section pointing at another masjid's offering,
-     * an offboarded organisation's, a deleted one, or a switched-off one all
-     * inline as null and the renderer draws nothing.
+     * filter, the same live-and-CRM-enabled organisation check and the same
+     * `is_active` predicate as forSlug(): a section pointing at another masjid's
+     * offering, an offboarded organisation's, one whose CRM is switched off, a
+     * deleted one, or a switched-off one all inline as null and the renderer
+     * draws nothing.
+     *
+     * This is the half a standalone-endpoint fix would miss. An `offering`
+     * section publishes the identical payload inside a page, so gating only
+     * GET /api/v1/offerings/{slug} would leave the organisation's own website
+     * still rendering the program, its prices and its Register button.
      */
     public static function forId(int $masjidId, int $offeringId): ?array
     {
-        if ($masjidId <= 0 || $offeringId <= 0 || ! PublicTenant::exists($masjidId)) {
+        if ($masjidId <= 0 || $offeringId <= 0 || ! PublicTenant::crmEnabled($masjidId)) {
             return null;
         }
 
@@ -174,24 +191,21 @@ final class OfferingPublicPayload
     public static function build(Offering $offering): array
     {
         $form = self::intakeForm($offering);
-        $plans = self::feePlans($offering);
 
-        // The verdict is decided from the plans THIS payload publishes, not from
-        // a second query that could disagree with them: if a plan is withheld
-        // here (deactivated, or an unrecognised money kind) it is not something
-        // a registrant can name in `fee_plan_id`, so it must not count towards
-        // "there is something to buy" either.
-        // The organisation is passed so clause 5 can be answered here: a family
-        // must not be told a PAID program is open by an organisation that has
-        // not finished Stripe onboarding and therefore cannot charge them.
-        $organisation = \App\Models\Masjid::find($offering->masjid_id);
+        // Whether this organisation can take a card at all. Read ONCE and used
+        // for both halves below, so the plans this payload publishes and the
+        // verdict it publishes beside them are answers to the same question
+        // about the same organisation at the same instant.
+        $canCollect = \App\Models\Masjid::find($offering->masjid_id)?->canAcceptDonations();
 
-        $state = State::decide(
-            $offering,
-            $form !== null,
-            count($plans),
-            $organisation?->canAcceptDonations()
-        );
+        // The raw chain, filtered exactly once, by the predicate that also
+        // decides the verdict and that `findFeePlan()` accepts on. A plan
+        // withheld here is not one a registrant can name in `fee_plan_id`, so
+        // it must not count towards "there is something to buy" either.
+        $rows = State::planRows($offering);
+        $plans = self::feePlans(State::purchasablePlans($rows, $canCollect));
+
+        $state = State::decide($offering, $form !== null, $rows, $canCollect);
 
         return [
             'slug' => $offering->slug,
@@ -237,33 +251,48 @@ final class OfferingPublicPayload
     }
 
     /**
-     * The ACTIVE plans of this offering, oldest first — the deactivate-and-
+     * The PURCHASABLE plans of this offering, oldest first — the deactivate-and-
      * replace chain in the order it was created, so the plan an admin added last
      * reads last.
      *
-     * Filtered to `is_active` because a deactivated plan is refused by
-     * RegistrationService::register (planInactive) — offering it on the page
-     * would be advertising a price nobody can buy.
+     * This method PRESENTS; it does not judge. Which plans reach it is
+     * `OfferingRegistrationState::isPurchasable()`'s decision alone — the same
+     * one `registration_state` is aggregated from and the same one
+     * `OfferingRegistrationsController::findFeePlan()` accepts on — because a
+     * private copy of that judgement here is precisely how the page came to
+     * publish `amount_minor: 15000` for a plan the verdict beside it declared
+     * unbuyable. Everything the predicate withholds (deactivated, an
+     * unrecognised money kind, a subscription with no valid interval, an
+     * installment plan with no payments, a paid kind that charges nothing, a
+     * charge an un-onboarded organisation cannot collect) is the same 404 from
+     * the write path as a plan that never existed.
      *
-     * Filtered to known KINDS because money never degrades: FeePlan has no
-     * kind() fallback on purpose, and listTotalFor() throws on an unknown kind.
-     * A row whose kind is not in FeePlan::KINDS is therefore not presented as
-     * purchasable rather than crashing the public page or being guessed at
-     * (.claude/rules/registration-billing-data.md).
+     * ## The claim, stated correctly: it is PER PLAN
      *
+     * This docblock used to promise that "a price is never published for a plan
+     * this same payload's `registration_state` declares unbuyable", and that is
+     * false as written — measured, `not_yet_open`, a window that has `closed`,
+     * and `no_intake_form` all serve `registration_state: closed` WITH
+     * `fee_plans` populated at 15000. The BEHAVIOUR is right and stays: a page
+     * that says "opens 4 September" needs the price to say it with, and those
+     * three verdicts are facts about the OFFERING, not about any plan.
+     *
+     * What is true, and is what the shared predicate actually buys, is the
+     * per-plan half: a plan is published if and only if `isPurchasable()`
+     * accepts it, and the two verdicts that mean "no plan survives that
+     * predicate" — `no_fee_plan` and `org_cannot_collect` — are therefore
+     * ALWAYS served beside `fee_plans: []`, because they are computed from the
+     * same call over the same rows at the same instant. A future reader trusts
+     * the sentence, so the sentence is the one the code holds.
+     *
+     * @param  list<FeePlan>  $plans  already filtered by the predicate
      * @return array<int,array<string,mixed>>
      */
-    private static function feePlans(Offering $offering): array
+    private static function feePlans(array $plans): array
     {
         $service = app(RegistrationService::class);
 
-        return FeePlan::query()
-            ->where('masjid_id', $offering->masjid_id)
-            ->where('offering_id', $offering->id)
-            ->where('is_active', true)
-            ->whereIn('kind', FeePlan::KINDS)
-            ->orderBy('id')
-            ->get()
+        return collect($plans)
             ->map(function (FeePlan $plan) use ($service): array {
                 // Server-computed, by the SAME function that snapshots
                 // list_total_minor at intake. The client is never asked to
@@ -282,7 +311,19 @@ final class OfferingPublicPayload
                     // INTEGER MINOR UNITS, per charge: the single charge for
                     // one_time, ONE installment for installment, one interval
                     // for recurring, 0 for free.
-                    'amount_minor' => (int) $plan->amount_minor,
+                    //
+                    // A `free` plan publishes 0 rather than its column. The
+                    // column CAN hold a stale amount — `StoreFeePlanRequest`
+                    // pins free to exactly 0, but an import or a manual edit is
+                    // not that request — and `isPurchasable()` deliberately does
+                    // not withhold such a row, because it is a real registration
+                    // path that the free-path carve-out confirms in-request and
+                    // never charges. Measured: the page printed "$150" beside
+                    // `total_minor: 0` and `requires_payment: false` on the same
+                    // plan. NO AMOUNT TRAVELS ON THIS PAYLOAD THAT WOULD NOT BE
+                    // CHARGED; `$plan->isFree()` is the model's own word for
+                    // which rows those are.
+                    'amount_minor' => $plan->isFree() ? 0 : (int) $plan->amount_minor,
                     // INTEGER MINOR UNITS, the whole commitment: amount x count
                     // for an installment plan, the same as amount_minor for the
                     // rest. An open-ended `recurring` plan has no finite total,

@@ -53,6 +53,15 @@ class GroupsController extends FamilyController
             ->orderBy('id')
             ->get();
 
+        // The QUERY above is still the guarantee against every group this
+        // contact holds no row in — a group they are not on is never fetched, so
+        // it cannot leak through a count or a paginator total. This narrows
+        // WITHIN that already-safe set, to the rows the credential speaks
+        // through, using the same call `show()` refuses with: a listing that
+        // offered a group whose `show()` answers 403 is the two halves
+        // disagreeing about one caller.
+        $groups = $groups->filter(fn (Group $group) => $this->hasStanding($group))->values();
+
         return response()->json([
             'status' => 'success',
             'data' => $groups->map(fn (Group $group) => $this->serialize($group))->values()->all(),
@@ -88,19 +97,37 @@ class GroupsController extends FamilyController
     /**
      * Is this parent in this group at all?
      *
-     * Asked of the memberships rather than of `GroupAudience::mayReceive()`,
-     * because those are different questions and conflating them would be a bug
-     * in both directions. `mayReceive(feed)` is false for a guardian who has
-     * never consented — but such a parent IS in the group and must still be able
-     * to see that their child is enrolled and to reach the participant thread
-     * about them, which consent deliberately does not gate
-     * (.claude/rules/groups.md, "consent gates broadcasts, not conversations").
+     * Still not `GroupAudience::mayReceive()`, because those are different
+     * questions and conflating them would be a bug in both directions.
+     * `mayReceive(feed)` is false for a guardian who has never consented — but
+     * such a parent IS in the group and must still be able to see that their
+     * child is enrolled and to reach the participant thread about them, which
+     * consent deliberately does not gate (.claude/rules/groups.md, "consent
+     * gates broadcasts, not conversations").
+     *
+     * It IS now `GroupAudience::membershipsFor()` rather than a `where` on the
+     * table. The direct query was a second definition of standing living outside
+     * the class that owns it, and it disagreed the moment the credential rule
+     * changed: a parent-portal credential speaks through its holder's GUARDIAN
+     * EDGES and not through their own participant rows, so a parent who is
+     * merely enrolled in the adult ḥalaqa gets no portal standing there — while
+     * this method went on answering true, listing the group and serializing
+     * their own membership id beside a feed and a record surface that all 403.
      */
     private function hasStanding(Group $group): bool
     {
-        return $group->memberships()
-            ->where('contact_id', $this->contact()->id)
-            ->exists();
+        return $this->standingRows($group)->isNotEmpty();
+    }
+
+    /**
+     * The rows this parent's credential speaks through in `$group` — the ONE
+     * definition, borrowed rather than re-stated. @see GroupAudience::membershipsFor
+     *
+     * @return \Illuminate\Support\Collection<int,GroupMembership>
+     */
+    private function standingRows(Group $group): \Illuminate\Support\Collection
+    {
+        return $this->audience->membershipsFor($this->contact(), $group);
     }
 
     /**
@@ -112,9 +139,13 @@ class GroupsController extends FamilyController
     {
         $contact = $this->contact();
 
-        $mine = $group->memberships()
-            ->where('contact_id', $contact->id)
-            ->get();
+        // The same narrowed set `hasStanding()` answers from, so what a parent
+        // is shown about a group and whether they may open it at all are one
+        // decision. `own_membership` below therefore serializes as null for a
+        // family credential: the holder's own participant row is not something
+        // this credential speaks through, and serving its id beside endpoints
+        // that all refuse it is how a later slice talks itself into opening one.
+        $mine = $this->standingRows($group);
 
         // The wards this parent names IN THIS GROUP. Per-group on purpose: a
         // guardian edge says guardian-of-WHOM-in-WHICH-group, so consent and

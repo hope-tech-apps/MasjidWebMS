@@ -426,14 +426,24 @@ class OfferingRegistrationStateTest extends TestCase
     {
         // A reason a renderer has no branch for is worse than none, so the set is
         // declared and pinned. The first three are the model's own
-        // `closed_reason` words, verbatim; the last two are the clauses no other
-        // field reports.
+        // `closed_reason` words, verbatim; the last three are the clauses no
+        // other field reports.
+        //
+        // This assertion pinned FIVE while `decide()` produced a sixth. Both
+        // halves of this test's name were false because of it: the vocabulary
+        // was not closed, and `org_cannot_collect` was not a write-path refusal
+        // — the page reported it while `register` went on answering 200 and
+        // holding a seat nothing could pay for. It is both now: the reason is
+        // declared here, and the clause behind it lives in
+        // `isPurchasable()`, which is what `findFeePlan()` accepts on, so the
+        // page, the quote and the write all refuse together.
         $this->assertSame([
             'inactive',
             'not_yet_open',
             'closed',
             'no_intake_form',
             'no_fee_plan',
+            'org_cannot_collect',
         ], OfferingRegistrationState::REASONS);
 
         // And every one of them is reachable — a constant nothing produces is a
@@ -469,11 +479,83 @@ class OfferingRegistrationStateTest extends TestCase
         Form::query()->whereKey($formless->intake_form_id)->first()->delete();
         $produced[] = OfferingRegistrationState::for($formless->fresh())['reason'];
 
+        // org_cannot_collect: a live offering whose ONLY plan raises a charge,
+        // on an organisation with no `stripe_account_id` (this file's fixture is
+        // deliberately not onboarded). It is a distinct word from `no_fee_plan`
+        // because the plan is right there — telling the registrar they have none
+        // would send them to the wrong screen.
+        $paidOnly = Offering::factory()->forMasjid($this->masjid)->create();
+        FeePlan::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $paidOnly->id,
+        ]);
+        $this->assertFalse($this->masjid->fresh()->canAcceptDonations());
+        $produced[] = OfferingRegistrationState::for($paidOnly->fresh())['reason'];
+
         sort($produced);
         $expected = OfferingRegistrationState::REASONS;
         sort($expected);
 
         $this->assertSame($expected, $produced);
+    }
+
+    #[Test]
+    public function an_organisation_that_cannot_collect_still_runs_its_free_tier(): void
+    {
+        // M4, the over-refusal half. A masjid running "Weekend school $450"
+        // beside "Weekend school — fee waived", whose Stripe onboarding has
+        // lapsed. The whole program read `closed / org_cannot_collect` — to the
+        // scholarship families too — while `register` on the free tier answered
+        // 200 confirmed in the same breath. The offering-level verdict was
+        // computed from a per-PLAN fact.
+        $offering = Offering::factory()->forMasjid($this->masjid)->create(['slug' => 'weekend-school']);
+
+        $paid = FeePlan::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+            'amount_minor' => 45000,
+            'label' => 'Weekend school',
+        ]);
+        $free = FeePlan::factory()->free()->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+            'label' => 'Scholarship — fee waived',
+        ]);
+
+        $this->assertFalse($this->masjid->fresh()->canAcceptDonations());
+
+        $page = $this->fetch('weekend-school');
+
+        // The program is open, because one of its plans can genuinely be used.
+        $this->assertSame('open', $page['registration_state']);
+        $this->assertNull($page['registration_state_reason']);
+
+        // And exactly one plan is published: the paid tier is withheld, so no
+        // price is advertised for something this organisation cannot charge.
+        $this->assertSame([$free->id], array_column($page['fee_plans'], 'id'));
+
+        $headers = ['masjid-id' => (string) $this->masjid->id];
+
+        // The write agrees with the page on BOTH plans.
+        $this->postJson('/api/v1/offerings/weekend-school/register', [
+            'fee_plan_id' => $free->id,
+            'payer' => ['name' => 'Amal Yusuf', 'email' => 'amal@test.local'],
+            'data' => ['full_name' => 'Amal Yusuf'],
+        ], $headers)
+            ->assertStatus(200)
+            ->assertJsonPath('data.status', 'confirmed');
+
+        $this->postJson('/api/v1/offerings/weekend-school/register', [
+            'fee_plan_id' => $paid->id,
+            'payer' => ['name' => 'Bilal Ahmed', 'email' => 'bilal@test.local'],
+            'data' => ['full_name' => 'Bilal Ahmed'],
+        ], $headers)
+            ->assertStatus(404)
+            ->assertJsonPath('message', 'This fee plan is not available.');
+
+        // The refused half wrote nothing: one registration, one seat.
+        $this->assertSame(1, \App\Models\Registration::query()->count());
+        $this->assertSame(1, (int) $offering->fresh()->registration_count);
     }
 
     // ============================= helpers =============================

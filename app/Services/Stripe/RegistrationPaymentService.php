@@ -883,6 +883,45 @@ class RegistrationPaymentService
      * registration. An event with no account (a platform-level event) carries
      * no verifiable tenant and is ignored — direct charges always arrive on the
      * connected account.
+     *
+     * ## AN OFFBOARDED ORGANISATION STILL GETS ITS LEDGER ROW
+     *
+     * `masjids` SOFT-deletes and `Masjid::query()` excludes trashed rows, so
+     * until 2026-08-12 this lookup resolved to null for an organisation
+     * offboarded while a Checkout Session was live: the family's card WAS
+     * charged at Stripe, and the event was dropped with a log line. No
+     * `registration_payments` row, `payment_status` left at `awaiting`,
+     * `checkout_expires_at` still set — so T-006f's reaper swept the seat and
+     * cancelled it. Money taken, nothing recorded, seat gone.
+     *
+     * Refusing the event is the WRONG direction, because the money has already
+     * moved. A webhook's job is to state truthfully what Stripe did; offboarding
+     * is a fact about the ORGANISATION, not about the family's payment, and
+     * discarding the only local evidence of a real charge serves nobody — least
+     * of all whoever has to refund it, who needs the amount, the charge id and
+     * the balance transaction to do so. So the org resolves WITH TRASHED and the
+     * event runs the ordinary path: ledger row booked, `payment_status` moved to
+     * paid/active, seat confirmed through the same seam every other paid
+     * registration uses.
+     *
+     * Confirming the seat is deliberate, not incidental. A settled one-time
+     * charge left `pending` is a lie about a registration nothing is waiting on,
+     * and it is indistinguishable on every admin screen from an abandoned
+     * checkout. `paid` + `confirmed` is what actually happened; whether the
+     * program can still run is the organisation's offboarding to answer, not the
+     * ledger's.
+     *
+     * The asymmetry with the OUTBOUND leg is the point, and both directions are
+     * right: `RegistrationCheckoutService` resolves the org with `Masjid::find()`
+     * and therefore REFUSES to open a new Session for a trashed organisation
+     * (PublicTenantLifecycleTest pins it), while this path records one that
+     * already completed. Money not yet moved: refuse. Money already moved:
+     * record it, and page a human.
+     *
+     * The live row is preferred over a trashed one should a connected account id
+     * ever appear on both — a Connect account belongs to exactly one
+     * organisation, so that is a data error, and routing a live organisation's
+     * payment into an offboarded twin would be the expensive way to discover it.
      */
     private function resolve(array $object, ?string $account): ?Registration
     {
@@ -900,7 +939,8 @@ class RegistrationPaymentService
             return null;
         }
 
-        $masjid = Masjid::where('stripe_account_id', $account)->first();
+        $masjid = Masjid::where('stripe_account_id', $account)->first()
+            ?? Masjid::onlyTrashed()->where('stripe_account_id', $account)->first();
 
         if (! $masjid) {
             Log::warning('Registration event for an unknown connected account; ignoring.', [
@@ -908,6 +948,23 @@ class RegistrationPaymentService
             ]);
 
             return null;
+        }
+
+        if ($masjid->trashed()) {
+            // Loud, searchable, and carrying everything a refund needs. The
+            // organisation is merchant of record, so the refund is its own
+            // action in its own Stripe dashboard — this line is how anybody
+            // learns there is one to make.
+            Log::warning(
+                'Registration payment event for an OFFBOARDED organisation — recorded anyway; '
+                . 'the money moved and a refund is the organisation\'s own action in its Stripe dashboard.',
+                [
+                    'masjid_id' => (int) $masjid->id,
+                    'deleted_at' => optional($masjid->deleted_at)->toISOString(),
+                    'account' => $account,
+                    'registration_uuid' => $uuid,
+                ]
+            );
         }
 
         // Masjid-filtered by construction — a cross-tenant uuid is a miss.

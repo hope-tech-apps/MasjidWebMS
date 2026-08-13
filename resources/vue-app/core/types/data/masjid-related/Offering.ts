@@ -118,14 +118,26 @@ export type OfferingRegistrationState = 'open' | 'waitlist' | 'closed';
 /**
  * Why the state is `closed`; null when it is not.
  *
+ * MIRRORS `App\Support\OfferingRegistrationState::REASONS` — all six of them.
+ * `org_cannot_collect` was missing here while the server produced it, so this
+ * declared contract said a value that does occur cannot, `useOfferingDisplay`
+ * had no key for it, and the one reason an admin can fix in two clicks rendered
+ * as a neutral grey "Closed — Not accepting registrations." Adding a member to
+ * the PHP list means adding it here and to the three maps plus
+ * `registrationStateIsFault` in `composables/useOfferingDisplay.ts`.
+ *
  * The first three come straight from `Offering::closed_reason` (the window).
- * The last two are the ones NO other field reports — with either of them true,
+ * The last three are the ones NO other field reports — with any of them true,
  * `is_open` still says true and `closed_reason` still says null:
  *
  *  - `no_intake_form` — the form registrations are validated against has been
  *    soft-deleted; `register()` throws `offeringClosed()` on the spot.
- *  - `no_fee_plan` — no active plan of a known kind, so there is nothing to put
- *    in `register`'s `fee_plan_id`. A FREE offering still needs a `free` plan.
+ *  - `no_fee_plan` — no purchasable plan, so there is nothing to put in
+ *    `register`'s `fee_plan_id`. A FREE offering still needs a `free` plan.
+ *  - `org_cannot_collect` — there ARE plans, every one of them raises a charge,
+ *    and the organisation has not finished Stripe onboarding, so the charge has
+ *    nowhere to land. An offering with a free tier alongside stays `open`: the
+ *    free path takes no payment.
  */
 export type OfferingRegistrationStateReason =
     | 'inactive'
@@ -133,6 +145,7 @@ export type OfferingRegistrationStateReason =
     | 'closed'
     | 'no_intake_form'
     | 'no_fee_plan'
+    | 'org_cannot_collect'
     | null;
 
 export const ADJUSTMENT_KINDS: AdjustmentKind[] = ['aid', 'discount', 'code'];
@@ -273,8 +286,10 @@ export type Offering = {
     registration_state: OfferingRegistrationState;
     registration_state_reason: OfferingRegistrationStateReason;
     /**
-     * Plans a registrant could actually name in `fee_plan_id`: active AND of a
-     * known money kind. Zero means nobody can register, however open the window.
+     * Plans a registrant could actually name in `fee_plan_id` — the whole of
+     * `OfferingRegistrationState::isPurchasable()`, not just active + known
+     * kind. Zero means nobody can register, however open the window; the
+     * `registration_state_reason` beside it says which flavour of nothing it is.
      */
     active_fee_plan_count?: number;
     /** False when the intake form has been soft-deleted out from under it. */
@@ -317,9 +332,10 @@ export type OfferingOption = {
     /** Every seat taken: a sign-up is waitlisted, not refused. */
     is_full: boolean;
     /**
-     * Active AND of a known money kind — the same predicate the public payload
-     * publishes on, because a plan it withholds is not one a registrant can name
-     * in `fee_plan_id` either.
+     * Purchasable — the same predicate the public payload publishes on, because
+     * a plan it withholds is not one a registrant can name in `fee_plan_id`
+     * either. Active, a known money kind, a billable subscription shape, and a
+     * charge this organisation can actually collect.
      */
     active_fee_plan_count: number;
     /** False when the intake form has been soft-deleted out from under it. */

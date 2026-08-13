@@ -44,6 +44,34 @@
                             </button>
                         </div>
                     </div>
+                    <!--
+                        DELETED MEMBERS.
+
+                        A delete here is a SOFT delete, so a mis-click on a
+                        congregant record was always meant to be recoverable —
+                        and nothing in this application could reach a deleted
+                        row, so in practice it was not. That also put the
+                        `revoked` row that deleting a member writes beyond every
+                        screen, including the access history right below, which
+                        is the one thing that answers "who took my access away".
+
+                        Off by default: the directory is the live membership, and
+                        deleted members appearing in it unasked would be a
+                        different screen.
+                    -->
+                    <div class="col-md-4 col-lg-6 d-flex align-items-center">
+                        <div class="form-check ms-md-3 mt-3 mt-md-0">
+                            <input
+                                id="contacts-show-deleted"
+                                class="form-check-input"
+                                type="checkbox"
+                                v-model="showDeleted"
+                            >
+                            <label class="form-check-label small text-muted" for="contacts-show-deleted">
+                                Show deleted {{ membersTerm.toLowerCase() }}
+                            </label>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Loading State -->
@@ -71,9 +99,12 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="contact in contacts" :key="contact.id">
+                            <tr v-for="contact in contacts" :key="contact.id" :class="{ 'opacity-75': contact.deleted_at }">
                                 <td>
                                     <strong>{{ contact.first_name }} {{ contact.last_name }}</strong>
+                                    <span v-if="contact.deleted_at" class="badge bg-secondary-subtle text-secondary ms-2">
+                                        Deleted
+                                    </span>
                                 </td>
                                 <td>
                                     <a v-if="contact.email" :href="`mailto:${contact.email}`" class="text-decoration-none">
@@ -92,11 +123,38 @@
                                         <button class="btn btn-outline-primary" @click="viewContact(contact)" title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </button>
-                                        <button class="btn btn-outline-secondary" @click="openEditModal(contact)" title="Edit">
+                                        <button
+                                            v-if="!contact.deleted_at"
+                                            class="btn btn-outline-secondary"
+                                            @click="openEditModal(contact)"
+                                            title="Edit"
+                                        >
                                             <i class="bi bi-pencil"></i>
                                         </button>
-                                        <button class="btn btn-outline-danger" @click="confirmDelete(contact)" title="Delete">
+                                        <button
+                                            v-if="!contact.deleted_at"
+                                            class="btn btn-outline-danger"
+                                            @click="confirmDelete(contact)"
+                                            title="Delete"
+                                        >
                                             <i class="bi bi-trash"></i>
+                                        </button>
+                                        <!--
+                                            Restore puts the member back in the
+                                            directory and NOTHING else: their
+                                            parent portal sign-in stays revoked
+                                            until somebody re-opens it
+                                            deliberately, because a grant
+                                            produced as a side effect of an
+                                            undelete is a grant nobody typed.
+                                        -->
+                                        <button
+                                            v-else
+                                            class="btn btn-outline-success"
+                                            @click="confirmRestore(contact)"
+                                            title="Restore"
+                                        >
+                                            <i class="bi bi-arrow-counterclockwise"></i>
                                         </button>
                                     </div>
                                 </td>
@@ -254,8 +312,48 @@
                                             <template v-else>Has never signed in.</template>
                                         </p>
 
+                                        <!--
+                                            SAID BEFORE THE CLICK, and it is the
+                                            server's own sentence.
+
+                                            The screen used to offer "Enable
+                                            parent portal sign-in" on every
+                                            member, so a registrar working down a
+                                            school roster reached a nine-year-old,
+                                            clicked, typed an address, and only
+                                            then learned it was never permitted.
+                                            `ineligible_reason` is the string
+                                            FamilyAccessService would have
+                                            refused with — not a second copy of
+                                            the rule in TypeScript that agrees
+                                            today, and not a softer preview of a
+                                            stricter write.
+
+                                            Shown for an ENABLED member too. When
+                                            standing lapses (a guardian edge
+                                            removed, a ward deleted) the
+                                            credential deliberately keeps working
+                                            — see FamilyAccessService — and the
+                                            office has to be able to read that
+                                            here rather than learn it from a
+                                            parent's phone call.
+                                        -->
+                                        <div v-if="!familyLogin.eligible" class="alert alert-warning py-2 small">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>
+                                            <strong v-if="familyLogin.state === 'enabled'">
+                                                This sign-in is on, but this member no longer qualifies for one.
+                                            </strong>
+                                            {{ familyLogin.ineligible_reason }}
+                                        </div>
+
                                         <div class="btn-group btn-group-sm mb-2">
-                                            <button type="button" class="btn btn-outline-success" @click="openFamilyLoginModal" :disabled="familyLoginSaving">
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-success"
+                                                @click="openFamilyLoginModal"
+                                                :disabled="familyLoginSaving || !familyLogin.eligible"
+                                                :title="familyLogin.eligible ? '' : (familyLogin.ineligible_reason ?? '')"
+                                            >
                                                 <i class="bi bi-key me-1"></i>
                                                 {{ familyLogin.state === 'enabled' ? 'Change sign-in email' : (familyLogin.state === 'revoked' ? 'Re-enable sign-in' : 'Enable sign-in') }}
                                             </button>
@@ -275,11 +373,17 @@
                                                 Access history ({{ familyLogin.events.length }})
                                             </summary>
                                             <ul class="list-unstyled mt-2 mb-0">
+                                                <!--
+                                                    Four verbs, rendered as four.
+                                                    A binary "revoked or else
+                                                    Enabled" printed the word
+                                                    Enabled over a `merged` row —
+                                                    an audit trail that mislabels
+                                                    a grant is worse than one
+                                                    that omits it.
+                                                -->
                                                 <li v-for="e in familyLogin.events" :key="e.id" class="mb-1">
-                                                    <span
-                                                        class="badge me-1"
-                                                        :class="e.action === 'revoked' ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'"
-                                                    >{{ e.action === 'revoked' ? 'Revoked' : 'Enabled' }}</span>
+                                                    <span class="badge me-1" :class="eventBadgeClass(e.action)">{{ eventLabel(e.action) }}</span>
                                                     <span class="font-monospace">{{ e.login_email || '—' }}</span>
                                                     <span class="text-muted"> by {{ e.actor_name }} · {{ formatDateTime(e.created_at) }}</span>
                                                 </li>
@@ -307,8 +411,25 @@
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" @click="showViewModal = false">Close</button>
-                            <button v-if="(selectedContact as any).is_placeholder" type="button" class="btn btn-outline-primary" @click="openMerge">
-                                <i class="bi bi-person-plus me-1"></i> Attach to member
+                            <!--
+                                MERGE IS FOR ANY DUPLICATE, not only for an
+                                unidentified card.
+
+                                This button used to render only on a placeholder,
+                                so a registrar looking at two duplicate CHILD rows
+                                had no merge affordance at all — while the rules
+                                named this verb as the reconciliation for exactly
+                                that. The only route to it was to open one of the
+                                two and find nothing.
+
+                                The wording follows the record: "Attach to member"
+                                is right for a card that names nobody, and "Merge
+                                into another member" is right for two rows that
+                                are one person.
+                            -->
+                            <button type="button" class="btn btn-outline-primary" @click="openMerge">
+                                <i class="bi bi-person-plus me-1"></i>
+                                {{ (selectedContact as any).is_placeholder ? 'Attach to member' : 'Merge into another member' }}
                             </button>
                             <button type="button" class="btn btn-outline-secondary" @click="editFromView">
                                 <i class="bi bi-pencil me-1"></i> Edit
@@ -363,15 +484,50 @@
 
                                 <div v-if="familyLoginError" class="alert alert-danger mt-3 mb-0 py-2 small">
                                     {{ familyLoginError }}
+
+                                    <!--
+                                        The way through, offered only after the
+                                        server has refused and explained. The
+                                        server decides whether it applies (the
+                                        holder's access must already have ended);
+                                        this checkbox is the operator saying yes
+                                        to what they have just read, never a
+                                        force switch they could tick in advance.
+                                        A holder who can sign in right now is
+                                        refused again with it set.
+                                    -->
+                                    <div v-if="familyLoginCanReassign" class="form-check mt-2">
+                                        <input
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            id="reassignAddressConfirm"
+                                            v-model="familyLoginReassign"
+                                        >
+                                        <label class="form-check-label" for="reassignAddressConfirm">
+                                            Move this sign-in address to
+                                            <strong>{{ selectedContact.first_name }} {{ selectedContact.last_name }}</strong>.
+                                            The other record loses it, and both halves are written to
+                                            <strong>this</strong> member's access history — including where the
+                                            address came from, which the other record cannot show once it has
+                                            been deleted.
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" @click="showFamilyLoginModal = false" :disabled="familyLoginSaving">
                                     Cancel
                                 </button>
-                                <button type="submit" class="btn btn-success" :disabled="familyLoginSaving || !familyLoginEmail">
+                                <button
+                                    type="submit"
+                                    class="btn"
+                                    :class="familyLoginReassign ? 'btn-warning' : 'btn-success'"
+                                    :disabled="familyLoginSaving || !familyLoginEmail"
+                                >
                                     <span v-if="familyLoginSaving" class="spinner-border spinner-border-sm me-1" role="status"></span>
-                                    {{ familyLogin?.state === 'enabled' ? 'Save address' : 'Enable sign-in' }}
+                                    {{ familyLoginReassign
+                                        ? 'Reassign address and enable'
+                                        : (familyLogin?.state === 'enabled' ? 'Save address' : 'Enable sign-in') }}
                                 </button>
                             </div>
                         </form>
@@ -386,14 +542,65 @@
                 <div class="modal-dialog modal-dialog-centered">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Attach card to a member</h5>
+                            <h5 class="modal-title">{{ isPlaceholderMerge ? 'Attach card to a member' : 'Merge into another member' }}</h5>
                             <button type="button" class="btn-close" @click="showMergeModal = false"></button>
                         </div>
                         <div class="modal-body">
                             <p class="text-muted small">
-                                This moves “{{ selectedContact.first_name }} {{ selectedContact.last_name }}”’s giving and card
-                                onto a member, then removes the placeholder.
+                                This moves “{{ selectedContact.first_name }} {{ selectedContact.last_name }}”’s giving, card
+                                <template v-if="!isPlaceholderMerge">and roster entries </template>
+                                onto {{ isPlaceholderMerge ? 'a member' : 'the surviving record' }}, then removes
+                                {{ isPlaceholderMerge ? 'the placeholder' : 'this one' }}.
                             </p>
+
+                            <!--
+                                A MERGE IS A DE-DUPLICATION, NEVER AN
+                                AUTHORIZATION — said before the click, because
+                                this was the third door found in this area. The
+                                registrar who merged two identical child rows
+                                authenticated a de-duplication, and a guardian
+                                claim an anonymous form had written rode across
+                                onto the real child and opened her behaviour, her
+                                ḥifẓ and a safeguarding thread. The server now
+                                refuses to let a confirmation follow a row onto a
+                                different person; this sentence is so nobody
+                                learns that from a support call.
+                            -->
+                            <div v-if="!isPlaceholderMerge" class="alert alert-info py-2 small">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Roster entries move across, but this does not vouch for any of them. A
+                                <strong>guardian</strong> entry that ends up pointing at a different person
+                                goes back to being an unconfirmed claim and opens nothing until somebody
+                                confirms it on that group's roster.
+                            </div>
+
+                            <!--
+                                Said BEFORE the click, not reported after it. The
+                                absorbed record is force-deleted, so a live
+                                parent sign-in on it ends here; the survivor does
+                                not inherit it, deliberately — a credential
+                                granted as a side effect of a de-duplication is a
+                                grant no administrator typed. The history moves
+                                across, so it is still readable afterwards.
+
+                                What this used to say and could not deliver was
+                                "enable sign-in on them if they should still have
+                                access": the merge also destroyed the guardian
+                                edge that permission is derived from, so the
+                                instruction led to a 422. The roster entries now
+                                move onto the survivor with everything else, and
+                                the server checks the survivor's actual
+                                eligibility before repeating the promise — so this
+                                copy stops asserting it and the response says it.
+                            -->
+                            <div v-if="familyLogin?.state === 'enabled'" class="alert alert-warning py-2 small">
+                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                This record has parent portal sign-in enabled at
+                                <span class="font-monospace">{{ familyLogin.login_email }}</span>.
+                                Merging <strong>revokes it</strong> — the member you attach to does not inherit it.
+                                Their group roster entries and the access history move across, and this screen
+                                will tell you afterwards whether sign-in can be enabled on them.
+                            </div>
                             <div class="btn-group w-100 mb-3">
                                 <button class="btn" :class="mergeMode==='existing' ? 'btn-success' : 'btn-outline-secondary'" @click="mergeMode='existing'">Existing member</button>
                                 <button class="btn" :class="mergeMode==='new' ? 'btn-success' : 'btn-outline-secondary'" @click="mergeMode='new'">New member</button>
@@ -435,7 +642,8 @@
                         <div class="modal-footer">
                             <button class="btn btn-secondary" @click="showMergeModal = false">Cancel</button>
                             <button class="btn btn-success" :disabled="!canMerge || merging" @click="doMerge">
-                                <span v-if="merging" class="spinner-border spinner-border-sm"></span><span v-else>Attach</span>
+                                <span v-if="merging" class="spinner-border spinner-border-sm"></span>
+                                <span v-else>{{ isPlaceholderMerge ? 'Attach' : 'Merge' }}</span>
                             </button>
                         </div>
                     </div>
@@ -449,7 +657,7 @@
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
-import { Contact, ContactPayload, FamilyLoginStatus } from '@/core/types/data/masjid-related/Contact';
+import { Contact, ContactPayload, FamilyLoginEvent, FamilyLoginStatus } from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
@@ -468,6 +676,8 @@ const showViewModal = ref(false);
 const isEditForm = ref(false);
 const editingId = ref<number | null>(null);
 const selectedContact = ref<Contact | null>(null);
+/** Include soft-deleted members in the listing. Off by default. */
+const showDeleted = ref(false);
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const emptyForm = (): ContactPayload => ({ first_name: '', last_name: '', email: '', phone: '', notes: '' });
@@ -501,11 +711,17 @@ watch(searchQuery, () => {
     }, 500);
 });
 
+// Not debounced: a checkbox is one deliberate click, and waiting half a second
+// to honour it reads as a broken control.
+watch(showDeleted, async () => {
+    await loadData(1, searchQuery.value);
+});
+
 // Methods
 const loadData = async (page: number = 1, search: string = '') => {
     loading.value = true;
     try {
-        await contactsStore.fetchContacts(page, search);
+        await contactsStore.fetchContacts(page, search, showDeleted.value ? 'with' : '');
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to load members.' });
     } finally {
@@ -566,9 +782,26 @@ const familyLoginSaving = ref(false);
 const showFamilyLoginModal = ref(false);
 const familyLoginEmail = ref('');
 const familyLoginError = ref('');
+// Set by the SERVER's refusal (`reassignable`), never by reading the message:
+// only one of the five refusals `enable()` can produce has a way through, and
+// which one it is must not depend on the wording of a sentence.
+const familyLoginCanReassign = ref(false);
+const familyLoginReassign = ref(false);
 
-/** The three states, in the words an office uses. Never a boolean. */
+/**
+ * The three states, in the words an office uses. Never a boolean.
+ *
+ * "Not eligible" is a fourth WORD but not a fourth state: it is `never_enabled`
+ * plus the server's eligibility answer, and it exists so the compact badge — the
+ * thing a registrar scans on a member's record — says which members can hold a
+ * sign-in at all. It never overrides `enabled` or `revoked`, which are facts
+ * about a grant that happened; a lapsed grant is reported by the warning beside
+ * the button instead, where there is room to say why.
+ */
 const familyLoginLabel = computed<string>(() => {
+    if (familyLogin.value && !familyLogin.value.eligible && familyLogin.value.state === 'never_enabled') {
+        return 'Not eligible';
+    }
     switch (familyLogin.value?.state) {
         case 'enabled': return 'Enabled';
         case 'revoked': return 'Revoked';
@@ -598,6 +831,35 @@ const loadFamilyLogin = async (contactId: number | string) => {
     }
 };
 
+/**
+ * The access history's five verbs. `merged`, `address_released` and
+ * `address_claimed` are not grants and must not be badged as one — the previous
+ * binary rendering printed "Enabled" over every row that was not a revocation,
+ * which on a carried trail meant labelling a merge as somebody handing out
+ * access. `address_claimed` is the row that says this member TOOK a sign-in
+ * address off another record; without it the panel showed only the grant, and
+ * the release half sat on a soft-deleted record no screen can open.
+ */
+const eventLabel = (action: FamilyLoginEvent['action']): string => {
+    switch (action) {
+        case 'revoked': return 'Revoked';
+        case 'merged': return 'Merged in';
+        case 'address_released': return 'Address released';
+        case 'address_claimed': return 'Address taken over';
+        default: return 'Enabled';
+    }
+};
+
+const eventBadgeClass = (action: FamilyLoginEvent['action']): string => {
+    switch (action) {
+        case 'revoked': return 'bg-danger-subtle text-danger';
+        case 'merged': return 'bg-info-subtle text-info';
+        case 'address_released': return 'bg-warning-subtle text-warning';
+        case 'address_claimed': return 'bg-warning-subtle text-warning';
+        default: return 'bg-success-subtle text-success';
+    }
+};
+
 const openFamilyLoginModal = () => {
     // Pre-filled with the CURRENT sign-in address when there is one, and blank
     // otherwise. Deliberately never pre-filled from `contact.email`: that column
@@ -606,6 +868,8 @@ const openFamilyLoginModal = () => {
     // spreadsheet happened to carry.
     familyLoginEmail.value = familyLogin.value?.login_email ?? '';
     familyLoginError.value = '';
+    familyLoginCanReassign.value = false;
+    familyLoginReassign.value = false;
     showFamilyLoginModal.value = true;
 };
 
@@ -613,17 +877,23 @@ const submitFamilyLogin = async () => {
     if (!selectedContact.value || !familyLoginEmail.value) return;
     familyLoginSaving.value = true;
     familyLoginError.value = '';
+    const reassigning = familyLoginReassign.value;
     try {
         familyLogin.value = await contactsStore.enableFamilyLogin(
             selectedContact.value.id,
-            familyLoginEmail.value
+            familyLoginEmail.value,
+            reassigning
         );
         showFamilyLoginModal.value = false;
+        familyLoginCanReassign.value = false;
+        familyLoginReassign.value = false;
         Swal.fire({
             icon: 'success',
-            title: 'Sign-in enabled',
-            text: `${familyLogin.value?.login_email} can now request a sign-in code.`,
-            timer: 2500,
+            title: reassigning ? 'Address reassigned' : 'Sign-in enabled',
+            text: reassigning
+                ? `${familyLogin.value?.login_email} was taken from the previous record and now belongs to this member, who can request a sign-in code with it.`
+                : `${familyLogin.value?.login_email} can now request a sign-in code.`,
+            timer: reassigning ? 4000 : 2500,
             showConfirmButton: false
         });
     } catch (error: any) {
@@ -636,6 +906,14 @@ const submitFamilyLogin = async () => {
             ?? '';
         if (!familyLoginError.value) {
             familyLoginError.value = 'Could not enable sign-in. Please try again.';
+        }
+        // The server says whether this particular refusal has a way through. It
+        // is never inferred from the wording, and it resets to false on every
+        // other refusal so a stale checkbox cannot survive into an unrelated
+        // failure.
+        familyLoginCanReassign.value = data?.reassignable === true;
+        if (!familyLoginCanReassign.value) {
+            familyLoginReassign.value = false;
         }
     } finally {
         familyLoginSaving.value = false;
@@ -689,6 +967,13 @@ let mergeSearchTimer: any = null;
 const canMerge = computed(() =>
     mergeMode.value === 'existing' ? !!mergeTarget.value : !!mergeNew.value.first_name);
 
+/**
+ * Which merge this is — a card that names nobody, or two rows that are one
+ * person. It changes only the WORDS; the verb and everything it moves are the
+ * same, which is why there is one modal rather than two that drift.
+ */
+const isPlaceholderMerge = computed<boolean>(() => !!(selectedContact.value as any)?.is_placeholder);
+
 const openMerge = () => {
     mergeMode.value = 'existing';
     mergeSearch.value = ''; mergeResults.value = []; mergeTarget.value = null;
@@ -710,6 +995,9 @@ const searchMembers = () => {
 
 const doMerge = async () => {
     if (!selectedContact.value || !canMerge.value) return;
+    // Captured BEFORE the reload below clears `selectedContact` — the outcome
+    // dialog is worded for the record that has just been absorbed.
+    const wasPlaceholderMerge = isPlaceholderMerge.value;
     const id = masjidStore.masjid?.id;
     const payload = new URLSearchParams();
     if (mergeMode.value === 'existing') payload.append('target_contact_id', String(mergeTarget.value.id));
@@ -721,11 +1009,43 @@ const doMerge = async () => {
     }
     merging.value = true;
     try {
-        await ApiService.post(`/api/admin/masjids/${id}/contacts/${selectedContact.value.id}/merge` as any, payload);
+        const res = await ApiService.post(`/api/admin/masjids/${id}/contacts/${selectedContact.value.id}/merge` as any, payload);
         showMergeModal.value = false;
         showViewModal.value = false;
         await loadData();
-        Swal.fire({ icon: 'success', title: 'Attached', text: 'The card and its giving were moved to the member.' });
+
+        // The merge destroys the absorbed record, and with it any parent portal
+        // sign-in it held — deliberately, because the survivor may be nobody's
+        // guardian and a credential must never be granted by a side effect. The
+        // server says when that happened; saying nothing here would make it the
+        // silent loss it used to be.
+        const familyLoginOutcome = res.data?.family_login;
+        // …and what it did to the ROSTER, which used to be discarded entirely:
+        // `carry()` returned {moved, dropped} and the controller threw it away,
+        // so a merge that re-opened a guardian claim for confirmation said
+        // nothing. A guardianship that stops working is not a detail.
+        const rosterOutcome = res.data?.roster;
+        const verb = wasPlaceholderMerge ? 'Attached' : 'Merged';
+
+        if (familyLoginOutcome?.access_ended) {
+            Swal.fire({
+                icon: 'warning',
+                title: `${verb} — portal access ended`,
+                text: [familyLoginOutcome.message, rosterOutcome?.message].filter(Boolean).join(' '),
+            });
+        } else if (rosterOutcome?.unconfirmed > 0) {
+            Swal.fire({ icon: 'warning', title: `${verb} — a guardian entry needs confirming`, text: rosterOutcome.message });
+        } else if (rosterOutcome?.message) {
+            Swal.fire({ icon: 'success', title: verb, text: rosterOutcome.message });
+        } else {
+            Swal.fire({
+                icon: 'success',
+                title: verb,
+                text: wasPlaceholderMerge
+                    ? 'The card and its giving were moved to the member.'
+                    : 'The record and its giving were moved to the surviving member.',
+            });
+        }
     } catch (e) {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not attach. Please try again.' });
     } finally { merging.value = false; }
@@ -781,7 +1101,14 @@ const submitForm = async () => {
 const confirmDelete = async (contact: Contact) => {
     const result = await Swal.fire({
         title: 'Are you sure?',
-        text: `Remove ${contact.first_name} ${contact.last_name} from the directory?`,
+        // The second sentence is what a delete actually does now, said before
+        // the click rather than discovered afterwards: a trashed contact could
+        // never sign in (familyLoginIsActive() checks trashed()), so the access
+        // always ended here — it just used to end with the record still reading
+        // "enabled" and nothing in the history saying who ended it.
+        text: `Remove ${contact.first_name} ${contact.last_name} from the directory? `
+            + 'Any parent portal sign-in they hold is revoked, and their sign-in address stays '
+            + 'reserved to them until it is deliberately reassigned.',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#d33',
@@ -796,6 +1123,39 @@ const confirmDelete = async (contact: Contact) => {
             Swal.fire({ icon: 'success', title: 'Deleted!', text: 'Member has been removed.', timer: 2000, showConfirmButton: false });
         } catch (error) {
             Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to delete member.' });
+        }
+    }
+};
+
+/**
+ * Undelete a member — and say what it does NOT do.
+ *
+ * The one thing an operator will assume is that restoring the member restores
+ * their parent portal sign-in. It does not: the delete revoked it, on the
+ * record, and re-opening a credential is a typed, deliberate act everywhere
+ * else in this screen. Saying so in the confirmation is the difference between
+ * a rule and a surprise.
+ */
+const confirmRestore = async (contact: Contact) => {
+    const result = await Swal.fire({
+        title: 'Restore this member?',
+        text: `${contact.first_name} ${contact.last_name} will be returned to the directory. `
+            + 'Their parent portal sign-in stays revoked — re-enable it from their record if they '
+            + 'should have access again.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#198754',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Yes, restore'
+    });
+
+    if (result.isConfirmed) {
+        try {
+            await contactsStore.restoreContact(contact.id);
+            await loadData(paginationOptions.value?.currentPage || 1, searchQuery.value);
+            Swal.fire({ icon: 'success', title: 'Restored', text: 'Member is back in the directory.', timer: 2000, showConfirmButton: false });
+        } catch (error) {
+            Swal.fire({ icon: 'error', title: 'Error!', text: 'Failed to restore member.' });
         }
     }
 };

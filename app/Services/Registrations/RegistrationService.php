@@ -13,9 +13,11 @@ use App\Models\Registrant;
 use App\Models\Registration;
 use App\Models\RegistrationAdjustment;
 use App\Models\User;
+use App\Services\Stripe\RegistrationCheckoutService;
 use App\Support\FormSchema;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -66,6 +68,33 @@ use Illuminate\Validation\ValidationException;
  * registrant who is not themselves — after the ward's participant row exists,
  * per .claude/rules/groups.md. Contacts-first: this service creates no
  * Contact rows; callers resolve people to Contacts before registering.
+ *
+ * WHICH MAKES THE CALLER RESPONSIBLE FOR THE GUARDIAN CLAIM, and that is worth
+ * saying out loud because it was got wrong once. `writeRosterMemberships()`
+ * writes a guardian edge from the payer over every registrant, and a guardian
+ * edge is the single fact the parent portal reads to decide whose child's
+ * behaviour, ḥifẓ and safeguarding records a credential opens. This service
+ * cannot see who asked: `confirm()` runs from a webhook minutes or days later,
+ * with no request and no principal, so it takes the registrant list AS the
+ * claim and the door that assembled that list owns proving it.
+ *
+ * The public endpoint's rule is therefore part of THIS contract, not a detail
+ * of that controller: `Api\V1\OfferingRegistrationsController` resolves a
+ * REGISTRANT to a contact it creates in that same request and never to a
+ * pre-existing one, because nothing on an unauthenticated path authorises the
+ * claim "I am this person's guardian" over somebody who already exists. Before
+ * that split, an anonymous POST naming two real addresses made one parent the
+ * recorded guardian of another family's child, in the class she was actually
+ * in. Any FUTURE caller that resolves registrants differently — an admin
+ * enrolment screen, an importer — is asserting that its own act carries that
+ * authority, and had better be authenticated.
+ *
+ * THE ROSTER IS A MATERIALISATION, NOT THE REGISTRATION. It is optional by
+ * construction (`offerings.group_id` is nullable and an offering without one
+ * registers families perfectly well), so a group that cannot be resolved is
+ * logged and skipped, never thrown — see writeRosterMemberships(). A throw
+ * there unwound the ledger row and the `paid` status of a payment the webhook
+ * had already been told about.
  */
 class RegistrationService
 {
@@ -106,7 +135,7 @@ class RegistrationService
      *         empty means the payer registers themselves
      *
      * @throws RegistrationException  closed offering, cross-tenant reference,
-     *         inactive/mismatched/unknown plan, misconfigured roster group
+     *         inactive/mismatched/unknown plan
      * @throws ValidationException  intake answers fail the form's schema
      */
     public function register(
@@ -133,7 +162,32 @@ class RegistrationService
         // Validation derives from the STORED schema, never from the payload
         // (App\Support\FormSchema is the enforcement; any client-side check is
         // a convenience). Failing here means nothing has been written at all.
-        $form = Form::query()->whereKey($offering->intake_form_id)->first();
+        //
+        // MASJID-FILTERED, like every other reader of this column
+        // (OfferingPublicPayload::intakeForm, OfferingRegistrationState::
+        // intakeFormExists, AdminDashboard\OfferingsController). The filter was
+        // missing here until 2026-08-12, and this is the one path that WRITES:
+        // the public register endpoint runs UNBOUND, so the BelongsToMasjid
+        // global scope adds no filter at all and a bare whereKey() resolves any
+        // tenant's form (.claude/rules/tenant-scoping.md). Measured with
+        // `intake_form_id` pointing at another organisation's form: the public
+        // page said `closed / no_intake_form` — because the readers DID filter —
+        // while `POST .../register` answered 200 and wrote a `form_responses`
+        // row carrying org A's `masjid_id` beside org B's `form_id`, validated
+        // against org B's schema and questions.
+        //
+        // Reachability, stated plainly rather than inflated:
+        // `OfferingFormRequest::ownedRule` blocks a cross-tenant
+        // `intake_form_id` on the admin surface, so a row in this shape needs a
+        // seeder, an import or a manual DB edit to arise. It is fixed anyway
+        // because it is the exact shape of the two holes that shipped this month
+        // — a hand-filter present in every reader and absent in the writer — and
+        // because the failure is silent: the page reports the offering closed
+        // and the write succeeds regardless.
+        $form = Form::query()
+            ->where('masjid_id', $offering->masjid_id)
+            ->whereKey($offering->intake_form_id)
+            ->first();
 
         if (! $form) {
             throw RegistrationException::offeringClosed();
@@ -464,10 +518,16 @@ class RegistrationService
 
             $offering->increment('registration_count');
 
-            if ((int) $locked->adjusted_total_minor === 0) {
+            if ($this->chargeableMinor($locked) <= 0) {
                 // The free-path carve-out: no Stripe leg, so the seat confirms
                 // in-request through the single confirmation seam (which is
                 // pending-only — hence the transition through pending here).
+                //
+                // The same predicate `grantAdjustment()` uses, and for the same
+                // reason: a waitlisted row may carry aid (it has no payment leg
+                // to conflict with), so promoting one whose per-charge rounds to
+                // nothing used to hand out a pending seat with a checkout link
+                // that 422s and a deadline for the reaper to act on.
                 $locked->status = Registration::STATUS_PENDING;
                 $locked->payment_status = Registration::PAYMENT_NONE;
                 $locked->checkout_expires_at = null;
@@ -500,6 +560,33 @@ class RegistrationService
      * The recompute reads list_total_minor from the REGISTRATION row — the
      * immutable plan is not consulted again, so a (hypothetical) later plan
      * edit can never restate what somebody agreed to pay.
+     *
+     * ## "WAIVED" IS WHEN THE CHARGE REACHES ZERO, NOT WHEN THE TOTAL DOES
+     *
+     * The carve-out below used to test `adjusted_total_minor === 0` exactly,
+     * which is the right test for a one-time plan and the wrong one for an
+     * installment plan. What Stripe is asked for is `perChargeMinor()` =
+     * `intdiv(adjusted_total, installment_count)`, so an installment plan
+     * crosses into "nothing to charge" the moment the TOTAL drops below the
+     * COUNT — not when it reaches zero. Measured, 9 x $100.00 with
+     * `grantAdjustment(aid, 89995)`:
+     *
+     *     adjusted_total_minor = 5, the admin sees the grant succeed
+     *     per charge           = intdiv(5, 9) = 0
+     *     checkout             -> 422 "This registration has nothing left to pay"
+     *     seat                 = 1, checkout_expires_at still set
+     *     +46 min              -> the reaper cancels the seat
+     *
+     * A registrar granting near-total aid ejected the family she was helping.
+     * The rounding doctrine already reasons about "up to N-1 minor units dropped
+     * in the PAYER's favour"; this is that same rule at its limit, where the
+     * remainder happens to be the whole total, and it lands where every other
+     * uncollectable total lands — the free-path carve-out.
+     *
+     * `adjusted_total_minor` is deliberately NOT rewritten to 0. It is derived
+     * from the audit trail (`adjusted = list - sum(adjustments)`) and restating
+     * it would make the ledger disagree with the rows it is computed from; the
+     * money state (`none`) is what says nothing is being collected.
      */
     public function grantAdjustment(
         Registration $registration,
@@ -544,7 +631,7 @@ class RegistrationService
 
             $locked->adjusted_total_minor = max(0, $locked->list_total_minor - $reductions);
 
-            if ($locked->adjusted_total_minor === 0
+            if ($this->chargeableMinor($locked) <= 0
                 && $locked->payment_status === Registration::PAYMENT_AWAITING) {
                 // 100% waiver → the free-path carve-out: never a $0 session,
                 // so the payment leg (window, key) is dismantled entirely.
@@ -599,6 +686,45 @@ class RegistrationService
         }
 
         return (int) $feePlan->amount_minor;
+    }
+
+    /**
+     * WHAT STRIPE WOULD ACTUALLY BE ASKED FOR, integer minor units — the test
+     * for "is there still anything to collect", as opposed to "is the total
+     * zero".
+     *
+     * Delegates to `RegistrationCheckoutService::perChargeMinor()`, which is THE
+     * per-charge function (.claude/rules/registration-billing-data.md) and pure
+     * arithmetic over the registration's snapshot and the plan's shape — no
+     * Stripe call, which is why calling it does not break this class's "no
+     * Stripe API calls, ever". `RegistrationPaymentService::perChargeFallback`
+     * reaches for it the same way and for the same reason: two implementations
+     * of "what is one charge worth" is how they come to disagree, and the
+     * disagreement is always somebody's money.
+     *
+     * A plan that cannot be loaded, or one whose shape `perChargeMinor()`
+     * refuses, degrades to the snapshot total: the free-path carve-out is a
+     * decision to collect NOTHING, and it must never be reached by accident
+     * through a broken plan row.
+     */
+    private function chargeableMinor(Registration $registration): int
+    {
+        $total = (int) $registration->adjusted_total_minor;
+
+        $feePlan = FeePlan::query()
+            ->where('masjid_id', $registration->masjid_id)
+            ->whereKey($registration->fee_plan_id)
+            ->first();
+
+        if (! $feePlan) {
+            return $total;
+        }
+
+        try {
+            return RegistrationCheckoutService::perChargeMinor($registration, $feePlan);
+        } catch (\Throwable $e) {
+            return $total;
+        }
     }
 
     // ------------------------------------------------------------------ guards
@@ -698,13 +824,81 @@ class RegistrationService
      *  - a payer who is also a registrant gets a participant row and NO
      *    self-guardian edge.
      *
+     * ## EVERY ROW THIS METHOD WRITES IS `self_asserted`, AND NEVER CONFIRMED
+     *
+     * This is THE unauthenticated roster writer in this application. The list it
+     * materialises came from a public form — no session, no token, no proof of
+     * control of either address — so what it writes is a CLAIM and not a grant:
+     * it lists a person, it counts towards capacity, a teacher may keep records
+     * about the child it enrols, and it opens not one byte of anybody's records
+     * until the office confirms it (`GroupMembership::PROVENANCES`,
+     * `GroupAudience::membershipsFor()`, `FamilyAccessService::guardianEdges()`).
+     *
+     * NEVER CONFIRMED — not conditionally, not when a staff principal happens to
+     * be on the request. A free registration confirms in-request while an
+     * anonymous POST is in flight; a priced one confirms minutes later from a
+     * Stripe webhook with no request at all; and an admin re-driving either path
+     * is still materialising a list the public typed. The authority behind the
+     * claim is identical in all three, so reading the ambient principal would
+     * make provenance a fact about WHO PRESSED GO rather than about who vouched
+     * for the child — which is the exact substitution that produced three rounds
+     * of defects here. Confirmation is a separate, deliberate act with its own
+     * endpoint and its own actor: `GroupMembershipsController::confirm`.
+     *
+     * A row that ALREADY EXISTS is left exactly as it is — the `exists()` checks
+     * below are what keep a second season's registration from downgrading an
+     * edge the office confirmed last September.
+     *
      * Consent is NOT written here: a guardian edge records a relationship,
      * never consent — absence of a record means no consent, and recording it
      * is GroupConsentController's job at the guardian's own request.
      *
-     * No group configured means no roster to materialise; a group that
-     * resolves to another tenant is a data error and refuses loudly rather
-     * than writing a cross-tenant roster row.
+     * ## A ROSTER THAT CANNOT BE WRITTEN IS NOT A REASON TO UNDO A PAYMENT
+     *
+     * A roster is OPTIONAL by construction: `offerings.group_id` is nullable,
+     * and an offering with no group has always registered families perfectly
+     * well — the first branch below returns and nothing is materialised. That
+     * is the fact that decides what the other two failures mean.
+     *
+     * This method used to throw `rosterMisconfigured()` when the group did not
+     * resolve for the tenant, and the throw was the defect. `confirm()` calls
+     * this INSIDE its transaction and `settle()` calls `confirm()` inside ITS
+     * transaction, so the throw rolled back the `registration_payments` ledger
+     * row and `payment_status = paid` with it, and propagated to
+     * `StripeWebhookController::handle`, which answered 500. Measured, with the
+     * offering's roster group soft-deleted by one unguarded admin click:
+     *
+     *     checkout.session.completed x3 (Stripe retries) -> 500, 500, 500
+     *     after the retries:  status=pending payment=awaiting payments=0
+     *     +46 min reaper:     cancelled / canceled / seat 0 / payments 0
+     *
+     * The family paid, the platform kept no record, and the reaper cancelled her
+     * seat. The FREE path failed the same way and more visibly: `register`
+     * answered an anonymous parent 422 with this class's internal invariant
+     * sentence — a refusal no read surface predicts and that is not a member of
+     * `OfferingRegistrationState::REASONS`.
+     *
+     * So the two failures are now what they actually are:
+     *
+     *  - THE GROUP DOES NOT RESOLVE (soft-deleted underneath the pointer, or
+     *    hard-deleted before `nullOnDelete` could fire). This is the same fact
+     *    as `group_id === null` — there is no live roster to materialise into —
+     *    and the codebase already treats that as ordinary. Logged loudly with
+     *    everything an admin needs to repair it, and the registration stands.
+     *  - THE GROUP BELONGS TO ANOTHER ORGANISATION. Still never written into —
+     *    that is the whole point of the check — but by SKIPPING, not by
+     *    throwing. Refusing to write the row is what protects the other tenant;
+     *    destroying this tenant's money was only ever the delivery mechanism.
+     *
+     * Nothing is swallowed except this one judgement: a database error, a
+     * deadlock or a constraint violation still propagates, still 500s, and
+     * Stripe still retries it — which is correct, because those are transient
+     * and this is not.
+     *
+     * `AdminDashboard\GroupsController::destroy` now refuses to delete a group
+     * that is a live offering's roster, which is what stops this arising at all.
+     * This branch is what keeps rows broken before that guard — or broken by an
+     * import — from costing a family her money.
      */
     private function writeRosterMemberships(Registration $registration): void
     {
@@ -717,7 +911,23 @@ class RegistrationService
         $group = Group::query()->whereKey($offering->group_id)->first();
 
         if (! $group || (int) $group->masjid_id !== (int) $registration->masjid_id) {
-            throw RegistrationException::rosterMisconfigured();
+            // Loud, searchable, and carrying everything the repair needs: which
+            // program, which group id, and which registration did not land on a
+            // roster because of it.
+            Log::warning(
+                'Registration confirmed with NO roster: this offering\'s group could not be resolved for its '
+                . 'organisation. The seat and any payment stand; re-point the offering at a live group and add '
+                . 'the registrant to it.',
+                [
+                    'registration_id' => $registration->id,
+                    'masjid_id' => (int) $registration->masjid_id,
+                    'offering_id' => (int) $offering->id,
+                    'group_id' => (int) $offering->group_id,
+                    'cross_tenant' => $group !== null,
+                ]
+            );
+
+            return;
         }
 
         $wardIds = Registrant::query()
@@ -735,13 +945,15 @@ class RegistrationService
                 ->exists();
 
             if (! $alreadyParticipant) {
-                GroupMembership::create([
+                $participant = new GroupMembership([
                     'masjid_id' => $registration->masjid_id,
                     'group_id' => $group->id,
                     'contact_id' => $contactId,
                     'role' => GroupMembership::ROLE_MEMBER,
                     'joined_at' => now(),
                 ]);
+
+                $participant->selfAssertedFrom($registration)->save();
             }
         }
 
@@ -764,7 +976,7 @@ class RegistrationService
                 ->exists();
 
             if (! $edgeExists) {
-                GroupMembership::create([
+                $edge = new GroupMembership([
                     'masjid_id' => $registration->masjid_id,
                     'group_id' => $group->id,
                     'contact_id' => $guardianId,
@@ -772,6 +984,8 @@ class RegistrationService
                     'guardian_of_contact_id' => $wardId,
                     'joined_at' => now(),
                 ]);
+
+                $edge->selfAssertedFrom($registration)->save();
             }
         }
     }

@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Groups\UpdateGroupRequest;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\Masjid;
+use App\Models\Offering;
 use App\Support\Errors;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
@@ -134,10 +135,95 @@ class GroupsController extends Controller
      * it can be a list of children, and a mis-click must not be the thing that
      * destroys it. Its memberships are left in place, invisible with the group,
      * so a later retention slice can decide when they actually go.
+     *
+     * REFUSED while this group is a live offering's ROSTER.
+     *
+     * `offerings.group_id` is where a confirmed registration materialises its
+     * registrants and its guardian edges (RegistrationService::
+     * writeRosterMemberships). The column is nullable with `nullOnDelete()`, but
+     * `groups` SOFT-deletes, so the FK never fires and the pointer is simply left
+     * dangling at a row that no longer resolves.
+     *
+     * This was the last unguarded reference into this table, and it is the one
+     * that takes money. Measured end to end before the guard:
+     *
+     *     register                                 -> 200 pending, seat 1, live
+     *                                                 checkout URL
+     *     DELETE .../groups/{roster_group_id}      -> 200, one click, no warning
+     *     checkout.session.completed  (x3 retries) -> 500, 500, 500
+     *     after the retries   status=pending payment=awaiting payments=0
+     *     +46 min, the reaper cancelled the seat   payments=0 memberships=0
+     *
+     * The family paid $150, holds Stripe's receipt, and forty-five minutes later
+     * her registration is cancelled with no local trace of the charge — so nobody
+     * can even find her to refund her.
+     *
+     * Both sibling references from this table are already guarded, and this one is
+     * written to match them: `FormsController::destroy` refuses while the form is a
+     * live offering's `intake_form_id`, and `OfferingsController::destroy` refuses
+     * while an offering holds live registrations. Same shape, same words, and the
+     * same pointer at the non-destructive path.
+     *
+     * The recovery is SOFTER than the intake form's, because a roster is optional
+     * where an intake form is not: detach the program from the group (`group_id`
+     * is nullable — registrations then confirm with no roster), re-point it at the
+     * classroom that replaces this one, or switch the group off with
+     * `is_active = false`, which is not a delete at all.
+     *
+     * The guard is NOT the only defence and is not meant to be. A group deleted
+     * before it shipped still dangles, so `writeRosterMemberships()` treats an
+     * unresolvable group as "no roster to materialise" rather than throwing —
+     * exactly as `no_intake_form` still exists behind the FormsController guard.
+     * This is what stops the mistake being made; that is what stops the mistake
+     * costing a family her money.
+     *
+     * The scoped findOrFail runs OUTSIDE the try so a cross-tenant / missing id
+     * surfaces as a clean 404 rather than being swallowed into a 500.
      */
     public function destroy($masjid_id, $group_id)
     {
         $group = Group::findOrFail($group_id);
+
+        // Explicit masjid filter AND an explicit scope bypass, mirroring
+        // FormsController::destroy: this must not depend on whether
+        // TenantContext happens to be bound, because a query that quietly
+        // returned nothing here would let the delete through
+        // (.claude/rules/tenant-scoping.md — an unbound scope adds NO filter).
+        // Soft-deleted offerings do not block: nothing registers into one.
+        $blocking = Offering::withoutMasjidScope()
+            ->where('masjid_id', $group->masjid_id)
+            ->where('group_id', $group->id)
+            ->orderBy('name')
+            ->pluck('name')
+            ->all();
+
+        if ($blocking !== []) {
+            $names = implode(', ', array_slice($blocking, 0, 5))
+                . (count($blocking) > 5 ? ', and ' . (count($blocking) - 5) . ' more' : '');
+
+            $one = count($blocking) === 1;
+
+            $message = 'This group is the roster for ' . $names . '. Deleting it would leave '
+                . ($one ? 'that program' : 'those programs')
+                . ' with nowhere to enrol the families who register, including the ones '
+                . 'who have already paid. Take '
+                . ($one ? 'the program' : 'the programs')
+                . ' off this group first (or point '
+                . ($one ? 'it' : 'them')
+                . ' at another one), or switch this group off instead of deleting it.';
+
+            // `status: failed` + `data` mirrors OfferingsController::destroy,
+            // which is the same refusal for the same reason; `message` is what
+            // FormsController::destroy returns for the sibling reference, so a
+            // client reading either convention sees it.
+            return response()->json([
+                'status' => 'failed',
+                'message' => $message,
+                'data' => $message,
+                'offerings' => $blocking,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         $group->delete();
 
         return response()->json([

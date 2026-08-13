@@ -101,6 +101,15 @@ class OfferingAdminTest extends TestCase
             // Offerings live inside the CRM route group, gated by
             // masjids.crm_enabled (default false; CrmFeatureGateTest covers it).
             'crm_enabled' => true,
+            // Connect onboarding finished. `active_fee_plan_count` counts plans
+            // a registrant could actually NAME in `fee_plan_id`, and since
+            // 2026-08-12 a plan that raises a charge is not one of those for an
+            // organisation with nowhere to put the money
+            // (OfferingRegistrationState::isPurchasable). Without this, the paid
+            // fixtures below would be withheld and the assertions here would
+            // pass or fail for a reason this file is not about.
+            'stripe_account_id' => 'acct_TEST' . uniqid(),
+            'stripe_charges_enabled' => true,
         ], $overrides));
     }
 

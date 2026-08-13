@@ -81,4 +81,79 @@ final class PublicTenant
             ->whereNull('deleted_at')
             ->exists();
     }
+
+    /**
+     * True when this id names a live organisation whose CRM IS SWITCHED ON —
+     * the question every public REGISTRATION endpoint has to ask, on top of
+     * `exists()`.
+     *
+     * ## Why registration asks a second question
+     *
+     * `masjids.crm_enabled` gates the CRM route group in routes/admin.php
+     * (`App\Http\Middleware\EnsureCrmEnabled`), and the offering / fee-plan /
+     * registration admin surfaces are INSIDE that group. Until 2026-08-12 no
+     * `/api/v1` endpoint consulted the flag, so with `crm_enabled = false`, as
+     * the organisation's own admin:
+     *
+     *     PUBLIC  GET  /api/v1/offerings/{slug}         200, registration_state "open"
+     *     PUBLIC  POST /api/v1/offerings/{slug}/quote   200, amount_due_minor 15000
+     *     PUBLIC  POST /api/v1/offerings/{slug}/register
+     *                                                   200, live checkout_url on the
+     *                                                   org's connected account
+     *                                                   -> 1 Contact + 1 Registration written
+     *     ADMIN   GET  /api/admin/masjids/{id}/offerings              403
+     *     ADMIN   GET  .../offerings/{id}/registrations               403
+     *
+     * — money taken and rows written for an organisation whose staff cannot see
+     * any of it.
+     *
+     * ## Why the gate belongs on the PUBLIC side, not off the admin side
+     *
+     * The tempting "fix" is to drop `crm` from the offerings routes so the org
+     * can at least see what is being sold for it. That is the wrong direction,
+     * and measurably so: `AdminDashboard\RegistrationsController@index`
+     * eager-loads `contact` and `registrants.contact` and `show` adds
+     * `formResponse` — the roster IS the member directory, with names, emails,
+     * phone numbers and intake answers. Ungating it would turn the roster
+     * screen into an unguarded window onto the contacts the `crm` gate exists to
+     * close, which is worse than the defect it fixed.
+     *
+     * Registration is not adjacent to the CRM, it is INSIDE it: `register()`
+     * find-or-creates `Contact` rows in the member directory, `confirm()`
+     * materialises `group_memberships`, and the charge runs on the connected
+     * account whose onboarding endpoints are themselves behind this same gate.
+     * `.claude/rules/auth-permissions.md` states it plainly — "the whole CRM
+     * (member directory + money path) is OFF by default" — so an organisation
+     * whose CRM has never been switched on has no registration feature to
+     * expose, and one whose CRM has been switched OFF has had it withdrawn.
+     *
+     * ## Why not the `crm` middleware itself
+     *
+     * `EnsureCrmEnabled` reads `TenantContext` / the `{masjid_id}` route param
+     * and aborts 403 "The CRM is not enabled for this masjid." Neither half
+     * fits here: `/api/v1` never runs the tenant middleware and takes its
+     * organisation from a HEADER, and a 403 naming an internal feature flag
+     * tells an anonymous caller something about the organisation's account
+     * standing that is none of their business. So the public surface answers
+     * with the SAME 404 a missing offering gets — a caller cannot distinguish
+     * "no such offering", "another org's offering", "switched off",
+     * "offboarded" and "CRM not enabled", which is the same
+     * no-probing contract the rest of this class holds.
+     *
+     * Deliberately NOT applied to the other public endpoints. A masjid without
+     * a CRM still has prayer times, announcements, pages, a contact form and a
+     * zakat calculator; this is the registration surface's question alone.
+     */
+    public static function crmEnabled(int $masjidId): bool
+    {
+        if ($masjidId <= 0) {
+            return false;
+        }
+
+        return Masjid::query()
+            ->whereKey($masjidId)
+            ->whereNull('deleted_at')
+            ->where('crm_enabled', true)
+            ->exists();
+    }
 }

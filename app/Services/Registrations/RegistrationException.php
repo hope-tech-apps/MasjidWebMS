@@ -47,10 +47,25 @@ class RegistrationException extends RuntimeException
         return new self('This offering is not currently accepting registrations.');
     }
 
-    public static function rosterMisconfigured(): self
-    {
-        return new self('This offering\'s roster group could not be resolved for its organization.');
-    }
+    /*
+     * REMOVED: rosterMisconfigured(). Do not reinstate it.
+     *
+     * It refused a confirmation whose offering's roster group did not resolve
+     * for the tenant, and it was thrown from inside
+     * RegistrationService::writeRosterMemberships() — which runs inside
+     * confirm(), which runs inside settle()'s transaction. So the refusal rolled
+     * back the `registration_payments` row and `payment_status = paid` of money
+     * Stripe had already told us about, answered the webhook 500 (Stripe then
+     * retries forever), and left the seat for the reaper to cancel. On the free
+     * path it reached an anonymous parent as a 422 carrying that internal
+     * sentence.
+     *
+     * A roster is optional — `offerings.group_id` is nullable and an offering
+     * without one registers families fine — so an unresolvable group is now
+     * logged and skipped there, and a group belonging to another organisation is
+     * still never written into. `AdminDashboard\GroupsController::destroy` is
+     * where the misconfiguration is refused, before any money exists.
+     */
 
     public static function notConfirmable(string $status): self
     {
@@ -77,6 +92,24 @@ class RegistrationException extends RuntimeException
     public static function notCheckoutable(string $status): self
     {
         return new self("Only a pending registration can be checked out (status: {$status}).");
+    }
+
+    /**
+     * The 30-minute seat hold lapsed before payment was completed.
+     *
+     * NOT `notCheckoutable('expired')`, which is what this used to be:
+     * `'expired'` is not a member of `Registration::STATUSES`
+     * (pending|confirmed|waitlisted|cancelled), so that spelling showed an
+     * anonymous caller a status the system does not have, inside a sentence
+     * written for a developer reading a stack trace. Every other refusal a
+     * family can reach on the public path is written for a parent, and this one
+     * now is too — including the fifteen-minute wait, because the reaper's grace
+     * margin means re-registering immediately would queue them behind their own
+     * dead seat.
+     */
+    public static function checkoutWindowClosed(): self
+    {
+        return new self('The payment window for this registration has closed. Its place is released automatically — please register again in a few minutes.');
     }
 
     /**

@@ -35,9 +35,27 @@ use Tests\TestCase;
  * for".
  *
  * A student login is a DIFFERENT standing computation — own record only, no
- * group feed, no participant threads — and belongs to its own task. Until that
- * exists, this refusal is the only thing standing between a roster and a child
- * credential.
+ * group feed, no participant threads — and belongs to its own task.
+ *
+ * ## What this file stopped asserting, and why
+ *
+ * It used to end "this refusal is the only thing standing between a roster and
+ * a child credential", and a previous round widened the refusal to cover any
+ * contact holding a participant edge ANYWHERE. That is gone. It refused the two
+ * commonest adults in a school — a parent enrolled in the adult ḥalaqa, a
+ * teacher who is also a parent — and the `GroupMembership::created` hook that
+ * enforced it after the fact destroyed credentials they already held, on an
+ * ordinary 201, reachable by an anonymous POST to the public registration
+ * endpoint.
+ *
+ * The guarantee did not weaken, it MOVED: `GroupAudience::membershipsFor()`
+ * narrows a family principal to their guardian edges, so a credential reads
+ * wards and nothing else — the nine-year-old measured above is still refused
+ * one (they are nobody's guardian, the condition below that never moved), and
+ * a dual-role holder now gets one that opens their ward's records and nothing
+ * about themselves. Controlling what a credential READS turned out to be the
+ * property; controlling who may hold one was a proxy for it that refused real
+ * people and still had to be patched from behind.
  */
 class GuardianOnlyLoginTest extends TestCase
 {
@@ -129,6 +147,215 @@ class GuardianOnlyLoginTest extends TestCase
     }
 
     /**
+     * THE DUAL-ROLE CASE — HELD A GUARDIAN EDGE **AND** A PARTICIPANT EDGE.
+     *
+     * Tariq is sixteen. He is a `member` of the Teens Ḥalaqa — classmates on the
+     * roster, a published feed, and a participant thread about him where a
+     * teacher and his guardian discuss a safeguarding concern. He is also
+     * recorded as a `guardian` of his seven-year-old sister on the Kids Class
+     * roster, because a school records who may collect a child.
+     *
+     * Measured before ANY of this: `enable()` succeeded, and with the resulting
+     * token the teens feed answered 200 and so did the safeguarding thread about
+     * him.
+     *
+     * A previous round answered that by REFUSING HIM A CREDENTIAL. That refusal
+     * is gone, and this test now pins what replaced it, because the refusal was
+     * aimed at the wrong noun: it decided WHO MAY HOLD a credential in order to
+     * control WHAT A CREDENTIAL MAY READ, and the two come apart on the most
+     * ordinary adults a school has — a parent enrolled in the adult ḥalaqa, a
+     * teacher who is also a parent. Both were refused outright, and the
+     * `GroupMembership::created` hook that enforced the same rule after the fact
+     * DESTROYED credentials those adults already held, on an ordinary 201.
+     *
+     * `GroupAudience::membershipsFor()` narrows a family principal to their
+     * guardian edges, so Tariq may hold a credential and it reads his sister's
+     * records and NOTHING about himself. `a_dual_role_credential_reads_the_ward_and_not_the_holder`
+     * in tests/Feature/GuardianEdgeProvenanceTest.php walks the same shape
+     * end-to-end over HTTP; this one pins the enable-time verdict.
+     */
+    #[Test]
+    public function a_student_who_is_also_a_siblings_guardian_may_hold_a_login_scoped_to_their_ward(): void
+    {
+        [$masjid, $teens] = $this->makeClassroom();
+        $kids = $this->makeGroupIn($masjid);
+
+        $tariq = $this->makeContact($masjid, 'Tariq', 'Rahman');
+        $sister = $this->makeContact($masjid, 'Salma', 'Rahman');
+
+        // A student on a class roster.
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $teens->id,
+            'contact_id' => $tariq->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+
+        // …and an ordinary pickup-authorisation row on his sister's class.
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $kids->id,
+            'contact_id' => $sister->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $kids->id,
+            'contact_id' => $tariq->id,
+            'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $sister->id,
+            'joined_at' => now(),
+        ]);
+
+        $service = app(FamilyAccessService::class);
+
+        $this->assertNull(
+            $service->ineligibilityReason($tariq),
+            'a guardian was refused a credential for also being on a roster'
+        );
+
+        $updated = $service->enable($tariq, 'tariq@example.test');
+        $this->assertNotNull($updated->login_enabled_at);
+
+        // AND THE READ SCOPE IS WHAT MAKES THAT SAFE. His own participant row in
+        // the Teens Ḥalaqa buys the credential no standing there at all, so the
+        // feed and the safeguarding thread about him — the two things measured
+        // at 200 — are refused at the source rather than at the door.
+        app(\App\Support\TenantContext::class)->set((int) $masjid->id);
+
+        $audience = app(\App\Support\GroupAudience::class);
+        $principal = $updated->refresh();
+
+        $this->assertTrue(
+            $audience->membershipsFor($principal, $teens->refresh())->isEmpty(),
+            'the credential still speaks through its holder\'s own participant row'
+        );
+        $this->assertFalse($audience->mayReceive(
+            $principal, $teens->refresh(), \App\Support\GroupAudience::DISCLOSURE_FEED
+        ));
+
+        // …while the ward's class, which is what the credential was issued for,
+        // still answers.
+        $this->assertFalse(
+            $audience->membershipsFor($principal, $kids->refresh())->isEmpty(),
+            'the guardian edge stopped carrying the credential'
+        );
+    }
+
+    /**
+     * THE SAME, WITH A LEADER — and a leader's participant standing is the WIDER
+     * one: `standingIn()` gives a leader every participant thread in the group,
+     * every award and every ḥifẓ record for every child in it.
+     *
+     * A teacher who is also a parent is the second adult the blanket refusal hit,
+     * and the `created` hook hit them harder: giving Ustadha Maryam a class ended
+     * the parent-portal sign-in she already held, on a 201, with an audit row
+     * naming nobody. She may hold one now, and it carries her own child and not
+     * her classroom — which she reads through the STAFF surface and the identity
+     * bridge, as she always did.
+     */
+    #[Test]
+    public function a_group_leader_who_is_also_a_guardian_may_hold_a_login_scoped_to_their_ward(): void
+    {
+        [$masjid, $group] = $this->makeClassroom();
+
+        $child = $this->makeContact($masjid, 'Amina', 'Yusuf');
+        $teacherParent = $this->makeContact($masjid, 'Ustadha', 'Maryam');
+
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $child->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $teacherParent->id,
+            'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $child->id,
+            'joined_at' => now(),
+        ]);
+
+        // She teaches the class as well.
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $teacherParent->id,
+            'role' => GroupMembership::ROLE_LEADER,
+            'joined_at' => now(),
+        ]);
+
+        $service = app(FamilyAccessService::class);
+
+        $this->assertNull($service->ineligibilityReason($teacherParent));
+        $this->assertNotNull(
+            $service->enable($teacherParent, 'maryam@example.test')->login_enabled_at
+        );
+
+        // Her LEADER row buys the credential nothing: the group carries her
+        // guardian edge over Amina and that is all it speaks through, so she has
+        // no leader standing through the parent portal.
+        app(\App\Support\TenantContext::class)->set((int) $masjid->id);
+
+        $rows = app(\App\Support\GroupAudience::class)
+            ->membershipsFor($teacherParent->refresh(), $group->refresh());
+
+        $this->assertCount(1, $rows);
+        $this->assertSame(GroupMembership::ROLE_GUARDIAN, $rows->first()->role);
+        $this->assertSame($child->id, (int) $rows->first()->guardian_of_contact_id);
+    }
+
+    /**
+     * A GUARDIAN OF A DELETED WARD IS NOBODY'S GUARDIAN.
+     *
+     * `contacts` soft-delete, so nothing cascades when a member is removed from
+     * the directory and the edge row survives intact. Measured: create the edge,
+     * delete the child, and `enable()` still wrote a FRESH grant, dated today,
+     * to somebody who is nobody's guardian in the directory the office is
+     * looking at.
+     *
+     * A trashed ward also has no readable records — `identitiesFor()` and every
+     * listing query run through the SoftDeletes scope — so the credential this
+     * used to mint opened nothing at all.
+     */
+    #[Test]
+    public function a_guardian_whose_only_ward_has_been_deleted_cannot_be_given_a_family_login(): void
+    {
+        [$masjid, $group] = $this->makeClassroom();
+
+        $child = $this->makeContact($masjid, 'Amina', 'Yusuf');
+        $parent = $this->makeContact($masjid, 'Yusuf', 'Ibrahim');
+
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $child->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+
+        GroupMembership::create([
+            'masjid_id' => $masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $parent->id,
+            'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $child->id,
+            'joined_at' => now(),
+        ]);
+
+        $child->delete();   // soft — the edge row is untouched
+
+        $this->expectException(RuntimeException::class);
+
+        app(FamilyAccessService::class)->enable($parent, 'yusuf@example.test');
+    }
+
+    /**
      * A guardian edge naming nobody is not a guardian edge.
      *
      * `StoreGroupMembershipRequest` already refuses to CREATE one ("a guardian
@@ -210,16 +437,19 @@ class GuardianOnlyLoginTest extends TestCase
             'org_type' => Masjid::ORG_TYPE_SCHOOL,
         ]);
 
+        return [$masjid, $this->makeGroupIn($masjid)];
+    }
+
+    private function makeGroupIn(Masjid $masjid): Group
+    {
         $name = 'Class '.uniqid();
 
-        $group = Group::create([
+        return Group::create([
             'masjid_id' => $masjid->id,
             'name' => $name,
             'slug' => \Illuminate\Support\Str::slug($name),
             'kind' => 'class',
         ]);
-
-        return [$masjid, $group];
     }
 
     private function makeContact(Masjid $masjid, string $first, string $last): Contact

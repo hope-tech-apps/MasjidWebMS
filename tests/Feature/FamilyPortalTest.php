@@ -733,33 +733,38 @@ class FamilyPortalTest extends TestCase
     // ------------------------------- 7. the §7 hazard, pinned rather than hidden
 
     #[Test]
-    public function a_login_enabled_participant_reads_the_whole_group_feed(): void
+    public function a_login_enabled_participant_reads_nothing_through_their_own_roster_row(): void
     {
-        // THIS TEST DOCUMENTS A HAZARD. It is not an endorsement.
+        // THIS TEST USED TO DOCUMENT A HAZARD. It now pins the hazard shut.
         //
-        // `standingIn()` sets `feed = true` outright for any PARTICIPANT — the
-        // person themselves needs nobody's consent to be shown their own group.
-        // That is correct for the adult it was written for (a volunteer on a
-        // masjid's team is a `member` row exactly as a child in a classroom is),
-        // and it is why docs/t015-parent-identity-design.md §7 refuses STUDENT
-        // logins outright: enabling a login on a child's contact row would hand
-        // that child the entire class feed — every classmate's photograph, with
-        // nobody's consent — plus the participant threads about themselves,
-        // which are where a teacher and a guardian discuss a safeguarding
-        // concern.
+        // `standingIn()` set `feed = true` outright for any PARTICIPANT — correct
+        // for the adult it was written for, and for a STAFF caller it still is
+        // (a volunteer on a masjid's team is a `member` row exactly as a child
+        // in a classroom is). Applied to a PARENT-PORTAL credential it meant
+        // enabling a login on a child's contact row handed that child the entire
+        // class feed — every classmate's photograph, with nobody's consent —
+        // plus the participant threads about themselves, which are where a
+        // teacher and a guardian discuss a safeguarding concern. Measured, and
+        // this test asserted every one of those 200s.
         //
-        // No code can tell the two apart: the schema has no age or role flag
-        // that distinguishes "adult volunteer" from "student". What keeps it
-        // shut today is that NOTHING in this application sets
-        // `login_enabled_at` — the four login_* columns are not fillable, no
-        // controller writes them, and the admin invite flow is not built. When
-        // it is, it must issue invites for GUARDIAN EDGES ONLY, and this test is
-        // the tripwire: if a future slice starts enabling participant logins,
-        // the behaviour it is buying is stated right here.
+        // No code can tell an adult volunteer from a student: the schema has no
+        // age or role flag. So the rule is not about WHO holds a credential — a
+        // previous round tried that and it refused a parent in the adult ḥalaqa
+        // and a teacher who is also a parent, and had to be patched from behind
+        // by a hook that an anonymous POST could fire. The rule is about what a
+        // FAMILY credential SPEAKS THROUGH: `GroupAudience::membershipsFor()`
+        // keeps a `Contact` principal's guardian edges and drops their own
+        // participant rows. A child's contact row is nobody's guardian, so it
+        // now resolves to no standing anywhere — which is what makes the
+        // enable-time rule ("a guardian, over a live ward") sufficient instead of
+        // merely necessary.
         $post = $this->seedPostWithImage();
         $threadAboutThem = $this->seedParticipantThread($this->childAMembership, 'About Amina');
 
-        // The child's own contact row, given a login.
+        // The child's own contact row, given a login — forceFill, because
+        // FamilyAccessService::enable() refuses this contact outright (nobody's
+        // guardian) and the point here is that the DISCLOSURE layer refuses it
+        // too, independently of the door.
         $this->childA->forceFill([
             'login_email' => 'child-' . uniqid() . '@test.local',
             'login_enabled_at' => now(),
@@ -767,28 +772,35 @@ class FamilyPortalTest extends TestCase
 
         $child = $this->childA->refresh();
 
-        // The WHOLE feed, with no consent recorded anywhere.
-        $this->as($child)
-            ->getJson($this->groupUrl('/posts'))
-            ->assertOk()
-            ->assertJsonPath('data.data.0.title', 'Trip photos');
+        // The group they are a MEMBER of does not exist as far as this
+        // credential is concerned.
+        $this->as($child)->getJson($this->url('/groups'))->assertOk()->assertJsonCount(0, 'data');
+        $this->as($child)->getJson($this->groupUrl())->assertStatus(403);
 
-        // And the media too, again with no consent — because a participant
-        // holds every disclosure about their own group outright.
+        // No feed…
+        $this->as($child)->getJson($this->groupUrl('/posts'))->assertStatus(403);
+
+        // …no bytes…
         $attachment = $post->attachments()->firstOrFail();
         $this->as($child)
             ->get($this->groupUrl("/posts/{$post->id}/attachments/{$attachment->id}"))
-            ->assertOk();
+            ->assertStatus(403);
 
-        // And the participant thread about themselves.
+        // …and not the participant thread about themselves, which is the one
+        // that mattered most.
         $this->as($child)
             ->getJson($this->groupUrl("/threads/{$threadAboutThem->id}"))
-            ->assertOk();
+            ->assertStatus(403);
 
-        // THE LIMIT THAT DOES HOLD, and the reason this is a hazard rather than
-        // a hole: even a participant login sees only their OWN records. The
-        // other family's child is still refused, by the same rule that refuses
-        // another guardian.
+        // Their own records, addressed by their own membership id, are refused
+        // too — this is deliberately NOT the student-login standing computation,
+        // which is its own task. A family credential gets nothing from a
+        // participant row rather than the narrow slice a student one should.
+        $this->as($child)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/awards"))
+            ->assertStatus(403);
+
+        // And the other family's child stays refused, as it always was.
         $this->as($child)
             ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/awards"))
             ->assertStatus(403);

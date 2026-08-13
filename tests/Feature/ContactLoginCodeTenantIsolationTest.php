@@ -406,11 +406,29 @@ class ContactLoginCodeTenantIsolationTest extends TestCase
         $groupA = Group::factory()->create(['masjid_id' => $this->a->id]);
         Group::factory()->create(['masjid_id' => $this->b->id]);
 
+        // A GUARDIAN edge, not a participant one. The fixture used to put the
+        // credential-holding parent on the roster as a `member`, which is the one
+        // shape a family credential may not sit beside: GroupMembership's
+        // `created` hook now ends a live sign-in the moment its holder acquires
+        // participant standing, because `standingIn()` grants a participant the
+        // whole group feed outright. The subject of this test is tenant binding,
+        // so it takes the standing a parent actually has.
+        $childA = Contact::factory()->create(['masjid_id' => $this->a->id]);
+
+        GroupMembership::create([
+            'masjid_id' => $this->a->id,
+            'group_id' => $groupA->id,
+            'contact_id' => $childA->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+        ]);
         GroupMembership::create([
             'masjid_id' => $this->a->id,
             'group_id' => $groupA->id,
             'contact_id' => $parentA->id,
-            'role' => GroupMembership::ROLE_MEMBER,
+            'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $childA->id,
+            'consent_granted_at' => now(),
+            'consent_scope' => GroupMembership::CONSENT_FEED,
         ]);
 
         $this->asANewRequest();

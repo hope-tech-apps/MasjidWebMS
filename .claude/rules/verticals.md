@@ -53,6 +53,46 @@ day the two diverge, existing-tenant behaviour silently changes. Add a new
 `mobile_app_features` key ⇒ add it to the masjid bundle in the same change.
 `ProvisionOrgTypeTest` pins the set.
 
+### GO-LIVE: `crm_enabled` is NOT part of provisioning, and a school is dark without it
+
+**Provisioning a school does not switch its CRM on.** This is the one step that
+is invisible from every screen the person doing the provisioning is looking at,
+so it goes here rather than in a runbook nobody opens on the day.
+
+`masjids.crm_enabled` defaults **false** (`2026_07_12_000011_add_crm_enabled_to
+_masjids_table`), and `OnboardingController@provision` never writes it — the
+wizard has no checkbox for it and the vertical bundles do not carry it, because
+it is a per-tenant gate and not a feature key. Verified against the tree: the
+only two writers in the whole codebase are `MasjidsController::setCrmEnabled`
+(**SuperAdmin only**) and `App\Support\DemoSchoolSeeder`. So a real school,
+provisioned correctly through the wizard, with its classrooms, guardians,
+offerings and fee plans all configured, is switched off until a SuperAdmin flips
+this one boolean.
+
+What the flag being false actually looks like, on both sides at once:
+
+  - **Families see a program that does not exist.** `PublicTenant::crmEnabled()`
+    gates every public registration endpoint, so `GET /api/v1/offerings/{slug}`,
+    `POST .../quote`, `POST .../register` and `POST /api/v1/registrations/
+    {uuid}/checkout` all answer **404 "This offering is not available."** — the
+    same words a slug that never existed gets, deliberately, so the refusal
+    carries no hint about what is wrong. An `offering` page SECTION inlines as
+    null and the organisation's own website renders nothing where the program
+    should be (`OfferingPublicPayload::forId`).
+  - **Staff get 403 from the screens that would explain it.** The `crm` route
+    group in `routes/admin.php` (`EnsureCrmEnabled`) covers contacts, groups,
+    offerings, fee plans and registrations, so the admin who built the program
+    cannot open it either.
+
+Neither refusal names the flag, and neither is reachable by the person who can
+fix it: the toggle is SuperAdmin-only. **Check it the moment a tenant is
+provisioned, not the morning registration opens** — the failure mode is a
+correctly-built school that is simply invisible, which reads as a bug in the
+registration feature rather than as one unset boolean.
+
+The gate itself is right where it is and should not be relaxed to make this
+easier; `App\Support\PublicTenant::crmEnabled()` carries that argument in full.
+
 ## Accepting a vertical at the request boundary
 
 Anything that creates a tenant validates `org_type` with

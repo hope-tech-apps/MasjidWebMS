@@ -243,7 +243,7 @@ class ContactLoginEventTenantIsolationTest extends TestCase
     /**
      * A contact who is somebody's guardian in `$masjid`.
      *
-     * Family sign-in is guardian-only (FamilyAccessService::assertHoldsAGuardianEdge,
+     * Family sign-in is guardian-only (FamilyAccessService::ineligibilityReason,
      * GuardianOnlyLoginTest) because enabling a login on a child's own row is a
      * student login — it grants the whole class feed. These tests all enable a
      * login, so the subject has to be someone who may legally hold one.

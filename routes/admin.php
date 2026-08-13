@@ -479,6 +479,14 @@ Route::prefix('admin')->group(function () {
                     Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
                     // Merge a placeholder (unidentified-card) contact into a member.
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
+                    // Undelete. `Contact` soft-deletes so a mis-click on a
+                    // congregant record is recoverable, and until this route
+                    // existed nothing in the application could recover one —
+                    // which also put the `revoked` audit row that `destroy`
+                    // writes permanently beyond every screen. `manage contacts`,
+                    // the same gate as the delete it undoes; the listing finds a
+                    // deleted member with `?trashed=only`.
+                    Route::post('/{contact_id}/restore', 'restore')->middleware('permission:manage contacts');
                 });
 
                 // SMS consent for one contact (T-009). Two verbs rather than one
@@ -591,6 +599,15 @@ Route::prefix('admin')->group(function () {
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
+                        // Standing behind the claims a PUBLIC registration form
+                        // put on this roster. Declared BEFORE the {membership_id}
+                        // routes so `confirm` is a verb and not an id.
+                        //
+                        // `manage contacts`, minting no permission: confirming is
+                        // the same accountable roster administration as typing
+                        // the row in by hand, and it is literally the same write
+                        // (`GroupMembership::confirmedByStaff`).
+                        Route::post('/confirm', 'confirm')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 

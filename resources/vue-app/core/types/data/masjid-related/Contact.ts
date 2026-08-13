@@ -8,6 +8,13 @@ export type Contact = {
     notes: string | null;
     created_at: string;
     updated_at: string;
+    /**
+     * Present and non-null only in the DELETED view (`?trashed=with|only`). The
+     * ordinary directory never returns a deleted member, so this is undefined
+     * there rather than null — a row that omits the key and a row that carries
+     * `deleted_at: null` are the same fact, and the UI tests truthiness.
+     */
+    deleted_at?: string | null;
 };
 
 // Shape submitted by the create/edit form (server stamps masjid_id + timestamps).
@@ -33,7 +40,18 @@ export type ContactPayload = {
  */
 export type FamilyLoginEvent = {
     id: number;
-    action: 'enabled' | 'revoked';
+    /**
+     * Five verbs, not two. `merged` marks history CARRIED here from a record
+     * this member absorbed — without it the carried rows name an address this
+     * member never held and nothing explains why. `address_released` marks the
+     * sign-in address being freed for another member, which is the only way a
+     * `login_email` is ever cleared, and `address_claimed` is its other half —
+     * written on the member who TOOK the address, because the released half sits
+     * on a record that is routinely soft-deleted and therefore on no screen at
+     * all. See ContactLoginEvent::ACTIONS; the column is a plain string
+     * precisely so verbs can be added without a migration.
+     */
+    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed';
     login_email: string | null;
     actor_name: string;
     actor_email: string | null;
@@ -51,6 +69,20 @@ export type FamilyLoginEvent = {
 export type FamilyLoginStatus = {
     contact_id: number;
     state: 'never_enabled' | 'enabled' | 'revoked';
+    /**
+     * MAY this member hold a parent sign-in at all — a separate question from
+     * whether one is currently on. Computed by the same method the server
+     * refuses `enable()` with (FamilyAccessService::ineligibilityReason), never
+     * re-derived here: a screen that guesses eligibility either hides a member
+     * who could be enabled or offers a button that answers 422 after the
+     * operator has typed an address.
+     *
+     * `ineligible_reason` is the sentence the write would refuse with, verbatim,
+     * so the screen and the server say the same thing. Non-null exactly when
+     * `eligible` is false.
+     */
+    eligible: boolean;
+    ineligible_reason: string | null;
     login_email: string | null;
     login_enabled_at: string | null;
     login_revoked_at: string | null;

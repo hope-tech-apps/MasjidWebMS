@@ -595,6 +595,13 @@ class PublicOfferingReadTest extends TestCase
             'stripe_account_id' => 'acct_TEST'.uniqid(),
             'stripe_charges_enabled' => true,
             'stripe_payouts_enabled' => true,
+            // Offerings, fee plans and rosters live inside the `crm`-gated admin
+            // group, and since 2026-08-12 the PUBLIC registration surface asks
+            // the same question (PublicTenant::crmEnabled) — a masjid whose CRM
+            // was never switched on has no registration feature to publish.
+            // PublicRegistrationCrmGateTest owns that clause; these tests are
+            // about the offering.
+            'crm_enabled' => true,
         ], $overrides));
     }
 
