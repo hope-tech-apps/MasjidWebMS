@@ -234,7 +234,14 @@ class Form extends Model
             return null;
         }
 
-        $today = ($at ?: now())->toDateString();
+        // The cut-off is a CALENDAR DATE, so it has to be read in the masjid's own
+        // timezone. config('app.timezone') is UTC, and a bare now()->toDateString()
+        // therefore rolls over at 8:00 PM Eastern — an "early bird ends tonight" price
+        // would quietly step up four hours early and charge the standard rate to anyone
+        // registering that evening. Same rule as the giving dashboard's day buckets:
+        // money boundaries belong to the masjid's clock, never the server's.
+        $tz = $this->masjid?->timezone ?: config('app.timezone');
+        $today = ($at ?: now())->copy()->setTimezone($tz)->toDateString();
 
         foreach ($tiers as $tier) {
             if (! is_array($tier) || ! isset($tier['amount'])) {
