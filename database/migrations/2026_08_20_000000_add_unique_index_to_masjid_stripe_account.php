@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
  * had paid for. There was no log line on that branch either, so the first
  * anybody heard of it was the family (that half is fixed in `resolve()`).
  *
- * ## Why the index is on LIVE rows only
+ * ## Why the index is on LIVE, ONBOARDED rows only
  *
  * A soft-deleted organisation legitimately keeps its `stripe_account_id`, and
  * `resolve()` deliberately falls back to `onlyTrashed()` so that money arriving
@@ -35,6 +35,35 @@ use Illuminate\Support\Facades\DB;
  * ordinary state, and a blanket unique index would refuse it. What must never
  * happen is TWO LIVE rows on one account, because that is the only case where
  * the question "whose event is this" has no answer.
+ *
+ * The EMPTY STRING is "not onboarded", exactly like NULL, and is excluded for
+ * the same reason. It is not a Stripe account id and it can never be routed to:
+ * `RegistrationPaymentService::resolve()` returns null on
+ * `$account === null || $account === ''` before it looks anything up, and
+ * `StripeConnectService::syncAccountStatus()` returns null on a falsy account
+ * id. So two live rows carrying `''` are not two organisations fighting over one
+ * account — they are two organisations that have not onboarded, which is the
+ * ordinary state of a freshly provisioned tenant. The parallel owner index says
+ * the same thing about NULL: "not an owner, not a value that can collide".
+ *
+ * This mattered because the pre-flight guard below ALREADY excluded `''` while
+ * the index did not, so the one duplicate class the guard exists to catch
+ * politely was the one it let through into raw DDL. Measured on this branch, by
+ * seeding each state and calling `up()`:
+ *
+ *     two live rows on the SAME real account id -> REFUSED politely
+ *     two live rows on the EMPTY STRING         -> SQLSTATE[23000]: UNIQUE
+ *                                                  constraint failed:
+ *                                                  masjids.stripe_account_id
+ *     two live rows on NULL                     -> up() SUCCEEDED
+ *
+ * On MySQL the generated column carried `''` through unchanged and failed the
+ * same way: a production deploy aborting half-migrated with an opaque error. The
+ * two predicates are now written from ONE place — `LIVE_ONBOARDED_SQL` below is
+ * the index's WHERE clause, the generated column's CASE, and the guard's filter
+ * — so they cannot drift apart again. MasjidStripeAccountUniquenessTest drives
+ * all three states through `up()` and asserts the guard refuses exactly what the
+ * index refuses.
  *
  * This is the same shape, and the same two-driver implementation, as
  * `masjids_active_owner_unique` (add_owner_uniqueness_to_masjids_table):
@@ -61,6 +90,22 @@ return new class extends Migration
     /** MySQL/MariaDB-only shadow column; see the class docblock. */
     private const COLUMN = 'active_stripe_account_id';
 
+    /**
+     * THE PREDICATE, written once.
+     *
+     * A row is subject to uniqueness only while it is LIVE and ONBOARDED. This
+     * string is the SQLite partial index's WHERE clause, the MySQL generated
+     * column's CASE condition, and — through `refuseToRunWithDuplicateAccounts()`
+     * — the pre-flight's filter. When those three disagree the migration aborts
+     * mid-deploy on a state its own guard claims to catch; see the class
+     * docblock for the measurement.
+     *
+     * NULL is excluded by the `<> ''` comparison itself (NULL <> '' is NULL, and
+     * neither a partial index nor a CASE takes an unknown as true), which is the
+     * behaviour both drivers already wanted: no account is no account.
+     */
+    private const LIVE_ONBOARDED_SQL = "deleted_at IS NULL AND stripe_account_id <> ''";
+
     public function up(): void
     {
         $this->refuseToRunWithDuplicateAccounts();
@@ -68,7 +113,8 @@ return new class extends Migration
         if (DB::getDriverName() === 'mysql') {
             DB::statement(
                 'ALTER TABLE masjids ADD COLUMN ' . self::COLUMN . ' VARCHAR(255)'
-                . ' GENERATED ALWAYS AS (CASE WHEN deleted_at IS NULL THEN stripe_account_id ELSE NULL END)'
+                . ' GENERATED ALWAYS AS (CASE WHEN ' . self::LIVE_ONBOARDED_SQL
+                . ' THEN stripe_account_id ELSE NULL END)'
                 . ' VIRTUAL'
             );
 
@@ -78,7 +124,8 @@ return new class extends Migration
         }
 
         DB::statement(
-            'CREATE UNIQUE INDEX ' . self::INDEX . ' ON masjids (stripe_account_id) WHERE deleted_at IS NULL'
+            'CREATE UNIQUE INDEX ' . self::INDEX . ' ON masjids (stripe_account_id)'
+            . ' WHERE ' . self::LIVE_ONBOARDED_SQL
         );
     }
 
@@ -102,14 +149,18 @@ return new class extends Migration
      * account. This names the accounts. Which organisation owns one is a money
      * question a human has to answer, and a migration is the wrong place to
      * answer it unattended.
+     *
+     * The filter is `LIVE_ONBOARDED_SQL` verbatim — the index's own predicate —
+     * because a pre-flight that scans a NARROWER set than the constraint it
+     * precedes is worse than no pre-flight at all: it reports the database clean
+     * and then hands the operator the raw error anyway, half-migrated. That is
+     * exactly what the `!= ''` written here by hand used to do.
      */
     private function refuseToRunWithDuplicateAccounts(): void
     {
         $duplicates = DB::table('masjids')
             ->select('stripe_account_id')
-            ->whereNull('deleted_at')
-            ->whereNotNull('stripe_account_id')
-            ->where('stripe_account_id', '!=', '')
+            ->whereRaw(self::LIVE_ONBOARDED_SQL)
             ->groupBy('stripe_account_id')
             ->havingRaw('COUNT(*) > 1')
             ->pluck('stripe_account_id')

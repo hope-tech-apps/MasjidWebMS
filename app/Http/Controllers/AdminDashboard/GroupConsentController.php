@@ -114,11 +114,41 @@ class GroupConsentController extends Controller
      *
      * What is on the record for this edge. Deliberately explicit about the two
      * scopes rather than making the caller re-derive the hierarchy.
+     *
+     * ## THE READ NOW ANSWERS THE SAME QUESTION THE WRITE REFUSES
+     *
+     * `update()` above has always refused to record consent against a pending
+     * claim. This method had no such gate and reported the two columns
+     * whatever stood in them, so the pair said opposite things about one row:
+     *
+     *     GET  …/consent -> 200 {"scope":"media","covers_feed":true,
+     *                            "covers_media":true}
+     *     PUT  …/consent -> 422 "still an unconfirmed claim … Confirm it first"
+     *
+     * The gate itself now lives in `GroupMembership::hasConsent()`, so this
+     * endpoint, `consentCovers()` and `App\Support\GroupAudience` cannot drift;
+     * what belongs HERE is saying why the answer is empty.
+     *
+     * AND THE REASON IS PRINTED RATHER THAN LEFT AS A BLANK. `scope: null` on a
+     * row whose `consent_scope` column reads `media` is the same defect one
+     * screen over — "a blank is the thing the operator reads straight past"
+     * (`GroupRosterTab.vue`). So the payload says outright that a record exists,
+     * that it grants nothing, and what would have to happen first. It is safe to
+     * say: this tree is `admin`-gated behind `permission:view contacts`, and the
+     * only new bytes are a boolean and a sentence about this organisation's own
+     * roster.
      */
     public function show($masjid_id, $group_id, $membership_id)
     {
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->findOrFail($membership_id);
+
+        $effective = $membership->hasConsent();
+
+        // A record on the row that grants nothing, because the row is a claim.
+        $withheld = ! $effective
+            && $membership->isPendingClaim()
+            && $membership->consentColumnsAreSet();
 
         return response()->json([
             'status' => 'success',
@@ -126,10 +156,22 @@ class GroupConsentController extends Controller
                 'membership_id' => $membership->id,
                 'role' => $membership->role,
                 'guardian_of_contact_id' => $membership->guardian_of_contact_id,
-                'granted_at' => optional($membership->consent_granted_at)->toIso8601String(),
-                'scope' => $membership->hasConsent() ? $membership->consent_scope : null,
+                // Nulled with the scope rather than reported beside it. A date
+                // is read as "consent was given on…", and this endpoint's answer
+                // for an unconfirmed claim is that no consent is in force.
+                'granted_at' => $effective
+                    ? optional($membership->consent_granted_at)->toIso8601String()
+                    : null,
+                'scope' => $effective ? $membership->consent_scope : null,
                 'covers_feed' => $membership->consentCovers(GroupMembership::CONSENT_FEED),
                 'covers_media' => $membership->consentCovers(GroupMembership::CONSENT_MEDIA),
+                'withheld_pending_confirmation' => $withheld,
+                'withheld_reason' => $withheld
+                    ? 'A consent record is on this entry, but the entry is still an unconfirmed claim '
+                        . 'from a registration form, so it grants nothing. Confirm the guardian entry on '
+                        . 'the roster and then record consent again — the earlier record was given about a '
+                        . 'relationship this organisation has not stood behind.'
+                    : null,
             ],
             'meta' => ['scopes' => GroupMembership::CONSENT_SCOPES],
         ], Response::HTTP_OK);

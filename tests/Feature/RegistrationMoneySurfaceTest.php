@@ -593,7 +593,14 @@ class RegistrationMoneySurfaceTest extends TestCase
                 // she cannot act on this minute. A shut window is not a receipt.
                 $this->assertTrue($quote->json('data.requires_payment'), "{$label}: still owed");
                 $this->assertSame(15000, $quote->json('data.amount_due_minor'), "{$label}: amount due");
-                $this->assertSame(0, $quote->json('data.amount_paid_minor'), "{$label}: nothing paid yet");
+
+                // This cell used to assert `amount_paid_minor: 0` as well. That
+                // field is no longer published to an unauthenticated caller
+                // holding only a uuid (M2, `the_anonymous_quote_publishes_no_
+                // payment_history`), so what it was really pinning — that a live
+                // hold with nothing settled owes the whole $150 — is asserted
+                // through the field that remains, one line up.
+                $this->assertArrayNotHasKey('amount_paid_minor', $quote->json('data'), "{$label}: no history");
             }
 
             // Restore for the next cell.
@@ -772,11 +779,360 @@ class RegistrationMoneySurfaceTest extends TestCase
             ->assertOk()
             // What it cost, unchanged and never restated.
             ->assertJsonPath('data.adjusted_total_minor', 90000)
-            // What she has actually paid: $300, not $500.
-            ->assertJsonPath('data.amount_paid_minor', 30000)
-            // …so what she owes is $600.
+            // …so what she owes is $600 — $300 of the $900 has settled, and the
+            // pending and refunded rows are not money she has paid. The paid
+            // figure itself is no longer published to a link-bearer (M2 below);
+            // on an UNAIDED plan like this one it is exactly `adjusted − due`,
+            // which is what this pair of numbers demonstrates. (That stops being
+            // true once aid leaves a rounding remainder — see
+            // `an_aided_installment_plan_owes_exactly_the_sum_of_its_remaining_charges`.)
             ->assertJsonPath('data.amount_due_minor', 60000)
             ->assertJsonPath('data.requires_payment', true);
+    }
+
+    // =====================================================================
+    // M-F2 — `amount_due_minor` on an OPEN-ENDED plan
+    // =====================================================================
+    //
+    // Round five made the field a balance: `max(0, adjusted_total − amount_paid)`.
+    // For `kind: recurring`, `listTotalFor()` returns the PER-INTERVAL amount, so
+    // the "total" is one month and the balance hits zero the moment the first
+    // invoice settles — and stays there for the life of the subscription,
+    // INCLUDING PAST DUE. Measured on the wire, $50/month, driven entirely by
+    // signed Stripe webhooks:
+    //
+    //   month 0 (pending)                 adjusted=5000 due=5000 paid=0
+    //   after session.completed           adjusted=5000 due=5000 paid=0
+    //   after invoice 1                   adjusted=5000 due=0    paid=5000
+    //   after invoice 6                   adjusted=5000 due=0    paid=30000
+    //   PAST DUE (invoice.payment_failed) adjusted=5000 due=0    paid=30000
+    //
+    // The last row is the one a school chasing tuition actually looks at, and it
+    // reported that nothing was owed. Not one assertion in the suite named
+    // `amount_due_minor` on a recurring plan — every existing one is 15000,
+    // 90000, 60000 or 0 — which is why round five's mutation testing did not
+    // catch it.
+    //
+    // AN OPEN-ENDED SUBSCRIPTION HAS NO BALANCE, because it has no finite
+    // commitment to take a balance against. What it has is an interval, and at
+    // most one of them is ever outstanding. So the field means "the charges that
+    // have not been made yet", which for a finite plan is
+    // `per-charge × count − paid` and for an open-ended one is one interval,
+    // outstanding exactly while the current interval has not settled.
+
+    /**
+     * THE MEASURED LIFECYCLE, month by month, every transition driven by a
+     * signed webhook rather than by forceFill — because the states this got
+     * wrong are exactly the ones Stripe produces and a fixture does not.
+     */
+    #[Test]
+    public function a_recurring_subscription_owes_one_interval_until_that_interval_settles(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->recurring(FeePlan::INTERVAL_MONTH, 5000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        // Month 0 — the hold, before anything has been collected. The first
+        // month is owed.
+        $this->assertQuote($offering, $registration, ['adjusted' => 5000, 'due' => 5000, 'requires' => true]);
+
+        // The subscription goes live. `checkout.session.completed` moves the
+        // money state to `active` on its own, BEFORE any invoice has settled —
+        // so "active" alone cannot mean "nothing is outstanding". Until this
+        // round, and after it, this row owes the month it has not yet paid.
+        $this->postWebhook($this->subscriptionSessionEvent($registration))->assertOk();
+        $this->assertQuote($offering, $registration, ['adjusted' => 5000, 'due' => 5000, 'requires' => true]);
+
+        // First invoice settles: the current interval is paid, and the next one
+        // is Stripe's to bill on its own clock. Nothing is outstanding NOW.
+        $this->postWebhook($this->invoicePaidEvent($registration, ['id' => 'in_1']))->assertOk();
+        $this->assertQuote($offering, $registration, ['adjusted' => 5000, 'due' => 0, 'requires' => true]);
+
+        // …and still nothing, five months in. `requires_payment` stays true
+        // because Stripe IS still expected; that is a different question from
+        // what is outstanding at this instant, and they get different fields.
+        foreach (range(2, 6) as $n) {
+            $this->postWebhook($this->invoicePaidEvent($registration, ['id' => "in_{$n}"]))->assertOk();
+        }
+
+        $this->assertQuote($offering, $registration, ['adjusted' => 5000, 'due' => 0, 'requires' => true]);
+        $this->assertSame(30000, $this->settledMinor($registration), 'Six months at $50 have settled.');
+    }
+
+    /**
+     * THE HEADLINE. A declined card is the state a school chasing tuition looks
+     * at, and it reported that the family owed nothing.
+     */
+    #[Test]
+    public function a_past_due_subscription_owes_the_interval_it_failed_to_collect(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->recurring(FeePlan::INTERVAL_MONTH, 5000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        $this->postWebhook($this->subscriptionSessionEvent($registration))->assertOk();
+
+        foreach (range(1, 6) as $n) {
+            $this->postWebhook($this->invoicePaidEvent($registration, ['id' => "in_{$n}"]))->assertOk();
+        }
+
+        // Month seven declines. Dunning never touches the seat — only the money
+        // state — so this is a paying family whose card expired, not an ejection.
+        $this->postWebhook($this->invoiceFailedEvent($registration, ['id' => 'in_7', 'amount_due' => 5000]))->assertOk();
+
+        $this->assertSame(Registration::PAYMENT_PAST_DUE, $registration->fresh()->payment_status);
+        $this->assertSame(Registration::STATUS_CONFIRMED, $registration->fresh()->status);
+
+        $this->assertQuote($offering, $registration, [
+            'adjusted' => 5000,
+            // ONE month, not zero and not six months of history.
+            'due' => 5000,
+            'requires' => true,
+        ]);
+
+        // Stripe's own retry succeeds and the debt clears; this codebase has no
+        // dunning engine, so the only thing that may move it is a real invoice.
+        $this->postWebhook($this->invoicePaidEvent($registration, ['id' => 'in_7']))->assertOk();
+
+        $this->assertSame(Registration::PAYMENT_ACTIVE, $registration->fresh()->payment_status);
+        $this->assertQuote($offering, $registration, ['adjusted' => 5000, 'due' => 0, 'requires' => true]);
+    }
+
+    /**
+     * Aid on an open-ended plan reduces THE INTERVAL, because for a recurring
+     * plan the snapshot IS one interval — so the outstanding month is the
+     * discounted one, and `perChargeMinor()` is the single function that says so
+     * for all three paid kinds.
+     */
+    #[Test]
+    public function an_aided_recurring_subscription_owes_the_discounted_interval(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->recurring(FeePlan::INTERVAL_MONTH, 5000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        app(RegistrationService::class)->grantAdjustment(
+            $registration,
+            RegistrationAdjustment::KIND_AID,
+            2000,
+            'Hardship — $20 off the monthly'
+        );
+
+        $this->assertQuote($offering, $registration->fresh(), [
+            'adjusted' => 3000,
+            'due' => 3000,
+            'requires' => true,
+        ]);
+    }
+
+    /**
+     * A recurring plan quoted with NO registration is a list price, and the
+     * first interval is what signing up costs. Unchanged; asserted because the
+     * branch above and this one are the two halves of one field.
+     */
+    #[Test]
+    public function a_recurring_list_price_quotes_one_interval(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->recurring(FeePlan::INTERVAL_MONTH, 5000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $this->postQuote($offering, ['fee_plan_id' => $plan->id])
+            ->assertOk()
+            ->assertJsonPath('data.fee_plan_kind', FeePlan::KIND_RECURRING)
+            ->assertJsonPath('data.list_total_minor', 5000)
+            ->assertJsonPath('data.adjusted_total_minor', 5000)
+            ->assertJsonPath('data.amount_due_minor', 5000)
+            ->assertJsonPath('data.requires_payment', true);
+    }
+
+    // =====================================================================
+    // M-F3 — the balance must not exceed the charges that remain
+    // =====================================================================
+
+    /**
+     * On an aid-adjusted installment plan the quoted balance used to exceed the
+     * sum of the remaining charges by up to N−1 minor units, because it
+     * subtracted the ledger from the SNAPSHOT while Stripe is charged
+     * `intdiv(snapshot, N)` per instalment. Measured, 9 × $100.00 with 10¢ of
+     * aid: adjusted 89990, per-charge 9998, nine charges = 89982, quoted balance
+     * 89990 — 8¢ she is told she owes and will never be asked for.
+     *
+     * Small, self-clearing, and in the payer's favour at the till — which is why
+     * it is fixed rather than inflated. The fix is not new arithmetic: it is
+     * asking `perChargeMinor()`, the one per-charge function
+     * (.claude/rules/registration-billing-data.md), instead of keeping a second
+     * opinion beside it.
+     */
+    #[Test]
+    public function an_aided_installment_plan_owes_exactly_the_sum_of_its_remaining_charges(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->installment(9, 10000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        app(RegistrationService::class)->grantAdjustment(
+            $registration,
+            RegistrationAdjustment::KIND_AID,
+            10,
+            'A dime, to force the remainder'
+        );
+
+        $registration->refresh();
+
+        $perCharge = RegistrationCheckoutService::perChargeMinor($registration, $plan);
+        $this->assertSame(9998, $perCharge, 'intdiv(89990, 9) — rounding drops in the payer\'s favour.');
+
+        // The audit trail is untouched: adjusted = list − Σ adjustments.
+        $this->assertSame(89990, (int) $registration->adjusted_total_minor);
+
+        $data = $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
+            ->assertOk()
+            ->assertJsonPath('data.adjusted_total_minor', 89990)
+            // Nine charges of 9998 is what Stripe will actually be asked for.
+            ->assertJsonPath('data.amount_due_minor', 89982)
+            ->assertJsonPath('data.requires_payment', true)
+            ->json('data');
+
+        // THE CAVEAT THIS FIX CREATES, pinned so the M2 reasoning cannot be
+        // restated carelessly: once the remainder is non-zero, `adjusted − due`
+        // is NO LONGER what has been paid. Nothing has settled here, and the
+        // subtraction says 8¢.
+        $this->assertSame(0, $this->settledMinor($registration));
+        $this->assertSame(8, $data['adjusted_total_minor'] - $data['amount_due_minor']);
+
+        // …and it decrements by exactly one charge per settled instalment,
+        // reaching zero on the ninth rather than leaving an 8¢ tail.
+        foreach (range(1, 9) as $n) {
+            RegistrationPayment::withoutMasjidScope()->create([
+                'masjid_id' => $this->masjid->id,
+                'registration_id' => $registration->id,
+                'amount_minor' => $perCharge,
+                'currency' => 'usd',
+                'status' => RegistrationPayment::STATUS_SUCCEEDED,
+                'stripe_charge_id' => 'ch_aided_' . $n,
+            ]);
+
+            $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
+                ->assertOk()
+                ->assertJsonPath('data.amount_due_minor', $perCharge * (9 - $n), "after instalment {$n} of 9");
+        }
+    }
+
+    // =====================================================================
+    // M2 — what this endpoint may say to the bearer of a link
+    // =====================================================================
+
+    /**
+     * `POST /api/v1/offerings/{slug}/quote` takes NO Authorization header and no
+     * cookie — a uuid and the `masjid-id` header are the whole credential.
+     * Round five added `amount_paid_minor` to it: a cumulative payment-history
+     * summary on an anonymous endpoint, in a 60-line docblock that never asked
+     * who may read it. Measured with no auth at all:
+     *
+     *   {"fee_plan_kind":"installment","list_total_minor":90000,
+     *    "adjusted_total_minor":45000,"amount_due_minor":40000,
+     *    "amount_paid_minor":5000,"requires_payment":true}
+     *
+     * The uuid is an unguessable v4, but it is a BEARER token that lives in
+     * payment-link URLs, in forwarded emails, in browser history and in referrer
+     * headers. "This family is on financial aid and is $400 behind" should not
+     * be answerable to whoever ends up holding the link.
+     *
+     * The field is removed rather than gated, and how big a reduction that is
+     * was MEASURED rather than assumed — the first draft of this reasoning
+     * claimed `paid` is always `adjusted − due` for a finite plan, which is
+     * false once aid leaves a rounding remainder:
+     *
+     *   9 × $100, no aid, 3 settled    adjusted 90000 due 60000  → 30000 = paid
+     *   9 × $100, 10¢ aid, 0 settled   adjusted 89990 due 89982  → 8     ≠ 0
+     *   9 × $100, 10¢ aid, 4 settled   adjusted 89990 due 49990  → 40000 ≠ 39992
+     *
+     * because `amount_due_minor` is `per-charge × N − paid` and the payload
+     * publishes neither the per-charge amount nor N. So:
+     *
+     *  - In the ORDINARY case — no aid, or aid that divides evenly — the field
+     *    added nothing a link-bearer could not already compute, and a renderer
+     *    can still compute it (`a_part_paid_installment_plan…` asserts that
+     *    subtraction is exact there).
+     *  - On an AID-ADJUSTED plan, and on an OPEN-ENDED subscription where
+     *    `amount_due_minor` is one interval rather than a balance, it carried a
+     *    number nothing else carries — the one with the longest memory: how many
+     *    months this family has been paying, or has not.
+     *  - Nothing in this repository renders it.
+     *
+     * So the anonymous quote answers what the place cost, what is outstanding,
+     * whether payment is expected and whether the door is open. A payment
+     * HISTORY belongs to the authenticated family portal, which knows who is
+     * asking. This restores the pre-round-five disclosure set on an
+     * unauthenticated money surface days before a real school is provisioned
+     * onto it.
+     */
+    #[Test]
+    public function the_anonymous_quote_publishes_no_payment_history(): void
+    {
+        $offering = Offering::factory()->forMasjid($this->masjid)->create();
+        $plan = FeePlan::factory()->recurring(FeePlan::INTERVAL_MONTH, 5000)->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $registration = $this->registerThrough($offering, $plan);
+
+        $this->postWebhook($this->subscriptionSessionEvent($registration))->assertOk();
+
+        foreach (range(1, 6) as $n) {
+            $this->postWebhook($this->invoicePaidEvent($registration, ['id' => "in_{$n}"]))->assertOk();
+        }
+
+        // Six months of history exists locally…
+        $this->assertSame(30000, $this->settledMinor($registration));
+
+        // …and no part of it is on the wire to a caller holding only the uuid.
+        $data = $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
+            ->assertOk()
+            ->json('data');
+
+        $this->assertArrayNotHasKey(
+            'amount_paid_minor',
+            $data,
+            'A bearer of a payment link must not be handed the family\'s payment history.'
+        );
+
+        // Everything the surface is actually for is still answered.
+        $this->assertSame(5000, $data['adjusted_total_minor']);
+        $this->assertSame(0, $data['amount_due_minor']);
+        $this->assertTrue($data['requires_payment']);
+    }
+
+    /** No Authorization header is needed to reach any of this — stated, not assumed. */
+    #[Test]
+    public function the_quote_is_reachable_with_no_credential_but_the_uuid(): void
+    {
+        [$offering, $plan] = $this->makeOffering();
+        $registration = $this->registerThrough($offering, $plan);
+
+        $this->assertGuest();
+
+        $this->postQuote($offering, ['registration_uuid' => $registration->uuid])->assertOk();
     }
 
     /**
@@ -1543,6 +1899,90 @@ class RegistrationMoneySurfaceTest extends TestCase
             ],
             $payload
         );
+    }
+
+    /**
+     * One quote, three numbers. Written as a helper because M-F2 is a sequence
+     * of states rather than a single cell, and the sequence is the evidence.
+     *
+     * @param  array{adjusted:int,due:int,requires:bool}  $expected
+     */
+    private function assertQuote(Offering $offering, Registration $registration, array $expected): void
+    {
+        $data = $this->postQuote($offering, ['registration_uuid' => $registration->uuid])
+            ->assertOk()
+            ->json('data');
+
+        $this->assertSame($expected['adjusted'], $data['adjusted_total_minor'], 'adjusted_total_minor');
+        $this->assertSame($expected['due'], $data['amount_due_minor'], 'amount_due_minor');
+        $this->assertSame($expected['requires'], $data['requires_payment'], 'requires_payment');
+    }
+
+    /** What the ledger says has actually settled. */
+    private function settledMinor(Registration $registration): int
+    {
+        return (int) RegistrationPayment::withoutMasjidScope()
+            ->where('registration_id', $registration->id)
+            ->where('status', RegistrationPayment::STATUS_SUCCEEDED)
+            ->sum('amount_minor');
+    }
+
+    /** `checkout.session.completed` in SUBSCRIPTION mode — books no payment row. */
+    private function subscriptionSessionEvent(Registration $registration, array $o = []): array
+    {
+        return [
+            'id' => $o['event_id'] ?? 'evt_' . uniqid(),
+            'type' => 'checkout.session.completed',
+            'account' => $o['account'] ?? 'acct_A',
+            'data' => ['object' => [
+                'id' => $o['id'] ?? 'cs_sub_1',
+                'object' => 'checkout.session',
+                'mode' => 'subscription',
+                'payment_status' => 'paid',
+                'status' => 'complete',
+                'subscription' => $o['subscription'] ?? 'sub_reg_1',
+                'client_reference_id' => $registration->uuid,
+                'metadata' => ['registration_uuid' => $registration->uuid],
+            ]],
+        ];
+    }
+
+    /** Our uuid rides on the SUBSCRIPTION's metadata, not the invoice's own. */
+    private function invoicePaidEvent(Registration $registration, array $o = []): array
+    {
+        return [
+            'id' => $o['event_id'] ?? 'evt_' . uniqid(),
+            'type' => 'invoice.payment_succeeded',
+            'account' => $o['account'] ?? 'acct_A',
+            'data' => ['object' => [
+                'id' => $o['id'] ?? 'in_1',
+                'object' => 'invoice',
+                'amount_paid' => $o['amount_paid'] ?? 5000,
+                'subscription' => $o['subscription'] ?? 'sub_reg_1',
+                'subscription_details' => [
+                    'metadata' => ['registration_uuid' => $registration->uuid],
+                ],
+            ]],
+        ];
+    }
+
+    private function invoiceFailedEvent(Registration $registration, array $o = []): array
+    {
+        return [
+            'id' => $o['event_id'] ?? 'evt_' . uniqid(),
+            'type' => 'invoice.payment_failed',
+            'account' => $o['account'] ?? 'acct_A',
+            'data' => ['object' => [
+                'id' => $o['id'] ?? 'in_1',
+                'object' => 'invoice',
+                'amount_due' => $o['amount_due'] ?? 5000,
+                'amount_paid' => 0,
+                'subscription' => $o['subscription'] ?? 'sub_reg_1',
+                'subscription_details' => [
+                    'metadata' => ['registration_uuid' => $registration->uuid],
+                ],
+            ]],
+        ];
     }
 
     private function completedEvent(Registration $registration, array $o = []): array

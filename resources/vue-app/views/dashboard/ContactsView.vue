@@ -610,13 +610,76 @@
                                 <label class="form-label small text-muted">Search members</label>
                                 <input class="form-control mb-2" v-model="mergeSearch" @input="searchMembers" placeholder="Name or email…">
                                 <div class="list-group" style="max-height:30vh; overflow-y:auto;">
+                                    <!--
+                                        A MISSING ADDRESS IS SAID, NOT LEFT
+                                        BLANK. This rendered `{{ m.email || '' }}`
+                                        — a blank cell — on the ONE screen from
+                                        which a guardianship can change hands.
+                                        GroupRosterTab.vue had already learned
+                                        this on the roster: "a blank is the thing
+                                        the operator reads straight past", and
+                                        reading straight past is the whole
+                                        finding. The picker also falls back to a
+                                        phone, because a phone number is
+                                        something an operator can act on — but
+                                        it is NOT an identity (nothing mints a
+                                        credential against one), which is why the
+                                        warning below counts only the address.
+                                    -->
                                     <button v-for="m in mergeResults" :key="m.id" type="button"
                                         class="list-group-item list-group-item-action d-flex justify-content-between"
                                         :class="{ active: mergeTarget?.id === m.id }" @click="mergeTarget = m">
                                         <span>{{ m.first_name }} {{ m.last_name }}</span>
-                                        <small class="text-muted">{{ m.email || '' }}</small>
+                                        <small :class="contactAddressOf(m) ? 'text-muted' : 'text-danger'">
+                                            {{ contactAddressLabel(m) }}
+                                        </small>
                                     </button>
                                     <div v-if="!mergeResults.length" class="text-muted small p-2">Type to search…</div>
+                                </div>
+
+                                <!--
+                                    THE TWO RECORDS CANNOT BE TOLD APART — said
+                                    before the click, on the screen where the
+                                    click happens.
+
+                                    A merge asserts that two rows ARE one human,
+                                    and RosterMergeService believes it: where the
+                                    identity is unchanged, a confirmed guardian
+                                    edge moves across CARRYING its confirmation.
+                                    The one shape an unauthenticated caller can
+                                    plant is an ADDRESS-LESS row under a real
+                                    person's name — `createContact()` nulls an
+                                    address another contact holds, and
+                                    `registrants.*.email` is nullable besides —
+                                    so "same name, no address on either side" is
+                                    exactly the shape a stranger produces and
+                                    exactly the one an operator cannot judge.
+
+                                    The server no longer TRUSTS this case (an
+                                    absent value is never an identity match, so
+                                    the edge is re-opened as a claim). This
+                                    warning is not the guard; it is so the
+                                    office does not de-duplicate two different
+                                    people in the first place, and does not learn
+                                    from a support call why a confirmed entry
+                                    went back to needing confirmation.
+                                -->
+                                <div v-if="mergeIsIndistinguishable" class="alert alert-danger py-2 small mt-2 mb-0">
+                                    <i class="bi bi-exclamation-octagon me-1"></i>
+                                    <strong>These two records cannot be told apart.</strong>
+                                    They carry the same name, and
+                                    <template v-if="!contactAddressOf(selectedContact) && !contactAddressOf(mergeTarget)">
+                                        neither has an email address on file.
+                                    </template>
+                                    <template v-else>
+                                        one of them has no email address on file.
+                                    </template>
+                                    Anyone can put a record into this directory by filling in a public
+                                    registration form, and a record with no address is the shape they leave.
+                                    Check that these really are one person — by phone, or against the signup
+                                    each one came from — before merging. Any confirmed guardian entry involved
+                                    will go back to being an unconfirmed claim, and will have to be confirmed
+                                    again on that group's roster.
                                 </div>
                             </div>
 
@@ -974,6 +1037,47 @@ const canMerge = computed(() =>
  */
 const isPlaceholderMerge = computed<boolean>(() => !!(selectedContact.value as any)?.is_placeholder);
 
+/**
+ * THE ADDRESS A RECORD IS READ THROUGH — the one rendered byte that separates
+ * two rows carrying the same name.
+ *
+ * Email only, and the fallback to phone is deliberately NOT here: a phone number
+ * is worth SHOWING (an operator can ring it) and is not an identity, because
+ * nothing in this application mints a parent portal credential against one or
+ * resolves a principal by one. `App\Support\ContactIdentity` makes the same
+ * distinction on the server and gives the argument.
+ */
+const contactAddressOf = (c: any): string => (c?.email || '').trim();
+
+/** For display. A missing address is said out loud — never rendered as a blank. */
+const contactAddressLabel = (c: any): string =>
+    contactAddressOf(c) || (c?.phone || '').trim() || 'no address on file';
+
+const sameDisplayedName = (a: any, b: any): boolean => {
+    const key = (c: any) =>
+        `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.replace(/\s+/g, ' ').trim().toLowerCase();
+    const left = key(a);
+    return left !== '' && left === key(b);
+};
+
+/**
+ * Are these two records ones an operator has nothing to tell apart WITH?
+ *
+ * Same displayed name, and at least one side with no email on file. That is the
+ * exact shape an anonymous registration leaves behind, and the shape that used
+ * to make a merge carry a staff confirmation onto a stranger.
+ *
+ * A placeholder merge is excluded: a placeholder is a card that names nobody, so
+ * "these two look like the same person" is not the question being asked.
+ */
+const mergeIsIndistinguishable = computed<boolean>(() => {
+    if (isPlaceholderMerge.value || mergeMode.value !== 'existing') return false;
+    if (!selectedContact.value || !mergeTarget.value) return false;
+    if (!sameDisplayedName(selectedContact.value, mergeTarget.value)) return false;
+
+    return !contactAddressOf(selectedContact.value) || !contactAddressOf(mergeTarget.value);
+});
+
 const openMerge = () => {
     mergeMode.value = 'existing';
     mergeSearch.value = ''; mergeResults.value = []; mergeTarget.value = null;
@@ -1033,8 +1137,15 @@ const doMerge = async () => {
                 title: `${verb} — portal access ended`,
                 text: [familyLoginOutcome.message, rosterOutcome?.message].filter(Boolean).join(' '),
             });
-        } else if (rosterOutcome?.unconfirmed > 0) {
+        } else if (rosterOutcome?.guardian_claims_reissued > 0 || rosterOutcome?.confirmed_guardian_edges_dropped > 0) {
+            // A guardian PAIR changed, or a confirmed one went with the absorbed
+            // record. Either way somebody's parent portal stops opening things,
+            // and the entry the operator may already have drawn is not the entry
+            // that is there now — so this is the loud branch even when no
+            // credential was revoked by the merge itself.
             Swal.fire({ icon: 'warning', title: `${verb} — a guardian entry needs confirming`, text: rosterOutcome.message });
+        } else if (rosterOutcome?.unconfirmed > 0) {
+            Swal.fire({ icon: 'warning', title: `${verb} — a roster entry needs confirming`, text: rosterOutcome.message });
         } else if (rosterOutcome?.message) {
             Swal.fire({ icon: 'success', title: verb, text: rosterOutcome.message });
         } else {

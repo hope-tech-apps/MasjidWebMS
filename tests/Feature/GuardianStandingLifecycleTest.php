@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\ConfirmsRosterClaims;
 use Tests\TestCase;
 
 /**
@@ -60,6 +61,7 @@ use Tests\TestCase;
 class GuardianStandingLifecycleTest extends TestCase
 {
     use RefreshDatabase;
+    use ConfirmsRosterClaims;
 
     private Masjid $masjid;
     private User $admin;
@@ -307,7 +309,7 @@ class GuardianStandingLifecycleTest extends TestCase
         $this->asAdmin();
         $this->postJson(
             "/api/admin/masjids/{$this->masjid->id}/groups/{$group->id}/members/confirm",
-            ['membership_ids' => [$carried->id]],
+            $this->confirmBody([$carried->id]),
         )->assertOk()->assertJsonPath('data.confirmed', 1);
 
         $this->asAdmin();
@@ -361,9 +363,24 @@ class GuardianStandingLifecycleTest extends TestCase
 
         // The guardian edge that named the absorbed row as its ward follows it,
         // or the parent is left guarding nobody.
-        $movedEdge = GroupMembership::withoutMasjidScope()->find($edge->id);
-        $this->assertNotNull($movedEdge);
+        //
+        // It follows as a RE-ISSUED row rather than the same one: the ward is
+        // half of the pair a confirmation names, so a merge that changes it
+        // retires the entry and writes the relationship back as a fresh claim
+        // (`RosterMergeService::reissue()`). The RELATIONSHIP is what must
+        // survive here — the id is what must not, or a Confirm click carrying
+        // ids drawn before the merge lands on a pair nobody read.
+        $this->assertNull($edge->fresh(), 'the row that named the old pair kept its id');
+
+        $movedEdge = GroupMembership::withoutMasjidScope()
+            ->where('group_id', $group->id)
+            ->where('contact_id', $parent->id)
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->first();
+
+        $this->assertNotNull($movedEdge, 'the parent was left guarding nobody');
         $this->assertSame((int) $survivor->id, (int) $movedEdge->guardian_of_contact_id);
+        $this->assertTrue($movedEdge->isPendingClaim(), 'a confirmation survived a change of ward');
     }
 
     /**

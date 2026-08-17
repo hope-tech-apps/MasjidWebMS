@@ -331,11 +331,42 @@ class GroupMembership extends Model
     /**
      * Return a row to the un-confirmed state, keeping how it arose.
      *
-     * Used by `RosterMergeService` when a merge re-points a CONFIRMED guardian
-     * edge at a DIFFERENT ward: what a staff member confirmed was "this adult is
-     * the guardian of THAT NAMED PERSON", and re-pointing changes the person, so
-     * the confirmation no longer describes the row it sits on. A merge is a
-     * de-duplication, never an authorization decision.
+     * Used by `RosterMergeService` when a merge changes WHO a row is about and
+     * the row cannot be retired and re-issued in its place: what a staff member
+     * confirmed was "this adult is the guardian of THAT NAMED PERSON", and
+     * changing either end makes the confirmation a statement about somebody they
+     * were never asked about. A merge is a de-duplication, never an
+     * authorization decision.
+     *
+     * ## THE CONSENT COLUMNS GO WITH IT, and leaving them was a defect
+     *
+     * This method cleared `provenance`, `confirmed_at` and `confirmed_by_user_id`
+     * and left `consent_granted_at` / `consent_scope` standing — producing a row
+     * THIS APPLICATION REFUSES TO CREATE. `GroupConsentController::update()`
+     * answers 422 on an unconfirmed claim ("consent has to be recorded against a
+     * relationship this organisation has stood behind"), and every read path was
+     * happy to serve the state anyway. Measured, on a merge that re-pointed a
+     * confirmed edge from a phantom child onto a real one:
+     *
+     *     EDGE AFTER: prov=self_asserted consent_scope='media'
+     *                 consent_granted_at='2026-08-17 17:21:25'
+     *     PUT  …/consent -> 422 "still an unconfirmed claim … Confirm it first"
+     *     GET  …/consent -> 200 {"scope":"media","covers_feed":true,
+     *                            "covers_media":true}
+     *     CONFIRM -> 200 ; FEED -> 200 {"title":"Class photograph",
+     *                                   "media_withheld":false}
+     *
+     * So consent obtained about ONE child governed disclosure about ANOTHER, and
+     * a single confirm click opened the photograph bytes with no second decision
+     * in between — the precise thing `GroupConsentController`'s own guard exists
+     * to make impossible. Consent is permission to disclose something about one
+     * named child to one named adult; a row that is no longer that pair holds no
+     * such permission, and "absence of a record means no consent" is only true if
+     * this method makes the absence true.
+     *
+     * WITHDRAWAL IS STILL NOT GATED (`GroupConsentController::destroy`): the one
+     * direction this area may never fail in is leaving consent standing on a row
+     * somebody was trying to undo, and clearing more here cannot cause that.
      */
     public function unconfirm(): static
     {
@@ -343,6 +374,8 @@ class GroupMembership extends Model
             'provenance' => self::PROVENANCE_SELF_ASSERTED,
             'confirmed_at' => null,
             'confirmed_by_user_id' => null,
+            'consent_granted_at' => null,
+            'consent_scope' => null,
         ]);
 
         return $this;
@@ -386,17 +419,67 @@ class GroupMembership extends Model
     }
 
     /**
-     * Has consent been recorded on this edge at all?
+     * DOES THIS EDGE CARRY CONSENT THAT GRANTS ANYTHING?
      *
-     * BOTH columns must be meaningful. A granted_at with an unrecognised scope
+     * Three conditions, and the third was missing.
+     *
+     * BOTH COLUMNS MUST BE MEANINGFUL. A granted_at with an unrecognised scope
      * grants nothing: a value nobody can interpret must not be read as
      * permission, the same defensive read as Group::kind() degrading an unknown
      * kind rather than letting it behave as one nobody granted.
+     *
+     * AND THE EDGE MUST BE CONFIRMED. `GroupConsentController::update()` has
+     * always refused to WRITE consent onto a pending claim — "consent has to be
+     * recorded against a relationship this organisation has stood behind" — and
+     * until this round every READ path was happy to serve the state anyway. A
+     * server that refuses to write a state it happily reads has not got a rule;
+     * it has a form validation. Measured, against a row left in that state by a
+     * merge before `unconfirm()` learned to clear the columns:
+     *
+     *     GET  …/consent -> 200 {"scope":"media","covers_feed":true,
+     *                            "covers_media":true}
+     *     PUT  …/consent -> 422 "still an unconfirmed claim … Confirm it first"
+     *     CONFIRM        -> {"confirmed":1,"skipped":0}
+     *     edge after     -> {"provenance":"confirmed","consent_scope":"media"}
+     *     family feed    -> 200 [{"title":"Class photograph", …}]
+     *
+     * — consent obtained about ONE child governing disclosure about ANOTHER, and
+     * ONE Confirm click opening the photographs with no second decision in
+     * between. `unconfirm()` clearing the columns fixes the rows a merge writes
+     * FROM NOW ON and reaches nothing already on disk; a read that consults
+     * provenance holds for every row, including the ones a future writer forgets
+     * about. Both were needed, and the rows already on disk are cleared by
+     * `…_clear_consent_on_unconfirmed_group_memberships`.
+     *
+     * THE GATE IS HERE AND NOT IN THE CONTROLLER on purpose. `consentCovers()`,
+     * `GroupConsentController::show()` and `App\Support\GroupAudience` are three
+     * surfaces reading one fact, and this round's whole lesson is that a
+     * safeguard written on one surface gets believed about all of them.
      */
     public function hasConsent(): bool
     {
-        return $this->consent_granted_at !== null
+        return $this->isConfirmed()
+            && $this->consent_granted_at !== null
             && in_array($this->consent_scope, self::CONSENT_SCOPES, true);
+    }
+
+    /**
+     * ARE THE TWO CONSENT COLUMNS CARRYING ANYTHING? — a question about BYTES.
+     *
+     * NOT A PERMISSION CHECK, and nothing that decides a disclosure may call it:
+     * it deliberately ignores provenance, so it answers `true` for exactly the
+     * corrupt state `hasConsent()` exists to refuse.
+     *
+     * It has one caller and is expected to keep having one:
+     * `RosterMergeService::describe()`, which reports to the operator what a
+     * merge is about to ERASE from a row. That report is about the record, not
+     * about what the record granted, and telling an office "consent withdrawn:
+     * false" while deleting a `consent_scope` column would be a different lie
+     * from the one this round is fixing.
+     */
+    public function consentColumnsAreSet(): bool
+    {
+        return $this->consent_granted_at !== null || $this->consent_scope !== null;
     }
 
     /**
@@ -424,10 +507,20 @@ class GroupMembership extends Model
         return $query->whereIn('role', self::PARTICIPANT_ROLES);
     }
 
-    /** Guardian edges with consent recorded (in any scope). */
+    /**
+     * Guardian edges whose consent GRANTS something (in any scope).
+     *
+     * `->confirmed()` is part of the definition for the same reason
+     * `scopePendingClaims()` spells NULL out in SQL: the class docblock promises
+     * that a scope and its row-by-row method are one definition, and the
+     * direction of a disagreement here is the dangerous one — a query-level
+     * consent check that counted rows `hasConsent()` refuses would be a
+     * disclosure decided by which of the two a caller happened to reach for.
+     */
     public function scopeConsented($query)
     {
         return $query->where('role', self::ROLE_GUARDIAN)
+            ->confirmed()
             ->whereNotNull('consent_granted_at')
             ->whereIn('consent_scope', self::CONSENT_SCOPES);
     }

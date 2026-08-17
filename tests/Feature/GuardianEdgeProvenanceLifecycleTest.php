@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\ConfirmsRosterClaims;
 use Tests\TestCase;
 
 /**
@@ -44,6 +45,7 @@ use Tests\TestCase;
 class GuardianEdgeProvenanceLifecycleTest extends TestCase
 {
     use RefreshDatabase;
+    use ConfirmsRosterClaims;
 
     private Masjid $masjid;
 
@@ -338,12 +340,26 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
             'target_contact_id' => $this->salma->id,
         ])->assertStatus(200);
 
+        // THE EDGE IS RETIRED AND RE-ISSUED, not merely un-confirmed in place.
+        // The pair it named is gone, so the row that named it is gone with it and
+        // the relationship comes back as a fresh claim with a NEW ID — which is
+        // what stops a Confirm click carrying ids drawn before the merge from
+        // landing on it. `$edge->fresh()` is therefore null BY DESIGN.
+        $this->assertNull($edge->fresh(), 'the row that named the old pair kept its id');
+
+        $reissued = GroupMembership::withoutMasjidScope()
+            ->where('group_id', $this->grade5->id)
+            ->where('contact_id', $bilal->id)
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->where('guardian_of_contact_id', $this->salma->id)
+            ->firstOrFail();
+
         $this->assertSame(
             GroupMembership::PROVENANCE_SELF_ASSERTED,
-            $edge->fresh()->provenance,
+            $reissued->provenance,
             'a merge confirmed a guardianship over a child nobody confirmed it over'
         );
-        $this->assertNull($edge->fresh()->confirmed_by_user_id);
+        $this->assertNull($reissued->confirmed_by_user_id);
 
         // AND THE OPERATOR IS TOLD. `carry()`'s return value used to be
         // discarded, so a merge that re-opened a guardian claim said nothing.
@@ -419,9 +435,7 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
             ->assertJsonPath('data.eligible', false);
 
         // One click on the roster is the whole remedy.
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => [$claim->id],
-        ])->assertStatus(200)->assertJsonPath('data.confirmed', 1);
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody([$claim->id]))->assertStatus(200)->assertJsonPath('data.confirmed', 1);
 
         $this->assertTrue($claim->fresh()->isConfirmed());
         $this->assertSame($this->admin->id, (int) $claim->fresh()->confirmed_by_user_id);
@@ -470,9 +484,7 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
             ->pluck('id')
             ->all();
 
-        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), [
-            'membership_ids' => $shown,
-        ])
+        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), $this->confirmBody($shown))
             ->assertStatus(200)
             ->assertJsonPath('data.confirmed', 6)
             ->assertJsonPath('data.pending_claims', 0);
@@ -530,9 +542,7 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
             ->pluck('id')
             ->all();
 
-        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), [
-            'membership_ids' => $clubRows,
-        ])
+        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), $this->confirmBody($clubRows))
             ->assertStatus(200)
             ->assertJsonPath('data.confirmed', 2);
 
@@ -546,18 +556,14 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
         $one = GroupMembership::withoutMasjidScope()
             ->where('group_id', $this->grade5->id)->pendingClaims()->orderBy('id')->firstOrFail();
 
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => [$one->id],
-        ])->assertStatus(200)->assertJsonPath('data.confirmed', 1);
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody([$one->id]))->assertStatus(200)->assertJsonPath('data.confirmed', 1);
 
         $this->assertSame(1, GroupMembership::withoutMasjidScope()
             ->where('group_id', $this->grade5->id)->pendingClaims()->count());
 
         // A stale screen re-submitting a list somebody else already confirmed is
         // a no-op with an honest count, not a 422 nobody can act on.
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => [$one->id],
-        ])->assertStatus(200)->assertJsonPath('data.confirmed', 0);
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody([$one->id]))->assertStatus(200)->assertJsonPath('data.confirmed', 0);
     }
 
     #[Test]
@@ -571,15 +577,11 @@ class GuardianEdgeProvenanceLifecycleTest extends TestCase
         // Ids are named so the request passes validation and the tenant guard is
         // what answers — an empty body is a 422 from the form request and would
         // prove nothing about scoping.
-        $this->postJson($this->adminUrl("/groups/{$strangersGroup->id}/members/confirm"), [
-            'membership_ids' => [1],
-        ])->assertStatus(404);
+        $this->postJson($this->adminUrl("/groups/{$strangersGroup->id}/members/confirm"), $this->confirmBody([1]))->assertStatus(404);
 
         Auth::forgetGuards();
 
-        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), [
-            'membership_ids' => [1],
-        ])->assertStatus(401);
+        $this->postJson($this->adminUrl("/groups/{$this->club->id}/members/confirm"), $this->confirmBody([1]))->assertStatus(401);
     }
 
     #[Test]

@@ -3,8 +3,10 @@
 namespace App\Services\Groups;
 
 use App\Models\Contact;
+use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupThread;
+use App\Support\ContactIdentity;
 
 /**
  * Carry one contact's ROSTER EDGES onto the contact that absorbed them.
@@ -61,7 +63,10 @@ use App\Models\GroupThread;
  * ---------------------------------------------------------------------------
  *
  * A dropped row is simply left for the force-delete's cascade; nothing here
- * deletes anything, so no `deleting` hook fires half-way through a merge.
+ * deletes anything ON THAT PATH, so no `deleting` hook fires half-way through a
+ * merge. (The one thing this class does delete is described under RE-ISSUE
+ * below, and it deletes a GUARDIAN row, whose `deleting` hook is a documented
+ * no-op.)
  *
  *  1. AN EDGE THE SURVIVOR ALREADY HOLDS. Two CRM rows for one parent, both
  *     recorded against the same child in the same class, is precisely what a
@@ -81,6 +86,26 @@ use App\Models\GroupThread;
  * roster screen and one click to remove; a deleted ḥifẓ history is neither. A
  * de-duplication must never be the thing that destroys a record about a child.
  *
+ * A DROP IS NEVER SILENT ANY MORE. Dropping a CONFIRMED guardian edge destroys a
+ * decision a staff member deliberately made, and until this round it was
+ * reported as `unconfirmed: 0` — nothing at all. Measured, a real parent with an
+ * office-confirmed edge, `media` consent and a live portal login, when the office
+ * merged two CRM rows FOR HER CHILD in the direction that put the duplicate on
+ * top:
+ *
+ *     MERGE (real child -> duplicate) -> 200
+ *       roster {"moved":0,"dropped":2,"unconfirmed":0,
+ *               "message":"0 roster entries moved onto this member and 2
+ *                          duplicates dropped."}
+ *     AFTER  /groups -> 200 {"status":"success","data":[]}
+ *            family-login "state":"enabled","eligible":false
+ *
+ * `GroupMembershipsController::destroy` reaches the SAME cascade and narrates
+ * `guardian_edges_removed` / `confirmed_guardian_edges_removed` /
+ * `family_logins_left_without_a_ward`; the merge verb got none of it. It does
+ * now, from the same three questions, and the DIRECTION of the merge no longer
+ * changes what the operator is told.
+ *
  * ---------------------------------------------------------------------------
  * A MERGE MOVES ROWS. IT NEVER LAUNDERS AUTHORITY.
  * ---------------------------------------------------------------------------
@@ -97,32 +122,136 @@ use App\Models\GroupThread;
  * with this class said the merge "is where that claim finally gets its
  * authenticated act", and that sentence was wrong: the registrar authenticated a
  * DE-DUPLICATION, and was never shown, asked about, or told of a guardianship.
- * The merge response body carries `{status, data, family_login}` and did not
+ * The merge response body carried `{status, data, family_login}` and did not
  * contain the word "guardian"; this method's own return value was DISCARDED by
  * the caller.
  *
- * Provenance makes the rule expressible instead of aspirational
- * (`GroupMembership::PROVENANCES`), and it holds in both directions:
+ * ===========================================================================
+ * THE RULE THIS CLASS NOW HOLDS, IN ONE SENTENCE
+ * ===========================================================================
  *
- *  - A `self_asserted` row that moves STAYS `self_asserted`. Nothing here
- *    upgrades one, so re-pointing a manufactured edge onto a surviving contact
- *    yields a manufactured edge over the surviving contact, which grants
- *    nothing and sits in the office's pending queue naming the registration that
- *    asserted it.
- *  - A `confirmed` guardian edge that is re-pointed at a DIFFERENT WARD drops
- *    BACK to `self_asserted`. What a staff member confirmed was "this adult is
- *    the guardian of THAT NAMED PERSON"; re-pointing changes the person, so the
- *    confirmation stops describing the row it sits on. This is the same door one
- *    authenticated act further along — confirm the claim over the phantom child,
- *    then merge the phantom into the real one — and it is shut by the same
- *    sentence rather than by a fourth special case.
+ * A merge may move a roster row. It may keep that row's AUTHORITY only when the
+ * IDENTITY THAT AUTHORITY IS READ THROUGH has not changed, and where it has, the
+ * row is re-opened as a claim AND SAID OUT LOUD, by role, by name.
  *
- * And the opposite failure is closed too, because a de-duplication must not
- * QUIETLY REVOKE either: when the survivor already holds the same edge as an
- * unconfirmed claim and the absorbed row was confirmed, the confirmation is
- * carried onto the survivor's row instead of being dropped with it. The ward is
- * the same person in that case — only the guardian's own CRM row changed, which
- * is the thing the merge asserts was always one human.
+ * The previous round wrote half of that: a CONFIRMED edge whose holder or ward
+ * changed went back to `self_asserted`. Two things were missing, and both were
+ * measured on the wire.
+ *
+ * ---------------------------------------------------------------------------
+ * (a) A PENDING CLAIM HAS AN IDENTITY TOO, AND THE ROW ID IS NOT IT
+ * ---------------------------------------------------------------------------
+ *
+ * `unconfirm()` only fires on a row that IS confirmed. A pending claim that
+ * changes holder is already pending, so nothing fired and nothing was counted —
+ * and the row ID IS STABLE, so the operator's drawn list still named it.
+ * `ConfirmGroupMembershipsRequest` binds the operator's agreement to a list of
+ * ids, which is airtight against a row INSERTED after the draw and useless
+ * against a row the operator cannot TELL APART because it changed underneath
+ * one. Measured, from a stranger with no account:
+ *
+ *   1. anon POST …/register  payer {name:"Aisha Ahmed", email:"bilal@evil.test"}
+ *      -> directory: #1 Fatima Ahmed | #2 Aisha Ahmed <bilal@evil.test>
+ *   2. the real family signs up -> pending claim, membership #3, contact #3
+ *   3. operator draws roster row #3:
+ *        guardian=Aisha Ahmed <aisha@household.test> ward=Fatima Ahmed
+ *   4. registrar de-duplicates two "Aisha Ahmed" rows (real -> the stranger's)
+ *      MERGE -> 200 {"moved":1,"dropped":0,"unconfirmed":0}
+ *   5. THE SAME ROW #3 NOW READS guardian=Aisha Ahmed <bilal@evil.test>
+ *      confirm {"membership_ids":[3]} -> 200 {"confirmed":1}
+ *   6. eligible=true; family-login -> 200 login_email=bilal@evil.test
+ *   7. his own token: awards 200, ḥifẓ 200, "Safeguarding: incident on 3 Sept"
+ *
+ * So a guardian edge whose PAIR changes is not moved. It is RETIRED AND
+ * RE-ISSUED: the old row is deleted and a fresh `self_asserted` claim is written
+ * in its place, carrying the group, the role, the ward and the registration that
+ * asserted it — and a NEW ID. Step 5 above then answers
+ * `{"confirmed":0,"skipped":1}`, because the id the operator agreed to no longer
+ * exists, which is exactly true: what they read is not what is there. The office
+ * re-reads the roster and confirms the new line, with the guardian's address in
+ * front of them, which is the only place that decision can honestly be made.
+ *
+ * A confirmation names a PAIR — this adult, over this ward. Both ends are now
+ * treated the same way, because "the ward moved" and "the holder moved" are the
+ * same fact from two sides.
+ *
+ * ---------------------------------------------------------------------------
+ * (b) "THE IDENTITY CHANGED" IS A QUESTION WITH A DIFFERENT ANSWER PER END
+ * ---------------------------------------------------------------------------
+ *
+ * ONE RULE ANSWERS BOTH ENDS, AND IT LIVES IN `App\Support\ContactIdentity`:
+ * AN ABSENT VALUE IS NEVER AN IDENTITY MATCH.
+ *
+ * THE HOLDER END IS AN ADDRESS. A guardian edge authorises a PARENT PORTAL
+ * CREDENTIAL, and a credential is minted against an address; a staff caller is
+ * resolved to a person by `GroupAudience::identitiesFor()`, which is
+ * `LOWER(email)` and nothing else. So when the absorbed row and the survivor
+ * carry the SAME NON-EMPTY address, a credential opened on either reaches the
+ * same mailbox and the merge has changed nothing that any read path can see —
+ * the edge moves and keeps its confirmation. When the addresses differ, OR WHEN
+ * EITHER SIDE HAS NONE, the merge has changed the only thing that matters and
+ * the edge is re-issued as a claim.
+ *
+ * The "or when either side has none" is the half a previous round lost, and it
+ * cost the whole class. `addressOf()` returned `''` for a contact with no email
+ * and the comparison was a bare `!==`, so two ADDRESS-LESS adults compared equal
+ * and a confirmed guardianship rode a de-duplication onto a stranger with its
+ * consent intact. The measured transcript is in `ContactIdentity`'s docblock;
+ * the reason it is stated THERE and not here is that this file had already
+ * written the correct rule for the ward end, in prose, twenty lines from the
+ * line that contradicted it.
+ *
+ * The same-address exemption is safe because of a property enforced one file
+ * away, not because it is hoped for:
+ * `Api\V1\OfferingRegistrationsController::createContact()` "NEVER takes an
+ * address another contact already holds" — it nulls the address instead. So the
+ * one UNAUTHENTICATED writer in this application cannot put a second row on a
+ * real person's address. What it CAN do, and what the defect above turned into a
+ * disclosure, is put a second row carrying NO address at all: nulling the
+ * address is that method's refusal, and `registrants.*.email` is `nullable`
+ * besides. An address-less row is therefore the one shape a stranger can plant,
+ * which is precisely why it must never be the shape that matches.
+ *
+ * THE WARD END IS NOT AN ADDRESS, and must never be treated as one — not even
+ * with the fixed comparison. Most children have none (the same file: "A child's
+ * identity is not an address: most have none, and the siblings who do share the
+ * household mailbox"), so an address test on the ward side would exempt every
+ * pair of duplicate child rows that share a household mailbox, and re-open the
+ * exact door this class exists to shut: confirm the claim over the phantom
+ * child, then merge the phantom into the real one. There is therefore NO
+ * exemption on the ward side, and `ContactIdentity` is deliberately not called
+ * there. Any change of ward retires and re-issues.
+ *
+ * ---------------------------------------------------------------------------
+ * (c) A PARTICIPANT ROW IS NOT A PAIR, AND MUST NOT BE NARRATED AS ONE
+ * ---------------------------------------------------------------------------
+ *
+ * `leader` and `member` rows are the person's OWN place in a group. They name
+ * nobody else, they authorise no disclosure ABOUT anybody else, and a family
+ * credential is given nothing at all by one (`GroupAudience::membershipsFor()`
+ * drops a parent-portal principal's participant rows). The previous round
+ * unconfirmed them on ANY holder change and described what it had done in the
+ * words "1 guardian entry now point at this member". Measured, on a teacher's
+ * confirmed `leader` row merged onto a target CARRYING HER OWN ADDRESS:
+ *
+ *     leader row prov=confirmed -> AFTER: prov=self_asserted
+ *     posts 403 "You are not entitled to read this group's feed."
+ *     threads 403 · awards 403
+ *
+ * — a teacher locked out of her own classroom by an ordinary de-duplication,
+ * told about it in a sentence that named a guardianship, a ward and a specific
+ * person, none of which existed on that row.
+ *
+ * The rule above answers it without a special case: the identity a participant
+ * row is read through is the address, so a merge between two rows carrying the
+ * SAME address leaves her confirmed and working, and a merge that puts her row
+ * on a DIFFERENT address re-opens it as a claim — which is the only case where
+ * "somebody else can now be read into this classroom" is even expressible. The
+ * row is not retired and re-issued: there is no pair to break, records about
+ * children hang off participant ids (`behavior_awards.group_membership_id`,
+ * `hifz_entries.group_membership_id`, `group_threads.about_membership_id`), and
+ * rotating the id of a row that carries a child's ḥifẓ history to win a race
+ * would be the exact trade this class refuses everywhere else.
  */
 class RosterMergeService
 {
@@ -130,14 +259,46 @@ class RosterMergeService
      * Move `$source`'s roster edges onto `$target`. Call INSIDE the merge
      * transaction and BEFORE `forceDelete()`.
      *
-     * @return array{moved: int, dropped: int, unconfirmed: int, confirmations_carried: int}
+     * @return array{
+     *     moved: int,
+     *     dropped: int,
+     *     unconfirmed: int,
+     *     guardian_claims_reissued: int,
+     *     participant_rows_reopened: int,
+     *     confirmed_guardian_edges_dropped: int,
+     *     family_logins_left_without_a_ward: int,
+     *     guardian_claims: array<int,array<string,mixed>>,
+     * }
      */
     public function carry(Contact $source, Contact $target): array
     {
         $moved = 0;
         $dropped = 0;
-        $unconfirmed = 0;
-        $confirmationsCarried = 0;
+        $reissued = 0;
+        $repointed = 0;
+        $reopened = 0;
+        $strandedTwins = 0;
+        $participantTwins = 0;
+
+        /** @var array<int,array<string,mixed>> $claims */
+        $claims = [];
+
+        /** @var array<int,int> $doomed ids the force-delete's cascade will take */
+        $doomed = [];
+
+        /** @var array<int,int> $lockedOut contact ids whose confirmed edge stopped granting */
+        $lockedOut = [];
+
+        // THE HOLDER'S IDENTITY, resolved once. `GroupAudience::identitiesFor()`
+        // is `LOWER(email)` and nothing else, so this is the whole of what a
+        // change of holder can change about who reads through a row.
+        //
+        // ASKED THROUGH `ContactIdentity` AND NOT WITH AN OPERATOR. The question
+        // "are these the same person" has an answer for two real addresses and
+        // NO answer for two absences, and a `!==` between two strings cannot
+        // express the difference — which is the defect this line used to be.
+        // See that class for the rule and for the transcript.
+        $holderIdentityChanged = ContactIdentity::changed($source, $target);
 
         // The source's own place in each group.
         $own = GroupMembership::withoutMasjidScope()
@@ -151,6 +312,15 @@ class RosterMergeService
                 && (int) $membership->guardian_of_contact_id === (int) $target->getKey();
 
             if ($isSelfEdge) {
+                $doomed[] = (int) $membership->getKey();
+
+                if ($membership->isConfirmed() && $membership->isGuardian()) {
+                    // The SURVIVOR is who is left holding whatever this edge
+                    // used to grant — the absorbed row's own credential is
+                    // `absorbOnMerge()`'s subject and is reported there.
+                    $lockedOut[] = (int) $target->getKey();
+                }
+
                 $dropped++;
 
                 continue;
@@ -177,8 +347,21 @@ class RosterMergeService
                 // the screen the operator did it on, with the count and the door
                 // back. Losing a click is recoverable; the other direction is a
                 // stranger reading a child's safeguarding record.
+                $doomed[] = (int) $membership->getKey();
+
                 if ($membership->isConfirmed() && $twin->isPendingClaim()) {
-                    $unconfirmed++;
+                    $lockedOut[] = (int) $target->getKey();
+                    $strandedTwins++;
+
+                    if (! $membership->isGuardian()) {
+                        // A confirmed ENROLMENT dropped in favour of the
+                        // survivor's unconfirmed one. Nobody's records open on
+                        // it, but the child's roster line is now a claim, and it
+                        // is one of the entries `unconfirmed` counts — so it
+                        // gets its own sentence rather than being a number the
+                        // message does not explain.
+                        $participantTwins++;
+                    }
                 }
 
                 $dropped++;
@@ -186,36 +369,63 @@ class RosterMergeService
                 continue;
             }
 
-            // THE HOLDER IS CHANGING, so the confirmation does not travel with
-            // the row.
+            // ------------------------------------------------- THE ROW MOVES.
             //
-            // A confirmation names a PAIR — this guardian, over this ward — and
-            // a staff member vouched for that pair. Re-pointing either end makes
-            // it a statement about somebody they were never asked about. The
-            // `$over` loop below already refuses this when the WARD moves; the
-            // holder moving is the same fact from the other side, and treating
-            // it as safe rested on an assumption nothing records: that the
-            // surviving CRM row is one a human vouched for. `contacts` has no
-            // provenance, so a row an anonymous registration authored is
-            // byte-indistinguishable — on the directory screen, in the merge
-            // search list, and here — from one a registrar typed.
-            //
-            // Measured on the version that carried it: an anonymous POST seeded
-            // a second "Fatima Ahmed", a registrar merged the real one into it,
-            // and the confirmed guardian edge arrived on the stranger's row
-            // still confirmed, with the recorded media consent on it. That
-            // credential then read the child's awards, her ḥifẓ, the thread
-            // "Safeguarding: incident on 3 Sept", and the bytes of a class
-            // photograph.
-            //
-            // The edge still MOVES. Destroying it is the opposite failure — a
-            // de-duplication that quietly strips a family off a roster — so the
-            // roster line survives as a claim the office can confirm, and the
-            // merge response says how many went back to being claims rather
-            // than narrating only the ward-side count.
-            if ($membership->isConfirmed()) {
+            // What travels with it depends on what the row IS, and the two
+            // answers are the subject of (b) and (c) in this class's docblock.
+            if ($membership->isGuardian()) {
+                if ($holderIdentityChanged && ! $this->carriesRecordsAboutAChild($membership)) {
+                    // The pair changed at the guardian end: retire and re-issue,
+                    // so no agreement made about the old pair — given, or drawn
+                    // on a screen and still in flight — can attach to the new
+                    // one by naming an id.
+                    $claims[] = $this->describe($membership, $source, $target, 'guardian');
+
+                    if ($membership->isConfirmed()) {
+                        $lockedOut[] = (int) $target->getKey();
+                    }
+
+                    // The ward is copied as it stands, NULL included: a guardian
+                    // row with no ward is malformed, and `(int) null` would make
+                    // it a foreign key to contact 0 rather than leaving it as
+                    // the malformed row it already was.
+                    $this->reissue(
+                        $membership,
+                        (int) $target->getKey(),
+                        $membership->guardian_of_contact_id === null
+                            ? null
+                            : (int) $membership->guardian_of_contact_id,
+                    );
+
+                    $reissued++;
+                    $moved++;
+
+                    continue;
+                }
+
+                if ($holderIdentityChanged) {
+                    // A guardian row carrying a record about a child is not a
+                    // shape this application writes (`mayReceiveRecordAbout()`
+                    // refuses a guardian subject outright), but deleting one
+                    // would destroy that record through `cascadeOnDelete`. So it
+                    // is moved in place and merely re-opened as a claim: the
+                    // weaker guard, taken deliberately, because a de-duplication
+                    // must never be the thing that deletes a child's history.
+                    $claims[] = $this->describe($membership, $source, $target, 'guardian');
+
+                    if ($membership->isConfirmed()) {
+                        $lockedOut[] = (int) $target->getKey();
+                    }
+
+                    $membership->unconfirm();
+                    $repointed++;
+                }
+            } elseif ($holderIdentityChanged && $membership->isConfirmed()) {
+                // A participant row names one person and nobody else. It goes
+                // back to being a claim only because the address it is read
+                // through changed — never because "a merge happened".
                 $membership->unconfirm();
-                $unconfirmed++;
+                $reopened++;
             }
 
             $membership->contact_id = $target->getKey();
@@ -232,20 +442,90 @@ class RosterMergeService
             ->get();
 
         foreach ($over as $edge) {
-            $isSelfEdge = (int) $edge->contact_id === (int) $target->getKey();
+            // `$edge->contact_id !== null` is belt and braces against the shape
+            // this round is named after, not a live case: the column is a
+            // non-nullable foreign key (create_group_memberships_table). Were it
+            // ever relaxed, `(int) null === (int) null` is `0 === 0`, and a real
+            // guardian edge would be dropped as a "self-edge" — destroying a
+            // staff decision rather than laundering one, but on the same
+            // comparison. Said in code so the next reader cannot write it.
+            $isSelfEdge = $edge->contact_id !== null
+                && (int) $edge->contact_id === (int) $target->getKey();
+            $wardTwin = $this->survivorsWardTwinOf($target, $edge);
 
-            if ($isSelfEdge || $this->wouldDuplicateWard($target, $edge)) {
+            if ($isSelfEdge || $wardTwin !== null) {
+                // DROPPED, AND NO LONGER IN SILENCE. This is the branch F3 was
+                // measured on: `wouldDuplicateWard()` true meant `$dropped++`
+                // and nothing else, and the force-delete's cascade then
+                // destroyed a staff-confirmed guardianship with `unconfirmed: 0`
+                // on the wire. The twin the survivor already holds is a PENDING
+                // claim in the case that matters, so the parent is left with a
+                // roster line that opens nothing.
+                //
+                // The confirmation is still not carried onto that twin, for the
+                // reason the `$own` branch above gives at length — and here the
+                // objection is sharper, not weaker: the twin is held by the SAME
+                // contact as the absorbed edge, so an attacker holding a
+                // confirmed edge over a phantom child and a pending one over the
+                // real child would collect the real one by merging the phantom
+                // into her. That is the original door, one authenticated act
+                // further along.
+                $doomed[] = (int) $edge->getKey();
+
+                if ($edge->isConfirmed()) {
+                    $lockedOut[] = (int) $edge->contact_id;
+
+                    if ($wardTwin !== null && $wardTwin->isPendingClaim()) {
+                        // The survivor's own line over this pair is a CLAIM, so
+                        // there is one roster entry left that needs confirming —
+                        // which is what `unconfirmed` counts for the operator.
+                        $strandedTwins++;
+                    }
+                }
+
                 $dropped++;
 
                 continue;
             }
 
             // THE WARD IS CHANGING. Whatever authority this edge carried was
-            // recorded about the person it used to name.
-            if ($edge->isConfirmed()) {
-                $edge->unconfirm();
-                $unconfirmed++;
+            // recorded about the person it used to name — and whatever CONSENT
+            // was recorded on it was given about that person too, which is why
+            // the re-issued row carries neither.
+            //
+            // No same-address exemption here, deliberately: see (b) in the class
+            // docblock. A ward is a child, most have no address at all, and
+            // `'' == ''` would make this fire on every pair of duplicate child
+            // rows.
+            // `isGuardian()` is belt and braces with the invariant that only a
+            // guardian row carries a ward: retiring a row is safe BECAUSE the
+            // `deleting` hook is a no-op on a guardian row and awards/ḥifẓ/
+            // participant threads hang off participant ids. A malformed row that
+            // reached this loop some other way is moved in place instead, which
+            // is weaker and cannot delete a child's history.
+            if ($edge->isGuardian() && ! $this->carriesRecordsAboutAChild($edge)) {
+                $claims[] = $this->describe($edge, $source, $target, 'ward');
+
+                if ($edge->isConfirmed()) {
+                    $lockedOut[] = (int) $edge->contact_id;
+                }
+
+                $this->reissue($edge, (int) $edge->contact_id, (int) $target->getKey());
+
+                $reissued++;
+                $moved++;
+
+                continue;
             }
+
+            $claims[] = $this->describe($edge, $source, $target, 'ward');
+
+            if ($edge->isConfirmed()) {
+                $lockedOut[] = (int) $edge->contact_id;
+                $edge->unconfirm();
+            }
+
+            $repointed++;
 
             $edge->guardian_of_contact_id = $target->getKey();
             $edge->save();
@@ -255,9 +535,215 @@ class RosterMergeService
         return [
             'moved' => $moved,
             'dropped' => $dropped,
-            'unconfirmed' => $unconfirmed,
-            'confirmations_carried' => $confirmationsCarried,
+            // The umbrella the SPA and the operator read: roster entries that
+            // are back to being unconfirmed claims because of this merge.
+            // ROSTER ENTRIES THIS MERGE LEFT NEEDING A CONFIRMATION — the
+            // number the SPA warns on and the operator acts on. Re-issued
+            // claims, rows re-opened in place, and the surviving twin left
+            // behind when a confirmed edge went into the cascade: each of those
+            // is one line somebody now has to press Confirm on.
+            'unconfirmed' => $reissued + $repointed + $reopened + $strandedTwins,
+            'guardian_claims_reissued' => $reissued,
+            // Guardian edges whose pair changed but which could NOT be retired,
+            // because retiring them would have deleted a record kept about a
+            // child. Re-pointed in place and re-opened as claims instead — the
+            // weaker of the two guards, taken deliberately and counted
+            // separately so nobody reads it as the stronger one.
+            'guardian_claims_repointed_in_place' => $repointed,
+            'participant_rows_reopened' => $reopened,
+            'participant_rows_dropped_for_a_claim' => $participantTwins,
+            'confirmed_guardian_edges_dropped' => $this->confirmedGuardianEdgesAmong($doomed),
+            'family_logins_left_without_a_ward' => $this->strandedLogins($lockedOut, $doomed, $source),
+            'guardian_claims' => $claims,
         ];
+    }
+
+    /**
+     * Retire a guardian edge and write the same pairing back as a FRESH CLAIM.
+     *
+     * The old id is gone on purpose — it is the entire point. A stale list of
+     * ids drawn before the merge names rows that described a different pair, and
+     * `GroupMembershipsController::confirm()` skips an id it cannot find as a
+     * pending claim of the group, so such a click becomes an honest
+     * `{"confirmed":0,"skipped":1}` instead of a silent grant.
+     *
+     * WHY DELETING IS SAFE ON THIS ROW AND ON NO OTHER. `GroupMembership`'s
+     * `deleting` hook cascades the guardian edges pointing at a PARTICIPANT and
+     * returns immediately for a guardian row, so retiring one removes exactly one
+     * row. The three foreign keys that would take something with them
+     * (`behavior_awards`, `hifz_entries`, `group_threads.about_membership_id`)
+     * are all keyed to participant rows by construction, and the caller checks
+     * for them anyway before choosing this path.
+     *
+     * `source_registration_id` travels: it is the office's evidence — "which
+     * signup asserted this, and into what program" — and re-opening a claim must
+     * not also blind the person being asked to judge it.
+     */
+    private function reissue(GroupMembership $edge, int $contactId, ?int $wardId): GroupMembership
+    {
+        $fresh = new GroupMembership([
+            'masjid_id' => $edge->masjid_id,
+            'group_id' => $edge->group_id,
+            'contact_id' => $contactId,
+            'role' => $edge->role,
+            'guardian_of_contact_id' => $wardId,
+            'joined_at' => $edge->joined_at,
+        ]);
+
+        // No confirmation, and NO CONSENT: a recorded consent is permission to
+        // disclose something about ONE named child to ONE named adult, and this
+        // row is no longer that pair.
+        $fresh->selfAssertedFrom(null);
+        $fresh->forceFill([
+            'source_registration_id' => $edge->source_registration_id,
+            'masjid_id' => $edge->masjid_id,
+        ]);
+
+        // The old row first, so the unique index (group, contact, role, ward)
+        // cannot be met by the row being replaced.
+        $edge->delete();
+
+        $fresh->save();
+
+        return $fresh;
+    }
+
+    /**
+     * One line of the report, read BEFORE the row changes.
+     *
+     * The three facts `ConfirmGroupMembershipsRequest` says the operator decides
+     * on — "ward names, the claimed guardian, and which signup asserted it" —
+     * plus the ADDRESS, because that is what a parent portal credential is minted
+     * against and the merge response is the last screen before somebody types it.
+     *
+     * @return array<string,mixed>
+     */
+    private function describe(GroupMembership $edge, Contact $source, Contact $target, string $end): array
+    {
+        $guardian = $end === 'guardian'
+            ? $target
+            : $this->contactById((int) $edge->contact_id);
+
+        $ward = $end === 'ward'
+            ? $target
+            : $this->contactById($edge->guardian_of_contact_id);
+
+        // WHAT SEPARATES THE TWO ENDS, said in the terms each end HAS.
+        //
+        // At the guardian end the address is the discriminator and is the thing
+        // a credential is minted against, so it is printed. At the WARD end
+        // there is usually no address at all, and the two rows carry the SAME
+        // NAME — that is precisely why they looked like duplicates — so the only
+        // thing that tells them apart is the directory record number. Printing
+        // the name on its own there produces "guardian of Ibrahim Nur (it read
+        // Ibrahim Nur)", which is true and tells the office nothing.
+        $wardLabel = $this->nameOf($ward);
+        $previously = $end === 'guardian'
+            ? $this->nameOf($source) . ' <' . $this->addressLabelOf($source) . '>'
+            : $this->nameOf($source) . ', member record #' . $source->getKey();
+
+        if ($end === 'ward' && $ward instanceof Contact) {
+            $wardLabel .= ', member record #' . $ward->getKey();
+        }
+
+        return [
+            'end_changed' => $end,
+            'group' => $this->groupNameOf($edge),
+            'guardian' => $this->nameOf($guardian),
+            'guardian_email' => $guardian?->email,
+            // Said rather than left null, for the reason `addressLabelOf()`
+            // gives: this line is read by an operator deciding whether a
+            // guardianship should have moved, and "" is not an answer.
+            'guardian_address' => $this->addressLabelOf($guardian),
+            'guardian_contact_id' => $guardian?->getKey(),
+            'ward' => $wardLabel,
+            'ward_contact_id' => $ward?->getKey(),
+            // What the row used to say at the end that moved. The operator read
+            // THIS on the roster; the row now says the line above.
+            'previously' => $previously,
+            'previous_contact_id' => (int) $source->getKey(),
+            'was_confirmed' => $edge->isConfirmed(),
+            // The COLUMNS, not the permission. This line says what the merge is
+            // about to erase from the record; `hasConsent()` would answer false
+            // for a row whose consent already granted nothing, and the office
+            // would watch a `consent_scope` disappear while being told nothing
+            // was withdrawn. See `GroupMembership::consentColumnsAreSet()`.
+            'consent_withdrawn' => $edge->consentColumnsAreSet(),
+            'source_registration_id' => $edge->source_registration_id,
+        ];
+    }
+
+    /**
+     * How many of the rows this merge leaves for the cascade were CONFIRMED
+     * guardian edges — the count `GroupMembershipsController::destroy()` calls
+     * `confirmed_guardian_edges_removed`, asked of the same cascade by the other
+     * verb that reaches it.
+     *
+     * @param  array<int,int>  $doomed
+     */
+    private function confirmedGuardianEdgesAmong(array $doomed): int
+    {
+        if ($doomed === []) {
+            return 0;
+        }
+
+        return GroupMembership::withoutMasjidScope()
+            ->whereIn('id', $doomed)
+            ->where('role', GroupMembership::ROLE_GUARDIAN)
+            ->confirmed()
+            ->count();
+    }
+
+    /**
+     * Parent portal sign-ins that this merge leaves opening NOTHING.
+     *
+     * The same question `destroy()` asks, of the same people, one verb over: a
+     * guardian whose confirmed edge this merge destroyed or re-opened, who still
+     * holds a live credential, and who has no OTHER confirmed guardian edge over
+     * a ward anywhere in this organisation once the force-delete has run.
+     *
+     * Stricter than `destroy()`'s version by one clause, deliberately: it counts
+     * only CONFIRMED remaining edges, because a pending claim is precisely a row
+     * that opens nothing (`GroupAudience::membershipsFor()` filters on
+     * `confirmed()`), so a parent left holding only claims is a parent whose
+     * sign-in opens nothing — which is the sentence this number is printed
+     * inside.
+     *
+     * The absorbed contact is excluded: `FamilyAccessService::absorbOnMerge()`
+     * has already revoked its credential loudly and reported that separately, so
+     * counting it here would say the same thing twice.
+     *
+     * @param  array<int,int>  $lockedOut
+     * @param  array<int,int>  $doomed
+     */
+    private function strandedLogins(array $lockedOut, array $doomed, Contact $source): int
+    {
+        $candidates = array_values(array_unique(array_filter(
+            $lockedOut,
+            fn (int $contactId): bool => $contactId !== (int) $source->getKey(),
+        )));
+
+        if ($candidates === []) {
+            return 0;
+        }
+
+        return collect($candidates)
+            ->filter(function (int $contactId) use ($doomed): bool {
+                $contact = Contact::withoutMasjidScope()->whereKey($contactId)->first();
+
+                if (! $contact instanceof Contact || ! $contact->familyLoginIsActive()) {
+                    return false;
+                }
+
+                return ! GroupMembership::withoutMasjidScope()
+                    ->where('contact_id', $contactId)
+                    ->where('role', GroupMembership::ROLE_GUARDIAN)
+                    ->whereNotNull('guardian_of_contact_id')
+                    ->confirmed()
+                    ->when($doomed !== [], fn ($q) => $q->whereNotIn('id', $doomed))
+                    ->exists();
+            })
+            ->count();
     }
 
     /**
@@ -281,15 +767,24 @@ class RosterMergeService
             ->first();
     }
 
-    /** Does the survivor already hold a guardian edge over themselves here? */
-    private function wouldDuplicateWard(Contact $target, GroupMembership $edge): bool
+    /**
+     * The survivor-side row this edge would collide with — the same holder, over
+     * the SURVIVOR as ward — or null.
+     *
+     * Was `wouldDuplicateWard(): bool`, and it returns the ROW for the same
+     * reason `survivorsTwinOf()` does: dropping a duplicate is not only a
+     * question of rows. The authority on the two halves can differ, and the
+     * caller has to be able to say whether what is left behind is a confirmed
+     * entry (nothing to do) or a claim somebody now has to press Confirm on.
+     */
+    private function survivorsWardTwinOf(Contact $target, GroupMembership $edge): ?GroupMembership
     {
         return GroupMembership::withoutMasjidScope()
             ->where('group_id', $edge->group_id)
             ->where('contact_id', $edge->contact_id)
             ->where('role', $edge->role)
             ->where('guardian_of_contact_id', $target->getKey())
-            ->exists();
+            ->first();
     }
 
     /**
@@ -310,5 +805,46 @@ class RosterMergeService
                 ->withTrashed()
                 ->where('about_membership_id', $membership->getKey())
                 ->exists();
+    }
+
+    /**
+     * The address a merge report PRINTS for a contact, or an explicit refusal to
+     * print a blank.
+     *
+     * NOT AN IDENTITY, and it must never be used as one — that is why it is a
+     * display helper on this class rather than a method on `ContactIdentity`,
+     * which deliberately hands back no string at all. Two contacts with no
+     * address both label as "no address on file", and comparing those two labels
+     * would be the very bug this round removed.
+     *
+     * The blank is the thing being refused. `GroupRosterTab.vue` learned the
+     * same lesson on the roster ("a blank is the thing the operator reads
+     * straight past") and this report is the last screen an operator sees before
+     * a guardianship changes hands.
+     */
+    private function addressLabelOf(?Contact $contact): string
+    {
+        $address = trim((string) $contact?->email);
+
+        return $address === '' ? 'no address on file' : $address;
+    }
+
+    private function contactById(?int $id): ?Contact
+    {
+        return $id === null
+            ? null
+            : Contact::withoutMasjidScope()->withTrashed()->whereKey($id)->first();
+    }
+
+    private function nameOf(?Contact $contact): ?string
+    {
+        return $contact instanceof Contact
+            ? trim($contact->first_name . ' ' . $contact->last_name)
+            : null;
+    }
+
+    private function groupNameOf(GroupMembership $edge): ?string
+    {
+        return Group::withoutMasjidScope()->whereKey($edge->group_id)->value('name');
     }
 }

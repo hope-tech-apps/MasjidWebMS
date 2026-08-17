@@ -188,13 +188,18 @@ class ContactsController extends Controller
      * DE-DUPLICATION. Nothing on the screen, in the request or in the response
      * below contained the word "guardian".
      *
-     * Provenance settles it in `RosterMergeService` — a self-asserted edge stays
-     * self-asserted through a merge, and a confirmed one re-pointed at a
-     * DIFFERENT ward drops back to a claim, because the confirmation was made
-     * about the person it used to name. This method's remaining job is to STOP
-     * DISCARDING THE REPORT: `carry()`'s return value was thrown away, so a merge
-     * that moved eleven roster rows and re-opened a guardian claim for
-     * confirmation said nothing at all about any of it.
+     * Provenance settles it in `RosterMergeService`, whose one rule is that a
+     * merge may keep a row's authority only when the identity that authority is
+     * read through has not changed — and where either end of a guardian PAIR
+     * changes, the entry is retired and re-issued as a fresh claim with a NEW ID,
+     * so a Confirm click carrying ids drawn before the merge confirms nothing.
+     *
+     * This method's remaining job is to STOP DISCARDING THE REPORT: `carry()`'s
+     * return value was thrown away, so a merge that moved eleven roster rows and
+     * re-opened a guardian claim for confirmation said nothing at all about any
+     * of it. `rosterReport()` below is that sentence, and it is now written per
+     * ROLE — the previous text described a teacher's `leader` row to her office
+     * as a guardianship over a named ward, which it was not.
      */
     public function merge(\App\Http\Requests\Admin\Contacts\MergeContactRequest $request, $masjid_id, $contact_id)
     {
@@ -266,13 +271,33 @@ class ContactsController extends Controller
      * Null when it touched nothing, which is the ordinary placeholder merge and
      * where a report about nothing is noise.
      *
-     * The `unconfirmed` count is the sentence that matters and the reason this
-     * is not a debug counter. A merge that re-points a CONFIRMED guardian edge
-     * at a different ward turns it back into a claim, because the confirmation
-     * was recorded about the person it used to name — so a parent whose portal
-     * worked this morning stops reading their child's records, and the office
-     * has to hear that from the screen they did it on rather than from a phone
-     * call. It names the door back: the roster's Confirm.
+     * ## WHY THIS IS NOT A DEBUG COUNTER
+     *
+     * A merge can change WHO a guardian claim is about. That is a disclosure
+     * decision the operator did not make and was not shown, and the previous
+     * version of this method could not describe it: it counted one number,
+     * printed the word "guardian" over rows that were not guardian rows, and
+     * printed NOTHING at all for the two shapes that mattered most.
+     *
+     * Three sentences now, and each one exists because a measured request had no
+     * sentence for it:
+     *
+     *  1. GUARDIAN CLAIMS THIS MERGE RE-ISSUED. A pending claim whose holder
+     *     changed used to move in total silence — same row id, different adult —
+     *     and the operator's already-drawn Confirm list still named it. The
+     *     entries are now named: the ward, the adult, and THE ADDRESS, because a
+     *     confirmation on a guardian entry is what makes a parent portal sign-in
+     *     possible and this is the last screen before somebody types one.
+     *  2. PARTICIPANT ROWS THIS MERGE RE-OPENED. Said in words that are true for
+     *     a `leader`/`member` row: it names one person, no ward, and no
+     *     guardianship. The old text told a teacher's office that "1 guardian
+     *     entry now point at this member … a confirmation names one specific
+     *     person, and this is no longer that person" about a leader row that
+     *     named no ward and moved none.
+     *  3. CONFIRMED GUARDIAN ENTRIES THE MERGE DESTROYED, and how many parent
+     *     portal sign-ins that leaves opening nothing. `destroy()` below the
+     *     roster verbs already narrates the same three counts about the same
+     *     cascade; a merge that reached it said `unconfirmed: 0`.
      */
     private function rosterReport(?array $roster): ?array
     {
@@ -288,20 +313,213 @@ class ContactsController extends Controller
             $roster['dropped'] === 1 ? '' : 's',
         );
 
-        if ($roster['unconfirmed'] > 0) {
-            $message .= sprintf(
-                ' %d guardian entr%s now point at this member instead of the absorbed record, so %s '
-                . 'gone back to being an unconfirmed claim — a confirmation names one specific person, '
-                . 'and this is no longer that person. Confirm %s on the group\'s roster if the '
-                . 'relationship is real; until then it opens nothing.',
-                $roster['unconfirmed'],
-                $roster['unconfirmed'] === 1 ? 'y' : 'ies',
-                $roster['unconfirmed'] === 1 ? 'it has' : 'they have',
-                $roster['unconfirmed'] === 1 ? 'it' : 'them',
+        $message .= $this->reissuedClaimsSentence($roster);
+        $message .= $this->repointedClaimsSentence($roster);
+        $message .= $this->namedClaimsSentence($roster);
+        $message .= $this->reopenedParticipantsSentence($roster);
+        $message .= $this->droppedParticipantTwinsSentence($roster);
+        $message .= $this->destroyedEdgesSentence($roster);
+
+        return $roster + ['message' => $message];
+    }
+
+    /**
+     * The guardian entries whose PAIR this merge changed.
+     *
+     * Every one of them was retired and written back as a fresh claim with a NEW
+     * ID, so an id drawn before the merge confirms nothing — and the office has
+     * to be told that, or the honest `{"confirmed":0,"skipped":1}` they get for
+     * clicking Confirm reads as a bug rather than as the refusal it is.
+     */
+    private function reissuedClaimsSentence(array $roster): string
+    {
+        $count = (int) ($roster['guardian_claims_reissued'] ?? 0);
+
+        if ($count === 0) {
+            return '';
+        }
+
+        $sentence = sprintf(
+            ' %d guardian entr%s changed who %s about, so %s been re-issued as %s new unconfirmed '
+            . 'claim%s — a confirmation names one pair, this adult over that named child, and after '
+            . 'this merge %s no longer that pair. The earlier entr%s can no longer be confirmed: '
+            . 're-read this group\'s roster and confirm the new line%s if the relationship is real. '
+            . 'Until then %s open%s nothing, and any consent recorded on %s has been withdrawn.',
+            $count,
+            $count === 1 ? 'y' : 'ies',
+            $count === 1 ? 'it is' : 'they are',
+            $count === 1 ? 'it has' : 'they have',
+            $count === 1 ? 'a' : '',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'it is' : 'they are',
+            $count === 1 ? 'y' : 'ies',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'it' : 'they',
+            $count === 1 ? 's' : '',
+            $count === 1 ? 'it' : 'them',
+        );
+
+        return $sentence;
+    }
+
+    /**
+     * The rare guardian entry whose pair changed but which could NOT be retired,
+     * because retiring it would have deleted a record kept about a child. It is
+     * counted apart from the re-issued ones on purpose: it keeps its id, so a
+     * Confirm click drawn before the merge WILL still land on it, and an operator
+     * must not be told the stronger guard held when it did not.
+     */
+    private function repointedClaimsSentence(array $roster): string
+    {
+        $count = (int) ($roster['guardian_claims_repointed_in_place'] ?? 0);
+
+        if ($count === 0) {
+            return '';
+        }
+
+        return sprintf(
+            ' %d guardian entr%s changed who %s about but had to keep %s roster line, because removing '
+            . 'it would have deleted a record kept about a child. %s back to being an unconfirmed '
+            . 'claim%s — check %s on the group\'s roster before confirming anything there.',
+            $count,
+            $count === 1 ? 'y' : 'ies',
+            $count === 1 ? 'it is' : 'they are',
+            $count === 1 ? 'its' : 'their',
+            $count === 1 ? 'It is' : 'They are',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'it' : 'them',
+        );
+    }
+
+    /**
+     * The entries themselves, named.
+     *
+     * `ConfirmGroupMembershipsRequest` says the operator decides on "ward names,
+     * the claimed guardian, and which signup asserted it". A merge can change the
+     * first two under them, and the ADDRESS is added because a confirmation on a
+     * guardian entry is what makes a parent portal sign-in possible and this is
+     * the last screen before somebody types one.
+     */
+    private function namedClaimsSentence(array $roster): string
+    {
+        $sentence = '';
+
+        foreach (($roster['guardian_claims'] ?? []) as $claim) {
+            $sentence .= sprintf(
+                ' %s <%s> is now recorded as the guardian of %s in %s (it read %s), so confirming it '
+                . 'would open that child\'s records to that address.',
+                $claim['guardian'] ?? 'This member',
+                $claim['guardian_email'] ?? 'no address on file',
+                $claim['ward'] ?? 'a member of that group',
+                $claim['group'] ?? 'that group',
+                $claim['previously'] ?? 'the absorbed record',
             );
         }
 
-        return $roster + ['message' => $message];
+        return $sentence;
+    }
+
+    /** Said in words that are true for a row that names one person and no ward. */
+    private function reopenedParticipantsSentence(array $roster): string
+    {
+        $count = (int) ($roster['participant_rows_reopened'] ?? 0);
+
+        if ($count === 0) {
+            return '';
+        }
+
+        return sprintf(
+            ' %d roster entr%s for this person %s moved onto a record with a different email address, '
+            . 'so %s gone back to being an unconfirmed claim%s — an email address is how this '
+            . 'application decides which person a roster row is about, and it is not the same one any '
+            . 'more. The row names one person and no ward, so nobody else\'s records are involved. '
+            . 'Confirm %s on the group\'s roster to put %s back.',
+            $count,
+            $count === 1 ? 'y' : 'ies',
+            $count === 1 ? 'has' : 'have',
+            $count === 1 ? 'it has' : 'they have',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'it' : 'them',
+            $count === 1 ? 'it' : 'them',
+        );
+    }
+
+    /**
+     * A CONFIRMED enrolment dropped as a duplicate of an unconfirmed one.
+     *
+     * Nobody's records open on a participant row, so this is not a disclosure
+     * event — but it is one more roster line that now needs a click, and every
+     * number in this report has to have a sentence. `unconfirmed` counting two
+     * while the text explained one is the shape of an unexplained count, which
+     * is how the previous rounds' silences started.
+     */
+    private function droppedParticipantTwinsSentence(array $roster): string
+    {
+        $count = (int) ($roster['participant_rows_dropped_for_a_claim'] ?? 0);
+
+        if ($count === 0) {
+            return '';
+        }
+
+        return sprintf(
+            ' %d roster entr%s this organisation had confirmed %s dropped as %s duplicate%s of %s this '
+            . 'member already holds as an unconfirmed claim, so %s line%s now %s a confirmation on the '
+            . 'group\'s roster. Nobody\'s records are opened by %s.',
+            $count,
+            $count === 1 ? 'y' : 'ies',
+            $count === 1 ? 'was' : 'were',
+            $count === 1 ? 'a' : '',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'one' : 'ones',
+            $count === 1 ? 'that' : 'those',
+            $count === 1 ? '' : 's',
+            $count === 1 ? 'needs' : 'need',
+            $count === 1 ? 'it' : 'them',
+        );
+    }
+
+    /**
+     * What the force-delete's cascade is taking, and what it costs.
+     *
+     * The same three questions `GroupMembershipsController::destroy()` answers
+     * about the same cascade — because the operator's problem is identical
+     * whichever verb reached it, and the merge used to answer none of them.
+     */
+    private function destroyedEdgesSentence(array $roster): string
+    {
+        $destroyed = (int) ($roster['confirmed_guardian_edges_dropped'] ?? 0);
+        $stranded = (int) ($roster['family_logins_left_without_a_ward'] ?? 0);
+
+        if ($destroyed === 0 && $stranded === 0) {
+            return '';
+        }
+
+        $sentence = '';
+
+        if ($destroyed > 0) {
+            $sentence .= sprintf(
+                ' %d guardian entr%s this organisation had CONFIRMED went with the absorbed record, '
+                . 'because this member already holds an entry for the same pair. That confirmation is '
+                . 'not carried across — a merge is a de-duplication, not an authorization — so what is '
+                . 'left is an unconfirmed claim until somebody confirms it on the group\'s roster.',
+                $destroyed,
+                $destroyed === 1 ? 'y' : 'ies',
+            );
+        }
+
+        if ($stranded > 0) {
+            $sentence .= sprintf(
+                ' %d parent portal sign-in%s now open%s nothing — confirm the remaining roster entr%s, '
+                . 'or revoke the sign-in%s if that was not intended.',
+                $stranded,
+                $stranded === 1 ? '' : 's',
+                $stranded === 1 ? 's' : '',
+                $stranded === 1 ? 'y' : 'ies',
+                $stranded === 1 ? '' : 's',
+            );
+        }
+
+        return $sentence;
     }
 
     /**

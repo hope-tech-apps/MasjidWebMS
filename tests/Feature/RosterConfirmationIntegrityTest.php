@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\ConfirmsRosterClaims;
 use Tests\TestCase;
 
 /**
@@ -100,6 +101,7 @@ use Tests\TestCase;
 class RosterConfirmationIntegrityTest extends TestCase
 {
     use RefreshDatabase;
+    use ConfirmsRosterClaims;
 
     private Masjid $masjid;
 
@@ -264,9 +266,7 @@ class RosterConfirmationIntegrityTest extends TestCase
 
         Sanctum::actingAs($this->admin);
 
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => $shown,
-        ])
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody($shown))
             ->assertStatus(200)
             ->assertJsonPath('data.confirmed', 8)
             ->assertJsonPath('data.pending_claims', 0);
@@ -311,9 +311,7 @@ class RosterConfirmationIntegrityTest extends TestCase
 
         Sanctum::actingAs($this->admin);
 
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => array_merge($ids, [999999]),
-        ])
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody(array_merge($ids, [999999])))
             ->assertStatus(200)
             ->assertJsonPath('data.confirmed', 2)
             ->assertJsonPath('data.skipped', 2);
@@ -342,9 +340,7 @@ class RosterConfirmationIntegrityTest extends TestCase
 
         Sanctum::actingAs($this->admin);
 
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => [$mine->id, $otherRoom->id, $foreign->id],
-        ])->assertStatus(200)->assertJsonPath('data.confirmed', 1);
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody([$mine->id, $otherRoom->id, $foreign->id]))->assertStatus(200)->assertJsonPath('data.confirmed', 1);
 
         $this->assertTrue($mine->fresh()->isConfirmed());
         $this->assertFalse($otherRoom->fresh()->isConfirmed());
@@ -557,9 +553,7 @@ class RosterConfirmationIntegrityTest extends TestCase
         $this->assertFalse($edge->isConfirmed());
 
         // And the remedy the response names actually works.
-        $this->postJson($this->adminUrl("/groups/{$this->grade3->id}/members/confirm"), [
-            'membership_ids' => [$edge->id],
-        ])->assertStatus(200)->assertJsonPath('data.confirmed', 1);
+        $this->postJson($this->adminUrl("/groups/{$this->grade3->id}/members/confirm"), $this->confirmBody([$edge->id]))->assertStatus(200)->assertJsonPath('data.confirmed', 1);
 
         app(TenantContext::class)->set($this->masjid->id);
         $this->assertTrue(app(FamilyAccessService::class)->mayHoldAFamilyLogin($p2->fresh()));
@@ -651,9 +645,7 @@ class RosterConfirmationIntegrityTest extends TestCase
         $this->assertNull($claim->fresh()->consent_granted_at);
 
         // …and once the office stands behind the edge, the same call works.
-        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), [
-            'membership_ids' => [$claim->id],
-        ])->assertStatus(200);
+        $this->postJson($this->adminUrl("/groups/{$this->grade5->id}/members/confirm"), $this->confirmBody([$claim->id]))->assertStatus(200);
 
         $this->putJson(
             $this->adminUrl("/groups/{$this->grade5->id}/members/{$claim->id}/consent"),
@@ -676,12 +668,36 @@ class RosterConfirmationIntegrityTest extends TestCase
         $this->seedMembership($this->grade5, $child, GroupMembership::ROLE_MEMBER);
         $edge = $this->seedMembership($this->grade5, $parent, GroupMembership::ROLE_GUARDIAN, $child);
 
+        // ORDER MATTERS HERE NOW. `unconfirm()` clears the consent columns as
+        // well (a pending claim carrying consent is a state
+        // `GroupConsentController::update()` answers 422 for, and it was
+        // reachable through the merge), so the row is re-opened FIRST and the
+        // consent written underneath it — the historical shape this defect is
+        // about, which withdrawal must still work on.
+        $edge->unconfirm()->save();
+
         $edge->update([
             'consent_scope' => GroupMembership::CONSENT_MEDIA,
             'consent_granted_at' => now(),
         ]);
 
-        $edge->unconfirm()->save();
+        // THE FIXTURE CHECK ASKS ABOUT BYTES, NOT ABOUT PERMISSION — and the
+        // distinction is the point of the test rather than a concession to it.
+        //
+        // `hasConsent()` now consults provenance, so it answers FALSE here: this
+        // row is a pending claim, and a pending claim's consent record grants
+        // nothing. That is exactly the state withdrawal has to keep working on.
+        // Asserting `hasConsent()` would make the fixture require the row to
+        // GRANT something before it can be un-granted, which is the gated
+        // direction this test exists to refuse.
+        $this->assertTrue(
+            $edge->fresh()->consentColumnsAreSet(),
+            'the fixture must leave a consent record standing on the row',
+        );
+        $this->assertFalse(
+            $edge->fresh()->hasConsent(),
+            'a pending claim must not read as granting consent',
+        );
 
         Sanctum::actingAs($this->admin);
 

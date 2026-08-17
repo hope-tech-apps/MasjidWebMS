@@ -14,6 +14,51 @@ import {
 } from "@/core/types/data/masjid-related/Group";
 
 /**
+ * What one press of the confirm button actually did.
+ *
+ * The counts are NOT a formality. A sweep can now come back having confirmed
+ * fewer rows than it named for three different reasons, and the office has to be
+ * told which — a row that changed under them is still waiting and needs another
+ * look, a contested one needs a decision the sweep is not allowed to make, and a
+ * settled one needs nothing at all. "8 confirmed" on a list of 10 is the exact
+ * shape the earlier defect hid inside.
+ */
+export type ConfirmClaimsResult = {
+    confirmed: number;
+    skipped: number;
+    changedSinceShown: number[];
+    needsAnIndividualDecision: number[];
+    message: string;
+};
+
+/**
+ * What adding somebody to a roster actually did — the ROW AND WHAT THE SERVER
+ * SAID ABOUT IT.
+ *
+ * `addMembership` used to return `res.data.data` and drop `res.data.message`,
+ * which was fine while the message was decoration and stopped being fine when
+ * `store()` began answering a second, sharper thing: `POST …/members` is the
+ * OTHER door onto the same grant `confirm()` guards, and the server now names
+ * the case where the entry it just confirmed has a same-named rival claiming
+ * the same child. That sentence was computed, serialised, and thrown away here;
+ * the screen fired a hardcoded "Added" toast. Measured: the contested stranger
+ * row, refused by the sweep seconds earlier, confirmed through this call with
+ * the warning present in the body and invisible on screen.
+ *
+ * `confirmedAnExistingClaim` is separated from the message rather than sniffed
+ * out of it: a 200 means "a claim that was already sitting there is now
+ * confirmed by you" and a 201 means "a new row was typed", and those are two
+ * different things for an operator to have done.
+ */
+export type AddMembershipResult = {
+    membership: GroupMembership;
+    /** The server's own sentence, or '' when it said nothing beyond success. */
+    message: string;
+    /** True when this stood behind a pending claim rather than creating a row. */
+    confirmedAnExistingClaim: boolean;
+};
+
+/**
  * Groups store — CRUD over /api/admin/masjids/{masjid_id}/groups and the roster
  * nested under it.
  *
@@ -32,6 +77,14 @@ export const useGroupsStore = defineStore('groupsStore', () => {
     const memberships = ref<GroupMembership[]>([]);
     /** How many rows on the loaded roster nobody at the organisation has confirmed. */
     const pendingClaims = ref<number>(0);
+    /**
+     * How many of those are claims the operator cannot tell apart from another
+     * one over the same child — served by the API, never recounted here, for the
+     * same reason `pendingClaims` is not: the definition of "contested" decides
+     * what the bulk button refuses, and a second copy in TypeScript is a copy
+     * that agrees today.
+     */
+    const contestedClaims = ref<number>(0);
     const groupsMeta = ref<GroupsMeta>();
 
     // Stores
@@ -166,6 +219,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
 
         memberships.value = [];
         pendingClaims.value = 0;
+        contestedClaims.value = 0;
 
         const res: AxiosResponse = await ApiService.get(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members` as BackendApiRoute
@@ -173,27 +227,52 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         if (res.data?.status === 'success' && Array.isArray(res.data?.data)) {
             memberships.value = res.data.data;
             pendingClaims.value = Number(res.data?.meta?.pending_claims ?? 0);
+            contestedClaims.value = Number(res.data?.meta?.contested_claims ?? 0);
         }
     }
 
     /**
      * Stand behind the roster claims a PUBLIC registration form asserted.
      *
-     * `membershipIds` is REQUIRED by the endpoint and the caller must name every
-     * row it is vouching for. An absent list used to mean "everything pending in
-     * this group", which is not the set the operator read — a registration
-     * landing between the render and the click was confirmed by it. A school's
-     * 200-signup intake is still one button; it just carries 200 ids.
-     * Resolves to how many were confirmed.
+     * THE CALLER SENDS WHAT IT SAW, and that is now three things rather than one.
+     *
+     *  - the IDS it drew. An absent list used to mean "everything pending in this
+     *    group", which is not the set the operator read — a registration landing
+     *    between the render and the click was confirmed by it.
+     *  - the FINGERPRINT each row was drawn with. An id names a row; it does not
+     *    name what the row said. A merge re-points a pending claim's `contact_id`
+     *    and the id does not move, so without this the operator confirms a
+     *    relationship they never read. Rows whose fingerprint no longer matches
+     *    come back under `changed_since_shown` and are left alone.
+     *  - the ids of any CONTESTED claims the operator decided one at a time.
+     *    Never populated by the bulk sweep, by construction: `confirmAllClaims`
+     *    does not pass it, so a claim the operator cannot tell apart from a rival
+     *    can only be confirmed from the dialog that shows both addresses.
+     *
+     * A school's 200-signup intake is still one button and one POST; it just
+     * carries 200 ids and 200 fingerprints.
      */
     async function confirmClaims(
         groupId: number | string,
-        membershipIds: number[]
-    ): Promise<number> {
-        if (!masjidStore.masjid?.id || membershipIds.length === 0) return 0;
+        rows: { id: number; fingerprint: string }[],
+        contestedIds: number[] = []
+    ): Promise<ConfirmClaimsResult> {
+        const empty: ConfirmClaimsResult = {
+            confirmed: 0,
+            skipped: 0,
+            changedSinceShown: [],
+            needsAnIndividualDecision: [],
+            message: ''
+        };
+
+        if (!masjidStore.masjid?.id || rows.length === 0) return empty;
 
         const body = new FormData();
-        membershipIds.forEach((id) => body.append('membership_ids[]', String(id)));
+        rows.forEach((row) => {
+            body.append('membership_ids[]', String(row.id));
+            body.append(`fingerprints[${row.id}]`, row.fingerprint);
+        });
+        contestedIds.forEach((id) => body.append('contested_membership_ids[]', String(id)));
 
         const res: AxiosResponse = await ApiService.post(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/members/confirm` as BackendApiRoute,
@@ -206,7 +285,13 @@ export const useGroupsStore = defineStore('groupsStore', () => {
 
         pendingClaims.value = Number(res.data?.data?.pending_claims ?? 0);
 
-        return Number(res.data?.data?.confirmed ?? 0);
+        return {
+            confirmed: Number(res.data?.data?.confirmed ?? 0),
+            skipped: Number(res.data?.data?.skipped ?? 0),
+            changedSinceShown: (res.data?.data?.changed_since_shown ?? []).map(Number),
+            needsAnIndividualDecision: (res.data?.data?.needs_an_individual_decision ?? []).map(Number),
+            message: String(res.data?.message ?? '')
+        };
     }
 
     /**
@@ -219,7 +304,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
     async function addMembership(
         groupId: number | string,
         payload: GroupMembershipPayload
-    ): Promise<GroupMembership> {
+    ): Promise<AddMembershipResult> {
         if (!masjidStore.masjid?.id) {
             throw new Error('Masjid not specified.');
         }
@@ -237,7 +322,12 @@ export const useGroupsStore = defineStore('groupsStore', () => {
             body
         );
         if (res.data?.status === 'success' && res.data?.data) {
-            return res.data.data;
+            return {
+                membership: res.data.data,
+                // Carried, not dropped. See AddMembershipResult.
+                message: String(res.data?.message ?? ''),
+                confirmedAnExistingClaim: res.status === 200
+            };
         }
         throw new Error('Failed to add the member.');
     }
@@ -264,6 +354,7 @@ export const useGroupsStore = defineStore('groupsStore', () => {
         groupsMeta,
         memberships,
         pendingClaims,
+        contestedClaims,
         fetchGroups,
         fetchGroup,
         createGroup,

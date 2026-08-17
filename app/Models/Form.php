@@ -248,14 +248,54 @@ class Form extends Model
                 continue;
             }
 
+            // ABSENT, null, or BLANK: this tier has NO cut-off and is the
+            // open-ended final price. All three are one statement, spelled three
+            // ways — `database/forms/camp-2026.json` omits the key, the builder
+            // sends a cleared box, and every HTTP door turns that cleared box
+            // into null before any rule sees it (`TrimStrings` +
+            // `ConvertEmptyStringsToNull`, global in bootstrap/app.php).
+            //
+            // The two BLANK spellings used to do opposite things here. Measured,
+            // one tier schedule, three days:
+            //
+            //   until ''      2026-08-01 Early bird/100   2026-08-20 Early bird/100
+            //                 2026-09-20 Early bird/100   <- treated as "no cut-off"
+            //   until '   '   2026-08-01 Standard/120     <- SKIPPED, price steps up
+            //                 2026-09-20 Day of camp/140
+            //
+            // Same blank, same document, two prices — and only rows written by
+            // `form:import` could carry either, since the API stores null for
+            // both. `TierCutoff::normalise()` is now the write-side statement of
+            // this and `ImportFormCommand` applies it, so no new row can carry a
+            // blank; the `trim()` below is the read half, for the rows that
+            // already do. It is deliberately NOT the "unreadable steps up" rule:
+            // a blank is not a date somebody got wrong, it is a date somebody did
+            // not give, and this system has always had exactly one meaning for
+            // that.
             $until = $tier['until'] ?? null;
+
+            if (is_string($until)) {
+                $until = trim($until);
+            }
 
             if ($until === null || $until === '') {
                 return $tier;
             }
 
-            // String comparison is safe and portable: both sides are ISO yyyy-mm-dd.
-            if ($today <= (string) $until) {
+            $until = self::normaliseCutoff($until);
+
+            // A cut-off nothing can read is NOT in force. Skipping steps UP to
+            // the next tier, which is visible on the page and complainable;
+            // treating an unreadable date as "not yet passed" is the silent
+            // under-charge below wearing a different hat.
+            if ($until === null) {
+                continue;
+            }
+
+            // Both sides are now provably zero-padded ISO yyyy-mm-dd, which is
+            // the precondition that makes a lexical comparison correct. It used
+            // to be assumed rather than established — see normaliseCutoff().
+            if ($today <= $until) {
                 return $tier;
             }
         }
@@ -264,5 +304,65 @@ class Form extends Model
         $last = end($tiers);
 
         return is_array($last) && isset($last['amount']) ? $last : null;
+    }
+
+    /**
+     * A tier cut-off as a zero-padded `Y-m-d` string, or null if it is not a
+     * calendar date at all.
+     *
+     * ## Why this exists
+     *
+     * `resolveTier()` compares `$today <= $until` as STRINGS, and the old
+     * comment defended that as "safe and portable: both sides are ISO
+     * yyyy-mm-dd". The left side always is — `toDateString()` pads. The right
+     * side is whatever somebody typed, and `ImportFormCommand` accepted a form
+     * whose `settings` were never validated, so `2026-8-14` landed in the column
+     * with exit code 0 while the admin API answered 422 "must match the format
+     * Y-m-d" for the identical payload. Under string comparison:
+     *
+     *     '2026-09-10' <= '2026-8-14'   is TRUE     ('0' < '8' at index 5)
+     *
+     * so the early-bird tier never expired. Measured on the imported camp form:
+     * August 16 quoted $100 instead of $120, September 10 — after the camp had
+     * finished — still quoted $100 instead of $140, and the tier only cleared at
+     * the year rollover. $40 per attendee, for four months.
+     *
+     * The write path refuses an unpadded cut-off on every door —
+     * `App\Rules\TierCutoff`, applied through `StoreFormRequest::settingsRules()`,
+     * which the builder, the PATCH and `ImportFormCommand` all use. This is the
+     * read half: rows already written carry the bad shape, and a comparison whose
+     * correctness rests on a precondition nothing enforced is the defect
+     * independently of who wrote the row.
+     *
+     * Deliberately LOOSER than the write rule in exactly one way: this accepts
+     * `2026-8-14` and pads it, while the doors refuse it. That asymmetry is the
+     * point — the doors stop new bad rows, this repairs the reading of the old
+     * ones.
+     *
+     * BLANK does not reach here: `resolveTier()` answers it above, as "no
+     * cut-off", which is what every write door stores for it.
+     *
+     * Deliberately NOT `strtotime()` / `Carbon::parse()`: both accept relative
+     * strings ("next friday", "+1 month"), which would make a typo in a fee
+     * schedule silently mean something. A cut-off is a literal calendar date or
+     * it is nothing.
+     */
+    private static function normaliseCutoff(mixed $until): ?string
+    {
+        if (! is_string($until) && ! is_int($until)) {
+            return null;
+        }
+
+        if (! preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', trim((string) $until), $m)) {
+            return null;
+        }
+
+        [, $year, $month, $day] = $m;
+
+        if (! checkdate((int) $month, (int) $day, (int) $year)) {
+            return null;
+        }
+
+        return sprintf('%04d-%02d-%02d', $year, $month, $day);
     }
 }

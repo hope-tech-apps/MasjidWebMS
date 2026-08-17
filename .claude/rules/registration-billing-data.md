@@ -8,6 +8,13 @@ paths:
   - "app/Models/RegistrationAdjustment.php"
   - "app/Models/RegistrationPayment.php"
   - "app/Services/Registrations/**"
+  # The public quote's money fields, and the fee-tier rules the forms domain
+  # shares with them — both sections are at the foot of this file.
+  - "app/Http/Controllers/Api/V1/OfferingRegistrationsController.php"
+  - "app/Models/Form.php"
+  - "app/Console/Commands/ImportFormCommand.php"
+  - "app/Http/Requests/Admin/Forms/StoreFormRequest.php"
+  - "database/forms/*.json"
   - "database/migrations/*_create_offerings_table.php"
   - "database/migrations/*_create_fee_plans_table.php"
   - "database/migrations/*_create_registration*"
@@ -466,3 +473,206 @@ page section) fixed these:
   unvalidated knob bag would make it the only public field with no schema. It is
   not the intake form's `description` either — one form can be the intake for
   several offerings.
+
+## THE PUBLIC QUOTE'S MONEY FIELDS (round six, revised round seven)
+
+`POST /api/v1/offerings/{slug}/quote` is UNAUTHENTICATED. There is no
+Authorization header and no cookie: a registration uuid plus the `masjid-id`
+header is the entire credential, and that uuid is a BEARER token — it lives in
+payment-link URLs, forwarded emails, browser history and referrer headers. Every
+field on that payload is therefore a decision about what a link-bearer may learn,
+and it has to be argued as one.
+
+- **THREE ENDPOINTS PUBLISH `amount_due_minor`, AND THEY PUBLISH ONE NUMBER.**
+  `quote`, `register` and `checkout`. Round six defined the field precisely and
+  implemented that definition on `quote` alone; the other two went on publishing
+  `(int) $registration->adjusted_total_minor` under the same name. Measured:
+  a FULL offering answered `register` 200 "you have been added to the waitlist"
+  with `amount_due_minor: 15000` for a row holding no seat and no payment leg,
+  while `quote` on that uuid answered 0; and a 9 × $100.00 plan with 10¢ of aid
+  answered `checkout` 200 `amount_due_minor: 89990` while opening a subscription
+  that bills 9998 nine times (89982). **The definition lives in
+  `App\Support\RegistrationOutstanding` and every door calls it** — one name,
+  one meaning, one implementation. `register` and `checkout` now publish
+  `adjusted_total_minor` as well, so naming the outstanding field honestly took
+  nothing away.
+- **`adjusted_total_minor` is WHAT THE PLACE COST** and is never restated. A
+  settled registration still cost what it cost; a cancelled one did too.
+- **`amount_due_minor` is THE CHARGES THAT HAVE NOT BEEN MADE YET**, which is a
+  different question, and it is answered per plan kind through
+  `RegistrationCheckoutService::perChargeMinor()` — THE per-charge function —
+  rather than by arithmetic of its own:
+  - `free` → 0 (`requires_payment` is already false; no Stripe leg exists).
+  - `one_time` → the one charge less the settled ledger.
+  - `installment` → `per-charge × installment_count − paid`. NOT
+    `adjusted_total − paid`: Stripe is charged `intdiv(adjusted, N)` with the
+    rounding dropped in the payer's favour, so the snapshot version quoted up to
+    N−1 minor units above the sum of the charges that remain (measured, 9 ×
+    $100.00 with 10¢ aid: per-charge 9998, nine charges 89982, quoted 89990).
+  - `recurring` → **THE INTERVALS STRIPE HAS TRIED AND FAILED TO COLLECT**, or
+    one interval while the current one has not settled. An open-ended
+    subscription has NO FINITE COMMITMENT and therefore no balance. Round five
+    made this field `adjusted − paid`, and since `listTotalFor()` snapshots a
+    recurring plan's PER-INTERVAL amount, the value hit zero when the first
+    invoice settled and stayed there for the life of the subscription —
+    INCLUDING PAST DUE, the one state a school chasing tuition looks at. Round
+    six fixed that and bounded the answer at ONE interval, declaring the bound
+    here and in the docblock. **Round seven removed the bound rather than
+    re-declaring it**, because when it bit there was no surface that would ever
+    say so. Measured, $50/month, every transition a signed webhook:
+    two consecutive `invoice.payment_failed` reported 5000 against 10000 owed,
+    three reported 5000 against 15000 — and a PARTIAL RECOVERY (one retry
+    succeeds, two invoices still open) returned `payment_status` to `active` and
+    reported **0** against 10000 owed, which is the worse cell and was not in the
+    finding.
+  - **The arrears come from the ledger, not from a counter.**
+    `RegistrationPaymentService::handleInvoiceFailed()` already writes ONE
+    `RegistrationPayment` row per failed invoice, keyed `invoice:{id}`, carrying
+    that invoice's own `amount_due`; `handleInvoicePaid()` UPGRADES the same row
+    when a retry succeeds. So `sum(amount_minor) WHERE status = failed` IS the
+    set of invoices Stripe could not collect. Nothing new is stored or counted.
+  - **THE BOUND THAT REMAINS:** the figure is exact to the extent the webhook
+    arrived. An `invoice.payment_failed` that was never delivered — or one
+    carrying no invoice id, which books no keyable row — is an invoice this
+    cannot know about. `past_due` on its own is the FLOOR under that case (at
+    least one interval), so the failure mode is "short by the invoices we were
+    never told about", never "zero while she is in arrears".
+  - **Arrears are deliberately NOT applied to `installment`.** A finite plan's
+    outstanding is already `per-charge × N − paid`, which counts every charge
+    that has not settled, failed ones included; adding the arrears there would
+    bill the same instalment twice.
+- **`active` alone never means "nothing is outstanding".**
+  `checkout.session.completed` upgrades a subscription to `active` BEFORE any
+  invoice has settled, so the unsettled test is the LEDGER (nothing succeeded
+  yet) OR `past_due` (the latest invoice failed). Measured, $50/month on the
+  wire: `after session.completed  adjusted=5000 due=5000 paid=0`.
+- **A plan whose shape `perChargeMinor()` refuses degrades to the snapshot
+  balance**, exactly as `RegistrationService::chargeableMinor()` does. This is a
+  read surface; a broken plan row must never turn a family's price into a 500.
+- **NO PAYMENT HISTORY IS PUBLISHED HERE.** `amount_paid_minor` was added to this
+  payload on 2026-08-14 so a renderer could show "$300 of $900", and the docblock
+  defending it never asked who may read it. It is removed. Be exact about the
+  size of that, and note it is NOT simply "the field was redundant" — that claim
+  was drafted and then measured false. In the ORDINARY case (no aid, or aid that
+  divides evenly by N) `paid` is `adjusted − due` and a link-bearer could always
+  compute it. Once aid leaves a rounding remainder it cannot, because
+  `amount_due_minor` is `per-charge × N − paid` and the payload publishes neither
+  the per-charge amount nor N: 9 × $100.00 with 10¢ of aid and nothing settled
+  quotes adjusted 89990 / due 89982, and `adjusted − due` is 8, not 0. So the
+  reduction bites on aid-adjusted plans and on open-ended subscriptions — where
+  the cumulative figure is the number with the longest memory (how many months
+  this family has been paying, or has not). Nothing in this repository rendered
+  it. **A payment history belongs on the authenticated family stack**
+  (`routes/family.php`: `auth:family` + `family.active` + `family.tenant` + `crm`),
+  which knows who is asking — note that stack serves NO registration or payment
+  endpoints today, so this removal is a removal, not a relocation. If a
+  parent-facing "you have paid $X of $Y" is wanted, build it there; the answer to
+  an anonymous renderer needing it is a credential, not a wider anonymous
+  payload. **A payment history belongs to the authenticated family
+  portal, which knows who is asking.** If a public renderer ever genuinely needs
+  one, the answer is a credential, not a wider anonymous payload.
+- **The aid gap is KNOWN and deliberately left**, so nobody re-discovers it as
+  new. `list_total_minor` beside `adjusted_total_minor` on a registration-scoped
+  quote tells a link-bearer that this family received hardship aid and how much.
+  It predates round five, a renderer showing "financial aid applied" needs both
+  halves, and it is her own receipt. Narrowing it is a decision about the whole
+  payment-link model — whether these links should carry a second factor at all —
+  and not a field-level tweak to be made quietly inside a quote endpoint.
+
+## WHAT THIS LEDGER DOES NOT KNOW: REFUNDS (round seven, OUT OF SCOPE)
+
+- **`RegistrationPayment::STATUS_REFUNDED` is declared and never written by any
+  code in this repository.** No webhook handler, no service and no admin action
+  sets it. The organisation is merchant of record, so a refund is a manual act in
+  its own Stripe dashboard — and nothing here hears about it. `amount_due_minor`
+  subtracts only SUCCEEDED rows, so after an org refunds a family the ledger
+  still says that money settled and the field goes stale in the family's favour
+  (it reports less owed than is owed). Written down rather than fixed: closing it
+  means handling `charge.refunded` / `charge.refund.updated` and deciding what a
+  refund does to a SEAT, which is a design decision about cancellation policy and
+  not a field-level change. Nobody should re-derive this as new.
+
+## FEE TIERS ARE CALENDAR DATES (round six, revised round seven)
+
+- **A tier's `until` is compared as a zero-padded `Y-m-d` STRING, and both write
+  doors must enforce that padding.** `Form::resolveTier()` compares lexically;
+  that is correct if and only if both sides are padded. They were not:
+  `ImportFormCommand` validated `settings` as `nullable|array` and nothing more,
+  so `2026-8-14` imported with exit 0 while the admin API answered 422 for the
+  identical payload — and `'2026-09-10' <= '2026-8-14'` is TRUE (`'0' < '8'` at
+  index 5), so the early-bird tier never expired. $40 per attendee, for four
+  months. The importer now applies `StoreFormRequest::settingsRules()` verbatim,
+  and `Form::normaliseCutoff()` pads what is already stored.
+- **`settings` rules live in `StoreFormRequest::settingsRules()` and are used by
+  every door.** The importer's docblock promised "the SAME rule the admin API
+  uses" while covering only `schema`. `settings` is where the FEE lives.
+- **AND SO DOES THE REST OF THE DOCUMENT**: `StoreFormRequest::documentRules()`
+  and `StoreFormRequest::crossCheck()`. Round six rewrote the importer's promise
+  and left the half it had transcribed for itself, which had drifted twice —
+  `capacity` with no upper bound (2000000 imported, 422 through the API) and
+  `is_active: null` accepted by both doors and stored as `true` by one and
+  `false` by the other. `slug` is the ONE deliberate difference and it is argued
+  in `StoreFormRequest::rules()`: `form:import` is idempotent by
+  (masjid_id, slug), so a duplicate is its update path rather than a refusal.
+- **THE PARTIAL WRITE IS A DOOR TOO, and it had no cross-check at all.**
+  `UpdateFormRequest` skipped it whenever the payload omitted `schema`, on the
+  reasoning that "the stored schema is already known-valid" — true, and it says
+  nothing about whether the INCOMING settings agree with it. Measured on a camp
+  form charging $100 per attendee with two attendees on the response:
+  `PUT {"settings":{"fee":{…,"perEntryOfSection":"attendee"}}}` answered **200**
+  and `FormSchema::amountDue()` went from 200.0 to **0.0** — one singular typo,
+  and the camp is free. `amountDue()` is STORED on each response at submission
+  time, so it is not a rendering artefact the next save repairs. The mirror image
+  was open too: a PUT carrying only a new `schema` could delete the section the
+  stored fee is charged per entry of. **Both halves are resolved — payload where
+  present, stored row otherwise — and the pair is checked.**
+- **`FormDoorEquivalenceTest` is what makes the equivalence claim true rather
+  than asserted.** One fixture table through `form:import`, `POST`, `PUT` (whole
+  document) and `PUT` (partial), asserting identical verdicts AND identical
+  stored rows. A rule added to one door and not the others fails there.
+- **An unreadable cut-off is NOT in force** — the tier is skipped, which steps UP
+  to the next price. Visible and complainable beats a silent under-charge.
+  `normaliseCutoff()` deliberately does not use `strtotime()`/`Carbon::parse()`:
+  both accept "next friday", which would make a typo in a fee schedule silently
+  mean something.
+- **A BLANK CUT-OFF IS NOT AN UNREADABLE ONE.** Absent, `null`, `''` and
+  whitespace are FOUR SPELLINGS OF ONE STATEMENT — "this tier has no cut-off; it
+  is the open-ended final price" — and they must all read that way. A blank is
+  not a date somebody got wrong; it is a date somebody did not give.
+- **THE DOORS DISAGREED ABOUT THIS IN MIDDLEWARE, WHICH IS WHY NEITHER FILE SAID
+  SO.** `TrimStrings` and `ConvertEmptyStringsToNull` are global
+  (`bootstrap/app.php`), so on POST and PUT a blank `until` is already `null`
+  before any validation rule can see it — the API stores NULL and always has. A
+  JSON file passes through no middleware, so `form:import` stored `''` verbatim.
+  Measured, reading the rows back: `''` and `'   '` → POST stored NULL,
+  `form:import` stored `''`. And `Form::resolveTier()` then read the two blanks
+  OPPOSITE ways — `''` as "no cut-off" (early bird forever) and `'   '` as
+  unreadable (price steps up at once). One document, two forms, two prices.
+  `App\Rules\TierCutoff::normalise()` is the write-side statement of this and
+  `ImportFormCommand` applies it; `resolveTier()` trims before deciding, for the
+  rows written before it existed. **When two doors disagree and neither file
+  mentions it, look at the middleware one of them does not run.**
+- **The cut-off contract is `App\Rules\TierCutoff`, an IMPLICIT rule, and it has
+  to be implicit.** `nullable|date_format:Y-m-d` cannot see a blank at all:
+  Laravel skips every non-implicit rule on an attribute that is present but
+  blank. That is how the blank spellings survived round six's hardening.
+- **The tier boundary is resolved in the MASJID's timezone**
+  (`$this->masjid?->timezone ?: config('app.timezone')`), because a cut-off is a
+  calendar date and money boundaries belong to the masjid's clock. `masjids.timezone`
+  is NOT NULL with a 'UTC' default, so the reachable "unset" state is the EMPTY
+  STRING — which is why the fallback is `?:` and not `??`.
+- **`masjids.timezone` IS NOW LOAD-BEARING FOR A PUBLIC PRICE.** A junk value
+  cannot reach `feeRule()` today — all four write doors validate it with
+  Laravel's `timezone` rule and the column defaults to `'UTC'` — but that is now
+  a fact the fee schedule depends on, not merely a display preference. Any new
+  door that writes `masjids.timezone` must carry the same rule, and a value that
+  is neither a valid identifier nor empty would move a whole masjid's price
+  boundary.
+- **KNOWN, LOW, NOT RE-ENGINEERED THIS ROUND:** the tier boundary (masjid
+  timezone) and the form window's `closes_at` (a stored timestamp compared
+  against UTC `now()` in `Form::isWithinWindow()`) sit an offset apart. At every
+  instant inside that gap `accepting = false`, so the stale price is decoration
+  on a closed form, and the submit path resolves through the same `feeRule()`
+  anyway. Do not re-engineer `isWithinWindow` on the strength of the tier fix;
+  if the window is ever made timezone-aware it should be done deliberately, with
+  the DST cases `TieredFeeTimezoneTest` already covers.

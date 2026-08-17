@@ -9,6 +9,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\User;
+use App\Support\RosterClaimIdentity;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -48,9 +49,49 @@ use Symfony\Component\HttpFoundation\Response;
  * over-refuse: a school that takes 200 camp signups gets 200 pending claims and
  * ONE button, on the roster screen, where the names and the signup that asserted
  * them are already in front of the person deciding.
+ *
+ * ## AND THE SCREEN HAS TO ACTUALLY CARRY THEM
+ *
+ * That last sentence was, for two rounds, a claim about a screen nobody had
+ * measured. It was false. `GroupRosterTab.vue` contained `source_registration`
+ * zero times, `confirmed_by` zero times, and rendered no address on either
+ * roster table; `index()` eager-loaded the source registration and nothing drew
+ * it. So two guardian claims over one child — the mother's, and a stranger's who
+ * typed her name with his own email — rendered as the same two strings, and the
+ * bulk button confirmed both.
+ *
+ * `index()` now serves the bytes that separate them, per row, under `claim`
+ * (App\Support\RosterClaimIdentity), and `confirm()` no longer trusts an id on
+ * its own: the caller echoes back what it drew, and the shape the operator
+ * CANNOT read — two guardian rows over one ward under the same displayed name —
+ * is refused a place in the sweep and has to be decided one row at a time.
  */
 class GroupMembershipsController extends Controller
 {
+    /**
+     * THE PEOPLE ON A ROSTER PAYLOAD, NARROWED TO THE COLUMNS A SCREEN NAMES.
+     *
+     * `index()` argued this and applied it; `store()` served
+     * `->load(['contact', …])` twenty lines further down and shipped
+     * `login_email`, `login_enabled_at`, `login_revoked_at`, `last_login_at`,
+     * the CRM notes and all four SMS-consent fields on both of its responses.
+     * Same audience and the same tenant, so it was never an escalation — but the
+     * credential columns are the ones .claude/rules/credentials.md keeps out of
+     * request bodies, and a roster verb is not where they should leak out
+     * instead.
+     *
+     * A CONSTANT AND NOT A COPY, so the next endpoint cannot half-apply it
+     * again. `email` and `phone` are LOAD-BEARING rather than decoration: they
+     * are the only rendered bytes that separate two claims over one child made
+     * under one name.
+     */
+    private const PERSON_COLUMNS = [
+        'contact:id,first_name,last_name,email,phone',
+        'guardianOf:id,first_name,last_name,email',
+        'confirmedBy:id,name',
+    ];
+
+
     /**
      * The roster of one group, newest additions last.
      *
@@ -58,24 +99,80 @@ class GroupMembershipsController extends Controller
      * that nobody is told about is a roster line the office reads as settled. It
      * is what the screen's banner counts, and it comes from the same query the
      * confirm verb below acts on rather than from a count computed in the SPA.
+     *
+     * ## `claim` — WHY EVERY ROW NOW CARRIES ONE
+     *
+     * A roster row used to serialise as its own columns plus three related
+     * people. That is enough to LIST a roster and not enough to DECIDE one, and
+     * the difference is what F9 was: the payload already carried the contact's
+     * address and the asserting registration, the screen drew neither, and the
+     * operator was asked to vouch for a relationship they could not distinguish
+     * from another one on the same page.
+     *
+     * `claim` is the decision-bearing half, computed once here so the screen and
+     * the confirm verb read one definition:
+     *
+     *   - `fingerprint` — what the caller echoes back to prove this row has not
+     *     moved since it was drawn. Null on a confirmed row, which has nothing
+     *     left to confirm.
+     *   - `contested` + `rival_claim_ids` — this guardian claim shares its ward
+     *     AND its displayed name with another row. The bulk sweep refuses these.
+     *   - `origin` — which signup asserted the claim and who paid, INCLUDING an
+     *     explicit state for each way that evidence can be missing. A merge
+     *     nulls `registrations.contact_id`, and a screen that renders that as
+     *     blank is F9 again with a different cause.
+     *
+     * The related people are also narrowed to the columns the screen names.
+     * `with('contact')` served every column of every contact on the roster —
+     * `login_email`, `login_enabled_at`, `login_revoked_at`, `last_login_at`,
+     * the SMS-consent evidence and the CRM notes — to a listing that renders a
+     * name and an address. Nothing read them, a 200-child roster carried them
+     * 400 times over, and the credential columns in particular are the ones
+     * .claude/rules/credentials.md keeps out of request bodies; there is no
+     * reason for a roster listing to be where they leak out instead.
      */
     public function index($masjid_id, $group_id)
     {
         $group = Group::findOrFail($group_id);
 
         $memberships = $group->memberships()
-            ->with(['contact', 'guardianOf', 'confirmedBy:id,name', 'sourceRegistration:id,offering_id,contact_id'])
+            ->with([
+                ...self::PERSON_COLUMNS,
+                // The claim's EVIDENCE, which only the listing renders.
+                'sourceRegistration:id,offering_id,contact_id',
+                'sourceRegistration.contact:id,first_name,last_name,email',
+            ])
             ->orderBy('role')
             ->orderBy('id')
             ->get();
 
+        $contested = RosterClaimIdentity::contestedClaimIds($memberships);
+
         return response()->json([
             'status' => 'success',
-            'data' => $memberships,
+            'data' => $memberships->map(function (GroupMembership $membership) use ($memberships, $contested): array {
+                $isContested = in_array((int) $membership->getKey(), $contested, true);
+
+                return array_merge($membership->toArray(), [
+                    'claim' => [
+                        'fingerprint' => $membership->isConfirmed()
+                            ? null
+                            : RosterClaimIdentity::fingerprint($membership),
+                        'contested' => $isContested,
+                        'rival_claim_ids' => $isContested
+                            ? RosterClaimIdentity::rivalClaimIds($membership, $memberships)
+                            : [],
+                        'origin' => RosterClaimIdentity::origin($membership),
+                    ],
+                ]);
+            })->values(),
             'meta' => [
                 'pending_claims' => $memberships
                     ->filter(fn (GroupMembership $m): bool => $m->isPendingClaim())
                     ->count(),
+                // Counted for the banner, so "6 waiting" never reads as "6 the
+                // button will take care of".
+                'contested_claims' => count($contested),
             ],
         ], Response::HTTP_OK);
     }
@@ -153,13 +250,33 @@ class GroupMembershipsController extends Controller
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
+            // SAID, BECAUSE THIS IS THE OTHER DOOR ONTO THE SAME GRANT.
+            //
+            // `confirm()` refuses to sweep a guardian claim that shares its ward
+            // and its displayed name with another row; typing the same entry in
+            // here reaches the identical write. That is not a hole to plug — an
+            // administrator who searched the directory, picked ONE contact out of
+            // a list that shows each one's address, and named the ward has made
+            // exactly the individual, addressed decision the contested path asks
+            // for. What they have NOT necessarily been told is that a second
+            // adult of the same name is also claiming this child, which is the
+            // fact that makes the decision worth making twice.
+            $rivals = $this->rivalsOver($group, $duplicate);
+
             $duplicate->confirmedByStaff($this->actor($request))->save();
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'That entry was already on this roster as an unconfirmed claim from a '
-                    . 'registration form. It is now confirmed by you.',
-                'data' => $duplicate->load(['contact', 'guardianOf', 'confirmedBy:id,name']),
+                    . 'registration form. It is now confirmed by you.'
+                    . ($rivals === 0 ? '' : sprintf(
+                        ' Note: %d other roster %s claim%s to be a guardian of the same person under the same '
+                            . 'name. Check the addresses on the roster and remove any that should not be there.',
+                        $rivals,
+                        $rivals === 1 ? 'entry' : 'entries',
+                        $rivals === 1 ? 's' : '',
+                    )),
+                'data' => $duplicate->load(self::PERSON_COLUMNS),
             ], Response::HTTP_OK);
         }
 
@@ -175,7 +292,7 @@ class GroupMembershipsController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $membership->load(['contact', 'guardianOf', 'confirmedBy:id,name']),
+            'data' => $membership->load(self::PERSON_COLUMNS),
         ], Response::HTTP_CREATED);
     }
 
@@ -201,6 +318,38 @@ class GroupMembershipsController extends Controller
      * and a bulk delete over children's roster rows, reached from the same
      * screen as a bulk confirm, is one mis-click away from destroying a term's
      * behaviour and ḥifẓ history.
+     *
+     * ## THE ID WAS NEVER THE THING THE OPERATOR AGREED TO
+     *
+     * Round five bound the agreement to a list of ids. That is airtight against
+     * a row INSERTED after the draw — a registration arriving while the dialog
+     * is open is left alone — and it does nothing about the two shapes below,
+     * both of which reach the same button.
+     *
+     * 1. THE ROW MUTATED AND THE ID DID NOT. `RosterMergeService` re-points
+     *    `contact_id` on a pending claim; the id is stable; the operator
+     *    confirms a relationship they never read. So the caller must now echo
+     *    back a per-row FINGERPRINT of what it drew
+     *    (`RosterClaimIdentity::fingerprint`). A row that no longer matches its
+     *    description is SKIPPED and reported — the vocabulary `skipped` already
+     *    established — rather than confirmed under a stale reading. It also
+     *    covers the case where the row itself is untouched and its EVIDENCE
+     *    degraded: a merge nulls the source registration's payer.
+     *
+     * 2. THE OPERATOR COULD NOT TELL TWO ROWS APART IN THE FIRST PLACE. Two
+     *    guardian claims over one child under one displayed name — the mother's
+     *    and a stranger's — are not made distinguishable by naming their ids,
+     *    because the ids are not what the operator read. Those are lifted out of
+     *    the sweep entirely and must be named a second time, in
+     *    `contested_membership_ids`, which the SPA sets only from a dialog that
+     *    puts both claimants' addresses side by side. A caller that does not
+     *    know the shape exists — including a future rewrite of the client, and
+     *    including a naive loop that posts one id at a time — skips them, which
+     *    is the direction this has to fail in.
+     *
+     * Neither costs the 200-signup intake a second click: the ids, the
+     * fingerprints and the (usually empty) contested list all ride the one POST
+     * the one button already sends.
      */
     public function confirm(ConfirmGroupMembershipsRequest $request, $masjid_id, $group_id)
     {
@@ -233,36 +382,101 @@ class GroupMembershipsController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $pending = $group->memberships()
-            ->pendingClaims()
-            ->whereIn('id', $ids)
+        $described = $this->describedRows($request);
+
+        // THE SAME BELT AND BRACES, one field along. The request makes a
+        // fingerprint per named id required; if that rule is ever relaxed, an
+        // undescribed row must still not be confirmed on the strength of its id.
+        $undescribed = array_values(array_diff($ids, array_keys($described)));
+
+        if ($undescribed !== []) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Say what you were shown for every entry. Confirming grants access to a child\'s '
+                    . 'records, and a roster row can be re-pointed at a different child between the moment it '
+                    . 'is drawn and the moment it is agreed to.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        // Acknowledged contests: rows the operator decided ONE AT A TIME, having
+        // been shown the rival claim beside this one. Naming a row here that is
+        // not contested is harmless and deliberately not an error — the client
+        // learns a row is contested from a payload that may be a moment old, and
+        // a rival removed in between must not turn an ordinary confirm into a
+        // 422.
+        $acknowledged = array_values(array_unique(array_map(
+            'intval',
+            (array) $request->input('contested_membership_ids', [])
+        )));
+
+        // THE WHOLE ROSTER, not just the named rows: contest is a property of a
+        // row's NEIGHBOURS, so a rival that is confirmed, or that was never
+        // named in this request, still has to be visible to the check. Loaded
+        // with the same relations `index()` serves, because the fingerprint is
+        // computed from them and a fingerprint computed over unloaded relations
+        // is a check that passes by accident.
+        $roster = $group->memberships()
+            ->with([
+                'contact:id,first_name,last_name,email,phone',
+                'sourceRegistration:id,offering_id,contact_id',
+                'sourceRegistration.contact:id,first_name,last_name,email',
+            ])
             ->orderBy('id')
             ->get();
 
-        foreach ($pending as $membership) {
+        $contested = RosterClaimIdentity::contestedClaimIds($roster);
+
+        $confirmable = [];
+        $changedSinceShown = [];
+        $needsIndividualDecision = [];
+
+        foreach ($roster as $membership) {
+            $id = (int) $membership->getKey();
+
+            if (! in_array($id, $ids, true) || $membership->isConfirmed()) {
+                continue;
+            }
+
+            if (! hash_equals(RosterClaimIdentity::fingerprint($membership), $described[$id])) {
+                $changedSinceShown[] = $id;
+
+                continue;
+            }
+
+            if (in_array($id, $contested, true) && ! in_array($id, $acknowledged, true)) {
+                $needsIndividualDecision[] = $id;
+
+                continue;
+            }
+
+            $confirmable[] = $membership;
+        }
+
+        foreach ($confirmable as $membership) {
             $membership->confirmedByStaff($actor)->save();
         }
 
-        $confirmed = $pending->count();
+        $confirmed = count($confirmable);
         $skipped = count($ids) - $confirmed;
 
         return response()->json([
             'status' => 'success',
-            'message' => $confirmed === 0
-                ? 'None of those roster entries was still waiting to be confirmed.'
-                : sprintf(
-                    '%d roster %s confirmed%s. The guardians among them can now be given parent portal sign-in.',
-                    $confirmed,
-                    $confirmed === 1 ? 'entry' : 'entries',
-                    $skipped > 0
-                        ? sprintf(' and %d skipped, having already been confirmed or removed', $skipped)
-                        : '',
-                ),
+            'message' => $this->confirmMessage($confirmed, $skipped, $changedSinceShown, $needsIndividualDecision),
             'data' => [
                 'confirmed' => $confirmed,
                 // Said out loud, because "8 confirmed" on a list of 10 is the
-                // shape the previous defect hid inside.
+                // shape the previous defect hid inside. The breakdown is added
+                // BESIDE it rather than replacing it: the three reasons a row is
+                // skipped call for three different acts from the office, and
+                // "skipped" alone cannot tell an operator which.
                 'skipped' => $skipped,
+                'skipped_detail' => [
+                    'already_settled' => $skipped - count($changedSinceShown) - count($needsIndividualDecision),
+                    'changed_since_shown' => count($changedSinceShown),
+                    'needs_an_individual_decision' => count($needsIndividualDecision),
+                ],
+                'changed_since_shown' => $changedSinceShown,
+                'needs_an_individual_decision' => $needsIndividualDecision,
                 'pending_claims' => $group->memberships()->pendingClaims()->count(),
             ],
         ], Response::HTTP_OK);
@@ -371,6 +585,116 @@ class GroupMembershipsController extends Controller
     }
 
     // ------------------------------------------------------------- internals
+
+    /**
+     * How many OTHER roster rows claim to be a guardian of the same person
+     * under the same displayed name.
+     *
+     * Reuses the contest definition rather than restating it, so "which rows an
+     * operator cannot tell apart" has one answer in this application.
+     */
+    private function rivalsOver(Group $group, GroupMembership $membership): int
+    {
+        if (! $membership->isGuardian() || $membership->guardian_of_contact_id === null) {
+            return 0;
+        }
+
+        $roster = $group->memberships()
+            ->where('guardian_of_contact_id', $membership->guardian_of_contact_id)
+            ->with('contact:id,first_name,last_name,email,phone')
+            ->get();
+
+        return count(RosterClaimIdentity::rivalClaimIds(
+            $roster->firstWhere('id', $membership->getKey()) ?? $membership,
+            $roster,
+        ));
+    }
+
+    /**
+     * What the caller says it was shown, keyed by membership id.
+     *
+     * Non-string values are dropped rather than cast. A fingerprint is compared
+     * with `hash_equals`, which requires two strings, and an array or a null
+     * arriving under an id must read as "this row was not described" — the
+     * branch that refuses — rather than as an empty description that could
+     * coincide with a computed one.
+     *
+     * @return array<int, string>
+     */
+    private function describedRows(Request $request): array
+    {
+        $described = [];
+
+        foreach ((array) $request->input('fingerprints', []) as $id => $fingerprint) {
+            if (is_string($fingerprint) && $fingerprint !== '') {
+                $described[(int) $id] = $fingerprint;
+            }
+        }
+
+        return $described;
+    }
+
+    /**
+     * What the office is told, in the order it has to act on it.
+     *
+     * The two new skip reasons are NOT folded into "already confirmed or
+     * removed": one of them means a row changed under the operator and is still
+     * waiting, the other means a row needs a decision this button is not allowed
+     * to make. Both are things to go and do; the settled ones are not.
+     *
+     * @param  array<int, int>  $changedSinceShown
+     * @param  array<int, int>  $needsIndividualDecision
+     */
+    private function confirmMessage(
+        int $confirmed,
+        int $skipped,
+        array $changedSinceShown,
+        array $needsIndividualDecision,
+    ): string {
+        $settled = $skipped - count($changedSinceShown) - count($needsIndividualDecision);
+
+        $notes = [];
+
+        if ($settled > 0) {
+            $notes[] = sprintf(
+                '%d had already been confirmed or removed',
+                $settled,
+            );
+        }
+
+        if ($changedSinceShown !== []) {
+            $notes[] = sprintf(
+                '%d changed after the roster was drawn and %s left untouched — open the roster again and read %s',
+                count($changedSinceShown),
+                count($changedSinceShown) === 1 ? 'was' : 'were',
+                count($changedSinceShown) === 1 ? 'it' : 'them',
+            );
+        }
+
+        if ($needsIndividualDecision !== []) {
+            $notes[] = sprintf(
+                '%d %s more than one guardian claim over the same child under the same name, which has to be '
+                    . 'decided one entry at a time',
+                count($needsIndividualDecision),
+                count($needsIndividualDecision) === 1 ? 'is' : 'are',
+            );
+        }
+
+        $tail = $notes === [] ? '' : ' Skipped: ' . implode('; ', $notes) . '.';
+
+        if ($confirmed === 0) {
+            return 'Nothing was confirmed.' . ($tail === ''
+                ? ' None of those roster entries was still waiting to be confirmed.'
+                : $tail);
+        }
+
+        return sprintf(
+            '%d roster %s confirmed. The guardians among them can now be given parent portal sign-in.%s',
+            $confirmed,
+            $confirmed === 1 ? 'entry' : 'entries',
+            $tail,
+        );
+    }
 
     /**
      * The staff member acting, or null.

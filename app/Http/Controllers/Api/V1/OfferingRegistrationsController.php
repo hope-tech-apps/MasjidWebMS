@@ -11,7 +11,6 @@ use App\Models\GroupMembership;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Models\Registration;
-use App\Models\RegistrationPayment;
 use App\Services\Registrations\RegistrationException;
 use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
@@ -19,6 +18,7 @@ use App\Support\Errors;
 use App\Support\OfferingPublicPayload;
 use App\Support\OfferingRegistrationState;
 use App\Support\PublicTenant;
+use App\Support\RegistrationOutstanding;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -271,11 +271,13 @@ class OfferingRegistrationsController extends Controller
             // through to the list-price branch below.
             $registration = $this->quotedRegistration($masjidId, $offering, $request->input('registration_uuid'));
 
-            // Defaults for the list-price branch, where no registration exists:
-            // nothing has been paid and there is no Stripe door to be open or
-            // shut yet, so "can she pay now" is the same question as "is a
-            // payment expected", answered below.
-            $amountPaid = 0;
+            // The default for the list-price branch, where no registration
+            // exists: there is no Stripe door to be open or shut yet, so "can
+            // she pay now" is the same question as "is a payment expected",
+            // answered below. (`$amountPaid` deliberately does NOT have a
+            // default out here — it is meaningless without a registration, and a
+            // zero sitting in scope is how a later edit reads a ledger figure
+            // for a row that has no ledger.)
             $canPayNow = null;
 
             if ($registration) {
@@ -294,35 +296,14 @@ class OfferingRegistrationsController extends Controller
                 $listTotal = (int) $registration->list_total_minor;
                 $adjustedTotal = (int) $registration->adjusted_total_minor;
 
-                // WHAT SHE HAS ALREADY PAID, summed from the ledger rather than
-                // inferred from the status — an installment plan is `confirmed`
-                // from its first charge to its last, so the status says nothing
-                // about how far through it she is. Only SUCCEEDED rows count: a
-                // pending charge has not moved money and a refunded one moved it
-                // back. This is what makes `amount_due_minor` a balance instead
-                // of a restatement of the commitment.
-                $amountPaid = (int) $registration->payments()
-                    ->where('status', RegistrationPayment::STATUS_SUCCEEDED)
-                    ->sum('amount_minor');
-
-                // WHETHER STRIPE IS STILL EXPECTED, read off the registration's
-                // own money state rather than re-derived from its total.
-                //
-                // For a preview of a NEW registration the two are the same
-                // question, and `adjusted > 0` is the right answer. For an
-                // EXISTING one they come apart, in both directions: a settled
-                // registration still carries its `adjusted_total_minor` (that is
-                // what the place cost, and the snapshot is never restated), and
-                // a near-total waiver on an installment plan leaves a total
-                // above zero whose per-charge rounds to nothing — the free-path
-                // carve-out, `payment_status = none`, nothing to collect ever.
-                // Deriving from the total told a parent she still owed $150 she
-                // had already paid, and 5¢ nobody would ever ask her for.
-                $requiresPayment = in_array($registration->payment_status, [
-                    Registration::PAYMENT_AWAITING,
-                    Registration::PAYMENT_ACTIVE,
-                    Registration::PAYMENT_PAST_DUE,
-                ], true);
+                // WHETHER STRIPE IS STILL EXPECTED and WHAT IS STILL OWED, both
+                // from App\Support\RegistrationOutstanding — THE statement of
+                // those two questions, shared verbatim with `register()` and
+                // `checkout()`, which published a different number under the
+                // same field name until this round. The whole argument, and the
+                // measurement of what the three doors used to disagree about,
+                // is on that class.
+                $requiresPayment = RegistrationOutstanding::requiresPayment($registration);
 
                 // ...AND, FOR A SEAT STILL HOLDING, WHETHER THE DOOR SHE WOULD
                 // PAY THROUGH IS ACTUALLY OPEN.
@@ -385,6 +366,8 @@ class OfferingRegistrationsController extends Controller
                 if ($registration->status === Registration::STATUS_PENDING) {
                     $canPayNow = $requiresPayment && $this->checkout->canOpenCheckout($registration);
                 }
+
+                $amountDue = RegistrationOutstanding::minor($registration, $feePlan);
             } else {
                 // A UUID WAS NAMED AND DID NOT RESOLVE, and nothing else on the
                 // request names a price. `fee_plan_id` became
@@ -446,6 +429,12 @@ class OfferingRegistrationsController extends Controller
                 // that a window or an offboarding could have shut.
                 $requiresPayment = $adjustedTotal > 0;
                 $canPayNow = $requiresPayment;
+                // Nothing has been collected against a registration that does
+                // not exist, so the whole list price is what signing up costs —
+                // for a recurring plan that list price is ONE INTERVAL, which is
+                // exactly the first charge. Same number the branch above reaches
+                // through `perChargeMinor()`.
+                $amountDue = $requiresPayment ? $adjustedTotal : 0;
             }
 
             return response()->api(200, 'Quote generated.', [
@@ -481,16 +470,18 @@ class OfferingRegistrationsController extends Controller
                 // a paid family she still owed $150. Costing information is not
                 // lost by fixing this: it is `adjusted_total_minor`, one line
                 // up, which is where it belonged all along.
-                // …and it is a BALANCE, not the commitment. Measured on a 9 ×
-                // $100.00 installment plan before this: `amount_due_minor
+                // …and it is what is OUTSTANDING, not the commitment. Measured
+                // on a 9 × $100.00 installment plan before that: `amount_due_minor
                 // 90000` on a Session that charges 10000, and still 90000 after
                 // three of the nine had been paid, because nothing subtracted
                 // the ledger. A parent on a payment plan was told she owed $900
                 // six months and $600 in.
-                'amount_due_minor' => $requiresPayment ? max(0, $adjustedTotal - $amountPaid) : 0,
-                // What the ledger says has actually settled, so a renderer can
-                // show "$300 of $900" without arithmetic of its own.
-                'amount_paid_minor' => $amountPaid,
+                //
+                // See App\Support\RegistrationOutstanding for what the field
+                // means per plan kind, for the two ways "a balance" was the
+                // wrong word for it, and for why all three endpoints that
+                // publish this name now compute it there.
+                'amount_due_minor' => $amountDue,
                 // Whether money is still owed. False is the free-path carve-out
                 // (confirmed in-request, never a $0 Session) and, for an
                 // existing registration, also a settled or cancelled one.
@@ -507,6 +498,53 @@ class OfferingRegistrationsController extends Controller
                 // reduce a price by itself. Aid is granted by an admin.
                 'code_applied' => false,
             ]);
+            // NO `amount_paid_minor`. It was added here on 2026-08-14 so a
+            // renderer could show "$300 of $900" without arithmetic of its own,
+            // and the docblock defending the change never asked WHO MAY READ IT.
+            // This endpoint takes no Authorization header and no cookie: a uuid
+            // and the `masjid-id` header are the entire credential, and the uuid
+            // is a bearer token that lives in payment-link URLs, forwarded
+            // emails, browser history and referrer headers.
+            //
+            // HOW BIG A REDUCTION THIS ACTUALLY IS, measured rather than
+            // asserted — the first draft of this comment claimed `paid` is
+            // always `adjusted − due` for a finite plan, and that is FALSE once
+            // aid leaves a rounding remainder:
+            //
+            //   9 × $100.00, no aid, 3 settled   adjusted 90000 due 60000
+            //                                    adjusted−due 30000 = paid  ✔
+            //   9 × $100.00, 10¢ aid, 0 settled  adjusted 89990 due 89982
+            //                                    adjusted−due 8    ≠ paid 0 ✘
+            //   9 × $100.00, 10¢ aid, 4 settled  adjusted 89990 due 49990
+            //                                    adjusted−due 40000 ≠ 39992  ✘
+            //
+            // because `amount_due_minor` is now `per-charge × N − paid` and the
+            // payload publishes neither the per-charge amount nor N. So in the
+            // ORDINARY case (no aid, or aid that divides evenly) a link-bearer
+            // could already compute the history and still can; on an
+            // aid-adjusted plan, and on an open-ended subscription — where
+            // `amount_due_minor` is one interval rather than a balance — this
+            // genuinely removes a number nothing else carries. That number is
+            // the one with the longest memory: how many months this family has
+            // been paying, or has not. Nothing in this repository renders it.
+            //
+            // So the anonymous surface answers what the place cost, what is
+            // outstanding, whether payment is expected and whether the door is
+            // open. A payment HISTORY belongs on the authenticated family stack
+            // (routes/family.php), which knows who is asking — and note that
+            // stack serves no registration endpoints today, so this is a
+            // removal rather than a relocation. Building a parent-facing
+            // "you have paid $X of $Y" is deliberate future work behind a
+            // credential, not a reason to keep volunteering it to a link.
+            //
+            // The aid gap this payload still discloses — `list_total_minor`
+            // beside `adjusted_total_minor` on a registration-scoped quote —
+            // predates that change and is deliberately left alone this round:
+            // it is her own receipt, a renderer showing "financial aid applied"
+            // needs both halves, and narrowing it is a decision about the whole
+            // payment-link model rather than about one field. It is written down
+            // in .claude/rules/registration-billing-data.md instead of being
+            // re-engineered quietly here.
         } catch (RegistrationException $e) {
             return response()->api(422, $e->getMessage(), null);
         } catch (\Throwable $e) {
@@ -614,7 +652,21 @@ class OfferingRegistrationsController extends Controller
                 'status' => $registration->status,
                 'payment_status' => $registration->payment_status,
                 'currency' => $feePlan->currency,
-                'amount_due_minor' => (int) $registration->adjusted_total_minor,
+                // WHAT THE PLACE COST — the snapshot, never restated. Added
+                // here this round because the field below stopped being a
+                // second copy of it, and a "thank you" screen needs the number
+                // she just agreed to.
+                'adjusted_total_minor' => (int) $registration->adjusted_total_minor,
+                // WHAT IS STILL OWED. This WAS `(int) $adjusted_total_minor`
+                // under a name that says otherwise — the same defect round six
+                // fixed on `quote()` and did not carry to the two doors money
+                // actually moves through. Measured on a FULL offering: this
+                // endpoint answered "you have been added to the waitlist" and
+                // `amount_due_minor: 15000` in the same 200, for a row holding
+                // no seat and no payment leg, while `quote()` on that very uuid
+                // answered 0. One name, one meaning, one implementation —
+                // App\Support\RegistrationOutstanding.
+                'amount_due_minor' => RegistrationOutstanding::minor($registration, $feePlan),
                 'checkout_url' => $checkoutUrl,
             ]);
         } catch (ValidationException $e) {
@@ -666,7 +718,16 @@ class OfferingRegistrationsController extends Controller
                 'registration_uuid' => $registration->uuid,
                 'status' => $registration->status,
                 'payment_status' => $registration->payment_status,
-                'amount_due_minor' => (int) $registration->adjusted_total_minor,
+                // Both numbers, same meanings as everywhere else on this API.
+                'adjusted_total_minor' => (int) $registration->adjusted_total_minor,
+                // Measured before this: a 9 × $100.00 plan with 10¢ of aid
+                // granted while pending opened a Stripe subscription billing
+                // 9998 nine times (89982) and answered `amount_due_minor:
+                // 89990` — 8¢ more than the session it had just minted, and 8¢
+                // more than the quote rendered beside it said. THE DOOR MONEY
+                // MOVES THROUGH MUST NOT NAME A DIFFERENT NUMBER FROM THE ONE
+                // STRIPE IS ASKED FOR.
+                'amount_due_minor' => RegistrationOutstanding::minor($registration),
                 'checkout_url' => $result['checkout_url'],
             ]);
         } catch (RegistrationException $e) {

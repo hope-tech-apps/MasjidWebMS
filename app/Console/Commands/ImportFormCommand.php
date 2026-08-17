@@ -2,9 +2,10 @@
 
 namespace App\Console\Commands;
 
+use App\Http\Requests\Admin\Forms\StoreFormRequest;
 use App\Models\Form;
 use App\Models\Masjid;
-use App\Rules\ValidFormSchema;
+use App\Rules\TierCutoff;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Validator;
 
@@ -21,8 +22,28 @@ use Illuminate\Support\Facades\Validator;
  * Idempotent by (masjid_id, slug): running it twice UPDATES rather than duplicating, so
  * it is safe to re-run after editing the file. Existing responses are untouched.
  *
- * The schema is validated through the SAME rule the admin API uses, so a file cannot
- * introduce a form the builder would have rejected.
+ * THE WHOLE DOCUMENT is validated through the admin API's OWN rules —
+ * `StoreFormRequest::documentRules()`, `::settingsRules()` and `::crossCheck()`, called
+ * rather than transcribed — so a file cannot introduce a form the builder would have
+ * rejected. The single deliberate exception is `slug`: this command is idempotent by
+ * (masjid_id, slug) and updates (or restores) an existing row where the API refuses a
+ * duplicate.
+ *
+ * THAT SENTENCE HAS BEEN WRONG TWICE, in the same shape both times — a promise written
+ * about one part of the document and believed about all of it. Round six found it
+ * covered only `schema`, not `settings`, which is where the FEE lives: `form:import`
+ * accepted `tiers[0].until = '2026-8-14'` with exit 0 while the admin API answered 422
+ * for the identical payload, and the imported form then charged the expired early-bird
+ * rate for four months. This round found the rewritten promise still false in the
+ * remaining half — the rules the command transcribed for itself:
+ *
+ *     capacity 2000000    form:import ACCEPT   POST 422   PUT 422
+ *     is_active null      form:import ACCEPT and stores `true`
+ *                         POST 201     and stores `false`
+ *
+ * So it is no longer a promise. FormDoorEquivalenceTest feeds one fixture table through
+ * every door and asserts the verdicts and the stored rows are identical; when this
+ * sentence next goes false, that test fails instead of a committee's camp.
  */
 class ImportFormCommand extends Command
 {
@@ -67,17 +88,57 @@ class ImportFormCommand extends Command
         // Editorial comments are allowed in the file and dropped on import.
         unset($definition['$comment']);
 
+        // A BLANK TIER CUT-OFF MEANS THE SAME THING HERE AS IT DOES THROUGH THE
+        // BUILDER, because this is the only door that can see one.
+        //
+        // `TrimStrings` and `ConvertEmptyStringsToNull` are global middleware
+        // (bootstrap/app.php), so on POST and PUT a blank `until` is already null
+        // before validation — the API stores NULL and means "no cut-off, this is
+        // the open-ended final price". A file does not pass through middleware,
+        // so the same document used to store `''` here. Measured, reading the row
+        // back:
+        //
+        //     until ''      POST -> stored NULL      form:import -> stored ''
+        //     until '   '   POST -> stored NULL      form:import -> stored ''
+        //
+        // One document, two forms, and under `Form::resolveTier()` those two
+        // forms priced differently. Normalised here rather than refused, because
+        // refusing would invent a THIRD meaning for a spelling the builder has
+        // always accepted — and the importer is the door that has to match, not
+        // the one that gets to legislate. See App\Rules\TierCutoff.
+        if (isset($definition['settings']['fee']['tiers']) && is_array($definition['settings']['fee']['tiers'])) {
+            foreach ($definition['settings']['fee']['tiers'] as $i => $tier) {
+                if (is_array($tier) && array_key_exists('until', $tier)) {
+                    $definition['settings']['fee']['tiers'][$i]['until'] = TierCutoff::normalise($tier['until']);
+                }
+            }
+        }
+
+        // `is_active` is coerced EXACTLY as StoreFormRequest::prepareForValidation
+        // coerces it, before the shared rules run. Measured before this: the same
+        // file with `"is_active": null` imported as a LIVE form and POSTed as a
+        // switched-off one — both doors answered success and the two rows
+        // disagreed about whether the public could see the form at all. Absent
+        // still means live (the documented default); anything present is read the
+        // way the builder reads it.
+        if (array_key_exists('is_active', $definition)) {
+            $definition['is_active'] = filter_var($definition['is_active'], FILTER_VALIDATE_BOOLEAN);
+        }
+
+        // EVERY rule the admin doors apply, from the admin doors themselves — not
+        // a paraphrase of them. `slug` is the one deliberate difference and it is
+        // argued on StoreFormRequest::rules(): this command is idempotent by
+        // (masjid_id, slug), so an existing slug is its update path rather than a
+        // refusal.
+        //
+        // Until this round the command carried its own transcription, and the
+        // transcription had drifted in two measurable places on top of the
+        // `settings` gap round six closed: `capacity` had no upper bound (2000000
+        // imported, 422 through the API) and `is_active` above. See
+        // StoreFormRequest::documentRules().
         $validator = Validator::make($definition, [
             'slug' => ['required', 'string', 'max:255', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/'],
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string', 'max:2000'],
-            'schema' => ['required', 'array', new ValidFormSchema()],
-            'settings' => ['nullable', 'array'],
-            'is_active' => ['nullable', 'boolean'],
-            'opens_at' => ['nullable', 'date'],
-            'closes_at' => ['nullable', 'date', 'after_or_equal:opens_at'],
-            'capacity' => ['nullable', 'integer', 'min:1'],
-        ]);
+        ] + StoreFormRequest::documentRules() + StoreFormRequest::settingsRules());
 
         if ($validator->fails()) {
             $this->error('That form definition is not valid:');
@@ -88,10 +149,19 @@ class ImportFormCommand extends Command
             return self::FAILURE;
         }
 
-        // Cross-check the identity map and fee rule against the schema, mirroring
-        // StoreFormRequest — a typo here silently produces an unsearchable response list
-        // or a total of zero, neither of which announces itself.
-        $problems = $this->crossCheck($definition);
+        // Cross-check the identity map and fee rule against the schema — a typo
+        // here silently produces an unsearchable response list or a total of
+        // zero, neither of which announces itself.
+        //
+        // StoreFormRequest::crossCheck() IS the check, called rather than
+        // mirrored. This command used to carry a near-identical private copy;
+        // "mirroring StoreFormRequest" is the sentence that describes two
+        // implementations, and two implementations of one paragraph is the shape
+        // every round of this review has found somewhere else.
+        $problems = StoreFormRequest::crossCheck(
+            (array) ($definition['schema'] ?? []),
+            (array) ($definition['settings'] ?? []),
+        );
 
         if ($problems !== []) {
             $this->error('The settings reference questions that do not exist:');
@@ -158,56 +228,5 @@ class ImportFormCommand extends Command
         $this->line('Add it to a page by creating a section of type "form" with content.form_id = ' . $form->id . '.');
 
         return self::SUCCESS;
-    }
-
-    /**
-     * @return array<int,string>
-     */
-    private function crossCheck(array $definition): array
-    {
-        $problems = [];
-
-        $flat = [];
-        $repeatable = [];
-
-        foreach ($definition['schema']['sections'] ?? [] as $section) {
-            if (! empty($section['repeatable'])) {
-                if (isset($section['id'])) {
-                    $repeatable[] = $section['id'];
-                }
-
-                continue;
-            }
-
-            foreach ($section['fields'] ?? [] as $field) {
-                if (isset($field['name'])) {
-                    $flat[] = $field['name'];
-                }
-            }
-        }
-
-        foreach (['name', 'email', 'phone'] as $slot) {
-            $declared = $definition['settings']['identity'][$slot] ?? null;
-
-            if ($declared === null || $declared === '') {
-                continue;
-            }
-
-            // A slot may name one question or several (first + last name), so check each.
-            foreach ((array) $declared as $field) {
-                if (! is_string($field) || ! in_array($field, $flat, true)) {
-                    $label = is_string($field) ? $field : json_encode($field);
-                    $problems[] = "settings.identity.{$slot} points at \"{$label}\", which is not a question in this form.";
-                }
-            }
-        }
-
-        $perEntry = $definition['settings']['fee']['perEntryOfSection'] ?? null;
-
-        if ($perEntry && ! in_array($perEntry, $repeatable, true)) {
-            $problems[] = "settings.fee.perEntryOfSection points at \"{$perEntry}\", which is not a repeatable section.";
-        }
-
-        return $problems;
     }
 }
