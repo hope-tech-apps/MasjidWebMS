@@ -318,6 +318,28 @@ return [
 
     'global_endpoints' => [
         'api/v1/contact-us/reasons',
+        // The MOBILE twin of the line above. One table (`contact_us_reasons`,
+        // created 2025-02-13 with no masjid_id), two routes, and only the /api/v1
+        // one was declared — so the canary's first run against production paged
+        // on it. The same "declared at one door, believed at all of them" shape
+        // this platform keeps producing; read both route tables before adding a
+        // global table's endpoint here.
+        //
+        // NOT to be confused with `api/mobile/masjids/{masjid_id}/contact-reasons`
+        // — the note above says that one is tenant-scoped and must stay watched,
+        // and it is a DIFFERENT route on a DIFFERENT controller. Verified before
+        // adding this line rather than inferred from the name:
+        //   contact-us/reasons -> Mobile\ContactUsController::reasonsList()
+        //                         ContactUsReason::where('show_to_users', 1)
+        //                         columns: id, text, show_to_users, timestamps
+        //   contact-reasons    -> ContactReasonsController, ContactReason, scoped.
+        'api/mobile/masjids/{masjid_id}/contact-us/reasons',
+        // `mobile_app_features` is the GLOBAL feature catalog — `$fillable` is
+        // name/key/is_available, there is no masjid_id. What is per-tenant is the
+        // `masjid_mobile_app_features` PIVOT, and the pivot's rows are not what
+        // this endpoint returns. Two organisations seeing catalog ids 1..11 is
+        // the catalog working, not a leak.
+        'api/mobile/masjids/{masjid_id}/features',
         'api/mobile/masjids',
         'api/mobile/azkar',
         'api/mobile/azkar/categorized',
@@ -375,6 +397,18 @@ return [
 
     'global_buckets' => [
         // 'api/v1/services' => ['categories'],
+
+        // `SettingController` composes the whole tenant payload — masjid, theme,
+        // iqama, prayer settings, announcements — and alongside them the list of
+        // GLOBAL catalog rows this organisation has switched on. Measured against
+        // production: masjids 1 and 13 share `activated_features` ids 2..11,
+        // which is two schools enabling the same features out of one catalog.
+        //
+        // Declared per BUCKET rather than per endpoint precisely so the rest of
+        // this payload — the announcements and services that ARE the tenant's own
+        // rows — stays compared and attributed. Silencing the whole endpoint to
+        // quiet this one list is how the watch would become decoration.
+        'api/v1/settings' => ['activated_features'],
     ],
 
     /*
