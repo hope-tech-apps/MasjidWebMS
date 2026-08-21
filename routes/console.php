@@ -292,3 +292,268 @@ Schedule::command('family:prune-login-codes')->dailyAt('03:25')->withoutOverlapp
 | the sentence `clean`.
 */
 Schedule::command('tenancy:canary --json')->hourlyAt(47)->withoutOverlapping(15);
+
+/*
+|--------------------------------------------------------------------------
+| Media estate verifier
+|--------------------------------------------------------------------------
+|
+| The second thing here that only LOOKS. `tenancy:canary` watches whether one
+| organisation can read another's content; this watches whether the content is
+| still THERE. See App\Console\Commands\MediaVerify for what each question is
+| and why it is read-only.
+|
+| WHAT IT IS FOR
+|
+| On 2026-08-21 Burlington's lobby television read "No announcements" while ten
+| were live. The `media` table held 0 rows against an auto_increment of 422; the
+| pre-deploy backup from four days earlier held 226 — 77 feature icons, 45
+| announcement images, 25 logo records, 22 services, 20 avatars. Every masjid
+| showed no logo in the apps and every announcement was withheld from the feed,
+| for an unknown period.
+|
+| NOTHING DETECTED ANY OF IT. No alert, no failing check, no log anybody read.
+| The first report was a photograph of a screen on a masjid wall, days later.
+| This is the thing that was missing.
+|
+| WHY EVERY SIX HOURS, AND NOT DAILY OR HOURLY
+|
+| The drift is introduced by DEPLOYS, RESTORES and MANUAL MAINTENANCE — a
+| database moved between machines without its files, a `media-library:clean`
+| somebody ran by hand — not by traffic. Those are human-scale events, and they
+| cluster in working hours rather than at 3am.
+|
+| That is the argument against DAILY. A single 04:00 sweep lets a lunchtime
+| deploy sit broken until the next morning: eighteen hours of every organisation
+| showing no logo, which is the incident again with a shorter clock. Six hours
+| bounds it to six, and the cost is four runs a day of a check whose whole
+| expense is one filesystem stat per media row plus one directory listing per
+| disk — bounded by `--max-rows` / `--max-files`, on an estate whose last known
+| good state was 226 rows and 56 folders.
+|
+| It is the argument against HOURLY too. Nothing here is rate-limited and the
+| database cost is fixed, but the orphan walk is a recursive listing of the
+| whole media disk, which grows with the estate rather than staying at 56
+| folders, and a check that fires 24 times a day to catch an event that happens
+| a few times a month is buying its last five hours of latency very expensively.
+|
+| The DEPLOY is the other half of the cadence and does not belong in a cron: the
+| deploy script should run `php artisan media:verify --json` after the release is
+| live and fail the deploy on exit >= 1. That is when the database and the files
+| most often part company. This schedule is the backstop for the time they part
+| company some other way.
+|
+| :17 past the hour, so it never shares a minute with the hourly canary (:47),
+| the quarter-hourly checkout reaper (:00/:15/:30/:45), the 03:10 group sweep,
+| the 03:25 code prune or the 07:00 prayer resync. Runs at 00:17, 06:17, 12:17,
+| 18:17 UTC.
+|
+| withoutOverlapping(30) rather than the bare call, for the reason the canary
+| deviates the same way: the bare form holds its lock for 24 hours, so one
+| killed run would silence this for a day and four scheduled runs. A watchdog
+| whose failure mode is "stops watching, says nothing" is the failure mode it
+| exists to prevent. Thirty minutes comfortably exceeds a run on any estate this
+| bound allows and expires well inside the six-hour gap.
+|
+| THE ALERT CONTRACT — read this before wiring anything to it
+|
+| `schedule:run` discards stdout and nothing here inspects the status, so for a
+| SCHEDULED run the LOG LINE is the alert path, not the exit code. There is
+| exactly one line per run including a clean one — a check nobody can prove ran
+| is a check that can stop running unnoticed, which is precisely how this
+| incident lasted as long as it did — and its LEVEL carries the verdict, so a
+| rule can route on it without anyone editing this file:
+|
+|   exit  status      level     meaning                                  action
+|   ----  ----------  --------  ---------------------------------------  ------
+|    0    clean       info      every row VERIFIED has its file, every    none
+|                               listed organisation has a logo that
+|                               resolves, no collection shrank past the
+|                               threshold, the serving link is intact
+|    1    broken      error     a finding — any of: a dangling row; a     page
+|                               listed organisation with no logo; a
+|                               collection that lost more rows than
+|                               ordinary editing explains; a row naming
+|                               a disk that does not resolve; a broken
+|                               `public/storage`
+|    2    incomplete  error     the run is not evidence about this        page
+|                               platform (no media table, no readable
+|                               disk, not one row verified)
+|    3    partial     warning   the run IS evidence, about most of the    ticket
+|                               estate, and names what it did not see
+|                               (`degraded_by`: truncated_row_budget,
+|                               unreadable_disk, unverified_rows)
+|    4    empty       critical  the `media` table holds NO ROWS while     page
+|                               the platform still expects media
+|
+| VISITED IS NOT VERIFIED. `estate.rows_checked` counts rows the run looked at;
+| `estate.rows_verified` counts rows whose file it actually determined the state
+| of. A check with a gap between them reports `partial` and never `pass` — the
+| recurring defect in this codebase is a surface announcing success about
+| something it did not read, and a green report is worth nothing if `clean` can
+| mean "I could not reach the disk".
+|
+| THE TWO DISK FAILURES ARE DIFFERENT EVENTS. A disk that does not RESOLVE has
+| no driver in this application: every file behind a row naming it is unreachable
+| by every code path, so those rows are broken references and the run is `broken`
+| at exit 1. A disk that resolved and then THREW is a transient read failure and
+| the run is `partial` at exit 3. The payload carries them under separate keys
+| (`estate.unresolvable_disks`, `estate.unreadable_disks`) so a reader can check
+| which one they have instead of trusting the verdict.
+|
+| Codes 0-3 are `tenancy:canary`'s exact vocabulary and levels, deliberately, so
+| an on-call engineer holds one dialect rather than two. Code 4 is the addition,
+| and it is the one this command exists for: folded into `broken`, an emptied
+| table would be indistinguishable from a single broken thumbnail to a rule that
+| never reads the body — and it is not a bigger version of a broken thumbnail,
+| it is a different event with a different response. Stop, find out what deleted
+| them, restore from backup. Do NOT run `media-library:clean`, which is what
+| deletes dangling rows and is not scheduled anywhere in this application.
+|
+| THE RUN HAS A MEMORY, AND ONE THING ON-CALL CAN DO WITH IT
+|
+| A DELETED row leaves no trace. Every other question here is answered by looking
+| at what is there; a removed row is simply absent, and absence is
+| indistinguishable from "that content never existed". So the run keeps a census
+| — one row count per `model_type` + `collection_name`, plus a platform total —
+| at `storage/app/media-verify/baseline.json`, and compares each run against the
+| last. Without it this command catches the wipe that HAPPENED (the table at
+| exactly zero) and misses the same event minus one surviving row, and misses the
+| likelier partial: the 45 announcement images deleted and the rest left alone.
+|
+| The file lives in `storage/app/` because that survives a `git checkout` into
+| the live tree, survives `cache:clear` (a cleared cache is exactly the moment
+| the baseline matters most), and is not in the database — a baseline kept in the
+| table that got wiped is not independent evidence of what the table used to
+| hold. Losing the file costs one run; the next one records a fresh baseline and
+| says `census.baseline_source: none` rather than implying it compared. On a host
+| with backups installed, the newest set's `media_integrity.rows` seeds the
+| platform total in the meantime.
+|
+| Be precise about what that seed buys: the manifest records ONE number, so a
+| seeded run can see the platform shrink and cannot see WHICH collection did.
+| Per-collection cover returns only once a real baseline has been written — that
+| is, on the second run after the file was lost. A seeded run says so in
+| `census.baseline_source: manifest` rather than leaving a reader to assume the
+| detail is there.
+|
+| A finding here does NOT clear itself when the next run sees the smaller number.
+| The baseline is HELD at its previous value and the page repeats every six hours
+| until the rows come back or somebody accepts the loss. That is deliberate: a
+| watchdog that barks once is a watchdog somebody slept through, and this
+| incident went unnoticed for days.
+|
+| So there is one gesture on-call may need, and it is the only thing in this
+| command that writes anything:
+|
+|     php artisan media:verify --accept-baseline
+|
+| It records the current census as the new normal and clears the hold. Use it
+| when the deletion was DELIBERATE — a tenant offboarded, a gallery retired.
+| Reaching for it to silence a page nobody has explained defeats the detector
+| entirely, and it touches no media row and no media file either way.
+|
+| The threshold is argued in config/media-verify.php: a drop must be at least 10
+| rows AND at least half the collection, or take a collection to exactly zero
+| from 5 or more. Ordinary editing does not clear that bar, which is the point —
+| an alarm that fires on an ordinary Tuesday gets silenced, and then the
+| emergency is unheard.
+|
+| WHAT IS DELIBERATELY NOT AN ALERT: ORPHAN FILES
+|
+| Unreferenced bytes on the media disk are counted, sized, printed above the
+| check table and carried in the log summary of every run — and they move no
+| verdict and fire no page. They break nothing for anybody: no request 404s, no
+| app renders a hole. Graded, they would be a permanent amber on any estate with
+| history, and an alarm that fires on an ordinary Tuesday gets silenced, and
+| then the emergency is unheard. They are reported because they are what
+| `media-library:clean` deletes, and an operator should see that number BEFORE
+| anybody runs it rather than after.
+|
+| AND ONE THING THAT IS AN ALERT AND LOOKS LIKE NOTHING: THE SERVING LINK
+|
+| `storage/app/public` is reachable over HTTP only because `public/storage`
+| points at it. Break that link — a deploy into a fresh tree without
+| `storage:link`, a release directory replaced — and every media URL 404s while
+| every row and every file is perfectly intact. Every other check here goes green
+| about images nobody can load. It is exit 1, the repair is `php artisan
+| storage:link`, and nothing needs restoring. On a host whose media is not served
+| that way the check reports `skipped` with the reason rather than guessing.
+|
+| Requires the same system cron running `php artisan schedule:run` every minute
+| that everything above already depends on — see deploy/README.md.
+*/
+Schedule::command('media:verify --json')->cron('17 */6 * * *')->withoutOverlapping(30);
+
+/*
+|--------------------------------------------------------------------------
+| Backups
+|--------------------------------------------------------------------------
+|
+| The database AND the media files its rows point at, as one set that can only
+| be restored together. See App\Console\Commands\BackupRun and bin/backup — the
+| latter carries the full statement of what this does not cover.
+|
+| WHY IT IS SCHEDULED AT ALL, GIVEN NOTHING ELSE HERE WRITES GIGABYTES
+|
+| The four backups that existed on 2026-08-17 were taken BY HAND, before
+| deploys, and named after them: pre-forms-migration, pre-manara-verticals,
+| pre-family-sms, pre-r8. That is a backup of the thing an operator was afraid
+| of. It is not a backup of the thing that actually happened — 226 media rows
+| disappearing on some ordinary day, discovered days later from a photograph of
+| a television. A backup taken only when somebody is nervous cannot catch that,
+| so this runs whether anybody is nervous or not.
+|
+| WHAT IT COSTS, MEASURED 2026-08-21 ON THIS DROPLET
+|
+|   root filesystem              48G total, 6.4G used, 42G free
+|   database dump, gzipped       ~1.3 MB   (the four in /root/backups)
+|   media disk                   11 MB in 91 files
+|   => one set                   ~12.5 MB, and BACKUP_KEEP_SETS=14 is ~175 MB
+|
+| 0.4% of free space. RETENTION IS BOUNDED BY A COUNT, not a duration, because a
+| count is a hard ceiling on bytes and a duration is not; pruning happens only
+| after a new set is written and VERIFIED, and never takes the last one. If the
+| volume cannot take another set, `backup:run` refuses the run before writing
+| anything and logs at `error` — it does not part-write and it does not delete an
+| old set to make room for one that has not succeeded yet.
+|
+| 02:40 UTC: clear of the 03:10 group sweep, the 03:25 code prune, the 07:00
+| prayer resync and the :47 canary, and before the sweeps rather than after so a
+| day's set is taken BEFORE that day's deletions rather than after them.
+|
+| withoutOverlapping(60) rather than the bare call, for the reason the canary
+| gives: the bare form holds its lock for 24 hours, so one killed run would
+| silence backups for a day. Sixty minutes comfortably exceeds a run of this
+| size and expires well inside the daily gap.
+|
+| THE ALERT CONTRACT. schedule:run discards stdout, so the LOG LINE is the only
+| evidence a scheduled run leaves. Exactly one per run, including a clean one,
+| because a backup that quietly stops happening looks exactly like a backup that
+| is fine — which is how the media loss went unnoticed for days:
+|
+|   info     a complete set was written and verified                  (exit 0)
+|   warning  a complete set was written and verified, and the media it captured
+|            has rows whose files are missing — the backup is sound, the data in
+|            it is not (ticket, not page)                            (exit 2)
+|   warning  a complete set was written and verified, and it captured markedly
+|            fewer media FILES than the set it would have replaced, so RETENTION
+|            WAS SKIPPED and nothing was deleted. The older sets are the only
+|            copies of what this one no longer holds — look at the media disk
+|            before the next run.                                    (exit 3)
+|   error    no set was written: the media disk was unreachable, the destination
+|            was unwritable, the volume was too full, a media row named a disk
+|            this set does not archive, the media root had no files left, or a
+|            half failed to verify                                   (exit 1)
+|
+| A file with no row is deliberately NOT graded — this disk carries 68
+| directories of stock seed art that will never have rows, and an amber that
+| burns every ordinary night is an amber that gets silenced.
+|
+| INERT UNTIL THE DESTINATION EXISTS. It writes to config('backup.destination'),
+| /var/backups/manara, which must exist and be owned by www-data because that is
+| who this cron runs as. `sudo bin/backup --install` creates it. Until then every
+| run refuses with an `error` line naming that command — loudly, rather than
+| appearing to work.
+*/
+Schedule::command('backup:run')->dailyAt('02:40')->withoutOverlapping(60);

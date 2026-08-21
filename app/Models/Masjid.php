@@ -328,8 +328,24 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(ThemeSetting::class);
     }
 
+    /**
+     * The logo the public organisation directory renders.
+     *
+     * `model_type` IS PART OF THE KEY. Spatie's `media` table is polymorphic:
+     * `model_id` alone is not a foreign key to anything, it is one half of one.
+     * Without this predicate the relation matched any `logos` row whose
+     * `model_id` happened to equal this masjid's id — a School with id 14 and a
+     * Masjid with id 14 would have shared a logo, and the organisation picker
+     * every mobile app opens with (`Masjid::listed()->with('logo')`) would have
+     * rendered whichever row `latest()` returned.
+     *
+     * Latent today only because nothing else in this application writes a
+     * `logos` collection; `App\Console\Commands\MediaVerify` has always
+     * queried the pair, so the check and the thing it checks now agree.
+     */
     public function logo() {
         return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
             ->where('collection_name', 'logos')
             ->orderBy('created_at', 'desc')
             ->latest();
