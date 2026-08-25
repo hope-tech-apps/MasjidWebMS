@@ -8,6 +8,8 @@ use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Models\Page;
 use App\Models\Service;
+use App\Console\Commands\TenancyCanary;
+use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Artisan;
@@ -15,7 +17,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\TestCase;
 
 /**
@@ -1834,6 +1839,12 @@ class TenancyCanaryTest extends TestCase
     #[Test]
     public function a_full_run_writes_nothing(): void
     {
+        // An EMPTY table cannot witness a deletion. `media` held no rows here,
+        // so even after rowCounts() started watching every table, this
+        // assertion still could not have seen the wipe. Seed the collection
+        // whose loss is the reason this file has a section about it.
+        $this->seedMedia();
+
         $before = $this->rowCounts();
 
         $this->runCanary(['--all' => true, '--max-requests' => 500]);
@@ -2281,6 +2292,157 @@ class TenancyCanaryTest extends TestCase
      * @param  array<string,mixed>  $options
      * @return array{0:int,1:array<string,mixed>}
      */
+    // ================================================================
+    // The canary is an OBSERVER. It must not change what it watches.
+    //
+    // MEASURED, TWICE, IN PRODUCTION (2026-08-17 23:49 and 2026-08-21 16:49
+    // UTC, both the :47 hourly run): every logo, poster and gallery photo on
+    // the platform was deleted — rows AND files — by the canary's own coverage
+    // inventory. attributableRelationsNotConfigured() reflected over `Masjid`,
+    // filtered on `getDeclaringClass() === Masjid::class`, and CALLED whatever
+    // survived. That filter does not exclude trait methods: PHP reports a
+    // trait's method as declared by the class that uses the trait. So Spatie's
+    // `deleteAllMedia()` was called, inside `Relation::noConstraints`, which
+    // had stripped the `model_id`/`model_type` clause that scopes media to one
+    // owner. `catch (\Throwable)` swallowed it and the run exited 0.
+    //
+    // The first test below is the one that would have caught it.
+    // ================================================================
+
+    #[Test]
+    public function it_deletes_nothing_while_taking_its_own_inventory(): void
+    {
+        $before = $this->seedMedia();
+
+        $this->runCanary();
+
+        $this->assertSame($before, Media::count(),
+            'the canary deleted media while inventorying its coverage — this is the 2026-08-17 outage');
+    }
+
+    #[Test]
+    public function it_refuses_to_invoke_a_method_a_trait_mixed_in(): void
+    {
+        $before = $this->seedMedia();
+
+        [$relation, $reason] = $this->resolveRelation('deleteAllMedia');
+
+        $this->assertNull($relation, 'deleteAllMedia was treated as a relation candidate');
+        $this->assertStringContainsString('trait', (string) $reason,
+            'the refusal must say WHY, or the next reader re-opens the hole');
+        $this->assertSame($before, Media::count(),
+            'asking whether deleteAllMedia is a relation deleted media — the question executed the answer');
+    }
+
+    #[Test]
+    public function it_refuses_every_method_any_trait_contributes(): void
+    {
+        // The meta-test. Not "deleteAllMedia is refused" — that is one name,
+        // and the next destructive mixin will have a different one.
+        $names = [];
+
+        foreach (class_uses(Masjid::class) ?: [] as $trait) {
+            foreach (get_class_methods($trait) as $method) {
+                $names[$method] = true;
+            }
+        }
+
+        $this->assertNotEmpty($names, 'Masjid uses no traits — this test is watching nothing');
+
+        foreach (array_keys($names) as $name) {
+            [$relation, $reason] = $this->resolveRelation($name);
+
+            $this->assertNull($relation,
+                "`{$name}` is mixed in from a trait and was still resolved as a relation ({$reason})");
+        }
+    }
+
+    #[Test]
+    public function a_relation_the_model_really_declares_still_resolves(): void
+    {
+        // The fix must narrow what gets CALLED without blinding the feature.
+        foreach (['announcements', 'services', 'pages'] as $name) {
+            [$relation, $reason] = $this->resolveRelation($name);
+
+            $this->assertInstanceOf(HasOneOrMany::class, $relation,
+                "`{$name}` stopped resolving after the fix ({$reason})");
+            $this->assertSame('masjid_id', $relation->getForeignKeyName());
+        }
+    }
+
+    #[Test]
+    public function the_coverage_inventory_still_reports_and_names_nothing_destructive(): void
+    {
+        $before = $this->seedMedia();
+
+        $listed = $this->coverageInventory();
+
+        $this->assertNotEmpty($listed,
+            'the inventory went empty — the fix removed the finding instead of the danger');
+        $this->assertNotContains('deleteAllMedia', $listed);
+        $this->assertSame($before, Media::count());
+
+        foreach ($listed as $name) {
+            [$relation] = $this->resolveRelation($name);
+
+            $this->assertInstanceOf(HasOneOrMany::class, $relation,
+                "the inventory named `{$name}`, which is not a has-one/has-many");
+        }
+    }
+
+    /**
+     * Resolve a name through the command's one seam.
+     *
+     * @return array{0: mixed, 1: ?string}
+     */
+    private function resolveRelation(string $name): array
+    {
+        $command = app(TenancyCanary::class);
+
+        $method = new \ReflectionMethod($command, 'relationOrNull');
+
+        $reason = null;
+        $args = [$name, &$reason];
+
+        return [$method->invokeArgs($command, $args), $reason];
+    }
+
+    /** @return array<int,string> */
+    private function coverageInventory(): array
+    {
+        $command = app(TenancyCanary::class);
+
+        $method = new \ReflectionMethod($command, 'attributableRelationsNotConfigured');
+
+        return (array) $method->invoke($command, (array) config('canary'));
+    }
+
+    /** Two logo rows, one per tenant. Returns the resulting row count. */
+    private function seedMedia(): int
+    {
+        foreach ([$this->masjidA, $this->masjidB] as $masjid) {
+            $media = new Media;
+
+            $media->model_type = Masjid::class;
+            $media->model_id = $masjid->id;
+            $media->uuid = (string) Str::uuid();
+            $media->collection_name = 'logos';
+            $media->name = 'logo';
+            $media->file_name = 'logo-'.Str::random(6).'.png';
+            $media->mime_type = 'image/png';
+            $media->disk = 'public';
+            $media->size = 12;
+            $media->manipulations = [];
+            $media->custom_properties = [];
+            $media->generated_conversions = [];
+            $media->responsive_images = [];
+            $media->order_column = 1;
+            $media->save();
+        }
+
+        return Media::count();
+    }
+
     private function runCanary(array $options = []): array
     {
         $options = array_merge([
@@ -2302,14 +2464,38 @@ class TenancyCanaryTest extends TestCase
     }
 
     /** @return array<string,int> */
+    /**
+     * A row count for EVERY table, not a list somebody remembered to extend.
+     *
+     * This used to name seven tables. `media` was not one of them, so
+     * `a_full_run_writes_nothing` stayed green through two production wipes of
+     * every logo and poster on the platform — the assertion was real, it was
+     * just pointed somewhere else. A guard whose coverage is a hand-written
+     * list only ever covers what its author already suspected.
+     *
+     * The exclusions below are tables a read-only run is ALLOWED to move:
+     * caches it warms by reading, and the framework's own bookkeeping. They are
+     * named individually and deliberately; everything else, including every
+     * table added after this was written, is watched by default.
+     *
+     * @return array<string,int>
+     */
     private function rowCounts(): array
     {
+        $volatile = [
+            'migrations', 'cache', 'cache_locks', 'sessions',
+            'jobs', 'job_batches', 'failed_jobs', 'password_reset_tokens',
+        ];
+
         $counts = [];
 
-        foreach ([
-            'masjids', 'announcements', 'services', 'pages',
-            'contact_us_messages', 'mobile_app_users', 'prayers',
-        ] as $table) {
+        foreach (Schema::getTableListing() as $table) {
+            $table = str_contains($table, '.') ? substr(strrchr($table, '.'), 1) : $table;
+
+            if (in_array($table, $volatile, true)) {
+                continue;
+            }
+
             $counts[$table] = DB::table($table)->count();
         }
 

@@ -2915,9 +2915,13 @@ class TenancyCanary extends Command
             }
 
             try {
-                // noConstraints, or the relation carries `where masjid_id is
-                // null` from the unsaved parent and matches nothing.
-                $relation = Relation::noConstraints(static fn () => (new Masjid)->{$name}());
+                $relation = $this->relationOrNull($name, $refusal);
+
+                if ($relation === null) {
+                    $this->ownershipSkipped[$name] = $refusal ?? 'not a relation';
+
+                    continue;
+                }
 
                 if (! $relation instanceof HasOneOrMany) {
                     $this->ownershipSkipped[$name] = 'not a has-one/has-many relation, so it has no '.
@@ -3621,17 +3625,35 @@ class TenancyCanary extends Command
      * see that the seven are seven endpoints backed by three tables out of
      * however many the model has.
      *
-     * Read by reflection over `Masjid`'s own public methods, and it executes no
-     * query: `Relation::noConstraints` builds the relation object without
-     * touching the database, and only its foreign key name is read. A method
-     * that needs arguments, throws, or is not a has-one/has-many keyed on a
-     * `canary.tenant_keys` column is not a candidate and is passed over in
-     * silence — a canary that dies taking its own inventory is a canary that
-     * stopped watching.
+     * Read by reflection over `Masjid`'s own public methods, every one of which
+     * is resolved through relationOrNull() — the ONE seam in this command that
+     * turns a method NAME into a relation OBJECT, and the only place allowed to
+     * invoke a model method. This inventory used to call every zero-argument
+     * public method it found and claimed, in this docblock, that doing so
+     * "executes no query". That was false, and the way it was false deleted
+     * production: `getDeclaringClass()` reports a TRAIT's method as declared by
+     * the class that USES the trait, so `Masjid`'s own body was never what got
+     * enumerated — `deleteAllMedia()`, mixed in from Spatie's
+     * InteractsWithMedia, passed every filter and was CALLED. Inside
+     * `Relation::noConstraints` it lost the `model_id`/`model_type` clause that
+     * scopes media to its owner, so it deleted every media row on the platform,
+     * files and all, once an hour. See relationOrNull() for what is refused now.
+     *
+     * A method that is not a candidate is passed over in silence — a canary that
+     * dies taking its own inventory is a canary that stopped watching.
      *
      * @param  array<string,mixed>  $config
      * @return array<int,string>
      */
+    /**
+     * Name heads this command refuses to invoke. See relationOrNull() step 4.
+     * `delete` is here because `deleteAllMedia()` is why this list exists.
+     */
+    private const NEVER_INVOKED = [
+        'delete', 'destroy', 'remove', 'clear', 'purge', 'truncate',
+        'flush', 'forget', 'wipe', 'reset', 'drop', 'restore', 'detach',
+    ];
+
     private function attributableRelationsNotConfigured(array $config): array
     {
         $configured = array_map('strval', (array) ($config['compare_by'] ?? []));
@@ -3655,23 +3677,168 @@ class TenancyCanary extends Command
                 continue;
             }
 
-            try {
-                $relation = Relation::noConstraints(static fn () => (new Masjid)->{$name}());
+            $relation = $this->relationOrNull($name);
 
-                if ($relation instanceof HasOneOrMany
-                    && in_array($relation->getForeignKeyName(), $tenantKeys, true)) {
-                    $available[] = $name;
-                }
-            } catch (\Throwable) {
-                // Not a relation, or not one that can be built without a saved
-                // parent. Either way it is not a candidate.
-                continue;
+            if ($relation instanceof HasOneOrMany
+                && in_array($relation->getForeignKeyName(), $tenantKeys, true)) {
+                $available[] = $name;
             }
         }
 
         sort($available);
 
         return $available;
+    }
+
+    /**
+     * Method NAME in, relation OBJECT out — or null, with a reason.
+     *
+     * ## Why this exists at all
+     *
+     * Two places in this command need to know whether `Masjid::somename()` is a
+     * relation that names an organisation: resolveOwnership(), which reads
+     * `canary.compare_by`, and attributableRelationsNotConfigured(), which
+     * reflects over the model. Both used to answer the question the only way
+     * that is guaranteed to be correct and is also catastrophic — by CALLING
+     * the method and looking at what came back.
+     *
+     * A canary is a read-only observer of a live platform. It must not be able
+     * to execute a model's behaviour to satisfy its curiosity, because a name
+     * it has never heard of may not be a getter at all. `deleteAllMedia` is a
+     * name it had never heard of. Calling it wiped every logo, poster and photo
+     * the platform had, twice, and the `catch (\Throwable)` around the call
+     * swallowed the failure so the run still exited 0.
+     *
+     * ## What is refused, and in what order
+     *
+     * The order matters: every check below happens BEFORE the method is
+     * invoked, because after it is invoked the damage is already done.
+     *
+     *  1. Not a zero-argument public instance method — cannot be a relation
+     *     getter, and arguments we would have to invent.
+     *  2. MIXED IN FROM A TRAIT. This is the one that was missing.
+     *     `ReflectionMethod::getDeclaringClass()` names the class that USES a
+     *     trait, not the trait, so trait methods are indistinguishable from the
+     *     model's own by that test. They are collected here by name from
+     *     `class_uses()` over the model and its parents (and over the traits
+     *     themselves — traits use traits) and refused. This is what stops
+     *     InteractsWithMedia's `deleteAllMedia()`, SoftDeletes' `restore()` and
+     *     every future destructive mixin, including ones not written yet.
+     *  3. A DECLARED return type that is not a relation. Cheap and exact for
+     *     `isListed(): bool` and friends. Relations on this model mostly have
+     *     no declared return type, so this narrows rather than decides.
+     *  4. A DESTRUCTIVE VERB at the head of the name. Belt to (2)'s braces: it
+     *     covers a destructive method declared directly in a model body, where
+     *     the trait test cannot help. A real relation is a noun — `donations`,
+     *     `pages`, `gallery` — so refusing verbs costs an inventory line at
+     *     worst, and the cost of being wrong the other way is this outage.
+     *
+     * Only then is the method called, and only inside `Relation::noConstraints`
+     * — which is REQUIRED for a correct answer (an unsaved parent would
+     * otherwise pin the relation to `masjid_id is null`) and which is exactly
+     * what made the old call so destructive. That is the whole reason nothing
+     * unvetted may reach this line.
+     *
+     * @param  string|null  $reason  filled in with why null came back
+     */
+    private function relationOrNull(string $name, ?string &$reason = null): ?Relation
+    {
+        $reason = null;
+
+        try {
+            $method = new \ReflectionMethod(Masjid::class, $name);
+        } catch (\Throwable) {
+            $reason = 'no method of that name on '.class_basename(Masjid::class);
+
+            return null;
+        }
+
+        if (! $method->isPublic() || $method->isStatic() || $method->getNumberOfParameters() > 0) {
+            $reason = 'not a zero-argument public instance method, so it cannot be a relation getter';
+
+            return null;
+        }
+
+        if (isset(self::traitMethodNames()[strtolower($name)])) {
+            $reason = 'mixed in from a trait rather than declared by the model — a trait method is '.
+                'behaviour, and this command does not execute behaviour';
+
+            return null;
+        }
+
+        $returnType = $method->getReturnType();
+
+        if ($returnType !== null
+            && (! $returnType instanceof \ReflectionNamedType
+                || $returnType->isBuiltin()
+                || ! is_a($returnType->getName(), Relation::class, true))) {
+            $reason = 'declares a `'.$returnType.'` return type, which is not an Eloquent relation';
+
+            return null;
+        }
+
+        foreach (self::NEVER_INVOKED as $verb) {
+            if (str_starts_with(strtolower($name), $verb)) {
+                $reason = 'starts with `'.$verb.'`, which reads as an action rather than a relation — '.
+                    'this command will not call it to find out';
+
+                return null;
+            }
+        }
+
+        try {
+            // noConstraints, or the relation carries `where masjid_id is null`
+            // from the unsaved parent and matches nothing.
+            $relation = Relation::noConstraints(static fn () => (new Masjid)->{$name}());
+        } catch (\Throwable $e) {
+            $reason = 'building it threw: '.$e->getMessage();
+
+            return null;
+        }
+
+        if (! $relation instanceof Relation) {
+            $reason = 'returned '.get_debug_type($relation).', not a relation';
+
+            return null;
+        }
+
+        return $relation;
+    }
+
+    /**
+     * Every method name any trait contributes to `Masjid`, lowercased.
+     *
+     * Walks the model's own traits, its parents' traits, and the traits those
+     * traits use, because `class_uses()` is one level deep and a mixin three
+     * levels down deletes just as much as one at the top.
+     *
+     * @return array<string,true>
+     */
+    private static function traitMethodNames(): array
+    {
+        static $names = null;
+
+        if ($names !== null) {
+            return $names;
+        }
+
+        $names = [];
+
+        $collect = static function (string $class) use (&$collect, &$names): void {
+            foreach (class_uses($class) ?: [] as $trait) {
+                foreach (get_class_methods($trait) as $method) {
+                    $names[strtolower($method)] = true;
+                }
+
+                $collect($trait);
+            }
+        };
+
+        for ($class = Masjid::class; $class !== false; $class = get_parent_class($class)) {
+            $collect($class);
+        }
+
+        return $names;
     }
 
     /** @param array<int,string> $prefixes */
