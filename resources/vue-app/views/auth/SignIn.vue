@@ -24,10 +24,13 @@
                             <PasswordInput name="password" v-model="signData.password" input-class="input w-100" />
                         </ColumnInputContainer>
                     </div>
-                    <div class="card-footer bg-white border-0">
+                    <div class="card-footer bg-white border-0 d-flex flex-column gap-3">
                         <LoadingButton type="submit" classes="btn-success w-100" :is-loading="submitLoading">
                             Sign In
                         </LoadingButton>
+                        <router-link to="/auth/forgot-password" class="text-center text-decoration-none">
+                            Forgot your password?
+                        </router-link>
                     </div>
                 </Form>
             </div>

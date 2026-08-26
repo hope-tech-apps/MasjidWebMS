@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Http\Requests\Admin\Auth\ForgotPasswordRequest;
+use App\Http\Requests\Admin\Auth\ResetPasswordRequest;
+use App\Services\Auth\AccountAccessService;
+use Illuminate\Support\Facades\Password as PasswordBroker;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Auth\LoginRequest;
 use App\Http\Requests\Admin\Auth\UpdateProfileRequest;
@@ -125,6 +129,48 @@ class AuthController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Ask for a reset link.
+     *
+     * ALWAYS answers the same thing, whether or not the address belongs to an
+     * account. This endpoint is necessarily unauthenticated, and one that
+     * distinguishes "sent" from "no such user" is a free list of who has an
+     * account on the platform.
+     */
+    public function forgotPassword(ForgotPasswordRequest $request, AccountAccessService $access)
+    {
+        $access->sendResetLink((string) $request->validated('email'));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'If that address belongs to an account, a reset link is on its way. '.
+                'The link expires in an hour.',
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Set a new password from a link. Also used for the FIRST password on an
+     * invited account — same token, same expiry, same single use.
+     */
+    public function resetPassword(ResetPasswordRequest $request, AccountAccessService $access)
+    {
+        $status = $access->reset($request->only('email', 'password', 'password_confirmation', 'token'));
+
+        if ($status !== PasswordBroker::PASSWORD_RESET) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $status === PasswordBroker::INVALID_TOKEN
+                    ? 'That link has already been used or has expired. Ask for a new one.'
+                    : 'That link could not be used. Ask for a new one.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Your password is set. You can sign in with it now.',
+        ], Response::HTTP_OK);
     }
 
     public function logout()

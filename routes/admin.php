@@ -71,6 +71,12 @@ Route::prefix('admin')->group(function () {
     // Security: brute-force defense — 5 attempts per minute keyed on email+IP.
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
+    // Account access. Unauthenticated by necessity — somebody who cannot sign in
+    // is exactly who needs these — so both are throttled, and forgot-password
+    // answers identically whether or not the address exists.
+    Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:login');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:login');
+
     // `tenant` (ResolveMasjidTenant) runs after auth: it binds TenantContext to
     // a MasjidAdmin's masjid and is a no-op for SuperAdmin. Only BelongsToMasjid
     // models consult that context, so existing endpoints are unaffected today.
@@ -95,10 +101,16 @@ Route::prefix('admin')->group(function () {
             // User account control
             Route::get('/', 'index');
             Route::post('/', 'store');
+            // MUST precede the /{user_id} wildcards: a literal segment
+            // registered after them is matched as an id.
+            Route::post('/invite', 'inviteNew');
             Route::get('/{user_id}', 'show');
             Route::post('/{user_id}', 'update');
             Route::delete('/{user_id}', 'destroy');
             Route::delete('/{user_id}/trash', 'moveToTrash');
+            // Send (or re-send) the set-your-own-password invite. The platform
+            // never learns the credential it is handing over.
+            Route::post('/{user_id}/invite', 'invite');
         });
 
         Route::get('search', [DashboardSearchController::class, 'searchForSuperDataRecords'])->middleware('super');
