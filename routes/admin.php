@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AppointmentRequestsController;
 use App\Http\Controllers\AdminDashboard\AssistantController;
+use App\Http\Controllers\AdminDashboard\ArabicLettersController;
 use App\Http\Controllers\AdminDashboard\AuthController;
 use App\Http\Controllers\AdminDashboard\ContactAvatarController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
@@ -634,6 +635,18 @@ Route::prefix('admin')->group(function () {
                         // (`GroupMembership::confirmedByStaff`).
                         Route::post('/confirm', 'confirm')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The Arabic letter tracker. Same CONTACTS gate as the roster,
+                // the behaviour points and the hifz diary beside it — the same
+                // kind of record about the same children.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(ArabicLettersController::class)
+                    ->group(function () {
+                        Route::get('/letters', 'index')->middleware('permission:view contacts');
+                        Route::put('/letters/stage', 'setStage')->middleware('permission:manage contacts');
+                        Route::get('/members/{membership_id}/letters', 'show')->middleware('permission:view contacts');
+                        Route::put('/members/{membership_id}/letters', 'mark')->middleware('permission:manage contacts');
                     });
 
                 // Guardian consent, recorded against ONE guardian edge — the

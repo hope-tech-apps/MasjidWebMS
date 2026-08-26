@@ -134,10 +134,19 @@
                                 :size="52" />
                             <div>
                                 <h2 class="h6 mb-0">{{ childName(child) }}</h2>
-                                <button class="btn btn-link btn-sm p-0 text-decoration-none"
-                                        @click="avatarFor = child">
-                                    Choose an avatar
-                                </button>
+                                <div class="d-flex gap-3">
+                                    <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                            @click="avatarFor = child">
+                                        Choose an avatar
+                                    </button>
+                                    <!-- Hand the phone over. The child gets a session
+                                         of their own that cannot reach this portal. -->
+                                    <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                            :disabled="handingOver === child.membership_id"
+                                            @click="handOver(child)">
+                                        {{ handingOver === child.membership_id ? 'Starting…' : `Let ${childName(child).split(' ')[0]} choose` }}
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -155,6 +164,30 @@
                                 </span>
                             </li>
                         </ul>
+
+                        <h3 class="text-uppercase text-muted small">Arabic letters</h3>
+                        <div v-if="letters[child.membership_id]" class="mb-3">
+                            <div class="d-flex justify-content-between align-items-baseline">
+                                <span class="small">{{ letters[child.membership_id].stage.label }}</span>
+                                <span class="small text-muted">
+                                    {{ letters[child.membership_id].totals.mastered }} of
+                                    {{ letters[child.membership_id].totals.total }}
+                                </span>
+                            </div>
+                            <div class="progress mt-1" style="height:8px;">
+                                <div class="progress-bar bg-success"
+                                     :style="{ width: lettersPercent(child.membership_id) + '%' }"></div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-1 mt-2">
+                                <span v-for="l in letters[child.membership_id].letters" :key="l.id"
+                                      class="letter-chip"
+                                      :class="`letter-chip--${l.status}`"
+                                      :title="`${l.transliteration} — ${l.status.replace('_',' ')}`">
+                                    {{ l.glyph }}
+                                </span>
+                            </div>
+                        </div>
+                        <p v-else class="text-muted small mb-3">Nothing recorded yet.</p>
 
                         <h3 class="text-uppercase text-muted small">Qur'an</h3>
                         <p v-if="!records[child.membership_id]?.hifz?.length" class="text-muted small mb-0">Nothing recorded yet.</p>
@@ -198,6 +231,7 @@
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
+import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { computed, onMounted, ref, watch } from 'vue';
@@ -217,6 +251,38 @@ const threads = ref<any[]>([]);
 const records = ref<Record<string, any>>({});
 const openedThread = ref<any>(null);
 const avatarFor = ref<any>(null);
+const handingOver = ref<number | null>(null);
+const letters = ref<Record<string, any>>({});
+
+const lettersPercent = (membershipId: number | string) => {
+    const t = letters.value[membershipId]?.totals;
+    return t && t.total ? Math.round((t.mastered / t.total) * 100) : 0;
+};
+
+/**
+ * Hand the device to the child: ask the server for a session scoped to THIS
+ * child, store it under its own key, and navigate into child mode.
+ */
+const handOver = async (child: any) => {
+    handingOver.value = child.membership_id;
+    try {
+        const res = await FamilyApiService.post(
+            `${base.value}/members/${child.membership_id}/student-session`, {}
+        );
+        const data = res.data?.data;
+        StudentApiService.begin(data.token, {
+            masjidId: String(masjidId.value),
+            groupId: String(groupId.value),
+            membershipId: String(child.membership_id),
+            name: childName(child),
+        });
+        router.push(`/family/${masjidId.value}/student/${groupId.value}/${child.membership_id}`);
+    } catch (e) {
+        if (!fail(e)) error.value = 'That could not be started. Please try again.';
+    } finally {
+        handingOver.value = null;
+    }
+};
 
 /** Write the new avatar back onto the child in place, so the card updates
  *  without refetching the whole class. */
@@ -314,6 +380,14 @@ const loadChildRecords = async () => {
                 awards: rowsOf(awards.data?.data),
                 hifz: rowsOf(hifz.data?.data),
             };
+
+            try {
+                const l = await FamilyApiService.get(`${base.value}/members/${child.membership_id}/letters`);
+                letters.value[child.membership_id] = l.data?.data ?? null;
+            } catch {
+                // A class with no Arabic work is not an error; the card simply
+                // says nothing is recorded yet.
+            }
         } catch (e) {
             if (fail(e)) return;
             records.value[child.membership_id] = { awards: [], hifz: [] };
@@ -346,3 +420,14 @@ onMounted(async () => {
 
 watch(tab, () => { openedThread.value = null; });
 </script>
+
+<style scoped>
+.letter-chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 8px; font-size: 17px; line-height: 1;
+    background: var(--bs-tertiary-bg, #eceff1); color: #444;
+}
+.letter-chip--learning { background: rgba(255, 193, 7, .28); }
+.letter-chip--mastered { background: rgba(25, 135, 84, .26); color: #0f5132; }
+</style>
+

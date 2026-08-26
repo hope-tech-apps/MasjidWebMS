@@ -34,6 +34,16 @@ const familyRoutes: RouteRecordRaw[] = [
                 meta: { pageTitle: "Family Portal", family: true },
             },
             {
+                // Child mode. NOT behind the family guard: its credential is the
+                // student hand-off token, which deliberately fails every parent
+                // surface, so requiring a parent session here would lock the
+                // child out of the one screen meant for them.
+                path: 'student/:groupId(\\d+)/:membershipId(\\d+)',
+                name: 'studentMode',
+                component: () => import("@/views/family/StudentMode.vue"),
+                meta: { pageTitle: "My Avatar" },
+            },
+            {
                 path: 'classes/:groupId(\\d+)',
                 name: 'familyClass',
                 component: () => import("@/views/family/FamilyClass.vue"),

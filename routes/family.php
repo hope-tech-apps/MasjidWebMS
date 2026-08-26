@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Family\ArabicLettersController;
 use App\Http\Controllers\Family\BehaviorAwardsController;
 use App\Http\Controllers\Family\FamilyAuthController;
 use App\Http\Controllers\Family\GroupPostsController;
@@ -190,6 +191,7 @@ Route::prefix('family')
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);
+                Route::get('/letters', [ArabicLettersController::class, 'forMember']);
                 Route::get('/hifz/progress', [HifzEntriesController::class, 'progress']);
             });
         });

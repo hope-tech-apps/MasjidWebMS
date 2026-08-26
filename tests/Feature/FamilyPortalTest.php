@@ -558,6 +558,43 @@ class FamilyPortalTest extends TestCase
         $this->assertSame('pink', $restored['color']);
     }
 
+    // ------------------------------------- 0a. the letter tracker, read only
+
+    #[Test]
+    public function a_parent_watches_their_own_childs_letters(): void
+    {
+        $this->group->forceFill(['arabic_stage' => 'short_vowels'])->save();
+
+        $response = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"))
+            ->assertOk();
+
+        $response->assertJsonCount(28, 'data.letters');
+        $response->assertJsonPath('data.stage.id', 'short_vowels');
+        $this->assertSame(28 * 4, $response->json('data.totals.total'));
+    }
+
+    #[Test]
+    public function a_parent_cannot_watch_another_familys_child(): void
+    {
+        $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/letters"))
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_parent_cannot_mark_a_drill(): void
+    {
+        // Marking is the teacher's, like behaviour points and hifz. A parent who
+        // could tick "mastered" would make the record say something the
+        // classroom never observed. There is simply no route.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"), [
+                'drill_id' => 'ba', 'status' => 'mastered',
+            ])
+            ->assertStatus(405);
+    }
+
     // ------------------------------------------- 0b. a child's own avatar
 
     #[Test]

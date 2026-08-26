@@ -83,6 +83,12 @@
                         :memberships="groupsStore.memberships"
                     />
 
+                    <GroupLettersTab
+                        v-else-if="activeTab === 'letters'"
+                        :groupId="groupId"
+                        :masjidId="masjidStore.masjid?.id ?? 0"
+                    />
+
                     <GroupHifzTab
                         v-else-if="activeTab === 'hifz'"
                         :groupId="groupId"
@@ -108,6 +114,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import GroupRosterTab from './groups/GroupRosterTab.vue';
 import GroupStoryTab from './groups/GroupStoryTab.vue';
 import GroupPointsTab from './groups/GroupPointsTab.vue';
+import GroupLettersTab from './groups/GroupLettersTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';
 import { Group } from '@/core/types/data/masjid-related/Group';
@@ -130,7 +137,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
  * .claude/rules/verticals.md.
  */
 
-type TabKey = 'roster' | 'story' | 'points' | 'hifz' | 'threads';
+type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'hifz' | 'threads';
 
 // Routing
 const route = useRoute();
@@ -156,6 +163,7 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     // halaqa has a class story just as a school's classroom does.
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
+    { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
     { key: 'hifz', label: 'Hifz', icon: 'bi-book' },
     { key: 'threads', label: 'Messages', icon: 'bi-chat-dots' }
 ];
