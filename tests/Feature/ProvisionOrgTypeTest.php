@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Mail\AccountAccessMail;
+use Illuminate\Support\Facades\Mail;
 use App\Models\Masjid;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
@@ -56,6 +58,8 @@ class ProvisionOrgTypeTest extends TestCase
             'name' => 'Burlington',
             'country_id' => $this->countryId,
         ]);
+
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
 
         foreach (self::FEATURE_KEYS as $key) {
             MobileAppFeature::create(['name' => ucfirst($key), 'key' => $key]);
@@ -226,6 +230,82 @@ class ProvisionOrgTypeTest extends TestCase
             'type' => 'SuperAdmin',
             'phone' => '+1' . random_int(1000000000, 9999999999),
         ]);
+    }
+
+    // ============ an organisation must not be born unable to be used ============
+
+    #[Test]
+    public function a_provisioned_organisation_has_its_crm_switched_on(): void
+    {
+        // MEASURED 2026-08-26: `crm_enabled` defaults false at the column and
+        // provisioning never wrote it, so three of five production tenants
+        // (NAFIS, MEC, Al-Razi) were created DARK — the whole CRM route group
+        // 403s, the public registration door 404s, and the admin nav hides the
+        // screens, so nobody could tell why the org had no Families,
+        // Classrooms, Programs or Giving.
+        $masjid = Masjid::findOrFail($this->provision()->assertCreated()->json('data.masjid_id'));
+
+        $this->assertTrue((bool) $masjid->crm_enabled);
+    }
+
+    #[Test]
+    public function provisioning_can_still_deliberately_leave_the_crm_off(): void
+    {
+        // "Set it up now, switch it on at launch" is a real request. Only an
+        // EXPLICIT false does it — an absent field means on.
+        $masjid = Masjid::findOrFail(
+            $this->provision(['crm_enabled' => false])->assertCreated()->json('data.masjid_id')
+        );
+
+        $this->assertFalse((bool) $masjid->crm_enabled);
+    }
+
+    #[Test]
+    public function an_admin_can_be_created_and_invited_in_the_same_step(): void
+    {
+        Mail::fake();
+
+        $response = $this->provision([
+            'admin' => [
+                'name' => 'School Office',
+                'email' => 'office@newschool.test',
+                'phone' => '+15559998888',
+            ],
+        ])->assertCreated();
+
+        $masjid = Masjid::findOrFail($response->json('data.masjid_id'));
+        $admin = User::where('email', 'office@newschool.test')->firstOrFail();
+
+        // THIS is the field that grants access: with multi_membership off,
+        // TenantResolver derives a MasjidAdmin's grant from masjids.user_id, and
+        // an org whose user_id is null cannot be reached by its own staff at all.
+        $this->assertSame($admin->id, $masjid->user_id);
+        $this->assertSame('MasjidAdmin', $admin->type);
+        $this->assertTrue($admin->hasRole('masjid-admin'));
+
+        // The platform never learns the credential.
+        Mail::assertSent(AccountAccessMail::class, fn (AccountAccessMail $m) => $m->user->is($admin)
+            && $m->mode === AccountAccessMail::MODE_INVITE);
+    }
+
+    #[Test]
+    public function provisioning_without_an_admin_still_works_and_sends_nothing(): void
+    {
+        Mail::fake();
+
+        $masjid = Masjid::findOrFail($this->provision()->assertCreated()->json('data.masjid_id'));
+
+        $this->assertNull($masjid->user_id);
+        Mail::assertNothingSent();
+    }
+
+    #[Test]
+    public function an_admin_address_already_in_use_is_refused(): void
+    {
+        User::factory()->create(['email' => 'taken@example.test', 'phone' => '+15551110000']);
+
+        $this->provision(['admin' => ['email' => 'taken@example.test']])
+            ->assertStatus(422);
     }
 
     private function provision(array $overrides = []): \Illuminate\Testing\TestResponse
