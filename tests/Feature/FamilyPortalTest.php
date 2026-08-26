@@ -195,6 +195,24 @@ class FamilyPortalTest extends TestCase
         );
     }
 
+    private function studentUrl(int $membershipId, string $path = ''): string
+    {
+        return $this->groupUrl("/members/{$membershipId}/student".$path);
+    }
+
+    /** The token a parent mints when handing the phone to their child. */
+    private function handoffToken(Contact $parent, int $membershipId): string
+    {
+        $response = $this->as($parent)
+            ->postJson($this->groupUrl("/members/{$membershipId}/student-session"))
+            ->assertCreated();
+
+        Auth::forgetGuards();
+        app(TenantContext::class)->forgetTenant();
+
+        return $response->json('data.token');
+    }
+
     private function url(string $path = ''): string
     {
         return "/api/family/masjids/{$this->masjid->id}" . $path;
@@ -417,6 +435,127 @@ class FamilyPortalTest extends TestCase
             'author_contact_id' => $this->parentA->id,
             'body' => 'Who wrote this?',
         ]);
+    }
+
+    // --------------------------------- 0c. child mode, and its boundary
+
+    #[Test]
+    public function a_parent_can_hand_the_device_to_their_own_child(): void
+    {
+        $response = $this->as($this->parentA)
+            ->postJson($this->groupUrl("/members/{$this->childAMembership->id}/student-session"))
+            ->assertCreated();
+
+        $this->assertNotEmpty($response->json('data.token'));
+        $this->assertSame($this->childAMembership->id, $response->json('data.membership_id'));
+    }
+
+    #[Test]
+    public function a_parent_cannot_hand_the_device_to_someone_elses_child(): void
+    {
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/members/{$this->childBMembership->id}/student-session"))
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_child_in_student_mode_can_choose_their_own_avatar(): void
+    {
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson($this->studentUrl($this->childAMembership->id, '/me'))
+            ->assertOk()
+            ->assertJsonPath('data.student.membership_id', $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->putJson($this->studentUrl($this->childAMembership->id, '/avatar'), [
+                'character' => 'ameera', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertOk();
+
+        $this->assertSame('ameera', $this->childA->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function a_student_token_cannot_open_the_parents_portal(): void
+    {
+        // THE boundary. With the phone in the child's hands, the class feed, the
+        // teacher threads and the sibling's records are refused by the SERVER —
+        // not hidden by a screen the child is asked not to leave.
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+        $thread = $this->seedParticipantThread($this->childAMembership, 'About Amina');
+
+        foreach ([
+            $this->url('/me'),
+            $this->url('/groups'),
+            $this->groupUrl(),
+            $this->groupUrl('/posts'),
+            $this->groupUrl('/threads'),
+            $this->groupUrl("/threads/{$thread->id}"),
+            $this->groupUrl("/members/{$this->childAMembership->id}/awards"),
+        ] as $forbidden) {
+            $this->withHeader('Authorization', "Bearer {$token}")
+                ->getJson($forbidden)
+                ->assertForbidden();
+        }
+    }
+
+    #[Test]
+    public function a_student_token_minted_for_one_sibling_cannot_address_the_other(): void
+    {
+        // Two children on one phone are two sessions, because the ability names
+        // a membership and the middleware compares it to the URL.
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->putJson($this->studentUrl($this->childBMembership->id, '/avatar'), [
+                'character' => 'ameer', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($this->childB->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function a_parent_token_cannot_use_the_student_screen(): void
+    {
+        // The student routes must not become a second, weaker way for a parent
+        // to act — every ability check runs in both directions.
+        $this->as($this->parentA)
+            ->getJson($this->studentUrl($this->childAMembership->id, '/me'))
+            ->assertForbidden();
+    }
+
+    // ------------------------------- 0d. a teacher never destroys the child's pick
+
+    #[Test]
+    public function a_staff_override_hides_the_childs_avatar_without_erasing_it(): void
+    {
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone1', 'avatar_color' => 'pink',
+        ])->save();
+
+        // A teacher sets something else.
+        $this->childA->forceFill([
+            'staff_avatar_character' => 'ameera', 'staff_avatar_tone' => 'tone4', 'staff_avatar_color' => 'white',
+        ])->save();
+
+        $avatar = $this->childA->fresh()->avatar;
+
+        $this->assertSame('staff', $avatar['source']);
+        $this->assertSame('tone4', $avatar['tone']);
+        // The child's own is still there, and still says pink.
+        $this->assertSame('pink', $avatar['student_choice']['color']);
+
+        // Dropping the override brings it straight back — it was never touched.
+        $this->childA->forceFill([
+            'staff_avatar_character' => null, 'staff_avatar_tone' => null, 'staff_avatar_color' => null,
+        ])->save();
+
+        $restored = $this->childA->fresh()->avatar;
+        $this->assertSame('student', $restored['source']);
+        $this->assertSame('pink', $restored['color']);
     }
 
     // ------------------------------------------- 0b. a child's own avatar
@@ -929,7 +1068,7 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function the_family_realm_writes_exactly_four_things(): void
+    public function the_family_realm_writes_exactly_six_things(): void
     {
         // This used to assert the realm accepted NO write verb at all, because
         // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
@@ -959,8 +1098,10 @@ class FamilyPortalTest extends TestCase
         $this->assertSame([
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
         ], $writes);
     }
 

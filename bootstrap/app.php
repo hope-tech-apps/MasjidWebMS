@@ -3,6 +3,8 @@
 use App\Http\Middleware\EnsureAssistantEnabled;
 use App\Http\Middleware\EnsureCrmEnabled;
 use App\Http\Middleware\EnsureFamilyLoginActive;
+use App\Http\Middleware\EnsureFamilyParentToken;
+use App\Http\Middleware\EnsureStudentHandoffToken;
 use App\Http\Middleware\ResolveFamilyGuestTenant;
 use App\Http\Middleware\ResolveFamilyTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
@@ -72,6 +74,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // for every BelongsToMasjid model (.claude/rules/tenant-scoping.md).
             'family.active' => EnsureFamilyLoginActive::class,
             'family.tenant' => ResolveFamilyTenant::class,
+            // Abilities, finally used: `family.parent` keeps a child's hand-off
+            // token off the parent surfaces, and `family.student` pins a
+            // hand-off token to the one child it was minted for.
+            'family.parent' => EnsureFamilyParentToken::class,
+            'family.student' => EnsureStudentHandoffToken::class,
             // The UNAUTHENTICATED half of the family realm (T-015d): the two
             // sign-in endpoints, which by definition have no token to bind a
             // tenant from. `family.guest` binds it from the {masjid_id} in the

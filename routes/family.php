@@ -7,6 +7,7 @@ use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
 use App\Http\Controllers\Family\HifzEntriesController;
 use App\Http\Controllers\Family\MeController;
+use App\Http\Controllers\Family\StudentSessionController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -101,10 +102,32 @@ Route::prefix('family/masjids/{masjid_id}/auth')
         Route::post('/verify-code', 'verifyCode')->middleware('throttle:family-verify');
     });
 
+// ------------------------------------------------------------ child mode
+//
+// The screen a child gets when a parent hands them the phone. Its token is
+// minted BY a parent (the server authenticated them, not the child) but carries
+// only `student:{membership}`, so `family.parent` refuses it everywhere above
+// and `family.student` pins it to the one child it names. A six-year-old cannot
+// be issued a password — Contact::getAuthPassword() says so — and this is how
+// they get a session anyway without one.
+//
+// Deliberately TWO routes. Everything else a student might eventually see
+// (their own points, their own hifz) is a later slice with its own standing
+// computation; what is here is the narrowest thing that lets a child choose how
+// they are represented.
+Route::prefix('family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student')
+    ->whereNumber(['masjid_id', 'group_id', 'membership_id'])
+    ->middleware(['auth:family', 'family.active', 'family.student', 'family.tenant', 'crm', 'throttle:family'])
+    ->controller(StudentSessionController::class)
+    ->group(function () {
+        Route::get('/me', 'show');
+        Route::put('/avatar', 'updateAvatar');
+    });
+
 // ------------------------------------------------------------ the portal
 
 Route::prefix('family')
-    ->middleware(['auth:family', 'family.active', 'family.tenant', 'crm', 'throttle:family'])
+    ->middleware(['auth:family', 'family.active', 'family.parent', 'family.tenant', 'crm', 'throttle:family'])
     ->group(function () {
 
         // Every family route is addressed per-organisation, matching the admin
@@ -159,6 +182,10 @@ Route::prefix('family')
                 // student login, so this is as close as the platform gets to the
                 // student picking their own face. Authorised by the ward edge.
                 Route::put('/avatar', [GroupsController::class, 'updateAvatar']);
+
+                // Hand the device to the child. Mints a token scoped to THIS
+                // child and nothing else — see StudentSessionController.
+                Route::post('/student-session', [StudentSessionController::class, 'store']);
 
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);

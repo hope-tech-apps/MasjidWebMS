@@ -141,6 +141,41 @@ abstract class FamilyController extends Controller
      *
      * @return array<string,mixed>
      */
+    /**
+     * The rows this parent's credential speaks through in `$group` — the ONE
+     * definition, borrowed rather than re-stated. @see GroupAudience::membershipsFor
+     *
+     * Lives on the BASE because two controllers now decide from it: the portal,
+     * for what a parent may open, and the student hand-off, for whose device a
+     * parent may pass over. Two copies would be two answers to "is this your
+     * child", and the second one to drift would be the one minting a session.
+     *
+     * @return \Illuminate\Support\Collection<int,GroupMembership>
+     */
+    protected function standingRows(Group $group): \Illuminate\Support\Collection
+    {
+        return $this->audience->membershipsFor($this->contact(), $group);
+    }
+
+    /**
+     * The contact ids of the children this parent is a guardian OF in `$group`.
+     *
+     * The single question "is this my child?", asked by the avatar write and the
+     * hand-off alike.
+     *
+     * @return array<int,int>
+     */
+    protected function wardContactIds(Group $group): array
+    {
+        return $this->standingRows($group)
+            ->filter(fn (GroupMembership $m): bool => $m->isGuardian())
+            ->pluck('guardian_of_contact_id')
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->values()
+            ->all();
+    }
+
     protected function student(GroupMembership $membership): array
     {
         $contact = $membership->contact;

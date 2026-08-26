@@ -119,12 +119,7 @@ class GroupsController extends FamilyController
     {
         $group = $this->group($group_id);
 
-        $wardContactIds = $this->standingRows($group)
-            ->filter(fn (GroupMembership $m): bool => $m->isGuardian())
-            ->pluck('guardian_of_contact_id')
-            ->filter()
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+        $wardContactIds = $this->wardContactIds($group);
 
         $membership = $group->memberships()->participants()->findOrFail($membership_id);
 
@@ -138,6 +133,9 @@ class GroupsController extends FamilyController
             abort(Response::HTTP_NOT_FOUND, 'That student has no contact record.');
         }
 
+        // The CHILD'S OWN choice — never the staff override. A parent choosing
+        // with their child is the child choosing; it must not silently clear a
+        // teacher's override, and a teacher's override must not stop them.
         $contact->fill([
             'avatar_character' => $request->input('character') ?: null,
             'avatar_tone' => $request->input('tone') ?: null,
@@ -185,17 +183,6 @@ class GroupsController extends FamilyController
     private function hasStanding(Group $group): bool
     {
         return $this->standingRows($group)->isNotEmpty();
-    }
-
-    /**
-     * The rows this parent's credential speaks through in `$group` — the ONE
-     * definition, borrowed rather than re-stated. @see GroupAudience::membershipsFor
-     *
-     * @return \Illuminate\Support\Collection<int,GroupMembership>
-     */
-    private function standingRows(Group $group): \Illuminate\Support\Collection
-    {
-        return $this->audience->membershipsFor($this->contact(), $group);
     }
 
     /**

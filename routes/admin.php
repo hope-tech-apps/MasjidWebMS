@@ -604,6 +604,9 @@ Route::prefix('admin')->group(function () {
                     ->middleware('permission:view contacts');
                 Route::put('{masjid_id}/contacts/{contact_id}/avatar', [ContactAvatarController::class, 'update'])
                     ->middleware('permission:manage contacts');
+                // "Restore the student's own" — drops the staff override.
+                Route::delete('{masjid_id}/contacts/{contact_id}/avatar/override', [ContactAvatarController::class, 'destroyOverride'])
+                    ->middleware('permission:manage contacts');
 
                 Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');

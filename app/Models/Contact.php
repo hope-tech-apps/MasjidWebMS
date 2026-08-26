@@ -150,6 +150,11 @@ class Contact extends Model implements AuthenticatableContract
         'avatar_character',
         'avatar_tone',
         'avatar_color',
+        // A STAFF override, laid on top of the child's own choice rather
+        // than replacing it. Clearing these restores what the child picked.
+        'staff_avatar_character',
+        'staff_avatar_tone',
+        'staff_avatar_color',
     ];
 
     protected function casts(): array
@@ -263,6 +268,41 @@ class Contact extends Model implements AuthenticatableContract
     }
 
     /**
+     * A HAND-OFF token: the parent passes the device to their child.
+     *
+     * ClassDojo's youngest students sign in "from your parent's account", which
+     * is the only way a six-year-old with no email gets an account of their own.
+     * This is that, made into a real boundary rather than a screen the child is
+     * asked not to leave.
+     *
+     * The token is minted from the PARENT's contact — the server authenticated
+     * them, not the child — but it carries ONLY `student:{membership}`. It
+     * therefore fails `family` on every ordinary family route, so a child
+     * holding the phone cannot open the parent's messages, another child's
+     * record, or the class feed. The abilities constant was written to be inert
+     * "so that a later slice can add abilities: enforcement to a route without a
+     * flag day"; this is that slice.
+     *
+     * Short-lived on purpose. Sanctum enforces the global expiry against
+     * `created_at`, and a per-token `expires_at` can only SHORTEN a life, never
+     * extend it — so this is safe to set without touching how anyone else's
+     * session ages.
+     */
+    public function createStudentHandoffToken(int $membershipId, int $minutes = 60): NewAccessToken
+    {
+        return $this->createToken(
+            'student-handoff',
+            [self::studentAbility($membershipId)],
+            now()->addMinutes($minutes)
+        );
+    }
+
+    public static function studentAbility(int $membershipId): string
+    {
+        return 'student:'.$membershipId;
+    }
+
+    /**
      * Contacts have NO password column and no password-based guard, by design —
      * 200 families cannot be issued passwords and a school office cannot run a
      * reset desk (§1). Credentials are the mailbox, via the codes T-015d adds.
@@ -346,7 +386,8 @@ class Contact extends Model implements AuthenticatableContract
      * call sites append it, rather than twelve places each remembering three
      * column names.
      */
-    public const AVATAR_COLUMNS = 'avatar_character,avatar_tone,avatar_color';
+    public const AVATAR_COLUMNS = 'avatar_character,avatar_tone,avatar_color,'
+        .'staff_avatar_character,staff_avatar_tone,staff_avatar_color';
 
     /**
      * Serialized on every contact payload, so a face shows up wherever a person
@@ -355,29 +396,66 @@ class Contact extends Model implements AuthenticatableContract
      */
     protected $appends = ['avatar'];
 
+    /**
+     * What to DRAW for this person, and where it came from.
+     *
+     * A staff override wins when present — a teacher setting a recognisable
+     * avatar for a roster is doing it for a reason. `source` says which is
+     * showing, and `student_choice` carries the child's own even while
+     * overridden, so a client can offer "restore" without a second request.
+     */
     public function getAvatarAttribute(): ?array
     {
-        $url = $this->avatarUrl();
+        $staff = $this->staffAvatarParts();
+        $own = $this->studentAvatarParts();
+        $effective = $staff ?? $own;
+
+        if ($effective === null) {
+            return null;
+        }
+
+        return $effective + [
+            'source' => $staff !== null ? 'staff' : 'student',
+            'student_choice' => $staff !== null ? $own : null,
+        ];
+    }
+
+    /** The child's own choice, whether or not it is currently showing. */
+    public function studentAvatarParts(): ?array
+    {
+        return $this->avatarParts($this->avatar_character, $this->avatar_tone, $this->avatar_color);
+    }
+
+    public function staffAvatarParts(): ?array
+    {
+        return $this->avatarParts(
+            $this->staff_avatar_character,
+            $this->staff_avatar_tone,
+            $this->staff_avatar_color
+        );
+    }
+
+    public function hasStaffAvatarOverride(): bool
+    {
+        return $this->staffAvatarParts() !== null;
+    }
+
+    private function avatarParts(?string $character, ?string $tone, ?string $color): ?array
+    {
+        $url = \App\Support\Avatar::imageUrl($character, $tone, $color);
 
         if ($url === null) {
             return null;
         }
 
-        return [
-            'character' => $this->avatar_character,
-            'tone' => $this->avatar_tone,
-            'color' => $this->avatar_color,
-            'url' => $url,
-        ];
+        return ['character' => $character, 'tone' => $tone, 'color' => $color, 'url' => $url];
     }
 
     public function avatarUrl(): ?string
     {
-        return \App\Support\Avatar::imageUrl(
-            $this->avatar_character,
-            $this->avatar_tone,
-            $this->avatar_color
-        );
+        $effective = $this->staffAvatarParts() ?? $this->studentAvatarParts();
+
+        return $effective['url'] ?? null;
     }
 
 }
