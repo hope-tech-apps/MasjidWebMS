@@ -144,6 +144,12 @@ class Contact extends Model implements AuthenticatableContract
         'sms_consent_source',
         'sms_consent_evidence',
         'sms_opted_out_at',
+        // The chosen avatar: a character, a skin tone and a hijab/kufi
+        // colour. Three strings naming one of forty drawings the app ships,
+        // never an upload — see App\Support\Avatar.
+        'avatar_character',
+        'avatar_tone',
+        'avatar_color',
     ];
 
     protected function casts(): array
@@ -324,4 +330,19 @@ class Contact extends Model implements AuthenticatableContract
     {
         return $this->hasMany(ContactCredential::class);
     }
+
+    /**
+     * The URL of this person's chosen avatar, or null when they have not chosen
+     * one. Null is a real answer — the client draws initials — and is preferred
+     * over a default image, which would show a child somebody else's face.
+     */
+    public function avatarUrl(): ?string
+    {
+        return \App\Support\Avatar::imageUrl(
+            $this->avatar_character,
+            $this->avatar_tone,
+            $this->avatar_color
+        );
+    }
+
 }

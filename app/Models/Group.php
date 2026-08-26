@@ -60,6 +60,10 @@ class Group extends Model
         'is_active',
         'starts_on',
         'ends_on',
+        // How far through the qāʿidah this CLASS is working. The stage is a
+        // property of the room, not of thirty children who would each have
+        // to carry a number that agrees with it. Null = the first stage.
+        'arabic_stage',
     ];
 
     protected $attributes = [
@@ -188,4 +192,16 @@ class Group extends Model
     {
         return $query->where('kind', $kind);
     }
+
+    public function arabicLetterProgress(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ArabicLetterProgress::class);
+    }
+
+    /** Never null: a group with no stage set is on the first one. */
+    public function arabicStage(): string
+    {
+        return \App\Support\Arabic\ArabicCurriculum::normaliseStage($this->arabic_stage);
+    }
+
 }
