@@ -68,9 +68,10 @@ use Illuminate\Support\Facades\Route;
 | ============================ THE REALM IS READ-ONLY =======================
 |
 | Almost read-only, and the exceptions are counted. The two sign-in POSTs write
-| a `contact_login_codes` row; T-015f adds ONE more — a reply in a thread the
-| parent may already read, which also moves their own read bookmark. Everything
-| else here is a GET. A parent cannot START a thread (that would route around
+| a `contact_login_codes` row; T-015f adds a reply in a thread the parent may
+| already read (which also moves their own read bookmark); and a parent may set
+| the AVATAR of a child they are the guardian of, because this platform has no
+| student login and somebody has to choose it with them. Everything else is a GET. A parent cannot START a thread (that would route around
 | the teacher who decides what is discussed and where), and withdrawing their
 | own consent is still T-015h — absent rather than half-built.
 */
@@ -114,6 +115,9 @@ Route::prefix('family')
 
             Route::get('/me', [MeController::class, 'show']);
 
+            // The forty drawings a family can choose from.
+            Route::get('/avatars', [GroupsController::class, 'avatarCatalogue']);
+
             // The entry point: which groups this parent stands in, and which
             // children they hold in each. Every route below is addressed with
             // ids discovered here.
@@ -151,6 +155,11 @@ Route::prefix('family')
             // either: a class-wide view of points or of who has memorised most
             // is the ranking these modules exist to refuse.
             Route::prefix('groups/{group_id}/members/{membership_id}')->group(function () {
+                // A parent choosing their OWN child's avatar. Manara has no
+                // student login, so this is as close as the platform gets to the
+                // student picking their own face. Authorised by the ward edge.
+                Route::put('/avatar', [GroupsController::class, 'updateAvatar']);
+
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);

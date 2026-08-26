@@ -98,6 +98,18 @@
                     <tbody>
                         <tr v-for="membership in participants" :key="membership.id">
                             <td class="fw-semibold">
+                                <!-- The student's own face, so a roster reads as
+                                     thirty children rather than thirty rows. -->
+                                <button type="button"
+                                        class="btn btn-link p-0 align-middle me-2"
+                                        :title="`Choose an avatar for ${fullName(membership.contact)}`"
+                                        @click="openAvatarPicker(membership)">
+                                    <PersonAvatar
+                                        :avatar="membership.contact?.avatar"
+                                        :first-name="membership.contact?.first_name"
+                                        :last-name="membership.contact?.last_name"
+                                        :size="34" />
+                                </button>
                                 {{ fullName(membership.contact) }}
                                 <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
                                     Unconfirmed
@@ -338,12 +350,38 @@
             </div>
         </Teleport>
     </div>
-</template>
+
+        <!-- Choosing a student's avatar -->
+        <Teleport to="body">
+            <div v-if="avatarFor" class="modal fade show d-block" tabindex="-1"
+                 style="background:rgba(0,0,0,.5)" @click.self="avatarFor = null">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Avatar</h5>
+                            <button type="button" class="btn-close" @click="avatarFor = null"></button>
+                        </div>
+                        <div class="modal-body">
+                            <AvatarPicker
+                                :masjid-id="masjidId"
+                                :contact-id="avatarFor.contact?.id"
+                                :avatar="avatarFor.contact?.avatar"
+                                :first-name="avatarFor.contact?.first_name"
+                                :last-name="avatarFor.contact?.last_name"
+                                @saved="onAvatarSaved" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+    </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { AxiosResponse } from 'axios';
 import ApiService from '@/core/services/ApiService';
+import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Contact } from '@/core/types/data/masjid-related/Contact';
 import { GroupContact, GroupMembership, GroupMembershipPayload, GroupRole } from '@/core/types/data/masjid-related/Group';
@@ -399,6 +437,29 @@ const props = defineProps<{
     loading: boolean;
     loadError: string;
 }>();
+
+/** The student whose avatar is being chosen, or null when the picker is shut. */
+const avatarFor = ref<any>(null);
+
+const masjidId = computed(() => masjidStore.masjid?.id ?? 0);
+
+const openAvatarPicker = (membership: any) => { avatarFor.value = membership; };
+
+/**
+ * Write the saved avatar back onto the row in place. Re-fetching the whole
+ * roster would lose the office's scroll position and any pending-claim banner
+ * state for the sake of one image.
+ */
+const onAvatarSaved = (contact: any) => {
+    if (avatarFor.value?.contact && contact) {
+        avatarFor.value.contact.avatar = contact.avatar ?? null;
+        avatarFor.value.contact.avatar_character = contact.avatar_character ?? null;
+        avatarFor.value.contact.avatar_tone = contact.avatar_tone ?? null;
+        avatarFor.value.contact.avatar_color = contact.avatar_color ?? null;
+    }
+    avatarFor.value = null;
+};
+
 
 const emit = defineEmits<{ (event: 'changed'): void; (event: 'reload'): void }>();
 

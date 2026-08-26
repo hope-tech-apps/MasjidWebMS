@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\StoreHifzEntryRequest;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\HifzEntry;
@@ -377,7 +378,7 @@ class HifzEntriesController extends Controller
     private function readEagerLoads(): array
     {
         return [
-            'membership.contact:id,first_name,last_name',
+            'membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS,
             'heardBy:id,name',
         ];
     }
@@ -435,6 +436,9 @@ class HifzEntriesController extends Controller
                 'id' => $contact->id,
                 'first_name' => $contact->first_name,
                 'last_name' => $contact->last_name,
+                // The child's own face. Null when unchosen — the client draws
+                // initials rather than showing somebody else's avatar.
+                'avatar' => $contact->avatar,
             ] : null,
         ];
     }

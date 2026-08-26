@@ -5,6 +5,7 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\StoreGroupMessageRequest;
 use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
@@ -82,7 +83,7 @@ class GroupThreadsController extends Controller
         }
 
         $threads = $query
-            ->with(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name'])
+            ->with(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS])
             ->withCount('messages')
             ->withMax('messages as latest_message_at', 'created_at')
             ->when($scope !== null, fn ($q) => $q->where('scope', $scope))
@@ -381,7 +382,7 @@ class GroupThreadsController extends Controller
      */
     private function withListAggregates(GroupThread $thread): GroupThread
     {
-        $thread->loadMissing(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name']);
+        $thread->loadMissing(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS]);
 
         $thread->setAttribute('messages_count', $thread->messages()->count());
         $thread->setAttribute('latest_message_at', $thread->messages()->max('created_at'));

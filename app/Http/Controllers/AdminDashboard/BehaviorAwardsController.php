@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\StoreBehaviorAwardRequest;
+use App\Models\Contact;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
 use App\Models\Group;
@@ -402,7 +403,7 @@ class BehaviorAwardsController extends Controller
     private function readEagerLoads(): array
     {
         return [
-            'membership.contact:id,first_name,last_name',
+            'membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS,
             'awardedBy:id,name',
         ];
     }
@@ -456,6 +457,9 @@ class BehaviorAwardsController extends Controller
                 'id' => $contact->id,
                 'first_name' => $contact->first_name,
                 'last_name' => $contact->last_name,
+                // The child's own face. Null when unchosen — the client draws
+                // initials rather than showing somebody else's avatar.
+                'avatar' => $contact->avatar,
             ] : null,
         ];
     }

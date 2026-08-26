@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Models\Contact;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
 use App\Models\Group;
@@ -57,7 +58,7 @@ class BehaviorAwardsController extends FamilyController
         $awards = $this->readable($group)
             ->where('group_membership_id', $membership->id)
             ->awardedBetween($request->query('from'), $request->query('to'))
-            ->with(['membership.contact:id,first_name,last_name', 'awardedBy:id,name'])
+            ->with(['membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS, 'awardedBy:id,name'])
             ->orderByDesc('awarded_at')
             ->orderByDesc('id')
             ->paginate($this->perPage($request, 25))

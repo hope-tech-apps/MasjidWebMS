@@ -4,6 +4,7 @@ use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AppointmentRequestsController;
 use App\Http\Controllers\AdminDashboard\AssistantController;
 use App\Http\Controllers\AdminDashboard\AuthController;
+use App\Http\Controllers\AdminDashboard\ContactAvatarController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
 use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
@@ -595,6 +596,15 @@ Route::prefix('admin')->group(function () {
                 // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin,
                 // which this additive slice must not do. Splitting the two is a
                 // deliberate later step. See .claude/rules/groups.md.
+                // A person's avatar — one of the forty drawings the app ships,
+                // chosen rather than uploaded. `view contacts` to read the
+                // catalogue, `manage contacts` to set somebody's, mirroring the
+                // directory it is an attribute of.
+                Route::get('{masjid_id}/avatars', [ContactAvatarController::class, 'catalogue'])
+                    ->middleware('permission:view contacts');
+                Route::put('{masjid_id}/contacts/{contact_id}/avatar', [ContactAvatarController::class, 'update'])
+                    ->middleware('permission:manage contacts');
+
                 Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');

@@ -419,6 +419,84 @@ class FamilyPortalTest extends TestCase
         ]);
     }
 
+    // ------------------------------------------- 0b. a child's own avatar
+
+    #[Test]
+    public function a_parent_can_choose_an_avatar_for_their_own_child(): void
+    {
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => 'ameera', 'tone' => 'tone3', 'color' => 'pink',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.contact.avatar.character', 'ameera')
+            ->assertJsonPath('data.contact.avatar.tone', 'tone3');
+
+        $this->assertSame('ameera', $this->childA->fresh()->avatar_character);
+        $this->assertStringContainsString(
+            'ameera_tone3_pink.webp',
+            $this->childA->fresh()->avatarUrl()
+        );
+    }
+
+    #[Test]
+    public function a_parent_cannot_dress_another_familys_child(): void
+    {
+        // The ward edge is the authorisation, so a classmate is refused even
+        // though both children sit in the same group.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childBMembership->id}/avatar"), [
+                'character' => 'ameer', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($this->childB->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function two_thirds_of_an_avatar_is_refused(): void
+    {
+        // A character with no tone names no drawing; storing it would leave the
+        // child with a permanently blank face and nothing reporting it wrong.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => 'ameera', 'tone' => null, 'color' => null,
+            ])
+            ->assertStatus(422);
+
+        $this->assertNull($this->childA->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function clearing_all_three_returns_the_child_to_initials(): void
+    {
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone1', 'avatar_color' => 'black',
+        ])->save();
+
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => null, 'tone' => null, 'color' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.contact.avatar', null);
+
+        $this->assertNull($this->childA->fresh()->avatarUrl());
+    }
+
+    #[Test]
+    public function a_childs_avatar_reaches_the_parent_on_the_group_payload(): void
+    {
+        // The whole point: a face wherever the child appears.
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone2', 'avatar_color' => 'green',
+        ])->save();
+
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.children.0.contact.avatar.color', 'green');
+    }
+
     // ------------------------------------------------- 1. the parent sees THEIR group
 
     #[Test]
@@ -851,7 +929,7 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function the_family_realm_writes_exactly_three_things(): void
+    public function the_family_realm_writes_exactly_four_things(): void
     {
         // This used to assert the realm accepted NO write verb at all, because
         // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
@@ -882,6 +960,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
         ], $writes);
     }
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Family;
 
 use App\Http\Requests\Family\StoreFamilyMessageRequest;
+use App\Models\Contact;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
@@ -68,7 +69,7 @@ class GroupThreadsController extends FamilyController
         }
 
         $threads = $query
-            ->with(['aboutMembership.contact:id,first_name,last_name'])
+            ->with(['aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS])
             ->withCount('messages')
             ->withMax('messages as latest_message_at', 'created_at')
             ->orderByDesc('updated_at')
@@ -138,7 +139,7 @@ class GroupThreadsController extends FamilyController
 
     private function withAggregates(GroupThread $thread): GroupThread
     {
-        $thread->loadMissing(['aboutMembership.contact:id,first_name,last_name']);
+        $thread->loadMissing(['aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS]);
 
         $thread->setAttribute('messages_count', $thread->messages()->count());
         $thread->setAttribute('latest_message_at', $thread->messages()->max('created_at'));

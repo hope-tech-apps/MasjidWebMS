@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Http\Requests\Admin\Contacts\SetAvatarRequest;
+use App\Support\Avatar;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
@@ -92,6 +95,71 @@ class GroupsController extends FamilyController
         ], Response::HTTP_OK);
     }
 
+    /**
+     * PUT .../groups/{group_id}/members/{membership_id}/avatar
+     *
+     * A parent choosing the avatar for their OWN child.
+     *
+     * Manara has no student login — a child cannot sign in to pick a face for
+     * themselves — so the guardian does it with them. That is the closest this
+     * platform gets to "the student's own avatar", and it is why this is the
+     * second write in the family realm.
+     *
+     * AUTHORISED BY THE WARD EDGE, not by consent. `standingRows()` is the same
+     * narrowed set every read here resolves through, and the membership must
+     * name a contact this parent is the guardian OF. A parent may therefore
+     * dress their own child and nobody else's — not a classmate, not another
+     * family's child, and not themselves.
+     *
+     * Consent is deliberately NOT consulted: choosing a cartoon is not a
+     * disclosure of anything, and gating it on media consent would leave a
+     * child who cannot be photographed also unable to have a drawing.
+     */
+    public function updateAvatar(SetAvatarRequest $request, $masjid_id, $group_id, $membership_id)
+    {
+        $group = $this->group($group_id);
+
+        $wardContactIds = $this->standingRows($group)
+            ->filter(fn (GroupMembership $m): bool => $m->isGuardian())
+            ->pluck('guardian_of_contact_id')
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        $membership = $group->memberships()->participants()->findOrFail($membership_id);
+
+        if (! in_array((int) $membership->contact_id, $wardContactIds, true)) {
+            abort(Response::HTTP_FORBIDDEN, 'That is not your child.');
+        }
+
+        $contact = $membership->contact;
+
+        if ($contact === null) {
+            abort(Response::HTTP_NOT_FOUND, 'That student has no contact record.');
+        }
+
+        $contact->fill([
+            'avatar_character' => $request->input('character') ?: null,
+            'avatar_tone' => $request->input('tone') ?: null,
+            'avatar_color' => $request->input('color') ?: null,
+        ])->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->student($membership->fresh('contact')),
+            'meta' => $this->meta(),
+        ], Response::HTTP_OK);
+    }
+
+    /** The catalogue a picker renders, same source the staff surface uses. */
+    public function avatarCatalogue()
+    {
+        return response()->json([
+            'status' => 'success',
+            'data' => Avatar::catalogue(),
+        ], Response::HTTP_OK);
+    }
+
     // ------------------------------------------------------------- internals
 
     /**
@@ -169,7 +237,7 @@ class GroupsController extends FamilyController
             : $group->memberships()
                 ->participants()
                 ->whereIn('contact_id', $wardContactIds)
-                ->with('contact:id,first_name,last_name')
+                ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
                 ->get();
 
         $ownParticipant = $mine->first(

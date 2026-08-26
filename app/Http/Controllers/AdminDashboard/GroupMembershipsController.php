@@ -86,7 +86,7 @@ class GroupMembershipsController extends Controller
      * under one name.
      */
     private const PERSON_COLUMNS = [
-        'contact:id,first_name,last_name,email,phone',
+        'contact:id,first_name,last_name,email,phone,'.Contact::AVATAR_COLUMNS,
         'guardianOf:id,first_name,last_name,email',
         'confirmedBy:id,name',
     ];
@@ -140,7 +140,7 @@ class GroupMembershipsController extends Controller
                 ...self::PERSON_COLUMNS,
                 // The claim's EVIDENCE, which only the listing renders.
                 'sourceRegistration:id,offering_id,contact_id',
-                'sourceRegistration.contact:id,first_name,last_name,email',
+                'sourceRegistration.contact:id,first_name,last_name,email,'.Contact::AVATAR_COLUMNS,
             ])
             ->orderBy('role')
             ->orderBy('id')
@@ -417,9 +417,9 @@ class GroupMembershipsController extends Controller
         // is a check that passes by accident.
         $roster = $group->memberships()
             ->with([
-                'contact:id,first_name,last_name,email,phone',
+                'contact:id,first_name,last_name,email,phone,'.Contact::AVATAR_COLUMNS,
                 'sourceRegistration:id,offering_id,contact_id',
-                'sourceRegistration.contact:id,first_name,last_name,email',
+                'sourceRegistration.contact:id,first_name,last_name,email,'.Contact::AVATAR_COLUMNS,
             ])
             ->orderBy('id')
             ->get();
@@ -601,7 +601,7 @@ class GroupMembershipsController extends Controller
 
         $roster = $group->memberships()
             ->where('guardian_of_contact_id', $membership->guardian_of_contact_id)
-            ->with('contact:id,first_name,last_name,email,phone')
+            ->with('contact:id,first_name,last_name,email,phone,'.Contact::AVATAR_COLUMNS)
             ->get();
 
         return count(RosterClaimIdentity::rivalClaimIds(

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\HifzEntry;
 use App\Support\HifzProgress;
@@ -64,7 +65,7 @@ class HifzEntriesController extends FamilyController
                 is_string($request->query('kind')) && $request->query('kind') !== '',
                 fn (Builder $q) => $q->ofKind((string) $request->query('kind'))
             )
-            ->with(['membership.contact:id,first_name,last_name', 'heardBy:id,name'])
+            ->with(['membership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS, 'heardBy:id,name'])
             ->orderByDesc('recited_at')
             ->orderByDesc('id')
             ->paginate($this->perPage($request, 25))

@@ -336,6 +336,41 @@ class Contact extends Model implements AuthenticatableContract
      * one. Null is a real answer — the client draws initials — and is preferred
      * over a default image, which would show a child somebody else's face.
      */
+    /**
+     * The avatar columns, as an eager-load column list.
+     *
+     * Every `with('contact:id,first_name,...')` in this application must include
+     * these or the appended `avatar` silently resolves to null — the accessor
+     * reads columns the query never selected, and nothing errors. There were
+     * twelve such lists when avatars were added, so the set lives HERE and the
+     * call sites append it, rather than twelve places each remembering three
+     * column names.
+     */
+    public const AVATAR_COLUMNS = 'avatar_character,avatar_tone,avatar_color';
+
+    /**
+     * Serialized on every contact payload, so a face shows up wherever a person
+     * does without each controller opting in. Null when unchosen — the client
+     * draws initials.
+     */
+    protected $appends = ['avatar'];
+
+    public function getAvatarAttribute(): ?array
+    {
+        $url = $this->avatarUrl();
+
+        if ($url === null) {
+            return null;
+        }
+
+        return [
+            'character' => $this->avatar_character,
+            'tone' => $this->avatar_tone,
+            'color' => $this->avatar_color,
+            'url' => $url,
+        ];
+    }
+
     public function avatarUrl(): ?string
     {
         return \App\Support\Avatar::imageUrl(

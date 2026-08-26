@@ -151,6 +151,9 @@ abstract class FamilyController extends Controller
                 'id' => (int) $contact->id,
                 'first_name' => $contact->first_name,
                 'last_name' => $contact->last_name,
+                // The child's own face. Null when unchosen — the client draws
+                // initials rather than showing somebody else's avatar.
+                'avatar' => $contact->avatar,
             ] : null,
         ];
     }
