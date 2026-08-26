@@ -69,7 +69,10 @@
                         <div class="card-body py-3">
                             <div class="d-flex justify-content-between align-items-start gap-2">
                                 <div>
-                                    <div class="fw-semibold small">{{ thread.subject || 'Message' }}</div>
+                                    <div class="fw-semibold small">
+                                        {{ thread.subject || 'Message' }}
+                                        <span v-if="thread.unread" class="badge bg-success ms-1">New</span>
+                                    </div>
                                     <div class="text-muted small">
                                         <span v-if="thread.about">About {{ thread.about.name || childName(thread.about) }} · </span>
                                         {{ thread.message_count }} message{{ thread.message_count === 1 ? '' : 's' }}
@@ -88,13 +91,33 @@
                         <button class="btn-close" @click="openedThread = null"></button>
                     </div>
                     <div class="card-body d-flex flex-column gap-3">
-                        <div v-for="m in openedMessages" :key="m.id">
-                            <div class="text-muted small">{{ m.author?.name || 'The school' }} · {{ when(m.created_at) }}</div>
-                            <div style="white-space: pre-wrap;">{{ m.body }}</div>
+                        <div v-for="m in openedMessages" :key="m.id"
+                             :class="m.is_mine ? 'align-self-end text-end' : ''" style="max-width: 85%;">
+                            <div class="text-muted small">
+                                {{ m.is_mine ? 'You' : (m.author?.name || 'The school') }} · {{ when(m.created_at) }}
+                            </div>
+                            <div class="rounded px-3 py-2 d-inline-block text-start"
+                                 :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
+                                 style="white-space: pre-wrap;">{{ m.body }}</div>
                         </div>
                     </div>
-                    <div class="card-footer bg-white text-muted small">
-                        Replying from the portal is coming soon. For now, contact the school office directly.
+
+                    <div class="card-footer bg-white">
+                        <div v-if="openedThread.is_closed" class="text-muted small">
+                            The school has closed this conversation.
+                        </div>
+                        <template v-else>
+                            <div v-if="replyError" class="alert alert-danger small py-2">{{ replyError }}</div>
+                            <div class="d-flex gap-2 align-items-end">
+                                <textarea v-model="replyBody" class="form-control" rows="2"
+                                          placeholder="Write a reply…" @keydown.ctrl.enter="sendReply"></textarea>
+                                <button class="btn btn-success" :disabled="!replyBody.trim() || sendingReply"
+                                        @click="sendReply">
+                                    <span v-if="sendingReply" class="spinner-border spinner-border-sm"></span>
+                                    <span v-else>Send</span>
+                                </button>
+                            </div>
+                        </template>
                     </div>
                 </div>
             </section>
@@ -187,10 +210,45 @@ const fail = (e: any) => {
     return false;
 };
 
+const replyBody = ref('');
+const sendingReply = ref(false);
+const replyError = ref('');
+
+const sendReply = async () => {
+    const body = replyBody.value.trim();
+    if (!body || !openedThread.value) return;
+
+    sendingReply.value = true;
+    replyError.value = '';
+    try {
+        const res = await FamilyApiService.post(
+            `${base.value}/threads/${openedThread.value.id}/messages`,
+            { body }
+        );
+        // Append the server's own copy rather than echoing the draft, so what
+        // is on screen is what was actually stored.
+        openedMessages.value.push(res.data?.data);
+        replyBody.value = '';
+
+        // The thread list's counts and unread flag are now stale.
+        const t = await FamilyApiService.get(`${base.value}/threads`);
+        threads.value = rowsOf(t.data?.data);
+    } catch (e: any) {
+        if (fail(e)) return;
+        replyError.value = e?.response?.data?.message
+            || e?.response?.data?.data?.body?.[0]
+            || 'Your reply could not be sent. Please try again.';
+    } finally {
+        sendingReply.value = false;
+    }
+};
+
 const openThread = async (thread: any) => {
     try {
         const res = await FamilyApiService.get(`${base.value}/threads/${thread.id}`);
         openedThread.value = res.data?.data?.thread ?? thread;
+        replyBody.value = '';
+        replyError.value = '';
         openedMessages.value = rowsOf(res.data?.data?.messages);
     } catch (e) {
         if (!fail(e)) error.value = 'That conversation could not be opened.';

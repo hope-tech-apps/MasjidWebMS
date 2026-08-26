@@ -16,6 +16,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -129,6 +130,24 @@ return Application::configure(basePath: dirname(__DIR__))
                         'status' => 'error',
                         'message' => 'Route not found.',
                     ], Response::HTTP_NOT_FOUND);
+                }
+
+                // A ValidationException raised OUTSIDE a FormRequest — from a
+                // service, or a bare $request->validate() in a controller.
+                // BaseFormRequest throws HttpResponseException and is handled
+                // above; this one is neither that nor HttpExceptionInterface, so
+                // without this branch it fell through to the generic 500 and the
+                // caller was told the platform broke when in fact THEY sent
+                // something invalid. Measured twice: an ambiguous donor name in
+                // DonationsController, and an empty parent reply. Rendered in the
+                // SAME {status:'failed', data:{field:[...]}} envelope
+                // BaseFormRequest uses, so a client cannot tell which door
+                // refused it.
+                if ($e instanceof ValidationException) {
+                    return response()->json([
+                        'status' => 'failed',
+                        'data' => $e->errors(),
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
                 }
 
                 // HTTP-aware exceptions (404, 403, 422 thrown manually, etc.) —

@@ -7,6 +7,7 @@ use App\Models\BehaviorSkill;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupMessage;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
@@ -17,6 +18,7 @@ use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -268,6 +270,153 @@ class FamilyPortalTest extends TestCase
         ]);
 
         return $thread;
+    }
+
+    // ------------------------------------------------- 0. the parent can REPLY (T-015f)
+
+    #[Test]
+    public function a_parent_can_reply_in_a_thread_about_their_own_child(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), [
+                'body' => 'Jazakum Allahu khayran — we will practise at home.',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.body', 'Jazakum Allahu khayran — we will practise at home.')
+            ->assertJsonPath('data.author_is_parent', true);
+
+        $message = GroupMessage::withoutMasjidScope()
+            ->where('group_thread_id', $thread->id)
+            ->latest('id')
+            ->first();
+
+        // The author is the AUTHENTICATED contact, and no staff account is
+        // implicated in something a parent said.
+        $this->assertSame($this->parentA->id, (int) $message->author_contact_id);
+        $this->assertNull($message->author_user_id);
+    }
+
+    #[Test]
+    public function the_author_comes_from_the_token_and_never_from_the_payload(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), [
+                'body' => 'Hello',
+                // A client claiming to be the other family, or a staff member.
+                'author_contact_id' => $this->parentB->id,
+                'author_user_id' => 1,
+            ])
+            ->assertCreated();
+
+        $message = GroupMessage::withoutMasjidScope()
+            ->where('group_thread_id', $thread->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertSame($this->parentA->id, (int) $message->author_contact_id,
+            'a client claimed authorship of another person\'s message');
+        $this->assertNull($message->author_user_id);
+    }
+
+    #[Test]
+    public function a_parent_cannot_reply_in_another_familys_thread(): void
+    {
+        // The sharpest line in the product: this is where a teacher and a
+        // guardian discuss a safeguarding concern about a different child.
+        $thread = $this->seedParticipantThread($this->childBMembership, 'Bilal');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => 'Who is this about?'])
+            ->assertForbidden();
+
+        $this->assertSame(1, GroupMessage::withoutMasjidScope()->where('group_thread_id', $thread->id)->count());
+    }
+
+    #[Test]
+    public function replying_is_refused_on_a_thread_the_school_has_closed(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+        $thread->forceFill(['closed_at' => now()])->save();
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => 'One more thing'])
+            ->assertStatus(422);
+    }
+
+    #[Test]
+    public function a_parent_cannot_start_a_conversation(): void
+    {
+        // Deliberately no route: a parent opening a thread about their own child
+        // would route around the teacher who decides what is discussed and where.
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl('/threads'), ['subject' => 'A new topic', 'scope' => 'participant'])
+            ->assertStatus(405);
+    }
+
+    #[Test]
+    public function an_empty_reply_is_refused(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => '   '])
+            ->assertStatus(422);
+    }
+
+    #[Test]
+    public function reading_a_thread_bookmarks_it_for_the_parent_and_not_for_any_staff_account(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $read = DB::table('group_thread_reads')->where('group_thread_id', $thread->id)->get();
+
+        $this->assertCount(1, $read);
+        $this->assertSame($this->parentA->id, (int) $read->first()->contact_id);
+        $this->assertNull($read->first()->user_id,
+            'a parent\'s read was written into the staff column');
+    }
+
+    #[Test]
+    public function two_parents_reading_one_thread_do_not_collide(): void
+    {
+        // The (thread, user) unique key used to make this impossible, which is
+        // why user_id could not simply be reused for parents.
+        $thread = GroupThread::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'scope' => GroupThread::SCOPE_GROUP,
+            'subject' => 'Field trip',
+        ]);
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'Slips due Friday']);
+
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+        $this->consent($this->parentB, GroupMembership::CONSENT_FEED);
+
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+        $this->as($this->parentB)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $this->assertSame(2, DB::table('group_thread_reads')->where('group_thread_id', $thread->id)->count());
+    }
+
+    #[Test]
+    public function a_message_cannot_have_two_authors(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->expectException(\LogicException::class);
+
+        $thread->messages()->create([
+            'masjid_id' => $this->masjid->id,
+            'author_user_id' => 1,
+            'author_contact_id' => $this->parentA->id,
+            'body' => 'Who wrote this?',
+        ]);
     }
 
     // ------------------------------------------------- 1. the parent sees THEIR group
@@ -702,12 +851,15 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function no_family_route_accepts_a_write_verb(): void
+    public function the_family_realm_writes_exactly_three_things(): void
     {
-        // T-015f (parents replying) and T-015h (self-service consent withdrawal)
-        // are deliberately not built. This asserts they were not half-built: the
-        // only non-GET routes in the realm are the two sign-in endpoints, which
-        // write a `contact_login_codes` row and nothing else.
+        // This used to assert the realm accepted NO write verb at all, because
+        // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
+        // so the guarantee is restated rather than dropped: the realm's writes
+        // are COUNTED, and adding a fourth has to be a deliberate edit here.
+        // T-015h (self-service consent withdrawal) is still absent — a parent
+        // cannot start a thread, cannot change a roster, cannot withdraw consent
+        // without the office.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -724,9 +876,12 @@ class FamilyPortalTest extends TestCase
             }
         }
 
+        sort($writes);
+
         $this->assertSame([
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
         ], $writes);
     }
 
@@ -810,22 +965,60 @@ class FamilyPortalTest extends TestCase
     }
 
     #[Test]
-    public function the_thread_payload_carries_no_unread_bookmark(): void
+    public function unread_is_computed_from_the_parents_own_bookmark(): void
     {
-        // `group_thread_reads.user_id` is NOT NULL and points at `users`, so this
-        // slice cannot write a parent's bookmark and does not serve an `unread`
-        // flag it could not compute honestly. T-015f replaces that column pair
-        // with a dual-principal one; a permanently-false `unread` in the
-        // meantime would have been worse than none.
+        // This used to assert the OPPOSITE — that no bookmark existed and no
+        // `unread` was served — because `group_thread_reads.user_id` was NOT
+        // NULL against `users` and there was no column a Contact could be
+        // written into. T-015f added one, so the flag can now be computed
+        // honestly instead of being withheld.
         $thread = $this->seedParticipantThread($this->childAMembership, 'About Amina');
 
-        $response = $this->as($this->parentA)
-            ->getJson($this->groupUrl("/threads/{$thread->id}"))
-            ->assertOk();
+        // Never opened: there is a message and no bookmark, so it is news.
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', true)
+            ->assertJsonPath('data.data.0.last_read_at', null);
 
-        $response->assertJsonMissingPath('data.thread.unread');
-        $response->assertJsonMissingPath('data.thread.last_read_at');
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
 
-        $this->assertDatabaseCount('group_thread_reads', 0);
+        // Opened: nothing has been said since.
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', false);
+
+        // The teacher says something new — it is news again. Time has to move:
+        // a message written in the same second as the bookmark is not "after"
+        // it, and the whole test would otherwise pass or fail on clock luck.
+        $this->travel(1)->minutes();
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'One more thing']);
+
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', true);
+    }
+
+    #[Test]
+    public function one_parents_bookmark_is_not_another_parents(): void
+    {
+        $thread = GroupThread::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'scope' => GroupThread::SCOPE_GROUP,
+            'subject' => 'Field trip',
+        ]);
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'Slips due Friday']);
+
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+        $this->consent($this->parentB, GroupMembership::CONSENT_FEED);
+
+        // A reads it. B must still be told it is unread.
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()->assertJsonPath('data.data.0.unread', false);
+
+        $this->as($this->parentB)->getJson($this->groupUrl('/threads'))
+            ->assertOk()->assertJsonPath('data.data.0.unread', true);
     }
 }

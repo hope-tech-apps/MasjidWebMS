@@ -67,11 +67,12 @@ use Illuminate\Support\Facades\Route;
 |
 | ============================ THE REALM IS READ-ONLY =======================
 |
-| Apart from the two sign-in POSTs, which write only a `contact_login_codes`
-| row, there is no verb here but GET. A parent replying in a thread is T-015f
-| (it needs `group_messages.author_contact_id` and a dual-principal
-| `group_thread_reads`, whose `user_id` is NOT NULL today); withdrawing their
-| own consent is T-015h. Both are absent rather than half-built.
+| Almost read-only, and the exceptions are counted. The two sign-in POSTs write
+| a `contact_login_codes` row; T-015f adds ONE more — a reply in a thread the
+| parent may already read, which also moves their own read bookmark. Everything
+| else here is a GET. A parent cannot START a thread (that would route around
+| the teacher who decides what is discussed and where), and withdrawing their
+| own consent is still T-015h — absent rather than half-built.
 */
 
 // --------------------------------------------------------------- signing in
@@ -138,6 +139,11 @@ Route::prefix('family')
                 ->group(function () {
                     Route::get('/', 'index');
                     Route::get('/{thread_id}', 'show');
+
+                    // T-015f — the one write in this realm besides sign-in.
+                    // Authorised by the same `mayReceiveThread()` the reads use,
+                    // and the author comes from the TOKEN, never the payload.
+                    Route::post('/{thread_id}/messages', 'storeMessage');
                 });
 
             // Per-CHILD records, addressed by the ward's own participant

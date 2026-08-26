@@ -451,7 +451,19 @@ class GroupThreadsController extends Controller
             'id' => $message->id,
             'thread_id' => $message->group_thread_id,
             'body' => $message->body,
-            'author' => $message->author ? ['id' => $message->author->id, 'name' => $message->author->name] : null,
+            // Since T-015f a message may be written by a PARENT. Both principals
+            // resolve through GroupMessage::authorLabel(), and the staff surface
+            // is told which — a parent's reply must be visibly a parent's, not an
+            // unattributed line a teacher might answer as though a colleague
+            // wrote it. `id` is emitted only for a staff author: a contact id is
+            // not a staff identifier and does not belong in this payload.
+            'author' => $message->authorLabel() !== null
+                ? array_filter([
+                    'id' => $message->authorIsParent() ? null : $message->author?->id,
+                    'name' => $message->authorLabel(),
+                ], static fn ($v) => $v !== null)
+                : null,
+            'author_is_parent' => $message->authorIsParent(),
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }
