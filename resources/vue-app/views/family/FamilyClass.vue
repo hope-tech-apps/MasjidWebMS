@@ -126,7 +126,20 @@
             <section v-else>
                 <div v-for="child in group.children" :key="child.membership_id" class="card border-0 shadow-sm mb-3">
                     <div class="card-body">
-                        <h2 class="h6 mb-3">{{ childName(child) }}</h2>
+                        <div class="d-flex align-items-center gap-3 mb-3">
+                            <PersonAvatar
+                                :avatar="child.contact?.avatar"
+                                :first-name="child.contact?.first_name"
+                                :last-name="child.contact?.last_name"
+                                :size="52" />
+                            <div>
+                                <h2 class="h6 mb-0">{{ childName(child) }}</h2>
+                                <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                        @click="avatarFor = child">
+                                    Choose an avatar
+                                </button>
+                            </div>
+                        </div>
 
                         <h3 class="text-uppercase text-muted small">Behaviour</h3>
                         <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">Nothing recorded yet.</p>
@@ -156,10 +169,35 @@
             </section>
         </template>
     </div>
-</template>
+
+        <!-- A parent choosing their own child's avatar. There is no student
+             login, so this is where a child picks their face, with their parent. -->
+        <div v-if="avatarFor" class="modal fade show d-block" tabindex="-1"
+             style="background:rgba(0,0,0,.5)" @click.self="avatarFor = null">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Choose an avatar</h5>
+                        <button type="button" class="btn-close" @click="avatarFor = null"></button>
+                    </div>
+                    <div class="modal-body">
+                        <AvatarPicker
+                            :masjid-id="masjidId"
+                            :avatar="avatarFor.contact?.avatar"
+                            :first-name="avatarFor.contact?.first_name"
+                            :last-name="avatarFor.contact?.last_name"
+                            :family-endpoint="`${base}/members/${avatarFor.membership_id}/avatar`"
+                            @saved="onAvatarSaved" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
 
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
+import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { computed, onMounted, ref, watch } from 'vue';
@@ -178,6 +216,16 @@ const posts = ref<any[]>([]);
 const threads = ref<any[]>([]);
 const records = ref<Record<string, any>>({});
 const openedThread = ref<any>(null);
+const avatarFor = ref<any>(null);
+
+/** Write the new avatar back onto the child in place, so the card updates
+ *  without refetching the whole class. */
+const onAvatarSaved = (student: any) => {
+    if (avatarFor.value && student?.contact) {
+        avatarFor.value.contact.avatar = student.contact.avatar ?? null;
+    }
+    avatarFor.value = null;
+};
 const openedMessages = ref<any[]>([]);
 const tab = ref<'story' | 'messages' | 'children'>('story');
 const loading = ref(true);

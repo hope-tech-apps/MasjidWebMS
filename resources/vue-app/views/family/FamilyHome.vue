@@ -29,10 +29,15 @@
                             <h2 class="h6 mb-1">{{ group.name }}</h2>
                             <p v-if="group.description" class="text-muted small mb-2">{{ group.description }}</p>
 
-                            <div class="d-flex flex-wrap gap-1">
+                            <div class="d-flex flex-wrap gap-3">
                                 <span v-for="child in group.children" :key="child.membership_id"
-                                      class="badge bg-success-subtle text-success-emphasis">
-                                    {{ childName(child) }}
+                                      class="d-inline-flex align-items-center gap-2">
+                                    <PersonAvatar
+                                        :avatar="child.contact?.avatar"
+                                        :first-name="child.contact?.first_name"
+                                        :last-name="child.contact?.last_name"
+                                        :size="34" />
+                                    <span class="small">{{ childName(child) }}</span>
                                 </span>
                             </div>
                         </div>
@@ -53,6 +58,7 @@
 
 <script setup lang="ts">
 import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
+import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

@@ -66,11 +66,22 @@ const wrapStyle = computed(() => ({
 const imgStyle = computed(() => {
     const h = props.size / head.value.height;         // scale so the head fills the circle
     const w = h * (900 / 1200);                       // the artwork's aspect
-    const top = props.size / 2 - head.value.centerY * h;
+
+    // The flex container ALREADY centres the image, so a relative offset
+    // compounds with that centring rather than replacing it. MEASURED: using
+    // the absolute figure (size/2 − centerY·h) put the visible window on the
+    // child's chin, because the item was sitting at (size − h)/2 before the
+    // shift was applied. The nudge from centre is therefore:
+    //     h·(0.5 − centerY)
+    const top = h * (0.5 - head.value.centerY);
+
     return {
         width: `${w}px`,
         height: `${h}px`,
         maxWidth: 'none',
+        // Without this the image is a flex item and shrinks to the circle's
+        // width, undoing the zoom in narrow containers.
+        flex: '0 0 auto',
         position: 'relative' as const,
         top: `${top}px`,
     };
