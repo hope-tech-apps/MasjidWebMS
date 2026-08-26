@@ -84,6 +84,10 @@
                                     <button class="btn btn-sm btn-outline-primary" @click="viewDonation(donation)" title="View Details">
                                         <i class="bi bi-eye"></i>
                                     </button>
+                                    <!-- Stripe gifts have no edit affordance: the payment record owns them. -->
+                                    <button v-if="donation.source === 'offline'" class="btn btn-sm btn-outline-secondary ms-1" @click="openEdit(donation)" title="Edit gift">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
                                 </td>
                             </tr>
                         </tbody>
@@ -162,7 +166,14 @@
                                 </div>
                                 <div class="col-md-4">
                                     <h6 class="text-muted mb-1">Date</h6>
-                                    <p class="mb-0">{{ formatDate(selectedDonation.created_at) }}</p>
+                                    <!-- The GIFT date, matching the ledger column. This showed
+                                         created_at, so an imported or back-dated gift displayed
+                                         the day it was typed in. -->
+                                    <p class="mb-0">{{ formatDate(selectedDonation.donated_at || selectedDonation.created_at) }}</p>
+                                </div>
+                                <div v-if="selectedDonation.note" class="col-12 mt-3">
+                                    <h6 class="text-muted mb-1">Note</h6>
+                                    <p class="mb-0">{{ selectedDonation.note }}</p>
                                 </div>
                             </div>
 
@@ -213,17 +224,27 @@
                 <div class="modal-dialog modal-dialog-centered">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Record an offline gift</h5>
+                            <h5 class="modal-title">{{ editingId ? 'Edit gift' : 'Record an offline gift' }}</h5>
                             <button type="button" class="btn-close" @click="showOffline=false"></button>
                         </div>
                         <div class="modal-body">
                             <p class="text-muted small">For cash, check, Zelle, Venmo, PayPal or Square donations recorded by hand.</p>
+                            <div v-if="editingId && editingReceipt" class="alert alert-warning py-2 small">
+                                Receipt <strong>#{{ editingReceipt }}</strong> has been issued for this gift, so the donor,
+                                fund, amount and date are locked — the donor is holding a tax document that states them.
+                                The note, method and cheque number can still be corrected.
+                            </div>
                             <div class="mb-2">
                                 <label class="form-label small text-muted">Donor (optional)</label>
                                 <input class="form-control" v-model="offlineDonorSearch" @input="searchDonors" :placeholder="offlineDonor ? '' : 'Search a member, or leave blank for general'">
                                 <div v-if="offlineDonor" class="form-text">Selected: <strong>{{ offlineDonor.first_name }} {{ offlineDonor.last_name }}</strong> <a href="#" @click.prevent="offlineDonor=null">change</a></div>
                                 <div v-else-if="offlineDonorResults.length" class="list-group mt-1" style="max-height:22vh; overflow-y:auto;">
                                     <button v-for="m in offlineDonorResults" :key="m.id" type="button" class="list-group-item list-group-item-action" @click="pickDonor(m)">{{ m.first_name }} {{ m.last_name }} <small class="text-muted">{{ m.email||'' }}</small></button>
+                                </div>
+                                <!-- The state that did not exist: a search that found nobody used to
+                                     render nothing at all, which looks exactly like "still typing". -->
+                                <div v-else-if="donorSearched && offlineDonorSearch.trim()" class="form-text text-success">
+                                    <i class="bi bi-plus-circle"></i> No existing member matches — <strong>{{ offlineDonorSearch.trim() }}</strong> will be added as a new donor.
                                 </div>
                             </div>
                             <div class="row">
@@ -261,7 +282,7 @@
                         <div class="modal-footer">
                             <button class="btn btn-secondary" @click="showOffline=false">Cancel</button>
                             <button class="btn btn-success" :disabled="!offlineValid || savingOffline" @click="submitOffline">
-                                <span v-if="savingOffline" class="spinner-border spinner-border-sm"></span><span v-else>Record gift</span>
+                                <span v-if="savingOffline" class="spinner-border spinner-border-sm"></span><span v-else>{{ editingId ? 'Save changes' : 'Record gift' }}</span>
                             </button>
                         </div>
                     </div>
@@ -350,23 +371,68 @@ const offlineForm = ref<any>({ amount: '', payment_method: 'cash', check_number:
 const offlineDonor = ref<any>(null);
 const offlineDonorSearch = ref('');
 const offlineDonorResults = ref<any[]>([]);
+const donorSearched = ref(false);
+const editingId = ref<number | null>(null);
+const editingReceipt = ref<string | null>(null);
 let donorTimer: any = null;
+
+/** Today where the MASJID is, not where UTC is. `toISOString()` is a UTC date,
+ *  so every gift entered after ~8pm Eastern was pre-filled with TOMORROW. */
+const todayLocal = () => new Date().toLocaleDateString('en-CA');
 
 const oMasjidId = () => authStore.dashboardMasjidId ?? masjidStore.masjid?.id;
 const offlineValid = computed(() => !!offlineForm.value.amount && !!offlineForm.value.fund_id && !!offlineForm.value.donated_at && !!offlineForm.value.payment_method);
 
 const openOffline = () => {
-    offlineForm.value = { amount: '', payment_method: 'cash', check_number: '', fund_id: '', donated_at: new Date().toISOString().slice(0, 10), note: '' };
-    offlineDonor.value = null; offlineDonorSearch.value = ''; offlineDonorResults.value = [];
+    editingId.value = null; editingReceipt.value = null;
+    offlineForm.value = { amount: '', payment_method: 'cash', check_number: '', fund_id: '', donated_at: todayLocal(), note: '' };
+    offlineDonor.value = null; offlineDonorSearch.value = ''; offlineDonorResults.value = []; donorSearched.value = false;
+    showOffline.value = true;
+};
+
+/** Reopen a recorded gift for correction. Same form, same validation, same
+ *  submit — an edit screen that drifts from the entry screen is how the two
+ *  stop agreeing about what a gift is. */
+const openEdit = (donation: any) => {
+    editingId.value = donation.id;
+    editingReceipt.value = donation.receipt?.serial_number ?? null;
+    offlineForm.value = {
+        amount: ((donation.charged_amount ?? 0) / 100).toFixed(2),
+        payment_method: donation.payment_method || 'cash',
+        check_number: donation.check_number || '',
+        fund_id: donation.fund_id || donation.fund?.id || '',
+        donated_at: (donation.donated_at || donation.created_at || '').slice(0, 10),
+        note: donation.note || '',
+    };
+    offlineDonor.value = donation.contact ?? null;
+    offlineDonorSearch.value = donation.contact
+        ? `${donation.contact.first_name ?? ''} ${donation.contact.last_name ?? ''}`.trim()
+        : '';
+    offlineDonorResults.value = []; donorSearched.value = false;
     showOffline.value = true;
 };
 const searchDonors = () => {
+    // Editing the text after picking somebody used to leave the PICKED contact
+    // attached: the box could read "Ahmed Khan" while the gift booked to Ahmad
+    // Fais. Typing away from the selection now detaches it.
+    if (offlineDonor.value) {
+        const picked = `${offlineDonor.value.first_name ?? ''} ${offlineDonor.value.last_name ?? ''}`.trim();
+        if (offlineDonorSearch.value.trim() !== picked) offlineDonor.value = null;
+    }
+    donorSearched.value = false;
     clearTimeout(donorTimer);
     donorTimer = setTimeout(async () => {
         const q = offlineDonorSearch.value.trim();
-        if (!q) { offlineDonorResults.value = []; return; }
-        const res = await ApiService.get(`/api/admin/masjids/${oMasjidId()}/contacts?search=${encodeURIComponent(q)}&per_page=8` as any);
-        offlineDonorResults.value = res.data?.data?.data || [];
+        if (!q) { offlineDonorResults.value = []; donorSearched.value = false; return; }
+        try {
+            const res = await ApiService.get(`/api/admin/masjids/${oMasjidId()}/contacts?search=${encodeURIComponent(q)}&per_page=8` as any);
+            offlineDonorResults.value = res.data?.data?.data || [];
+        } catch {
+            // A failed lookup must not read as "no such member" — the name is
+            // still sent and the server decides.
+            offlineDonorResults.value = [];
+        }
+        donorSearched.value = true;
     }, 300);
 };
 const pickDonor = (m: any) => { offlineDonor.value = m; offlineDonorResults.value = []; offlineDonorSearch.value = `${m.first_name} ${m.last_name}`; };
@@ -375,19 +441,38 @@ const submitOffline = async () => {
     const p = new URLSearchParams();
     p.append('amount', offlineForm.value.amount);
     p.append('payment_method', offlineForm.value.payment_method);
-    if (offlineForm.value.payment_method === 'check' && offlineForm.value.check_number) p.append('check_number', offlineForm.value.check_number);
+    if (offlineForm.value.payment_method === 'check') p.append('check_number', offlineForm.value.check_number ?? '');
     p.append('fund_id', String(offlineForm.value.fund_id));
     p.append('donated_at', offlineForm.value.donated_at);
+    // THE DONOR. A picked contact wins; otherwise whatever is in the box is sent
+    // as a NAME and the server finds-or-creates the contact. The one thing that
+    // must never happen again is the typed name going nowhere.
     if (offlineDonor.value) p.append('contact_id', String(offlineDonor.value.id));
-    if (offlineForm.value.note) p.append('note', offlineForm.value.note);
+    else if (offlineDonorSearch.value.trim()) p.append('donor_name', offlineDonorSearch.value.trim());
+    else if (editingId.value) p.append('contact_id', '');   // explicitly back to general
+    p.append('note', offlineForm.value.note ?? '');
     savingOffline.value = true;
     try {
-        await ApiService.post(`/api/admin/masjids/${oMasjidId()}/donations` as any, p);
+        const base = `/api/admin/masjids/${oMasjidId()}/donations`;
+        if (editingId.value) await ApiService.put(`${base}/${editingId.value}` as any, p);
+        else await ApiService.post(base as any, p);
+        const edited = !!editingId.value;
         showOffline.value = false;
         await loadData(1);
-        Swal.fire({ icon: 'success', title: 'Recorded', text: 'The gift was added.' });
-    } catch (e) {
-        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not record the gift.' });
+        Swal.fire({
+            icon: 'success',
+            title: edited ? 'Saved' : 'Recorded',
+            text: edited ? 'The gift was updated.' : 'The gift was added.',
+        });
+    } catch (e: any) {
+        // Say what the server actually refused — an ambiguous donor name and a
+        // receipt-locked field are both things the admin can act on.
+        const data = e?.response?.data;
+        Swal.fire({
+            icon: 'error',
+            title: 'Error!',
+            text: data?.message || data?.errors?.donor_name?.[0] || 'Could not save the gift.',
+        });
     } finally { savingOffline.value = false; }
 };
 

@@ -823,14 +823,23 @@ Route::prefix('admin')->group(function () {
                     Route::get('/by-fund', 'byFund')->middleware('permission:view donations');
                 });
 
-                // Donations ledger — READ-ONLY. Rows are created and advanced
-                // exclusively by Stripe webhooks, so there is deliberately NO
-                // store / update / destroy route here.
+                // Donations ledger. STRIPE rows are created and advanced
+                // exclusively by webhooks and are refused by store/update — the
+                // payment record is the source of truth for those. OFFLINE gifts
+                // are typed by a human, so they can be recorded AND corrected
+                // here; there is still deliberately no destroy route, because a
+                // gift that never happened is a $0 correction with a note, not a
+                // hole in the ledger.
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     // Manual/offline gift entry (cash/check/Zelle/…). Stripe gifts
                     // remain webhook-only; this is the only write path for donations.
                     Route::post('/', 'store')->middleware('permission:manage donations');
+                    // Correct a manually-recorded gift. Stripe rows are refused
+                    // by the controller — the webhook owns those. A gift whose
+                    // receipt has been issued is frozen on donor/fund/amount/date.
+                    Route::put('/{donation_id}', 'update')->middleware('permission:manage donations');
+                    Route::patch('/{donation_id}', 'update')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
                     // Issue the tax receipt for an OFFLINE gift — a deliberate
                     // treasurer action, never automatic on entry (see the
