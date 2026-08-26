@@ -71,4 +71,20 @@ class FamilyApiService {
     }
 }
 
+/**
+ * The rows out of a family payload, whatever shape it came in.
+ *
+ * MEASURED against production: `/groups` answers a plain array, while
+ * `/posts`, `/threads`, `/awards`, `/hifz` and a thread's `messages` all answer
+ * a Laravel PAGINATOR — the list is at `data.data`. Reading `data` alone gives
+ * the paginator object, which renders as nothing and reports a length of
+ * undefined. One unwrapper, so a caller cannot get this right in four places
+ * and wrong in the fifth.
+ */
+export function rowsOf(node: any): any[] {
+    if (Array.isArray(node)) return node;
+    if (Array.isArray(node?.data)) return node.data;
+    return [];
+}
+
 export default FamilyApiService;

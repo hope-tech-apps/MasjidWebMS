@@ -30,7 +30,7 @@
                             <p v-if="group.description" class="text-muted small mb-2">{{ group.description }}</p>
 
                             <div class="d-flex flex-wrap gap-1">
-                                <span v-for="child in group.children" :key="child.id"
+                                <span v-for="child in group.children" :key="child.membership_id"
                                       class="badge bg-success-subtle text-success-emphasis">
                                     {{ childName(child) }}
                                 </span>
@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import FamilyApiService from '@/core/services/FamilyApiService';
+import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import { useFamilyStore } from '@/stores/familyStore';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -75,7 +75,7 @@ const childName = (child: any) =>
 onMounted(async () => {
     try {
         const res = await FamilyApiService.get(`/api/family/masjids/${masjidId.value}/groups`);
-        groups.value = res.data?.data ?? [];
+        groups.value = rowsOf(res.data?.data);
     } catch (e: any) {
         if (familyStore.handleAuthFailure(e?.response?.status)) {
             router.replace(`/family/${masjidId.value}/sign-in`);

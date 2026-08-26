@@ -101,14 +101,14 @@
 
             <!-- -------------------------------------------------- children -->
             <section v-else>
-                <div v-for="child in group.children" :key="child.id" class="card border-0 shadow-sm mb-3">
+                <div v-for="child in group.children" :key="child.membership_id" class="card border-0 shadow-sm mb-3">
                     <div class="card-body">
                         <h2 class="h6 mb-3">{{ childName(child) }}</h2>
 
                         <h3 class="text-uppercase text-muted small">Behaviour</h3>
-                        <p v-if="!records[child.id]?.awards?.length" class="text-muted small">Nothing recorded yet.</p>
+                        <p v-if="!records[child.membership_id]?.awards?.length" class="text-muted small">Nothing recorded yet.</p>
                         <ul v-else class="list-unstyled mb-3">
-                            <li v-for="a in records[child.id].awards" :key="a.id" class="d-flex gap-2 align-items-baseline">
+                            <li v-for="a in records[child.membership_id].awards" :key="a.id" class="d-flex gap-2 align-items-baseline">
                                 <span class="badge" :class="a.polarity === 'negative' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-success-subtle text-success-emphasis'">
                                     {{ a.points > 0 ? '+' : '' }}{{ a.points }}
                                 </span>
@@ -121,10 +121,10 @@
                         </ul>
 
                         <h3 class="text-uppercase text-muted small">Qur'an</h3>
-                        <p v-if="!records[child.id]?.hifz?.length" class="text-muted small mb-0">Nothing recorded yet.</p>
+                        <p v-if="!records[child.membership_id]?.hifz?.length" class="text-muted small mb-0">Nothing recorded yet.</p>
                         <ul v-else class="list-unstyled mb-0">
-                            <li v-for="h in records[child.id].hifz" :key="h.id" class="small">
-                                <span class="text-capitalize">{{ h.kind }}</span>: {{ h.from }} &rarr; {{ h.to }}
+                            <li v-for="h in records[child.membership_id].hifz" :key="h.id" class="small">
+                                <span class="text-capitalize">{{ h.kind }}</span>: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}
                                 <span class="text-muted">· {{ h.quality }} · {{ when(h.recited_at) }}</span>
                             </li>
                         </ul>
@@ -136,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import FamilyApiService from '@/core/services/FamilyApiService';
+import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { computed, onMounted, ref, watch } from 'vue';
@@ -164,6 +164,13 @@ const childName = (child: any) =>
     [child?.contact?.first_name ?? child?.first_name, child?.contact?.last_name ?? child?.last_name]
         .filter(Boolean).join(' ') || 'Student';
 
+/** `from` / `to` arrive as {surah, surah_name, ayah, juz}, not a string. */
+const ayah = (ref: any) => {
+    if (!ref) return '';
+    if (typeof ref === 'string') return ref;
+    return `${ref.surah_name ?? 'Surah ' + ref.surah} ${ref.ayah}`;
+};
+
 const when = (iso: string | null) => {
     if (!iso) return '';
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -183,8 +190,8 @@ const fail = (e: any) => {
 const openThread = async (thread: any) => {
     try {
         const res = await FamilyApiService.get(`${base.value}/threads/${thread.id}`);
-        openedThread.value = res.data?.data ?? thread;
-        openedMessages.value = res.data?.data?.messages ?? [];
+        openedThread.value = res.data?.data?.thread ?? thread;
+        openedMessages.value = rowsOf(res.data?.data?.messages);
     } catch (e) {
         if (!fail(e)) error.value = 'That conversation could not be opened.';
     }
@@ -194,16 +201,16 @@ const loadChildRecords = async () => {
     for (const child of group.value?.children ?? []) {
         try {
             const [awards, hifz] = await Promise.all([
-                FamilyApiService.get(`${base.value}/members/${child.id}/awards`),
-                FamilyApiService.get(`${base.value}/members/${child.id}/hifz`),
+                FamilyApiService.get(`${base.value}/members/${child.membership_id}/awards`),
+                FamilyApiService.get(`${base.value}/members/${child.membership_id}/hifz`),
             ]);
-            records.value[child.id] = {
-                awards: awards.data?.data ?? [],
-                hifz: hifz.data?.data ?? [],
+            records.value[child.membership_id] = {
+                awards: rowsOf(awards.data?.data),
+                hifz: rowsOf(hifz.data?.data),
             };
         } catch (e) {
             if (fail(e)) return;
-            records.value[child.id] = { awards: [], hifz: [] };
+            records.value[child.membership_id] = { awards: [], hifz: [] };
         }
     }
 };
@@ -217,11 +224,11 @@ onMounted(async () => {
         // parent has already been told about, so do not ask.
         if (group.value?.may_receive_feed) {
             const p = await FamilyApiService.get(`${base.value}/posts`);
-            posts.value = p.data?.data ?? [];
+            posts.value = rowsOf(p.data?.data);
         }
 
         const t = await FamilyApiService.get(`${base.value}/threads`);
-        threads.value = t.data?.data ?? [];
+        threads.value = rowsOf(t.data?.data);
 
         await loadChildRecords();
     } catch (e: any) {
