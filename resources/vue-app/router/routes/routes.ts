@@ -2,6 +2,7 @@ import { RouteRecordRaw } from "vue-router";
 import authRoutes from "@/router/routes/authLayoutRoutes";
 import dashboardRoutes from "@/router/routes/dashboardLayoutRoutes";
 import superDashboardRoutes from "@/router/routes/superDashboardRoutes";
+import familyRoutes from "@/router/routes/familyRoutes";
 
 const routes: RouteRecordRaw[] = [
     {
@@ -15,6 +16,8 @@ const routes: RouteRecordRaw[] = [
             ...superDashboardRoutes
         ]
     },
+    // The parent portal — its own realm, outside the admin app's guard.
+    ...familyRoutes,
     {
         // Public donor-facing result pages (Stripe Checkout success/cancel URLs).
         // Standalone — no auth or dashboard chrome.
