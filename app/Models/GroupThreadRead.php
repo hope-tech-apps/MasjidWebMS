@@ -32,6 +32,7 @@ class GroupThreadRead extends Model
         'masjid_id',
         'group_thread_id',
         'user_id',
+        'contact_id',
         'last_read_at',
     ];
 

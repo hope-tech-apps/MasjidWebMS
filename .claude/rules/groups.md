@@ -93,6 +93,212 @@ both treat NULLs in a unique index as distinct. Duplicate participant membership
 is therefore rejected in `GroupMembershipsController` before insert — that check
 is the guarantee, not the index. Do not "simplify" it away.
 
+### PROVENANCE — a guardian edge records ON WHOSE AUTHORITY it exists
+
+A guardian edge is the single fact the parent portal reads to decide whose
+child's behaviour, ḥifẓ and safeguarding records a credential opens. It is an
+**authorization grant**, and until 2026-08-13 the table recorded no grantor: "the
+office established this relationship" and "an anonymous POST to
+`/api/v1/offerings/{slug}/register` asserted it" were the same row, so every read
+path trusted both equally.
+
+`group_memberships.provenance` is that missing fact
+(`GroupMembership::PROVENANCES`, PHP constants for the same reason `role` is):
+
+- **`confirmed`** — an authenticated staff act stands behind it,
+  `confirmed_by_user_id` + `confirmed_at` name who and when. Grants what a
+  membership always granted.
+- **`self_asserted`** — a public form's claim, made with no session, no token and
+  no proof of control of any address. It is a **roster fact and not a grant**: it
+  lists a person, it counts towards capacity, a teacher keeps behaviour and ḥifẓ
+  records about the child it enrols — and it opens **nothing** for its holder.
+  `source_registration_id` says which signup asserted it, so the office can judge
+  a claim instead of merely seeing one.
+
+Three things make that true, and there is no fourth:
+
+1. `GroupAudience::membershipsFor()` filters to `confirmed()`. ONE clause, in the
+   one method every standing question already resolves through, so `mayReceive`,
+   `standingIn`, the thread/award/ḥifẓ decisions, the listing queries and
+   `Family\GroupsController` honour it by construction rather than by eight
+   implementations that agree today.
+2. `FamilyAccessService`'s eligibility condition — the SOLE remaining condition —
+   counts confirmed edges only. Before this, the panel built to stop a registrar
+   handing a nine-year-old a login advertised an anonymously-forged edge as
+   `"eligible": true`.
+3. `RegistrationService::writeRosterMemberships()` is the ONE unauthenticated
+   writer and sets `self_asserted` **explicitly and unconditionally** — never
+   from the ambient principal. A free registration confirms in-request behind an
+   anonymous POST, a priced one from a Stripe webhook, and an admin may re-drive
+   either; the list came from a public form in all three, so reading who pressed
+   go would make provenance a fact about the trigger rather than about who
+   vouched for the child.
+
+**A MERGE MOVES ROWS AND NEVER LAUNDERS AUTHORITY.** This paragraph used to say
+`RosterMergeService::carry()` is "where that claim finally gets its authenticated
+act". That was wrong, and it was the third door: measured, an anonymous POST
+wrote a duplicate child plus an edge over it, a registrar merged the two
+identical rows exactly as the office should, `carry()` re-pointed the edge onto
+the REAL child, and the stranger's portal opened her behaviour record, her ḥifẓ
+and the thread "Safeguarding: incident on 3 Sept". The registrar authenticated a
+**de-duplication**; nothing on the screen, in the request or in the response
+named a guardianship. So:
+
+- a `self_asserted` row that moves STAYS `self_asserted`;
+- a `confirmed` guardian edge whose PAIR changes — either end — is retired and
+  re-issued as a fresh `self_asserted` claim with a NEW id, because a
+  confirmation names one specific adult over one specific ward and changing
+  either end makes it a statement about somebody nobody was asked about (this
+  shuts the same door one authenticated act further along: confirm over the
+  phantom, then merge the phantom into the real child). The new id also means a
+  Confirm list drawn before the merge names a row that no longer exists, so the
+  click is an honest `{"confirmed":0,"skipped":1}`;
+- **AN ABSENT VALUE IS NEVER AN IDENTITY MATCH**, and this is the one rule that
+  answers both ends. See the section below — it is where the previous round put
+  a regression.
+- when a confirmed edge is DROPPED because the survivor already holds the same
+  edge, the confirmation is **not** carried onto the survivor's row — the
+  survivor may be a row nobody vouched for, and the same caller who authored it
+  can author its claim over the ward and collect the confirmation. It is
+  COUNTED instead (`unconfirmed`, `confirmed_guardian_edges_dropped`,
+  `family_logins_left_without_a_ward`), so an ordinary de-duplication cannot
+  quietly end a parent's sign-in *in silence*. Losing a click is recoverable;
+  the other direction is a stranger reading a child's safeguarding record.
+  (This bullet used to say the confirmation was CARRIED. It was, once; the code
+  changed and this sentence did not.)
+- `ContactsController::merge` reports all of it, because `carry()`'s return value
+  used to be discarded.
+
+### AN ABSENT VALUE IS NEVER AN IDENTITY MATCH
+
+`App\Support\ContactIdentity` is the only place this application asks "are these
+two rows the same person", and the answer is **false whenever either side has no
+address — including when neither does.**
+
+The previous round wrote the holder end as
+`addressOf($source) !== addressOf($target)` with `addressOf()` returning `''` for
+a contact with no email, and reasoned in that method's own docblock only about
+`'' != 'real@x'`. So two address-less adults were the same person. Measured, from
+a caller with no account and no token: an anonymous
+`POST /api/v1/offerings/{slug}/register` plants a second address-less contact
+under a real parent's name (`registrants.*.email` is `nullable`, and
+`createContact()` nulls an address another contact already holds); the registrar
+de-duplicates; and the confirmed guardian edge lands on the stranger's row
+carrying `provenance: confirmed`, `confirmed_by_user_id` and `consent_scope:
+media`, reported as `unconfirmed: 0`. Family-login then answered
+`"eligible": true`, enable answered 200, and the stranger's own token read
+`/groups`, the thread "Safeguarding: incident on 3 Sept", the award "Left the
+classroom without permission" and the ḥifẓ sabak.
+
+Three consequences, and none of them is optional:
+
+- **An address-less row is the ONE shape an unauthenticated caller can plant.**
+  Nulling the address is `createContact()`'s refusal. So the absent shape is
+  precisely the shape that must never match.
+- **The rule is enforced by a TYPE, not by a paragraph.** `ContactIdentity` hands
+  back no string at all — no getter, no `__toString` — so there is nothing to
+  compare with `===`, and the only comparison is `isTheSamePersonAs()`. A caller
+  who ignores that and compares two instances gets "changed", which re-opens a
+  row that did not need it: a lost click, not a laundered grant. The previous
+  round had the correct rule written out in prose on the ward end and the
+  opposite code twenty lines later, which is why prose is no longer where it
+  lives.
+- **The ward end still has NO address exemption, even with the fixed
+  comparison**, and `ContactIdentity` is deliberately not called there. A ward is
+  a child; most have none and the siblings who do share the household mailbox.
+  Any change of ward retires and re-issues.
+
+A phone number is shown on a roster (an operator can ring it) and is **not** an
+identity: nothing mints a credential against one and nothing resolves a principal
+by one, so it cannot answer "would a credential reach the same person".
+
+And the merge SCREEN says it before the click. `ContactsView.vue` renders each
+candidate's address — "no address on file" in red, never a blank, the same call
+`GroupRosterTab.vue` made on the roster — and warns outright when the two records
+share a displayed name and at least one has no address, because that is the shape
+a stranger produces and the shape an operator has nothing to judge with.
+
+**The office's door.** `POST …/groups/{id}/members/confirm` is still ONE click for
+a school with 200 camp signups, and the click now has to say what it read. Three
+fields, each added because binding to the previous set was not enough:
+
+- `membership_ids` — **required**. An absent body used to mean "every pending
+  claim at the moment the request LANDS", which is not the set the operator was
+  shown: measured, a registration arriving while the dialog was open was
+  confirmed by a click on the eight rows above it, and the ninth was a stranger's
+  claim over a named child. This defeats INSERTION.
+- `fingerprints` — **required, one per named id**, echoing the value
+  `index()` served with that row (`App\Support\RosterClaimIdentity`). An id
+  identifies a row and not what the row SAID: a merge re-points `contact_id` on a
+  pending claim and the id does not move, and a merge that force-deletes an
+  absorbed payer nulls `registrations.contact_id` without touching the membership
+  row at all. A row that no longer matches its description is SKIPPED and
+  reported. This defeats MUTATION.
+- `contested_membership_ids` — the rows the operator decided **one at a time**. A
+  pending guardian claim that shares its ward AND its displayed name with another
+  row is refused a place in a sweep, because naming its id binds the agreement to
+  a row the operator could not read apart from its twin. Measured: a stranger who
+  knew a child's name and household address typed the MOTHER's name as payer with
+  his own email, and the roster drew "Aisha Ahmed" twice with no address and no
+  ward. Plurality is NOT the trigger — a mother and a father are two legible
+  claims and sweep through in the one click; indistinguishability is.
+
+And the screen has to carry what the request claims it carries. This rule and
+that request's docblock both used to assert that "the ward names, the claimed
+guardian and the signup that asserted them are in front of the person deciding".
+Measured in `GroupRosterTab.vue`: `source_registration` 0 times, `confirmed_by` 0
+times, no address on either table, and the ward column rendering `—` on every row
+because `$snakeAttributes` serialises `guardianOf` as `guardian_of` and the
+template read the camelCase name. `index()` now serves a `claim` block per row
+(fingerprint, contested + rivals, and the asserting signup's payer **including an
+explicit state for each way that evidence can be missing**), the roster tables
+draw it, the confirm dialog enumerates guardian claims BY ADDRESS rather than by
+count, and `RosterClaimIdentityTest` fails if any of that stops.
+
+There is deliberately no tenant-wide confirm (one click over rosters its clicker
+has never read) and no bulk reject (`destroy()` already exists, already cascades
+the guardian edges, and a bulk delete over children's roster rows beside a bulk
+confirm is one mis-click from destroying a term's ḥifẓ history). Typing in an
+entry a pending claim already holds CONFIRMS it rather than answering 422 —
+otherwise the duplicate refusal fires at the office's own remedy — and that
+response now SAYS when the entry it confirmed has a same-named rival over the
+same child, because it is the same grant reached by a different door. **And the
+screen shows it.** The server computed that sentence and
+`groupsStore.ts::addMembership` returned `res.data.data`, dropping `message`,
+while `GroupRosterTab.vue` fired a hardcoded `{icon:'success', title:'Added'}` on
+a 1600ms timer — measured, with the contested stranger row confirmed through this
+door and the warning present in the body and invisible on screen. The store now
+returns `AddMembershipResult` (`membership` + `message` +
+`confirmedAnExistingClaim`) and anything the server chose to say is rendered as a
+dialog the operator has to dismiss. A promise kept on the wire and broken on the
+screen is not kept.
+
+`store()`'s two responses also narrow the related people to the columns the
+screen names (`GroupMembershipsController::PERSON_COLUMNS`, shared with
+`index()` so the two cannot half-apply again). They used to serve every column of
+`contacts` — `login_email`, `login_enabled_at`, `login_revoked_at`,
+`last_login_at`, the CRM notes and all four SMS-consent fields. Same audience, so
+never an escalation; and .claude/rules/credentials.md keeps those columns out of
+request bodies, so a roster verb is not where they belong on the way out.
+
+**What was reverted to get here.** An earlier round made
+`Api\V1\OfferingRegistrationsController` resolve a REGISTRANT only to a contact
+it created in that same request, never to a pre-existing one. It is gone. It
+enumerated doors (the `payer` field is the same writer one field away and was
+never guarded) and it caused three defects: one anonymous POST forked the
+directory on a teacher's address and permanently 403'd her out of the classroom
+she teaches (`GroupAudience` resolves a staff caller by `LOWER(email)` and
+requires exactly one contact); a returning child became N people on one roster,
+walking past the duplicate-participant refusal below because the writer created a
+new PERSON; and the prescribed reconciliation was the merge verb, which is door
+three. One resolver, find-or-create on `(masjid, LOWER(email))`, is what exists
+now — with a NAME clause on registrants so two siblings on one household mailbox
+stay two people, and with the rule that a contact this endpoint CREATES never
+carries an address another contact already holds, which is what makes a staff
+identity unambiguous whatever name a caller pairs with it. It is still not an
+existence oracle: the endpoint answers the same 200 with the same body and writes
+a contact either way.
+
 ## Naming a group is the tenant's vocabulary
 
 The admin-facing word for a group comes from the terminology pack —
@@ -138,7 +344,17 @@ should reuse the machinery below rather than re-decide it.
    consent. See "Consent" below.
 3. **Retention.** ✅ *Built for the feed (T-005b).* `groups` soft-deletes and
    memberships are retained with it, on purpose: a mis-click must not destroy a
-   roster. `group_posts.retained_until` + `groups:purge-feed` is the pattern —
+   roster. **And since 2026-08-13 the soft delete is REFUSED outright while the
+   group is a live offering's `group_id`** (`GroupsController::destroy`, 422,
+   naming the programs). `offerings.group_id` is nullable with `nullOnDelete()`,
+   so the FK looks like it handles this — it does not, because a soft delete
+   fires no FK and leaves the pointer dangling at a row that no longer resolves.
+   Measured before the guard: a family's paid registration webhook 500'd three
+   times, booked nothing, and the reaper cancelled her seat 46 minutes later
+   (.claude/rules/registration-billing-data.md, T-006c/T-006g). The
+   non-destructive paths the refusal points at are detaching the offering,
+   re-pointing it at the replacement classroom, or `is_active = false` on the
+   group. Soft-deleted offerings do not block. `group_posts.retained_until` + `groups:purge-feed` is the pattern —
    a nullable window plus a purge that reaches the disk THROUGH THE MODEL,
    because a DB cascade fires no model events and orphans bytes forever (see
    `.claude/rules/private-uploads.md`). `groups` and `group_memberships`
@@ -203,6 +419,41 @@ in `GroupAudience::identitiesFor()` and nothing else.
 > participant threads / awards / ḥifẓ only about their own ward, and is still
 > excluded at QUERY level from another family's rows.
 >
+> **Amended again, 2026-08-13: A FAMILY CREDENTIAL SPEAKS FOR WARDS ONLY.**
+> `GroupAudience::membershipsFor()` is a second — and last — place that touches
+> the principal, and it is a SCOPE question rather than an identity one: for a
+> `Contact` principal it keeps the guardian edges and DROPS the holder's own
+> `leader`/`member` rows. So through the parent portal a participant row buys
+> no feed, no participant thread about the holder, no award, no ḥifẓ record, and
+> no standing in that group at all (`/groups` omits it, `/groups/{id}` 403s).
+> STAFF callers are untouched — a participant is still the person themselves and
+> still holds their own group outright.
+>
+> This closes the hazard the paragraph above used to leave open ("enabling a
+> login on a child's contact row is a student login"), and it replaces a
+> different answer that did not survive contact with a real school: refusing a
+> credential to ANY contact holding a participant edge, plus a
+> `GroupMembership::created` hook that revoked one when a roster row arrived
+> later. That pair refused a parent enrolled in the adult ḥalaqa and a teacher
+> who is also a parent, and the hook destroyed working credentials as a side
+> effect of an ordinary roster add — reachable, measured, by an anonymous POST
+> to the public registration endpoint. Controlling what a credential READS is
+> the property; controlling who may hold one was a proxy that over-refused and
+> still needed patching from behind. **`FamilyAccessService::enable()` now asks
+> only that the contact be somebody's guardian over a live ward** — a child's own
+> row is nobody's guardian, so the registrar-and-the-nine-year-old case is still
+> shut, by the condition that was always doing that work.
+>
+> A STUDENT login remains its own task and is still not built: this narrowing
+> gives a family credential NOTHING from a participant row, not the narrower
+> own-record slice a student login eventually should.
+>
+> `Http\Controllers\Family\GroupsController` asks the same question through the
+> same call rather than querying `group_memberships` itself, which it used to —
+> a second definition of standing living outside the class that owns it is the
+> drift `GroupAudience` exists to prevent, and it disagreed the moment this rule
+> changed.
+>
 > The parent-facing endpoints are `routes/family.php` +
 > `app/Http/Controllers/Family/` — READ-ONLY, no `permission:`, no roster
 > listing, and attachments served as bytes through an authenticated endpoint
@@ -231,6 +482,24 @@ two decisions.
   enum, for the same reason as `ROLES`.
 - The scopes are a **hierarchy**: `media` covers `feed`. A photograph is a
   sharper disclosure than a note, so it takes its own explicit grant.
+- **Consent grants nothing on a row nobody has stood behind.**
+  `GroupConsentController::update()` has always refused to WRITE consent onto a
+  pending claim; every READ path served the state anyway, so the server refused
+  the state it happily read. `GroupMembership::hasConsent()` now consults
+  provenance, which puts the gate in front of `consentCovers()`, `show()`,
+  `scopeConsented()` and `GroupAudience` at once rather than on one of them.
+  A read gate is **not sufficient on its own**: measured, a row left in the old
+  state reads as granting nothing, and then one ordinary Confirm click — a
+  decision about a RELATIONSHIP, on a screen that says nothing about photographs
+  — re-arms the stale `media` grant and the family feed answers 200 with
+  `media_withheld: false`. So
+  `…_clear_consent_on_unconfirmed_group_memberships` **erases both columns on
+  every row whose provenance is not `confirmed`**. Deliberately destructive and
+  deliberately wide: an unconfirmed row carrying consent is a state no writer may
+  produce from any path, nothing records which merge produced which row, and
+  re-asking a parent costs one conversation the office is already having when it
+  confirms the claim. `show()` says so rather than rendering a blank —
+  `withheld_pending_confirmation` plus the reason.
 - Consent is meaningful ONLY on a guardian row. A leader/member IS the person,
   and nobody consents on their behalf — `consentCovers()` returns false on a
   participant row even if the columns are somehow populated.

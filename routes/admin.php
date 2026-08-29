@@ -3,7 +3,9 @@
 use App\Http\Controllers\AdminDashboard\AnnouncementsController;
 use App\Http\Controllers\AdminDashboard\AppointmentRequestsController;
 use App\Http\Controllers\AdminDashboard\AssistantController;
+use App\Http\Controllers\AdminDashboard\ArabicLettersController;
 use App\Http\Controllers\AdminDashboard\AuthController;
+use App\Http\Controllers\AdminDashboard\ContactAvatarController;
 use App\Http\Controllers\AdminDashboard\AzkarCategoriesController;
 use App\Http\Controllers\AdminDashboard\AzkarController;
 use App\Http\Controllers\AdminDashboard\BehaviorAwardsController;
@@ -32,6 +34,7 @@ use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\TeachersController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
@@ -39,6 +42,9 @@ use App\Http\Controllers\AdminDashboard\ImpactMetricsController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
+use App\Http\Controllers\AdminDashboard\MealMenuItemsController;
+use App\Http\Controllers\AdminDashboard\MealMenusController;
+use App\Http\Controllers\AdminDashboard\MealOrdersController;
 use App\Http\Controllers\AdminDashboard\MasjidAboutUsController;
 use App\Http\Controllers\AdminDashboard\MasjidAdminsController;
 use App\Http\Controllers\AdminDashboard\MasjidDetailsController;
@@ -71,6 +77,12 @@ Route::prefix('admin')->group(function () {
     // Security: brute-force defense — 5 attempts per minute keyed on email+IP.
     Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:login');
 
+    // Account access. Unauthenticated by necessity — somebody who cannot sign in
+    // is exactly who needs these — so both are throttled, and forgot-password
+    // answers identically whether or not the address exists.
+    Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:login');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:login');
+
     // `tenant` (ResolveMasjidTenant) runs after auth: it binds TenantContext to
     // a MasjidAdmin's masjid and is a no-op for SuperAdmin. Only BelongsToMasjid
     // models consult that context, so existing endpoints are unaffected today.
@@ -95,10 +107,16 @@ Route::prefix('admin')->group(function () {
             // User account control
             Route::get('/', 'index');
             Route::post('/', 'store');
+            // MUST precede the /{user_id} wildcards: a literal segment
+            // registered after them is matched as an id.
+            Route::post('/invite', 'inviteNew');
             Route::get('/{user_id}', 'show');
             Route::post('/{user_id}', 'update');
             Route::delete('/{user_id}', 'destroy');
             Route::delete('/{user_id}/trash', 'moveToTrash');
+            // Send (or re-send) the set-your-own-password invite. The platform
+            // never learns the credential it is handing over.
+            Route::post('/{user_id}/invite', 'invite');
         });
 
         Route::get('search', [DashboardSearchController::class, 'searchForSuperDataRecords'])->middleware('super');
@@ -253,6 +271,35 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
+
+            // Jummah Lunch ordering — a masjid-level food sale, deliberately
+            // OUTSIDE the `crm` group so a masjid can run it without the member
+            // directory. The `admin` middleware already restricts this to
+            // MasjidAdmin/SuperAdmin (Teachers cannot reach it), so no extra
+            // permission gate is added. Orders carry customer name/phone.
+            Route::prefix('{masjid_id}/jummah-lunch')->group(function () {
+                Route::controller(MealMenusController::class)->group(function () {
+                    Route::get('/menus', 'index');
+                    Route::post('/menus', 'store');
+                    Route::get('/menus/{menu_id}', 'show');
+                    Route::put('/menus/{menu_id}', 'update');
+                    Route::delete('/menus/{menu_id}', 'destroy');
+                    Route::post('/flyer', 'uploadFlyer');
+                });
+
+                Route::controller(MealMenuItemsController::class)->group(function () {
+                    Route::post('/menus/{menu_id}/items', 'store');
+                    Route::put('/menus/{menu_id}/items/{item_id}', 'update');
+                    Route::delete('/menus/{menu_id}/items/{item_id}', 'destroy');
+                });
+
+                Route::controller(MealOrdersController::class)->group(function () {
+                    Route::get('/menus/{menu_id}/orders', 'index');
+                    Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
+                    Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');
+                    Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
+                });
+            });
 
             // Masjid color theme settings
             Route::prefix('{masjid_id}/theme')->controller(ThemeSettingsController::class)->group((function () {
@@ -428,6 +475,11 @@ Route::prefix('admin')->group(function () {
             // SuperAdmin-only Masjid Assistant gate toggle. Like crm-access, this is
             // deliberately OUTSIDE the `assistant` gate — it is how the gate is opened.
             Route::patch('{masjid_id}/assistant-access', [MasjidsController::class, 'setAssistantAccess']);
+            // SuperAdmin-only public-directory toggle (masjids.listed_at). A newly
+            // provisioned organisation is NOT listed, so this is how one is
+            // published to the mobile app's picker once it is actually ready.
+            // Same 403-for-non-super contract as the two toggles above.
+            Route::patch('{masjid_id}/directory-listing', [MasjidsController::class, 'setDirectoryListing']);
 
             // App-provisioning control plane (SuperAdmin only). "Generate apps"
             // dispatches a GitHub Actions workflow (self-hosted runner) that
@@ -474,6 +526,14 @@ Route::prefix('admin')->group(function () {
                     Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
                     // Merge a placeholder (unidentified-card) contact into a member.
                     Route::post('/{contact_id}/merge', 'merge')->middleware('permission:manage contacts');
+                    // Undelete. `Contact` soft-deletes so a mis-click on a
+                    // congregant record is recoverable, and until this route
+                    // existed nothing in the application could recover one —
+                    // which also put the `revoked` audit row that `destroy`
+                    // writes permanently beyond every screen. `manage contacts`,
+                    // the same gate as the delete it undoes; the listing finds a
+                    // deleted member with `?trashed=only`.
+                    Route::post('/{contact_id}/restore', 'restore')->middleware('permission:manage contacts');
                 });
 
                 // SMS consent for one contact (T-009). Two verbs rather than one
@@ -486,6 +546,40 @@ Route::prefix('admin')->group(function () {
                 Route::prefix('{masjid_id}/contacts/{contact_id}/sms-consent')
                     ->controller(\App\Http\Controllers\AdminDashboard\ContactSmsConsentController::class)
                     ->group(function () {
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // Family sign-in for one contact (T-015d, admin half) — THE
+                // ON-SWITCH for the parent portal.
+                //
+                // Everything the portal needs has existed since T-015c/d/e: the
+                // `family` guard, `contact_login_codes`, the OTP endpoints,
+                // GroupAudience's guardian branch, the whole read surface. None
+                // of it was reachable, because nothing in the application ever
+                // wrote `contacts.login_enabled_at` — the four `login_*` columns
+                // are deliberately not fillable and no controller set them.
+                // These three routes are the only thing that does.
+                //
+                // Three verbs rather than a toggle, for the reason the
+                // sms-consent block above records: enabling and revoking are not
+                // inverses. Revoking additionally ends live sessions, and both
+                // append to an immutable trail (`contact_login_events`) because
+                // what is being granted is a stranger's view of a specific
+                // child's photographs and safeguarding conversations, and "it
+                // was on" is not an answer to "who turned it on?".
+                //
+                // Gated by the CONTACTS permissions, the same call the
+                // credentials routes below make: a login is an attribute OF the
+                // member directory, so whoever may manage a person's record may
+                // manage how that person signs in. READING is `view contacts`
+                // (the trail names staff and one family address); WRITING is
+                // `manage contacts`. No permission is minted — Permission::count()
+                // stays at 8 and StaffAuthGuardPinTest pins it.
+                Route::prefix('{masjid_id}/contacts/{contact_id}/family-login')
+                    ->controller(\App\Http\Controllers\AdminDashboard\ContactFamilyLoginController::class)
+                    ->group(function () {
+                        Route::get('/', 'show')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
                     });
@@ -536,12 +630,39 @@ Route::prefix('admin')->group(function () {
                 // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin,
                 // which this additive slice must not do. Splitting the two is a
                 // deliberate later step. See .claude/rules/groups.md.
+                // A person's avatar — one of the forty drawings the app ships,
+                // chosen rather than uploaded. `view contacts` to read the
+                // catalogue, `manage contacts` to set somebody's, mirroring the
+                // directory it is an attribute of.
+                Route::get('{masjid_id}/avatars', [ContactAvatarController::class, 'catalogue'])
+                    ->middleware('permission:view contacts');
+                Route::put('{masjid_id}/contacts/{contact_id}/avatar', [ContactAvatarController::class, 'update'])
+                    ->middleware('permission:manage contacts');
+                // "Restore the student's own" — drops the staff override.
+                Route::delete('{masjid_id}/contacts/{contact_id}/avatar/override', [ContactAvatarController::class, 'destroyOverride'])
+                    ->middleware('permission:manage contacts');
+
                 Route::prefix('{masjid_id}/groups')->controller(GroupsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
                     Route::get('/{group_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{group_id}', 'update')->middleware('permission:manage contacts');
                     Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Teacher provisioning — create a teacher login, assign the
+                // classes they lead, email an invite. Gated by `manage contacts`
+                // (the roster-administration permission every MasjidAdmin holds);
+                // the login is always type='Teacher' and its reach is bound to
+                // this school by masjid_user + group_staff. See TeachersController.
+                Route::prefix('{masjid_id}/teachers')->controller(TeachersController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{user_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{user_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{user_id}', 'destroy')->middleware('permission:manage contacts');
+                    // Re-send the set-password invite ("they never got it").
+                    Route::post('/{user_id}/invite', 'invite')->middleware('permission:manage contacts');
                 });
 
                 // Group rosters. A membership links an existing Contact to a
@@ -552,7 +673,28 @@ Route::prefix('admin')->group(function () {
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
+                        // Standing behind the claims a PUBLIC registration form
+                        // put on this roster. Declared BEFORE the {membership_id}
+                        // routes so `confirm` is a verb and not an id.
+                        //
+                        // `manage contacts`, minting no permission: confirming is
+                        // the same accountable roster administration as typing
+                        // the row in by hand, and it is literally the same write
+                        // (`GroupMembership::confirmedByStaff`).
+                        Route::post('/confirm', 'confirm')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // The Arabic letter tracker. Same CONTACTS gate as the roster,
+                // the behaviour points and the hifz diary beside it — the same
+                // kind of record about the same children.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(ArabicLettersController::class)
+                    ->group(function () {
+                        Route::get('/letters', 'index')->middleware('permission:view contacts');
+                        Route::put('/letters/stage', 'setStage')->middleware('permission:manage contacts');
+                        Route::get('/members/{membership_id}/letters', 'show')->middleware('permission:view contacts');
+                        Route::put('/members/{membership_id}/letters', 'mark')->middleware('permission:manage contacts');
                     });
 
                 // Guardian consent, recorded against ONE guardian edge — the
@@ -767,14 +909,23 @@ Route::prefix('admin')->group(function () {
                     Route::get('/by-fund', 'byFund')->middleware('permission:view donations');
                 });
 
-                // Donations ledger — READ-ONLY. Rows are created and advanced
-                // exclusively by Stripe webhooks, so there is deliberately NO
-                // store / update / destroy route here.
+                // Donations ledger. STRIPE rows are created and advanced
+                // exclusively by webhooks and are refused by store/update — the
+                // payment record is the source of truth for those. OFFLINE gifts
+                // are typed by a human, so they can be recorded AND corrected
+                // here; there is still deliberately no destroy route, because a
+                // gift that never happened is a $0 correction with a note, not a
+                // hole in the ledger.
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     // Manual/offline gift entry (cash/check/Zelle/…). Stripe gifts
                     // remain webhook-only; this is the only write path for donations.
                     Route::post('/', 'store')->middleware('permission:manage donations');
+                    // Correct a manually-recorded gift. Stripe rows are refused
+                    // by the controller — the webhook owns those. A gift whose
+                    // receipt has been issued is frozen on donor/fund/amount/date.
+                    Route::put('/{donation_id}', 'update')->middleware('permission:manage donations');
+                    Route::patch('/{donation_id}', 'update')->middleware('permission:manage donations');
                     Route::get('/{donation_id}', 'show')->middleware('permission:view donations');
                     // Issue the tax receipt for an OFFLINE gift — a deliberate
                     // treasurer action, never automatic on entry (see the
@@ -828,6 +979,10 @@ Route::prefix('admin')->group(function () {
                 // and credentials slices did before this one.
                 Route::prefix('{masjid_id}/offerings')->controller(OfferingsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
+                    // Literal path BEFORE /{offering_id}, or it is captured as
+                    // an id — the same ordering routes/admin.php already keeps
+                    // for forms/options and forms/field-types.
+                    Route::get('/options', 'options')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
                     Route::get('/{offering_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{offering_id}', 'update')->middleware('permission:manage contacts');

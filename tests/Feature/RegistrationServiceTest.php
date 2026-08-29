@@ -520,29 +520,41 @@ class RegistrationServiceTest extends TestCase
         $this->assertSame(2, $offering->fresh()->registration_count);
     }
 
+    /**
+     * ONE TRANSACTION: a failure at the LAST step of intake unwinds every row
+     * the earlier steps wrote, including the guarded seat counter.
+     *
+     * The failure is injected on the last write the transaction performs (the
+     * roster membership) rather than borrowed from a domain refusal, because
+     * this test is about the transaction boundary and not about any particular
+     * reason to refuse. It used to use a cross-tenant roster group as its
+     * vehicle; that stopped throwing on 2026-08-13 and deliberately so — see
+     * the test below and RegistrationService::writeRosterMemberships().
+     */
     #[Test]
     public function a_mid_transaction_failure_rolls_the_whole_intake_back(): void
     {
-        // A roster group that resolves to ANOTHER tenant is a data error the
-        // roster writer refuses loudly — inside the transaction, after the
-        // form_response, registration, registrants, and counter increment.
-        // Everything must roll back together.
-        $foreignGroup = Group::factory()->create(['masjid_id' => $this->otherMasjid->id]);
+        $group = Group::factory()->create(['masjid_id' => $this->masjid->id]);
 
-        $offering = Offering::factory()->forMasjid($this->masjid)->create([
-            'group_id' => $foreignGroup->id,
-            'capacity' => 5,
-        ]);
+        $offering = Offering::factory()
+            ->forMasjid($this->masjid)
+            ->withRoster($group)
+            ->withCapacity(5)
+            ->create();
         $plan = FeePlan::factory()->free()->create([
             'masjid_id' => $this->masjid->id,
             'offering_id' => $offering->id,
         ]);
 
+        GroupMembership::creating(function (): void {
+            throw new \RuntimeException('boom, at the very last write');
+        });
+
         try {
             $this->service->register($offering, $plan, $this->contact(), ['full_name' => 'Rollback']);
-            $this->fail('Expected RegistrationException for a cross-tenant roster group.');
-        } catch (RegistrationException $e) {
-            // expected
+            $this->fail('Expected the injected failure to propagate.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('boom', $e->getMessage());
         }
 
         $this->assertSame(0, Registration::count());
@@ -550,6 +562,59 @@ class RegistrationServiceTest extends TestCase
         $this->assertSame(0, Registrant::count());
         $this->assertSame(0, GroupMembership::count());
         $this->assertSame(0, $offering->fresh()->registration_count);
+    }
+
+    /**
+     * A ROSTER GROUP THAT CANNOT BE RESOLVED IS NOT A REASON TO REFUSE A
+     * REGISTRATION — it is the same fact as `group_id === null`, which this
+     * engine has always treated as ordinary (see
+     * a_free_registration_without_a_group_confirms_and_writes_no_memberships).
+     *
+     * Refusing was the 2026-08-13 defect. `writeRosterMemberships()` threw
+     * `rosterMisconfigured()`, `confirm()` calls it inside a transaction and
+     * `RegistrationPaymentService::settle()` calls `confirm()` inside ITS
+     * transaction — so a soft-deleted roster group rolled back the ledger row
+     * and the `paid` status of money Stripe had already reported, answered the
+     * webhook 500, and left the seat for the reaper. On this free path the same
+     * throw reached an anonymous parent as a 422 carrying an internal invariant
+     * sentence that is not a member of `OfferingRegistrationState::REASONS`.
+     *
+     * What the check still buys is preserved exactly: no roster row is ever
+     * written into a group belonging to another organisation.
+     */
+    #[Test]
+    public function an_unresolvable_or_foreign_roster_group_registers_without_a_roster(): void
+    {
+        $foreignGroup = Group::factory()->create(['masjid_id' => $this->otherMasjid->id]);
+        $ownGroup = Group::factory()->create(['masjid_id' => $this->masjid->id]);
+
+        // The reachable case: the registrar soft-deleted the classroom.
+        $ownGroup->delete();
+
+        foreach ([$foreignGroup, $ownGroup] as $group) {
+            $offering = Offering::factory()->forMasjid($this->masjid)->withCapacity(5)->create([
+                'group_id' => $group->id,
+            ]);
+            $plan = FeePlan::factory()->free()->create([
+                'masjid_id' => $this->masjid->id,
+                'offering_id' => $offering->id,
+            ]);
+
+            $registration = $this->service->register(
+                $offering,
+                $plan,
+                $this->contact(),
+                ['full_name' => 'No Roster'],
+                [$this->contact()]
+            );
+
+            $this->assertSame(Registration::STATUS_CONFIRMED, $registration->status);
+            $this->assertSame(1, $offering->fresh()->registration_count);
+        }
+
+        // Nothing was written into either group — least of all the other
+        // organisation's.
+        $this->assertSame(0, GroupMembership::withoutMasjidScope()->count());
     }
 
     // ---------------------------------------------------------- cross-tenant

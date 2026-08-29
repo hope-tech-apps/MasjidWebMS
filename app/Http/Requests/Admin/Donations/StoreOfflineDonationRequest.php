@@ -7,7 +7,9 @@ use App\Http\Requests\BaseFormRequest;
 /**
  * Record a manual/offline donation (cash, check, Zelle, Venmo, PayPal, Square).
  * `amount` is DOLLARS from the form; converted to integer cents in the controller.
- * A contact is optional (a general/anonymous gift books with no donor).
+ * A contact is optional (a general/anonymous gift books with no donor) — but an
+ * UNMATCHED TYPED NAME IS NOT THE SAME THING as no donor, and used to be treated
+ * as one. See `donor_name` below.
  */
 class StoreOfflineDonationRequest extends BaseFormRequest
 {
@@ -16,6 +18,12 @@ class StoreOfflineDonationRequest extends BaseFormRequest
         return [
             'fund_id' => ['required', 'integer'],
             'contact_id' => ['nullable', 'integer'],
+            // The donor's name as the admin typed it, for a giver who is not in
+            // the directory yet. Resolved through DonorContactService::
+            // findOrCreateByName(), so a first-time cheque writer becomes a real
+            // contact instead of being dropped on the floor. `contact_id` wins
+            // when both are sent — an id is a decision, a name is a lookup.
+            'donor_name' => ['nullable', 'string', 'max:200'],
             'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
             'payment_method' => ['required', 'in:cash,check,zelle,venmo,paypal,square,credit,giftcard,other'],
             'check_number' => ['nullable', 'string', 'max:50'],

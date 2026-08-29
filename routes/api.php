@@ -40,6 +40,11 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         Route::get('/masjid', 'masjidDetails');
     });
 
+    // Backward-compat: apps already installed call the GLOBAL app-config on
+    // launch (the version gate is per-masjid now, below). A 404 here hangs those
+    // installs on the splash screen, so answer it and fail open.
+    Route::get('/app-config', [AppConfigController::class, 'platformConfig']);
+
     // Per-masjid read routes (cached server-side from Phase 1).
     Route::prefix('masjids')->group(function () {
 

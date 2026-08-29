@@ -23,6 +23,33 @@ namespace App\Enums;
  */
 enum SectionType: string
 {
+    /**
+     * The one sentence about a type the SITE cannot draw yet — see
+     * withoutRenderer() below.
+     *
+     * A CONSTANT, and appended by description() rather than typed into each
+     * copy, because the product was telling three different stories about the
+     * `offering` type at once:
+     *
+     *   this enum's description   "…its fee plans, the places left, and the
+     *                              registration form" — a promise
+     *   OfferingSectionEditor     a preview of the states the block would show
+     *                              — a second promise
+     *   OfferingsView             "the public sign-up page is not drawn yet"
+     *                              — the truth, on a different screen
+     *
+     * An admin who read the first two and not the third would publish a section
+     * that renders nothing, and — exactly as OfferingsView warns — reasonably
+     * publish the intake FORM as a substitute, which writes a FormResponse and
+     * never a Registration: no seat taken, no money moved, and every screen
+     * agreeing that nothing happened.
+     */
+    public const RENDERER_PENDING_NOTE = 'NOT YET RENDERED: publishing this section stores the '
+        . 'reference and serves its data to the website, but the website has no component to draw '
+        . 'it with, so the page shows nothing where it sits. Do not point families at it, and do '
+        . 'not publish the sign-up form on a page instead — a form submission takes no seat and '
+        . 'moves no money.';
+
     case PAGE_TITLE = 'page_title';
     case PRAYER_TIMES = 'prayer_times';
     case TEXT = 'text';
@@ -65,6 +92,13 @@ enum SectionType: string
     case SERVICES_ELIGIBILITY = 'services_eligibility';
     case PROVIDERS_DIRECTORY = 'providers_directory';
     case IMPACT_STATS = 'impact_stats';
+    // The public front door for the registration engine (T-006g). Holds a
+    // REFERENCE to an Offering, exactly as `form` holds one to a Form — the
+    // price, the window, the places left and the intake questions live on the
+    // offering and its fee plans, never in this section's JSON. Offered to every
+    // tenant like every other type: a masjid taking iftar RSVPs and a school
+    // taking tuition are the same mechanism.
+    case OFFERING = 'offering';
 
     /**
      * Get all section type values
@@ -106,15 +140,21 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY => 'Services & Eligibility',
             self::PROVIDERS_DIRECTORY => 'Providers & Care Team',
             self::IMPACT_STATS => 'Impact Numbers',
+            self::OFFERING => 'Registration & Payment',
         };
     }
 
     /**
-     * Get section type description
+     * Get section type description.
+     *
+     * A type the site cannot draw yet carries the RENDERER_PENDING_NOTE on the
+     * end of whatever it says about itself — appended here, once, so no
+     * description can promise a rendering that does not exist and no surface
+     * has to remember to add the caveat itself.
      */
     public function description(): string
     {
-        return match ($this) {
+        $description = match ($this) {
             self::PAGE_TITLE => 'Page header with background image and title',
             self::PRAYER_TIMES => 'Prayer times section with image, title, and subtitle',
             self::TEXT => 'Rich text content section',
@@ -141,7 +181,67 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY => 'The services you offer and who qualifies for them — criteria, plus one highlighted card for the programme people ask about most',
             self::PROVIDERS_DIRECTORY => 'The people who provide care — photo, credentials and specialty, grouped by department',
             self::IMPACT_STATS => 'Headline numbers for funders and visitors — visits served, value of care, volunteer hours',
+            // Describes what this section HOLDS — a reference to one offering —
+            // not what a page will show, because today a page shows nothing.
+            // The truth about that is appended below, from one constant, for
+            // every type in withoutRenderer().
+            self::OFFERING => 'A reference to one program, class, event or admission round, so its sign-ups and payment can be published on a page. Create it first under Programs.',
         };
+
+        return $this->hasRenderer()
+            ? $description
+            : $description . ' ' . self::RENDERER_PENDING_NOTE;
+    }
+
+    /**
+     * Whether the public SITE has a component that draws this type.
+     *
+     * The renderers live in the Nuxt site repo (`app/components/section/*`),
+     * which ships separately, so it is possible — and has happened — for the
+     * backend half of a type to land while the half that draws it does not.
+     * This is the one place that fact is recorded; `description()` above,
+     * `rendererNote()` below and the admin `section-types` payload all read it,
+     * so the palette, the section editor and the type's own description cannot
+     * tell three different stories.
+     *
+     * WHEN THE RENDERER SHIPS: delete the case from withoutRenderer(). Nothing
+     * else changes, and `SectionTypeRendererTruthTest` checks that every string
+     * flipped with it.
+     */
+    public function hasRenderer(): bool
+    {
+        return ! in_array($this, self::withoutRenderer(), true);
+    }
+
+    /**
+     * The caveat for this type, or null when there is nothing to caveat.
+     * Served to the SPA so the palette and the editors print the SAME sentence
+     * rather than each keeping a copy.
+     */
+    public function rendererNote(): ?string
+    {
+        return $this->hasRenderer() ? null : self::RENDERER_PENDING_NOTE;
+    }
+
+    /**
+     * Types whose public renderer does not exist yet.
+     *
+     * `offering` is here because T-006g built the backend front door — the
+     * public read, the presenter, the section, the binder — and the component
+     * that draws a registration block was explicitly out of its scope. Every
+     * other type in this enum is drawn today.
+     *
+     * NOT gated out of the palette. The data IS served (SectionContentBinder
+     * inlines it), a masjid can lay its page out ahead of the renderer, and
+     * removing a case from the palette would be a new per-type mechanism the
+     * class docblock above deliberately does not have. What it must never do is
+     * PROMISE a rendering, which is what it was doing.
+     *
+     * @return list<self>
+     */
+    public static function withoutRenderer(): array
+    {
+        return [self::OFFERING];
     }
 
     /**
@@ -197,6 +297,13 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY,
             self::PROVIDERS_DIRECTORY,
             self::IMPACT_STATS => false,
+            // FALSE, like `form`, and for the same reason. This flag means "the
+            // renderer must call another endpoint of ours to draw this" — and it
+            // must not, because SectionContentBinder::bindOffering INLINES the
+            // offering's public payload into the section when the page is
+            // served. One fetch, and no window in which the page has rendered
+            // and the price has not.
+            self::OFFERING => false,
         };
     }
 
@@ -540,6 +647,40 @@ enum SectionType: string
                 'stats' => [],
                 'layout' => 'row', // row | grid
                 'columns' => 3,
+                'background_color' => '#ffffff',
+            ],
+            // ---------------------------------------------------------------
+            // The registration front door (T-006g)
+            // ---------------------------------------------------------------
+            // A REFERENCE and page-level wording — nothing else. The name, the
+            // description, the fee plans, the registration window and the places
+            // remaining all live on the Offering and its FeePlans;
+            // SectionContentBinder::bindOffering inlines them under
+            // `content.offering` at serve time, through the same presenter the
+            // public GET /api/v1/offerings/{slug} uses.
+            //
+            // COPYING ANY OF THEM IN HERE WOULD BE A SECOND PRICE. Section
+            // content is a JSON blob an admin edits by hand; a fee copied into
+            // it would go stale the moment a fee plan was replaced, and the page
+            // would advertise one number while Stripe charged another. This is
+            // the same call `form` makes (a reference, never the schema) and the
+            // reason `admissions_tuition.tiers[].amount` is display TEXT: that
+            // section is a price list nothing charges from, this one is the
+            // actual checkout, and the two must not be confused.
+            //
+            // `title` and `intro` are page-level wording drawn AROUND the
+            // offering; the offering's own name and description come from the
+            // offering, so renaming a program does not leave the page stale.
+            self::OFFERING => [
+                'offering_id' => null,
+                'title' => '',
+                'intro' => '',
+                // Show the price table above the form. An organization whose
+                // single plan is free legitimately turns this off.
+                'show_fee_plans' => true,
+                // Wording only — it never decides whether registration is open.
+                // `content.offering.registration_state` does.
+                'button_text' => 'Register',
                 'background_color' => '#ffffff',
             ],
         };

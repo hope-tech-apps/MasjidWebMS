@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Http\Requests\Admin\Contacts\SetAvatarRequest;
+use App\Support\Avatar;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\GroupAudience;
@@ -53,6 +56,15 @@ class GroupsController extends FamilyController
             ->orderBy('id')
             ->get();
 
+        // The QUERY above is still the guarantee against every group this
+        // contact holds no row in — a group they are not on is never fetched, so
+        // it cannot leak through a count or a paginator total. This narrows
+        // WITHIN that already-safe set, to the rows the credential speaks
+        // through, using the same call `show()` refuses with: a listing that
+        // offered a group whose `show()` answers 403 is the two halves
+        // disagreeing about one caller.
+        $groups = $groups->filter(fn (Group $group) => $this->hasStanding($group))->values();
+
         return response()->json([
             'status' => 'success',
             'data' => $groups->map(fn (Group $group) => $this->serialize($group))->values()->all(),
@@ -83,24 +95,94 @@ class GroupsController extends FamilyController
         ], Response::HTTP_OK);
     }
 
+    /**
+     * PUT .../groups/{group_id}/members/{membership_id}/avatar
+     *
+     * A parent choosing the avatar for their OWN child.
+     *
+     * Manara has no student login — a child cannot sign in to pick a face for
+     * themselves — so the guardian does it with them. That is the closest this
+     * platform gets to "the student's own avatar", and it is why this is the
+     * second write in the family realm.
+     *
+     * AUTHORISED BY THE WARD EDGE, not by consent. `standingRows()` is the same
+     * narrowed set every read here resolves through, and the membership must
+     * name a contact this parent is the guardian OF. A parent may therefore
+     * dress their own child and nobody else's — not a classmate, not another
+     * family's child, and not themselves.
+     *
+     * Consent is deliberately NOT consulted: choosing a cartoon is not a
+     * disclosure of anything, and gating it on media consent would leave a
+     * child who cannot be photographed also unable to have a drawing.
+     */
+    public function updateAvatar(SetAvatarRequest $request, $masjid_id, $group_id, $membership_id)
+    {
+        $group = $this->group($group_id);
+
+        $wardContactIds = $this->wardContactIds($group);
+
+        $membership = $group->memberships()->participants()->findOrFail($membership_id);
+
+        if (! in_array((int) $membership->contact_id, $wardContactIds, true)) {
+            abort(Response::HTTP_FORBIDDEN, 'That is not your child.');
+        }
+
+        $contact = $membership->contact;
+
+        if ($contact === null) {
+            abort(Response::HTTP_NOT_FOUND, 'That student has no contact record.');
+        }
+
+        // The CHILD'S OWN choice — never the staff override. A parent choosing
+        // with their child is the child choosing; it must not silently clear a
+        // teacher's override, and a teacher's override must not stop them.
+        $contact->fill([
+            'avatar_character' => $request->input('character') ?: null,
+            'avatar_tone' => $request->input('tone') ?: null,
+            'avatar_color' => $request->input('color') ?: null,
+        ])->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->student($membership->fresh('contact')),
+            'meta' => $this->meta(),
+        ], Response::HTTP_OK);
+    }
+
+    /** The catalogue a picker renders, same source the staff surface uses. */
+    public function avatarCatalogue()
+    {
+        return response()->json([
+            'status' => 'success',
+            'data' => Avatar::catalogue(),
+        ], Response::HTTP_OK);
+    }
+
     // ------------------------------------------------------------- internals
 
     /**
      * Is this parent in this group at all?
      *
-     * Asked of the memberships rather than of `GroupAudience::mayReceive()`,
-     * because those are different questions and conflating them would be a bug
-     * in both directions. `mayReceive(feed)` is false for a guardian who has
-     * never consented — but such a parent IS in the group and must still be able
-     * to see that their child is enrolled and to reach the participant thread
-     * about them, which consent deliberately does not gate
-     * (.claude/rules/groups.md, "consent gates broadcasts, not conversations").
+     * Still not `GroupAudience::mayReceive()`, because those are different
+     * questions and conflating them would be a bug in both directions.
+     * `mayReceive(feed)` is false for a guardian who has never consented — but
+     * such a parent IS in the group and must still be able to see that their
+     * child is enrolled and to reach the participant thread about them, which
+     * consent deliberately does not gate (.claude/rules/groups.md, "consent
+     * gates broadcasts, not conversations").
+     *
+     * It IS now `GroupAudience::membershipsFor()` rather than a `where` on the
+     * table. The direct query was a second definition of standing living outside
+     * the class that owns it, and it disagreed the moment the credential rule
+     * changed: a parent-portal credential speaks through its holder's GUARDIAN
+     * EDGES and not through their own participant rows, so a parent who is
+     * merely enrolled in the adult ḥalaqa gets no portal standing there — while
+     * this method went on answering true, listing the group and serializing
+     * their own membership id beside a feed and a record surface that all 403.
      */
     private function hasStanding(Group $group): bool
     {
-        return $group->memberships()
-            ->where('contact_id', $this->contact()->id)
-            ->exists();
+        return $this->standingRows($group)->isNotEmpty();
     }
 
     /**
@@ -112,9 +194,13 @@ class GroupsController extends FamilyController
     {
         $contact = $this->contact();
 
-        $mine = $group->memberships()
-            ->where('contact_id', $contact->id)
-            ->get();
+        // The same narrowed set `hasStanding()` answers from, so what a parent
+        // is shown about a group and whether they may open it at all are one
+        // decision. `own_membership` below therefore serializes as null for a
+        // family credential: the holder's own participant row is not something
+        // this credential speaks through, and serving its id beside endpoints
+        // that all refuse it is how a later slice talks itself into opening one.
+        $mine = $this->standingRows($group);
 
         // The wards this parent names IN THIS GROUP. Per-group on purpose: a
         // guardian edge says guardian-of-WHOM-in-WHICH-group, so consent and
@@ -138,7 +224,7 @@ class GroupsController extends FamilyController
             : $group->memberships()
                 ->participants()
                 ->whereIn('contact_id', $wardContactIds)
-                ->with('contact:id,first_name,last_name')
+                ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
                 ->get();
 
         $ownParticipant = $mine->first(

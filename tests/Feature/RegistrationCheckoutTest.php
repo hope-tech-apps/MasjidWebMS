@@ -4,12 +4,14 @@ namespace Tests\Feature;
 
 use App\Models\Contact;
 use App\Models\FeePlan;
+use App\Models\Form;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Models\Registration;
 use App\Models\RegistrationAdjustment;
 use App\Services\Registrations\RegistrationService;
 use App\Services\Stripe\RegistrationCheckoutService;
+use App\Support\OfferingRegistrationState;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
@@ -365,6 +367,167 @@ class RegistrationCheckoutTest extends TestCase
         $this->postCheckout($registration)->assertStatus(422);
     }
 
+    // ------------------ what the till re-checks, and what it deliberately does not
+
+    #[Test]
+    public function raising_the_price_for_next_season_does_not_break_this_seasons_checkout_link(): void
+    {
+        // DEACTIVATE-AND-REPLACE IS THE ONLY WAY TO CHANGE A PRICE.
+        // `FeePlansController::update` refuses an edit outright and `destroy`
+        // just sets `is_active = false`, under a docblock that states the
+        // contract: deactivating hides the plan from new registration "while
+        // every existing one keeps resolving."
+        //
+        // A `! $feePlan->is_active` guard was added to the checkout path and
+        // broke exactly that. Measured: a family registers at 15000 and holds a
+        // pending seat; the registrar deactivates the 2026 plan and creates the
+        // 2027 plan at 17500 — the documented flow, done correctly — and her
+        // checkout link answers 422 "This fee plan is no longer available."
+        // while her snapshot still says 15000 and her dead hold still occupies
+        // the seat she would have to re-register into.
+        $this->stubSession('cs_season', 'https://checkout.stripe.test/cs_season', 'pi_season');
+
+        [$offering, $plan2026] = $this->makeOffering(['capacity' => 1]);
+
+        $registration = $this->registerThrough($offering, $plan2026);
+        $this->assertSame(15000, (int) $registration->adjusted_total_minor);
+
+        // The seasonal price rise, exactly as the admin surface performs it.
+        $plan2026->is_active = false;
+        $plan2026->save();
+
+        FeePlan::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+            'amount_minor' => 17500,
+            'label' => '2027',
+        ]);
+
+        $this->postCheckout($registration)
+            ->assertOk()
+            ->assertJsonPath('data.checkout_url', 'https://checkout.stripe.test/cs_season')
+            // AND SHE IS STILL CHARGED WHAT SHE AGREED TO. The plan is never
+            // re-read for a price; `adjusted_total_minor` is.
+            ->assertJsonPath('data.amount_due_minor', 15000);
+
+        $this->assertSame(15000, $this->captured['params']['line_items'][0]['price_data']['unit_amount']);
+    }
+
+    #[Test]
+    public function a_deactivated_plan_is_still_refused_to_a_NEW_registration(): void
+    {
+        // The other half of the same contract, so dropping the guard above
+        // cannot be mistaken for "deactivation stopped meaning anything".
+        // `is_active = false` means "not offered to NEW registrants", and
+        // `RegistrationService::register()` is where that is enforced.
+        [$offering, $plan] = $this->makeOffering();
+
+        $plan->is_active = false;
+        $plan->save();
+
+        $this->postRegister($offering, [
+            'fee_plan_id' => $plan->id,
+            'payer' => ['name' => 'Amal Yusuf', 'email' => 'amal@example.test'],
+            'data' => ['full_name' => 'Amal Yusuf'],
+        ])->assertStatus(404);
+
+        $this->assertDatabaseCount('registrations', 0);
+    }
+
+    #[Test]
+    public function checkout_refuses_when_the_intake_form_has_been_deleted_under_the_seat(): void
+    {
+        // THE DOOR SHUT AND THE TILL OPEN. Measured: a family holds a pending
+        // paid seat, the registrar soft-deletes the intake form. Every read
+        // surface says `closed / no_intake_form`, a new `register` is 422 — and
+        // checkout of the EXISTING seat returned 200 with a live hosted Session
+        // for $150. The webhook then confirms the seat and materialises group
+        // memberships for a program the platform declares shut, and since the
+        // org is merchant of record the refund is a manual act in its dashboard.
+        //
+        // The counter-argument (the answers are already stored as a
+        // form_response, so the form's absence does not invalidate an existing
+        // row) is real but loses on cost: the seat lapses in thirty minutes and
+        // re-registering is already refused, so the family is stranded either
+        // way — the only question is whether money moved first.
+        $service = Mockery::mock(RegistrationCheckoutService::class)->makePartial();
+        $service->shouldAllowMockingProtectedMethods();
+        $service->shouldNotReceive('createCheckoutSession');
+        $this->app->instance(RegistrationCheckoutService::class, $service);
+
+        [$offering, $plan] = $this->makeOffering();
+        $registration = $this->registerThrough($offering, $plan);
+
+        Form::query()->whereKey($offering->intake_form_id)->firstOrFail()->delete();
+
+        $this->postCheckout($registration)
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'This offering is not currently accepting registrations.');
+
+        // Same words the page and `register` use — one answer at the door and
+        // at the till.
+        $this->assertSame(
+            'no_intake_form',
+            OfferingRegistrationState::for($offering->fresh())['reason']
+        );
+    }
+
+    #[Test]
+    public function checkout_is_still_allowed_while_the_offering_is_merely_full(): void
+    {
+        // The over-refusal guard on the clause above. Capacity is a fact about a
+        // NEW registration, not about the program, and this seat is already
+        // held — refusing to let a family pay for the seat they hold because
+        // somebody else took the last one would be absurd. Nor may the plan
+        // count be re-decided here: those are intake questions.
+        $this->stubSession('cs_full', 'https://checkout.stripe.test/cs_full', 'pi_full');
+
+        [$offering, $plan] = $this->makeOffering(['capacity' => 1]);
+        $registration = $this->registerThrough($offering, $plan);
+
+        $this->assertTrue($offering->fresh()->isAtCapacity());
+
+        $this->postCheckout($registration)
+            ->assertOk()
+            ->assertJsonPath('data.checkout_url', 'https://checkout.stripe.test/cs_full');
+    }
+
+    #[Test]
+    public function a_lapsed_hold_is_refused_in_words_a_family_can_read(): void
+    {
+        // `notCheckoutable('expired')` rendered "Only a pending registration can
+        // be checked out (status: expired)." to an anonymous caller. 'expired'
+        // is not a member of Registration::STATUSES, so the sentence named a
+        // status the system does not have — and it was the only developer-facing
+        // refusal on a path whose other messages are written for a parent.
+        $service = Mockery::mock(RegistrationCheckoutService::class)->makePartial();
+        $service->shouldAllowMockingProtectedMethods();
+        $service->shouldNotReceive('createCheckoutSession');
+        $this->app->instance(RegistrationCheckoutService::class, $service);
+
+        [$offering, $plan] = $this->makeOffering(['capacity' => 1]);
+        $registration = $this->registerThrough($offering, $plan);
+
+        $registration->checkout_expires_at = now()->subMinutes(5);
+        $registration->save();
+
+        $response = $this->postCheckout($registration)->assertStatus(422);
+
+        $this->assertStringNotContainsString('expired', (string) $response->json('message'));
+        $this->assertStringNotContainsString('status:', (string) $response->json('message'));
+        $this->assertNotContains('expired', Registration::STATUSES);
+        $this->assertSame(
+            'The payment window for this registration has closed. Its place is released automatically — please register again in a few minutes.',
+            $response->json('message')
+        );
+
+        // The seat is NOT released here on purpose: `releaseSeat()` is the single
+        // seam and the reaper drives it behind a grace margin that exists so a
+        // webhook in flight cannot have a paying family's seat swept.
+        $this->assertSame(Registration::STATUS_PENDING, $registration->fresh()->status);
+        $this->assertSame(1, (int) $offering->fresh()->registration_count);
+    }
+
     // ------------------------------------------- T-006e: subscription shapes
 
     #[Test]
@@ -588,6 +751,11 @@ class RegistrationCheckoutTest extends TestCase
             'address' => '1 Test St',
             'latitude' => 0.0,
             'longitude' => 0.0,
+            // The public registration endpoints are the CRM's public face and
+            // ask `masjids.crm_enabled` (PublicTenant::crmEnabled) since
+            // 2026-08-12. PublicRegistrationCrmGateTest owns that clause; this
+            // file is about the money path behind it.
+            'crm_enabled' => true,
         ], $overrides));
     }
 

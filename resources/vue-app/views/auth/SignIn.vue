@@ -24,10 +24,13 @@
                             <PasswordInput name="password" v-model="signData.password" input-class="input w-100" />
                         </ColumnInputContainer>
                     </div>
-                    <div class="card-footer bg-white border-0">
+                    <div class="card-footer bg-white border-0 d-flex flex-column gap-3">
                         <LoadingButton type="submit" classes="btn-success w-100" :is-loading="submitLoading">
                             Sign In
                         </LoadingButton>
+                        <router-link to="/auth/forgot-password" class="text-center text-decoration-none">
+                            Forgot your password?
+                        </router-link>
                     </div>
                 </Form>
             </div>
@@ -87,6 +90,16 @@ async function signIn () : Promise<void> {
                 }
                 else if(authStore.user?.type === 'SuperAdmin') {
                     router.push("/auth/dashboards");
+                }
+                else if(authStore.user?.type === 'Teacher') {
+                    // Mirror the MasjidAdmin prefetch: seed the masjid id the shell
+                    // leans on. The teacher realm has no admin access, so we do NOT
+                    // call the admin-scoped masjidStore.fetchMasjid(); the teacher
+                    // shell reads its own /api/teacher/user for the school header.
+                    if (authStore.user.masjid) {
+                        authStore.saveDashboardMasjidId(authStore.user.masjid.id);
+                    }
+                    router.push("/teacher");
                 } else {
                     router.push("/auth/401");
                 }

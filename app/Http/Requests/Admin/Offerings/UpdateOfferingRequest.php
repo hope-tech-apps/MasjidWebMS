@@ -31,6 +31,11 @@ class UpdateOfferingRequest extends OfferingFormRequest
     {
         return [
             'name' => 'sometimes|required|string|max:255',
+            // Public copy (T-006g) — served verbatim to anonymous visitors by
+            // OfferingPublicPayload. `nullable`, because an offering with no
+            // description is a legitimate state and the renderer omits the
+            // block; length-bounded because it is a paragraph, not a page.
+            'description' => 'sometimes|nullable|string|max:5000',
             'slug' => [
                 'sometimes', 'required', 'string', 'max:255',
                 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',

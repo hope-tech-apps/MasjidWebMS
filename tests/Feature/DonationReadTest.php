@@ -222,7 +222,7 @@ class DonationReadTest extends TestCase
             ->assertStatus(403);
     }
 
-    // ---------- read-only: no write routes exist ----------
+    // ---------- write routes: what exists, and what is refused ----------
 
     #[Test]
     public function donations_store_route_validates_the_offline_gift_body(): void
@@ -240,16 +240,55 @@ class DonationReadTest extends TestCase
     }
 
     #[Test]
-    public function donations_have_no_update_route(): void
+    public function a_stripe_donation_is_refused_by_the_update_route(): void
     {
+        // T-007c registered PUT/PATCH so a HAND-TYPED gift can be corrected —
+        // before it, a cheque recorded against the wrong donor was wrong
+        // forever. The guarantee this test has always been about is unchanged
+        // and now sits in the controller instead of the router: a donation that
+        // came from Stripe is the webhook's record, and this route will not
+        // touch it. These fixtures are factory-made, so `source` is the column
+        // default 'stripe'.
         $ownId = $this->donationIdFor($this->masjidA);
 
         Sanctum::actingAs($this->adminA);
 
-        // PUT is not registered on a single donation -> 405.
         $this->putJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$ownId}", [
+            'note' => 'trying to edit a card gift',
+        ])->assertStatus(422);
+
+        $this->assertNull(
+            Donation::withoutMasjidScope()->find($ownId)->note,
+            'a Stripe donation was mutated through the admin update route'
+        );
+    }
+
+    #[Test]
+    public function the_update_route_cannot_move_money_or_flip_a_status(): void
+    {
+        // The other half of the old assertion: even on an editable OFFLINE gift,
+        // `status` and the Stripe identifiers are not accepted keys, so an admin
+        // cannot mark an unpaid gift succeeded or forge a payment reference.
+        Sanctum::actingAs($this->adminA);
+
+        $offline = Donation::factory()->create([
+            'masjid_id' => $this->masjidA->id,
+            'fund_id' => $this->fundA->id,
+            'source' => 'offline',
+            'status' => 'pending',
+        ]);
+
+        $this->putJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$offline->id}", [
             'status' => 'succeeded',
-        ])->assertStatus(405);
+            'stripe_payment_intent_id' => 'pi_forged',
+            'note' => 'the one key that is allowed',
+        ])->assertStatus(200);
+
+        $offline->refresh();
+
+        $this->assertSame('pending', $offline->status, 'an admin flipped a donation status');
+        $this->assertNull($offline->stripe_payment_intent_id, 'an admin forged a Stripe reference');
+        $this->assertSame('the one key that is allowed', $offline->note);
     }
 
     #[Test]

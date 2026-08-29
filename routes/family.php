@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Family\ArabicLettersController;
 use App\Http\Controllers\Family\BehaviorAwardsController;
 use App\Http\Controllers\Family\FamilyAuthController;
 use App\Http\Controllers\Family\GroupPostsController;
@@ -7,6 +8,7 @@ use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
 use App\Http\Controllers\Family\HifzEntriesController;
 use App\Http\Controllers\Family\MeController;
+use App\Http\Controllers\Family\StudentSessionController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -67,11 +69,13 @@ use Illuminate\Support\Facades\Route;
 |
 | ============================ THE REALM IS READ-ONLY =======================
 |
-| Apart from the two sign-in POSTs, which write only a `contact_login_codes`
-| row, there is no verb here but GET. A parent replying in a thread is T-015f
-| (it needs `group_messages.author_contact_id` and a dual-principal
-| `group_thread_reads`, whose `user_id` is NOT NULL today); withdrawing their
-| own consent is T-015h. Both are absent rather than half-built.
+| Almost read-only, and the exceptions are counted. The two sign-in POSTs write
+| a `contact_login_codes` row; T-015f adds a reply in a thread the parent may
+| already read (which also moves their own read bookmark); and a parent may set
+| the AVATAR of a child they are the guardian of, because this platform has no
+| student login and somebody has to choose it with them. Everything else is a GET. A parent cannot START a thread (that would route around
+| the teacher who decides what is discussed and where), and withdrawing their
+| own consent is still T-015h — absent rather than half-built.
 */
 
 // --------------------------------------------------------------- signing in
@@ -99,10 +103,32 @@ Route::prefix('family/masjids/{masjid_id}/auth')
         Route::post('/verify-code', 'verifyCode')->middleware('throttle:family-verify');
     });
 
+// ------------------------------------------------------------ child mode
+//
+// The screen a child gets when a parent hands them the phone. Its token is
+// minted BY a parent (the server authenticated them, not the child) but carries
+// only `student:{membership}`, so `family.parent` refuses it everywhere above
+// and `family.student` pins it to the one child it names. A six-year-old cannot
+// be issued a password — Contact::getAuthPassword() says so — and this is how
+// they get a session anyway without one.
+//
+// Deliberately TWO routes. Everything else a student might eventually see
+// (their own points, their own hifz) is a later slice with its own standing
+// computation; what is here is the narrowest thing that lets a child choose how
+// they are represented.
+Route::prefix('family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student')
+    ->whereNumber(['masjid_id', 'group_id', 'membership_id'])
+    ->middleware(['auth:family', 'family.active', 'family.student', 'family.tenant', 'crm', 'throttle:family'])
+    ->controller(StudentSessionController::class)
+    ->group(function () {
+        Route::get('/me', 'show');
+        Route::put('/avatar', 'updateAvatar');
+    });
+
 // ------------------------------------------------------------ the portal
 
 Route::prefix('family')
-    ->middleware(['auth:family', 'family.active', 'family.tenant', 'crm', 'throttle:family'])
+    ->middleware(['auth:family', 'family.active', 'family.parent', 'family.tenant', 'crm', 'throttle:family'])
     ->group(function () {
 
         // Every family route is addressed per-organisation, matching the admin
@@ -112,6 +138,9 @@ Route::prefix('family')
         Route::prefix('masjids/{masjid_id}')->group(function () {
 
             Route::get('/me', [MeController::class, 'show']);
+
+            // The forty drawings a family can choose from.
+            Route::get('/avatars', [GroupsController::class, 'avatarCatalogue']);
 
             // The entry point: which groups this parent stands in, and which
             // children they hold in each. Every route below is addressed with
@@ -138,6 +167,11 @@ Route::prefix('family')
                 ->group(function () {
                     Route::get('/', 'index');
                     Route::get('/{thread_id}', 'show');
+
+                    // T-015f — the one write in this realm besides sign-in.
+                    // Authorised by the same `mayReceiveThread()` the reads use,
+                    // and the author comes from the TOKEN, never the payload.
+                    Route::post('/{thread_id}/messages', 'storeMessage');
                 });
 
             // Per-CHILD records, addressed by the ward's own participant
@@ -145,9 +179,19 @@ Route::prefix('family')
             // either: a class-wide view of points or of who has memorised most
             // is the ranking these modules exist to refuse.
             Route::prefix('groups/{group_id}/members/{membership_id}')->group(function () {
+                // A parent choosing their OWN child's avatar. Manara has no
+                // student login, so this is as close as the platform gets to the
+                // student picking their own face. Authorised by the ward edge.
+                Route::put('/avatar', [GroupsController::class, 'updateAvatar']);
+
+                // Hand the device to the child. Mints a token scoped to THIS
+                // child and nothing else — see StudentSessionController.
+                Route::post('/student-session', [StudentSessionController::class, 'store']);
+
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);
+                Route::get('/letters', [ArabicLettersController::class, 'forMember']);
                 Route::get('/hifz/progress', [HifzEntriesController::class, 'progress']);
             });
         });

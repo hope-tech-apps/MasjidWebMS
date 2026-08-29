@@ -59,6 +59,10 @@ class Masjid extends Model implements HasMedia
         'created_by',
         'updated_by',
         'deleted_by'
+        // `listed_at` is deliberately ABSENT: publishing an organisation to the
+        // public directory is a SuperAdmin decision made through one endpoint
+        // (MasjidsController::setDirectoryListing), never something a mass
+        // assignment on some other write path can turn on by accident.
     ];
 
     /**
@@ -141,7 +145,39 @@ class Masjid extends Model implements HasMedia
             // Per-masjid CRM feature gate; default false = CRM off (SuperAdmin-only toggle).
             'crm_enabled' => 'boolean',
             'assistant_enabled' => 'boolean',
+            // Public directory listing gate — see scopeListed() below.
+            'listed_at' => 'datetime',
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // Public directory listing
+    // ------------------------------------------------------------------
+
+    /**
+     * Organisations the mobile app's picker is allowed to show.
+     *
+     * NULL `listed_at` means "exists, but not published to the public directory"
+     * — which is how every organisation is born, so creating a tenant no longer
+     * publishes it (see the add_listed_at_to_masjids_table migration). A
+     * SuperAdmin lists it deliberately once it is ready.
+     *
+     * This gates GET /mobile/masjids (the directory) and NOT
+     * GET /mobile/masjids/{id}. Unlisting is a discoverability decision, not a
+     * revocation: apps already installed hold a masjid id and keep working, so
+     * an operator can pull an organisation out of the picker without breaking
+     * the people already using it. Anything genuinely private is scoped by
+     * tenant elsewhere — this is not an authorization boundary.
+     */
+    public function scopeListed($query)
+    {
+        return $query->whereNotNull('listed_at');
+    }
+
+    /** True when this organisation appears in the public directory. */
+    public function isListed(): bool
+    {
+        return $this->listed_at !== null;
     }
 
     // ------------------------------------------------------------------
@@ -292,8 +328,24 @@ class Masjid extends Model implements HasMedia
         return $this->hasOne(ThemeSetting::class);
     }
 
+    /**
+     * The logo the public organisation directory renders.
+     *
+     * `model_type` IS PART OF THE KEY. Spatie's `media` table is polymorphic:
+     * `model_id` alone is not a foreign key to anything, it is one half of one.
+     * Without this predicate the relation matched any `logos` row whose
+     * `model_id` happened to equal this masjid's id — a School with id 14 and a
+     * Masjid with id 14 would have shared a logo, and the organisation picker
+     * every mobile app opens with (`Masjid::listed()->with('logo')`) would have
+     * rendered whichever row `latest()` returned.
+     *
+     * Latent today only because nothing else in this application writes a
+     * `logos` collection; `App\Console\Commands\MediaVerify` has always
+     * queried the pair, so the check and the thing it checks now agree.
+     */
     public function logo() {
         return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
             ->where('collection_name', 'logos')
             ->orderBy('created_at', 'desc')
             ->latest();

@@ -5,20 +5,33 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\MobileMedia;
 use Illuminate\Support\Facades\Cache;
 
 class MasjidsController extends Controller
 {
+    /**
+     * The public organisation directory the apps open with.
+     *
+     * Gated on `masjids.listed_at` (Masjid::scopeListed): this used to return
+     * EVERY row, so creating a tenant published it to every app user inside the
+     * one-day cache window whether anyone was ready or not. An organisation is
+     * offered here only once a SuperAdmin has listed it.
+     *
+     * Anything that changes listing state must flush MASJIDS_LIST — the cache
+     * outlives the decision by a day otherwise.
+     */
     public function index()
     {
         $masjids = Cache::remember(
             MobileCache::globalKey(MobileCache::MASJIDS_LIST),
             MobileCache::TTL_DAY,
-            // makeHidden at the boundary, not $hidden on the model: these columns
-            // are legitimately read by the admin surfaces, and this is the one
-            // place the row meets an anonymous caller. See
-            // Masjid::PUBLIC_DIRECTORY_DENYLIST for what was being published.
-            fn() => Masjid::with('logo')->get()
+            // makeHidden at the boundary, not $hidden on the model: these
+            // columns are legitimately read by the admin surfaces, and this is
+            // the one place the row meets an anonymous caller. See
+            // Masjid::PUBLIC_DIRECTORY_DENYLIST for what was being published
+            // and why email/phone stay.
+            fn() => Masjid::listed()->with('logo')->get()
                 ->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST)
         );
 
@@ -45,7 +58,8 @@ class MasjidsController extends Controller
                     'themeSettings'
                 )->findOrFail($masjid_id);
 
-                // Same boundary rule as index().
+                // Same boundary rule as index() — an anonymous caller gets the
+                // organisation's public identity, never its credentials.
                 $masjid->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST);
 
                 // Per-masjid color theme, baked into the cached payload so the apps
@@ -105,7 +119,14 @@ class MasjidsController extends Controller
         $gallery = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::GALLERY),
             MobileCache::TTL_MEDIUM,
-            fn() => Masjid::with('gallery')->findOrFail($masjid_id)->gallery->toArray()
+            // A gallery item IS a media row, rendered by the app as
+            // gallery[i].originalUrl! — a row with a null url would crash the
+            // grid (the featuresIcons class). A gallery image with no file is
+            // nothing to show, so drop it rather than serve a broken tile.
+            fn() => Masjid::with('gallery')->findOrFail($masjid_id)->gallery
+                ->filter(fn($media) => ! empty($media->original_url))
+                ->values()
+                ->toArray()
         );
 
         return response()->json([
@@ -121,11 +142,27 @@ class MasjidsController extends Controller
         $wrapped = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::ABOUT),
             MobileCache::TTL_MEDIUM,
-            fn() => ['value' => Masjid::with(
-                'masjidAbout.aboutImage',
-                'masjidAbout.missionIcon',
-                'masjidAbout.visionIcon'
-            )->findOrFail($masjid_id)->masjidAbout],
+            function () use ($masjid_id) {
+                $about = Masjid::with(
+                    'masjidAbout.aboutImage',
+                    'masjidAbout.missionIcon',
+                    'masjidAbout.visionIcon'
+                )->findOrFail($masjid_id)->masjidAbout;
+
+                if ($about === null) {
+                    return ['value' => null];
+                }
+
+                // The About screen force-unwraps aboutImage/missionIcon/
+                // visionIcon .originalUrl!; any one missing blanks the screen.
+                // Guarantee each is a non-null envelope.
+                $row = $about->toArray();
+                $row['about_image'] = MobileMedia::envelope($about->aboutImage, MobileMedia::imagePlaceholderUrl());
+                $row['mission_icon'] = MobileMedia::envelope($about->missionIcon, MobileMedia::imagePlaceholderUrl());
+                $row['vision_icon'] = MobileMedia::envelope($about->visionIcon, MobileMedia::imagePlaceholderUrl());
+
+                return ['value' => $row];
+            },
         );
 
         return response()->json([
@@ -140,7 +177,20 @@ class MasjidsController extends Controller
         $wrapped = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::DONATION_LINK),
             MobileCache::TTL_MEDIUM,
-            fn() => ['value' => Masjid::with('donationLink.image')->findOrFail($masjid_id)->donationLink],
+            function () use ($masjid_id) {
+                $link = Masjid::with('donationLink.image')->findOrFail($masjid_id)->donationLink;
+
+                if ($link === null) {
+                    return ['value' => null];
+                }
+
+                // The Donate screen force-unwraps image.originalUrl!; a link with
+                // no banner would crash it. Guarantee a non-null envelope.
+                $row = $link->toArray();
+                $row['image'] = MobileMedia::envelope($link->image, MobileMedia::imagePlaceholderUrl());
+
+                return ['value' => $row];
+            },
         );
 
         return response()->json([

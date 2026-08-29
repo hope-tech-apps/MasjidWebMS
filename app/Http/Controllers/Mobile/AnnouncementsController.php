@@ -6,8 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\MobileMedia;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 class AnnouncementsController extends Controller
 {
@@ -23,25 +23,48 @@ class AnnouncementsController extends Controller
                     ->with('image')
                     ->get();
 
-                // The iOS client declares `image` non-optional and decodes the list
-                // in one pass, so a single imageless row throws and the whole
-                // announcements tab renders empty — every other announcement
-                // disappears with it. Dropping the one bad row keeps the feed alive.
+                // AN IMAGELESS ANNOUNCEMENT IS SERVED, NOT DROPPED.
                 //
-                // This should never fire: the admin form requires an image and so
-                // does the assistant. It is here because the blast radius of being
-                // wrong is the entire tab, for every user, until an App Store
-                // release. Logged loudly so a hidden announcement is not silent.
-                [$usable, $broken] = $announcements->partition(fn ($a) => $a->image !== null);
+                // This used to partition the list and discard every row without an
+                // image, to protect an iOS build that declared `image` as a
+                // non-optional `Gallery`: one bad row failed the whole decode and
+                // blanked the tab. The comment said it "should never fire, the
+                // admin form requires an image".
+                //
+                // Measured on 2026-08-21: it was firing for EVERY announcement on
+                // the platform. The `media` table is empty, so all 12 of
+                // Burlington's live announcements and all 3 of MEC's were being
+                // withheld — the phone tab was blank and the lobby board read
+                // "No announcements" while ten were current. A photograph of the
+                // screen on the masjid wall is what surfaced it.
+                //
+                // The clients were never the obstacle. `MasjidKit`'s model now
+                // reads `public let image: Gallery?`, and the tvOS carousel keeps
+                // any slide with EITHER an image or text:
+                //
+                //     items.filter { $0.image?.originalUrl != nil || $0.carouselText != nil }
+                //
+                // So a text-only notice renders correctly on the board today.
+                //
+                // Every row carries a NON-NULL image envelope, via the mobile
+                // media boundary (App\Support\MobileMedia). An older build wants
+                // a non-optional object with an `id`; a newer build FORCE-UNWRAPS
+                // image.originalUrl! in its carousel itemBuilder, so a null URL
+                // there blanks the whole Announcements tab (the 2026-08-28
+                // featuresIcons-class crash, one collection over). A served
+                // placeholder URL is safe for both: the old build draws it, the
+                // new build's `!` never fires. The real photo still comes from the
+                // media when it is present.
+                return $announcements->map(function ($announcement) {
+                    $row = $announcement->toArray();
 
-                if ($broken->isNotEmpty()) {
-                    Log::warning('Announcements hidden from mobile feed: no image', [
-                        'masjid_id' => $masjid->id,
-                        'announcement_ids' => $broken->pluck('id')->all(),
-                    ]);
-                }
+                    $row['image'] = MobileMedia::envelope(
+                        $announcement->image,
+                        MobileMedia::imagePlaceholderUrl()
+                    );
 
-                return $usable->values();
+                    return $row;
+                })->values();
             }
         );
 

@@ -174,12 +174,38 @@ class PublicApiTenantScopingTest extends TestCase
     #[Test]
     public function an_unknown_masjid_yields_nothing_rather_than_everything(): void
     {
+        // The property this test exists for is unchanged and is asserted below:
+        // NOT ONE ROW of any tenant comes back.
+        //
+        // What changed on 2026-08-12 is the shape of "nothing". This used to be
+        // 200 with an empty list, because `filterByMasjid` added a WHERE on an id
+        // that matched nothing. That answer was indistinguishable from "this
+        // organisation exists and has published no announcements" — and it was
+        // also the answer a SOFT-DELETED organisation got for its own rows,
+        // which is the far worse half: `masjids` soft-deletes, so an offboarded
+        // organisation's id went on matching its own announcements, services and
+        // pages forever, and they went on being published.
+        //
+        // The scope now verifies the organisation exists (App\Support\PublicTenant)
+        // and refuses with a 404 — the same contract the gallery on this very
+        // surface has always had (see the test above: `masjid-id: 999999` -> 404),
+        // and the same one ZakatCalculatorController, ContactUsController,
+        // AppointmentRequestsController and PhotoGalleryController each state in
+        // their own words. One public API, one answer.
+        //
+        // Note the two are still distinct, which is the whole reason 400 was not
+        // reused: 400 means "you named no organisation", 404 means "the one you
+        // named is not there". PublicTenantLifecycleTest walks the whole surface.
         $response = $this->getJson('/api/v1/announcements?per_page=1000', [
             'masjid-id' => '999999',
         ]);
 
-        $response->assertOk();
-        $this->assertSame([], $response->json('data.items'));
+        $response->assertStatus(404);
+
+        $body = $response->getContent();
+        $this->assertStringNotContainsString('A-first', $body, 'a tenant\'s announcement leaked to an unknown masjid');
+        $this->assertStringNotContainsString('B-only', $body, 'a tenant\'s announcement leaked to an unknown masjid');
+        $this->assertNull($response->json('data.items'));
     }
 
     // ------------------------------------------------- helpers

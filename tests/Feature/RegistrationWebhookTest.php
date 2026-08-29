@@ -14,6 +14,7 @@ use App\Models\Registration;
 use App\Models\RegistrationPayment;
 use App\Services\Registrations\RegistrationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -374,6 +375,186 @@ class RegistrationWebhookTest extends TestCase
         $this->assertSame(Registration::STATUS_CONFIRMED, $registration->fresh()->status);
         $this->assertDatabaseCount('donations', 0);
         $this->assertDatabaseCount('donation_receipts', 0);
+    }
+
+    // ------------------------------------------- an offboarded organisation
+
+    /**
+     * MONEY THAT ALREADY MOVED IS RECORDED, WHATEVER HAPPENED TO THE ORG.
+     *
+     * `masjids` SOFT-deletes and `Masjid::query()` excludes trashed rows, so
+     * `resolve()` returned null for an organisation offboarded while a Checkout
+     * Session was live. Measured before the fix: the family's card WAS charged
+     * at Stripe, and the event was dropped with a log line — no
+     * `registration_payments` row, `payment_status` still `awaiting`,
+     * `checkout_expires_at` still set, so T-006f's reaper swept the seat and
+     * cancelled it. Money taken, nothing recorded, seat gone.
+     *
+     * Refusing the webhook is the WRONG direction: the money has already moved,
+     * and dropping the event destroys the only local evidence of a real charge —
+     * the amount, the charge id and the balance transaction that whoever issues
+     * the refund needs. The organisation is merchant of record, so the refund is
+     * its own action in its own dashboard; this codebase's job is to be a
+     * truthful ledger and to say loudly that there is one to make.
+     *
+     * The asymmetry with the OUTBOUND leg is deliberate and both halves are
+     * right: `RegistrationCheckoutService` still REFUSES to open a new Session
+     * for a trashed organisation (PublicTenantLifecycleTest::
+     * a_priced_registration_cannot_open_a_checkout_session_for_a_deleted_organisation).
+     * Money not yet moved: refuse. Money already moved: record it.
+     */
+    #[Test]
+    public function a_payment_for_an_offboarded_organisation_is_recorded_rather_than_dropped(): void
+    {
+        $offering = $this->makeOffering(['capacity' => 5]);
+        $registration = $this->paidPending($offering);
+
+        // Offboarded mid-session: the family is already on Stripe's hosted page.
+        $this->masjid->delete();
+        $this->assertTrue(Masjid::onlyTrashed()->whereKey($this->masjid->id)->exists());
+        $this->assertNull(Masjid::find($this->masjid->id), 'the soft delete is what used to drop the event');
+
+        Log::spy();
+
+        $this->postWebhook($this->completedEvent($registration))->assertOk();
+        $this->postWebhook($this->succeededEvent($registration))->assertOk();
+
+        $registration->refresh();
+
+        // The ledger row exists, carrying what a refund needs.
+        $payments = RegistrationPayment::withoutMasjidScope()
+            ->where('registration_id', $registration->id)->get();
+
+        $this->assertCount(1, $payments, 'the charge left no local record at all');
+        $this->assertSame(15000, $payments[0]->amount_minor);
+        $this->assertSame(RegistrationPayment::STATUS_SUCCEEDED, $payments[0]->status);
+        $this->assertSame('ch_reg_1', $payments[0]->stripe_charge_id);
+        $this->assertSame('txn_reg_1', $payments[0]->stripe_balance_transaction_id);
+        $this->assertSame($this->masjid->id, $payments[0]->masjid_id);
+
+        // The seat states what actually happened. A settled one-time charge left
+        // `pending` is a lie about a registration nothing is waiting on, and it
+        // is indistinguishable on every screen from an abandoned checkout.
+        $this->assertSame(Registration::STATUS_CONFIRMED, $registration->status);
+        $this->assertSame(Registration::PAYMENT_PAID, $registration->payment_status);
+
+        // And it can no longer be reaped: no deadline, and `paid` is refused by
+        // releaseSeat() in EXPIRY mode anyway. That was the second half of the
+        // damage — the family paid and a background job cancelled them.
+        $this->assertNull($registration->checkout_expires_at);
+        $this->assertSame(1, $offering->fresh()->registration_count);
+
+        // Loud enough for a human to find, because a human has to refund it.
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (...$args) => is_string($args[0] ?? null)
+                && str_contains($args[0], 'OFFBOARDED'))
+            ->atLeast()->once();
+    }
+
+    #[Test]
+    public function the_reaper_can_no_longer_cancel_a_seat_that_was_paid_for_after_offboarding(): void
+    {
+        // The consequence chain, end to end: it is not enough that the row is
+        // written — the seat must survive the sweep that used to take it.
+        $offering = $this->makeOffering(['capacity' => 5]);
+        $registration = $this->paidPending($offering);
+
+        $this->masjid->delete();
+
+        $this->postWebhook($this->completedEvent($registration))->assertOk();
+
+        $this->travel(2)->days();
+
+        \Illuminate\Support\Facades\Artisan::call('registrations:reap-expired');
+
+        $registration->refresh();
+
+        $this->assertSame(Registration::STATUS_CONFIRMED, $registration->status);
+        $this->assertSame(Registration::PAYMENT_PAID, $registration->payment_status);
+        $this->assertSame(1, $offering->fresh()->registration_count);
+    }
+
+    /**
+     * THE ONE BRANCH THAT USED TO BE SILENT.
+     *
+     * When an event names a registration that does not belong to the
+     * organisation holding the connected account, `resolve()` returns null and
+     * the handler returns — answering Stripe 200, so it never retries. If money
+     * moved, it is unrecorded here and the reaper will release the seat 45
+     * minutes later. There was no log line at all on that path, so the first
+     * anybody heard of it was the family.
+     *
+     * A mutation test is what put this test here: deleting the warning left the
+     * whole suite green, which meant the only evidence a payment had been
+     * dropped was constrained by nothing.
+     */
+    #[Test]
+    public function a_dropped_event_says_what_it_dropped(): void
+    {
+        Log::spy();
+
+        $registration = $this->paidPending();
+
+        // A second live organisation, its own Connect account, and an event
+        // whose account routes there while the uuid belongs to the first.
+        $other = $this->makeMasjid(['stripe_account_id' => 'acct_OTHER', 'stripe_charges_enabled' => true]);
+
+        $event = $this->completedEvent($registration);
+        $event['account'] = 'acct_OTHER';
+
+        $this->postWebhook($event)->assertOk();
+
+        $registration->refresh();
+
+        // Nothing was recorded — that is the behaviour, and it is why the line
+        // has to exist.
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame(
+            0,
+            RegistrationPayment::withoutMasjidScope()->where('registration_id', $registration->id)->count(),
+        );
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(function (string $message, array $context) use ($registration, $other): bool {
+                return str_contains($message, 'does not belong to the organisation')
+                    && $context['registration_uuid'] === $registration->uuid
+                    && (int) $context['masjid_id'] === (int) $other->id
+                    && $context['account'] === 'acct_OTHER';
+            })
+            ->once();
+    }
+
+    #[Test]
+    public function a_live_organisation_is_preferred_over_a_trashed_one_on_the_same_account_id(): void
+    {
+        // A Connect account belongs to exactly one LIVE organisation, and
+        // `masjids_active_stripe_account_unique` now enforces that — so the
+        // ghost has to reach this state the way a real one does: it held the
+        // account, it was offboarded, and the account was later onboarded by
+        // somebody else. The index covers live rows only, precisely so that
+        // this remains possible; money arriving for an offboarded organisation
+        // must still be RECORDED, which is what the trashed fallback is for.
+        //
+        // Hence the order: live under its own account, soft-deleted, and only
+        // then moved onto acct_A — which the partial index permits because the
+        // row is no longer live. Creating it live on acct_A alongside the real
+        // organisation is the state the index exists to make unreachable.
+        $ghost = $this->makeMasjid(['stripe_account_id' => 'acct_GHOST', 'stripe_charges_enabled' => true]);
+        $ghost->delete();
+        $ghost->forceFill(['stripe_account_id' => 'acct_A'])->saveQuietly();
+
+        $registration = $this->paidPending();
+
+        $this->postWebhook($this->completedEvent($registration))->assertOk();
+
+        $registration->refresh();
+
+        $this->assertSame(Registration::STATUS_CONFIRMED, $registration->status);
+        $this->assertSame(
+            $this->masjid->id,
+            (int) RegistrationPayment::withoutMasjidScope()
+                ->where('registration_id', $registration->id)->firstOrFail()->masjid_id
+        );
     }
 
     // ============================= helpers =============================

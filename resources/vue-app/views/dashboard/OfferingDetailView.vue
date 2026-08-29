@@ -36,12 +36,45 @@
                     <!-- Header -->
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
                         <span class="badge bg-light text-dark border">{{ offeringKindLabel(offering.kind) }}</span>
-                        <!-- is_open: is_active alone claimed "Open for registration" on offerings whose window had closed -->
-                <span v-if="offering.is_open" class="badge bg-success-subtle text-success">Open for registration</span>
-                <span v-else-if="offering.closed_reason === 'not_yet_open'" class="badge bg-info-subtle text-info">Opens later</span>
-                <span v-else-if="offering.closed_reason === 'closed'" class="badge bg-secondary-subtle text-secondary">Registration window closed</span>
-                        <span v-else class="badge bg-secondary-subtle text-secondary">Closed</span>
+                        <!--
+                            registration_state, not is_open. is_active alone once claimed "Open
+                            for registration" on offerings whose window had closed; is_open fixed
+                            that half and left two more, because it is ONLY the window. An
+                            offering whose sign-up form has been deleted, or whose fee plans have
+                            all been deactivated, still reports is_open=true / closed_reason=null
+                            and still refuses every registration — a green badge over a program
+                            nobody can join. The server now decides the whole verdict in one place
+                            (App\Support\OfferingRegistrationState) and serves the same field to
+                            the public page.
+                        -->
+                        <span
+                            class="badge"
+                            :class="registrationStateBadge(offering.registration_state, offering.registration_state_reason)"
+                        >
+                            <i
+                                v-if="registrationStateIsFault(offering.registration_state, offering.registration_state_reason)"
+                                class="bi bi-exclamation-triangle-fill me-1"
+                            ></i>
+                            {{ registrationStateLabel(offering.registration_state, offering.registration_state_reason) }}
+                        </span>
                         <span class="text-muted small font-monospace">{{ offering.slug }}</span>
+                    </div>
+
+                    <!--
+                        The sentence the badge cannot fit, and the action that fixes it. Shown for
+                        every non-open state so "opens in September" reads as calmly as it should
+                        and "no fee plan" reads as the fault it is — an admin should never have to
+                        infer either from a colour.
+                    -->
+                    <div
+                        v-if="offering.registration_state !== 'open'"
+                        class="alert py-2 px-3 small"
+                        :class="registrationStateIsFault(offering.registration_state, offering.registration_state_reason)
+                            ? 'alert-danger'
+                            : 'alert-secondary'"
+                    >
+                        <i class="bi bi-info-circle me-1"></i>
+                        {{ registrationStateHint(offering.registration_state, offering.registration_state_reason) }}
                     </div>
 
                     <div class="row g-3 mb-4">
@@ -216,6 +249,10 @@ const {
     registrationStatusLabel,
     registrationStatusBadge,
     registrationStatusIcon,
+    registrationStateLabel,
+    registrationStateBadge,
+    registrationStateHint,
+    registrationStateIsFault,
     formatDateTime
 } = useOfferingDisplay();
 

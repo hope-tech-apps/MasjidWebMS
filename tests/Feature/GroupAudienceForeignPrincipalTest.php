@@ -76,6 +76,17 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         'readableHifzQuery',
         'constrainToOwnStudents',
         'standingIn',
+        // The fourteenth, added when the parent-portal read scope moved into
+        // this class: it narrows a family principal to their guardian edges, so
+        // it takes a principal and must refuse an unrecognized one exactly as
+        // the other thirteen do.
+        'membershipsFor',
+        // The fifteenth and sixteenth, added for the teacher realm: the
+        // login-side leader check (group_staff) and the "only my classes" id
+        // set. They take a principal and refuse an unrecognized one — false and
+        // an empty array — exactly as the others do.
+        'isLeaderOf',
+        'leaderGroupIdsFor',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -262,9 +273,11 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         sort($expected);
 
         // The count is load-bearing: the design review found thirteen seams
-        // where every proposal had assumed one.
+        // where every proposal had assumed one, and `membershipsFor()` made a
+        // fourteenth. A new seam must be ADDED to the list above deliberately —
+        // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(13, $seen);
+        $this->assertCount(16, $seen);
     }
 
     #[Test]
@@ -302,11 +315,22 @@ class GroupAudienceForeignPrincipalTest extends TestCase
             $this->audience->mayReceiveHifzEntry($this->foreign, $this->group, $this->hifzEntry)
         );
 
+        // The fourteenth seam. An unrecognized principal resolves to no
+        // identity, so it speaks through no roster row — which is what every
+        // refusal above is then computed from.
+        $this->assertTrue(
+            $this->audience->membershipsFor($this->foreign, $this->group)->isEmpty()
+        );
+
         // Null, not an empty query: "no standing in this group at all", which
         // the controllers answer with 403.
         $this->assertNull($this->audience->readableThreadsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableHifzQuery($this->foreign, $this->group));
+
+        // The teacher seams: an unrecognized principal leads nothing.
+        $this->assertFalse($this->audience->isLeaderOf($this->foreign, $this->group));
+        $this->assertSame([], $this->audience->leaderGroupIdsFor($this->foreign));
     }
 
     #[Test]

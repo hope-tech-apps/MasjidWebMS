@@ -53,7 +53,17 @@ passes with everything else. Anything else is a regression.
 ## A new tenant-scoped model needs BOTH kinds of suite
 
 `.claude/rules/tenant-scoping.md` makes a cross-tenant Feature test mandatory per
-model. The Groups slice is the reference shape for a model with a roster:
+model, and `TenantScopingCoverageTest` **enforces that mechanically** — it
+discovers every `BelongsToMasjid` model by reflection and fails the build if one
+has no test that asserts a refusal. If it fails on your new model, read the
+failure: it prints the file to create and the assertions to write. Do not add an
+exemption; exemptions are for models that genuinely are not tenant-scoped.
+
+That suite is also the one file in `tests/` that must exclude itself from its own
+scan (`testSources()`) — it names every model in its rosters, so without the
+exclusion it would count as coverage for all of them and always pass.
+
+The Groups slice is the reference shape for a model with a roster:
 
 - `GroupTenantIsolationTest` — model layer, binds `TenantContext` directly
   (scope, creating hook, `withoutMasjidScope()`), plus the invariants the MODEL

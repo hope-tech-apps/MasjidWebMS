@@ -111,8 +111,20 @@ class Contact extends Model implements AuthenticatableContract
      * photographs — and every write path into this array is a CRM request body
      * (`ContactsController::store`/`update`, the roster import). Leaving them
      * out means no request payload can enable, re-address or un-revoke a login
-     * as a side effect of editing a phone number. They are set explicitly, by
-     * the invite flow (T-015d) and by revocation, and by nothing else.
+     * as a side effect of editing a phone number.
+     *
+     * They are written by `forceFill` in exactly TWO classes and nowhere else:
+     *
+     *   - `App\Services\Family\FamilyAccessService` — the admin ON-SWITCH.
+     *     `enable()` sets `login_email` + `login_enabled_at` and clears
+     *     `login_revoked_at`; `revoke()` sets `login_revoked_at`. Both append to
+     *     `contact_login_events` and both are reachable only through
+     *     `ContactFamilyLoginController`, behind `manage contacts`.
+     *   - `App\Services\Family\FamilyLoginService::consume()` — `last_login_at`,
+     *     which is operator visibility only and authorizes nothing.
+     *
+     * If a third writer ever appears, the audit trail stops being complete —
+     * which is the point of keeping the list this short.
      */
     protected $fillable = [
         'masjid_id',
@@ -132,6 +144,17 @@ class Contact extends Model implements AuthenticatableContract
         'sms_consent_source',
         'sms_consent_evidence',
         'sms_opted_out_at',
+        // The chosen avatar: a character, a skin tone and a hijab/kufi
+        // colour. Three strings naming one of forty drawings the app ships,
+        // never an upload — see App\Support\Avatar.
+        'avatar_character',
+        'avatar_tone',
+        'avatar_color',
+        // A STAFF override, laid on top of the child's own choice rather
+        // than replacing it. Clearing these restores what the child picked.
+        'staff_avatar_character',
+        'staff_avatar_tone',
+        'staff_avatar_color',
     ];
 
     protected function casts(): array
@@ -245,6 +268,41 @@ class Contact extends Model implements AuthenticatableContract
     }
 
     /**
+     * A HAND-OFF token: the parent passes the device to their child.
+     *
+     * ClassDojo's youngest students sign in "from your parent's account", which
+     * is the only way a six-year-old with no email gets an account of their own.
+     * This is that, made into a real boundary rather than a screen the child is
+     * asked not to leave.
+     *
+     * The token is minted from the PARENT's contact — the server authenticated
+     * them, not the child — but it carries ONLY `student:{membership}`. It
+     * therefore fails `family` on every ordinary family route, so a child
+     * holding the phone cannot open the parent's messages, another child's
+     * record, or the class feed. The abilities constant was written to be inert
+     * "so that a later slice can add abilities: enforcement to a route without a
+     * flag day"; this is that slice.
+     *
+     * Short-lived on purpose. Sanctum enforces the global expiry against
+     * `created_at`, and a per-token `expires_at` can only SHORTEN a life, never
+     * extend it — so this is safe to set without touching how anyone else's
+     * session ages.
+     */
+    public function createStudentHandoffToken(int $membershipId, int $minutes = 60): NewAccessToken
+    {
+        return $this->createToken(
+            'student-handoff',
+            [self::studentAbility($membershipId)],
+            now()->addMinutes($minutes)
+        );
+    }
+
+    public static function studentAbility(int $membershipId): string
+    {
+        return 'student:'.$membershipId;
+    }
+
+    /**
      * Contacts have NO password column and no password-based guard, by design —
      * 200 families cannot be issued passwords and a school office cannot run a
      * reset desk (§1). Credentials are the mailbox, via the codes T-015d adds.
@@ -312,4 +370,92 @@ class Contact extends Model implements AuthenticatableContract
     {
         return $this->hasMany(ContactCredential::class);
     }
+
+    /**
+     * The URL of this person's chosen avatar, or null when they have not chosen
+     * one. Null is a real answer — the client draws initials — and is preferred
+     * over a default image, which would show a child somebody else's face.
+     */
+    /**
+     * The avatar columns, as an eager-load column list.
+     *
+     * Every `with('contact:id,first_name,...')` in this application must include
+     * these or the appended `avatar` silently resolves to null — the accessor
+     * reads columns the query never selected, and nothing errors. There were
+     * twelve such lists when avatars were added, so the set lives HERE and the
+     * call sites append it, rather than twelve places each remembering three
+     * column names.
+     */
+    public const AVATAR_COLUMNS = 'avatar_character,avatar_tone,avatar_color,'
+        .'staff_avatar_character,staff_avatar_tone,staff_avatar_color';
+
+    /**
+     * Serialized on every contact payload, so a face shows up wherever a person
+     * does without each controller opting in. Null when unchosen — the client
+     * draws initials.
+     */
+    protected $appends = ['avatar'];
+
+    /**
+     * What to DRAW for this person, and where it came from.
+     *
+     * A staff override wins when present — a teacher setting a recognisable
+     * avatar for a roster is doing it for a reason. `source` says which is
+     * showing, and `student_choice` carries the child's own even while
+     * overridden, so a client can offer "restore" without a second request.
+     */
+    public function getAvatarAttribute(): ?array
+    {
+        $staff = $this->staffAvatarParts();
+        $own = $this->studentAvatarParts();
+        $effective = $staff ?? $own;
+
+        if ($effective === null) {
+            return null;
+        }
+
+        return $effective + [
+            'source' => $staff !== null ? 'staff' : 'student',
+            'student_choice' => $staff !== null ? $own : null,
+        ];
+    }
+
+    /** The child's own choice, whether or not it is currently showing. */
+    public function studentAvatarParts(): ?array
+    {
+        return $this->avatarParts($this->avatar_character, $this->avatar_tone, $this->avatar_color);
+    }
+
+    public function staffAvatarParts(): ?array
+    {
+        return $this->avatarParts(
+            $this->staff_avatar_character,
+            $this->staff_avatar_tone,
+            $this->staff_avatar_color
+        );
+    }
+
+    public function hasStaffAvatarOverride(): bool
+    {
+        return $this->staffAvatarParts() !== null;
+    }
+
+    private function avatarParts(?string $character, ?string $tone, ?string $color): ?array
+    {
+        $url = \App\Support\Avatar::imageUrl($character, $tone, $color);
+
+        if ($url === null) {
+            return null;
+        }
+
+        return ['character' => $character, 'tone' => $tone, 'color' => $color, 'url' => $url];
+    }
+
+    public function avatarUrl(): ?string
+    {
+        $effective = $this->staffAvatarParts() ?? $this->studentAvatarParts();
+
+        return $effective['url'] ?? null;
+    }
+
 }

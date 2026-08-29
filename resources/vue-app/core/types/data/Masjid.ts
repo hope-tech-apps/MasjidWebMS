@@ -1,12 +1,22 @@
 import { Admin } from "@/core/types/data/Admin"
 import { Media } from "./Media"
 import { City, Country } from "./Country"
-import { Vertical } from "./Vertical"
+import { OrgType, Vertical } from "./Vertical"
 
 export type Masjid = {
     id: number;
     user_id: number;
     name: string;
+    /** The Manara vertical discriminator. Absent on payloads cached from before it existed. */
+    org_type?: OrgType;
+    /**
+     * When this organization was published to the mobile app's public directory
+     * (`masjids.listed_at`). `null` means it exists but is NOT offered in the
+     * app's organization picker — which is how every newly provisioned
+     * organization starts. Optional because payloads cached from before the
+     * column existed simply do not carry it.
+     */
+    listed_at?: string | null;
     email: string;
     email_verified_at: string | null;
     phone: string;

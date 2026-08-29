@@ -144,6 +144,21 @@
                                     {{ type.label }} - {{ type.description }}
                                 </option>
                             </select>
+
+                            <!--
+                                A type whose public renderer has not shipped. The server decides
+                                this (SectionType::hasRenderer) and supplies the sentence, so this
+                                banner, the description in the list above and the type's own
+                                editor all print the same words instead of each keeping a copy —
+                                the `offering` type had three surfaces telling three stories.
+                            -->
+                            <div
+                                v-if="selectedTypeInfo && !selectedTypeInfo.has_renderer"
+                                class="alert alert-warning mt-2 mb-0 py-2 px-3 small"
+                            >
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                {{ selectedTypeInfo.renderer_note }}
+                            </div>
                         </div>
 
                         <!-- Section Type Badge (for edit mode) -->
@@ -305,6 +320,7 @@ import AdmissionsTuitionSectionEditor from '@/components/sections/editors/Admiss
 import ServicesEligibilitySectionEditor from '@/components/sections/editors/ServicesEligibilitySectionEditor.vue';
 import ProvidersDirectorySectionEditor from '@/components/sections/editors/ProvidersDirectorySectionEditor.vue';
 import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
+import OfferingSectionEditor from '@/components/sections/editors/OfferingSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -347,6 +363,15 @@ const formData = ref<any>({
 // Computed
 const isEdit = computed(() => !!props.section);
 const sectionTypes = computed(() => pagesStore.sectionTypes);
+
+/**
+ * The server's own record for the type being added — including whether the
+ * public site can draw it at all. Only meaningful while creating: an edit does
+ * not re-pick a type.
+ */
+const selectedTypeInfo = computed(() => sectionTypes.value.find(
+    t => t.value === formData.value.section_type
+) ?? null);
 const sectionsLibrary = computed(() => pagesStore.sectionsLibrary);
 const selectedSection = computed(() => {
     if (!selectedSectionId.value) return null;
@@ -392,6 +417,12 @@ const editorMap: Record<SectionType, any> = {
     'services_eligibility': ServicesEligibilitySectionEditor,
     'providers_directory': ProvidersDirectorySectionEditor,
     'impact_stats': ImpactStatsSectionEditor,
+    // The registration front door (T-006g). Same rule as every entry above: the
+    // backend enum puts this in the dropdown whether or not it is keyed here, so
+    // the entry and the import land in the same change or the admin gets a blank
+    // editor pane — and here that pane would be the one thing standing between a
+    // family and a payment.
+    'offering': OfferingSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

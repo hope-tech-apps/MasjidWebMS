@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\StoreGroupMessageRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
+use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
@@ -82,7 +85,7 @@ class GroupThreadsController extends Controller
         }
 
         $threads = $query
-            ->with(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name'])
+            ->with(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS])
             ->withCount('messages')
             ->withMax('messages as latest_message_at', 'created_at')
             ->when($scope !== null, fn ($q) => $q->where('scope', $scope))
@@ -127,6 +130,7 @@ class GroupThreadsController extends Controller
         $group = Group::findOrFail($group_id);
 
         $aboutMembershipId = null;
+        $aboutContactId = null;
 
         if ($request->input('scope') === GroupThread::SCOPE_PARTICIPANT) {
             $about = $group->memberships()
@@ -141,6 +145,7 @@ class GroupThreadsController extends Controller
             }
 
             $aboutMembershipId = $about->id;
+            $aboutContactId = $about->contact_id;
         }
 
         try {
@@ -168,6 +173,21 @@ class GroupThreadsController extends Controller
 
                 return $thread;
             });
+
+            // A thread opened WITH a first message notifies like a reply would;
+            // an empty thread shell notifies no one. A participant thread reaches
+            // the ward's guardian(s); a group-wide thread reaches the feed audience
+            // (the job decides from aboutContactId). afterCommit + fail-soft.
+            if ($request->filled('body')) {
+                SendGroupNotificationJob::dispatch(
+                    (int) $group->masjid_id,
+                    (int) $group->id,
+                    GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
+                    aboutContactId: $aboutContactId,
+                    authorUserId: $request->user()?->id,
+                    authorContactId: null,
+                )->afterCommit();
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -255,6 +275,18 @@ class GroupThreadsController extends Controller
 
                 return $message;
             });
+
+            // A staff reply reaches the ward's guardian(s) (participant thread) or
+            // the feed audience (group-wide thread) — the job decides from
+            // aboutContactId. afterCommit + fail-soft.
+            SendGroupNotificationJob::dispatch(
+                (int) $group->masjid_id,
+                (int) $group->id,
+                GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
+                aboutContactId: $thread->aboutMembership?->contact_id,
+                authorUserId: $request->user()?->id,
+                authorContactId: null,
+            )->afterCommit();
 
             return response()->json([
                 'status' => 'success',
@@ -381,7 +413,7 @@ class GroupThreadsController extends Controller
      */
     private function withListAggregates(GroupThread $thread): GroupThread
     {
-        $thread->loadMissing(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name']);
+        $thread->loadMissing(['creator:id,name', 'aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS]);
 
         $thread->setAttribute('messages_count', $thread->messages()->count());
         $thread->setAttribute('latest_message_at', $thread->messages()->max('created_at'));
@@ -451,7 +483,19 @@ class GroupThreadsController extends Controller
             'id' => $message->id,
             'thread_id' => $message->group_thread_id,
             'body' => $message->body,
-            'author' => $message->author ? ['id' => $message->author->id, 'name' => $message->author->name] : null,
+            // Since T-015f a message may be written by a PARENT. Both principals
+            // resolve through GroupMessage::authorLabel(), and the staff surface
+            // is told which — a parent's reply must be visibly a parent's, not an
+            // unattributed line a teacher might answer as though a colleague
+            // wrote it. `id` is emitted only for a staff author: a contact id is
+            // not a staff identifier and does not belong in this payload.
+            'author' => $message->authorLabel() !== null
+                ? array_filter([
+                    'id' => $message->authorIsParent() ? null : $message->author?->id,
+                    'name' => $message->authorLabel(),
+                ], static fn ($v) => $v !== null)
+                : null,
+            'author_is_parent' => $message->authorIsParent(),
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }

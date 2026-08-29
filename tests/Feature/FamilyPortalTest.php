@@ -7,6 +7,7 @@ use App\Models\BehaviorSkill;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupMessage;
 use App\Models\GroupPost;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
@@ -17,6 +18,7 @@ use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -193,6 +195,24 @@ class FamilyPortalTest extends TestCase
         );
     }
 
+    private function studentUrl(int $membershipId, string $path = ''): string
+    {
+        return $this->groupUrl("/members/{$membershipId}/student".$path);
+    }
+
+    /** The token a parent mints when handing the phone to their child. */
+    private function handoffToken(Contact $parent, int $membershipId): string
+    {
+        $response = $this->as($parent)
+            ->postJson($this->groupUrl("/members/{$membershipId}/student-session"))
+            ->assertCreated();
+
+        Auth::forgetGuards();
+        app(TenantContext::class)->forgetTenant();
+
+        return $response->json('data.token');
+    }
+
     private function url(string $path = ''): string
     {
         return "/api/family/masjids/{$this->masjid->id}" . $path;
@@ -268,6 +288,389 @@ class FamilyPortalTest extends TestCase
         ]);
 
         return $thread;
+    }
+
+    // ------------------------------------------------- 0. the parent can REPLY (T-015f)
+
+    #[Test]
+    public function a_parent_can_reply_in_a_thread_about_their_own_child(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), [
+                'body' => 'Jazakum Allahu khayran — we will practise at home.',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.body', 'Jazakum Allahu khayran — we will practise at home.')
+            ->assertJsonPath('data.author_is_parent', true);
+
+        $message = GroupMessage::withoutMasjidScope()
+            ->where('group_thread_id', $thread->id)
+            ->latest('id')
+            ->first();
+
+        // The author is the AUTHENTICATED contact, and no staff account is
+        // implicated in something a parent said.
+        $this->assertSame($this->parentA->id, (int) $message->author_contact_id);
+        $this->assertNull($message->author_user_id);
+    }
+
+    #[Test]
+    public function the_author_comes_from_the_token_and_never_from_the_payload(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), [
+                'body' => 'Hello',
+                // A client claiming to be the other family, or a staff member.
+                'author_contact_id' => $this->parentB->id,
+                'author_user_id' => 1,
+            ])
+            ->assertCreated();
+
+        $message = GroupMessage::withoutMasjidScope()
+            ->where('group_thread_id', $thread->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertSame($this->parentA->id, (int) $message->author_contact_id,
+            'a client claimed authorship of another person\'s message');
+        $this->assertNull($message->author_user_id);
+    }
+
+    #[Test]
+    public function a_parent_cannot_reply_in_another_familys_thread(): void
+    {
+        // The sharpest line in the product: this is where a teacher and a
+        // guardian discuss a safeguarding concern about a different child.
+        $thread = $this->seedParticipantThread($this->childBMembership, 'Bilal');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => 'Who is this about?'])
+            ->assertForbidden();
+
+        $this->assertSame(1, GroupMessage::withoutMasjidScope()->where('group_thread_id', $thread->id)->count());
+    }
+
+    #[Test]
+    public function replying_is_refused_on_a_thread_the_school_has_closed(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+        $thread->forceFill(['closed_at' => now()])->save();
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => 'One more thing'])
+            ->assertStatus(422);
+    }
+
+    #[Test]
+    public function a_parent_cannot_start_a_conversation(): void
+    {
+        // Deliberately no route: a parent opening a thread about their own child
+        // would route around the teacher who decides what is discussed and where.
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl('/threads'), ['subject' => 'A new topic', 'scope' => 'participant'])
+            ->assertStatus(405);
+    }
+
+    #[Test]
+    public function an_empty_reply_is_refused(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/threads/{$thread->id}/messages"), ['body' => '   '])
+            ->assertStatus(422);
+    }
+
+    #[Test]
+    public function reading_a_thread_bookmarks_it_for_the_parent_and_not_for_any_staff_account(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $read = DB::table('group_thread_reads')->where('group_thread_id', $thread->id)->get();
+
+        $this->assertCount(1, $read);
+        $this->assertSame($this->parentA->id, (int) $read->first()->contact_id);
+        $this->assertNull($read->first()->user_id,
+            'a parent\'s read was written into the staff column');
+    }
+
+    #[Test]
+    public function two_parents_reading_one_thread_do_not_collide(): void
+    {
+        // The (thread, user) unique key used to make this impossible, which is
+        // why user_id could not simply be reused for parents.
+        $thread = GroupThread::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'scope' => GroupThread::SCOPE_GROUP,
+            'subject' => 'Field trip',
+        ]);
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'Slips due Friday']);
+
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+        $this->consent($this->parentB, GroupMembership::CONSENT_FEED);
+
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+        $this->as($this->parentB)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $this->assertSame(2, DB::table('group_thread_reads')->where('group_thread_id', $thread->id)->count());
+    }
+
+    #[Test]
+    public function a_message_cannot_have_two_authors(): void
+    {
+        $thread = $this->seedParticipantThread($this->childAMembership, 'Amina');
+
+        $this->expectException(\LogicException::class);
+
+        $thread->messages()->create([
+            'masjid_id' => $this->masjid->id,
+            'author_user_id' => 1,
+            'author_contact_id' => $this->parentA->id,
+            'body' => 'Who wrote this?',
+        ]);
+    }
+
+    // --------------------------------- 0c. child mode, and its boundary
+
+    #[Test]
+    public function a_parent_can_hand_the_device_to_their_own_child(): void
+    {
+        $response = $this->as($this->parentA)
+            ->postJson($this->groupUrl("/members/{$this->childAMembership->id}/student-session"))
+            ->assertCreated();
+
+        $this->assertNotEmpty($response->json('data.token'));
+        $this->assertSame($this->childAMembership->id, $response->json('data.membership_id'));
+    }
+
+    #[Test]
+    public function a_parent_cannot_hand_the_device_to_someone_elses_child(): void
+    {
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl("/members/{$this->childBMembership->id}/student-session"))
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_child_in_student_mode_can_choose_their_own_avatar(): void
+    {
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson($this->studentUrl($this->childAMembership->id, '/me'))
+            ->assertOk()
+            ->assertJsonPath('data.student.membership_id', $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->putJson($this->studentUrl($this->childAMembership->id, '/avatar'), [
+                'character' => 'ameera', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertOk();
+
+        $this->assertSame('ameera', $this->childA->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function a_student_token_cannot_open_the_parents_portal(): void
+    {
+        // THE boundary. With the phone in the child's hands, the class feed, the
+        // teacher threads and the sibling's records are refused by the SERVER —
+        // not hidden by a screen the child is asked not to leave.
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+        $thread = $this->seedParticipantThread($this->childAMembership, 'About Amina');
+
+        foreach ([
+            $this->url('/me'),
+            $this->url('/groups'),
+            $this->groupUrl(),
+            $this->groupUrl('/posts'),
+            $this->groupUrl('/threads'),
+            $this->groupUrl("/threads/{$thread->id}"),
+            $this->groupUrl("/members/{$this->childAMembership->id}/awards"),
+        ] as $forbidden) {
+            $this->withHeader('Authorization', "Bearer {$token}")
+                ->getJson($forbidden)
+                ->assertForbidden();
+        }
+    }
+
+    #[Test]
+    public function a_student_token_minted_for_one_sibling_cannot_address_the_other(): void
+    {
+        // Two children on one phone are two sessions, because the ability names
+        // a membership and the middleware compares it to the URL.
+        $token = $this->handoffToken($this->parentA, $this->childAMembership->id);
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->putJson($this->studentUrl($this->childBMembership->id, '/avatar'), [
+                'character' => 'ameer', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($this->childB->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function a_parent_token_cannot_use_the_student_screen(): void
+    {
+        // The student routes must not become a second, weaker way for a parent
+        // to act — every ability check runs in both directions.
+        $this->as($this->parentA)
+            ->getJson($this->studentUrl($this->childAMembership->id, '/me'))
+            ->assertForbidden();
+    }
+
+    // ------------------------------- 0d. a teacher never destroys the child's pick
+
+    #[Test]
+    public function a_staff_override_hides_the_childs_avatar_without_erasing_it(): void
+    {
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone1', 'avatar_color' => 'pink',
+        ])->save();
+
+        // A teacher sets something else.
+        $this->childA->forceFill([
+            'staff_avatar_character' => 'ameera', 'staff_avatar_tone' => 'tone4', 'staff_avatar_color' => 'white',
+        ])->save();
+
+        $avatar = $this->childA->fresh()->avatar;
+
+        $this->assertSame('staff', $avatar['source']);
+        $this->assertSame('tone4', $avatar['tone']);
+        // The child's own is still there, and still says pink.
+        $this->assertSame('pink', $avatar['student_choice']['color']);
+
+        // Dropping the override brings it straight back — it was never touched.
+        $this->childA->forceFill([
+            'staff_avatar_character' => null, 'staff_avatar_tone' => null, 'staff_avatar_color' => null,
+        ])->save();
+
+        $restored = $this->childA->fresh()->avatar;
+        $this->assertSame('student', $restored['source']);
+        $this->assertSame('pink', $restored['color']);
+    }
+
+    // ------------------------------------- 0a. the letter tracker, read only
+
+    #[Test]
+    public function a_parent_watches_their_own_childs_letters(): void
+    {
+        $this->group->forceFill(['arabic_stage' => 'short_vowels'])->save();
+
+        $response = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"))
+            ->assertOk();
+
+        $response->assertJsonCount(28, 'data.letters');
+        $response->assertJsonPath('data.stage.id', 'short_vowels');
+        $this->assertSame(28 * 4, $response->json('data.totals.total'));
+    }
+
+    #[Test]
+    public function a_parent_cannot_watch_another_familys_child(): void
+    {
+        $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/letters"))
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_parent_cannot_mark_a_drill(): void
+    {
+        // Marking is the teacher's, like behaviour points and hifz. A parent who
+        // could tick "mastered" would make the record say something the
+        // classroom never observed. There is simply no route.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"), [
+                'drill_id' => 'ba', 'status' => 'mastered',
+            ])
+            ->assertStatus(405);
+    }
+
+    // ------------------------------------------- 0b. a child's own avatar
+
+    #[Test]
+    public function a_parent_can_choose_an_avatar_for_their_own_child(): void
+    {
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => 'ameera', 'tone' => 'tone3', 'color' => 'pink',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.contact.avatar.character', 'ameera')
+            ->assertJsonPath('data.contact.avatar.tone', 'tone3');
+
+        $this->assertSame('ameera', $this->childA->fresh()->avatar_character);
+        $this->assertStringContainsString(
+            'ameera_tone3_pink.webp',
+            $this->childA->fresh()->avatarUrl()
+        );
+    }
+
+    #[Test]
+    public function a_parent_cannot_dress_another_familys_child(): void
+    {
+        // The ward edge is the authorisation, so a classmate is refused even
+        // though both children sit in the same group.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childBMembership->id}/avatar"), [
+                'character' => 'ameer', 'tone' => 'tone1', 'color' => 'blue',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($this->childB->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function two_thirds_of_an_avatar_is_refused(): void
+    {
+        // A character with no tone names no drawing; storing it would leave the
+        // child with a permanently blank face and nothing reporting it wrong.
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => 'ameera', 'tone' => null, 'color' => null,
+            ])
+            ->assertStatus(422);
+
+        $this->assertNull($this->childA->fresh()->avatar_character);
+    }
+
+    #[Test]
+    public function clearing_all_three_returns_the_child_to_initials(): void
+    {
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone1', 'avatar_color' => 'black',
+        ])->save();
+
+        $this->as($this->parentA)
+            ->putJson($this->groupUrl("/members/{$this->childAMembership->id}/avatar"), [
+                'character' => null, 'tone' => null, 'color' => null,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.contact.avatar', null);
+
+        $this->assertNull($this->childA->fresh()->avatarUrl());
+    }
+
+    #[Test]
+    public function a_childs_avatar_reaches_the_parent_on_the_group_payload(): void
+    {
+        // The whole point: a face wherever the child appears.
+        $this->childA->forceFill([
+            'avatar_character' => 'ameera', 'avatar_tone' => 'tone2', 'avatar_color' => 'green',
+        ])->save();
+
+        $this->as($this->parentA)->getJson($this->url('/groups'))
+            ->assertOk()
+            ->assertJsonPath('data.0.children.0.contact.avatar.color', 'green');
     }
 
     // ------------------------------------------------- 1. the parent sees THEIR group
@@ -702,12 +1105,15 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function no_family_route_accepts_a_write_verb(): void
+    public function the_family_realm_writes_exactly_six_things(): void
     {
-        // T-015f (parents replying) and T-015h (self-service consent withdrawal)
-        // are deliberately not built. This asserts they were not half-built: the
-        // only non-GET routes in the realm are the two sign-in endpoints, which
-        // write a `contact_login_codes` row and nothing else.
+        // This used to assert the realm accepted NO write verb at all, because
+        // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
+        // so the guarantee is restated rather than dropped: the realm's writes
+        // are COUNTED, and adding a fourth has to be a deliberate edit here.
+        // T-015h (self-service consent withdrawal) is still absent — a parent
+        // cannot start a thread, cannot change a roster, cannot withdraw consent
+        // without the office.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -724,42 +1130,53 @@ class FamilyPortalTest extends TestCase
             }
         }
 
+        sort($writes);
+
         $this->assertSame([
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
         ], $writes);
     }
 
     // ------------------------------- 7. the §7 hazard, pinned rather than hidden
 
     #[Test]
-    public function a_login_enabled_participant_reads_the_whole_group_feed(): void
+    public function a_login_enabled_participant_reads_nothing_through_their_own_roster_row(): void
     {
-        // THIS TEST DOCUMENTS A HAZARD. It is not an endorsement.
+        // THIS TEST USED TO DOCUMENT A HAZARD. It now pins the hazard shut.
         //
-        // `standingIn()` sets `feed = true` outright for any PARTICIPANT — the
-        // person themselves needs nobody's consent to be shown their own group.
-        // That is correct for the adult it was written for (a volunteer on a
-        // masjid's team is a `member` row exactly as a child in a classroom is),
-        // and it is why docs/t015-parent-identity-design.md §7 refuses STUDENT
-        // logins outright: enabling a login on a child's contact row would hand
-        // that child the entire class feed — every classmate's photograph, with
-        // nobody's consent — plus the participant threads about themselves,
-        // which are where a teacher and a guardian discuss a safeguarding
-        // concern.
+        // `standingIn()` set `feed = true` outright for any PARTICIPANT — correct
+        // for the adult it was written for, and for a STAFF caller it still is
+        // (a volunteer on a masjid's team is a `member` row exactly as a child
+        // in a classroom is). Applied to a PARENT-PORTAL credential it meant
+        // enabling a login on a child's contact row handed that child the entire
+        // class feed — every classmate's photograph, with nobody's consent —
+        // plus the participant threads about themselves, which are where a
+        // teacher and a guardian discuss a safeguarding concern. Measured, and
+        // this test asserted every one of those 200s.
         //
-        // No code can tell the two apart: the schema has no age or role flag
-        // that distinguishes "adult volunteer" from "student". What keeps it
-        // shut today is that NOTHING in this application sets
-        // `login_enabled_at` — the four login_* columns are not fillable, no
-        // controller writes them, and the admin invite flow is not built. When
-        // it is, it must issue invites for GUARDIAN EDGES ONLY, and this test is
-        // the tripwire: if a future slice starts enabling participant logins,
-        // the behaviour it is buying is stated right here.
+        // No code can tell an adult volunteer from a student: the schema has no
+        // age or role flag. So the rule is not about WHO holds a credential — a
+        // previous round tried that and it refused a parent in the adult ḥalaqa
+        // and a teacher who is also a parent, and had to be patched from behind
+        // by a hook that an anonymous POST could fire. The rule is about what a
+        // FAMILY credential SPEAKS THROUGH: `GroupAudience::membershipsFor()`
+        // keeps a `Contact` principal's guardian edges and drops their own
+        // participant rows. A child's contact row is nobody's guardian, so it
+        // now resolves to no standing anywhere — which is what makes the
+        // enable-time rule ("a guardian, over a live ward") sufficient instead of
+        // merely necessary.
         $post = $this->seedPostWithImage();
         $threadAboutThem = $this->seedParticipantThread($this->childAMembership, 'About Amina');
 
-        // The child's own contact row, given a login.
+        // The child's own contact row, given a login — forceFill, because
+        // FamilyAccessService::enable() refuses this contact outright (nobody's
+        // guardian) and the point here is that the DISCLOSURE layer refuses it
+        // too, independently of the door.
         $this->childA->forceFill([
             'login_email' => 'child-' . uniqid() . '@test.local',
             'login_enabled_at' => now(),
@@ -767,28 +1184,35 @@ class FamilyPortalTest extends TestCase
 
         $child = $this->childA->refresh();
 
-        // The WHOLE feed, with no consent recorded anywhere.
-        $this->as($child)
-            ->getJson($this->groupUrl('/posts'))
-            ->assertOk()
-            ->assertJsonPath('data.data.0.title', 'Trip photos');
+        // The group they are a MEMBER of does not exist as far as this
+        // credential is concerned.
+        $this->as($child)->getJson($this->url('/groups'))->assertOk()->assertJsonCount(0, 'data');
+        $this->as($child)->getJson($this->groupUrl())->assertStatus(403);
 
-        // And the media too, again with no consent — because a participant
-        // holds every disclosure about their own group outright.
+        // No feed…
+        $this->as($child)->getJson($this->groupUrl('/posts'))->assertStatus(403);
+
+        // …no bytes…
         $attachment = $post->attachments()->firstOrFail();
         $this->as($child)
             ->get($this->groupUrl("/posts/{$post->id}/attachments/{$attachment->id}"))
-            ->assertOk();
+            ->assertStatus(403);
 
-        // And the participant thread about themselves.
+        // …and not the participant thread about themselves, which is the one
+        // that mattered most.
         $this->as($child)
             ->getJson($this->groupUrl("/threads/{$threadAboutThem->id}"))
-            ->assertOk();
+            ->assertStatus(403);
 
-        // THE LIMIT THAT DOES HOLD, and the reason this is a hazard rather than
-        // a hole: even a participant login sees only their OWN records. The
-        // other family's child is still refused, by the same rule that refuses
-        // another guardian.
+        // Their own records, addressed by their own membership id, are refused
+        // too — this is deliberately NOT the student-login standing computation,
+        // which is its own task. A family credential gets nothing from a
+        // participant row rather than the narrow slice a student one should.
+        $this->as($child)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/awards"))
+            ->assertStatus(403);
+
+        // And the other family's child stays refused, as it always was.
         $this->as($child)
             ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/awards"))
             ->assertStatus(403);
@@ -798,22 +1222,60 @@ class FamilyPortalTest extends TestCase
     }
 
     #[Test]
-    public function the_thread_payload_carries_no_unread_bookmark(): void
+    public function unread_is_computed_from_the_parents_own_bookmark(): void
     {
-        // `group_thread_reads.user_id` is NOT NULL and points at `users`, so this
-        // slice cannot write a parent's bookmark and does not serve an `unread`
-        // flag it could not compute honestly. T-015f replaces that column pair
-        // with a dual-principal one; a permanently-false `unread` in the
-        // meantime would have been worse than none.
+        // This used to assert the OPPOSITE — that no bookmark existed and no
+        // `unread` was served — because `group_thread_reads.user_id` was NOT
+        // NULL against `users` and there was no column a Contact could be
+        // written into. T-015f added one, so the flag can now be computed
+        // honestly instead of being withheld.
         $thread = $this->seedParticipantThread($this->childAMembership, 'About Amina');
 
-        $response = $this->as($this->parentA)
-            ->getJson($this->groupUrl("/threads/{$thread->id}"))
-            ->assertOk();
+        // Never opened: there is a message and no bookmark, so it is news.
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', true)
+            ->assertJsonPath('data.data.0.last_read_at', null);
 
-        $response->assertJsonMissingPath('data.thread.unread');
-        $response->assertJsonMissingPath('data.thread.last_read_at');
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
 
-        $this->assertDatabaseCount('group_thread_reads', 0);
+        // Opened: nothing has been said since.
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', false);
+
+        // The teacher says something new — it is news again. Time has to move:
+        // a message written in the same second as the bookmark is not "after"
+        // it, and the whole test would otherwise pass or fail on clock luck.
+        $this->travel(1)->minutes();
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'One more thing']);
+
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()
+            ->assertJsonPath('data.data.0.unread', true);
+    }
+
+    #[Test]
+    public function one_parents_bookmark_is_not_another_parents(): void
+    {
+        $thread = GroupThread::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'scope' => GroupThread::SCOPE_GROUP,
+            'subject' => 'Field trip',
+        ]);
+        $thread->messages()->create(['masjid_id' => $this->masjid->id, 'body' => 'Slips due Friday']);
+
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+        $this->consent($this->parentB, GroupMembership::CONSENT_FEED);
+
+        // A reads it. B must still be told it is unread.
+        $this->as($this->parentA)->getJson($this->groupUrl("/threads/{$thread->id}"))->assertOk();
+
+        $this->as($this->parentA)->getJson($this->groupUrl('/threads'))
+            ->assertOk()->assertJsonPath('data.data.0.unread', false);
+
+        $this->as($this->parentB)->getJson($this->groupUrl('/threads'))
+            ->assertOk()->assertJsonPath('data.data.0.unread', true);
     }
 }

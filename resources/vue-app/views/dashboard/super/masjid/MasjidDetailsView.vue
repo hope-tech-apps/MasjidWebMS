@@ -75,6 +75,26 @@
                 </div>
             </div>
 
+            <!-- Public directory listing (SuperAdmin-only; masjids.listed_at).
+                 Creating an organization no longer publishes it, so this is how
+                 one is put in front of app users when it is actually ready. -->
+            <div class="d-flex flex-column gap-2 w-100">
+                <span class="fs-5 fw-semibold">
+                    App Directory Listing
+                </span>
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <span class="fs-6 fw-semibold text-muted">
+                        Show this organization in the mobile app's organization picker.
+                        Off means it exists and its admins can work on it, but nobody can find it in the app.
+                    </span>
+                    <div class="form-check form-switch m-0">
+                        <input class="form-check-input bg-danger" type="checkbox"
+                            @click.prevent="toggleDirectoryListing(!masjid.listed_at)"
+                            :checked="masjid.listed_at ? true : false" />
+                    </div>
+                </div>
+            </div>
+
             <!-- CRM Access (SuperAdmin-only screen; toggles the per-masjid CRM gate) -->
             <div class="d-flex flex-column gap-2 w-100">
                 <span class="fs-5 fw-semibold">
@@ -334,6 +354,66 @@ const archiveMasjid = async () => {
                                 });
                             });
                         });
+                }
+            }
+        })
+}
+
+/**
+ * Publish / unpublish this organization in the mobile app's public directory
+ * (PATCH .../directory-listing -> masjids.listed_at).
+ *
+ * The server owns the timestamp; the response carries the saved masjid, so the
+ * locally loaded copy is refreshed from it rather than from a guess.
+ */
+const toggleDirectoryListing = (listed: boolean) => {
+    QSwal.fire(
+        "Question",
+        listed
+            ? "List this organization in the mobile app's directory? App users will be able to find it."
+            : "Remove this organization from the mobile app's directory? New app users will no longer find it.",
+        'question'
+    )
+        .then(async (result) => {
+            if (result.isConfirmed) {
+
+                let swalInstance: SweetAlertOptions = {
+                    title: "Info",
+                    text: "Nothing",
+                    icon: "info"
+                };
+
+                if (masjid.value?.id) {
+
+                    const apiRequestData = new URLSearchParams();
+                    apiRequestData.append('listed', listed ? "1" : "0");
+
+                    await ApiService.patch(`/api/admin/masjids/${masjid.value.id}/directory-listing`, apiRequestData)
+                        .then(res => {
+                            if (res.data.status === 'success') {
+                                if (masjid.value) masjid.value.listed_at = res.data.data?.listed_at ?? null;
+                                swalInstance.title = "Success";
+                                swalInstance.text = listed
+                                    ? "Organization listed in the app directory."
+                                    : "Organization removed from the app directory.";
+                                swalInstance.icon = "success";
+                            } else {
+                                swalInstance.title = "Sorry";
+                                swalInstance.text = getMessageFromObj(res);
+                                swalInstance.icon = "warning";
+                            }
+                        })
+                        .catch((e: AxiosError<BackendResponseData>) => {
+                            console.log(e);
+                            swalInstance.title = e.message;
+                            swalInstance.text = getMessageFromObj(e);
+                            swalInstance.icon = "error";
+                        })
+                        .finally(() => {
+                            MSwal.fire(swalInstance);
+                        });
+                } else {
+                    MSwal.fire('Sorry', 'The masjid ID missed.', 'error');
                 }
             }
         })

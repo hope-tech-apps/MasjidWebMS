@@ -24,6 +24,19 @@ use App\Models\Section;
  *   donation       <- DonationLink.title / .message / image (+ link)
  *   contact_form   <- masjid contact block (phone/email/address) + ContactReason list
  *
+ * Three more types resolve a REFERENCE they store into the thing it points at,
+ * which is the same idea one step further — the section holds an id, the binder
+ * inlines the public shape of the row:
+ *
+ *   form           <- the referenced Form's schema + its public wording
+ *   embed          <- the re-validated frame src + its sandbox policy
+ *   offering       <- the referenced Offering's PUBLIC payload (T-006g):
+ *                     copy, ACTIVE fee plans in integer minor units, places
+ *                     left, whether registration is open, intake questions.
+ *                     App\Support\OfferingPublicPayload owns that shape and the
+ *                     public GET /api/v1/offerings/{slug} calls the same
+ *                     presenter, so the two can never drift.
+ *
  * CRITICAL: the returned array preserves the EXACT `content` JSON shape the Nuxt
  * section components expect (see app/components/section/* in the site repo). Only
  * the model-owned fields are overridden; presentation-only fields the section
@@ -64,6 +77,7 @@ class SectionContentBinder
             SectionType::CONTACT_FORM   => self::bindContact($content, $masjidId),
             SectionType::FORM           => self::bindForm($content, $masjidId),
             SectionType::EMBED          => self::bindEmbed($content, $masjidId),
+            SectionType::OFFERING       => self::bindOffering($content, $masjidId),
             default                     => $content,
         };
     }
@@ -173,6 +187,47 @@ class SectionContentBinder
                 'fee' => $form->feeRule(),
             ],
         ];
+
+        return $content;
+    }
+
+    /**
+     * Inline the referenced offering's PUBLIC payload into the section content
+     * (T-006g).
+     *
+     * The section stores only `offering_id`; the renderer needs the copy, the
+     * fee plans, the places left, whether registration is open at all, and the
+     * intake questions. Resolving it here means the site fetches a page ONCE and
+     * can draw the whole registration block — no second request, and no window
+     * in which the page has rendered but the price has not. Exactly what
+     * bindForm() does for a `form` section, for exactly the same reasons.
+     *
+     * THE SHAPE IS NOT DEFINED HERE. App\Support\OfferingPublicPayload owns
+     * every decision about what an anonymous visitor may see, and the public
+     * GET /api/v1/offerings/{slug} endpoint calls the same presenter — so a
+     * field tightened in one place is tightened in both. A hand-rolled second
+     * copy here is how a private field ends up on a published page.
+     *
+     * Scoped by masjid, so a mis-set offering_id surfaces as a missing offering
+     * rather than as another tenant's program (and its prices) appearing on
+     * someone else's website.
+     *
+     * `offering` is null when the id is unset, points at nothing, belongs to
+     * another masjid, is soft-deleted, or is switched off. The renderer treats
+     * all five the same way: draw nothing, rather than an empty shell with a
+     * Register button that every submission would be refused by.
+     */
+    private static function bindOffering(array $content, ?int $masjidId): array
+    {
+        $content['offering'] = null;
+
+        $offeringId = $content['offering_id'] ?? null;
+
+        if (! $offeringId || ! $masjidId) {
+            return $content;
+        }
+
+        $content['offering'] = OfferingPublicPayload::forId($masjidId, (int) $offeringId);
 
         return $content;
     }

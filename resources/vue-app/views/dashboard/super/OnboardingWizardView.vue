@@ -3,7 +3,9 @@
 
         <!-- Header + Stepper -->
         <div class="card-header bg-white border-0 d-flex flex-column gap-3">
-            <div class="card-title fs-4 fw-semibold">Onboard a New Masjid</div>
+            <!-- Title follows the chosen vertical's label (config/verticals.php),
+                 so the wizard stops calling a school a masjid. -->
+            <div class="card-title fs-4 fw-semibold">Onboard a New {{ verticalLabel }}</div>
             <ol class="wizard-steps list-unstyled d-flex flex-wrap gap-2 m-0 p-0">
                 <li v-for="(step, index) in steps" :key="step.key"
                     class="wizard-step d-flex align-items-center gap-2"
@@ -18,10 +20,70 @@
 
             <!-- ===================== STEP 1: IDENTITY ===================== -->
             <section v-show="currentStep === 0" class="d-flex flex-column gap-4">
+                <!-- Organization type (Manara vertical). The FIRST decision,
+                     because it changes the terminology and the feature bundle
+                     everything after it is configured with. Options, labels,
+                     bundles and terminology all come from the backend
+                     (config/verticals.php) — nothing here is retyped. -->
+                <h5 class="section-heading">Organization Type</h5>
+                <div class="wizard-subsection">
+                    <p class="text-muted small mb-2">
+                        What kind of organization is this? It sets the vocabulary the admin panel uses
+                        and which modules its app ships with. It can't be changed here afterwards.
+                    </p>
+                    <div class="d-flex flex-wrap gap-2">
+                        <label v-for="v in verticals" :key="v.org_type" class="mode-pill"
+                            :class="{ selected: form.org_type === v.org_type }">
+                            <input type="radio" :value="v.org_type" v-model="form.org_type" />
+                            {{ v.label }}
+                        </label>
+                    </div>
+
+                    <!-- What the choice actually changes. This is the surprising
+                         part — a school gets no worship modules — so it is shown
+                         before the operator commits, not discovered afterwards. -->
+                    <div v-if="selectedVertical" class="vertical-effects mt-3">
+                        <div class="vertical-effect-block">
+                            <span class="subsection-title">Modules its app ships with</span>
+                            <div v-if="includedFeatures.length" class="d-flex flex-wrap gap-1 mt-1">
+                                <span v-for="f in includedFeatures" :key="f.key" class="effect-chip included">
+                                    {{ f.name }}
+                                </span>
+                            </div>
+                            <p v-else class="text-muted small mb-0 mt-1">
+                                No modules are enabled by default for this organization type.
+                            </p>
+
+                            <template v-if="excludedFeatures.length">
+                                <p class="text-muted small mb-0 mt-2">
+                                    Switched <strong>off</strong> for a {{ selectedVertical.label }} — you can still
+                                    turn any of these on in the Content step:
+                                </p>
+                                <div class="d-flex flex-wrap gap-1 mt-1">
+                                    <span v-for="f in excludedFeatures" :key="f.key" class="effect-chip excluded">
+                                        {{ f.name }}
+                                    </span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="vertical-effect-block">
+                            <span class="subsection-title">What the admin panel will call things</span>
+                            <dl v-if="terminologyPairs.length" class="terminology-list mt-1 mb-0">
+                                <div v-for="t in terminologyPairs" :key="t.key" class="terminology-row">
+                                    <dt>{{ t.key }}</dt>
+                                    <dd>{{ t.value }}</dd>
+                                </div>
+                            </dl>
+                            <p v-else class="text-muted small mb-0 mt-1">No terminology pack for this type.</p>
+                        </div>
+                    </div>
+                </div>
+
                 <h5 class="section-heading">Identity &amp; Contact</h5>
 
                 <div class="wizard-field">
-                    <label>Masjid Admin <span class="text-muted">(optional)</span></label>
+                    <label>{{ verticalLabel }} Admin <span class="text-muted">(optional)</span></label>
                     <select v-model="form.user_id" class="dashboard-input">
                         <option :value="''">No admin assigned yet</option>
                         <option v-for="admin in masjidAdmins" :key="admin.id" :value="admin.id">{{ admin.name }}</option>
@@ -30,7 +92,8 @@
 
                 <div class="wizard-field">
                     <label>Name <span class="req">*</span></label>
-                    <input v-model="form.name" type="text" class="dashboard-input" placeholder="Masjid name" />
+                    <input v-model="form.name" type="text" class="dashboard-input"
+                        :placeholder="`${verticalLabel} name`" />
                 </div>
 
                 <div class="d-flex flex-column flex-md-row gap-4">
@@ -228,7 +291,8 @@
 
                 <div class="wizard-field">
                     <label>About</label>
-                    <textarea v-model="form.about" rows="3" class="dashboard-input" placeholder="About this masjid"></textarea>
+                    <textarea v-model="form.about" rows="3" class="dashboard-input"
+                        :placeholder="`About this ${verticalLabel.toLowerCase()}`"></textarea>
                 </div>
                 <div class="d-flex flex-column flex-md-row gap-4">
                     <div class="wizard-field w-100">
@@ -243,9 +307,13 @@
 
                 <div class="wizard-subsection">
                     <span class="subsection-title">Mobile app features</span>
-                    <p class="text-muted small mb-2">Toggle which features appear in this masjid's app.</p>
+                    <p class="text-muted small mb-2">
+                        Pre-set from the {{ verticalLabel }} bundle — changing the organization type resets
+                        these. The bundle is a default, not a restriction: switch any module on deliberately.
+                    </p>
                     <div v-if="features.length" class="d-flex flex-wrap gap-3">
-                        <label v-for="f in features" :key="f.key" class="feature-toggle d-flex align-items-center gap-2">
+                        <label v-for="f in features" :key="f.key" class="feature-toggle d-flex align-items-center gap-2"
+                            :class="{ 'off-bundle': !bundledKeys.includes(f.key) }">
                             <input type="checkbox" :value="f.key" v-model="form.feature_keys" />
                             <span>{{ f.name }}</span>
                         </label>
@@ -359,15 +427,26 @@
                 <h5 class="section-heading">Review &amp; Provision</h5>
 
                 <div v-if="createdMasjidId" class="success-panel">
-                    <div class="fs-5 fw-semibold mb-1">Masjid created</div>
-                    <p class="mb-2">New masjid id: <strong>#{{ createdMasjidId }}</strong></p>
+                    <div class="fs-5 fw-semibold mb-1">{{ verticalLabel }} created</div>
+                    <p class="mb-2">New organization id: <strong>#{{ createdMasjidId }}</strong></p>
+                    <!-- Creating no longer publishes: masjids.listed_at starts
+                         NULL, so the app's directory does not offer it yet. -->
+                    <p class="mb-2 small">
+                        It is <strong>not listed</strong> in the mobile app's organization picker yet. Publish it
+                        from the organization's page once it's ready to be seen.
+                    </p>
                     <router-link :to="`/dashboard/super/masjids/${createdMasjidId}`" class="btn btn-success btn-sm">
-                        Open masjid
+                        Open {{ verticalLabel.toLowerCase() }}
                     </router-link>
                 </div>
 
                 <template v-else>
                     <div class="review-grid">
+                        <div class="review-item"><span>Organization type</span><strong>{{ verticalLabel }}</strong></div>
+                        <div v-if="excludedFeatures.length" class="review-item">
+                            <span>Not included</span>
+                            <strong>{{ excludedFeatures.map(f => f.name).join(', ') }}</strong>
+                        </div>
                         <div class="review-item"><span>Name</span><strong>{{ form.name || '—' }}</strong></div>
                         <div class="review-item"><span>Email</span><strong>{{ form.email || '—' }}</strong></div>
                         <div class="review-item"><span>Phone</span><strong>{{ form.phone || '—' }}</strong></div>
@@ -420,7 +499,7 @@
 
                 <LoadingButton v-else-if="!createdMasjidId" type="button" :is-loading="isLoading"
                     classes="btn-success" @click.prevent="provision">
-                    Provision Masjid
+                    Provision {{ verticalLabel }}
                 </LoadingButton>
 
                 <button v-else type="button" class="btn btn-success" @click="resetWizard">Onboard another</button>
@@ -437,6 +516,7 @@ import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { City, Country } from '@/core/types/data/Country';
 import { MasjidAdmin } from '@/core/types/data/Admin';
+import { DEFAULT_ORG_TYPE, OrgType, Terminology } from '@/core/types/data/Vertical';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
@@ -445,6 +525,23 @@ import { computed, onBeforeMount, reactive, ref, watch } from 'vue';
 type PrayerOption = { value: string; label: string };
 type FeatureOption = { id: number; key: string; name: string };
 type AccountMode = 'managed' | 'byo';
+
+/**
+ * One vertical as `/api/admin/onboarding/options` serves it, straight out of
+ * `config/verticals.php`.
+ *
+ * Deliberately NOT a local copy of that config: the label, the default feature
+ * bundle and the terminology pack are all fetched, so what the wizard promises
+ * and what `OnboardingController@provision` actually seeds cannot drift, and a
+ * fourth vertical needs no change in this file.
+ */
+type VerticalOption = {
+    org_type: OrgType;
+    label: string;
+    plural: string;
+    feature_keys: string[];
+    terminology: Terminology;
+};
 
 const usersStore = useUsersStore();
 
@@ -494,6 +591,7 @@ const countries = ref<Country[]>([]);
 const cities = ref<City[]>([]);
 const masjidAdmins = ref<MasjidAdmin[]>([]);
 const features = ref<FeatureOption[]>([]);
+const verticals = ref<VerticalOption[]>([]);
 const prayerOptions = reactive<{ methods: PrayerOption[]; madhabs: PrayerOption[]; high_latitude_rules: PrayerOption[] }>({
     methods: [],
     madhabs: [],
@@ -504,6 +602,12 @@ const prayerOptions = reactive<{ methods: PrayerOption[]; madhabs: PrayerOption[
 const timezones = ref<string[]>([]);
 
 const form = reactive({
+    // The Manara vertical. Seeded from DEFAULT_ORG_TYPE — which mirrors PHP's
+    // Masjid::ORG_TYPE_MASJID — and then confirmed from the options payload's
+    // `default_org_type`, which is that same constant. The wizard's
+    // pre-selection therefore agrees with what ProvisionMasjidRequest falls back
+    // to for a payload that omits org_type, rather than guessing at it.
+    org_type: DEFAULT_ORG_TYPE as OrgType,
     user_id: '' as number | '',
     name: '',
     email: '',
@@ -568,12 +672,18 @@ onBeforeMount(async () => {
             if (res.data?.status === 'success' && res.data?.data) {
                 const d = res.data.data;
                 features.value = d.features ?? [];
+                verticals.value = d.verticals ?? [];
                 prayerOptions.methods = d.prayer?.methods ?? [];
                 prayerOptions.madhabs = d.prayer?.madhabs ?? [];
                 prayerOptions.high_latitude_rules = d.prayer?.high_latitude_rules ?? [];
                 countries.value = d.countries ?? [];
-                // Default: enable every feature (admin can uncheck).
-                form.feature_keys = features.value.map(f => f.key);
+                // Take the default vertical from the backend rather than
+                // assuming it: it is the same constant the request falls back
+                // to. Only honour a value the picker can actually show.
+                if (d.default_org_type && verticals.value.some(v => v.org_type === d.default_org_type)) {
+                    form.org_type = d.default_org_type as OrgType;
+                }
+                applyVerticalFeatureDefaults();
             }
         })
         .catch((e: Error) => console.log(e));
@@ -599,6 +709,54 @@ watch(() => form.platforms.includes('ios'), (iosSelected) => {
         if (i !== -1) form.platforms.splice(i, 1);
     }
 });
+
+// ---- Vertical (organization type) ----
+
+/** The chosen vertical's block from the options payload; null until it lands. */
+const selectedVertical = computed<VerticalOption | null>(
+    () => verticals.value.find(v => v.org_type === form.org_type) ?? null
+);
+
+/** Label for the chosen vertical, degrading to a neutral word before options load. */
+const verticalLabel = computed(() => selectedVertical.value?.label || 'Organization');
+
+/**
+ * Feature keys this vertical seeds BY DEFAULT, narrowed to keys the catalog
+ * actually ships — so the wizard can never post a key the backend's
+ * `exists:mobile_app_features,key` rule would reject.
+ */
+const bundledKeys = computed(() =>
+    (selectedVertical.value?.feature_keys ?? []).filter(k => features.value.some(f => f.key === k))
+);
+
+const includedFeatures = computed(() => features.value.filter(f => bundledKeys.value.includes(f.key)));
+const excludedFeatures = computed(() => features.value.filter(f => !bundledKeys.value.includes(f.key)));
+
+/** The terminology pack as display rows, humanizing keys the way PHP's Masjid::term() does. */
+const terminologyPairs = computed(() =>
+    Object.entries(selectedVertical.value?.terminology ?? {}).map(([key, value]) => ({
+        key: key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase()),
+        value: String(value),
+    }))
+);
+
+/**
+ * Re-seed the Content step's toggles from the chosen vertical's bundle.
+ *
+ * This wizard always posts `feature_keys_provided`, so whatever is checked there
+ * WINS over the backend's vertical default. The checkboxes therefore have to
+ * carry the bundle themselves — otherwise a school would be provisioned with
+ * exactly the worship modules the picker just promised it would not get. For a
+ * masjid the bundle IS the full seeded catalog (.claude/rules/verticals.md pins
+ * that), so this leaves the previous "everything on" default unchanged.
+ */
+function applyVerticalFeatureDefaults() {
+    form.feature_keys = features.value.filter(f => bundledKeys.value.includes(f.key)).map(f => f.key);
+}
+
+// Changing the organization type re-seeds the toggles. The Content step says so,
+// so an operator who hand-picked features knows a late switch resets them.
+watch(() => form.org_type, () => applyVerticalFeatureDefaults());
 
 // ---- Validation helpers ----
 const emailValid = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
@@ -866,13 +1024,21 @@ async function provision() {
         return;
     }
 
-    const confirm = await QSwal.fire('Question', `Create and configure "${form.name}"?`, 'question');
+    const confirm = await QSwal.fire(
+        'Question',
+        `Create and configure "${form.name}" as a ${verticalLabel.value}? `
+        + 'It will not appear in the mobile app directory until you publish it.',
+        'question'
+    );
     if (!confirm.isConfirmed) return;
 
     isLoading.value = true;
 
     // Build the payload, including only BYO credentials for platforms in BYO mode.
     const payload: Record<string, unknown> = {
+        // The chosen vertical. Validated against Masjid::ORG_TYPES server-side;
+        // an omitted value would fall back to masjid, so it is always sent.
+        org_type: form.org_type,
         name: form.name,
         email: form.email,
         phone: form.phone,
@@ -1070,6 +1236,72 @@ async function provision() {
     border-radius: .4rem;
     padding: .4rem .7rem;
     cursor: pointer;
+}
+
+/* Outside the chosen vertical's default bundle — still selectable, just not on by default. */
+.feature-toggle.off-bundle {
+    border-style: dashed;
+}
+
+/* ---- Vertical picker: what the choice actually changes ---- */
+.vertical-effects {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+    .vertical-effects {
+        grid-template-columns: 3fr 2fr;
+    }
+}
+
+.vertical-effect-block {
+    border: 1px solid var(--input-border, #eee);
+    border-radius: .5rem;
+    padding: .75rem;
+}
+
+.effect-chip {
+    border-radius: 2rem;
+    padding: .15rem .6rem;
+    font-size: .8rem;
+    border: 1px solid var(--input-border, #ccc);
+}
+
+.effect-chip.included {
+    background: var(--cgreen, #01b151);
+    border-color: var(--cgreen, #01b151);
+    color: #fff;
+}
+
+.effect-chip.excluded {
+    border-style: dashed;
+    color: #777;
+    text-decoration: line-through;
+}
+
+.terminology-list {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+}
+
+.terminology-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: .85rem;
+}
+
+.terminology-row dt {
+    color: #777;
+    font-weight: 500;
+}
+
+.terminology-row dd {
+    margin: 0;
+    font-weight: 600;
 }
 
 .platform-card {

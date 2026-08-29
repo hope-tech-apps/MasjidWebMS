@@ -198,11 +198,28 @@
                                     </div>
                                 </td>
                                 <td class="text-center">
-                                    <!-- is_open, not is_active: a closed window still has is_active=true and used to show a green Open badge -->
-                                    <span v-if="offering.is_open" class="badge bg-success-subtle text-success">Open</span>
-                                    <span v-else-if="offering.closed_reason === 'not_yet_open'" class="badge bg-info-subtle text-info">Scheduled</span>
-                                    <span v-else-if="offering.closed_reason === 'closed'" class="badge bg-secondary-subtle text-secondary">Window closed</span>
-                                    <span v-else class="badge bg-secondary-subtle text-secondary">Closed</span>
+                                    <!--
+                                        registration_state, not is_open and certainly not
+                                        is_active. is_open is only the WINDOW: an offering whose
+                                        sign-up form has been deleted, or whose fee plans have all
+                                        been deactivated, still reports is_open=true and
+                                        closed_reason=null and still refuses every registration.
+                                        Both rendered a green "Open" here until 2026-08-12. The
+                                        server decides the verdict in one place
+                                        (App\Support\OfferingRegistrationState) and the public page
+                                        reads the same field.
+                                    -->
+                                    <span
+                                        class="badge"
+                                        :class="registrationStateBadge(offering.registration_state, offering.registration_state_reason)"
+                                        :title="registrationStateHint(offering.registration_state, offering.registration_state_reason)"
+                                    >
+                                        <i
+                                            v-if="registrationStateIsFault(offering.registration_state, offering.registration_state_reason)"
+                                            class="bi bi-exclamation-triangle-fill me-1"
+                                        ></i>
+                                        {{ registrationStateLabel(offering.registration_state, offering.registration_state_reason) }}
+                                    </span>
                                 </td>
                                 <td class="text-end">
                                     <div class="btn-group btn-group-sm">
@@ -229,6 +246,9 @@
                         <strong>Seats</strong> counts sign-ups that currently hold a place, which
                         is what capacity is measured against. <strong>Sign-ups</strong> counts
                         every registration ever attached, cancelled ones included.
+                        <strong>Status</strong> answers one question — could somebody register
+                        right now — so it accounts for the sign-up form and the fee plans as well
+                        as the dates. A red status is a misconfiguration, not a decision.
                     </p>
                 </div>
             </div>
@@ -268,6 +288,21 @@
                                         </select>
                                     </div>
                                     <div class="col-12">
+                                        <label class="form-label">Description</label>
+                                        <textarea
+                                            class="form-control"
+                                            rows="4"
+                                            v-model="form.description"
+                                            placeholder="What this is, who it is for, what to bring."
+                                        ></textarea>
+                                        <div class="form-text">
+                                            Shown to anyone reading the sign-up page — write it for a
+                                            family deciding whether to register, not for staff. Leave it
+                                            empty and the page simply omits the block.
+                                        </div>
+                                    </div>
+
+                                    <div class="col-12">
                                         <label class="form-label">Slug <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control font-monospace" v-model.trim="form.slug" required>
                                         <div class="form-text">
@@ -276,20 +311,35 @@
                                             offering breaks any link already shared.
                                             <br>
                                             <!--
-                                                Deliberately NOT "the public address people register at".
-                                                Nothing in this application publishes a registration page:
-                                                the only intake is POST /api/v1/offerings/{slug}/register,
-                                                and no section type, page or public route calls it. An
-                                                admin told this slug was a public address reasonably
-                                                publishes the intake FORM instead — which writes a
-                                                FormResponse and never a Registration, so no seat is taken
-                                                and no money moves while every screen agrees nothing
-                                                happened.
+                                                STILL deliberately not "the public address people register
+                                                at". T-006g added the backend half of the front door — the
+                                                public read GET /api/v1/offerings/{slug} and the `offering`
+                                                page section, which inlines that same payload when a page
+                                                is served — but the thing that DRAWS a registration form
+                                                lives in the Nuxt site repo and is not shipped.
+
+                                                This screen was the ONLY one saying so. The section type's
+                                                own description promised "its fee plans, the places left,
+                                                and the registration form", and the section editor previewed
+                                                the states the block would show — so an admin who never
+                                                opened this modal was told twice that it worked. The claim
+                                                now comes from the server (SectionType::rendererNote) and is
+                                                printed identically in the palette and in the section
+                                                editor; the sentence below is this screen's own wording of
+                                                the same fact, and it must not outlive it.
+
+                                                Delete this note when the renderer ships — the same commit
+                                                that removes OFFERING from SectionType::withoutRenderer().
                                             -->
                                             <span class="text-warning-emphasis">
-                                                Note: the public sign-up page for offerings is not live yet.
-                                                Registrations reach this screen through the registration API,
-                                                not by publishing the sign-up form on a page.
+                                                Note: the public sign-up page is not drawn yet. This
+                                                organisation's data is now served to the website
+                                                (the "Registration &amp; Payment" page section carries it),
+                                                but the website has no component to draw it with — so
+                                                publishing that section shows nothing on the page. Do not
+                                                tell families to visit it, and do not publish the intake
+                                                form on a page as a substitute: form submissions take no
+                                                seat and move no money.
                                             </span>
                                         </div>
                                     </div>
@@ -465,7 +515,15 @@ const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
 
 // Display helpers
-const { offeringKindLabel, describePlanTerms, formatDateTime } = useOfferingDisplay();
+const {
+    offeringKindLabel,
+    describePlanTerms,
+    formatDateTime,
+    registrationStateLabel,
+    registrationStateBadge,
+    registrationStateHint,
+    registrationStateIsFault
+} = useOfferingDisplay();
 
 // State
 const loading = ref(false);
@@ -491,6 +549,7 @@ const filters = reactive<OfferingFilters>({
 
 const emptyForm = (): OfferingPayload => ({
     name: '',
+    description: '',
     slug: '',
     kind: 'program',
     intake_form_id: null,
@@ -693,6 +752,7 @@ const openEditModal = async (offering: Offering) => {
     groupSearch.value = '';
     form.value = {
         name: offering.name ?? '',
+        description: offering.description ?? '',
         slug: offering.slug ?? '',
         kind: offering.kind ?? 'program',
         intake_form_id: offering.intake_form_id ?? null,

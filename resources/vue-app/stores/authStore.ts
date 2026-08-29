@@ -83,6 +83,10 @@ export const useAuthStore = defineStore('authStore', () => {
                             dashboardMasjidId.value = parseInt(expectedMasjidId);
                     } else if (user.value?.type === 'MasjidAdmin' && user.value.masjid?.id) {
                         saveDashboardMasjidId(user.value.masjid.id);
+                    } else if (user.value?.type === 'Teacher' && user.value.masjid?.id) {
+                        // A teacher is bound to exactly one school; seed the id the
+                        // teacher shell and any masjid-scoped fetch lean on.
+                        saveDashboardMasjidId(user.value.masjid.id);
                     }
                 }
             })

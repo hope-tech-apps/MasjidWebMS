@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Services\Auth\AccountAccessService;
+use App\Models\User;
+use Illuminate\Support\Str;
 use App\Enums\HighLatitudeRule;
 use App\Enums\Madhab;
 use App\Enums\PrayerCalculationMethod;
@@ -36,14 +39,43 @@ class OnboardingController extends Controller
 {
     /**
      * Catalog the wizard needs to render its selects in a single fetch:
-     * the mobile-feature catalog (for the Content step's toggles), the prayer
-     * calculation option lists, and the countries list.
+     * the vertical picker, the mobile-feature catalog (for the Content step's
+     * toggles), the prayer calculation option lists, and the countries list.
      */
     public function options()
     {
         return response()->json([
             'status' => 'success',
             'data' => [
+                // ---- Verticals (the wizard's Organization-type picker) ----
+                // Served straight from config/verticals.php so the SPA renders
+                // what provisioning will actually DO — the default feature
+                // bundle and the terminology pack — instead of a second copy of
+                // the same facts that can drift. Masjid::ORG_TYPES is the
+                // authority on the allowed set (.claude/rules/verticals.md), and
+                // it is the same constant ProvisionMasjidRequest validates
+                // against, so a new vertical appears in the wizard with no SPA
+                // change at all.
+                'verticals' => collect(Masjid::ORG_TYPES)->map(function (string $orgType) {
+                    $config = config("verticals.{$orgType}", []);
+
+                    return [
+                        'org_type' => $orgType,
+                        'label' => $config['label'] ?? '',
+                        'plural' => $config['plural'] ?? '',
+                        // DEFAULTS seeded at provisioning time, not an
+                        // authorization list — the wizard says as much.
+                        'feature_keys' => array_values($config['feature_keys'] ?? []),
+                        'terminology' => $config['terminology'] ?? [],
+                    ];
+                })->values(),
+                // The vertical an omitted org_type resolves to. Read from the
+                // SAME constant ProvisionMasjidRequest::prepareForValidation()
+                // merges, so the wizard's pre-selection and the request's
+                // fallback cannot disagree — OnboardingVerticalPickerTest pins
+                // that they agree by provisioning without an org_type and
+                // comparing.
+                'default_org_type' => Masjid::ORG_TYPE_MASJID,
                 'features' => MobileAppFeature::orderBy('name')->get(['id', 'key', 'name']),
                 'prayer' => [
                     'methods' => collect(PrayerCalculationMethod::cases())->map(fn($c) => [
@@ -74,10 +106,30 @@ class OnboardingController extends Controller
      * encrypted and are NEVER echoed back — the response exposes only presence
      * booleans (has_asc_key / has_play_service_account).
      */
-    public function provision(ProvisionMasjidRequest $request)
+    public function provision(ProvisionMasjidRequest $request, ?AccountAccessService $access = null)
     {
+        // Optional and container-resolved, NOT because injection is unwanted but
+        // because this method has a second caller that does not go through the
+        // container: the opt-in demo fixture support class invokes
+        // `app(OnboardingController::class)->provision($request)` directly, on
+        // purpose — its tenant is built through the REAL wizard path rather than
+        // a hand-written Masjid row. A required second parameter silently broke
+        // that caller with an ArgumentCountError, which surfaced as ten failing
+        // fixture tests and not as anything mentioning this file.
+        //
+        // Deliberately not naming that class here: a test asserts nothing under
+        // app/, database/ or routes/ mentions it, so the fixture cannot become
+        // reachable from shipped code by accident.
+        $access ??= app(AccountAccessService::class);
+
         try {
-            $masjid = DB::transaction(function () use ($request) {
+            // Collected inside the transaction, SENT after it commits: an email
+            // cannot be un-sent if the transaction later rolls back, and an
+            // invitation to an organisation that does not exist is worse than a
+            // late one.
+            $invitations = [];
+
+            $masjid = DB::transaction(function () use ($request, &$invitations) {
                 // ---- Masjid record (mirrors MasjidsController@store, + timezone) ----
                 $masjid = Masjid::create([
                     'name' => $request->input('name'),
@@ -91,6 +143,25 @@ class OnboardingController extends Controller
                     'country_id' => $request->input('country_id'),
                     'city_id' => $request->input('city_id'),
                     'user_id' => $request->input('user_id') ?: null,
+                    // AN ORGANISATION IS BORN WITH ITS CRM ON.
+                    //
+                    // `crm_enabled` defaults false at the column and was written
+                    // by exactly two things in the tree: the SuperAdmin toggle
+                    // and the demo seeder. Provisioning never touched it, so
+                    // every organisation this wizard created was DARK — the
+                    // whole CRM route group 403s, the public registration door
+                    // 404s, and the admin nav simply hides the screens, so
+                    // nobody can tell why the org has no Families, Classrooms,
+                    // Programs or Giving. MEASURED 2026-08-26: three of five
+                    // production tenants (NAFIS, MEC, Al-Razi) were sitting in
+                    // that state, all of them created this way.
+                    //
+                    // Overridable, because "set it up now, switch it on later"
+                    // is a real request — but the DEFAULT is on, because a
+                    // half-provisioned org is the failure this caused.
+                    'crm_enabled' => $request->has('crm_enabled')
+                        ? $request->boolean('crm_enabled')
+                        : true,
                     'created_by' => Auth::id(),
                 ]);
 
@@ -229,8 +300,43 @@ class OnboardingController extends Controller
                 }
                 MasjidAppPublishing::create($publishing);
 
+                // ---- The organisation's own administrator ----
+                //
+                // AN ORG WITH NO OWNER CANNOT BE ADMINISTERED BY ANYONE BUT A
+                // SUPERADMIN. With tenancy.multi_membership off, TenantResolver
+                // derives a MasjidAdmin's grant from `masjids.user_id`; when it
+                // is null, `soleOwnedMembership()` finds nothing and every
+                // masjid-scoped route 403s with "no verified membership". The
+                // wizard's Identity step has always had an optional "Admin"
+                // field and, left empty, wrote `user_id => null` with no warning
+                // — which is how NAFIS, MEC and Al-Razi all ended up unreachable
+                // by their own staff.
+                //
+                // Given an address, the account is created here and INVITED: the
+                // platform picks a random secret it never reads, and the person
+                // sets their own from an emailed link. Nobody at Manara ever
+                // knows another organisation's credential.
+                if ($request->filled('admin.email') && ! $request->filled('user_id')) {
+                    $admin = User::create([
+                        'name' => $request->input('admin.name') ?: $masjid->name.' Administrator',
+                        'email' => $request->input('admin.email'),
+                        'phone' => $request->input('admin.phone') ?: $masjid->phone,
+                        'type' => 'MasjidAdmin',
+                        'password' => Str::password(40),
+                    ]);
+
+                    $masjid->user_id = $admin->id;
+                    $masjid->save();
+
+                    $invitations[] = [$admin, $masjid->name];
+                }
+
                 return $masjid;
             });
+
+            foreach ($invitations as [$admin, $orgName]) {
+                $access->invite($admin, $orgName);
+            }
 
             // Newly created masjid changes the global mobile masjids list.
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);

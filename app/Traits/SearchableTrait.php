@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use App\Support\PublicTenant;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 trait SearchableTrait
@@ -57,6 +58,28 @@ trait SearchableTrait
      * 400 shape matches the contract ZakatCalculatorController and
      * FormSubmissionsController already give for a missing header, so the
      * public API answers a tenant-less request one way everywhere.
+     *
+     * ## And why NAMING a tenant is not the same as VERIFYING one
+     *
+     * The fix above made the WHERE unconditional. It did not ask whether the id
+     * in the header still names an organisation — and `masjids` SOFT-deletes, so
+     * an offboarded organisation's id goes on matching its own announcements,
+     * services, pages and sections forever. An organisation that has been
+     * offboarded kept publishing: `/api/v1/pages/{slug}`, `/api/v1/announcements`
+     * and `/api/v1/services` all answered 200 with its content.
+     *
+     * That is the SAME omission — tenant from a header, existence never checked
+     * — that let a soft-deleted organisation take registrations and open Stripe
+     * Checkout Sessions on the offering endpoints (App\Support\PublicTenant,
+     * PublicTenantLifecycleTest). It is fixed in one place here because these
+     * four models have one public entry point.
+     *
+     * The refusal is a 404 rather than a 400: the caller named an organisation
+     * perfectly well, there is simply no longer one there. Same words as any
+     * other public miss, so this is not a way to enumerate which tenant ids are
+     * live. Note that being UNLISTED is not being gone — `listed_at` gates the
+     * mobile directory only, and an unlisted organisation's pages must keep
+     * serving (Masjid::scopeListed).
      */
     public function scopeFilterByMasjid($query)
     {
@@ -65,6 +88,12 @@ trait SearchableTrait
         if ($resourceId <= 0) {
             throw new HttpResponseException(
                 response()->api(400, 'A masjid must be specified.', null)
+            );
+        }
+
+        if (! PublicTenant::exists($resourceId)) {
+            throw new HttpResponseException(
+                response()->api(404, 'That organization was not found.', null)
             );
         }
 

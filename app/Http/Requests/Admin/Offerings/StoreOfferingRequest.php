@@ -41,6 +41,10 @@ class StoreOfferingRequest extends OfferingFormRequest
     {
         return [
             'name' => 'required|string|max:255',
+            // Public copy (T-006g) — served verbatim to anonymous visitors by
+            // OfferingPublicPayload. Optional: an offering with no description
+            // is a legitimate state and the renderer omits the block.
+            'description' => 'nullable|string|max:5000',
             'slug' => [
                 'required', 'string', 'max:255',
                 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',

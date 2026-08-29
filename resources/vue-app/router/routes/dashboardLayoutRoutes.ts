@@ -176,6 +176,22 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/GroupDetailView.vue")
             },
+            {
+                // The ADMIN provisioning screen for teacher logins and the
+                // classes they lead. No `requiresCrm`/`requiresOrgTypes` on
+                // purpose: teachers are used by schools today and could be by
+                // masjids, so the screen stays reachable for every tenant and
+                // the server decides who may read/write. `pageTitle` is the
+                // plain word — there is no `teachers` terminology key.
+                path: 'teachers',
+                name: 'masjid.teachers',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Teachers'
+                },
+                component: () => import("@/views/dashboard/TeachersView.vue")
+            },
             // The clinic's intake queue. Registered here, with the other
             // per-feature route files, because these are children of the
             // /masjid dashboard layout — see appointmentsManagementRoutes.ts.
@@ -196,6 +212,16 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     requiresCrm: true
                 },
                 component: () => import("@/views/dashboard/FundsView.vue")
+            },
+            {
+                path: 'jummah-lunch',
+                name: 'masjid.jummahLunch',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Jummah Lunch'
+                },
+                component: () => import("@/views/dashboard/JummahLunchView.vue")
             },
             {
                 path: 'donations',

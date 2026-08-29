@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Exceptions\AmbiguousDonorNameException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Donations\StoreOfflineDonationRequest;
+use App\Http\Requests\Admin\Donations\UpdateOfflineDonationRequest;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Fund;
 use App\Models\Masjid;
+use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Support\DonationMetrics;
@@ -15,6 +18,7 @@ use App\Support\ZakatDesignation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -30,6 +34,7 @@ class DonationsController extends Controller
     public function __construct(
         private DonationReceiptPdfService $receiptPdfs,
         private ReceiptService $receipts,
+        private DonorContactService $donors,
     ) {
     }
 
@@ -162,9 +167,11 @@ class DonationsController extends Controller
     {
         // Validate fund + contact belong to THIS masjid (bound tenant scopes these).
         $fund = Fund::findOrFail($request->integer('fund_id'));
-        $contactId = null;
-        if ($request->filled('contact_id')) {
-            $contactId = Contact::findOrFail($request->integer('contact_id'))->id;
+
+        try {
+            $contactId = $this->resolveDonor($request, (int) $fund->masjid_id);
+        } catch (AmbiguousDonorNameException $e) {
+            return $this->ambiguousDonor($e);
         }
 
         $cents = (int) round(((float) $request->validated('amount')) * 100);
@@ -203,6 +210,207 @@ class DonationsController extends Controller
             'status' => 'success',
             'data' => $donation->load(['fund', 'contact']),
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Who this gift belongs to, from whichever of the two donor keys was sent.
+     *
+     * `contact_id` wins over `donor_name`: an id is a decision the admin made by
+     * clicking a real person in the typeahead, a name is only a lookup.
+     *
+     * Returns null when NEITHER key carries a value, which is a real answer — a
+     * donation box or a fundraiser table genuinely has no donor. The bug this
+     * replaced could not tell that answer apart from "a name was typed and I
+     * threw it away"; now the two are different inputs.
+     *
+     * A present-but-null `contact_id` also returns null, which is how the edit
+     * form puts a gift back to general.
+     */
+    private function resolveDonor(Request $request, int $masjidId): ?int
+    {
+        if ($request->filled('contact_id')) {
+            return Contact::findOrFail($request->integer('contact_id'))->id;
+        }
+
+        if ($request->filled('donor_name')) {
+            // Throws ValidationException (422) when the name is ambiguous rather
+            // than attributing the money to whichever row sorted first.
+            return $this->donors->findOrCreateByName($masjidId, (string) $request->input('donor_name'))?->id;
+        }
+
+        return null;
+    }
+
+    /**
+     * 422 for a donor name two real people share.
+     *
+     * Rendered here rather than thrown as a ValidationException because the
+     * app-wide JSON renderer (bootstrap/app.php) only passes through
+     * HttpResponseException and HttpExceptionInterface — a ValidationException
+     * raised outside a FormRequest would reach the client as a 500, which tells
+     * the admin nothing and looks like the platform broke.
+     *
+     * Carries BOTH shapes: `message` for the generic error toast, and the
+     * `errors.donor_name` key a form field binds to.
+     */
+    private function ambiguousDonor(AmbiguousDonorNameException $e)
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => $e->publicMessage(),
+            'errors' => ['donor_name' => [$e->publicMessage()]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    /**
+     * Correct a manually-recorded gift (T-007c).
+     *
+     * ## Why this route exists at all, next to a ledger that says "read-only"
+     *
+     * The comment above the routes still holds for STRIPE gifts: those rows are
+     * created and advanced by a signature-verified webhook, and a second writer
+     * would let the ledger disagree with the money. An OFFLINE gift has the
+     * opposite problem — it is a human transcribing a cheque, and until now a
+     * typo was permanent. There was no update route, no delete route, and no
+     * assistant tool, so a gift recorded against the wrong donor, fund or amount
+     * stayed wrong forever and quietly mis-stated a year-end statement.
+     *
+     * ## The two refusals
+     *
+     * 1. NOT A STRIPE GIFT. `source !== 'offline'` is refused outright. The
+     *    webhook owns those rows; this form must never be the thing that makes
+     *    the ledger differ from Stripe.
+     *
+     * 2. NOT A RECEIPTED GIFT, for the four facts the receipt states. Once a
+     *    serial has been issued, a tax document naming a donor, a fund, an amount
+     *    and a date is in that donor's hands and in the masjid's gap-free
+     *    sequence. Editing any of those four silently would leave the platform
+     *    disagreeing with a document the CRA/IRS may see, so they are frozen and
+     *    the refusal NAMES the serial. Everything a receipt does not assert —
+     *    the note, how the money arrived, the cheque number — stays editable,
+     *    because those are the fields a treasurer actually reconciles later.
+     *    A receipted gift that is genuinely wrong is a void-and-reissue, which is
+     *    a deliberate act and not this form's job.
+     *
+     * Fields absent from the request are LEFT ALONE (see UpdateOfflineDonationRequest),
+     * so an edit that only fixes the donor cannot blank the note.
+     */
+    public function update(UpdateOfflineDonationRequest $request, $masjid_id, $donation_id)
+    {
+        $donation = Donation::with('receipt')->findOrFail($donation_id);
+
+        if ($donation->source !== 'offline') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Only manually-recorded gifts can be edited. This one came from Stripe, '.
+                    'where the payment record is the source of truth.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $fund = $request->has('fund_id')
+            ? Fund::findOrFail($request->integer('fund_id'))
+            : Fund::findOrFail($donation->fund_id);
+
+        // Only re-resolve the donor when the request actually carries a donor key;
+        // otherwise an edit of the note would clear the donor.
+        try {
+            $contactId = ($request->has('contact_id') || $request->has('donor_name'))
+                ? $this->resolveDonor($request, (int) $fund->masjid_id)
+                : ($donation->contact_id !== null ? (int) $donation->contact_id : null);
+        } catch (AmbiguousDonorNameException $e) {
+            return $this->ambiguousDonor($e);
+        }
+
+        $cents = $request->has('amount')
+            ? (int) round(((float) $request->validated('amount')) * 100)
+            : (int) $donation->charged_amount;
+
+        $donatedAt = $request->has('donated_at')
+            ? Carbon::parse($request->validated('donated_at'))->toDateString()
+            : ($donation->donated_at ? Carbon::parse($donation->donated_at)->toDateString() : null);
+
+        // ---- the receipt freeze -------------------------------------------
+        $receipt = $donation->receipt;
+
+        if ($receipt) {
+            $current = [
+                'donor' => $donation->contact_id !== null ? (int) $donation->contact_id : null,
+                'fund' => (int) $donation->fund_id,
+                'amount' => (int) $donation->charged_amount,
+                'date' => $donation->donated_at ? Carbon::parse($donation->donated_at)->toDateString() : null,
+            ];
+
+            $wanted = [
+                'donor' => $contactId,
+                'fund' => (int) $fund->id,
+                'amount' => $cents,
+                'date' => $donatedAt,
+            ];
+
+            $frozen = array_keys(array_filter(
+                $wanted,
+                static fn ($value, $key) => $current[$key] !== $value,
+                ARRAY_FILTER_USE_BOTH
+            ));
+
+            if ($frozen !== []) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This gift has already been receipted (serial '.$receipt->serial_number.
+                        '), so its '.implode(', ', $frozen).' can no longer be changed — the donor is '.
+                        'holding a tax document that states them. The note, payment method and cheque '.
+                        'number can still be corrected.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        // ---- the write -----------------------------------------------------
+        $attributes = [
+            'contact_id' => $contactId,
+            'fund_id' => $fund->id,
+            'intended_amount' => $cents,
+            'charged_amount' => $cents,
+            'donated_at' => $donatedAt,
+        ];
+
+        if ($request->has('payment_method')) {
+            $attributes['payment_method'] = $request->validated('payment_method');
+        }
+
+        // The cheque number belongs to a cheque. Switching the method away from
+        // `check` drops it rather than leaving a stale number on a cash gift.
+        $method = $attributes['payment_method'] ?? $donation->payment_method;
+
+        if ($method !== 'check') {
+            $attributes['check_number'] = null;
+        } elseif ($request->has('check_number')) {
+            $attributes['check_number'] = $request->input('check_number');
+        }
+
+        if ($request->has('note')) {
+            $attributes['note'] = $request->input('note');
+        }
+
+        // Zakat is a statement about what the GIVER restricted, so an explicit
+        // one is never overwritten by a fund change. Re-resolve only when the
+        // admin says so, or when the stored answer was itself only the old
+        // fund's default and that fund is being changed out from under it.
+        $inferred = in_array($donation->zakat_source, [null, ZakatDesignation::SOURCE_FUND_DEFAULT], true);
+
+        if ($request->has('zakat')) {
+            $attributes += ZakatDesignation::resolve(
+                $request->boolean('zakat'), $fund, ZakatDesignation::SOURCE_ADMIN
+            );
+        } elseif ((int) $fund->id !== (int) $donation->fund_id && $inferred) {
+            $attributes += ZakatDesignation::resolve(null, $fund, ZakatDesignation::SOURCE_ADMIN);
+        }
+
+        $donation->fill($attributes)->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $donation->fresh()->load(['fund', 'contact', 'receipt']),
+        ], Response::HTTP_OK);
     }
 
     /**

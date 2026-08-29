@@ -32,7 +32,22 @@ class QuoteRegistrationRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
-            'fee_plan_id' => 'required|integer|min:1',
+            // REQUIRED ONLY WHEN NOTHING ELSE NAMES A PRICE. A quote that
+            // carries a `registration_uuid` is a question about THAT
+            // registration — "what do I still owe" — and the answer is its own
+            // snapshot on its own plan, which the controller resolves from the
+            // row rather than from the client.
+            //
+            // `required` here was half of the 2026-08-13 defect: it forced the
+            // payment page to name a plan for an in-flight registration, and
+            // the only plan the endpoint then accepted was a PURCHASABLE one —
+            // which, after the documented deactivate-and-replace price rise, is
+            // never the plan the registration is actually held on. Measured on
+            // one fixture at one instant: checkout 200 charging 15000, quote on
+            // the registration's OWN plan id 404 "This fee plan is not
+            // available.", quote on the NEW plan's id 200 reporting that plan's
+            // id and `kind: recurring` beside a one-time $150 snapshot.
+            'fee_plan_id' => ['required_without:registration_uuid', 'nullable', 'integer', 'min:1'],
             // Quote an EXISTING registration instead: its snapshot already
             // includes any aid an admin granted, which is the only way
             // adjustments can legitimately move a price.

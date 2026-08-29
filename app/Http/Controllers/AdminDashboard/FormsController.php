@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Forms\StoreFormRequest;
 use App\Http\Requests\Admin\Forms\UpdateFormRequest;
 use App\Models\Masjid;
+use App\Models\Offering;
 use App\Support\Errors;
 use App\Support\FormSchema;
 use Symfony\Component\HttpFoundation\Response;
@@ -198,13 +199,85 @@ class FormsController extends Controller
      * Soft delete. Responses are left intact and reachable by restoring the form — a
      * mis-click must not destroy a registration list. The form_responses FK cascades on
      * a hard delete only, which nothing in the admin surface performs.
+     *
+     * REFUSED while this form is the intake form of a live offering.
+     *
+     * `offerings.intake_form_id` is NOT NULL, and RegistrationService::register throws
+     * offeringClosed() the moment it cannot load the form — so soft-deleting it stops
+     * every registration for that program instantly. Measured end to end before this
+     * guard:
+     *
+     *     DELETE .../forms/{intake_form_id}   -> 200 "Form deleted successfully"
+     *     PUBLIC  registration_state = closed, intake_form = null
+     *     ADMIN   /offerings -> is_open=true, closed_reason=null  (a green "Open")
+     *
+     * An administrator tidying up an old form silently closed a program while every
+     * admin screen went on saying it was open — this codebase's recurring shape, a
+     * write that fails while the UI reports success.
+     *
+     * REFUSING rather than allowing-and-warning, for three reasons:
+     *
+     *  1. There is no legal end state. The column is NOT NULL and there is no "this
+     *     offering has no intake form" the product can represent, so the delete leaves
+     *     a required reference dangling — a state the schema says cannot exist, with no
+     *     admin surface that can restore a soft-deleted form to repair it.
+     *  2. The precedent is one file away and it is the same act one level down.
+     *     OfferingsController::destroy refuses to delete an offering that holds live
+     *     registrations and points at the non-destructive switch instead; deleting the
+     *     form underneath it strands exactly the same people.
+     *  3. There is a non-destructive path that does what the admin actually wanted:
+     *     set `is_active = false`, which stops standalone submissions to the form and
+     *     does NOT break offering registration (register() loads the form to validate
+     *     against, and never consults its `is_active`). Or re-point the offering at a
+     *     different form first, and then delete this one.
+     *
+     * The loud admin state is built anyway and is NOT redundant: rows broken before
+     * this guard existed are still out there, and an offering can be pointed at an
+     * already-deleted form id at creation time. See App\Support\OfferingRegistrationState
+     * and OfferingsController's `registration_state`.
+     *
+     * The scoped findOrFail runs OUTSIDE the try, so a cross-tenant / missing id
+     * surfaces as a clean 404 instead of being swallowed into a 500 by the catch.
      */
     public function destroy($masjid_id, $form_id)
     {
-        try {
-            $masjid = Masjid::findOrFail($masjid_id);
-            $form = $masjid->forms()->findOrFail($form_id);
+        $masjid = Masjid::findOrFail($masjid_id);
+        $form = $masjid->forms()->findOrFail($form_id);
 
+        // Explicit masjid filter and an explicit scope bypass: this must not depend on
+        // whether TenantContext happens to be bound on this request, because a query
+        // that quietly returns nothing here would let the delete through
+        // (.claude/rules/tenant-scoping.md — an unbound scope adds NO filter).
+        // Soft-deleted offerings do not block: nothing can register for one.
+        $blocking = Offering::withoutMasjidScope()
+            ->where('masjid_id', $masjid->id)
+            ->where('intake_form_id', $form->id)
+            ->orderBy('name')
+            ->pluck('name')
+            ->all();
+
+        if ($blocking !== []) {
+            $names = implode(', ', array_slice($blocking, 0, 5))
+                . (count($blocking) > 5 ? ', and ' . (count($blocking) - 5) . ' more' : '');
+
+            $message = 'This form is the sign-up form for ' . $names . '. Deleting it would stop '
+                . (count($blocking) === 1 ? 'that program' : 'those programs')
+                . ' accepting registrations immediately, with no way to sign anyone up. '
+                . 'Switch the form off instead (that leaves registrations working), or point '
+                . (count($blocking) === 1 ? 'it' : 'them') . ' at another form first.';
+
+            // `status: failed` + `data` mirrors OfferingsController::destroy, which is
+            // the same refusal for the same reason; `message` is this controller
+            // family's own error key, so a client reading either convention sees it.
+            return response()->json([
+                'status' => 'failed',
+                'message' => $message,
+                'data' => $message,
+                'offerings' => $blocking,
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        try {
             $form->delete();
 
             return response()->json([

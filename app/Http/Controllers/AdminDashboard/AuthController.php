@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Http\Requests\Admin\Auth\ForgotPasswordRequest;
+use App\Http\Requests\Admin\Auth\ResetPasswordRequest;
+use App\Services\Auth\AccountAccessService;
+use Illuminate\Support\Facades\Password as PasswordBroker;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Auth\LoginRequest;
 use App\Http\Requests\Admin\Auth\UpdateProfileRequest;
@@ -82,6 +86,23 @@ class AuthController extends Controller
                     'message' => "Sorry, you don't have a related masjid to your account."
                 ], Response::HTTP_OK);
             }
+        } elseif ($user->type === 'Teacher') {
+            // A teacher owns no masjid (masjids.user_id is never theirs), so the
+            // MasjidAdmin `hasOne` above is null for them. Their school is their
+            // masjid_user membership, resolved and attached as the `masjid`
+            // relation so the SPA reads user.masjid uniformly for both staff types.
+            $masjid = $this->teacherMasjid($user);
+
+            if (! $masjid) {
+                Auth::logout();
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => "Sorry, you are not assigned to a school yet.",
+                ], Response::HTTP_OK);
+            }
+
+            $masjid->logo = $masjid->logo()->first();
+            $user->setRelation('masjid', $masjid);
         }
 
         return response()->json([
@@ -91,6 +112,24 @@ class AuthController extends Controller
                 'token' => $token,
             ]
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * The school a teacher belongs to — their sole `masjid_user` membership.
+     *
+     * `whereHas('masjid')` drops a membership whose organisation has been trashed
+     * (Masjid soft-deletes), matching TenantResolver::staffMemberships so the
+     * login payload and the tenant binding cannot disagree about which school a
+     * teacher has. Runs UNBOUND (login is a public route), which is correct:
+     * memberships() is not tenant-scoped, exactly as the resolver reads it.
+     */
+    private function teacherMasjid(User $user): ?\App\Models\Masjid
+    {
+        return $user->memberships()
+            ->whereHas('masjid')
+            ->with('masjid')
+            ->orderBy('masjid_id')
+            ->first()?->masjid;
     }
 
     public function user()
@@ -112,6 +151,19 @@ class AuthController extends Controller
                             'message' => "Sorry, you don't have a related masjid to your account."
                         ], Response::HTTP_OK);
                     }
+                } elseif ($user->type === 'Teacher') {
+                    $masjid = $this->teacherMasjid($user);
+
+                    if (! $masjid) {
+                        Auth::logout();
+                        return response()->json([
+                            'status' => 'failed',
+                            'message' => "Sorry, you are not assigned to a school yet.",
+                        ], Response::HTTP_OK);
+                    }
+
+                    $masjid->logo = $masjid->logo()->first();
+                    $user->setRelation('masjid', $masjid);
                 }
 
                 return response()->json([
@@ -125,6 +177,48 @@ class AuthController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Ask for a reset link.
+     *
+     * ALWAYS answers the same thing, whether or not the address belongs to an
+     * account. This endpoint is necessarily unauthenticated, and one that
+     * distinguishes "sent" from "no such user" is a free list of who has an
+     * account on the platform.
+     */
+    public function forgotPassword(ForgotPasswordRequest $request, AccountAccessService $access)
+    {
+        $access->sendResetLink((string) $request->validated('email'));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'If that address belongs to an account, a reset link is on its way. '.
+                'The link expires in an hour.',
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Set a new password from a link. Also used for the FIRST password on an
+     * invited account — same token, same expiry, same single use.
+     */
+    public function resetPassword(ResetPasswordRequest $request, AccountAccessService $access)
+    {
+        $status = $access->reset($request->only('email', 'password', 'password_confirmation', 'token'));
+
+        if ($status !== PasswordBroker::PASSWORD_RESET) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $status === PasswordBroker::INVALID_TOKEN
+                    ? 'That link has already been used or has expired. Ask for a new one.'
+                    : 'That link could not be used. Ask for a new one.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Your password is set. You can sign in with it now.',
+        ], Response::HTTP_OK);
     }
 
     public function logout()

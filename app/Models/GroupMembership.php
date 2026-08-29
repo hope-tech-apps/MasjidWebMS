@@ -87,6 +87,46 @@ class GroupMembership extends Model
         self::CONSENT_MEDIA => [self::CONSENT_MEDIA],
     ];
 
+    /**
+     * PROVENANCE — on whose authority this row exists.
+     *
+     * A `guardian` row is the single fact the parent portal reads to decide
+     * whose child's behaviour, ḥifẓ and safeguarding records a credential opens.
+     * It is an AUTHORIZATION GRANT, and until this column existed the table
+     * recorded no grantor: "the office established this relationship" and "an
+     * anonymous POST to the public registration endpoint asserted it" were the
+     * same row, so every read path trusted both equally.
+     *
+     *   - CONFIRMED     — an authenticated staff act stands behind it
+     *                     (`confirmed_by_user_id` names them). Grants exactly
+     *                     what a membership granted before provenance existed.
+     *   - SELF_ASSERTED — a public form's claim about a person, with no session,
+     *                     no token and no proof of control of any address. It is
+     *                     a ROSTER FACT and not a grant: it lists, it counts
+     *                     towards capacity, a teacher may keep records about the
+     *                     child it enrols — and it gives its HOLDER no standing
+     *                     anywhere (see App\Support\GroupAudience::membershipsFor).
+     *
+     * PHP constants, not a DB enum — same reasoning as ROLES above.
+     */
+    public const PROVENANCE_CONFIRMED = 'confirmed';
+    public const PROVENANCE_SELF_ASSERTED = 'self_asserted';
+
+    public const PROVENANCES = [
+        self::PROVENANCE_CONFIRMED,
+        self::PROVENANCE_SELF_ASSERTED,
+    ];
+
+    /**
+     * `provenance` and its three companions are DELIBERATELY NOT FILLABLE, for
+     * the same reason `contacts`' four `login_*` columns are not: they record
+     * who authorised a disclosure about a child, so no request body may set
+     * them and no mass-assignment may carry them in from a payload. The two
+     * writers that legitimately set them — `GroupMembershipsController` (staff,
+     * confirming) and `RegistrationService` (the public form, asserting) — go
+     * through `confirmedBy()` / `selfAssertedFrom()` below, which is also what
+     * keeps "who may confirm" answerable by reading two call sites.
+     */
     protected $fillable = [
         'masjid_id',
         'group_id',
@@ -98,14 +138,73 @@ class GroupMembership extends Model
         'consent_scope',
     ];
 
+    /**
+     * The model states the column default rather than inheriting it from the DB.
+     *
+     * A row created without naming `provenance` read NULL in memory until it was
+     * refreshed, while the same row read `confirmed` from the database. Any
+     * writer that hands an unrefreshed model to a read path therefore got a
+     * different answer from the one the row actually has — failing closed by
+     * accident rather than by design, which is not a property you can rely on in
+     * the other direction. `selfAssertedFrom()` overrides this explicitly on
+     * every public-registration write.
+     */
+    protected $attributes = [
+        'provenance' => self::PROVENANCE_CONFIRMED,
+    ];
+
     protected function casts(): array
     {
         return [
             'joined_at' => 'date',
             'consent_granted_at' => 'datetime',
+            'confirmed_at' => 'datetime',
         ];
     }
 
+    /**
+     * ==========================================================================
+     * WHY THERE IS NO `created` HOOK HERE, AND MUST NOT BE ONE AGAIN
+     * ==========================================================================
+     *
+     * A previous round hung a hook here: creating a `leader`/`member` row for a
+     * contact who held a live parent-portal credential REVOKED that credential,
+     * on the theory that a participant edge turns a guardian's login into a
+     * student login. The theory was about a real hazard; the mechanism was
+     * wrong in three separate ways, all measured:
+     *
+     *  1. IT WAS REACHABLE BY AN ANONYMOUS STRANGER. The public registration
+     *     endpoint documents "absent registrants means the payer registers
+     *     themselves" and then writes the payer a `member` row — a
+     *     `GroupMembership::create()`. So a POST carrying nothing but the
+     *     household address printed on a class list permanently destroyed a
+     *     parent's credential: `login_revoked_at` set, live token DELETED,
+     *     signed out of her phone mid-session.
+     *  2. IT FIRED ON ORDINARY ADMINISTRATION. `POST …/groups/{id}/members`
+     *     with `role: member` for a parent joining the adult ḥalaqa, and with
+     *     `role: leader` for a teacher who is also a parent being given a
+     *     class, both ended a working sign-in on a 201.
+     *  3. IT COULD NOT BE UNDONE OR EXPLAINED. The audit row carried no actor
+     *     at all (`actor_user_id/name/email` null), so the one screen built to
+     *     answer "who took my access away" read "Sign-in revoked — Unknown
+     *     staff member" for an act no staff member performed; and re-enabling
+     *     answered 422, because the contact now held the participant edge the
+     *     enable-time rule refused. The only remedy was to un-enrol the parent
+     *     from the class they had just signed up for.
+     *
+     * A hook that DESTROYS AN ALREADY-ISSUED CREDENTIAL as a side effect of an
+     * unrelated act, and hands that destruction to an unauthenticated caller,
+     * is not a containment. The hazard it was aimed at is now answered where it
+     * belongs — in `App\Support\GroupAudience::membershipsFor()`, which scopes
+     * what a FAMILY credential may READ to its wards and ignores the holder's
+     * own participant rows, on every request, from live roster data. Scoping
+     * the read needs no revocation, refuses nothing legitimate, and cannot be
+     * triggered by anybody.
+     *
+     * The `deleting` cascade below stays: it is a different kind of act, it
+     * removes STALE ACCESS rather than a credential, and nothing can fire it
+     * except removing a person from a roster.
+     */
     protected static function booted(): void
     {
         // Removing someone from a roster must also remove the guardian edges
@@ -143,6 +242,143 @@ class GroupMembership extends Model
     public function guardianOf(): BelongsTo
     {
         return $this->belongsTo(Contact::class, 'guardian_of_contact_id');
+    }
+
+    /** The staff member who confirmed this row, if anybody has. */
+    public function confirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by_user_id');
+    }
+
+    /**
+     * The registration that asserted this row, on the rows a public form wrote.
+     *
+     * Provenance detail, never authority: `nullOnDelete` means a purged
+     * registration leaves `provenance` standing on its own.
+     */
+    public function sourceRegistration(): BelongsTo
+    {
+        return $this->belongsTo(Registration::class, 'source_registration_id');
+    }
+
+    // ------------------------------------------------------------- provenance
+
+    /**
+     * Does an authenticated staff act stand behind this row?
+     *
+     * An UNRECOGNISED stored value is NOT confirmed — the same defensive read as
+     * `hasConsent()` and `Group::kind()`. A value nobody can interpret must
+     * never be read as permission, so a typo, a hand edit or a future third
+     * state fails closed at every read even though the column default does not.
+     */
+    public function isConfirmed(): bool
+    {
+        return $this->provenance === self::PROVENANCE_CONFIRMED;
+    }
+
+    /** A claim nobody authenticated has stood behind yet. */
+    public function isPendingClaim(): bool
+    {
+        return ! $this->isConfirmed();
+    }
+
+    /**
+     * Stamp this row as established by an authenticated staff act.
+     *
+     * THE ONE PLACE A ROW BECOMES A GRANT, so "who may confirm" is answerable by
+     * finding the callers of this method: `GroupMembershipsController::store`
+     * (staff typing a roster row) and `::confirm` (staff working the pending
+     * queue). It is deliberately NOT reachable from a request body — see
+     * `$fillable` above.
+     *
+     * `$actor` is nullable rather than required because a console/seeder path
+     * has no `users` row to name, and a confirmation with no recorded actor is
+     * still better evidence than a row with no provenance at all. The audit
+     * question it leaves open ("which staff member?") is visible on the screen
+     * as such rather than guessed at — the same call
+     * ContactFamilyLoginController makes about an actorless login event.
+     */
+    public function confirmedByStaff(?User $actor): static
+    {
+        $this->forceFill([
+            'provenance' => self::PROVENANCE_CONFIRMED,
+            'confirmed_at' => now(),
+            'confirmed_by_user_id' => $actor?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Stamp this row as a public form's claim: on the record, granting nothing.
+     *
+     * `$registration` is what lets the office judge the claim instead of merely
+     * seeing one — it carries the payer who typed it and the program they typed
+     * it into.
+     */
+    public function selfAssertedFrom(?Registration $registration = null): static
+    {
+        $this->forceFill([
+            'provenance' => self::PROVENANCE_SELF_ASSERTED,
+            'confirmed_at' => null,
+            'confirmed_by_user_id' => null,
+            'source_registration_id' => $registration?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Return a row to the un-confirmed state, keeping how it arose.
+     *
+     * Used by `RosterMergeService` when a merge changes WHO a row is about and
+     * the row cannot be retired and re-issued in its place: what a staff member
+     * confirmed was "this adult is the guardian of THAT NAMED PERSON", and
+     * changing either end makes the confirmation a statement about somebody they
+     * were never asked about. A merge is a de-duplication, never an
+     * authorization decision.
+     *
+     * ## THE CONSENT COLUMNS GO WITH IT, and leaving them was a defect
+     *
+     * This method cleared `provenance`, `confirmed_at` and `confirmed_by_user_id`
+     * and left `consent_granted_at` / `consent_scope` standing — producing a row
+     * THIS APPLICATION REFUSES TO CREATE. `GroupConsentController::update()`
+     * answers 422 on an unconfirmed claim ("consent has to be recorded against a
+     * relationship this organisation has stood behind"), and every read path was
+     * happy to serve the state anyway. Measured, on a merge that re-pointed a
+     * confirmed edge from a phantom child onto a real one:
+     *
+     *     EDGE AFTER: prov=self_asserted consent_scope='media'
+     *                 consent_granted_at='2026-08-17 17:21:25'
+     *     PUT  …/consent -> 422 "still an unconfirmed claim … Confirm it first"
+     *     GET  …/consent -> 200 {"scope":"media","covers_feed":true,
+     *                            "covers_media":true}
+     *     CONFIRM -> 200 ; FEED -> 200 {"title":"Class photograph",
+     *                                   "media_withheld":false}
+     *
+     * So consent obtained about ONE child governed disclosure about ANOTHER, and
+     * a single confirm click opened the photograph bytes with no second decision
+     * in between — the precise thing `GroupConsentController`'s own guard exists
+     * to make impossible. Consent is permission to disclose something about one
+     * named child to one named adult; a row that is no longer that pair holds no
+     * such permission, and "absence of a record means no consent" is only true if
+     * this method makes the absence true.
+     *
+     * WITHDRAWAL IS STILL NOT GATED (`GroupConsentController::destroy`): the one
+     * direction this area may never fail in is leaving consent standing on a row
+     * somebody was trying to undo, and clearing more here cannot cause that.
+     */
+    public function unconfirm(): static
+    {
+        $this->forceFill([
+            'provenance' => self::PROVENANCE_SELF_ASSERTED,
+            'confirmed_at' => null,
+            'confirmed_by_user_id' => null,
+            'consent_granted_at' => null,
+            'consent_scope' => null,
+        ]);
+
+        return $this;
     }
 
     /**
@@ -183,17 +419,67 @@ class GroupMembership extends Model
     }
 
     /**
-     * Has consent been recorded on this edge at all?
+     * DOES THIS EDGE CARRY CONSENT THAT GRANTS ANYTHING?
      *
-     * BOTH columns must be meaningful. A granted_at with an unrecognised scope
+     * Three conditions, and the third was missing.
+     *
+     * BOTH COLUMNS MUST BE MEANINGFUL. A granted_at with an unrecognised scope
      * grants nothing: a value nobody can interpret must not be read as
      * permission, the same defensive read as Group::kind() degrading an unknown
      * kind rather than letting it behave as one nobody granted.
+     *
+     * AND THE EDGE MUST BE CONFIRMED. `GroupConsentController::update()` has
+     * always refused to WRITE consent onto a pending claim — "consent has to be
+     * recorded against a relationship this organisation has stood behind" — and
+     * until this round every READ path was happy to serve the state anyway. A
+     * server that refuses to write a state it happily reads has not got a rule;
+     * it has a form validation. Measured, against a row left in that state by a
+     * merge before `unconfirm()` learned to clear the columns:
+     *
+     *     GET  …/consent -> 200 {"scope":"media","covers_feed":true,
+     *                            "covers_media":true}
+     *     PUT  …/consent -> 422 "still an unconfirmed claim … Confirm it first"
+     *     CONFIRM        -> {"confirmed":1,"skipped":0}
+     *     edge after     -> {"provenance":"confirmed","consent_scope":"media"}
+     *     family feed    -> 200 [{"title":"Class photograph", …}]
+     *
+     * — consent obtained about ONE child governing disclosure about ANOTHER, and
+     * ONE Confirm click opening the photographs with no second decision in
+     * between. `unconfirm()` clearing the columns fixes the rows a merge writes
+     * FROM NOW ON and reaches nothing already on disk; a read that consults
+     * provenance holds for every row, including the ones a future writer forgets
+     * about. Both were needed, and the rows already on disk are cleared by
+     * `…_clear_consent_on_unconfirmed_group_memberships`.
+     *
+     * THE GATE IS HERE AND NOT IN THE CONTROLLER on purpose. `consentCovers()`,
+     * `GroupConsentController::show()` and `App\Support\GroupAudience` are three
+     * surfaces reading one fact, and this round's whole lesson is that a
+     * safeguard written on one surface gets believed about all of them.
      */
     public function hasConsent(): bool
     {
-        return $this->consent_granted_at !== null
+        return $this->isConfirmed()
+            && $this->consent_granted_at !== null
             && in_array($this->consent_scope, self::CONSENT_SCOPES, true);
+    }
+
+    /**
+     * ARE THE TWO CONSENT COLUMNS CARRYING ANYTHING? — a question about BYTES.
+     *
+     * NOT A PERMISSION CHECK, and nothing that decides a disclosure may call it:
+     * it deliberately ignores provenance, so it answers `true` for exactly the
+     * corrupt state `hasConsent()` exists to refuse.
+     *
+     * It has one caller and is expected to keep having one:
+     * `RosterMergeService::describe()`, which reports to the operator what a
+     * merge is about to ERASE from a row. That report is about the record, not
+     * about what the record granted, and telling an office "consent withdrawn:
+     * false" while deleting a `consent_scope` column would be a different lie
+     * from the one this round is fixing.
+     */
+    public function consentColumnsAreSet(): bool
+    {
+        return $this->consent_granted_at !== null || $this->consent_scope !== null;
     }
 
     /**
@@ -221,11 +507,53 @@ class GroupMembership extends Model
         return $query->whereIn('role', self::PARTICIPANT_ROLES);
     }
 
-    /** Guardian edges with consent recorded (in any scope). */
+    /**
+     * Guardian edges whose consent GRANTS something (in any scope).
+     *
+     * `->confirmed()` is part of the definition for the same reason
+     * `scopePendingClaims()` spells NULL out in SQL: the class docblock promises
+     * that a scope and its row-by-row method are one definition, and the
+     * direction of a disagreement here is the dangerous one — a query-level
+     * consent check that counted rows `hasConsent()` refuses would be a
+     * disclosure decided by which of the two a caller happened to reach for.
+     */
     public function scopeConsented($query)
     {
         return $query->where('role', self::ROLE_GUARDIAN)
+            ->confirmed()
             ->whereNotNull('consent_granted_at')
             ->whereIn('consent_scope', self::CONSENT_SCOPES);
+    }
+
+    /**
+     * Rows an authenticated staff act stands behind — the only rows that grant
+     * anything. Expressed as a scope so the QUERY-level constraints in
+     * `GroupAudience` and `FamilyAccessService` use the same definition
+     * `isConfirmed()` uses row by row.
+     */
+    public function scopeConfirmed($query)
+    {
+        return $query->where('provenance', self::PROVENANCE_CONFIRMED);
+    }
+
+    /**
+     * Claims a public form made that nobody has stood behind yet.
+     *
+     * NULL IS PENDING, and it has to be said in SQL because SQL will not say it
+     * for us: `provenance != 'confirmed'` is UNKNOWN for a NULL and the row
+     * drops out of the result. `isPendingClaim()` has always treated NULL as
+     * pending — anything that is not exactly `confirmed` is — and the class
+     * docblock promises the two are one definition. They were not, and the
+     * direction of the disagreement is the dangerous one: a NULL row would read
+     * as pending everywhere a human looked and be invisible to the queue that
+     * exists to clear it. Unreachable today (NOT NULL + a default), and one
+     * nullable column or one import away from being an invisible queue.
+     */
+    public function scopePendingClaims($query)
+    {
+        return $query->where(function ($q) {
+            $q->where('provenance', '!=', self::PROVENANCE_CONFIRMED)
+                ->orWhereNull('provenance');
+        });
     }
 }

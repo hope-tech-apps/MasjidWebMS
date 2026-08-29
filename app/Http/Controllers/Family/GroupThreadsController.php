@@ -2,9 +2,15 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Enums\GroupNotificationEvent;
+use App\Http\Requests\Family\StoreFamilyMessageRequest;
+use App\Jobs\SendGroupNotificationJob;
+use App\Models\Contact;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
+use App\Models\GroupThreadRead;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -30,16 +36,21 @@ use Symfony\Component\HttpFoundation\Response;
  * where a teacher and a guardian discuss a safeguarding concern.
  *
  * ---------------------------------------------------------------------------
- * NO UNREAD, NO BOOKMARK — and that is a schema fact, not an oversight
+ * A PARENT CAN NOW REPLY, AND BE MARKED AS HAVING READ (T-015f)
  * ---------------------------------------------------------------------------
  *
- * `group_thread_reads.user_id` is NOT NULL and points at `users`, with a unique
- * index on (thread, user). There is no column a Contact could be written into,
- * so this slice does not write one and does not serve an `unread` flag it could
- * not compute honestly. Replacing that pair with a dual-principal
- * `(reader_type, reader_id)` is T-015f, together with
- * `group_messages.author_contact_id` so a parent can reply. Serving a
- * permanently-false `unread` would have been worse than serving none.
+ * This class used to document the opposite: `group_thread_reads.user_id` was
+ * NOT NULL against `users`, so there was no column a Contact could be written
+ * into, and rather than serve a permanently-false `unread` the slice served
+ * none. Both halves are now real columns — `group_messages.author_contact_id`
+ * and `group_thread_reads.contact_id` — so this surface writes exactly two
+ * things and no more: a reply, and the reader's own bookmark.
+ *
+ * WHAT A REPLY STILL MAY NOT DO. It cannot start a conversation (a parent
+ * opening a thread about their own child would route around the teacher who
+ * decides what is discussed and where), it cannot reopen a closed one, and it
+ * cannot reach a thread `mayReceiveThread()` refuses — which is the same
+ * decision the read side already resolves through, not a second one.
  */
 class GroupThreadsController extends FamilyController
 {
@@ -60,13 +71,26 @@ class GroupThreadsController extends FamilyController
         }
 
         $threads = $query
-            ->with(['aboutMembership.contact:id,first_name,last_name'])
+            ->with(['aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS])
             ->withCount('messages')
             ->withMax('messages as latest_message_at', 'created_at')
             ->orderByDesc('updated_at')
             ->orderByDesc('id')
-            ->paginate($this->perPage($request, 15))
-            ->through(fn (GroupThread $thread) => $this->serializeThread($thread));
+            ->paginate($this->perPage($request, 15));
+
+        // This parent's OWN bookmarks for the threads on this page — one query,
+        // and only for the ids already selected, so an unread flag costs a
+        // lookup rather than a query per row. Nobody else's read state is
+        // fetched or serve-able: a bookmark says when YOU last looked.
+        $reads = GroupThreadRead::query()
+            ->where('contact_id', $this->contact()?->id)
+            ->whereIn('group_thread_id', collect($threads->items())->pluck('id')->all())
+            ->pluck('last_read_at', 'group_thread_id');
+
+        $threads->through(fn (GroupThread $thread) => $this->serializeThread(
+            $thread,
+            $reads->get($thread->id)
+        ));
 
         return response()->json([
             'status' => 'success',
@@ -92,13 +116,16 @@ class GroupThreadsController extends FamilyController
         }
 
         $messages = $thread->messages()
-            ->with('author:id,name')
+            ->with(['author:id,name', 'authorContact:id,first_name,last_name'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->paginate($this->perPage($request, 50))
             ->through(fn (GroupMessage $message) => $this->serializeMessage($message));
 
-        // Deliberately NOT marking the thread read — see the class docblock.
+        // Opening a conversation is reading it. The bookmark is the READER'S
+        // own and nobody else's — it records that this parent has seen it, and
+        // is not visible to, nor writable by, any other principal.
+        $this->markRead($thread);
 
         return response()->json([
             'status' => 'success',
@@ -114,7 +141,7 @@ class GroupThreadsController extends FamilyController
 
     private function withAggregates(GroupThread $thread): GroupThread
     {
-        $thread->loadMissing(['aboutMembership.contact:id,first_name,last_name']);
+        $thread->loadMissing(['aboutMembership.contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS]);
 
         $thread->setAttribute('messages_count', $thread->messages()->count());
         $thread->setAttribute('latest_message_at', $thread->messages()->max('created_at'));
@@ -125,7 +152,94 @@ class GroupThreadsController extends FamilyController
     /**
      * @return array<string,mixed>
      */
-    private function serializeThread(GroupThread $thread): array
+    /**
+     * POST .../threads/{thread_id}/messages — the parent's reply.
+     *
+     * The ONLY write in the family realm besides sign-in, and it is deliberately
+     * the narrowest one that makes a conversation a conversation.
+     *
+     * AUTHORISATION IS THE READ DECISION, unchanged: `mayReceiveThread()`. A
+     * parent may answer exactly the threads they may see, so there is no second
+     * rule that could drift from the first — and in particular no rule that
+     * could let a reply reach a thread the listing would never show them.
+     *
+     * THE AUTHOR COMES FROM THE TOKEN, never the payload. `author_contact_id`
+     * is the authenticated contact; there is no field a client could send to
+     * claim authorship of somebody else's message, which is the whole reason
+     * attributing a message to a Contact is honest now and was not before
+     * T-015c.
+     */
+    public function storeMessage(StoreFamilyMessageRequest $request, $masjid_id, $group_id, $thread_id)
+    {
+        $group = $this->group($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+
+        if (! $this->audience->mayReceiveThread($this->contact(), $group, $thread)) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this conversation.');
+        }
+
+        if ($thread->isClosed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This conversation has been closed by the school.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $message = DB::transaction(function () use ($thread, $request) {
+            $message = $thread->messages()->create([
+                'author_contact_id' => $this->contact()->id,
+                'body' => $request->validated('body'),
+            ]);
+
+            // You have read what you just wrote.
+            $this->markRead($thread);
+
+            return $message;
+        });
+
+        // A parent's reply notifies the class's teacher(s). The author (this
+        // parent) is skipped by the resolver. afterCommit + fail-soft.
+        SendGroupNotificationJob::dispatch(
+            (int) $group->masjid_id,
+            (int) $group->id,
+            GroupNotificationEvent::TEACHER_THREAD_MESSAGE,
+            aboutContactId: null,
+            authorUserId: null,
+            authorContactId: $this->contact()->id,
+        )->afterCommit();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->serializeMessage(
+                $message->load(['author:id,name', 'authorContact:id,first_name,last_name'])
+            ),
+        ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * Move THIS parent's read bookmark to now.
+     *
+     * updateOrCreate against (thread, contact), which the T-015f migration made
+     * unique, so two tabs race to the same row rather than minting duplicates.
+     * `user_id` stays null: a parent's read is not a staff read, and writing one
+     * into the staff column would attribute it to an account id that means
+     * something else entirely.
+     */
+    private function markRead(GroupThread $thread): void
+    {
+        $contact = $this->contact();
+
+        if ($contact === null) {
+            return;
+        }
+
+        GroupThreadRead::updateOrCreate(
+            ['group_thread_id' => $thread->id, 'contact_id' => $contact->id],
+            ['last_read_at' => now()],
+        );
+    }
+
+    private function serializeThread(GroupThread $thread, $lastReadAt = null): array
     {
         $about = null;
 
@@ -149,6 +263,13 @@ class GroupThreadsController extends FamilyController
 
         $latest = $thread->getAttribute('latest_message_at');
 
+        // Unread means "something was said after you last looked". A thread the
+        // parent has never opened is unread only if it actually HAS a message —
+        // an empty conversation is not news.
+        $lastRead = $lastReadAt !== null ? \Illuminate\Support\Carbon::parse($lastReadAt) : null;
+        $unread = $latest !== null
+            && ($lastRead === null || \Illuminate\Support\Carbon::parse($latest)->greaterThan($lastRead));
+
         return [
             'id' => (int) $thread->id,
             'group_id' => (int) $thread->group_id,
@@ -157,6 +278,8 @@ class GroupThreadsController extends FamilyController
             'about' => $about,
             'is_closed' => $thread->isClosed(),
             'message_count' => (int) ($thread->getAttribute('messages_count') ?? 0),
+            'unread' => $unread,
+            'last_read_at' => $lastRead?->toIso8601String(),
             'latest_message_at' => $latest !== null
                 ? \Illuminate\Support\Carbon::parse($latest)->toIso8601String()
                 : null,
@@ -175,8 +298,15 @@ class GroupThreadsController extends FamilyController
             'body' => $message->body,
             // A name, not an id. `users.id` is an internal staff identifier and
             // a parent has nothing to do with it; the teacher's name is what the
-            // conversation is with.
-            'author' => $message->author ? ['name' => $message->author->name] : null,
+            // conversation is with. Since T-015f the author may be a parent, so
+            // both principals resolve through GroupMessage::authorLabel() and
+            // the client is told WHICH, so it can side the message.
+            'author' => $message->authorLabel() !== null
+                ? ['name' => $message->authorLabel()]
+                : null,
+            'author_is_parent' => $message->authorIsParent(),
+            'is_mine' => $message->author_contact_id !== null
+                && (int) $message->author_contact_id === (int) $this->contact()?->id,
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }

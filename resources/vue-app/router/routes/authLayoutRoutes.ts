@@ -16,6 +16,23 @@ const authRoutes: RouteRecordRaw[] = [
                 }
             },
             {
+                path: 'forgot-password',
+                name: 'forgotPassword',
+                component: () => import("@/views/auth/ForgotPassword.vue"),
+                meta: {
+                    pageTitle: "Forgot Password"
+                }
+            },
+            {
+                // Landed on from an emailed link carrying ?token=&email=.
+                path: 'reset-password',
+                name: 'resetPassword',
+                component: () => import("@/views/auth/ResetPassword.vue"),
+                meta: {
+                    pageTitle: "Set Password"
+                }
+            },
+            {
                 path: 'dashboards',
                 name: 'dashboards',
                 component: () => import("@/views/super/DashboardsView.vue"),

@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\AppointmentRequestsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
+use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
 use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
 use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
@@ -70,6 +71,20 @@ Route::prefix('v1')->group(function () {
     // it paid. That happens ONLY in the signature-verified Stripe webhook
     // (.claude/rules/stripe-payments.md) — the browser redirect off Stripe's
     // hosted page proves nothing.
+    // The public READ (T-006g) — one offering by slug, for rendering: its copy,
+    // its ACTIVE fee plans in integer minor units with their currency, how many
+    // places remain, and whether it is accepting registrations at all. This is
+    // the only thing that made the endpoints below reachable by a family rather
+    // than only by a caller who already knew the API.
+    //
+    // Throttled on the looser 'registration-quote' shape rather than the intake
+    // one, for the same reason the quote is: it WRITES NOTHING and a visitor
+    // legitimately re-reads the page while filling the form in. Still bounded —
+    // the endpoint must not become a way to enumerate an organization's
+    // offerings for free.
+    Route::get('/offerings/{slug}', [OfferingRegistrationsController::class, 'show'])
+        ->middleware('throttle:registration-quote');
+
     Route::post('/offerings/{slug}/quote', [OfferingRegistrationsController::class, 'quote'])
         ->middleware('throttle:registration-quote');
 
@@ -78,6 +93,21 @@ Route::prefix('v1')->group(function () {
 
     Route::post('/registrations/{uuid}/checkout', [OfferingRegistrationsController::class, 'checkout'])
         ->middleware('throttle:registration-intake');
+
+    // Public Jummah-lunch ordering. Reading the open menu and an order's status
+    // write nothing (loose 'lunch-menu' limit); placing an order is an
+    // unauthenticated DB write that opens a Stripe Checkout Session for an online
+    // order, throttled tighter by name like every public write here. The tenant
+    // comes from the masjid-id header inside the controller, and — as with
+    // registrations — NOTHING here marks an order paid; only the Stripe webhook does.
+    Route::get('/lunch-menu', [JummahLunchOrdersController::class, 'menu'])
+        ->middleware('throttle:lunch-menu');
+
+    Route::post('/lunch-orders', [JummahLunchOrdersController::class, 'store'])
+        ->middleware('throttle:lunch-order');
+
+    Route::get('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'show'])
+        ->middleware('throttle:lunch-menu');
 
     // Public zakat calculator (T-031). The odd one out among the public POSTs
     // here: it WRITES NOTHING. It is a POST anyway because its body is a

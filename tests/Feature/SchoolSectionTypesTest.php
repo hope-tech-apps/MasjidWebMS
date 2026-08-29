@@ -85,6 +85,8 @@ class SchoolSectionTypesTest extends TestCase
         'services_eligibility',
         'providers_directory',
         'impact_stats',
+        // T-006g; OfferingSectionTypeTest owns this one.
+        'offering',
     ];
 
     protected function setUp(): void

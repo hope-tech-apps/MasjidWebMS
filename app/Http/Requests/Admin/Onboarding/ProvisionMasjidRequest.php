@@ -48,6 +48,18 @@ class ProvisionMasjidRequest extends BaseFormRequest
         $hex = ['nullable', 'string', 'regex:/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/', 'max:9'];
 
         return [
+            // Switched ON by default at provisioning; present-and-false is
+            // the deliberate "set it up dark for now".
+            'crm_enabled' => ['sometimes', 'boolean'],
+
+            // The organisation's own administrator. Given an address, the
+            // account is created and invited to set its own password — an org
+            // with no owner cannot be reached by any MasjidAdmin at all.
+            'admin' => ['sometimes', 'array'],
+            'admin.name' => ['nullable', 'string', 'max:255'],
+            'admin.email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
+            'admin.phone' => ['nullable', 'string', 'max:40'],
+
             // ---- Vertical (Manara org_type) ----
             // Masjid::ORG_TYPES — not a DB enum — is the authority on the
             // allowed set (.claude/rules/verticals.md), so a new vertical needs

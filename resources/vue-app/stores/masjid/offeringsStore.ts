@@ -11,6 +11,7 @@ import {
     FeePlanPayload,
     Offering,
     OfferingFilters,
+    OfferingOption,
     OfferingPayload,
     OfferingsMeta,
     Registrant,
@@ -56,6 +57,14 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
     const offeringsMeta = ref<OfferingsMeta>();
     /** The plans of the offering currently open; replaced on every fetch. */
     const feePlans = ref<FeePlan[]>([]);
+    /**
+     * The page-builder picker's list. Its own ref rather than reusing
+     * `offeringsPaginated`, because the `offering` section editor is opened from
+     * the PAGES screens: writing the picker's fetch into the paginated list
+     * would silently replace whatever page of the offerings table an admin had
+     * open, and the two screens have no reason to share state.
+     */
+    const offeringOptions = ref<OfferingOption[]>([]);
     /** One page of the roster, in whichever of the two server views was asked for. */
     const registrationsPaginated = ref<PaginatedData<Registration | Registrant>>();
 
@@ -123,6 +132,37 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
     }
 
     /**
+     * The offering picker for the `offering` page section (T-006g).
+     *
+     * Returns the list AND caches it, mirroring formsStore.fetchFormOptions —
+     * the section editor calls this on mount and re-reads the cache afterwards.
+     *
+     * A FAILURE IS NOT SWALLOWED INTO AN EMPTY LIST. These routes sit behind the
+     * `crm` gate and `permission:view contacts`, so a tenant without the CRM, or
+     * an admin whose role does not include programs, gets a 403 — and "you may
+     * not see the programs list" must not render as "you have no programs yet".
+     * The caller distinguishes them; hence the throw rather than a silent [].
+     */
+    async function fetchOfferingOptions(): Promise<OfferingOption[]> {
+        const id = masjidId();
+        if (!id) return [];
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${id}/offerings/options` as BackendApiRoute
+        );
+
+        if (res.data?.status === 'success' && Array.isArray(res.data?.data)) {
+            offeringOptions.value = res.data.data;
+            // The SERVER is the authority on what a tenant CALLS an offering —
+            // the editor reads `offering_label` off this rather than hardcoding
+            // "Programs".
+            if (res.data?.meta) offeringsMeta.value = res.data.meta;
+        }
+
+        return offeringOptions.value;
+    }
+
+    /**
      * Create an offering.
      *
      * POST goes out as multipart/form-data (the ApiService default). Booleans
@@ -138,6 +178,10 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
 
         const body = new FormData();
         body.append('name', payload.name);
+        // Omitted when empty, like every other optional field here: '' would
+        // pass `nullable|string` but store an empty string where the column
+        // means "no description", and the public payload would publish ''.
+        if (payload.description) body.append('description', payload.description);
         body.append('slug', payload.slug);
         body.append('kind', payload.kind);
         if (payload.intake_form_id !== null) body.append('intake_form_id', String(payload.intake_form_id));
@@ -182,6 +226,10 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
 
         const body = new URLSearchParams();
         body.append('name', payload.name);
+        // Sent EXPLICITLY EMPTY, not omitted — every field on the update request
+        // is `sometimes`, so omitting this would mean "leave it alone" and an
+        // admin could never clear a description once one was written.
+        body.append('description', payload.description || '');
         body.append('slug', payload.slug);
         body.append('kind', payload.kind);
         if (payload.intake_form_id !== null) body.append('intake_form_id', String(payload.intake_form_id));
@@ -473,9 +521,11 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
     return {
         offeringsPaginated,
         offeringsMeta,
+        offeringOptions,
         feePlans,
         registrationsPaginated,
         fetchOfferings,
+        fetchOfferingOptions,
         fetchOffering,
         createOffering,
         updateOffering,
