@@ -70,8 +70,13 @@ import { computed, onMounted, ref, watch } from 'vue';
 const props = defineProps<{
     masjidId: number | string;
     contactId?: number | null;
-    /** When set, saves through the family realm instead of the admin one. */
+    /** When set, saves through the family (or teacher) realm instead of the admin
+     *  one — this is the PUT endpoint for the chosen avatar. */
     familyEndpoint?: string | null;
+    /** When set, the character catalogue is FETCHED from here instead of the
+     *  admin/family default — lets the teacher realm point at its own catalogue
+     *  while `masjidId` (used only to build the default URLs) is ignored. */
+    catalogueEndpoint?: string | null;
     avatar?: { character?: string; tone?: string; color?: string; url?: string } | null;
     firstName?: string | null;
     lastName?: string | null;
@@ -107,9 +112,11 @@ watch(() => props.avatar, (next) => {
 
 onMounted(async () => {
     try {
-        const url = props.familyEndpoint
-            ? `/api/family/masjids/${props.masjidId}/avatars`
-            : `/api/admin/masjids/${props.masjidId}/avatars`;
+        const url = props.catalogueEndpoint
+            ? props.catalogueEndpoint
+            : props.familyEndpoint
+                ? `/api/family/masjids/${props.masjidId}/avatars`
+                : `/api/admin/masjids/${props.masjidId}/avatars`;
         const res = await ApiService.get(url as any);
         catalogue.value = res.data?.data ?? null;
     } catch {

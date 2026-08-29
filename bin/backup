@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+#
+# Take a backup of this installation: the database AND the media files its rows
+# point at, as one set that can only be restored together.
+#
+#     sudo bin/backup                  # take a set
+#     sudo bin/backup --dry-run        # show the plan, write nothing
+#     sudo bin/backup --label=pre-r9   # name it, e.g. before a deploy
+#     sudo bin/backup --install        # one-time: create the destination
+#
+# WHY THIS EXISTS
+#
+# On 2026-08-17 a lobby television read "No announcements" while ten were live.
+# The `media` table was empty platform-wide, 226 rows gone, and every masjid was
+# serving no logo. There were four backups on this server:
+#
+#     /root/backups/pre-forms-migration-20260728-233129.sql.gz
+#     /root/backups/pre-manara-verticals-20260811-203611.sql.gz
+#     /root/backups/pre-family-sms-20260812-005940.sql.gz
+#     /root/backups/pre-r8-20260817-231513.sql.gz
+#
+# Every one of them can restore those 226 ROWS. Not one of them holds a single
+# FILE, because they are `mysqldump` output and nothing else. The announcement
+# posters were recovered from the operator's laptop; the logos still are not
+# back. And the shape is worse than the gap: restoring one of those dumps
+# RE-CREATES rows pointing at files that do not exist, which IS the outage. A
+# backup that makes the problem worse on restore is worse than no backup.
+#
+# TWO OF THE SEVEN BACKUP ARTIFACTS ON THIS SERVER CAPTURED NOTHING.
+#
+#     /root/backups/pre-forms-migration-20260728-233129.sql.gz   20 bytes,
+#         a valid gzip stream that decompresses to ZERO. `gzip -t` calls it
+#         healthy. It has sat beside four real dumps since 2026-07-28.
+#     /var/backups/masjid_db/pre_permasjid_20260724_163430.sql   0 bytes,
+#         an empty file in a second, ad-hoc backup directory nobody scheduled.
+#
+# Both are named exactly like the ones that worked. Nothing ever looked inside
+# either. That is why `backup:run` opens what it just wrote, checks it against a
+# size floor, and looks for the line mysqldump writes only when it finished,
+# before it will call the result a backup.
+#
+# (Neither of those directories is produced by anything scheduled — there is no
+# cron and no timer on this host that writes a backup. Every artifact in both was
+# made by hand, before a migration somebody was nervous about.)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS COVERS
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#   the database        mysqldump of the connection the application uses, over
+#                       TLS, verified to end with the line mysqldump writes only
+#                       when it finished
+#   the media disk      tar.gz of whatever disk config('media-library.disk_name')
+#                       resolves to — `public` today; the config is followed, not
+#                       copied, so moving media moves the backup with it
+#   the pairing         a manifest with a sha256 for each half, written last, so
+#                       a set that exists is a set that finished
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHAT THIS DOES NOT COVER — read this before trusting it
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# 1. IT IS ONE COPY, ON ONE VOLUME, ON THE MACHINE IT IS BACKING UP.
+#    /var/backups/manara is on the same 48G root filesystem as the application.
+#    A destroyed droplet, a corrupted disk, or a wrong `rm` takes the backups
+#    with the thing they were backing up. There is NO OFFSITE COPY. Nothing here
+#    ships a set anywhere, and until something does, this protects against
+#    mistakes and not against losing the machine.
+#
+# 2. RETENTION IS A COUNT, AND IT IS THE ONLY THING BOUNDING DISK USE.
+#    BACKUP_KEEP_SETS (default 14) sets are kept; older ones are deleted after a
+#    new one has been written AND verified, never before, and the last remaining
+#    set is never pruned. Measured 2026-08-21: the database dump is ~1.3 MB
+#    gzipped and the media disk is 11 MB in 91 files, so a set is ~12.5 MB and 14
+#    of them are ~175 MB against 42 GB free — 0.4%. If media grows a hundredfold
+#    that becomes ~15 GB and this number is the one to lower.
+#    WHEN THE VOLUME FILLS: `backup:run` compares free space against three times
+#    the estimated set size BEFORE writing anything and REFUSES the run, loudly,
+#    with the byte counts and a log line at `error`. It does not part-write, and
+#    it does not delete an old set to make room for one that has not succeeded.
+#
+# 3. NOBODY HAS WRITTEN DOWN HOW THIS RELATES TO DIGITALOCEAN'S OWN BACKUPS.
+#    The database is a DigitalOcean MANAGED instance (nothing listens on 3306
+#    here; mysqld is inactive), and managed databases have their own automatic
+#    daily backups with their own retention, held by DigitalOcean. Nobody has
+#    written down what that retention is, whether it is enabled on this cluster,
+#    who can restore from it, or how long that takes. So there are two backup
+#    systems of the database and ONE of the files — and the file half exists
+#    nowhere but here. Treat DO's copy as the database's second line and this as
+#    the only line the media has. Confirming DO's settings and writing them into
+#    deploy/README.md is an open task, not something this script did.
+#
+# 4. THE DATABASE HALF OF A RESTORE HAS NEVER BEEN EXECUTED. A verified archive
+#    is not a proven restore, and the two halves of `backup:restore` are not
+#    equally proven:
+#      the file half   IS executed — a real tar unpacks a real archive onto a
+#                      real disk in the test suite, and every refusal runs.
+#      the db half     is NOT. Nothing in this repository has ever applied a
+#                      dump to a real MySQL or MariaDB server, because there is
+#                      nowhere permitted to: this host carries the CLIENT only
+#                      (/usr/bin/mysql, /usr/bin/mariadb — there is no
+#                      /usr/sbin/mysqld and no /usr/sbin/mariadbd, and both
+#                      units read `inactive`), and the database is a DigitalOcean
+#                      MANAGED instance that is off limits. Installing a server
+#                      here to prove a backup is safe would mean changing
+#                      production to check that production is safe.
+#    What IS proven short of the server: the whole decompressed dump reaches a
+#    real child process on STDIN, byte for byte, and a non-zero exit from that
+#    process makes the command report failure. The client's own behaviour is
+#    taken from its manual — and that is exactly where the bug was: `mysql
+#    --execute='source dump.sql'` runs the client's SOURCE command, which does
+#    not abort on error and lets the client exit 0, so a restore that died on
+#    statement 812 of 4000 reported success. It is fed on stdin now.
+#    Restoring onto a scratch database on a schedule is still not built, and
+#    until it is, this line stays.
+#
+# 5. NOT COVERED AT ALL: the private disk (storage/app/private — form
+#    attachments, group media, credential documents, 8 KB today), .env, the
+#    web-server and systemd configuration, Stripe/OneSignal state, and anything
+#    living outside this application directory and its database.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY THIS SCRIPT IS TWELVE LINES AND THE WORK IS IN PHP
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Everything a shell version would have to decide is already decided by the
+# application's configuration: which connection holds the data and its
+# credentials, which disk media is on and where that disk's root is, and whether
+# that disk is a directory or a bucket. A shell script would have to re-derive
+# all of it by parsing .env — a second, silently-drifting copy of the answer,
+# and one that goes stale the moment MEDIA_DISK changes. So the logic lives in
+# `php artisan backup:run` / `backup:restore`, where it reads the same config the
+# application reads and where it is covered by tests. This script exists so that
+# cron and an operator have one obvious entry point, and so that the paragraphs
+# above sit somewhere a person looks before trusting a backup.
+#
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem}"
+WEB_USER="${WEB_USER:-www-data}"
+
+cd "$APP_DIR"
+
+# One-time setup. The system cron runs `schedule:run` as www-data (see
+# deploy/README.md), so the destination has to be writable by www-data — which
+# is why it is not /root/backups, where the legacy dumps live and where a
+# scheduled backup would silently never write.
+if [ "${1:-}" = "--install" ]; then
+    DESTINATION="$(sudo -u "$WEB_USER" HOME=/tmp php artisan tinker --execute='echo config("backup.destination");' | tail -1)"
+    echo "==> Creating $DESTINATION for $WEB_USER"
+    mkdir -p "$DESTINATION"
+    chown "$WEB_USER":"$WEB_USER" "$DESTINATION"
+    chmod 0750 "$DESTINATION"
+    ls -ld "$DESTINATION"
+    echo "==> Now: sudo bin/backup --dry-run"
+    exit 0
+fi
+
+# Run as the user that owns storage/ and that the scheduler uses, so a set taken
+# by hand and a set taken by cron are owned by the same user.
+exec sudo -u "$WEB_USER" HOME=/tmp php artisan backup:run "$@"

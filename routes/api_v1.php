@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\AppointmentRequestsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
+use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
 use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
 use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
@@ -92,6 +93,21 @@ Route::prefix('v1')->group(function () {
 
     Route::post('/registrations/{uuid}/checkout', [OfferingRegistrationsController::class, 'checkout'])
         ->middleware('throttle:registration-intake');
+
+    // Public Jummah-lunch ordering. Reading the open menu and an order's status
+    // write nothing (loose 'lunch-menu' limit); placing an order is an
+    // unauthenticated DB write that opens a Stripe Checkout Session for an online
+    // order, throttled tighter by name like every public write here. The tenant
+    // comes from the masjid-id header inside the controller, and — as with
+    // registrations — NOTHING here marks an order paid; only the Stripe webhook does.
+    Route::get('/lunch-menu', [JummahLunchOrdersController::class, 'menu'])
+        ->middleware('throttle:lunch-menu');
+
+    Route::post('/lunch-orders', [JummahLunchOrdersController::class, 'store'])
+        ->middleware('throttle:lunch-order');
+
+    Route::get('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'show'])
+        ->middleware('throttle:lunch-menu');
 
     // Public zakat calculator (T-031). The odd one out among the public POSTs
     // here: it WRITES NOTHING. It is a POST anyway because its body is a

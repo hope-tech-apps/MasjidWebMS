@@ -81,6 +81,12 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // it takes a principal and must refuse an unrecognized one exactly as
         // the other thirteen do.
         'membershipsFor',
+        // The fifteenth and sixteenth, added for the teacher realm: the
+        // login-side leader check (group_staff) and the "only my classes" id
+        // set. They take a principal and refuse an unrecognized one — false and
+        // an empty array — exactly as the others do.
+        'isLeaderOf',
+        'leaderGroupIdsFor',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -271,7 +277,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(14, $seen);
+        $this->assertCount(16, $seen);
     }
 
     #[Test]
@@ -321,6 +327,10 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         $this->assertNull($this->audience->readableThreadsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableHifzQuery($this->foreign, $this->group));
+
+        // The teacher seams: an unrecognized principal leads nothing.
+        $this->assertFalse($this->audience->isLeaderOf($this->foreign, $this->group));
+        $this->assertSame([], $this->audience->leaderGroupIdsFor($this->foreign));
     }
 
     #[Test]

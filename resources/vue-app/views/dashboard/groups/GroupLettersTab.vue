@@ -65,7 +65,10 @@
                     </div>
                 </div>
 
-                <div class="d-flex flex-wrap gap-2 mb-3">
+                <!-- RTL: the alphabet starts at the top RIGHT and runs leftward.
+                     Laid out left-to-right it reads as a foreign list of symbols
+                     rather than as the alphabet a child is learning to read. -->
+                <div class="d-flex flex-wrap gap-2 mb-3" dir="rtl">
                     <button v-for="l in tracker?.letters" :key="l.id" type="button"
                             class="letter-tile" :class="`letter-tile--${l.status}`"
                             @click="openLetter = openLetter === l.id ? null : l.id">
@@ -84,21 +87,23 @@
                         <p v-if="!letter.connects_forward" class="text-muted small">
                             This letter never joins to the one after it, so it has two shapes.
                         </p>
-                        <div class="d-flex gap-2 mb-3">
+                        <!-- Also RTL: a word BEGINS at the right, so the
+                             initial form belongs on the right of this row. -->
+                        <div class="d-flex gap-2 mb-3" dir="rtl">
                             <div v-for="p in letter.positions" :key="p.id" class="shape-box">
                                 <div class="shape-box__glyph">{{ p.text }}</div>
                                 <div class="shape-box__label">{{ positionLabel(p.id) }}</div>
                             </div>
                         </div>
 
-                        <div class="list-group">
+                        <div class="list-group" dir="rtl">
                             <button v-for="d in letter.drills" :key="d.id" type="button"
                                     class="list-group-item list-group-item-action d-flex align-items-center gap-3"
                                     :class="`drill--${d.status}`"
                                     :disabled="marking === d.id"
                                     @click="advance(d)">
                                 <span class="drill__glyph">{{ d.text }}</span>
-                                <span class="flex-grow-1 small">
+                                <span class="flex-grow-1 small" dir="ltr" style="text-align:start;">
                                     {{ d.label }}
                                     <span v-if="d.sound" class="text-muted">· sounds like “{{ d.sound }}”</span>
                                 </span>

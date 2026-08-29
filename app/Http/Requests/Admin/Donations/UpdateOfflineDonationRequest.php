@@ -22,6 +22,36 @@ use App\Http\Requests\BaseFormRequest;
  */
 class UpdateOfflineDonationRequest extends BaseFormRequest
 {
+    /** The payment methods the picker offers — the `in:` allow-list, in one place. */
+    private const METHODS = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other'];
+
+    /**
+     * Heal a legacy or blank payment method before validation.
+     *
+     * A gift imported or recorded before the method picker existed can carry a
+     * value the picker no longer offers — 'unknown' is the common one. The picker
+     * then shows BLANK (it has no such option) and, on save, submits that stale
+     * value (or, once ConvertEmptyStringsToNull has run, a bare null). Either one
+     * fails the `in:` rule with "The selected payment method is invalid", and
+     * because every OTHER field here is `sometimes`, that single bad method blocks
+     * an edit of a completely unrelated field — a fund correction, a fixed date —
+     * with an error the form does not surface. Measured on a real Burlington gift.
+     *
+     * So: if a method is PRESENT but not one the picker offers, treat it as "the
+     * hand-recorded method was never captured" and normalise it to 'other' — a
+     * real, selectable value that means exactly that. A method that is ABSENT is
+     * left absent (the `sometimes` rule keeps the stored value); a VALID selection
+     * passes through untouched. The one thing that can no longer happen is a
+     * legacy value making the whole gift uneditable.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('payment_method')
+            && ! in_array($this->input('payment_method'), self::METHODS, true)) {
+            $this->merge(['payment_method' => 'other']);
+        }
+    }
+
     public function rules(): array
     {
         return [
@@ -32,7 +62,7 @@ class UpdateOfflineDonationRequest extends BaseFormRequest
             'contact_id' => ['sometimes', 'nullable', 'integer'],
             'donor_name' => ['sometimes', 'nullable', 'string', 'max:200'],
             'amount' => ['sometimes', 'numeric', 'min:0.01', 'max:1000000'],
-            'payment_method' => ['sometimes', 'in:cash,check,zelle,venmo,paypal,square,credit,giftcard,other'],
+            'payment_method' => ['sometimes', 'in:'.implode(',', self::METHODS)],
             'check_number' => ['sometimes', 'nullable', 'string', 'max:50'],
             'donated_at' => ['sometimes', 'date'],
             'note' => ['sometimes', 'nullable', 'string', 'max:1000'],

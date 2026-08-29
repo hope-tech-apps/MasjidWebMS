@@ -2,7 +2,7 @@ import { Masjid } from "@/core/types/data/Masjid"
 import { Media } from "@/core/types/data/Media"
 import { User } from "./User";
 
-export type AdminType = 'SuperAdmin' | 'MasjidAdmin';
+export type AdminType = 'SuperAdmin' | 'MasjidAdmin' | 'Teacher';
 
 export type Admin = {
     id: number;

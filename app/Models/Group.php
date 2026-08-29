@@ -183,6 +183,34 @@ class Group extends Model
             ->withTimestamps();
     }
 
+    /**
+     * The staff Users who lead this class (`group_staff`).
+     *
+     * Distinct from contacts()/memberships(): those are Contacts (students,
+     * guardians, legacy Contact "leaders"); this is the LOGIN that teaches the
+     * class. `->using(GroupStaff::class)` so the pivot carries BelongsToMasjid —
+     * but attach() must still pass masjid_id explicitly (see GroupStaff).
+     */
+    public function staff(): BelongsToMany
+    {
+        return $this->belongsToMany(\App\Models\User::class, 'group_staff')
+            ->using(GroupStaff::class)
+            ->withPivot(['role', 'assigned_by_user_id', 'assigned_at'])
+            ->withTimestamps();
+    }
+
+    /**
+     * The "only my classes" filter: groups this staff user leads.
+     *
+     * Drives every teacher read (Group::query()->ledBy($teacherId)->get()). The
+     * whereHas subquery stays inside the parent's bound tenant, and group_staff
+     * itself is tenant-scoped, so a leader row in another masjid cannot widen it.
+     */
+    public function scopeLedBy($query, int $userId)
+    {
+        return $query->whereHas('staff', fn ($q) => $q->where('users.id', $userId));
+    }
+
     public function scopeActive($query)
     {
         return $query->where('is_active', true);

@@ -90,6 +90,16 @@ async function signIn () : Promise<void> {
                 }
                 else if(authStore.user?.type === 'SuperAdmin') {
                     router.push("/auth/dashboards");
+                }
+                else if(authStore.user?.type === 'Teacher') {
+                    // Mirror the MasjidAdmin prefetch: seed the masjid id the shell
+                    // leans on. The teacher realm has no admin access, so we do NOT
+                    // call the admin-scoped masjidStore.fetchMasjid(); the teacher
+                    // shell reads its own /api/teacher/user for the school header.
+                    if (authStore.user.masjid) {
+                        authStore.saveDashboardMasjidId(authStore.user.masjid.id);
+                    }
+                    router.push("/teacher");
                 } else {
                     router.push("/auth/401");
                 }

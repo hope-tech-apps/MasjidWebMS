@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\StoreGroupMessageRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
 use App\Models\Contact;
 use App\Models\Group;
@@ -128,6 +130,7 @@ class GroupThreadsController extends Controller
         $group = Group::findOrFail($group_id);
 
         $aboutMembershipId = null;
+        $aboutContactId = null;
 
         if ($request->input('scope') === GroupThread::SCOPE_PARTICIPANT) {
             $about = $group->memberships()
@@ -142,6 +145,7 @@ class GroupThreadsController extends Controller
             }
 
             $aboutMembershipId = $about->id;
+            $aboutContactId = $about->contact_id;
         }
 
         try {
@@ -169,6 +173,21 @@ class GroupThreadsController extends Controller
 
                 return $thread;
             });
+
+            // A thread opened WITH a first message notifies like a reply would;
+            // an empty thread shell notifies no one. A participant thread reaches
+            // the ward's guardian(s); a group-wide thread reaches the feed audience
+            // (the job decides from aboutContactId). afterCommit + fail-soft.
+            if ($request->filled('body')) {
+                SendGroupNotificationJob::dispatch(
+                    (int) $group->masjid_id,
+                    (int) $group->id,
+                    GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
+                    aboutContactId: $aboutContactId,
+                    authorUserId: $request->user()?->id,
+                    authorContactId: null,
+                )->afterCommit();
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -256,6 +275,18 @@ class GroupThreadsController extends Controller
 
                 return $message;
             });
+
+            // A staff reply reaches the ward's guardian(s) (participant thread) or
+            // the feed audience (group-wide thread) — the job decides from
+            // aboutContactId. afterCommit + fail-soft.
+            SendGroupNotificationJob::dispatch(
+                (int) $group->masjid_id,
+                (int) $group->id,
+                GroupNotificationEvent::GUARDIAN_THREAD_MESSAGE,
+                aboutContactId: $thread->aboutMembership?->contact_id,
+                authorUserId: $request->user()?->id,
+                authorContactId: null,
+            )->afterCommit();
 
             return response()->json([
                 'status' => 'success',

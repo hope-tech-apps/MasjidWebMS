@@ -37,6 +37,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/groups` |
     `/api/admin/masjids/${string}/groups?${string}` |
     `/api/admin/masjids/${string}/groups/${string}` |
+    // Teachers — the admin provisioning surface: the index/create of teacher
+    // logins and the classes each one leads. A plain array on GET, a 201 on
+    // POST. One pattern per endpoint SHAPE, as with groups above. The
+    // `/teachers/${string}` shape carries GET (pre-fill), PUT (edit) and DELETE
+    // (remove from this school); `/invite` re-sends the set-password invite.
+    `/api/admin/masjids/${string}/teachers` |
+    `/api/admin/masjids/${string}/teachers/${string}` |
+    `/api/admin/masjids/${string}/teachers/${string}/invite` |
     // Appointment requests — the intake queue, one request, and the two writes
     // hung off it (status, notes). One pattern per endpoint SHAPE, as above:
     // `${string}` swallows the nested `/{id}/status` and `/{id}/notes` segments.
@@ -59,6 +67,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/behavior-skills?${string}` |
     `/api/admin/masjids/${string}/funds` |
     `/api/admin/masjids/${string}/funds/${string}` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus` |
+    `/api/admin/masjids/${string}/jummah-lunch/flyer` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}/items` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}/items/${string}` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}/orders` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}/orders/${string}/mark-paid` |
+    `/api/admin/masjids/${string}/jummah-lunch/menus/${string}/orders/${string}/status` |
     `/api/admin/masjids/${string}/donations` |
     `/api/admin/masjids/${string}/donations?page=${number}` |
     `/api/admin/masjids/${string}/donations/${string}` |

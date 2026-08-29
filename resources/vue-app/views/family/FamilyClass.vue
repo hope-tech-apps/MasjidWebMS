@@ -178,7 +178,8 @@
                                 <div class="progress-bar bg-success"
                                      :style="{ width: lettersPercent(child.membership_id) + '%' }"></div>
                             </div>
-                            <div class="d-flex flex-wrap gap-1 mt-2">
+                            <!-- RTL, like the alphabet itself. -->
+                            <div class="d-flex flex-wrap gap-1 mt-2" dir="rtl">
                                 <span v-for="l in letters[child.membership_id].letters" :key="l.id"
                                       class="letter-chip"
                                       :class="`letter-chip--${l.status}`"

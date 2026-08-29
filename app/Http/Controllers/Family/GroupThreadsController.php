@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Requests\Family\StoreFamilyMessageRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Models\Contact;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
@@ -194,6 +196,17 @@ class GroupThreadsController extends FamilyController
 
             return $message;
         });
+
+        // A parent's reply notifies the class's teacher(s). The author (this
+        // parent) is skipped by the resolver. afterCommit + fail-soft.
+        SendGroupNotificationJob::dispatch(
+            (int) $group->masjid_id,
+            (int) $group->id,
+            GroupNotificationEvent::TEACHER_THREAD_MESSAGE,
+            aboutContactId: null,
+            authorUserId: null,
+            authorContactId: $this->contact()->id,
+        )->afterCommit();
 
         return response()->json([
             'status' => 'success',

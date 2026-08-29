@@ -40,6 +40,10 @@ export type MasjidDashboardRoute =
     // screen is CALLED comes from the terminology pack, never the URL.
     '/masjid/groups' |
     `/masjid/groups/${number}` |
+    // The admin screen that provisions teacher logins and assigns the classes
+    // they lead. Neutral path like /groups; the label is authored, not from the
+    // terminology pack.
+    '/masjid/teachers' |
     // The intake triage queue (Community vertical) and one request's own page.
     '/masjid/appointment-requests' |
     `/masjid/appointment-requests/${number}` |
@@ -51,6 +55,7 @@ export type MasjidDashboardRoute =
     `/masjid/offerings/${number}` |
     `/masjid/offerings/${number}/registrations/${number}` |
     '/masjid/funds' |
+    '/masjid/jummah-lunch' |
     '/masjid/donations' |
     '/masjid/recurring-donations' |
     '/masjid/annual-statements' |

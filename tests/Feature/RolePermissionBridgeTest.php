@@ -86,9 +86,15 @@ class RolePermissionBridgeTest extends TestCase
     #[Test]
     public function seeder_creates_the_expected_roles_and_permissions(): void
     {
-        foreach (['super-admin', 'masjid-admin', 'member'] as $role) {
+        foreach (['super-admin', 'masjid-admin', 'member', 'teacher'] as $role) {
             $this->assertTrue(Role::where('name', $role)->exists(), "role {$role} should exist");
         }
+
+        // The 'teacher' role is deliberately PERMISSION-LESS, like 'member': a
+        // teacher's authority is per-class (group_staff, via GroupAudience),
+        // never a masjid-wide CRM grant. Granting it any permission here would
+        // silently give teachers roster/donor/property reach across the school.
+        $this->assertCount(0, Role::findByName('teacher')->permissions);
 
         $expectedPermissions = [
             'view contacts', 'manage contacts', 'view donations',

@@ -221,6 +221,34 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Public Jummah-lunch order (money path — opens a Stripe Checkout Session
+        // for an online order). The tightest public-write allowance, keyed by IP
+        // AND target organization so flooding one masjid's ordering cannot lock a
+        // visitor out of another's.
+        RateLimiter::for('lunch-order', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(12)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many order attempts from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
+        // The lunch menu + order-status reads write nothing, so they take the
+        // looser allowance — a hungry visitor re-loads the menu while deciding.
+        RateLimiter::for('lunch-menu', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(60)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         // The parent/guardian realm (T-015c, routes/family.php). Unlike every
         // limiter above it is applied to an AUTHENTICATED tree, so it is keyed
         // on the contact rather than the IP: a whole household — or a whole

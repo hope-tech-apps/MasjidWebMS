@@ -1,5 +1,5 @@
 import 'vue-router';
-import { UserType } from '@/core/types/data/Admin';
+import { UserType } from '@/core/types/data/User';
 
 declare module 'vue-router' {
     interface RouteMeta {
