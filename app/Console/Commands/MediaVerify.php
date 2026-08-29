@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Masjid;
+use App\Models\MobileAppFeature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -335,6 +336,12 @@ class MediaVerify extends Command
      */
     private array $unresolvableDisks = [];
 
+    /**
+     * The feature-icon should-have audit, carried into the report payload the
+     * way the logo audit's `expectations` is. @var array<string,mixed>
+     */
+    private array $featureExpectations = [];
+
     public function handle(): int
     {
         // `Artisan::call` reuses this instance, so a second run in the same
@@ -351,6 +358,7 @@ class MediaVerify extends Command
         $this->diskCache = [];
         $this->unreadableDisks = [];
         $this->unresolvableDisks = [];
+        $this->featureExpectations = [];
 
         $startedAt = now();
         $started = microtime(true);
@@ -428,6 +436,12 @@ class MediaVerify extends Command
         // would make the loudest report the least informative one.
         $this->gradeDangling($groups, $dangling, $checked, $verified, $totalRows, $wiped);
         $this->gradeExpectations($expectations, $wiped);
+
+        // The should-have check the logo audit's sibling was missing. Feature
+        // icons are the collection whose loss on 2026-08-28 this command sat
+        // green through; graded here so it cannot again. Read-only like the rest.
+        $this->featureExpectations = $this->auditFeatureIcons();
+        $this->gradeFeatureIcons($this->featureExpectations, $wiped);
 
         // ----------------------------------------------------- the memory
         //
@@ -1011,6 +1025,163 @@ class MediaVerify extends Command
                 'without_logo' => count($missing),
                 'unverifiable' => count($unverifiable),
                 'organisations' => array_slice($missing, 0, 25),
+            ]
+        );
+    }
+
+    // ------------------------------------------------------- feature icons
+
+    /**
+     * Every mobile feature the apps render in the functionalities drawer should
+     * have a `featuresIcons` media row whose file exists.
+     *
+     * THE CHECK THIS COMMAND WAS MISSING ON 2026-08-28. The logo audit above
+     * grades `logos` only — the docblock says so outright ("nothing covered
+     * announcement images, section images, service icons or avatars") — and the
+     * census cannot see a collection that was ALREADY empty when its first
+     * baseline was taken, which `featuresIcons` was. So the drawer served
+     * icon:null for every feature on every masjid while this command reported
+     * clean, and the break surfaced from a user rather than the watchdog. This is
+     * the positive should-have assertion that closes the gap, modelled exactly on
+     * `auditListedOrganisations`.
+     *
+     * Feature rows are GLOBAL — the pivot only toggles availability per masjid —
+     * so the question is asked once of the shared rows. Same three answers as the
+     * logo audit: no row, a row whose file is gone, or a row on a disk this run
+     * could not read.
+     *
+     * @return array{features:int, missing:array<int,array<string,mixed>>, unverifiable:array<int,array<string,mixed>>}
+     */
+    private function auditFeatureIcons(): array
+    {
+        if (! Schema::hasTable((new MobileAppFeature)->getTable())) {
+            return ['features' => 0, 'missing' => [], 'unverifiable' => []];
+        }
+
+        $features = MobileAppFeature::query()->orderBy('id')->get(['id', 'name']);
+
+        if ($features->isEmpty()) {
+            return ['features' => 0, 'missing' => [], 'unverifiable' => []];
+        }
+
+        /** @var class-string $mediaModel */
+        $mediaModel = config('media-library.media_model');
+
+        // One query for every feature icon, keyed by owner, newest first so
+        // first() matches the relation's latest().
+        $icons = $mediaModel::query()
+            ->where('model_type', MobileAppFeature::class)
+            ->where('collection_name', 'featuresIcons')
+            ->whereIn('model_id', $features->pluck('id')->all())
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('model_id');
+
+        $missing = [];
+        $unverifiable = [];
+
+        foreach ($features as $feature) {
+            $media = ($icons[$feature->id] ?? collect())->first();
+
+            if ($media === null) {
+                $missing[] = [
+                    'feature_id' => (int) $feature->id,
+                    'name' => (string) $feature->name,
+                    'reason' => 'no_icon_record',
+                ];
+
+                continue;
+            }
+
+            $present = $this->fileExists($media);
+
+            if ($present === false) {
+                $missing[] = [
+                    'feature_id' => (int) $feature->id,
+                    'name' => (string) $feature->name,
+                    'reason' => 'icon_file_missing',
+                    'media_id' => (int) $media->id,
+                    'path' => $this->relativePath($media),
+                ];
+
+                continue;
+            }
+
+            if ($present === null) {
+                $unverifiable[] = [
+                    'feature_id' => (int) $feature->id,
+                    'name' => (string) $feature->name,
+                    'reason' => 'icon_unverifiable',
+                    'media_id' => (int) $media->id,
+                    'disk' => (string) $media->disk,
+                    'path' => $this->relativePath($media),
+                ];
+            }
+        }
+
+        return ['features' => $features->count(), 'missing' => $missing, 'unverifiable' => $unverifiable];
+    }
+
+    /**
+     * @param  array{features:int, missing:array<int,array<string,mixed>>, unverifiable:array<int,array<string,mixed>>}  $expectations
+     */
+    private function gradeFeatureIcons(array $expectations, bool $wiped): void
+    {
+        if (($expectations['features'] ?? 0) === 0) {
+            $this->addCheck('features-have-an-icon', 'skipped', 'no mobile features are defined');
+
+            return;
+        }
+
+        $missing = $expectations['missing'];
+        $unverifiable = $expectations['unverifiable'] ?? [];
+
+        if ($unverifiable !== []) {
+            $this->degraded = true;
+            $this->degradedBy[] = 'unverified_rows';
+            $this->notes[] = count($unverifiable).' feature(s) have a `featuresIcons` row whose disk this run '.
+                'could not read. NOT counted as icon-less and NOT counted as resolving.';
+        }
+
+        if ($missing === [] && $unverifiable !== []) {
+            $this->addCheck('features-have-an-icon', 'partial',
+                ($expectations['features'] - count($unverifiable)).' of '.$expectations['features'].
+                ' feature(s) have an icon that resolves; '.count($unverifiable).' could not be read');
+
+            return;
+        }
+
+        if ($missing === []) {
+            $this->addCheck('features-have-an-icon', 'pass',
+                'all '.$expectations['features'].' feature(s) have an icon that resolves');
+
+            return;
+        }
+
+        $this->addCheck('features-have-an-icon', 'FAIL',
+            count($missing).' of '.$expectations['features'].
+            ' feature(s) have no icon the app can draw'.
+            ($unverifiable !== [] ? ' (a further '.count($unverifiable).' could not be read)' : ''));
+
+        // On a wiped estate the empty-table finding already covers this — one
+        // loud event, not a symptom list. Same suppression as the logo grade.
+        if ($wiped) {
+            return;
+        }
+
+        $this->addFinding(
+            self::SEVERITY_HIGH,
+            'feature_without_icon',
+            count($missing).' of '.$expectations['features'].' mobile feature(s) have no `featuresIcons` media. The '.
+                'functionalities drawer falls back to a placeholder glyph (the server floor holds the app up), but '.
+                'the real icons are GONE — restore them with `php artisan app:features-ensure-icons`.',
+            [
+                'features' => $expectations['features'],
+                'without_icon' => count($missing),
+                'unverifiable' => count($unverifiable),
+                'items' => array_slice($missing, 0, 25),
+                'repair' => 'php artisan app:features-ensure-icons',
             ]
         );
     }
@@ -2055,6 +2226,14 @@ class MediaVerify extends Command
                 'unverifiable' => count($expectations['unverifiable'] ?? []),
                 'organisations' => array_slice($expectations['missing'] ?? [], 0, 25),
                 'unverifiable_organisations' => array_slice($expectations['unverifiable'] ?? [], 0, 25),
+            ],
+            'feature_icons' => [
+                'rule' => 'every global MobileAppFeature must have a `featuresIcons` media row whose file exists — '.
+                    'Mobile\\MasjidMobileAppFeaturesController serves it and the app renders the drawer from it',
+                'features' => $this->featureExpectations['features'] ?? 0,
+                'without_icon' => count($this->featureExpectations['missing'] ?? []),
+                'unverifiable' => count($this->featureExpectations['unverifiable'] ?? []),
+                'items' => array_slice($this->featureExpectations['missing'] ?? [], 0, 25),
             ],
             // The memory: what each collection held at the previous run, what it
             // holds now, and every drop past the threshold. Reported on every

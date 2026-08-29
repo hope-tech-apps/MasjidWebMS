@@ -6,21 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\MobileMedia;
 use Illuminate\Support\Facades\Cache;
 
 class AnnouncementsController extends Controller
 {
-    /**
-     * Stands in for a missing image so an older client's non-optional `Gallery`
-     * still decodes. `id` is the only property that decoder requires; the null
-     * URLs are what stop any client drawing a broken picture.
-     */
-    private const NO_IMAGE = [
-        'id' => 0,
-        'original_url' => null,
-        'preview_url' => null,
-    ];
-
     public function index($masjid_id)
     {
         $announcements = Cache::remember(
@@ -56,17 +46,22 @@ class AnnouncementsController extends Controller
                 //
                 // So a text-only notice renders correctly on the board today.
                 //
-                // The stub below is for the OLDER build that is still in the field
-                // and still wants a non-optional object. `Gallery` requires only
-                // `id`; every other property is optional, so this decodes on that
-                // build AND on the current one, while the null URLs mean no client
-                // ever tries to draw a picture that does not exist. Returning
-                // `null` outright would be cleaner and would blank the tab for
-                // anyone who has not updated — the exact failure being fixed.
+                // Every row carries a NON-NULL image envelope, via the mobile
+                // media boundary (App\Support\MobileMedia). An older build wants
+                // a non-optional object with an `id`; a newer build FORCE-UNWRAPS
+                // image.originalUrl! in its carousel itemBuilder, so a null URL
+                // there blanks the whole Announcements tab (the 2026-08-28
+                // featuresIcons-class crash, one collection over). A served
+                // placeholder URL is safe for both: the old build draws it, the
+                // new build's `!` never fires. The real photo still comes from the
+                // media when it is present.
                 return $announcements->map(function ($announcement) {
                     $row = $announcement->toArray();
 
-                    $row['image'] = $row['image'] ?? self::NO_IMAGE;
+                    $row['image'] = MobileMedia::envelope(
+                        $announcement->image,
+                        MobileMedia::imagePlaceholderUrl()
+                    );
 
                     return $row;
                 })->values();

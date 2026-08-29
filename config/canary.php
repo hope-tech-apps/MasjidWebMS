@@ -340,6 +340,18 @@ return [
         // this endpoint returns. Two organisations seeing catalog ids 1..11 is
         // the catalog working, not a leak.
         'api/mobile/masjids/{masjid_id}/features',
+        // The GLOBAL, backward-compat app-config route — NOT the per-masjid
+        // `masjids/{masjid_id}/app-config` gate, which is tenant-scoped and stays
+        // fully watched. Old app installs call `/api/mobile/app-config` with no
+        // organisation on launch and it MUST answer, or they hang on the splash
+        // screen (the 2026-08-28 route-cache incident, why the route was restored).
+        // Read the controller, per the note above: AppConfigController::
+        // platformConfig() is a single
+        //   response()->json(['status' => 'success', 'data' => (object) []])
+        // — no query, no tenant column, no data of ANY kind. Answering a
+        // tenant-less request is the contract here, not a fail-open leak; there is
+        // nothing behind it to leak.
+        'api/mobile/app-config',
         'api/mobile/masjids',
         'api/mobile/azkar',
         'api/mobile/azkar/categorized',

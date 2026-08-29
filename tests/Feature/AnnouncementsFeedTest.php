@@ -101,9 +101,13 @@ class AnnouncementsFeedTest extends TestCase
     #[Test]
     public function the_image_field_is_present_and_decodable_even_when_there_is_no_image(): void
     {
-        // The older iOS build decodes `image` into a non-optional `Gallery`,
-        // whose only required property is `id`. Null URLs keep every client from
-        // trying to draw something that is not there.
+        // The image envelope is present with an `id` (an older build decodes it
+        // into a non-optional object) AND a NON-NULL url. The URLs used to be
+        // null, which was itself a crash: the current Flutter carousel
+        // force-unwraps image.originalUrl!, so a null there blanks the whole
+        // Announcements tab (the featuresIcons class, one collection over). A
+        // served placeholder is safe for both — the old build draws it, the new
+        // build's `!` never fires. See App\Support\MobileMedia.
         $this->announce('No Picture');
 
         $row = $this->feed()[0];
@@ -111,8 +115,9 @@ class AnnouncementsFeedTest extends TestCase
         $this->assertArrayHasKey('image', $row);
         $this->assertIsArray($row['image']);
         $this->assertSame(0, $row['image']['id']);
-        $this->assertNull($row['image']['original_url']);
-        $this->assertNull($row['image']['preview_url']);
+        $this->assertNotNull($row['image']['original_url'], 'a null original_url here crashes the carousel that force-unwraps it');
+        $this->assertNotNull($row['image']['preview_url']);
+        $this->assertStringContainsString('mobile-assets/placeholder', $row['image']['original_url']);
     }
 
     #[Test]

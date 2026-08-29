@@ -1214,6 +1214,44 @@ class MediaVerifyTest extends TestCase
      * @param  array<string,mixed>  $options
      * @return array{0:int, 1:array<string,mixed>}
      */
+    // ================================================================
+    // 7. Feature icons — the collection whose loss on 2026-08-28 this
+    //    command sat green through (logo-only should-have; census blind
+    //    to a collection already empty at its first baseline).
+    // ================================================================
+
+    #[Test]
+    public function a_feature_with_no_icon_is_a_finding(): void
+    {
+        // A mobile feature the drawer renders, with no `featuresIcons` media —
+        // the exact state that shipped icon:null to every phone.
+        \App\Models\MobileAppFeature::create(['name' => 'Qur\'an', 'key' => 'quran']);
+
+        [$exit, $run] = $this->verify();
+
+        $this->assertSame(1, $exit, 'media:verify stayed green on a feature with no icon');
+        $this->assertSame('broken', $run['status']);
+
+        $finding = $this->finding($run, 'feature_without_icon');
+        $this->assertSame(1, $finding['evidence']['without_icon']);
+        $this->assertSame(1, $run['feature_icons']['without_icon']);
+    }
+
+    #[Test]
+    public function a_feature_whose_icon_resolves_does_not_fire(): void
+    {
+        $feature = \App\Models\MobileAppFeature::create(['name' => 'Qur\'an', 'key' => 'quran']);
+
+        // A real icon row with its file present on disk.
+        $this->makeMedia($feature, 'featuresIcons', withFile: true);
+
+        [$exit, $run] = $this->verify();
+
+        $this->assertSame(0, $exit, 'media:verify went red on a feature whose icon resolves: '.json_encode($run['findings']));
+        $this->assertSame('clean', $run['status']);
+        $this->assertSame(0, $run['feature_icons']['without_icon']);
+    }
+
     private function verify(array $options = []): array
     {
         $exit = Artisan::call('media:verify', array_merge(['--json' => true], $options));
