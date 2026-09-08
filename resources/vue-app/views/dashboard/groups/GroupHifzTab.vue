@@ -147,7 +147,7 @@
                                     <div class="col-md-5">
                                         <label class="form-label">Kind <span class="text-danger">*</span></label>
                                         <select class="form-select text-capitalize" v-model="entryForm.kind">
-                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ kind }}</option>
+                                            <option v-for="kind in kinds" :key="kind" :value="kind">{{ kindLabel(kind) }}</option>
                                         </select>
                                         <div class="form-text">{{ kindHint(entryForm.kind) }}</div>
                                     </div>
@@ -324,6 +324,18 @@ const rangeLabel = (entry: HifzEntry): string => {
         return `${entry.from.surah_name} ${entry.from.ayah}–${entry.to.ayah}`;
     }
     return `${entry.from.surah_name} ${entry.from.ayah} – ${entry.to.surah_name} ${entry.to.ayah}`;
+};
+
+/**
+ * English first, the classical term second. The stored value is untouched — this
+ * is presentation, exactly as kindHint's note says. The option text used to be
+ * the raw enum ("sabak"), which reads as jargon to an office administrator who
+ * has not been through a ḥifẓ programme and has to pick correctly anyway.
+ */
+const kindLabel = (kind: HifzKind): string => {
+    if (kind === 'sabak') return 'New memorisation — sabak';
+    if (kind === 'sabqi') return 'Recent revision — sabqi';
+    return 'Older revision — manzil';
 };
 
 /** Explain the classical cycle without renaming it — what a UI LABELS them is presentation. */
