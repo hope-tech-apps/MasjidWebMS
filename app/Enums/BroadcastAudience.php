@@ -36,6 +36,46 @@ enum BroadcastAudience: string
     /** An explicit set of contact ids, snapshotted onto the broadcast. */
     case CONTACTS = 'contacts';
 
+    /**
+     * Everyone who asked to hear about one SERVICE.
+     *
+     * The third case the docblock above said the data did not support — and the
+     * two things that were missing now exist. `contact_service_interests`
+     * records a member's own opt-in, and `mobile_app_users.contact_id` gives a
+     * device an identity, which is precisely the fix .claude/rules/broadcasts.md
+     * named ("fix it, if ever, by giving devices an identity") rather than
+     * widening push to every handset and calling it narrow.
+     *
+     * Unlike CONTACTS this audience is NOT snapshotted onto the broadcast as a
+     * list of people. Only the service id is stored; the recipients are resolved
+     * at SEND time, because an interest is an opt-in and the SMS work already
+     * settled that opt-ins are read at the moment of sending. A member who
+     * withdrew their interest five minutes before dispatch must not receive the
+     * message — honouring a withdrawal is the entire reason to store one.
+     *
+     * This is still not the `group` audience, which remains deliberately absent:
+     * groups carry guardian-consent rules (.claude/rules/groups.md) that an
+     * interest toggle does not.
+     */
+    case SERVICE = 'service';
+
+    /**
+     * Does resolving this audience read the contact directory?
+     *
+     * A predicate rather than a comparison, matching
+     * BroadcastChannel::readsContacts(), so the authorization gate keeps working
+     * when a fourth audience arrives instead of silently admitting it.
+     *
+     * SERVICE reads `contacts` even though its recipients are DEVICES: the
+     * selection runs through a person's interests. An admin who may not view the
+     * directory should not be able to slice a send by what the directory knows,
+     * even though this audience never discloses an individual contact.
+     */
+    public function readsContacts(): bool
+    {
+        return $this === self::CONTACTS || $this === self::SERVICE;
+    }
+
     /** @return array<int, string> Values, for validation rules. */
     public static function values(): array
     {

@@ -92,16 +92,46 @@ predicate, and `BroadcastsController` did not change.
 - `contacts` — an explicit set of contact ids, **snapshotted** onto the broadcast
   so a later directory edit cannot rewrite who was addressed.
 
-**Push + a contacts audience is REJECTED at the request boundary.**
-`mobile_app_users` has `device_id` and `onesignal_subscription_id` and no
-`contact_id` — there is no join from a person to their phone. Accepting the
-combination and broadcasting to every device would tell an admin they had sent
-something narrow when they had not. Do not "fix" this by widening it; fix it, if
-ever, by giving devices an identity.
+- `service` — everyone who asked to hear about ONE service, reaching their
+  phones. Added 2026-09-08.
 
-A `group` audience is the natural third case and is deliberately absent: group
-audiences carry guardian-consent rules (`.claude/rules/groups.md`) that deserve
-their own task rather than a quiet inheritance.
+**Push + a CHOSEN LIST of contacts is still REJECTED at the request boundary**,
+but the reason has changed and the old one is no longer true. Devices now carry
+`mobile_app_users.contact_id` — the "give devices an identity" fix this rule used
+to prescribe — set when a member signs in and cleared on sign-out. What has not
+changed is that the app is usable WITHOUT an account, so most rows are NULL
+forever. An admin who hand-picks fifty contacts and reaches the six who happen to
+be signed in has been told they sent something they did not send: the same
+failure the original refusal prevented, pointing the other way.
+
+A `service` audience does not have that problem, which is why it is allowed:
+it addresses people who opted in THROUGH the app, so holding an account on a
+device is intrinsic to the audience rather than an accident that silently
+shrinks it.
+
+**The service is snapshotted; its people are not.** `audience_contact_ids`
+freezes a chosen list so a later directory edit cannot rewrite who was addressed.
+An interest is an OPT-IN, so `audience_service_id` stores only WHAT was addressed
+and `BroadcastAudienceResolver` answers WHO at send time — the same principle as
+SMS filtering on the consent record rather than on `phone IS NOT NULL`. A member
+who withdrew their interest between composing and dispatching is not reached.
+
+The resolver drops four kinds of non-recipient, and each is a way to be wrong:
+unclaimed (guest) handsets, members interested in a different service,
+soft-deleted contacts (`contact_id` is `nullOnDelete`, which a SOFT delete does
+not trigger), and revoked contacts. Pinned by
+`tests/Feature/ServiceAudiencePushRoutingTest.php`.
+
+**The AUDIENCE can need the contact directory even when no channel does.**
+`BroadcastAudience::readsContacts()` mirrors `BroadcastChannel::readsContacts()`,
+and `authorizeChannels()` checks both — so a `service` audience on push inherits
+the `crm_enabled` + `view contacts` gate rather than bypassing it, even though
+push reads no contacts on its own and no individual contact is ever disclosed.
+
+A `group` audience is the natural next case and is deliberately absent: group
+audiences carry guardian-consent rules (`.claude/rules/groups.md`) that an
+interest toggle does not, and that deserve their own task rather than a quiet
+inheritance.
 
 ## Adding a channel
 

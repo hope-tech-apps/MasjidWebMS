@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Enums\BroadcastAudience;
 use App\Enums\BroadcastChannel;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Broadcasts\StoreBroadcastRequest;
@@ -106,7 +107,7 @@ class BroadcastsController extends Controller
                 masjid: $masjid,
                 attributes: $request->safe()->only([
                     'title', 'body', 'link', 'starts_on', 'ends_on',
-                    'audience', 'contact_ids', 'scheduled_at',
+                    'audience', 'contact_ids', 'service_id', 'scheduled_at',
                 ]),
                 channels: $channels,
                 image: $request->file('image'),
@@ -139,22 +140,32 @@ class BroadcastsController extends Controller
     {
         $needsContacts = array_filter($channels, fn (BroadcastChannel $c) => $c->readsContacts());
 
-        if ($needsContacts === []) {
+        // The AUDIENCE can need the directory even when no channel does. A
+        // service audience resolves through `contact_service_interests` to pick
+        // which devices to push to, so push — a channel that reads no contacts
+        // on its own — inherits the gate here rather than bypassing it.
+        $audience = BroadcastAudience::tryFrom((string) $request->input('audience'));
+        $audienceNeedsContacts = $audience?->readsContacts() ?? false;
+
+        if ($needsContacts === [] && ! $audienceNeedsContacts) {
             return;
         }
+
+        $reason = $needsContacts !== []
+            ? 'The email channel reads the contact directory, which is part of the CRM.'
+            : 'That audience is built from the contact directory, which is part of the CRM.';
 
         if (! $masjid->crm_enabled) {
             abort(
                 Response::HTTP_FORBIDDEN,
-                'The email channel reads the contact directory, which is part of the CRM. '
-                . 'Enable the CRM for this organization, or send without the email channel.'
+                $reason . ' Enable the CRM for this organization, or send to everyone instead.'
             );
         }
 
         if (! $request->user()?->can('view contacts')) {
             abort(
                 Response::HTTP_FORBIDDEN,
-                'Sending by email requires the "view contacts" permission.'
+                'Sending to a contact-derived audience requires the "view contacts" permission.'
             );
         }
     }

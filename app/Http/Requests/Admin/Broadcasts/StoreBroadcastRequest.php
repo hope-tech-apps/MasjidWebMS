@@ -86,6 +86,18 @@ class StoreBroadcastRequest extends BaseFormRequest
             'contact_ids' => 'array',
             'contact_ids.*' => 'integer',
 
+            // The service a `service` audience addresses. Constrained to THIS
+            // masjid's services in the rule itself: `services` carries no
+            // BelongsToMasjid trait, so nothing downstream would catch an id
+            // belonging to another organisation.
+            'service_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('services', 'id')->where(
+                    fn ($q) => $q->where('masjid_id', $this->route('masjid_id'))->whereNull('deleted_at')
+                ),
+            ],
+
             // Nullable = send now. A past value is treated as "now" rather than
             // rejected: an admin who spent ninety seconds on the form should not
             // lose it to a clock.
@@ -102,15 +114,37 @@ class StoreBroadcastRequest extends BaseFormRequest
                 $this->applyAnnouncementRules($validator);
             }
 
+            // Push + a CHOSEN LIST of contacts is still refused, and the reason
+            // has changed rather than gone away. Devices now carry a
+            // `contact_id`, but only for the minority of handsets somebody has
+            // actually signed into — the app is usable without an account, so
+            // most rows are NULL forever. An admin who hand-picks fifty contacts
+            // and reaches the six of them who happen to have signed in has been
+            // told they sent something they did not send, which is the same
+            // failure the original refusal existed to prevent, pointing the
+            // other way.
+            //
+            // A SERVICE audience does not have that problem and is allowed: it
+            // addresses people who opted in THROUGH the app, so having an
+            // account on a device is intrinsic to the audience rather than an
+            // accident that silently shrinks it.
             if (
                 in_array(BroadcastChannel::PUSH->value, $channels, true)
                 && $this->input('audience') === BroadcastAudience::CONTACTS->value
             ) {
                 $validator->errors()->add(
                     'channels',
-                    'Push cannot be narrowed to selected contacts: registered devices carry no link to a contact record. '
-                    . 'Send push to everyone, or drop the push channel from this broadcast.'
+                    'Push cannot be narrowed to a chosen list of contacts: most registered devices are not signed in, '
+                    . 'so the send would silently reach only a fraction of the people you picked. '
+                    . 'Send push to everyone, address a service instead, or drop the push channel.'
                 );
+            }
+
+            if (
+                $this->input('audience') === BroadcastAudience::SERVICE->value
+                && empty($this->input('service_id'))
+            ) {
+                $validator->errors()->add('service_id', 'Choose the service this broadcast is for.');
             }
 
             if (

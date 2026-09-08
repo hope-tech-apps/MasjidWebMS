@@ -79,6 +79,7 @@ class Broadcast extends Model implements HasMedia
         'ends_on',
         'audience',
         'audience_contact_ids',
+        'audience_service_id',
         'scheduled_at',
         'dispatched_at',
         'status',

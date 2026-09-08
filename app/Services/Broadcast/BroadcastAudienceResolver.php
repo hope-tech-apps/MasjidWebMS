@@ -3,6 +3,7 @@
 namespace App\Services\Broadcast;
 
 use App\Enums\BroadcastAudience;
+use Illuminate\Support\Facades\DB;
 use App\Models\Broadcast;
 use App\Models\Contact;
 use App\Models\Masjid;
@@ -192,13 +193,61 @@ class BroadcastAudienceResolver
      *
      * @return array<int, string>
      */
-    public function pushSubscriptionIds(Masjid $masjid): array
+    public function pushSubscriptionIds(Masjid $masjid, ?Broadcast $broadcast = null): array
     {
-        return $masjid->mobileAppUsers()
-            ->whereNotNull('onesignal_subscription_id')
-            ->pluck('onesignal_subscription_id')
+        $query = $masjid->mobileAppUsers()->whereNotNull('onesignal_subscription_id');
+
+        if ($broadcast?->audienceType() === BroadcastAudience::SERVICE) {
+            $this->narrowToServiceInterest($query, $masjid, (int) $broadcast->audience_service_id);
+        }
+
+        return $query->pluck('onesignal_subscription_id')
             ->filter()
             ->values()
             ->toArray();
+    }
+
+    /**
+     * Narrow a device query to handsets belonging to members who asked to hear
+     * about one service.
+     *
+     * Resolved HERE, at send time, rather than from a list snapshotted when the
+     * broadcast was composed — an interest is an opt-in, and a member who
+     * withdrew theirs in the meantime must not be reached. Same principle as
+     * `smsRecipients()` filtering on the consent record instead of on
+     * `phone IS NOT NULL`.
+     *
+     * Four conditions, each of which is a way to be wrong:
+     *
+     *  - the device must be CLAIMED (`contact_id` not null). A guest handset has
+     *    no person behind it and no interests; it hears `everyone` and nothing
+     *    narrower.
+     *  - the interest row is matched with an explicit `masjid_id`. It is written
+     *    as a raw subquery, which does NOT carry the BelongsToMasjid global
+     *    scope, so the tenant filter has to be stated rather than assumed.
+     *  - the contact must not be soft-deleted. `contact_id` is `nullOnDelete`,
+     *    but a SOFT delete leaves the column pointing at a hidden row, so the
+     *    FK alone would keep pushing to a deleted person's phone.
+     *  - the contact must not be revoked. Staff revoking somebody revoked the
+     *    person, not one channel — the same rule `memberAccessIsActive()` and
+     *    `MemberSignupService` enforce on the way in.
+     */
+    private function narrowToServiceInterest($query, Masjid $masjid, int $serviceId): void
+    {
+        $query
+            ->whereNotNull('contact_id')
+            ->whereIn('contact_id', function ($sub) use ($masjid, $serviceId) {
+                $sub->select('contact_id')
+                    ->from('contact_service_interests')
+                    ->where('masjid_id', $masjid->id)
+                    ->where('service_id', $serviceId);
+            })
+            ->whereExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('contacts')
+                    ->whereColumn('contacts.id', 'mobile_app_users.contact_id')
+                    ->whereNull('contacts.deleted_at')
+                    ->whereNull('contacts.login_revoked_at');
+            });
     }
 }

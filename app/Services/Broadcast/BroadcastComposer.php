@@ -81,6 +81,13 @@ class BroadcastComposer
                 'audience_contact_ids' => $audience === BroadcastAudience::CONTACTS
                     ? array_values(array_unique(array_map('intval', (array) ($attributes['contact_ids'] ?? []))))
                     : null,
+                // The SERVICE is snapshotted; its people deliberately are not.
+                // An interest is an opt-in, so the recipients are resolved at
+                // send time and a withdrawal made between composing and
+                // dispatching is honoured (BroadcastAudienceResolver).
+                'audience_service_id' => $audience === BroadcastAudience::SERVICE
+                    ? (int) ($attributes['service_id'] ?? 0) ?: null
+                    : null,
                 'scheduled_at' => $scheduledAt,
                 'status' => $this->isFuture($scheduledAt) ? Broadcast::STATUS_SCHEDULED : Broadcast::STATUS_PENDING,
             ]);

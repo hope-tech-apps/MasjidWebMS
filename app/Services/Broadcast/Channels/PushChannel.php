@@ -69,7 +69,7 @@ class PushChannel implements BroadcastChannelDriver
                 ->toMediaCollection('notifications');
         }
 
-        $subscriptionIds = $this->audience->pushSubscriptionIds($masjid);
+        $subscriptionIds = $this->audience->pushSubscriptionIds($masjid, $broadcast);
 
         if ($subscriptionIds === []) {
             return ChannelResult::skipped(

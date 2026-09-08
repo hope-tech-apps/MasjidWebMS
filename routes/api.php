@@ -10,6 +10,7 @@ use App\Http\Controllers\Mobile\HadithsController;
 use App\Http\Controllers\Mobile\MasjidsController;
 use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\Member\MemberAuthController;
+use App\Http\Controllers\Mobile\Member\MemberDeviceController;
 use App\Http\Controllers\Mobile\Member\MemberInterestsController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\NotificationsController;
@@ -161,6 +162,13 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             ->group(function () {
                 Route::get('/interests', [MemberInterestsController::class, 'index']);
                 Route::put('/interests', [MemberInterestsController::class, 'update']);
+
+                // Claiming the handset. Without this a service audience
+                // resolves to no devices at all, however many members opted in.
+                // The app calls store() on sign-in and destroy() on sign-out —
+                // see MemberDeviceController for why the second half matters.
+                Route::post('/me/device', [MemberDeviceController::class, 'store']);
+                Route::delete('/me/device', [MemberDeviceController::class, 'destroy']);
             });
 
     });
