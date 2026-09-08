@@ -132,6 +132,11 @@ class GroupMembership extends Model
         'group_id',
         'contact_id',
         'role',
+        // Fillable, unlike the four provenance/consent columns above it: a grade
+        // is ordinary roster data the office types, not a record of who
+        // authorised a disclosure about a child. Staff-writable only — the
+        // teacher realm exposes no roster mutation at all.
+        'grade_label',
         'guardian_of_contact_id',
         'joined_at',
         'consent_granted_at',

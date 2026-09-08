@@ -104,9 +104,14 @@ class TeacherRealmTest extends TestCase
     #[Test]
     public function the_teacher_realm_exposes_exactly_these_writes(): void
     {
-        // Counting the write verbs, family-realm style: adding a fourteenth — a
+        // Counting the write verbs, family-realm style: adding a fifteenth — a
         // roster mutation, a donation, a thread lifecycle verb — has to be a
         // DELIBERATE edit here, not a silent widening of what a teacher can do.
+        //
+        // The fourteenth, added deliberately, is the class register. Note what it
+        // is NOT: there is still no roster mutation in this realm. A teacher marks
+        // who was in the room; only the office may say who belongs in it, which is
+        // also why `grade_label` is written from the admin console and not here.
         $writes = [];
 
         foreach (Route::getRoutes()->getRoutes() as $route) {
@@ -127,6 +132,7 @@ class TeacherRealmTest extends TestCase
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/letters',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards/{award_id}',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',

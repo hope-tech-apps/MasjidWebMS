@@ -8,6 +8,7 @@ use App\Http\Controllers\AdminDashboard\ContactAvatarController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
+use App\Http\Controllers\Teacher\AttendanceController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\StudentAvatarController;
 use Illuminate\Support\Facades\Route;
@@ -92,6 +93,15 @@ Route::prefix('teacher')
                         Route::delete('/awards/{award_id}', [BehaviorAwardsController::class, 'destroy']);
                         Route::get('/members/{membership_id}/awards', [BehaviorAwardsController::class, 'forMember']);
                         Route::get('/members/{membership_id}/awards/summary', [BehaviorAwardsController::class, 'summary']);
+
+                        // The class register. The teacher realm's OWN controller,
+                        // not a reused admin one: taking a register is a teacher
+                        // verb, and the admin console has no equivalent screen.
+                        // One PUT writes the whole class for one day — see
+                        // SaveAttendanceRequest for why it is not twelve calls.
+                        Route::get('/attendance', [AttendanceController::class, 'index']);
+                        Route::put('/attendance', [AttendanceController::class, 'save']);
+                        Route::get('/members/{membership_id}/attendance', [AttendanceController::class, 'forMember']);
 
                         // Ḥifẓ (reused).
                         Route::get('/hifz', [HifzEntriesController::class, 'index']);

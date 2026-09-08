@@ -48,7 +48,12 @@ abstract class TeacherController extends Controller
      * A student, NAMES ONLY — the serialization boundary. Never widen this to
      * include a guardian, an email, a phone, notes or a login field.
      *
-     * @return array{membership_id:int, contact:array{id:int,first_name:mixed,last_name:mixed,avatar:mixed}|null}
+     * `grade_label` is the one non-name field here, and it belongs: a class that
+     * combines Pre-K with KG is still teaching two grades, and the teacher taking
+     * the register has to see which child is which. It is roster data the office
+     * typed, not a disclosure about a family — no contact detail travels with it.
+     *
+     * @return array{membership_id:int, grade_label:?string, contact:array{id:int,first_name:mixed,last_name:mixed,avatar:mixed}|null}
      */
     protected function student(GroupMembership $membership): array
     {
@@ -56,6 +61,7 @@ abstract class TeacherController extends Controller
 
         return [
             'membership_id' => (int) $membership->id,
+            'grade_label' => $membership->grade_label,
             'contact' => $contact ? [
                 'id' => (int) $contact->id,
                 'first_name' => $contact->first_name,
