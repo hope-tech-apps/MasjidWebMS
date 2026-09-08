@@ -365,14 +365,63 @@ class FamilyPortalTest extends TestCase
             ->assertStatus(422);
     }
 
+    /**
+     * A DELIBERATE REVERSAL, recorded rather than quietly deleted.
+     *
+     * This test used to assert 405 — no route at all — on the reasoning that "a
+     * parent opening a thread about their own child would route around the
+     * teacher who decides what is discussed and where." The school's owner
+     * decided otherwise on 2026-09-08, and the reason the original position lost
+     * is worth writing down: a parent who cannot open a conversation does not
+     * stay silent, they phone the office or text a personal number, and the
+     * exchange leaves the system that exists to hold it.
+     *
+     * What replaced it is NOT the staff verb. Three narrowings survive from the
+     * original concern, and each is asserted below:
+     *   - a parent may never reach the whole class;
+     *   - a parent may never open a thread about someone else's child;
+     *   - and it is throttled, where replying is not.
+     */
     #[Test]
-    public function a_parent_cannot_start_a_conversation(): void
+    public function a_parent_may_start_a_conversation_only_about_their_own_child(): void
     {
-        // Deliberately no route: a parent opening a thread about their own child
-        // would route around the teacher who decides what is discussed and where.
         $this->as($this->parentA)
-            ->postJson($this->groupUrl('/threads'), ['subject' => 'A new topic', 'scope' => 'participant'])
-            ->assertStatus(405);
+            ->postJson($this->groupUrl('/threads'), [
+                'subject' => 'A new topic',
+                'about_membership_id' => $this->childAMembership->id,
+                'body' => 'Something I wanted to raise.',
+            ])
+            ->assertCreated();
+
+        // Another family's child is refused outright.
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl('/threads'), [
+                'subject' => 'About someone else',
+                'about_membership_id' => $this->childBMembership->id,
+                'body' => 'Not my child.',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(1, GroupThread::withoutGlobalScopes()->count());
+    }
+
+    /** The audience is decided server-side; a scope in the payload is ignored. */
+    #[Test]
+    public function a_parent_cannot_reach_the_whole_class_even_by_asking(): void
+    {
+        $this->as($this->parentA)
+            ->postJson($this->groupUrl('/threads'), [
+                'subject' => 'Everyone should know',
+                'scope' => GroupThread::SCOPE_GROUP,
+                'about_membership_id' => $this->childAMembership->id,
+                'body' => 'Trying to reach every family.',
+            ])
+            ->assertCreated();
+
+        $this->assertSame(
+            GroupThread::SCOPE_PARTICIPANT,
+            GroupThread::withoutGlobalScopes()->latest('id')->first()->scope
+        );
     }
 
     #[Test]
