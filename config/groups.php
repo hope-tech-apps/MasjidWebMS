@@ -266,4 +266,89 @@ return [
 
     ],
 
+    'lessons' => [
+
+        /*
+         * Ceiling on a lesson plan's body, at the request boundary. Generous
+         * because a plan is genuinely prose — a week of objectives, materials
+         * and a closing activity — unlike the one-sentence notes elsewhere in
+         * this file.
+         *
+         * There is NO retention setting here, and its absence is a decision: a
+         * lesson plan is the teacher's note about a ROOM, carrying no record
+         * about any child, so `groups:purge-feed` deliberately does not sweep it.
+         */
+        'max_body_length' => (int) env('GROUP_LESSON_MAX_BODY_LENGTH', 5000),
+
+    ],
+
+    'gradebook' => [
+
+        /*
+         * Ceiling on the note attached to one child's mark. A sentence of
+         * context ("did this with help"), not a report card.
+         */
+        'max_note_length' => (int) env('GROUP_GRADEBOOK_MAX_NOTE_LENGTH', 1000),
+
+        /*
+         * Bound on an assignment's maximum. A FAT-FINGER GUARD, not a policy
+         * about how work should be weighted: nothing here says a piece of work
+         * ought to be out of 10 or out of 100, only that a stray keystroke
+         * cannot make it out of 100000.
+         */
+        'max_points_possible' => (int) env('GROUP_GRADEBOOK_MAX_POINTS', 1000),
+
+        /*
+         * No retention setting, deliberately: a mark is an academic record
+         * bounded by the roster, the same call `hifz` makes above. It dies when
+         * the enrolment does, not on a clock.
+         */
+
+    ],
+
+    'resources' => [
+
+        /*
+         * The PRIVATE disk. These files are worksheets and handouts for one
+         * class; nothing here is ever served from a public URL, and the
+         * download route streams bytes after re-resolving the ownership chain.
+         *
+         * NOTE, because it is a real limitation rather than an oversight: the
+         * private disk is NOT covered by any backup target
+         * (.claude/rules/backups.md — MediaTarget derives from the PUBLIC
+         * media-library disk). Files here are one disk failure from gone.
+         */
+        'disk' => env('GROUP_RESOURCE_DISK', 'local'),
+        'directory' => env('GROUP_RESOURCE_DIRECTORY', 'group-resources'),
+
+        /*
+         * Its OWN allowlist, deliberately not `groups.media.mime_types`. That
+         * one is the children's photo feed, whose config states documents are
+         * absent on purpose ("a feed post is a photo of an activity, not a
+         * filing cabinet"), and it is driven by a single shared env var —
+         * widening it to carry PDFs would widen the photo feed too.
+         *
+         * The same five types the form-attachment allowlist uses. SVG is on
+         * neither list: it is script-bearing markup, not an image.
+         */
+        'mime_types' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+            'GROUP_RESOURCE_MIME_TYPES',
+            'application/pdf,'
+            . 'application/msword,'
+            . 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,'
+            . 'image/jpeg,'
+            . 'image/png'
+        ))))),
+
+        'max_size_kb' => (int) env('GROUP_RESOURCE_MAX_SIZE_KB', 8192),
+
+        /*
+         * A ceiling per class. The feed is bounded by how many posts a teacher
+         * bothers to write; a resource library is an unbounded append surface
+         * with no purge sweep behind it, so it needs a stated end.
+         */
+        'max_per_class' => (int) env('GROUP_RESOURCE_MAX_PER_CLASS', 200),
+
+    ],
+
 ];

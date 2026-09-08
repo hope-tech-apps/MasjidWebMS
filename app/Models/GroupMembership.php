@@ -418,6 +418,22 @@ class GroupMembership extends Model
         return $this->hasMany(HifzEntry::class, 'group_membership_id');
     }
 
+    /**
+     * On a PARTICIPANT row, this student's marks (T-gradebook).
+     *
+     * Never serialized with the membership, for the same reason as the two
+     * relations above: a roster listing is read by people entitled to none of
+     * these, and who may see one is decided per request by GroupAudience.
+     *
+     * Reading these WITHOUT joining `assignment` is a defect: class_assignments
+     * soft-deletes, so this relation can name rows whose parent no longer
+     * resolves. Every consumer either joins it or uses whereHas('assignment').
+     */
+    public function assignmentScores(): HasMany
+    {
+        return $this->hasMany(AssignmentScore::class, 'group_membership_id');
+    }
+
     public function isGuardian(): bool
     {
         return $this->role === self::ROLE_GUARDIAN;

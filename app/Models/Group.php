@@ -112,6 +112,13 @@ class Group extends Model
             }
 
             $group->posts()->withTrashed()->get()->each->purge();
+
+            // Resource files go the same way, and MUST go through the model: a
+            // database cascade off `groups` fires no model events, so without
+            // this line every uploaded worksheet stays on disk forever,
+            // unreferenced and unpurgeable — the exact failure the paragraph
+            // above describes for post images.
+            $group->resources()->get()->each->delete();
         });
     }
 
@@ -128,6 +135,28 @@ class Group extends Model
     public function posts(): HasMany
     {
         return $this->hasMany(GroupPost::class);
+    }
+
+    /**
+     * Files kept for this class. Private bytes: see GroupResource, and note that
+     * booted() above deletes these THROUGH THE MODEL so the byte-removal hook
+     * fires.
+     */
+    public function resources(): HasMany
+    {
+        return $this->hasMany(GroupResource::class);
+    }
+
+    /** Work set for this class — the gradebook's parent rows. */
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(ClassAssignment::class);
+    }
+
+    /** What this class is planned to cover, one row per day. */
+    public function lessonPlans(): HasMany
+    {
+        return $this->hasMany(LessonPlan::class);
     }
 
     /**

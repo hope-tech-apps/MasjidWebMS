@@ -8,6 +8,7 @@ use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
 use App\Http\Controllers\Family\HifzEntriesController;
 use App\Http\Controllers\Family\MeController;
+use App\Http\Controllers\Family\ResourcesController;
 use App\Http\Controllers\Family\StudentSessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -157,6 +158,18 @@ Route::prefix('family')
                     Route::get('/', 'index');
                     Route::get('/{post_id}', 'show');
                     Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment');
+                });
+
+            // Handouts the class has chosen to share. BOTH are GETs — nothing
+            // here widens what a parent may write, so the realm's counted-
+            // exceptions docblock above is untouched. Visibility is applied as a
+            // SCOPE, so a staff-only file is a 404 rather than a 403 that would
+            // confirm it exists.
+            Route::prefix('groups/{group_id}/resources')
+                ->controller(ResourcesController::class)
+                ->group(function () {
+                    Route::get('/', 'index');
+                    Route::get('/{resource_id}/download', 'download');
                 });
 
             // Conversations this parent is a party to. Group-wide threads are

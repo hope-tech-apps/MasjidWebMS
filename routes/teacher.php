@@ -9,7 +9,10 @@ use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\Teacher\AttendanceController;
+use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
+use App\Http\Controllers\Teacher\LessonPlanController;
+use App\Http\Controllers\Teacher\ResourcesController;
 use App\Http\Controllers\Teacher\StudentAvatarController;
 use Illuminate\Support\Facades\Route;
 
@@ -106,6 +109,33 @@ Route::prefix('teacher')
                         Route::get('/attendance', [AttendanceController::class, 'index']);
                         Route::put('/attendance', [AttendanceController::class, 'save']);
                         Route::get('/members/{membership_id}/attendance', [AttendanceController::class, 'forMember']);
+
+                        // Lesson plans. Addressed by (class, date) — there is no
+                        // {plan_id} anywhere, which is what the per-day unique
+                        // index buys: saving is an upsert.
+                        Route::get('/lesson-plans', [LessonPlanController::class, 'index']);
+                        Route::put('/lesson-plans', [LessonPlanController::class, 'save']);
+                        Route::delete('/lesson-plans', [LessonPlanController::class, 'destroy']);
+
+                        // The gradebook. The first CLASS-LEVEL create and delete
+                        // this realm allows — still not roster mutation: a
+                        // teacher says what the class was asked to do, never who
+                        // belongs in the room.
+                        Route::get('/assignments', [GradebookController::class, 'index']);
+                        Route::post('/assignments', [GradebookController::class, 'store']);
+                        Route::get('/assignments/{assignment_id}', [GradebookController::class, 'show']);
+                        Route::put('/assignments/{assignment_id}', [GradebookController::class, 'update']);
+                        Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
+                        Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
+                        Route::get('/members/{membership_id}/grades', [GradebookController::class, 'forMember']);
+
+                        // Class resources — the realm's first file upload, and
+                        // its first byte-streaming download.
+                        Route::get('/resources', [ResourcesController::class, 'index']);
+                        Route::post('/resources', [ResourcesController::class, 'store']);
+                        Route::put('/resources/{resource_id}', [ResourcesController::class, 'update']);
+                        Route::delete('/resources/{resource_id}', [ResourcesController::class, 'destroy']);
+                        Route::get('/resources/{resource_id}/download', [ResourcesController::class, 'download']);
 
                         // Ḥifẓ (reused).
                         Route::get('/hifz', [HifzEntriesController::class, 'index']);

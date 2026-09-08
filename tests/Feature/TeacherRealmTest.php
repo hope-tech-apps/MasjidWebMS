@@ -104,14 +104,22 @@ class TeacherRealmTest extends TestCase
     #[Test]
     public function the_teacher_realm_exposes_exactly_these_writes(): void
     {
-        // Counting the write verbs, family-realm style: adding a fifteenth — a
-        // roster mutation, a donation, a thread lifecycle verb — has to be a
+        // Counting the write verbs, family-realm style: adding a twenty-fourth —
+        // a roster mutation, a donation, a thread lifecycle verb — has to be a
         // DELIBERATE edit here, not a silent widening of what a teacher can do.
         //
-        // The fourteenth, added deliberately, is the class register. Note what it
-        // is NOT: there is still no roster mutation in this realm. A teacher marks
-        // who was in the room; only the office may say who belongs in it, which is
-        // also why `grade_label` is written from the admin console and not here.
+        // STILL NO ROSTER MUTATION. A teacher marks who was in the room, plans
+        // what the room will cover, says what work was set and how each child
+        // did, and keeps the class's files. Only the office may say who BELONGS
+        // in the room — which is also why `grade_label` is written from the admin
+        // console and not here.
+        //
+        // The gradebook did cross one line worth naming: assignments are the
+        // first CLASS-LEVEL object a teacher may create and delete, where every
+        // earlier write was either a record about a child or a message. That is
+        // deliberate — work is set by the person teaching — but it is a wider
+        // authority than this realm had before, so it is written down rather
+        // than left to be inferred from the list.
         $writes = [];
 
         foreach (Route::getRoutes()->getRoutes() as $route) {
@@ -133,6 +141,15 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards/{award_id}',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/lesson-plans',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/assignments/{assignment_id}/scores',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources',
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/resources/{resource_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',
