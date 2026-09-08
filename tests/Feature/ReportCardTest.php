@@ -14,7 +14,7 @@ use App\Models\ReportCardMark;
 use App\Models\User;
 use App\Support\ReportCardTemplate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Auth;
+use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -52,30 +52,31 @@ class ReportCardTest extends TestCase
             'foreign_key_constraints' => true,
         ]]);
 
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
         $this->school = $this->makeSchool();
+
         $this->teacher = User::factory()->create([
-            'type' => 'Teacher',
-            'phone' => '+1' . random_int(1000000000, 9999999999),
+            'type' => 'Teacher', 'phone' => '+1' . random_int(1000000000, 9999999999),
         ]);
-        MasjidUser::create(['masjid_id' => $this->school->id, 'user_id' => $this->teacher->id]);
-
-        $this->class = Group::create([
-            'masjid_id' => $this->school->id,
-            'name' => 'Combined Class A',
-            'type' => 'class',
+        MasjidUser::create([
+            'masjid_id' => $this->school->id, 'user_id' => $this->teacher->id,
+            'role' => 'teacher', 'is_default' => true,
         ]);
 
-        GroupStaff::create([
-            'masjid_id' => $this->school->id,
-            'group_id' => $this->class->id,
-            'user_id' => $this->teacher->id,
-            'role' => 'lead',
+        $this->class = Group::factory()->create([
+            'masjid_id' => $this->school->id, 'kind' => Group::KIND_CLASS,
+            'name' => 'Combined Class A', 'slug' => 'combined-class-a',
+        ]);
+
+        $this->class->staff()->attach($this->teacher->id, [
+            'masjid_id' => $this->class->masjid_id,
+            'role' => GroupStaff::ROLE_TEACHER, 'assigned_at' => now(),
         ]);
 
         $this->student = $this->enrol('Aalaa', '1st');
 
-        Auth::login($this->teacher);
-        $this->actingAs($this->teacher, 'sanctum');
+        Sanctum::actingAs($this->teacher, ['staff']);
     }
 
     // ---------------------------------------------------------------- helpers
@@ -87,7 +88,8 @@ class ReportCardTest extends TestCase
             'email' => 'school-' . uniqid() . '@test.local',
             'phone' => '+1' . random_int(1000000000, 9999999999),
             'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
-            'latitude' => 0.0, 'longitude' => 0.0, 'crm_enabled' => true,
+            'latitude' => 0.0, 'longitude' => 0.0,
+            'crm_enabled' => true, 'org_type' => 'school',
         ]);
     }
 
@@ -103,7 +105,7 @@ class ReportCardTest extends TestCase
             'masjid_id' => $this->school->id,
             'group_id' => $this->class->id,
             'contact_id' => $child->id,
-            'role' => 'participant',
+            'role' => GroupMembership::ROLE_MEMBER,
             'grade_label' => $grade,
         ]);
     }
