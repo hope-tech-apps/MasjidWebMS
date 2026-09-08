@@ -110,18 +110,31 @@ class ReportCardTest extends TestCase
         ]);
     }
 
+    /** One child's card. Defaults to the student every test uses. */
     private function url(?GroupMembership $m = null): string
     {
-        $base = "/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}";
+        $m ??= $this->student;
 
-        return $m === null
-            ? $base . '/report-cards'
-            : $base . "/members/{$m->id}/report-card";
+        return $this->base() . "/members/{$m->id}/report-card";
     }
+
+    /** The whole class for a period. */
+    private function classUrl(): string
+    {
+        return $this->base() . '/report-cards';
+    }
+
+    private function base(): string
+    {
+        return "/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}";
+    }
+
+    /** Every route here is addressed for the same quarter. */
+    private const PERIOD = '?term=2&school_year=2026-2027';
 
     private function open(?GroupMembership $m = null): array
     {
-        return $this->getJson($this->url($m ?? $this->student) . '?term=2&school_year=2026-2027')
+        return $this->getJson($this->url($m) . self::PERIOD)
             ->assertOk()->json('data');
     }
 
@@ -182,7 +195,7 @@ class ReportCardTest extends TestCase
         $criteria = collect($first['subjects'])->flatMap(fn ($s) => $s['criteria'])->count();
 
         $id = collect($first['subjects'])->first()['criteria'][0]['id'];
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => 4]],
         ])->assertOk();
 
@@ -201,11 +214,11 @@ class ReportCardTest extends TestCase
         $card = $this->open();
         $id = collect($card['subjects'])->first()['criteria'][0]['id'];
 
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => 3]],
         ])->assertOk();
 
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => null]],
         ])->assertOk();
 
@@ -220,7 +233,7 @@ class ReportCardTest extends TestCase
         $id = collect($this->open()['subjects'])->first()['criteria'][0]['id'];
 
         foreach ([0, 5, 2.5] as $notALevel) {
-            $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+            $this->putJson($this->url() . self::PERIOD, [
                 'marks' => [['id' => $id, 'level' => $notALevel]],
             ])->assertUnprocessable();
         }
@@ -239,7 +252,7 @@ class ReportCardTest extends TestCase
 
         $theirMarkId = collect($theirs['subjects'])->first()['criteria'][0]['id'];
 
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $theirMarkId, 'level' => 1]],
         ])->assertOk();
 
@@ -282,7 +295,7 @@ class ReportCardTest extends TestCase
         }
 
         $this->open();
-        $card = $this->postJson($this->url() . '/publish?term=2&school_year=2026-2027', [
+        $card = $this->postJson($this->url() . '/publish' . self::PERIOD, [
             'from' => '2026-11-01', 'to' => '2026-11-30',
         ])->assertOk()->json('data');
 
@@ -309,17 +322,17 @@ class ReportCardTest extends TestCase
         $card = $this->open();
         $id = collect($card['subjects'])->first()['criteria'][0]['id'];
 
-        $this->postJson($this->url() . '/publish?term=2&school_year=2026-2027')->assertOk();
+        $this->postJson($this->url() . '/publish' . self::PERIOD)->assertOk();
 
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => 1]],
         ])->assertUnprocessable();
 
         $this->assertNull(ReportCardMark::find($id)->level);
 
-        $this->deleteJson($this->url() . '/publish?term=2&school_year=2026-2027')->assertOk();
+        $this->deleteJson($this->url() . '/publish' . self::PERIOD)->assertOk();
 
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => 1]],
         ])->assertOk();
 
@@ -341,10 +354,10 @@ class ReportCardTest extends TestCase
         ]);
 
         $this->open();
-        $this->postJson($this->url() . '/publish?term=2&school_year=2026-2027')->assertOk();
+        $this->postJson($this->url() . '/publish' . self::PERIOD)->assertOk();
         $this->assertSame(1, $this->open()['attendance']['present']);
 
-        $card = $this->deleteJson($this->url() . '/publish?term=2&school_year=2026-2027')
+        $card = $this->deleteJson($this->url() . '/publish' . self::PERIOD)
             ->assertOk()->json('data');
 
         $this->assertFalse($card['published']);
@@ -358,7 +371,7 @@ class ReportCardTest extends TestCase
     {
         $this->enrol('Sama', 'Pre-K');
 
-        $list = $this->getJson($this->url() . '?term=2&school_year=2026-2027')
+        $list = $this->getJson($this->classUrl() . self::PERIOD)
             ->assertOk()->json('data');
 
         $this->assertCount(2, $list['students']);
@@ -372,11 +385,11 @@ class ReportCardTest extends TestCase
         // Once one is started, the list says how far along it is.
         $card = $this->open();
         $id = collect($card['subjects'])->first()['criteria'][0]['id'];
-        $this->putJson($this->url() . '?term=2&school_year=2026-2027', [
+        $this->putJson($this->url() . self::PERIOD, [
             'marks' => [['id' => $id, 'level' => 3]],
         ])->assertOk();
 
-        $again = collect($this->getJson($this->url() . '?term=2&school_year=2026-2027')->json('data.students'))
+        $again = collect($this->getJson($this->classUrl() . self::PERIOD)->json('data.students'))
             ->firstWhere('report_card_id', $card['id']);
 
         $this->assertTrue($again['started']);
@@ -389,7 +402,7 @@ class ReportCardTest extends TestCase
     {
         $reportCard = $this->open();
 
-        $progress = $this->getJson($this->url() . '?term=2&school_year=2026-2027&type=progress')
+        $progress = $this->getJson($this->url() . self::PERIOD . '&type=progress')
             ->assertOk()->json('data');
 
         $this->assertNotSame($reportCard['id'], $progress['id']);
@@ -401,7 +414,7 @@ class ReportCardTest extends TestCase
     #[Test]
     public function the_key_travels_with_the_card(): void
     {
-        $key = $this->getJson($this->url($this->student) . '?term=2&school_year=2026-2027')
+        $key = $this->getJson($this->url() . self::PERIOD)
             ->assertOk()->json('performance_levels');
 
         $this->assertCount(4, $key);
