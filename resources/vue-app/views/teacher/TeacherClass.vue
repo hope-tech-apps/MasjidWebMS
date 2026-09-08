@@ -641,20 +641,33 @@
                                     </span>
                                 </div>
                             </div>
-                            <input type="number" min="0" :max="openAssignment.points_possible" step="0.5"
-                                   class="form-control form-control-sm" style="width:5.5rem"
-                                   :disabled="marks_g[s.membership_id]?.status !== 'scored'"
-                                   v-model.number="marks_g[s.membership_id].points_earned"
-                                   placeholder="—">
-                            <div class="btn-group btn-group-sm">
-                                <button v-for="o in SCORE_OPTIONS" :key="o.value" type="button"
-                                        class="btn" :class="marks_g[s.membership_id]?.status === o.value ? o.on : o.off"
-                                        :title="o.label" @click="setScoreStatus(s.membership_id, o.value)">
-                                    {{ o.short }}
-                                </button>
+                            <!-- Typing a mark IS "scored". No third button, and the
+                                 box is never disabled — the old design made you
+                                 press S before you could type the thing S meant. -->
+                            <div class="d-flex align-items-center gap-1">
+                                <input type="number" min="0" :max="openAssignment.points_possible" step="0.5"
+                                       class="form-control form-control-sm text-end" style="width:4.75rem"
+                                       :disabled="isExempt(s.membership_id)"
+                                       v-model.number="marks_g[s.membership_id].points_earned"
+                                       @input="onMarkTyped(s.membership_id)"
+                                       placeholder="—">
+                                <span class="text-muted small">/ {{ openAssignment.points_possible }}</span>
                             </div>
+                            <button type="button" class="btn btn-sm"
+                                    :class="marks_g[s.membership_id]?.status === 'missing' ? 'btn-danger' : 'btn-outline-danger'"
+                                    @click="toggleMark(s.membership_id, 'missing')">Missing</button>
+                            <button type="button" class="btn btn-sm"
+                                    :class="marks_g[s.membership_id]?.status === 'excused' ? 'btn-secondary' : 'btn-outline-secondary'"
+                                    @click="toggleMark(s.membership_id, 'excused')">Excused</button>
                         </div>
                     </div>
+
+                    <p class="text-muted small mb-2">
+                        Type a mark to score a child.
+                        <span class="text-danger-emphasis">Missing</span> counts as zero;
+                        <span class="fw-semibold">Excused</span> does not count at all.
+                        A child you leave blank is simply not marked yet.
+                    </p>
 
                     <div class="d-flex align-items-center gap-2">
                         <button class="btn btn-success btn-sm" :disabled="savingScores" @click="saveScores">
@@ -1010,12 +1023,6 @@ const deletePlan = async () => {
 };
 
 // ---------- gradebook ----------
-const SCORE_OPTIONS = [
-    { value: 'scored', short: 'S', label: 'Scored', off: 'btn-outline-success', on: 'btn-success' },
-    { value: 'missing', short: 'M', label: 'Missing — counts as zero', off: 'btn-outline-danger', on: 'btn-danger' },
-    { value: 'excused', short: 'E', label: 'Excused — does not count at all', off: 'btn-outline-secondary', on: 'btn-secondary' },
-];
-
 const assignments = ref<any[]>([]);
 const assignmentForm = ref({ title: '', points_possible: 10, assigned_on: todayIso });
 const creatingAssignment = ref(false);
@@ -1069,12 +1076,36 @@ const openScores = async (a: any) => {
     }
 };
 
-const setScoreStatus = (membershipId: number, status: string) => {
+/** Missing and Excused both mean "there is no mark", so the box is closed. */
+const isExempt = (membershipId: number): boolean => {
+    const s = marks_g.value[membershipId]?.status;
+    return s === 'missing' || s === 'excused';
+};
+
+/**
+ * Typing a mark IS scoring — there is no separate button for it.
+ *
+ * Emptying the box returns the child to UNMARKED rather than to a zero, which
+ * is the same distinction the register makes between blank and absent.
+ */
+const onMarkTyped = (membershipId: number) => {
+    const row = marks_g.value[membershipId];
+    if (!row) return;
+    const v = row.points_earned;
+    row.status = (v === null || (v as any) === '' || Number.isNaN(v as any)) ? null : 'scored';
+};
+
+/**
+ * Missing / Excused, and tapping the lit one again clears the cell.
+ *
+ * A mis-tap has to be one tap to undo. Without the toggle the only way back to
+ * "not marked yet" would be to reload the page.
+ */
+const toggleMark = (membershipId: number, status: string) => {
     const row = marks_g.value[membershipId] ?? { status: null, points_earned: null };
-    row.status = status;
-    // The API refuses a mark on anything but `scored`, so clear it here rather
-    // than let the request fail.
-    if (status !== 'scored') row.points_earned = null;
+    row.status = row.status === status ? null : status;
+    // The API refuses a mark on anything but `scored`.
+    if (row.status !== 'scored') row.points_earned = null;
     marks_g.value[membershipId] = row;
 };
 
