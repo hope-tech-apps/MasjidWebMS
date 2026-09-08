@@ -23,7 +23,11 @@ class JumaaSetting extends Model
 
     public function getAthansAttribute($value)
     {
-        return json_decode($value);
+        // Never emit null. The app parses this as `(json['athans'] as List).cast
+        // <String>()`, so a null aborts the entire prayers/settings decode — the
+        // Jummah section and every iqama offset silently fail to load. An unset
+        // value is an empty list, not the absence of the field.
+        return json_decode($value) ?? [];
     }
 
     public function setAthansAttribute($value)

@@ -12,6 +12,7 @@ use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
+use App\Services\Stripe\MealOrderPaymentService;
 use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
@@ -74,6 +75,7 @@ class StripeWebhookController extends Controller
         private StripeConnectService $connect,
         private DonorContactService $donorContacts,
         private RegistrationPaymentService $registrationPayments,
+        private MealOrderPaymentService $mealOrderPayments,
     ) {
     }
 
@@ -184,18 +186,25 @@ class StripeWebhookController extends Controller
         $object = $event['data']['object'] ?? [];
         $account = $event['account'] ?? null;
 
-        // The ONE branch that decides whose event this is. Registration objects
-        // carry metadata.registration_uuid; everything else keeps today's
-        // donation behaviour exactly.
-        $isRegistration = RegistrationPaymentService::isRegistrationEvent($object);
+        // The branch that decides whose event this is, by DISTINCT metadata key.
+        // A meal order carries metadata.order_uuid; a registration carries
+        // metadata.registration_uuid; everything else keeps today's donation
+        // behaviour exactly. The keys never collide, so an order event can never
+        // book a donation or a registration, and vice versa.
+        $isOrder = MealOrderPaymentService::isOrderEvent($object);
+        $isRegistration = ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
 
         match ($event['type']) {
-            'checkout.session.completed' => $isRegistration
-                ? $this->registrationPayments->handleCheckoutCompleted($object, $account)
-                : $this->handleCheckoutCompleted($object),
-            'payment_intent.succeeded' => $isRegistration
-                ? $this->registrationPayments->handlePaymentIntentSucceeded($object, $account)
-                : $this->handlePaymentIntentSucceeded($object, $account),
+            'checkout.session.completed' => match (true) {
+                $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
+                $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
+                default => $this->handleCheckoutCompleted($object),
+            },
+            'payment_intent.succeeded' => match (true) {
+                $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
+                $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
+                default => $this->handlePaymentIntentSucceeded($object, $account),
+            },
             // New event type for this slice: the seat-release trigger. A
             // donation has no expiry semantics, so a non-registration expiry is
             // acked and ignored exactly as it was before.

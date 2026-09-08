@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Groups\GroupPostFormRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Http\Requests\Admin\Groups\StoreGroupPostRequest;
 use App\Http\Requests\Admin\Groups\UpdateGroupPostRequest;
 use App\Models\Group;
@@ -132,6 +134,18 @@ class GroupPostsController extends Controller
 
                 return $post;
             });
+
+            // Off-request nudge to the class's feed-consented guardians. Dispatched
+            // AFTER the transaction (afterCommit) so a queued worker never sees the
+            // post before it is committed; fail-soft so it can never break this write.
+            SendGroupNotificationJob::dispatch(
+                (int) $group->masjid_id,
+                (int) $group->id,
+                GroupNotificationEvent::CLASS_STORY,
+                aboutContactId: null,
+                authorUserId: $post->author_user_id,
+                authorContactId: null,
+            )->afterCommit();
 
             return response()->json([
                 'status' => 'success',

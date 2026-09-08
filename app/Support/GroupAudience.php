@@ -6,6 +6,7 @@ use App\Models\BehaviorAward;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupStaff;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
 use App\Models\User;
@@ -114,6 +115,58 @@ class GroupAudience
 
     public function __construct(private TenantContext $tenant)
     {
+    }
+
+    /**
+     * Does this principal LEAD `$group` as a staff login (`group_staff`)?
+     *
+     * THE teacher authorization primitive — the login-side counterpart of the
+     * Contact `leader` membership. True ONLY for a `User` named in this group's
+     * `group_staff`; never for a Contact, and NEVER through the email→Contact
+     * bridge in identitiesFor(). That independence is deliberate: a teacher holds
+     * no self-asserted Contact membership to confirm, so routing them through the
+     * Contact path would either grant nothing (nothing to confirm) or leak
+     * standing to a Contact that merely shares their email.
+     *
+     * Reads through the tenant-scoped `GroupStaff` model, so a staff row in
+     * another masjid cannot grant standing here even if a group id collided.
+     */
+    public function isLeaderOf(?Authenticatable $principal, Group $group): bool
+    {
+        if (! $principal instanceof User) {
+            return false;
+        }
+
+        return GroupStaff::query()
+            ->where('group_id', $group->getKey())
+            ->where('user_id', $principal->getKey())
+            ->exists();
+    }
+
+    /**
+     * The ids of the groups this staff user leads, within the bound tenant — the
+     * "only my classes" set that scopes every teacher read (Group::scopeLedBy
+     * runs the same relation the other way). Tenant-scoped by
+     * GroupStaff::BelongsToMasjid, so it can never name a group outside the bound
+     * masjid.
+     *
+     * @return array<int,int>
+     */
+    public function leaderGroupIdsFor(?Authenticatable $principal): array
+    {
+        // ?Authenticatable, not User, to keep every GroupAudience signature
+        // uniform (GroupAudienceForeignPrincipalTest pins this — the T-015b
+        // widening that lets a Contact principal flow through). Only a User can
+        // lead a class; anything else names no classes.
+        if (! $principal instanceof User) {
+            return [];
+        }
+
+        return GroupStaff::query()
+            ->where('user_id', $principal->getKey())
+            ->pluck('group_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
     }
 
     /**
@@ -265,6 +318,15 @@ class GroupAudience
      */
     public function mayReceive(?Authenticatable $principal, Group $group, string $disclosure): bool
     {
+        // A staff login that LEADS this class receives every disclosure about it,
+        // exactly as a Contact `leader` membership does below — a teacher sees
+        // their own class's feed and images. Resolved from group_staff, not from
+        // a Contact row, and it fires ONLY for a User in this group's staff, so
+        // every existing Contact/guardian/admin path is byte-identical.
+        if ($this->isLeaderOf($principal, $group)) {
+            return true;
+        }
+
         foreach ($this->membershipsFor($principal, $group) as $membership) {
             if (in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true)) {
                 return true;
@@ -762,6 +824,25 @@ class GroupAudience
             'participant_contact_ids' => [],
             'ward_contact_ids' => [],
         ];
+
+        // A staff login that LEADS this class (group_staff) has full leader
+        // standing directly, independent of any Contact membership. It mirrors
+        // exactly what a Contact `leader` produces below — in_group, leader and
+        // feed all true, with no participant/ward contacts — which every
+        // downstream rule (readableThreadsQuery, constrainToOwnStudents,
+        // mayReceiveRecordAbout) already reads as "sees the whole class". This
+        // MUST NOT route through membershipsFor()/confirmed(): a teacher has no
+        // roster row to confirm. Fires only for a User in this group's staff, so
+        // the Contact/guardian branches below stay byte-identical.
+        if ($this->isLeaderOf($principal, $group)) {
+            return [
+                'in_group' => true,
+                'leader' => true,
+                'feed' => true,
+                'participant_contact_ids' => [],
+                'ward_contact_ids' => [],
+            ];
+        }
 
         $memberships = $this->membershipsFor($principal, $group);
 

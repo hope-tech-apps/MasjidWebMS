@@ -51,4 +51,22 @@ class AppConfigController extends Controller
             'data' => $config->isEmpty() ? (object) [] : $config,
         ], Response::HTTP_OK);
     }
+
+    /**
+     * Backward-compat GLOBAL app-config (no masjid). The launch gate is
+     * per-masjid now, but apps ALREADY INSTALLED still call
+     * /api/mobile/app-config on launch — and a 404 there hangs them on the
+     * splash screen (that route used to be served from a route cache that was
+     * cleared, exposing the gap). Answer it, failing OPEN with an empty config
+     * — the same shape the per-masjid endpoint returns when a masjid has no
+     * rows — so those installs proceed instead of hanging. The real per-masjid
+     * gate below is unaffected.
+     */
+    public function platformConfig()
+    {
+        return response()->json([
+            'status' => 'success',
+            'data' => (object) [],
+        ], Response::HTTP_OK);
+    }
 }

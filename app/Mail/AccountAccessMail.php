@@ -39,6 +39,16 @@ class AccountAccessMail extends Mailable
             ? 'Set up your '.($this->orgName ?: config('app.name')).' account'
             : 'Reset your '.config('app.name').' password';
 
-        return $this->subject($subject)->view('emails.account-access');
+        // The SENDER NAME follows the school, not a single hard-coded tenant.
+        // Without this, every school's invite arrives from whatever
+        // MAIL_FROM_NAME is pinned to (one masjid's name), which reads wrong on
+        // another school's email — the subject and body already say the right
+        // org, so the "From" line must too. The ADDRESS stays the configured,
+        // domain-verified sender; only the display name is personalised.
+        $fromName = $this->orgName ?: config('mail.from.name', config('app.name'));
+
+        return $this->subject($subject)
+            ->from(config('mail.from.address'), $fromName)
+            ->view('emails.account-access');
     }
 }

@@ -34,6 +34,7 @@ use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\TeachersController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\AdminDashboard\HadithCategoriesController;
@@ -41,6 +42,9 @@ use App\Http\Controllers\AdminDashboard\ImpactMetricsController;
 use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
+use App\Http\Controllers\AdminDashboard\MealMenuItemsController;
+use App\Http\Controllers\AdminDashboard\MealMenusController;
+use App\Http\Controllers\AdminDashboard\MealOrdersController;
 use App\Http\Controllers\AdminDashboard\MasjidAboutUsController;
 use App\Http\Controllers\AdminDashboard\MasjidAdminsController;
 use App\Http\Controllers\AdminDashboard\MasjidDetailsController;
@@ -267,6 +271,35 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
+
+            // Jummah Lunch ordering — a masjid-level food sale, deliberately
+            // OUTSIDE the `crm` group so a masjid can run it without the member
+            // directory. The `admin` middleware already restricts this to
+            // MasjidAdmin/SuperAdmin (Teachers cannot reach it), so no extra
+            // permission gate is added. Orders carry customer name/phone.
+            Route::prefix('{masjid_id}/jummah-lunch')->group(function () {
+                Route::controller(MealMenusController::class)->group(function () {
+                    Route::get('/menus', 'index');
+                    Route::post('/menus', 'store');
+                    Route::get('/menus/{menu_id}', 'show');
+                    Route::put('/menus/{menu_id}', 'update');
+                    Route::delete('/menus/{menu_id}', 'destroy');
+                    Route::post('/flyer', 'uploadFlyer');
+                });
+
+                Route::controller(MealMenuItemsController::class)->group(function () {
+                    Route::post('/menus/{menu_id}/items', 'store');
+                    Route::put('/menus/{menu_id}/items/{item_id}', 'update');
+                    Route::delete('/menus/{menu_id}/items/{item_id}', 'destroy');
+                });
+
+                Route::controller(MealOrdersController::class)->group(function () {
+                    Route::get('/menus/{menu_id}/orders', 'index');
+                    Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
+                    Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');
+                    Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
+                });
+            });
 
             // Masjid color theme settings
             Route::prefix('{masjid_id}/theme')->controller(ThemeSettingsController::class)->group((function () {
@@ -615,6 +648,21 @@ Route::prefix('admin')->group(function () {
                     Route::get('/{group_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{group_id}', 'update')->middleware('permission:manage contacts');
                     Route::delete('/{group_id}', 'destroy')->middleware('permission:manage contacts');
+                });
+
+                // Teacher provisioning — create a teacher login, assign the
+                // classes they lead, email an invite. Gated by `manage contacts`
+                // (the roster-administration permission every MasjidAdmin holds);
+                // the login is always type='Teacher' and its reach is bound to
+                // this school by masjid_user + group_staff. See TeachersController.
+                Route::prefix('{masjid_id}/teachers')->controller(TeachersController::class)->group(function () {
+                    Route::get('/', 'index')->middleware('permission:view contacts');
+                    Route::post('/', 'store')->middleware('permission:manage contacts');
+                    Route::get('/{user_id}', 'show')->middleware('permission:view contacts');
+                    Route::put('/{user_id}', 'update')->middleware('permission:manage contacts');
+                    Route::delete('/{user_id}', 'destroy')->middleware('permission:manage contacts');
+                    // Re-send the set-password invite ("they never got it").
+                    Route::post('/{user_id}/invite', 'invite')->middleware('permission:manage contacts');
                 });
 
                 // Group rosters. A membership links an existing Contact to a

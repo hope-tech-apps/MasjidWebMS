@@ -55,13 +55,32 @@ class SecurityHeaders
         // Supabase + Pusher + Google fonts/maps are whitelisted because those
         // are the only legitimate cross-origin script/image/connect destinations
         // the admin currently uses. Tighten further by environment if needed.
+        //
+        // ONE EXCEPTION, on the public Jummah-lunch order page only: it is
+        // PROXIED onto masjids' own domains (e.g. burlingtonmasjid.com/jummah-
+        // lunch/{id} → this app), so the document origin there is that domain and
+        // 'self' no longer covers THIS app's own bundle, fonts, icons or API. On
+        // that path — and only that path — this app's own origin (and the Figtree
+        // font CDN the SPA loads) are named explicitly so the proxied page can
+        // boot and reach its API. Every other page's CSP is unchanged.
+        $ownOrigin = $ownStyle = $ownFont = $ownImg = $ownConnect = '';
+        if (str_starts_with($request->path(), 'jummah-lunch')) {
+            $app = rtrim((string) config('app.url'), '/');
+            $bunny = 'https://fonts.bunny.net';
+            $ownOrigin = " {$app}";
+            $ownStyle = " {$app} {$bunny}";
+            $ownFont = " {$app} {$bunny}";
+            $ownImg = " {$app}";
+            $ownConnect = " {$app}";
+        }
+
         $csp = implode('; ', [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com",
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
-            "font-src 'self' https://fonts.gstatic.com data:",
-            "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com",
-            "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com{$ownOrigin}",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net{$ownStyle}",
+            "font-src 'self' https://fonts.gstatic.com data:{$ownFont}",
+            "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com{$ownImg}",
+            "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com{$ownConnect}",
             "frame-src 'self' https://www.google.com https://maps.google.com",
             "frame-ancestors 'none'",
             "form-action 'self'",

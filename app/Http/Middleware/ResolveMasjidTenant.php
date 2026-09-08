@@ -123,6 +123,24 @@ class ResolveMasjidTenant
             if ($routeMasjidId !== null) {
                 $this->tenant->set($routeMasjidId);
             }
+        } elseif ($user instanceof User && $user->type === 'Teacher') {
+            // A Teacher names NO masjid in the URL — the teacher realm binds the
+            // tenant from the principal, like the family realm, not from the
+            // route. The resolver answers from their persisted `masjid_user`
+            // membership (TenantResolver::staffMemberships): a single-school
+            // teacher binds their one school; none or several fails closed. This
+            // branch is placed AFTER MasjidAdmin and SuperAdmin deliberately —
+            // the order is load-bearing (see the class docblock and
+            // SuperAdminExportScopeTest).
+            $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
+
+            if ($resolution->isDenied()) {
+                abort(403, self::FORBIDDEN_MESSAGE);
+            }
+
+            if ($resolution->membership() !== null) {
+                $this->tenant->setFromMembership($resolution->membership());
+            }
         } else {
             // Fail closed. Falling through here would leave the context unbound
             // and hand an unfiltered view of every masjid to a principal that

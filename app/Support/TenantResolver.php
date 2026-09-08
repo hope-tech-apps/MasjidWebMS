@@ -128,9 +128,38 @@ final class TenantResolver
      */
     private function grantsFor(User $user): Collection
     {
-        return $this->multiMembershipEnabled()
-            ? $this->everyLiveMembership($user)
-            : $this->soleOwnedMembership($user);
+        if ($this->multiMembershipEnabled()) {
+            return $this->everyLiveMembership($user);
+        }
+
+        $owned = $this->soleOwnedMembership($user);
+
+        // A non-owner staff principal — a Teacher — owns no masjid, so the
+        // ownership expression above is empty. Their grant is instead their
+        // persisted `masjid_user` membership(s) naming a LIVE masjid, written at
+        // invite time. This does NOT open the multi-membership path: a teacher
+        // with two live memberships still returns two grants here, which
+        // resolve() then refuses as ambiguous exactly as it would for an owner.
+        // It only lets a single-school teacher (every teacher today) bind.
+        return $owned->isNotEmpty() ? $owned : $this->staffMemberships($user);
+    }
+
+    /**
+     * The live-masjid memberships of a staff principal who owns no masjid.
+     *
+     * Same shape and soft-delete guard as everyLiveMembership(), but reached on
+     * the GATED (single-membership) path for a non-owner. Returning 0 or >1 is
+     * deliberate — it lets resolve() fail closed on "no school" and "ambiguous
+     * school" without a teacher-specific branch there.
+     *
+     * @return Collection<int, MasjidUser>
+     */
+    private function staffMemberships(User $user): Collection
+    {
+        return $user->memberships()
+            ->whereHas('masjid')
+            ->orderBy('masjid_id')
+            ->get();
     }
 
     /**

@@ -32,9 +32,18 @@ class MobileAppFeaturesSeeder extends Seeder
                 'name' => $feature['name'],
                 'key' => $feature['key'],
             ]);
-//            $featureFromDB->addMedia($feature['icon'])
-//                ->preservingOriginal()
-//                ->toMediaCollection('featuresIcons');
+
+            // ATTACH THE ICON. Leaving this commented out is what let a fresh
+            // seed reproduce the 2026-08-28 outage: features with icon:null, a
+            // drawer the app force-unwraps into a blank screen. preservingOriginal
+            // keeps the source SVG in place; the file-guard means an environment
+            // that does not carry the icon set (a bare CI database) seeds the
+            // rows without fataling rather than refusing to seed at all.
+            if (is_file($feature['icon'])) {
+                $featureFromDB->addMedia($feature['icon'])
+                    ->preservingOriginal()
+                    ->toMediaCollection('featuresIcons');
+            }
         }
     }
 }

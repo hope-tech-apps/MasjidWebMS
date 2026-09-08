@@ -47,6 +47,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $superAdmin = Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => $guard]);
         $masjidAdmin = Role::firstOrCreate(['name' => 'masjid-admin', 'guard_name' => $guard]);
         $member = Role::firstOrCreate(['name' => 'member', 'guard_name' => $guard]);
+        $teacher = Role::firstOrCreate(['name' => 'teacher', 'guard_name' => $guard]);
 
         // super-admin: everything.
         $superAdmin->syncPermissions(Permission::all());
@@ -58,6 +59,13 @@ class RolesAndPermissionsSeeder extends Seeder
 
         // member: no CRM permissions by default.
         $member->syncPermissions([]);
+
+        // teacher: ZERO CRM permissions, exactly like member. A teacher's
+        // authority is entirely per-class (group_staff, decided by GroupAudience),
+        // never a global masjid-wide grant — so it must hold none of these, or it
+        // would gain roster/donor/property reach across the whole organisation.
+        // This keeps Permission::count() at 8 (pinned in four tests).
+        $teacher->syncPermissions([]);
 
         // Backfill existing users: mirror each one's `type` onto its bridged role
         // (SuperAdmin -> super-admin, MasjidAdmin -> masjid-admin, User -> member).

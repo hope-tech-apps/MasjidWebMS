@@ -82,6 +82,30 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Emails the operator a single log record via the app mailer (Resend).
+        // The DELIVERY end of the scheduled monitors' on-call contract — set
+        // MEDIA_VERIFY_LOG_CHANNEL / CANARY_LOG_CHANNEL to `monitors` (below) so
+        // media:verify / tenancy:canary route their one-line-per-run here. Level
+        // `error` by default, so a partial run (warning) stays a file-only ticket
+        // and only a leak / incomplete / broken-or-empty estate (error+/critical)
+        // pages. Inert until OPS_ALERT_EMAIL is set. See App\Logging\OpsAlertChannel.
+        'ops-alerts' => [
+            'driver' => 'custom',
+            'via' => \App\Logging\OpsAlertChannel::class,
+            'level' => env('OPS_ALERT_LEVEL', 'error'),
+            'to' => env('OPS_ALERT_EMAIL'),
+        ],
+
+        // What the scheduled monitors point their log_channel at: the normal file
+        // line (proof-of-run on every run, including clean) AND the email path
+        // (error+ only). ignore_exceptions so a mail hiccup can never take down
+        // the file line beside it.
+        'monitors' => [
+            'driver' => 'stack',
+            'channels' => ['single', 'ops-alerts'],
+            'ignore_exceptions' => true,
+        ],
+
         'papertrail' => [
             'driver' => 'monolog',
             'level' => env('LOG_LEVEL', 'debug'),

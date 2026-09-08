@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
@@ -35,6 +36,11 @@ class User extends Authenticatable implements HasMedia
         'SuperAdmin' => 'super-admin',
         'MasjidAdmin' => 'masjid-admin',
         'User' => 'member',
+        // A school staff login scoped to the classes they lead. Bridged to a
+        // PERMISSION-LESS 'teacher' role (like 'member'): a teacher's authority
+        // is per-class, decided by group_staff via GroupAudience, never by a
+        // global CRM permission — so this must not grant one. See group_staff.
+        'Teacher' => 'teacher',
     ];
 
     /**
@@ -137,6 +143,37 @@ class User extends Authenticatable implements HasMedia
     public function memberships()
     {
         return $this->hasMany(MasjidUser::class);
+    }
+
+    /**
+     * True for a school-teacher staff login (users.type = 'Teacher').
+     *
+     * The one place a teacher-specific code path may branch. `type` stays the
+     * source of truth exactly as it is for SuperAdmin/MasjidAdmin; this is a
+     * named read of it, not a new authority. Reused authorization in the shared
+     * admin controllers guards its teacher branch behind this so the
+     * MasjidAdmin/SuperAdmin path stays byte-identical.
+     */
+    public function isTeacher(): bool
+    {
+        return $this->type === 'Teacher';
+    }
+
+    /**
+     * The classes this user leads (`group_staff`).
+     *
+     * This — NOT the legacy Contact `leader` membership — is the authoritative
+     * teacher↔class link for a login. `GroupAudience` reads it to decide teacher
+     * standing, and `Group::scopeLedBy()` filters "only my classes" through it.
+     * A group_staff row is written with an EXPLICIT masjid_id (attach() bypasses
+     * the BelongsToMasjid creating hook); see GroupStaff and TeachersController.
+     */
+    public function groupsLed(): BelongsToMany
+    {
+        return $this->belongsToMany(Group::class, 'group_staff')
+            ->using(GroupStaff::class)
+            ->withPivot(['role', 'assigned_by_user_id', 'assigned_at'])
+            ->withTimestamps();
     }
 
     /**

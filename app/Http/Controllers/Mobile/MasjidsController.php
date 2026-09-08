@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Mobile;
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\MobileMedia;
 use Illuminate\Support\Facades\Cache;
 
 class MasjidsController extends Controller
@@ -118,7 +119,14 @@ class MasjidsController extends Controller
         $gallery = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::GALLERY),
             MobileCache::TTL_MEDIUM,
-            fn() => Masjid::with('gallery')->findOrFail($masjid_id)->gallery->toArray()
+            // A gallery item IS a media row, rendered by the app as
+            // gallery[i].originalUrl! — a row with a null url would crash the
+            // grid (the featuresIcons class). A gallery image with no file is
+            // nothing to show, so drop it rather than serve a broken tile.
+            fn() => Masjid::with('gallery')->findOrFail($masjid_id)->gallery
+                ->filter(fn($media) => ! empty($media->original_url))
+                ->values()
+                ->toArray()
         );
 
         return response()->json([
@@ -134,11 +142,27 @@ class MasjidsController extends Controller
         $wrapped = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::ABOUT),
             MobileCache::TTL_MEDIUM,
-            fn() => ['value' => Masjid::with(
-                'masjidAbout.aboutImage',
-                'masjidAbout.missionIcon',
-                'masjidAbout.visionIcon'
-            )->findOrFail($masjid_id)->masjidAbout],
+            function () use ($masjid_id) {
+                $about = Masjid::with(
+                    'masjidAbout.aboutImage',
+                    'masjidAbout.missionIcon',
+                    'masjidAbout.visionIcon'
+                )->findOrFail($masjid_id)->masjidAbout;
+
+                if ($about === null) {
+                    return ['value' => null];
+                }
+
+                // The About screen force-unwraps aboutImage/missionIcon/
+                // visionIcon .originalUrl!; any one missing blanks the screen.
+                // Guarantee each is a non-null envelope.
+                $row = $about->toArray();
+                $row['about_image'] = MobileMedia::envelope($about->aboutImage, MobileMedia::imagePlaceholderUrl());
+                $row['mission_icon'] = MobileMedia::envelope($about->missionIcon, MobileMedia::imagePlaceholderUrl());
+                $row['vision_icon'] = MobileMedia::envelope($about->visionIcon, MobileMedia::imagePlaceholderUrl());
+
+                return ['value' => $row];
+            },
         );
 
         return response()->json([
@@ -153,7 +177,20 @@ class MasjidsController extends Controller
         $wrapped = Cache::remember(
             MobileCache::masjidKey((int) $masjid_id, MobileCache::DONATION_LINK),
             MobileCache::TTL_MEDIUM,
-            fn() => ['value' => Masjid::with('donationLink.image')->findOrFail($masjid_id)->donationLink],
+            function () use ($masjid_id) {
+                $link = Masjid::with('donationLink.image')->findOrFail($masjid_id)->donationLink;
+
+                if ($link === null) {
+                    return ['value' => null];
+                }
+
+                // The Donate screen force-unwraps image.originalUrl!; a link with
+                // no banner would crash it. Guarantee a non-null envelope.
+                $row = $link->toArray();
+                $row['image'] = MobileMedia::envelope($link->image, MobileMedia::imagePlaceholderUrl());
+
+                return ['value' => $row];
+            },
         );
 
         return response()->json([

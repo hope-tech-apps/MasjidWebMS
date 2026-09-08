@@ -10,6 +10,7 @@ use App\Http\Middleware\ResolveFamilyTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
+use App\Http\Middleware\TeacherMiddleware;
 use App\Http\Middleware\UserAdminMiddleware;
 use App\Support\Errors;
 use Illuminate\Auth\AuthenticationException;
@@ -45,6 +46,17 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::prefix('api')
                 ->middleware('api')
                 ->group(base_path('routes/family.php'));
+
+            // The teacher realm, mounted the same way and in its OWN file for the
+            // same reason as family.php: routes/admin.php has exactly one
+            // `auth:sanctum` group and it always carries `admin` (which rejects a
+            // Teacher). The teacher realm rides `auth:sanctum` too, but with the
+            // `teacher` gate and a Teacher-aware `tenant` branch, never the admin
+            // gate — so it must never be a sibling inside admin.php. See
+            // routes/teacher.php.
+            Route::prefix('api')
+                ->middleware('api')
+                ->group(base_path('routes/teacher.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
@@ -54,6 +66,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'super' => SuperAdminMiddleware::class,
             'admin' => UserAdminMiddleware::class,
+            // Gate for the teacher realm (routes/teacher.php) — admits ONLY a
+            // users.type='Teacher' staff login. Deliberately separate from
+            // `admin`: a teacher must never reach the admin API. Per-class
+            // authority is a finer check done in the controllers via GroupAudience.
+            'teacher' => TeacherMiddleware::class,
+            // The per-class boundary: the {group_id} in the route must be a class
+            // this teacher LEADS (group_staff). Runs after `tenant` so the group
+            // lookup is scoped to the teacher's school. This is what fences the
+            // reused admin controllers to the teacher's own classes.
+            'teacher.leads' => \App\Http\Middleware\EnsureTeacherLeadsGroup::class,
             // Binds TenantContext to a MasjidAdmin's masjid; no-op for SuperAdmin
             // and never applied to the public mobile routes. See routes/admin.php.
             'tenant' => ResolveMasjidTenant::class,
