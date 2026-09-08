@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -56,6 +57,7 @@ class FamilyLoginCodeMail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
+            from: new Address(config('mail.from.address'), $this->orgName ?: config('mail.from.name')),
             // Deliberately generic and identical for every tenant and every
             // recipient. A subject line is the part of an email that shows up
             // on a lock screen, in a notification preview and in a shared
