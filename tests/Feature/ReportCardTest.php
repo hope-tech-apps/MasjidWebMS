@@ -439,7 +439,7 @@ class ReportCardTest extends TestCase
         $other->user_id = $admin->id;
         $other->save();
 
-        app(\App\Support\TenantContext::class)->setTenant($other->id);
+        app(\App\Support\TenantContext::class)->set($other->id);
 
         $this->assertNull(ReportCard::find($card->id));
         $this->assertNull(ReportCardMark::find($mark->id));
