@@ -9,6 +9,7 @@ use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
 use App\Http\Controllers\Teacher\AttendanceController;
+use App\Http\Controllers\Teacher\CurriculumController;
 use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\LessonPlanController;
@@ -78,6 +79,10 @@ Route::prefix('teacher')
                 // bound its own āyah inputs. A GET: the realm's write list is
                 // unchanged — a GET adds no write verb to the counted list.
                 Route::get('/quran-surahs', [HifzEntriesController::class, 'surahs']);
+                // The school's own pacing guide, so a lesson plan can offer its
+                // standards instead of asking a teacher to retype them. Also a
+                // GET, so the counted write list is untouched.
+                Route::get('/curriculum', [CurriculumController::class, 'index']);
 
                 // Per-class: every route below is fenced to a class the teacher
                 // LEADS by `teacher.leads`.

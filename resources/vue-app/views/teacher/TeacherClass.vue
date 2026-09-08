@@ -628,23 +628,67 @@
                                 {{ planDayLabel }} · {{ group?.name }} · {{ students.length }} students
                             </div>
 
+                            <!-- Pickers when the school's pacing guide has been
+                                 imported, plain text when it has not — so a
+                                 tenant with no guide still gets a working form. -->
                             <div class="row g-2 mb-2">
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Grade</label>
+                                    <select v-if="curriculum.grades.length" class="form-select form-select-sm"
+                                            style="min-width:10rem" v-model="planForm.grade_label"
+                                            @change="onGradeChange">
+                                        <option value="">—</option>
+                                        <option v-for="g in curriculum.grades" :key="g" :value="g">{{ g }}</option>
+                                    </select>
+                                    <input v-else v-model="planForm.grade_label" type="text" maxlength="32"
+                                           class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K">
+                                </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Subject</label>
-                                    <input v-model="planForm.subject" type="text" maxlength="64"
+                                    <select v-if="curriculum.subjects.length" class="form-select form-select-sm"
+                                            v-model="planForm.subject" @change="onSubjectChange">
+                                        <option value="">—</option>
+                                        <option v-for="s in curriculum.subjects" :key="s" :value="s">{{ s }}</option>
+                                    </select>
+                                    <input v-else v-model="planForm.subject" type="text" maxlength="64"
                                            class="form-control form-control-sm" placeholder="e.g. Mathematics">
                                 </div>
                                 <div class="col-6 col-sm-auto">
-                                    <label class="form-label small text-muted mb-1">Grade</label>
-                                    <input v-model="planForm.grade_label" type="text" maxlength="32"
-                                           class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K">
-                                </div>
-                                <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Week</label>
-                                    <input v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
+                                    <select v-if="curriculum.weeks.length" class="form-select form-select-sm"
+                                            style="max-width:16rem" v-model.number="planForm.curriculum_week_no">
+                                        <option :value="null">—</option>
+                                        <option v-for="w in curriculum.weeks" :key="w.week_no" :value="w.week_no">
+                                            {{ w.week_no }} · {{ w.focus }}
+                                        </option>
+                                    </select>
+                                    <input v-else v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
                                            class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
                                 </div>
                             </div>
+
+                            <div v-if="curriculum.grades.length" class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+                                <button class="btn btn-sm btn-outline-success" :disabled="!canPrefill || prefilling"
+                                        @click="prefillFromGuide">
+                                    <i class="bi bi-stars me-1"></i>
+                                    {{ prefilling ? 'Filling…' : 'Prefill from pacing guide' }}
+                                </button>
+                                <span v-if="planForm.prefill_source" class="badge bg-success-subtle text-success-emphasis fw-normal">
+                                    from the pacing guide
+                                </span>
+                                <button v-if="planFor(planDate)" class="btn btn-sm btn-link px-0"
+                                        :disabled="copying" @click="copyAcrossWeek">
+                                    {{ copying ? 'Copying…' : 'Copy to the rest of this week' }}
+                                </button>
+                            </div>
+
+                            <!-- The guide gives ONE code per subject per week and a
+                                 week is four or five lessons, so a prefilled code is
+                                 a draft the teacher owns, not a fact. -->
+                            <p v-if="planForm.prefill_source" class="text-muted small mb-2">
+                                Prefilled fields are editable. Verify standard codes against the
+                                official DPI documents before citing them outside the school.
+                            </p>
 
                             <label class="form-label small text-muted mb-1">
                                 Activities <span class="text-danger">*</span>
@@ -1179,6 +1223,7 @@ const emptyPlan = () => ({
     teaching_methods: [] as string[], teaching_methods_other: '', teaching_aids: '',
     assessment_formative: '', assessment_exit_ticket: '',
     reflection_worked: '', reflection_improve: '',
+    prefill_source: '',
 });
 
 const planForm = ref<any>(emptyPlan());
@@ -1262,6 +1307,124 @@ const toggleMethod = (value: string) => {
     const list: string[] = planForm.value.teaching_methods;
     const i = list.indexOf(value);
     if (i === -1) list.push(value); else list.splice(i, 1);
+};
+
+// ---------- the school's pacing guide ----------
+const curriculum = ref<{ grades: string[]; subjects: string[]; weeks: any[] }>({
+    grades: [], subjects: [], weeks: [],
+});
+const prefilling = ref(false);
+const copying = ref(false);
+
+const canPrefill = computed(() =>
+    !!planForm.value.grade_label && !!planForm.value.subject && !!planForm.value.curriculum_week_no);
+
+const loadCurriculum = async (grade?: string, subject?: string) => {
+    try {
+        const q = new URLSearchParams();
+        if (grade) q.set('grade', grade);
+        if (subject) q.set('subject', subject);
+        const res = await TeacherApiService.get(
+            `/api/teacher/masjids/${masjidId.value}/curriculum${q.toString() ? '?' + q : ''}`
+        );
+        const d = res.data?.data ?? {};
+        curriculum.value = {
+            grades: d.grades ?? [],
+            subjects: d.subjects ?? [],
+            weeks: d.weeks ?? [],
+        };
+    } catch {
+        // No guide imported for this school: the form falls back to free text.
+        curriculum.value = { grades: [], subjects: [], weeks: [] };
+    }
+};
+
+const onGradeChange = async () => {
+    planForm.value.subject = '';
+    planForm.value.curriculum_week_no = null;
+    await loadCurriculum(planForm.value.grade_label);
+};
+
+const onSubjectChange = async () => {
+    planForm.value.curriculum_week_no = null;
+    await loadCurriculum(planForm.value.grade_label, planForm.value.subject);
+};
+
+/**
+ * Copy the week's cell into the form. Every field lands EDITABLE and nothing is
+ * saved until the teacher presses Save — prefill is a draft, not a write.
+ * Fields the teacher has already written are left alone.
+ */
+const prefillFromGuide = async () => {
+    prefilling.value = true;
+    planError.value = '';
+    try {
+        const q = new URLSearchParams({
+            grade: planForm.value.grade_label,
+            subject: planForm.value.subject,
+            week: String(planForm.value.curriculum_week_no),
+        });
+        const res = await TeacherApiService.get(
+            `/api/teacher/masjids/${masjidId.value}/curriculum?${q}`
+        );
+        const cell = res.data?.data?.cell;
+        if (!cell) { planError.value = 'The guide has nothing for that week.'; return; }
+
+        const fill = (k: string, v: any) => {
+            if (v && !String(planForm.value[k] ?? '').trim()) planForm.value[k] = v;
+        };
+
+        fill('standard_code', cell.standard_code);
+        fill('objective', cell.objective);
+        fill('assessment_formative', cell.assessment_formative);
+
+        // Cross-subject integration, written from the same week's sibling cells
+        // so a teacher is not asked to remember what Science is doing.
+        const siblings = (cell.siblings ?? []) as { subject: string; focus: string }[];
+        const islamic = siblings.find((s) => /Qur|Islamic/i.test(s.subject));
+        if (islamic) fill('cross_integration_islamic', islamic.focus);
+        const others = siblings.filter((s) => s !== islamic)
+            .map((s) => `${s.subject}: ${s.focus}`).join('\n');
+        if (others) fill('cross_integration_subject', others);
+
+        planForm.value.prefill_source = cell.prefill_source ?? 'pacing guide';
+    } catch {
+        planError.value = 'Could not read the pacing guide.';
+    } finally {
+        prefilling.value = false;
+    }
+};
+
+/**
+ * The guide is weekly and a week is four or five lessons, so this is the honest
+ * answer: the teacher decides, the tool does the typing. Five client-side PUTs
+ * of the SAVED plan — no new endpoint, and nothing is copied that is not already
+ * stored, so a half-typed form cannot be broadcast across the week.
+ */
+const copyAcrossWeek = async () => {
+    const source = planFor(planDate.value);
+    if (!source) return;
+
+    copying.value = true;
+    planError.value = '';
+    try {
+        for (const d of weekdaysOnly.value) {
+            if (d.iso === planDate.value) continue;
+            await TeacherApiService.put(`${base.value}/lesson-plans`, {
+                ...source,
+                session_date: d.iso,
+                // The other days keep their OWN activities if they have any:
+                // the shared part of a week is its standard and objective, not
+                // what the class actually did on Thursday.
+                body: planFor(d.iso)?.body || source.body,
+            });
+        }
+        await loadLessonPlans();
+    } catch {
+        planError.value = 'Could not copy across the week.';
+    } finally {
+        copying.value = false;
+    }
 };
 
 const loadLessonPlans = async () => {
@@ -2011,7 +2174,7 @@ watch(activeTab, (tab) => {
     if (tab === 'points' && !skills.value.length) loadSkills();
     if (tab === 'attendance') loadAttendance();
     if (tab === 'hifz') loadSurahs();
-    if (tab === 'lessons') loadLessonPlans();
+    if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
     if (tab !== 'grades') { openAssignment.value = null; }

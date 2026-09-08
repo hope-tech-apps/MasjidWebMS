@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
 use App\Models\Contact;
+use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupResource;
@@ -119,6 +120,28 @@ class SchoolRecordsTenantIsolationTest extends TestCase
 
         $this->assertNull(GroupResource::find($foreign->id));
         $this->assertCount(0, GroupResource::all());
+    }
+
+    /**
+     * A pacing guide is one school's, and the reason this matters is sharper
+     * than for most tables: these are NC Standard Course of Study codes. Leaking
+     * them into another tenant would put a state curriculum in front of a masjid
+     * ḥalaqa that never adopted one.
+     */
+    #[Test]
+    public function the_scope_hides_another_schools_curriculum_weeks(): void
+    {
+        $foreign = $this->tenant->runWithout(fn () => CurriculumWeek::create([
+            'masjid_id' => $this->schoolB->id,
+            'grade_label' => 'Kindergarten', 'subject' => 'Mathematics', 'week_no' => 5,
+            'focus' => 'Their week, not ours.', 'standard_code' => 'K.CC.A.1',
+        ]));
+
+        $this->tenant->set($this->schoolA->id);
+
+        $this->assertNull(CurriculumWeek::find($foreign->id));
+        $this->assertCount(0, CurriculumWeek::all());
+        $this->assertSame(0, CurriculumWeek::where('id', $foreign->id)->update(['focus' => 'tampered']));
     }
 
     #[Test]
