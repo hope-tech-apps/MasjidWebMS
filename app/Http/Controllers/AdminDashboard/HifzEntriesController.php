@@ -341,7 +341,7 @@ class HifzEntriesController extends Controller
         $query = $this->audience->readableHifzQuery($user, $group);
 
         if ($query === null) {
-            abort(403, 'You are not entitled to this group\'s hifz records.');
+            abort(403, 'You are not entitled to this group\'s Hifdh records.');
         }
 
         return $query;
@@ -361,7 +361,7 @@ class HifzEntriesController extends Controller
             return;
         }
 
-        abort(403, 'You are not entitled to this student\'s hifz record.');
+        abort(403, 'You are not entitled to this student\'s Hifdh record.');
     }
 
     /**

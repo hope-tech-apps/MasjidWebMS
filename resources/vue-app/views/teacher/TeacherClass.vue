@@ -555,7 +555,9 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'attendance', label: 'Attendance', icon: 'bi-calendar-check' },
     { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
-    { key: 'hifz', label: 'Ḥifẓ', icon: 'bi-book' },
+    // "Hifdh" is the school's own spelling. The KEY stays `hifz` — it is the
+    // stored value, the route segment and the API field; only the label moves.
+    { key: 'hifz', label: 'Hifdh', icon: 'bi-book' },
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'messages', label: 'Messages', icon: 'bi-chat-dots' },
 ];

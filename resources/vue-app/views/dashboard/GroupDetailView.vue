@@ -164,7 +164,9 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
     { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
-    { key: 'hifz', label: 'Hifz', icon: 'bi-book' },
+    // "Hifdh" is the school's own spelling; the key stays `hifz` (stored value,
+    // route segment, API field).
+    { key: 'hifz', label: 'Hifdh', icon: 'bi-book' },
     { key: 'threads', label: 'Messages', icon: 'bi-chat-dots' }
 ];
 
