@@ -35,9 +35,15 @@ class LessonPlanController extends TeacherController
         $from = $this->dateOr($request->query('from'), Carbon::today()->startOfWeek());
         $to = $this->dateOr($request->query('to'), $from->copy()->addDays(6));
 
+        // whereDate on both ends, not whereBetween on raw strings: the `date`
+        // cast can store '2026-09-11 00:00:00', which sorts OUTSIDE a
+        // BETWEEN '2026-09-11' AND '2026-09-11' as a string comparison — the
+        // plan saves and then does not appear. Comparing the DATE PART is
+        // correct on MySQL and SQLite alike.
         $plans = LessonPlan::query()
             ->where('group_id', $group->id)
-            ->whereBetween('session_date', [$from->toDateString(), $to->toDateString()])
+            ->whereDate('session_date', '>=', $from->toDateString())
+            ->whereDate('session_date', '<=', $to->toDateString())
             ->orderBy('session_date')
             ->get();
 
