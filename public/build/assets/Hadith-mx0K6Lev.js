@@ -1,0 +1,1 @@
+const a=["title","isnad","matn","strength","muhaddith","references","description","show_date"],t={Sahih:{en:"Sahih",ar:"صحيح"},Hasan:{en:"Hasan",ar:"حسن"},Daaif:{en:"Daaif",ar:"ضعيف"},Maodua:{en:"Maodua",ar:"موضوع"},NotHadith:{en:"Not-Hadith",ar:"ليس حديث"}};export{a as H,t as a};
