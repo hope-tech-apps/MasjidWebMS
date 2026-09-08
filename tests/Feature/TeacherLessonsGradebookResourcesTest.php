@@ -13,10 +13,13 @@ use App\Models\LessonPlan;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
+use App\Jobs\SendGroupNotificationJob;
+use App\Models\GroupThread;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -276,6 +279,59 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         // Not a 403: that would confirm the id exists in their child's class.
         $this->asParent()->get($this->familyUrl() . "/resources/{$staffOnly}/download")->assertNotFound();
         $this->asParent()->get($this->familyUrl() . "/resources/{$shared}/download")->assertOk();
+    }
+
+    // ------------------------------------------------- parent-opened threads
+
+    #[Test]
+    public function a_parent_opens_a_conversation_and_the_teacher_is_notified(): void
+    {
+        Queue::fake();
+
+        $this->asParent()->postJson($this->familyUrl() . '/threads', [
+            'subject' => 'Settling in',
+            'about_membership_id' => $this->student->id,
+            'body' => 'He has been talking about class all week.',
+        ])->assertCreated();
+
+        $thread = GroupThread::withoutGlobalScopes()->first();
+        $this->assertSame(GroupThread::SCOPE_PARTICIPANT, $thread->scope);
+        $this->assertSame((int) $this->parent->id, (int) $thread->created_by_contact_id);
+        $this->assertNull($thread->created_by_user_id, 'a parent-opened thread has no staff creator');
+
+        Queue::assertPushed(SendGroupNotificationJob::class);
+    }
+
+    #[Test]
+    public function a_parent_cannot_open_a_conversation_about_another_familys_child(): void
+    {
+        $other = $this->enrol($this->mine, 'Sama');
+
+        $this->asParent()->postJson($this->familyUrl() . '/threads', [
+            'subject' => 'About that child',
+            'about_membership_id' => $other->id,
+            'body' => 'Not my child.',
+        ])->assertForbidden();
+
+        $this->assertDatabaseCount('group_threads', 0);
+    }
+
+    /** The audience is forced server-side; no payload can widen it. */
+    #[Test]
+    public function a_parent_cannot_open_a_class_wide_thread_even_by_asking(): void
+    {
+        $this->asParent()->postJson($this->familyUrl() . '/threads', [
+            'subject' => 'Everyone should know',
+            'scope' => 'group',
+            'about_membership_id' => $this->student->id,
+            'body' => 'Trying to reach the whole class.',
+        ])->assertCreated();
+
+        $this->assertSame(
+            GroupThread::SCOPE_PARTICIPANT,
+            GroupThread::withoutGlobalScopes()->first()->scope,
+            'a scope in the payload must be ignored, never honoured'
+        );
     }
 
     // ---------------------------------------------------------------- helpers

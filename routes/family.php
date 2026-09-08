@@ -181,6 +181,14 @@ Route::prefix('family')
                     Route::get('/', 'index');
                     Route::get('/{thread_id}', 'show');
 
+                    // A parent OPENS a conversation. The SECOND write this realm
+                    // has, and deliberately narrower than the staff one: scope is
+                    // forced to participant in the controller (never read from the
+                    // payload), the subject must be the caller's own ward, and it
+                    // is throttled per contact — replying is not, because a parent
+                    // mid-conversation should never be told to slow down.
+                    Route::post('/', 'store')->middleware('throttle:family-thread');
+
                     // T-015f — the one write in this realm besides sign-in.
                     // Authorised by the same `mayReceiveThread()` the reads use,
                     // and the author comes from the TOKEN, never the payload.

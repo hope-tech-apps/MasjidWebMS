@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Teacher;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Requests\Teacher\SaveAssignmentScoresRequest;
 use App\Http\Requests\Teacher\StoreClassAssignmentRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
 use App\Models\Contact;
@@ -208,26 +210,43 @@ class GradebookController extends TeacherController
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        DB::transaction(function () use ($rows, $assignment, $group) {
+        // Which children's marks actually MOVED. One Save writes the whole class,
+        // so notifying on every row would mail six families every time a teacher
+        // corrected one typo.
+        $moved = [];
+
+        DB::transaction(function () use ($rows, $assignment, $group, &$moved) {
             foreach ($rows as $row) {
-                AssignmentScore::updateOrCreate(
-                    [
-                        'class_assignment_id' => $assignment->id,
-                        'group_membership_id' => (int) $row['membership_id'],
-                    ],
-                    [
-                        'masjid_id' => $group->masjid_id,
-                        'group_id' => $group->id,
-                        'status' => $row['status'],
-                        'points_earned' => $row['status'] === AssignmentScore::STATUS_SCORED
-                            ? $row['points_earned']
-                            : null,
-                        'note' => $row['note'] ?? null,
-                        'scored_by_user_id' => Auth::id(),
-                    ]
-                );
+                $membershipId = (int) $row['membership_id'];
+                $points = $row['status'] === AssignmentScore::STATUS_SCORED
+                    ? $row['points_earned']
+                    : null;
+
+                $score = AssignmentScore::firstOrNew([
+                    'class_assignment_id' => $assignment->id,
+                    'group_membership_id' => $membershipId,
+                ]);
+
+                $unchanged = $score->exists
+                    && $score->status === $row['status']
+                    && $this->samePoints($score->points_earned, $points);
+
+                $score->fill([
+                    'masjid_id' => $group->masjid_id,
+                    'group_id' => $group->id,
+                    'status' => $row['status'],
+                    'points_earned' => $points,
+                    'note' => $row['note'] ?? null,
+                    'scored_by_user_id' => Auth::id(),
+                ])->save();
+
+                if (! $unchanged) {
+                    $moved[] = $membershipId;
+                }
             }
         });
+
+        $this->announceMarks($group, $moved);
 
         return $this->show($request, $masjid_id, $group_id, $assignment_id);
     }
@@ -280,6 +299,51 @@ class GradebookController extends TeacherController
                 ])->values(),
             ],
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Two marks, compared as numbers.
+     *
+     * The `decimal:2` cast reads back "8.00" where the payload sent 8, so a
+     * string comparison would call every unchanged row a change and re-mail the
+     * family on every Save.
+     */
+    private function samePoints($stored, $incoming): bool
+    {
+        if ($stored === null || $incoming === null) {
+            return $stored === null && $incoming === null;
+        }
+
+        return abs((float) $stored - (float) $incoming) < 0.001;
+    }
+
+    /**
+     * Tell each affected family, and ONLY their own family.
+     *
+     * Per child, never per class: a class-wide notification would tell every
+     * family that somebody's mark had been entered, which is a small disclosure
+     * about a child none of them are entitled to.
+     */
+    private function announceMarks(Group $group, array $membershipIds): void
+    {
+        if ($membershipIds === []) {
+            return;
+        }
+
+        $contactIds = GroupMembership::query()
+            ->whereIn('id', $membershipIds)
+            ->pluck('contact_id', 'id');
+
+        foreach ($contactIds as $contactId) {
+            SendGroupNotificationJob::dispatch(
+                (int) $group->masjid_id,
+                (int) $group->id,
+                GroupNotificationEvent::GRADE_POSTED,
+                aboutContactId: (int) $contactId,
+                authorUserId: Auth::id(),
+                authorContactId: null,
+            )->afterCommit();
+        }
     }
 
     private function assignment(ClassAssignment $a): array

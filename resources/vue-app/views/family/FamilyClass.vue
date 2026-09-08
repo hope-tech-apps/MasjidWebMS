@@ -90,6 +90,50 @@
 
             <!-- -------------------------------------------------- messages -->
             <section v-else-if="tab === 'messages'">
+                <div v-if="!openedThread && group.children?.length" class="card border-0 shadow-sm mb-3">
+                    <div class="card-body">
+                        <button v-if="!composing" class="btn btn-sm btn-success" @click="startCompose">
+                            <i class="bi bi-pencil-square me-1"></i>Message the teacher
+                        </button>
+
+                        <template v-else>
+                            <div class="row g-2">
+                                <div v-if="group.children.length > 1" class="col-12 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">About</label>
+                                    <select class="form-select form-select-sm" v-model="composeForm.about_membership_id">
+                                        <option v-for="c in group.children" :key="c.membership_id" :value="c.membership_id">
+                                            {{ childName(c) }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-sm">
+                                    <label class="form-label small text-muted mb-1">Subject</label>
+                                    <input v-model="composeForm.subject" type="text" maxlength="255"
+                                           class="form-control form-control-sm" placeholder="What is this about?">
+                                </div>
+                            </div>
+
+                            <textarea v-model="composeForm.body" rows="3" maxlength="5000"
+                                      class="form-control form-control-sm mt-2"
+                                      placeholder="Your message to the teacher…"></textarea>
+
+                            <p class="text-muted small mt-2 mb-2">
+                                Only your child's teacher will see this.
+                            </p>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button class="btn btn-sm btn-success"
+                                        :disabled="sendingCompose || !composeForm.subject.trim() || !composeForm.body.trim()"
+                                        @click="createThread">
+                                    {{ sendingCompose ? 'Sending…' : 'Send' }}
+                                </button>
+                                <button class="btn btn-sm btn-link text-muted" @click="composing = false">Cancel</button>
+                                <span v-if="composeError" class="text-danger small">{{ composeError }}</span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
                 <div v-if="!threads.length" class="text-muted small">No messages yet.</div>
 
                 <div v-else class="d-flex flex-column gap-2">
@@ -325,6 +369,50 @@ const onAvatarSaved = (student: any) => {
 };
 const openedMessages = ref<any[]>([]);
 const tab = ref<'story' | 'messages' | 'children' | 'handouts'>('story');
+
+// ---------- starting a conversation ----------
+const composing = ref(false);
+const sendingCompose = ref(false);
+const composeError = ref('');
+const composeForm = ref<{ about_membership_id: number | null; subject: string; body: string }>({
+    about_membership_id: null, subject: '', body: '',
+});
+
+const startCompose = () => {
+    // Defaults to the only child when there is one, so the commonest case needs
+    // no choice at all. `scope` is NEVER sent — the server forces participant.
+    composeForm.value = {
+        about_membership_id: group.value?.children?.[0]?.membership_id ?? null,
+        subject: '', body: '',
+    };
+    composeError.value = '';
+    composing.value = true;
+};
+
+const createThread = async () => {
+    sendingCompose.value = true;
+    composeError.value = '';
+    try {
+        await FamilyApiService.post(`${base.value}/threads`, {
+            subject: composeForm.value.subject,
+            about_membership_id: composeForm.value.about_membership_id,
+            body: composeForm.value.body,
+        });
+        composing.value = false;
+        // There is no standalone thread loader in this view — the list is
+        // refreshed by re-reading the endpoint the class load uses.
+        const t = await FamilyApiService.get(`${base.value}/threads`);
+        threads.value = rowsOf(t.data?.data);
+    } catch (e: any) {
+        composeError.value = e?.response?.status === 429
+            ? 'You have started several conversations already. Please continue one of them.'
+            : (e?.response?.data?.message
+                ?? e?.response?.data?.data?.subject?.[0]
+                ?? 'That message could not be sent.');
+    } finally {
+        sendingCompose.value = false;
+    }
+};
 
 // Handouts the class chose to share. The API applies visibility as a SCOPE, so
 // a staff-only file is never in this list and its name is never in this payload.

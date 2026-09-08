@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Family;
 
 use App\Enums\GroupNotificationEvent;
 use App\Http\Requests\Family\StoreFamilyMessageRequest;
+use App\Http\Requests\Family\StoreFamilyThreadRequest;
 use App\Jobs\SendGroupNotificationJob;
 use App\Models\Contact;
 use App\Models\GroupMessage;
@@ -169,6 +170,72 @@ class GroupThreadsController extends FamilyController
      * attributing a message to a Contact is honest now and was not before
      * T-015c.
      */
+    /**
+     * POST .../groups/{group_id}/threads — a parent OPENS a conversation.
+     *
+     * The second write this realm has ever had, and narrower than the staff one
+     * in three deliberate ways:
+     *
+     *   1. SCOPE IS FORCED TO PARTICIPANT. It is not read from the payload at
+     *      all, so there is no request a parent can construct that opens a
+     *      class-wide thread. A group-scoped thread reaches every family in the
+     *      room; a teacher may open one because they can already post to that
+     *      same audience through the class story, and a parent cannot.
+     *   2. THE SUBJECT MUST BE THEIR OWN CHILD. `subject()` runs the same
+     *      GroupAudience check that governs every per-child read, so a
+     *      membership id naming another family's child is a 403 — not a thread.
+     *   3. RATE LIMITED at the route (`throttle:family-thread`), keyed on the
+     *      contact. Replying is not limited; opening is, because it is the verb
+     *      that creates work for a teacher.
+     *
+     * The notification is TEACHER_THREAD_MESSAGE, not the GUARDIAN_* the staff
+     * controller sends: this conversation is going the other way, and telling
+     * the guardians about their own message would be both wrong and a small
+     * disclosure to the other guardians of that child.
+     */
+    public function store(StoreFamilyThreadRequest $request, $masjid_id, $group_id)
+    {
+        $group = $this->group($group_id);
+
+        // 403s unless this contact is entitled to records about that child.
+        $about = $this->subject($group, $request->validated('about_membership_id'));
+
+        $thread = DB::transaction(function () use ($group, $about, $request) {
+            $thread = GroupThread::create([
+                'group_id' => $group->id,
+                // The AUTHENTICATED contact, never a client-supplied name.
+                'created_by_contact_id' => $this->contact()->id,
+                'subject' => $request->validated('subject'),
+                'scope' => GroupThread::SCOPE_PARTICIPANT,
+                'about_membership_id' => $about->id,
+            ]);
+
+            $thread->messages()->create([
+                'author_contact_id' => $this->contact()->id,
+                'body' => $request->validated('body'),
+            ]);
+
+            // You have read what you just wrote.
+            $this->markRead($thread);
+
+            return $thread;
+        });
+
+        SendGroupNotificationJob::dispatch(
+            (int) $group->masjid_id,
+            (int) $group->id,
+            GroupNotificationEvent::TEACHER_THREAD_MESSAGE,
+            aboutContactId: null,
+            authorUserId: null,
+            authorContactId: $this->contact()->id,
+        )->afterCommit();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['id' => (int) $thread->id, 'subject' => $thread->subject],
+        ], Response::HTTP_CREATED);
+    }
+
     public function storeMessage(StoreFamilyMessageRequest $request, $masjid_id, $group_id, $thread_id)
     {
         $group = $this->group($group_id);

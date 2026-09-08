@@ -95,6 +95,22 @@ class SendGroupNotificationJob implements ShouldQueue
                             : $resolver->feedGuardians($group, $authorAddress),
                         'message',
                     ],
+
+                // A handout shared with families reaches the same audience as
+                // the class story, and is gated by the same feed consent.
+                GroupNotificationEvent::RESOURCE_SHARED =>
+                    [$resolver->feedGuardians($group, $authorAddress), 'update'],
+
+                // A mark reaches ONE child's guardians. aboutContactId is always
+                // set for this event; falling back to the feed audience would
+                // tell every family in the class that a mark had been entered.
+                GroupNotificationEvent::GRADE_POSTED =>
+                    [
+                        $this->aboutContactId !== null
+                            ? $resolver->wardGuardians($group, $this->aboutContactId, $authorAddress)
+                            : collect(),
+                        'update',
+                    ],
             };
 
             if ($recipients->isEmpty()) {

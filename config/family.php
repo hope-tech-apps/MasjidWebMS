@@ -63,4 +63,23 @@ return [
 
     ],
 
+    'threads' => [
+
+        /*
+         * How many conversations one parent may OPEN in an hour.
+         *
+         * Replying is deliberately not limited anywhere — a parent mid-
+         * conversation must never be told to slow down. Opening is different:
+         * it is the verb that creates a new thing a teacher has to triage, so a
+         * stuck client retrying, or a frustrated parent tapping Send, must not
+         * manufacture twenty threads.
+         *
+         * Six is generous for a real family and low enough that the teacher's
+         * list stays readable. Keyed on the CONTACT, not the IP: a household
+         * behind one address may be several families.
+         */
+        'opened_per_hour' => (int) env('FAMILY_THREADS_OPENED_PER_HOUR', 6),
+
+    ],
+
 ];

@@ -319,6 +319,31 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        /*
+         * A parent OPENING a conversation.
+         *
+         * Replying is deliberately not limited here — a parent mid-conversation
+         * should never be told to slow down. Opening is different: it is the one
+         * verb that creates a new object a teacher has to triage, so a stuck
+         * client or a frustrated parent tapping Send repeatedly must not manufacture
+         * twenty threads. Keyed on the authenticated CONTACT, not the IP: a family
+         * sharing a phone is one parent, and a household behind one NAT address is
+         * still several.
+         */
+        RateLimiter::for('family-thread', function (Request $request) {
+            $contactId = $request->user()?->id ?? 'guest';
+
+            return Limit::perHour((int) config('family.threads.opened_per_hour', 6))
+                ->by('family-thread:' . $contactId)
+                ->response(function () {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'You have started several conversations already. '
+                            . 'Please continue one of them, or try again later.',
+                    ], 429);
+                });
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });

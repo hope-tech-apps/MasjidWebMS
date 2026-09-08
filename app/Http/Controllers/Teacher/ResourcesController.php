@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Teacher;
 
+use App\Enums\GroupNotificationEvent;
 use App\Http\Requests\Teacher\StoreGroupResourceRequest;
+use App\Jobs\SendGroupNotificationJob;
 use App\Models\Group;
 use App\Models\GroupResource;
 use App\Support\GroupResourceFiles;
@@ -67,6 +69,8 @@ class ResourcesController extends TeacherController
             'uploaded_by_user_id' => Auth::id(),
         ]);
 
+        $this->announceIfShared($group, $resource);
+
         return response()->json([
             'status' => 'success',
             'data' => $resource->toAudienceArray(),
@@ -91,12 +95,41 @@ class ResourcesController extends TeacherController
             'visibility' => ['sometimes', 'required', Rule::in(GroupResource::VISIBILITIES)],
         ]);
 
+        $wasShared = $resource->visibility === GroupResource::VISIBILITY_FAMILIES;
+
         $resource->update($validated);
+
+        // Only on the TRANSITION to families. Renaming a file that families can
+        // already see must not announce it a second time.
+        if (! $wasShared) {
+            $this->announceIfShared($group, $resource->fresh());
+        }
 
         return response()->json([
             'status' => 'success',
             'data' => $resource->fresh()->toAudienceArray(),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Tell the families a handout is waiting — but only if it is actually theirs
+     * to see. A staff-only upload notifies nobody, which is the whole point of
+     * the default.
+     */
+    private function announceIfShared(Group $group, GroupResource $resource): void
+    {
+        if ($resource->visibility !== GroupResource::VISIBILITY_FAMILIES) {
+            return;
+        }
+
+        SendGroupNotificationJob::dispatch(
+            (int) $group->masjid_id,
+            (int) $group->id,
+            GroupNotificationEvent::RESOURCE_SHARED,
+            aboutContactId: null,
+            authorUserId: Auth::id(),
+            authorContactId: null,
+        )->afterCommit();
     }
 
     public function destroy(Request $request, $masjid_id, $group_id, $resource_id): JsonResponse

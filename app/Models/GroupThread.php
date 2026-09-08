@@ -52,6 +52,9 @@ class GroupThread extends Model
         'masjid_id',
         'group_id',
         'created_by_user_id',
+        // Set INSTEAD of created_by_user_id when a parent opened the thread.
+        // Exactly one of the two is ever populated.
+        'created_by_contact_id',
         'subject',
         'scope',
         'about_membership_id',
