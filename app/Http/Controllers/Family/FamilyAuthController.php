@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Family;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Family\PasswordSignInRequest;
 use App\Http\Requests\Family\RequestLoginCodeRequest;
 use App\Http\Requests\Family\VerifyLoginCodeRequest;
 use App\Models\Contact;
 use App\Services\Family\FamilyLoginService;
+use App\Services\Family\FamilyPasswordService;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -43,6 +45,14 @@ use Symfony\Component\HttpFoundation\Response;
  * they hit, and in particular cannot use the difference between "wrong code" and
  * "no such address" as a directory.
  *
+ * `password` (2026-09-08) collapses four more into the SAME 410, from the same
+ * private method: unknown address, revoked login, no password chosen, wrong
+ * password. Sharing the body is not tidiness — the two doors now open the same
+ * account, so any observable difference between them would answer "does this
+ * family use a password?" about a specific family. They share the throttle
+ * bucket for the matching reason: separate allowances would hand an attacker
+ * twice the guesses against one address.
+ *
  * 410 rather than 401, for both the design's reason (§3 names it) and a
  * practical one: 401 on this route would collide with the envelope the guard and
  * `family.active` emit everywhere else in the realm, and a client cannot tell
@@ -51,8 +61,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class FamilyAuthController extends Controller
 {
-    public function __construct(private FamilyLoginService $logins)
-    {
+    public function __construct(
+        private FamilyLoginService $logins,
+        private FamilyPasswordService $passwords,
+    ) {
     }
 
     /**
@@ -85,10 +97,58 @@ class FamilyAuthController extends Controller
             $request->ip(),
         );
 
-        if ($result === null) {
-            return $this->refuse();
-        }
+        return $result === null ? $this->refuse() : $this->session($result);
+    }
 
+    /**
+     * POST /api/family/masjids/{masjid_id}/auth/password
+     *
+     * The SECOND door (2026-09-08). A parent who chose a password signs in with
+     * it instead of fetching a code from their mailbox.
+     *
+     * It answers with the SAME 410 body `verify-code` does, and that sameness is
+     * load-bearing in a way the other endpoints' is not. This route and
+     * `verify-code` are now two ways to attack the same account, so any
+     * difference between them — a distinct status, a distinct wording, even a
+     * distinct field ordering — would let a caller ask "does this address have a
+     * password?", which is a question about a specific family. One body, four
+     * causes: unknown address, revoked login, no password chosen, wrong
+     * password. `FamilyPasswordService::attempt()` returns null for all four and
+     * pays the same hashing cost for each, so the wall clock does not answer it
+     * either.
+     *
+     * Throttled with `family-verify`, deliberately the SAME bucket as the code
+     * door rather than a new one: two doors with separate allowances would give
+     * an attacker double the guesses against one address, which is exactly the
+     * mistake `redeem()` avoids when it charges every live code for a wrong
+     * guess.
+     */
+    public function signInWithPassword(PasswordSignInRequest $request)
+    {
+        $result = $this->passwords->attempt(
+            (string) $request->input('email'),
+            (string) $request->input('password'),
+            $request->ip(),
+        );
+
+        return $result === null ? $this->refuse() : $this->session($result);
+    }
+
+    /**
+     * The one successful body, shared by both doors.
+     *
+     * Extracted when the password door landed: two hand-built copies of this
+     * projection would be two places for a column added to `contacts` to start
+     * leaking, and the reason it is hand-built at all is that `notes` is
+     * staff-authored free text and `email`/`phone` are the office's contact
+     * data. A parent's own password never appears here in any form — not the
+     * hash (which `$hidden` also stops), not a "you have one" flag; `/me` is
+     * where a client asks that, holding a token.
+     *
+     * @param  array{contact: Contact, token: \Laravel\Sanctum\NewAccessToken}  $result
+     */
+    private function session(array $result)
+    {
         /** @var Contact $contact */
         $contact = $result['contact'];
 

@@ -1190,7 +1190,7 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function the_family_realm_writes_exactly_seven_things(): void
+    public function the_family_realm_writes_exactly_nine_things(): void
     {
         // This used to assert the realm accepted NO write verb at all, because
         // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
@@ -1205,6 +1205,15 @@ class FamilyPortalTest extends TestCase
         // the controller and never read from the payload, so no request can
         // reach the whole class; the subject must be the caller's own ward; and
         // it is throttled per contact, which replying deliberately is not.
+        //
+        // The eighth and ninth (2026-09-08) are a parent setting and removing
+        // their OWN password, plus the sign-in door that password opens. They
+        // are the only writes in this realm that touch a credential, and the
+        // only ones whose subject cannot be named by the request at all: both
+        // act on `Auth::user()`, so aiming them at another family is not a
+        // request that can be expressed. There is deliberately no admin twin —
+        // an office may enable or revoke a family's ACCESS, but may never set,
+        // read or reset their password.
         //
         // T-015h (self-service consent withdrawal) is still absent — a parent
         // cannot change a roster, and cannot withdraw consent without the office.
@@ -1227,6 +1236,8 @@ class FamilyPortalTest extends TestCase
         sort($writes);
 
         $this->assertSame([
+            'DELETE /api/family/masjids/{masjid_id}/password',
+            'POST /api/family/masjids/{masjid_id}/auth/password',
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
@@ -1234,6 +1245,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
+            'PUT /api/family/masjids/{masjid_id}/password',
         ], $writes);
     }
 

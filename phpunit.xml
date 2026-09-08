@@ -23,6 +23,10 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="sqlite"/>
+        <!-- No outbound HTTP from the suite: Password::uncompromised() would
+             call Have I Been Pwned. A test that reaches the public internet is
+             a test that fails on a train. See config/family.php. -->
+        <env name="FAMILY_PASSWORD_CHECK_BREACHES" value="false"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>

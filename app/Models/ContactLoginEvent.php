@@ -102,8 +102,23 @@ class ContactLoginEvent extends Model
     public const ACTION_ADDRESS_CLAIMED = 'address_claimed';
 
     /**
+     * The family CHOSE a password for themselves, or changed the one they had.
+     *
+     * The first verb on this trail with no operator behind it, and that is the
+     * fact worth recording: `actor_user_id`, `actor_name` and `actor_email` are
+     * all NULL because no staff user was involved and none CAN be — see
+     * FamilyPasswordService. A reader of the access-history panel should be able
+     * to tell an act the office performed from one the family performed, and the
+     * empty actor is how.
+     */
+    public const ACTION_PASSWORD_SET = 'password_set';
+
+    /** The family removed their password, returning to sign-in codes only. */
+    public const ACTION_PASSWORD_CLEARED = 'password_cleared';
+
+    /**
      * A plain string column, not an enum — adding a verb must not be an
-     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The three
+     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The five
      * verbs below `revoked` are what that choice was made FOR; they cost a
      * constant each and no schema change.
      *
@@ -115,6 +130,8 @@ class ContactLoginEvent extends Model
         self::ACTION_MERGED,
         self::ACTION_ADDRESS_RELEASED,
         self::ACTION_ADDRESS_CLAIMED,
+        self::ACTION_PASSWORD_SET,
+        self::ACTION_PASSWORD_CLEARED,
     ];
 
     /**

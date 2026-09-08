@@ -139,8 +139,15 @@ class Contact extends Model implements AuthenticatableContract
      *     `ContactFamilyLoginController`, behind `manage contacts`.
      *   - `App\Services\Family\FamilyLoginService::consume()` — `last_login_at`,
      *     which is operator visibility only and authorizes nothing.
+     *   - `App\Services\Family\FamilyPasswordService` — `password` /
+     *     `password_set_at`, added 2026-09-08. It is on this list for the same
+     *     reason the others are: `password` is credentials-adjacent in the
+     *     strongest possible sense, and leaving it out of $fillable means no
+     *     request body — not a CRM update, not a roster import — can set a
+     *     family's credential as a side effect of editing something else. The
+     *     service writes it only for the contact the caller's OWN token names.
      *
-     * If a third writer ever appears, the audit trail stops being complete —
+     * If a fourth writer ever appears, the audit trail stops being complete —
      * which is the point of keeping the list this short.
      */
     protected $fillable = [
@@ -174,6 +181,26 @@ class Contact extends Model implements AuthenticatableContract
         'staff_avatar_color',
     ];
 
+    /**
+     * The credential never leaves the database, on ANY surface.
+     *
+     * This model IS serialized wholesale, unlike the family realm's hand-built
+     * projections: `AdminDashboard\ContactsController` answers `->paginate()`
+     * on index, `'data' => $contact` on store and update, and `$contact
+     * ->toArray()` on show. Adding a `password` column without this line would
+     * have put a parent's bcrypt hash into four staff-facing JSON responses on
+     * the day the column landed.
+     *
+     * `password_set_at` is deliberately NOT hidden — "does this family have a
+     * password?" is a legitimate thing for an admin screen to answer, and the
+     * timestamp answers it without the hash.
+     *
+     * @var array<int, string>
+     */
+    protected $hidden = [
+        'password',
+    ];
+
     protected function casts(): array
     {
         return [
@@ -181,6 +208,11 @@ class Contact extends Model implements AuthenticatableContract
             'login_enabled_at' => 'datetime',
             'login_revoked_at' => 'datetime',
             'last_login_at' => 'datetime',
+            // NOT the `hashed` cast. The hash is written in exactly one place
+            // (FamilyPasswordService) which calls Hash::make itself, and a cast
+            // that silently re-hashes on assignment would make a double-hash
+            // depend on how a value happened to be set.
+            'password_set_at' => 'datetime',
             'verified_at' => 'datetime',
             'sms_opt_in' => 'boolean',
             'sms_consent_at' => 'datetime',
@@ -328,19 +360,60 @@ class Contact extends Model implements AuthenticatableContract
     }
 
     /**
-     * Contacts have NO password column and no password-based guard, by design —
-     * 200 families cannot be issued passwords and a school office cannot run a
-     * reset desk (§1). Credentials are the mailbox, via the codes T-015d adds.
+     * The password this contact CHOSE, or the empty string if they have not.
      *
-     * Returning an empty string rather than inheriting the trait's
-     * `$this->password` (which would be `null` here) is a fail-closed choice:
-     * every hasher in the framework answers `check($plain, '')` with `false`
-     * before doing any work, so if a password-driven guard is ever pointed at
-     * the `contacts` provider by mistake, no credential can satisfy it.
+     * ---------------------------------------------------------------------
+     * THIS REVERSES A RECORDED DECISION — deliberately, and only halfway
+     * ---------------------------------------------------------------------
+     *
+     * What stood here until 2026-09-08:
+     *
+     *     "Contacts have NO password column and no password-based guard, by
+     *      design — 200 families cannot be issued passwords and a school office
+     *      cannot run a reset desk (§1). Credentials are the mailbox, via the
+     *      codes T-015d adds."
+     *
+     * Both of those reasons were about the OFFICE ISSUING credentials, and both
+     * still hold. Nothing sets a password except the parent who owns it, while
+     * already holding a token they got from their own mailbox; no password is
+     * ever mailed; and there is still no reset desk — a parent who forgets
+     * theirs signs in with a code, exactly as before. What changed is that a
+     * parent who has already proved control of their mailbox may now choose not
+     * to return to it every time. See FamilyPasswordService.
+     *
+     * ---------------------------------------------------------------------
+     * The fail-closed choice is PRESERVED, not dropped
+     * ---------------------------------------------------------------------
+     *
+     * The old body returned `''` unconditionally so that no credential could
+     * ever satisfy a hasher pointed at this provider. That property is exactly
+     * what a contact with no password still needs, so the coalesce keeps it:
+     * `password` is NULL for every row that has not opted in — which is all of
+     * them until a parent acts — and `Hash::check($any, '')` is false before any
+     * work is done. An un-enrolled contact therefore cannot be signed in by ANY
+     * password, including the empty string and including null.
+     *
+     * Read from `$this->attributes` rather than `$this->password` on purpose:
+     * an accessor or a cast added to this model later must not be able to
+     * change what the authentication layer compares against.
      */
     public function getAuthPassword()
     {
-        return '';
+        return (string) ($this->attributes['password'] ?? '');
+    }
+
+    /**
+     * Has this parent chosen a password? Never reads the hash.
+     *
+     * `password_set_at` is the flag on purpose — a screen that wants to say
+     * "you have a password" must not have to touch the credential to find out,
+     * and a NULL hash with a non-NULL timestamp (or the reverse) is a bug this
+     * predicate makes visible rather than papering over.
+     */
+    public function hasFamilyPassword(): bool
+    {
+        return ($this->attributes['password'] ?? null) !== null
+            && $this->password_set_at !== null;
     }
 
     /**

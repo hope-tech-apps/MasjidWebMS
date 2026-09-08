@@ -3,6 +3,7 @@
 use App\Http\Controllers\Family\ArabicLettersController;
 use App\Http\Controllers\Family\BehaviorAwardsController;
 use App\Http\Controllers\Family\FamilyAuthController;
+use App\Http\Controllers\Family\FamilyPasswordController;
 use App\Http\Controllers\Family\GroupPostsController;
 use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
@@ -74,9 +75,15 @@ use Illuminate\Support\Facades\Route;
 | a `contact_login_codes` row; T-015f adds a reply in a thread the parent may
 | already read (which also moves their own read bookmark); and a parent may set
 | the AVATAR of a child they are the guardian of, because this platform has no
-| student login and somebody has to choose it with them. Everything else is a GET. A parent cannot START a thread (that would route around
-| the teacher who decides what is discussed and where), and withdrawing their
-| own consent is still T-015h — absent rather than half-built.
+| student login and somebody has to choose it with them. A parent may also now
+| set and remove their OWN password (2026-09-08) — the only writes in this realm
+| that touch a credential, and the only ones whose subject cannot be named by the
+| request at all. Everything else is a GET. Withdrawing their own consent is
+| still T-015h — absent rather than half-built.
+|
+| `FamilyPortalTest::the_family_realm_writes_exactly_nine_things` enumerates
+| every one of them and fails on a tenth. Adding a route here without updating
+| that list is a failing build, on purpose.
 */
 
 // --------------------------------------------------------------- signing in
@@ -102,6 +109,17 @@ Route::prefix('family/masjids/{masjid_id}/auth')
 
         // 200 + a token, or an identical 410 for all six ways it can fail.
         Route::post('/verify-code', 'verifyCode')->middleware('throttle:family-verify');
+
+        // The SECOND door: a parent who chose a password signs in with it.
+        //
+        // `throttle:family-verify` is the same bucket verify-code uses, on
+        // purpose and not by copy-paste. Two credential doors with independent
+        // allowances would give an attacker twice the guesses per hour against
+        // one address, which is the same arithmetic FamilyLoginService::redeem
+        // refuses when it charges EVERY live code for one wrong guess. The
+        // bucket keys on the submitted address, so both doors draw down one
+        // shared allowance for that address.
+        Route::post('/password', 'signInWithPassword')->middleware('throttle:family-verify');
     });
 
 // ------------------------------------------------------------ child mode
@@ -139,6 +157,19 @@ Route::prefix('family')
         Route::prefix('masjids/{masjid_id}')->group(function () {
 
             Route::get('/me', [MeController::class, 'show']);
+
+            // A parent CHOOSING their own password, and removing it. The third
+            // and fourth writes in this realm, and the only ones that touch a
+            // credential.
+            //
+            // Neither takes a contact identifier of any kind — the subject is
+            // `Auth::user()` and nothing else — so this pair cannot be aimed at
+            // another family, and there is deliberately no admin twin: an office
+            // may enable or revoke a family's ACCESS (ContactFamilyLoginController,
+            // behind `manage contacts`) but may never set, read or reset their
+            // password. See FamilyPasswordService.
+            Route::put('/password', [FamilyPasswordController::class, 'update']);
+            Route::delete('/password', [FamilyPasswordController::class, 'destroy']);
 
             // The forty drawings a family can choose from.
             Route::get('/avatars', [GroupsController::class, 'avatarCatalogue']);

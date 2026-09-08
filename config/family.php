@@ -112,4 +112,42 @@ return [
 
     ],
 
+    /*
+     * The password a parent may choose for themselves (2026-09-08).
+     *
+     * There is nothing here about issuing, resetting or expiring one, and that
+     * is deliberate: the office never holds a family's password, so there is no
+     * operator policy to configure. See App\Services\Family\FamilyPasswordService.
+     */
+    'password' => [
+
+        /*
+         * Minimum length, and the ONLY strength rule.
+         *
+         * No character-class requirements: they push people toward `Password1!`
+         * and are explicitly not what NIST 800-63B asks for. Length is.
+         *
+         * Enforced only where a password is CHOSEN. The sign-in door must never
+         * apply it — refusing a short submission with a 422 while a wrong-but-
+         * long one gets the uniform 410 would disclose the stored credential's
+         * length, and raising this number would silently lock out every parent
+         * whose password predates the change.
+         */
+        'min_length' => (int) env('FAMILY_PASSWORD_MIN_LENGTH', 12),
+
+        /*
+         * Check the chosen password against Have I Been Pwned.
+         *
+         * k-anonymity: five characters of a SHA-1 prefix leave the server, never
+         * the password. Laravel fails OPEN if the call cannot be made, so a
+         * network problem at the school cannot stop a parent setting a password.
+         *
+         * Off in `testing` (see phpunit.xml) so the suite makes no outbound
+         * request — a test that reaches the public internet is a test that fails
+         * on a train. Nothing else should turn it off.
+         */
+        'check_breaches' => (bool) env('FAMILY_PASSWORD_CHECK_BREACHES', true),
+
+    ],
+
 ];

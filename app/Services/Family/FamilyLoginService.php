@@ -189,8 +189,16 @@ class FamilyLoginService
      * exact duplicate impossible, but it cannot stop `Parent@x.com` and
      * `parent@x.com` both existing — and an ambiguity about WHO is signing in
      * resolves to nobody, the same call the staff identity bridge makes.
+     *
+     * PUBLIC since 2026-09-08 so `FamilyPasswordService` can share it rather
+     * than own a second copy. "Which contact does this address name, in the
+     * bound tenant, and may they log in at all?" is one question, and the two
+     * doors into this realm must answer it identically — a password door that
+     * resolved contacts even slightly differently (case, duplicates, revocation)
+     * would be a way around the code door's rules, which is the entire class of
+     * bug .claude/rules/tenant-scoping.md was written about.
      */
-    private function resolveContact(string $submittedEmail): ?Contact
+    public function resolveContact(string $submittedEmail): ?Contact
     {
         $email = Str::lower(trim($submittedEmail));
 
