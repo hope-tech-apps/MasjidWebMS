@@ -215,7 +215,14 @@ class FamilyAuthGuardTest extends TestCase
     #[Test]
     public function the_family_guard_is_pinned_to_the_contacts_provider(): void
     {
-        $this->assertSame('sanctum', config('auth.guards.family.driver'));
+        // `sanctum-family`, not `sanctum`, since 2026-09-08: the family guard is
+        // built by our own driver so a PARENT's session can outlive the global
+        // 8-hour expiration without lengthening a staff one. It is a copy of
+        // Sanctum's createGuard with the expiration changed and NOTHING else —
+        // in particular the provider below is still passed through, so
+        // Guard::hasValidProvider() runs exactly as it did, which is the
+        // security property this test exists to pin.
+        $this->assertSame('sanctum-family', config('auth.guards.family.driver'));
         $this->assertSame('contacts', config('auth.guards.family.provider'));
         $this->assertSame(Contact::class, config('auth.providers.contacts.model'));
 
