@@ -303,6 +303,37 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         $this->assertSame(1, $summary['excused']);
     }
 
+    /**
+     * The average is over the whole term, not over the page of marks below it.
+     *
+     * The old code took a `limit()` with NO ordering at all and then sorted in
+     * PHP, so past the page size the average was computed from whichever rows
+     * the database happened to return first. Not truncated — arbitrary. A wrong
+     * average on a screen a parent may be shown is worse than a missing one.
+     */
+    #[Test]
+    public function the_term_average_is_aggregated_over_every_mark_not_over_the_page(): void
+    {
+        config(['groups.records_page_size' => 2]);
+
+        foreach (range(1, 5) as $i) {
+            $id = $this->newAssignment();
+            $this->putJson($this->url() . "/assignments/{$id}/scores", [
+                'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 6]],
+            ])->assertOk();
+        }
+
+        $data = $this->getJson($this->url() . "/members/{$this->student->id}/grades")
+            ->assertOk()->json('data');
+
+        $this->assertSame(5, $data['summary']['recorded'], 'the term, not the page');
+        $this->assertSame(30.0, (float) $data['summary']['points_earned'], '5 marks of 6, not 2');
+        $this->assertSame(50.0, (float) $data['summary']['points_possible'], '5 assignments of 10, not 2');
+
+        $this->assertSame(2, $data['scores_shown']);
+        $this->assertTrue($data['scores_truncated'], 'a short list under a full average must say so');
+    }
+
     // -------------------------------------------------------------- resources
 
     #[Test]

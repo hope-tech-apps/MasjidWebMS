@@ -224,6 +224,48 @@ class TeacherAttendanceTest extends TestCase
         $this->assertSame(0, $summary['absent'], 'an excused absence is not an absence');
     }
 
+    /**
+     * The regression this pins is invisible at every realistic test size, which
+     * is exactly why it shipped: the summary used to be counted from the same
+     * bounded page the list returns, so it stayed right until a child had more
+     * marked days than the page holds — around the second year of a 180-day
+     * calendar, which is when a parent asks how many days were missed.
+     *
+     * Shrinking the page rather than creating 201 rows is the point: it tests
+     * the RELATIONSHIP between the total and the page, at any page size.
+     */
+    #[Test]
+    public function the_year_total_is_counted_over_every_day_not_over_the_page(): void
+    {
+        config(['groups.records_page_size' => 3]);
+
+        foreach (range(1, 8) as $i) {
+            AttendanceRecord::create([
+                'masjid_id' => $this->school->id, 'group_id' => $this->mine->id,
+                'group_membership_id' => $this->kg->id,
+                'session_date' => now()->subDays($i),
+                // The two absences are the OLDEST days, so they fall outside the
+                // three-day page. Counting the page would report zero absences.
+                'status' => $i >= 7 ? 'absent' : 'present',
+            ]);
+        }
+
+        $data = $this->getJson($this->url()."/members/{$this->kg->id}/attendance")
+            ->assertOk()->json('data');
+
+        $this->assertSame(8, $data['summary']['recorded'], 'the total is the year, not the page');
+        $this->assertSame(2, $data['summary']['absent'], 'both absences fall OUTSIDE the page');
+        $this->assertSame(6, $data['summary']['present']);
+
+        $this->assertSame(3, $data['records_shown']);
+        $this->assertTrue($data['records_truncated'], 'a short list under a big total must say so');
+        $this->assertSame(
+            now()->subDay()->toDateString(),
+            $data['records'][0]['session_date'],
+            'the page is the most RECENT days — ordered before the limit'
+        );
+    }
+
     #[Test]
     public function the_register_never_carries_a_guardians_contact_details(): void
     {
