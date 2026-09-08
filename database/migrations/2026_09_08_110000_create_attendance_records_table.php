@@ -91,8 +91,16 @@ return new class extends Migration
             $table->unique(['group_membership_id', 'session_date'], 'attendance_student_day_unique');
 
             // The only two reads: today's class register, and one child's history.
-            $table->index(['masjid_id', 'group_id', 'session_date']);
-            $table->index(['masjid_id', 'group_membership_id', 'session_date']);
+            //
+            // BOTH names are given explicitly because Laravel's generated name for
+            // the second one — attendance_records_masjid_id_group_membership_id_
+            // session_date_index, 67 characters — is over MySQL's 64-character
+            // identifier limit, and MySQL refuses it with errno 1059. SQLite has no
+            // such limit, so the test suite went green and the failure appeared for
+            // the first time against the live MySQL. Any index added here later
+            // needs a hand-written name for the same reason.
+            $table->index(['masjid_id', 'group_id', 'session_date'], 'attendance_class_day_idx');
+            $table->index(['masjid_id', 'group_membership_id', 'session_date'], 'attendance_student_history_idx');
         });
     }
 
