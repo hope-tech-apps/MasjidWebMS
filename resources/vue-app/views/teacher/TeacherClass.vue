@@ -846,6 +846,17 @@
                                            class="form-control form-control-sm" placeholder="e.g. Spelling test">
                                 </div>
                                 <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Marked on</label>
+                                    <select v-model="assignmentForm.scale" class="form-select form-select-sm" style="width:9.5rem">
+                                        <option value="levels">Levels 4–1</option>
+                                        <option value="points">Points</option>
+                                    </select>
+                                </div>
+                                <!-- Only points work has a maximum to ask for. On the
+                                     levels scale the maximum is implied by the scale,
+                                     and a box here would offer a five-level assignment
+                                     nothing else in the system can read. -->
+                                <div v-if="assignmentForm.scale === 'points'" class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Out of</label>
                                     <input v-model.number="assignmentForm.points_possible" type="number" min="1"
                                            class="form-control form-control-sm" style="width:6rem">
@@ -872,7 +883,9 @@
                                 @click="openScores(a)">
                             <div class="flex-grow-1">
                                 <div class="fw-semibold small">{{ a.title }}</div>
-                                <div class="text-muted small">{{ a.assigned_on }} · out of {{ a.points_possible }}</div>
+                                <div class="text-muted small">
+                                    {{ a.assigned_on }} · {{ a.scale === 'levels' ? 'levels 4–1' : `out of ${a.points_possible}` }}
+                                </div>
                             </div>
                             <span class="badge" :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
                                 {{ a.scored }}/{{ a.roster }} marked
@@ -886,7 +899,23 @@
                         ← Assignments
                     </button>
                     <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
-                    <div class="text-muted small mb-3">Out of {{ openAssignment.points_possible }}</div>
+                    <div class="text-muted small mb-3">
+                        {{ openAssignment.scale === 'levels' ? 'Performance levels' : `Out of ${openAssignment.points_possible}` }}
+                    </div>
+
+                    <!-- THE KEY. Rendered from the payload, never hardcoded, so
+                         these are the school's own words and a teacher choosing
+                         between a 2 and a 3 for a real child can read what each
+                         one actually means without leaving the screen. -->
+                    <details v-if="openAssignment.scale === 'levels' && levelKey.length" class="mb-3">
+                        <summary class="small text-primary" style="cursor:pointer">What do 4, 3, 2 and 1 mean?</summary>
+                        <dl class="row small mt-2 mb-0">
+                            <template v-for="l in levelKey" :key="l.level">
+                                <dt class="col-sm-3 fw-semibold">{{ l.level }} — {{ l.short_label }}</dt>
+                                <dd class="col-sm-9 text-muted">{{ l.description }}</dd>
+                            </template>
+                        </dl>
+                    </details>
 
                     <div class="list-group mb-3">
                         <div v-for="s in openAssignment.students" :key="s.membership_id"
@@ -901,10 +930,26 @@
                                     </span>
                                 </div>
                             </div>
+                            <!-- LEVELS: four buttons, because there are exactly four
+                                 answers. A number box here would invite 2.5 and 0,
+                                 neither of which the scale can express. Each button
+                                 carries the school's own word, so a teacher is
+                                 picking "Meets" rather than picking "3". -->
+                            <div v-if="openAssignment.scale === 'levels'" class="d-flex align-items-center gap-1 flex-wrap">
+                                <button v-for="l in levelKey" :key="l.level" type="button"
+                                        class="btn btn-sm"
+                                        :class="marks_g[s.membership_id]?.points_earned === l.level && marks_g[s.membership_id]?.status === 'scored'
+                                            ? 'btn-primary' : 'btn-outline-primary'"
+                                        :disabled="isExempt(s.membership_id)"
+                                        :title="l.description"
+                                        @click="setLevel(s.membership_id, l.level)">
+                                    {{ l.level }} <span class="d-none d-md-inline">· {{ l.short_label }}</span>
+                                </button>
+                            </div>
                             <!-- Typing a mark IS "scored". No third button, and the
                                  box is never disabled — the old design made you
                                  press S before you could type the thing S meant. -->
-                            <div class="d-flex align-items-center gap-1">
+                            <div v-else class="d-flex align-items-center gap-1">
                                 <input type="number" min="0" :max="openAssignment.points_possible" step="0.5"
                                        class="form-control form-control-sm text-end" style="width:4.75rem"
                                        :disabled="isExempt(s.membership_id)"
@@ -922,7 +967,14 @@
                         </div>
                     </div>
 
-                    <p class="text-muted small mb-2">
+                    <p v-if="openAssignment.scale === 'levels'" class="text-muted small mb-2">
+                        Choose a level to score a child.
+                        <span class="text-danger-emphasis">Missing</span> is shown but left out of the average —
+                        a 1 means “Needs Support”, which is not the same as work that was never handed in.
+                        <span class="fw-semibold">Excused</span> does not count at all.
+                        A child you leave blank is simply not marked yet.
+                    </p>
+                    <p v-else class="text-muted small mb-2">
                         Type a mark to score a child.
                         <span class="text-danger-emphasis">Missing</span> counts as zero;
                         <span class="fw-semibold">Excused</span> does not count at all.
@@ -1511,8 +1563,15 @@ const deletePlan = async () => {
 
 // ---------- gradebook ----------
 const assignments = ref<any[]>([]);
-const assignmentForm = ref({ title: '', points_possible: 10, assigned_on: todayIso });
+const blankAssignment = () => ({ title: '', points_possible: 10, scale: defaultScale.value, assigned_on: todayIso });
+const assignmentForm = ref<any>({ title: '', points_possible: 10, scale: 'levels', assigned_on: todayIso });
 const creatingAssignment = ref(false);
+
+// THE KEY, and the school's default scale, both read from the server rather
+// than hardcoded here. What a 3 means is a fact about the school, not about
+// this component, and a copy of it in the SPA is a copy that goes stale.
+const levelKey = ref<any[]>([]);
+const defaultScale = ref('levels');
 const openAssignment = ref<any>(null);
 const marks_g = ref<Record<number, { status: string | null; points_earned: number | null }>>({});
 const savingScores = ref(false);
@@ -1524,6 +1583,9 @@ const loadAssignments = async () => {
     try {
         const res = await TeacherApiService.get(`${base.value}/assignments`);
         assignments.value = res.data?.data ?? [];
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
+        defaultScale.value = res.data?.default_scale ?? defaultScale.value;
+        if (!assignmentForm.value.title) assignmentForm.value.scale = defaultScale.value;
     } catch {
         gradesError.value = 'Could not load the gradebook.';
     }
@@ -1534,15 +1596,32 @@ const createAssignment = async () => {
     gradesError.value = '';
     try {
         await TeacherApiService.post(`${base.value}/assignments`, assignmentForm.value);
-        assignmentForm.value = { title: '', points_possible: 10, assigned_on: todayIso };
+        assignmentForm.value = blankAssignment();
         await loadAssignments();
     } catch (e: any) {
         gradesError.value = e?.response?.data?.data?.title?.[0]
             ?? e?.response?.data?.data?.points_possible?.[0]
+            ?? e?.response?.data?.data?.scale?.[0]
             ?? 'That work could not be added.';
     } finally {
         creatingAssignment.value = false;
     }
+};
+
+/**
+ * Choose a performance level for one child.
+ *
+ * Tapping the level a child already has CLEARS it back to unmarked, the way
+ * the Missing/Excused buttons toggle. Without that a mis-tap would be
+ * uncorrectable on the levels scale — there is no empty box to blank out.
+ */
+const setLevel = (membershipId: number, level: number) => {
+    const cell = marks_g.value[membershipId];
+    if (!cell) return;
+    const already = cell.status === 'scored' && cell.points_earned === level;
+    cell.status = already ? null : 'scored';
+    cell.points_earned = already ? null : level;
+    scoresSaved.value = false;
 };
 
 const openScores = async (a: any) => {
@@ -1551,6 +1630,7 @@ const openScores = async (a: any) => {
     try {
         const res = await TeacherApiService.get(`${base.value}/assignments/${a.id}`);
         openAssignment.value = res.data?.data ?? null;
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
         const next: Record<number, any> = {};
         for (const s of openAssignment.value?.students ?? []) {
             // An unmarked child stays unmarked. Seeding a default here would
