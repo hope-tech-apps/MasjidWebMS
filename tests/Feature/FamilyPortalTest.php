@@ -1105,15 +1105,24 @@ class FamilyPortalTest extends TestCase
     // ------------------------------------------------ 6. the realm stays read-only
 
     #[Test]
-    public function the_family_realm_writes_exactly_six_things(): void
+    public function the_family_realm_writes_exactly_seven_things(): void
     {
         // This used to assert the realm accepted NO write verb at all, because
         // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
         // so the guarantee is restated rather than dropped: the realm's writes
-        // are COUNTED, and adding a fourth has to be a deliberate edit here.
+        // are COUNTED, and adding an eighth has to be a deliberate edit here.
+        //
+        // The seventh, added deliberately, is a parent OPENING a conversation.
+        // Until it existed neither a parent nor a teacher could start one — only
+        // the office could, from the admin console — so "message your teacher"
+        // was a thing a family had to phone the school to arrange. It is
+        // narrower than the staff verb: the scope is FORCED to participant in
+        // the controller and never read from the payload, so no request can
+        // reach the whole class; the subject must be the caller's own ward; and
+        // it is throttled per contact, which replying deliberately is not.
+        //
         // T-015h (self-service consent withdrawal) is still absent — a parent
-        // cannot start a thread, cannot change a roster, cannot withdraw consent
-        // without the office.
+        // cannot change a roster, and cannot withdraw consent without the office.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1136,6 +1145,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
