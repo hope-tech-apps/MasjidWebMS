@@ -250,17 +250,24 @@ class Contact extends Model implements AuthenticatableContract
     /**
      * Mint a parent/guardian token carrying the family realm's abilities.
      *
-     * ON EXPIRY, because the design (§2) asks for 30 days and this cannot
-     * deliver it: Sanctum builds every guard with the single global
-     * `config('sanctum.expiration')` (480 minutes here) and enforces it against
-     * `created_at` inside `Laravel\Sanctum\Guard`, so a per-token `expires_at`
-     * can only ever SHORTEN a token's life, never extend it past the global
-     * value. Raising that value would move staff sessions too, which
-     * .claude/rules/auth-permissions.md forbids ("never change how an existing
-     * admin logs in"). A longer family session therefore needs a per-guard
-     * expiration — a change in how the guard is constructed — and is left to
-     * the slice that ships the parent app (T-015j), rather than written here as
-     * an `expiresAt` that Sanctum would silently ignore.
+     * ON EXPIRY — RESOLVED 2026-09-08, and still not by an `expiresAt` here.
+     *
+     * The problem was never this method. Sanctum builds every guard with the
+     * single global `config('sanctum.expiration')` (480 minutes) and enforces it
+     * against `created_at` inside `Laravel\Sanctum\Guard`, so a per-token
+     * `expires_at` can only ever SHORTEN a token's life, never extend it past
+     * the global. Raising the global would move staff sessions too, which
+     * .claude/rules/auth-permissions.md forbids.
+     *
+     * The fix this docblock predicted — "a per-guard expiration, a change in how
+     * the guard is constructed" — is now built: the `family` guard has its own
+     * driver (AppServiceProvider::registerFamilyGuard) carrying
+     * `config('family.session.expiration_minutes')`, 30 days by default. Staff
+     * remain at 8 hours because their guard is untouched.
+     *
+     * So this method still mints a plain token with no expiry argument, and that
+     * is correct: the LIFETIME is a property of the guard that reads it, not of
+     * the token. Adding an `expiresAt` here would only be able to shorten it.
      */
     public function createFamilyToken(string $name = 'family-token'): NewAccessToken
     {

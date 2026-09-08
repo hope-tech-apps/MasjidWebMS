@@ -63,6 +63,36 @@ return [
 
     ],
 
+    'session' => [
+
+        /*
+         * How long a parent stays signed in, in MINUTES. 30 days.
+         *
+         * This is the number the design asked for and could not have until the
+         * `family` guard got its own expiration: Sanctum enforces ONE global
+         * `sanctum.expiration` inside its Guard, and a per-token `expires_at`
+         * can only ever shorten a token, never extend it past that global. The
+         * global is 480 minutes and must stay there, because raising it would
+         * lengthen STAFF sessions too — which .claude/rules/auth-permissions.md
+         * forbids ("never change how an existing admin logs in").
+         *
+         * So the family guard is now built by its own driver with its own
+         * expiration (AppServiceProvider), and this is that value. Staff are
+         * untouched at 8 hours.
+         *
+         * WHY SO LONG. A parent checks a school portal a few times a term. At 8
+         * hours they re-authenticated on essentially every visit — find the
+         * email, wait for a code, type six digits — which is enough friction to
+         * make a family stop looking, and a portal nobody opens is worse than no
+         * portal. The exposure is bounded: this token reads ONE family's own
+         * children, it is revocable at any moment through
+         * `contacts.login_revoked_at`, and revoking is a single switch in the
+         * admin console rather than a password reset.
+         */
+        'expiration_minutes' => (int) env('FAMILY_SESSION_MINUTES', 43200),
+
+    ],
+
     'threads' => [
 
         /*

@@ -138,7 +138,12 @@ return [
         | family realm shares staff's 8 hours. See Contact::createFamilyToken().
         */
         'family' => [
-            'driver' => 'sanctum',
+            // NOT 'sanctum'. This guard is built by our own driver
+            // (AppServiceProvider::registerFamilyGuard) so that a PARENT's
+            // session can outlive the global 8-hour `sanctum.expiration` without
+            // lengthening a staff session, which auth-permissions.md forbids.
+            // Setting this back to 'sanctum' silently returns parents to 8 hours.
+            'driver' => 'sanctum-family',
             'provider' => 'contacts',
         ],
     ],

@@ -405,6 +405,42 @@ class FamilyPortalTest extends TestCase
         $this->assertSame(1, GroupThread::withoutGlobalScopes()->count());
     }
 
+    /**
+     * A parent stays signed in far longer than a staff member, and the two are
+     * genuinely independent.
+     *
+     * This is the whole point of the `sanctum-family` driver. If
+     * `auth.guards.family.driver` is ever set back to `sanctum`, a parent
+     * silently drops to the 8-hour staff window and starts re-authenticating on
+     * every visit — a regression nobody would notice for weeks, because it looks
+     * like a parent simply being logged out.
+     */
+    #[Test]
+    public function a_parent_session_outlives_the_staff_window(): void
+    {
+        $token = $this->parentA->createFamilyToken();
+
+        // Aged past the global 480-minute expiration that still governs staff.
+        DB::table('personal_access_tokens')
+            ->where('id', $token->accessToken->id)
+            ->update(['created_at' => now()->subHours(24)]);
+
+        Auth::forgetGuards();
+        app(TenantContext::class)->forgetTenant();
+
+        $this->withHeader('Authorization', 'Bearer ' . $token->plainTextToken)
+            ->getJson($this->groupUrl('/threads'))
+            ->assertOk();
+
+        // And staff were NOT moved to get here.
+        $this->assertSame(
+            480,
+            (int) config('sanctum.expiration'),
+            'the global expiration governs STAFF and must stay at 8 hours'
+        );
+        $this->assertSame('sanctum-family', config('auth.guards.family.driver'));
+    }
+
     /** The audience is decided server-side; a scope in the payload is ignored. */
     #[Test]
     public function a_parent_cannot_reach_the_whole_class_even_by_asking(): void

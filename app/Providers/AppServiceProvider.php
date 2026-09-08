@@ -8,6 +8,8 @@ use App\Observers\UserObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Auth\RequestGuard;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Response;
@@ -47,6 +49,8 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->registerFamilyGuard();
+
         // NOTE ON REGISTRATION: everything under app/Listeners with a typed
         // handle() is ALREADY registered by Laravel's event discovery —
         // Application::configure() calls withEvents() unconditionally, which is
@@ -348,6 +352,8 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(60)->by($request->ip());
         });
 
+        // (the family guard driver is registered at the top of boot())
+
         RateLimiter::for('device', function (Request $request) {
             return Limit::perHour(10)->by($request->ip())->response(function () {
                 return response()->json([
@@ -368,6 +374,48 @@ class AppServiceProvider extends ServiceProvider
      * place `ResolveFamilyGuestTenant` reads it, so one tenant's traffic can
      * never consume another's allowance.
      */
+    /**
+     * The `family` guard, built with ITS OWN expiration.
+     *
+     * ## Why this exists at all
+     *
+     * Sanctum registers one driver and hands every guard the single global
+     * `config('sanctum.expiration')`, enforced against the token's `created_at`
+     * inside `Laravel\Sanctum\Guard`. A per-token `expires_at` can therefore only
+     * ever SHORTEN a token; it can never extend one past the global. That left
+     * two bad options and one good one:
+     *
+     *   - raise the global -> staff sessions lengthen too, which
+     *     .claude/rules/auth-permissions.md forbids;
+     *   - leave parents at 8 hours -> they re-authenticate on essentially every
+     *     visit, which is what "parent login is hard" actually was;
+     *   - give the family guard its own driver. This.
+     *
+     * It is a copy of SanctumServiceProvider::createGuard with one value
+     * changed. Nothing else about the guard differs: same RequestGuard, same
+     * Sanctum Guard, same `contacts` provider pinned in config/auth.php — so the
+     * provider check that keeps a parent's token off the admin API still runs
+     * exactly as before.
+     *
+     * The `auth.guards.family.driver` config points here. If that is ever set
+     * back to 'sanctum', parents silently return to 8 hours — hence the test.
+     */
+    private function registerFamilyGuard(): void
+    {
+        Auth::extend('sanctum-family', function ($app, $name, array $config) {
+            return new RequestGuard(
+                new \Laravel\Sanctum\Guard(
+                    $app['auth'],
+                    (int) config('family.session.expiration_minutes', 43200),
+                    $config['provider'] ?? null,
+                    config('sanctum.last_used_at', true)
+                ),
+                $app['request'],
+                $app['auth']->createUserProvider($config['provider'] ?? null)
+            );
+        });
+    }
+
     private function familyLoginKey(Request $request, string $prefix): string
     {
         // NORMALISE BOTH HALVES. This bucket is the only thing standing between a
