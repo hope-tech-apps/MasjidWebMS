@@ -211,10 +211,12 @@ class FamilyPasswordTest extends TestCase
         $this->assertFalse($parent->hasFamilyPassword());
         $this->assertSame('', $parent->getAuthPassword(), 'NULL must coalesce to the fail-closed empty string');
 
-        // Including the empty-ish ones: the fail-closed '' must not be
-        // satisfiable BY '' either, which is the trap a naive `=== $stored`
-        // comparison would fall into.
-        foreach ([' ', 'password', self::GOOD] as $attempt) {
+        // `'password'` and the real phrase both reach the hashing path and must
+        // lose there. A blank submission never gets that far — TrimStrings plus
+        // `required` make it a 422 about the caller's own input, which discloses
+        // nothing and is the same split VerifyLoginCodeRequest documents for a
+        // malformed code.
+        foreach (['password', self::GOOD, 'x'] as $attempt) {
             $this->postJson($this->signInUrl($masjid), [
                 'email' => $parent->login_email,
                 'password' => $attempt,
@@ -416,17 +418,19 @@ class FamilyPasswordTest extends TestCase
         $masjid = $this->makeMasjid();
         $parent = $this->makeParent($masjid);
 
-        // Authenticated, so a specific 422 discloses nothing.
+        // Authenticated, so a specific 422 discloses nothing. The envelope is
+        // this application's own — BaseFormRequest::failedValidation answers
+        // `{status: failed, data: {field: [...]}}`, not Laravel's `errors` key.
         $this->withToken($this->tokenFor($parent))
             ->putJson($this->passwordUrl($masjid), [
                 'password' => 'short', 'password_confirmation' => 'short',
-            ])->assertUnprocessable()->assertJsonValidationErrors('password');
+            ])->assertUnprocessable()->assertJsonStructure(['data' => ['password']]);
         $this->asANewRequest();
 
         $this->withToken($this->tokenFor($parent))
             ->putJson($this->passwordUrl($masjid), [
                 'password' => self::GOOD, 'password_confirmation' => 'typed it differently',
-            ])->assertUnprocessable()->assertJsonValidationErrors('password');
+            ])->assertUnprocessable()->assertJsonStructure(['data' => ['password']]);
         $this->asANewRequest();
 
         $this->assertFalse($parent->fresh()->hasFamilyPassword(), 'a refused attempt must not half-write');
