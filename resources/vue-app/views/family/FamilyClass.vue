@@ -24,10 +24,40 @@
                         {{ group.children.length === 1 ? childName(group.children[0]) : 'My children' }}
                     </button>
                 </li>
+                <!-- "Handouts", not "Resources" — that is the word a parent uses. -->
+                <li class="nav-item">
+                    <button class="nav-link" :class="{ active: tab === 'handouts' }" @click="tab = 'handouts'">
+                        Handouts
+                    </button>
+                </li>
             </ul>
 
+            <!-- -------------------------------------------------- handouts -->
+            <section v-if="tab === 'handouts'">
+                <p v-if="handoutsError" class="text-danger small">{{ handoutsError }}</p>
+                <p v-else-if="!handouts.length" class="text-muted small mb-0">
+                    Nothing shared yet. Anything your teacher sends home will appear here.
+                </p>
+                <div v-else class="list-group">
+                    <div v-for="h in handouts" :key="h.id"
+                         class="list-group-item d-flex align-items-center gap-3">
+                        <i class="bi bi-file-earmark fs-5 text-muted"></i>
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold small">{{ h.title }}</div>
+                            <div class="text-muted small">
+                                {{ h.original_name }} · {{ Math.max(1, Math.round(h.size_bytes / 1024)) }} KB
+                            </div>
+                            <div v-if="h.description" class="text-muted small">{{ h.description }}</div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" @click="downloadHandout(h)">
+                            <i class="bi bi-download"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <!-- ------------------------------------------------ class story -->
-            <section v-if="tab === 'story'">
+            <section v-else-if="tab === 'story'">
                 <div v-if="!group.may_receive_feed" class="alert alert-warning">
                     The class story is hidden because your consent for class updates is not on file.
                     The school office can record it for you.
@@ -294,7 +324,39 @@ const onAvatarSaved = (student: any) => {
     avatarFor.value = null;
 };
 const openedMessages = ref<any[]>([]);
-const tab = ref<'story' | 'messages' | 'children'>('story');
+const tab = ref<'story' | 'messages' | 'children' | 'handouts'>('story');
+
+// Handouts the class chose to share. The API applies visibility as a SCOPE, so
+// a staff-only file is never in this list and its name is never in this payload.
+const handouts = ref<any[]>([]);
+const handoutsError = ref('');
+
+const loadHandouts = async () => {
+    handoutsError.value = '';
+    try {
+        const res = await FamilyApiService.get(`${base.value}/resources`);
+        handouts.value = res.data?.data ?? [];
+    } catch {
+        handoutsError.value = 'These could not be loaded just now.';
+    }
+};
+
+const downloadHandout = async (h: any) => {
+    try {
+        const url = await FamilyApiService.blobUrl(`${base.value}/resources/${h.id}/download`);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = h.original_name;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch {
+        handoutsError.value = 'That file could not be downloaded.';
+    }
+};
+
+watch(tab, (t) => {
+    if (t === 'handouts' && !handouts.value.length) loadHandouts();
+});
 const loading = ref(true);
 const error = ref('');
 

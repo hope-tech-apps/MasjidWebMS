@@ -101,6 +101,34 @@ class TeacherApiService {
     public static delete(url: string): Promise<AxiosResponse> {
         return TeacherApiService.instance().delete(url);
     }
+
+    /**
+     * A multipart upload — the ONE write that must not use JSON_WRITE.
+     *
+     * `Content-Type: undefined` is deliberate and is not the same as omitting
+     * the header: it tells axios to let the browser set the header itself, which
+     * is the only way the multipart BOUNDARY gets written. Setting
+     * 'multipart/form-data' by hand produces a boundary-less header and a body
+     * PHP cannot parse — every field arrives empty, which is precisely the
+     * failure JSON_WRITE exists to prevent, arrived at from the other direction.
+     */
+    public static postForm(url: string, form: FormData): Promise<AxiosResponse> {
+        return TeacherApiService.instance().post(url, form, {
+            headers: { 'Content-Type': undefined },
+        });
+    }
+
+    /**
+     * Fetch private bytes as an object URL.
+     *
+     * A plain <a href> would 401: these routes are bearer-authenticated, and a
+     * browser navigation carries no Authorization header. Mirrors the one
+     * FamilyApiService already has.
+     */
+    public static async blobUrl(url: string): Promise<string> {
+        const res = await TeacherApiService.instance().get(url, { responseType: 'blob' });
+        return URL.createObjectURL(res.data);
+    }
 }
 
 /**

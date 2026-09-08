@@ -19,12 +19,33 @@
             </div>
             <p v-if="group.description" class="text-muted small mb-3">{{ group.description }}</p>
 
+            <!-- Seven tabs already filled a one-row scroller; ten would put the
+                 last three off-screen with nothing to say they exist. The seven
+                 a teacher has muscle memory for do not move, and the new three
+                 sit behind More — which renders the ACTIVE one's label, or the
+                 teacher loses their place. -->
             <ul class="nav nav-tabs mb-4 flex-nowrap overflow-auto">
                 <li v-for="t in tabs" :key="t.key" class="nav-item">
                     <button type="button" class="nav-link text-nowrap"
                             :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
                         <i :class="`bi ${t.icon} me-1`"></i>{{ t.label }}
                     </button>
+                </li>
+                <li class="nav-item dropdown">
+                    <button type="button" class="nav-link dropdown-toggle text-nowrap"
+                            :class="{ active: activeMoreTab !== null }"
+                            data-bs-toggle="dropdown" aria-expanded="false">
+                        <i :class="`bi ${activeMoreTab?.icon ?? 'bi-three-dots'} me-1`"></i>
+                        {{ activeMoreTab ? `More: ${activeMoreTab.label}` : 'More' }}
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li v-for="t in moreTabs" :key="t.key">
+                            <button type="button" class="dropdown-item"
+                                    :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
+                                <i :class="`bi ${t.icon} me-2`"></i>{{ t.label }}
+                            </button>
+                        </li>
+                    </ul>
                 </li>
             </ul>
 
@@ -496,6 +517,214 @@
                     </div>
                 </div>
             </section>
+
+            <!-- ================================================ LESSON PLANS -->
+            <section v-else-if="activeTab === 'lessons'">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <button class="btn btn-sm btn-outline-secondary" @click="shiftWeek(-1)">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <span class="small fw-semibold">{{ weekLabel }}</span>
+                    <button class="btn btn-sm btn-outline-secondary" @click="shiftWeek(1)">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </div>
+
+                <div class="d-flex gap-1 mb-3 flex-wrap">
+                    <button v-for="d in weekDays" :key="d.iso" type="button"
+                            class="btn btn-sm" :class="d.iso === planDate ? 'btn-success' : (planFor(d.iso) ? 'btn-outline-success' : 'btn-outline-secondary')"
+                            @click="planDate = d.iso">
+                        {{ d.label }}
+                        <i v-if="planFor(d.iso)" class="bi bi-dot"></i>
+                    </button>
+                </div>
+
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body">
+                        <input v-model="planForm.title" type="text" maxlength="255"
+                               class="form-control form-control-sm mb-2" placeholder="Title (optional)">
+                        <textarea v-model="planForm.body" rows="7" class="form-control form-control-sm"
+                                  placeholder="What will this class cover?"></textarea>
+                        <div class="d-flex align-items-center gap-2 mt-2">
+                            <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim()"
+                                    @click="savePlan">
+                                {{ planSaving ? 'Saving…' : 'Save plan' }}
+                            </button>
+                            <button v-if="planFor(planDate)" class="btn btn-sm btn-link text-danger"
+                                    @click="deletePlan">Remove</button>
+                            <span v-if="planSaved" class="text-success small">
+                                <i class="bi bi-check-circle me-1"></i>Saved
+                            </span>
+                            <span v-if="planError" class="text-danger small">{{ planError }}</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ======================================================= GRADES -->
+            <section v-else-if="activeTab === 'grades'">
+                <template v-if="!openAssignment">
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-12 col-sm">
+                                    <label class="form-label small text-muted mb-1">New work</label>
+                                    <input v-model="assignmentForm.title" type="text" maxlength="200"
+                                           class="form-control form-control-sm" placeholder="e.g. Spelling test">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Out of</label>
+                                    <input v-model.number="assignmentForm.points_possible" type="number" min="1"
+                                           class="form-control form-control-sm" style="width:6rem">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Set on</label>
+                                    <input v-model="assignmentForm.assigned_on" type="date"
+                                           class="form-control form-control-sm" style="width:10rem">
+                                </div>
+                                <div class="col-auto">
+                                    <button class="btn btn-sm btn-success"
+                                            :disabled="creatingAssignment || !assignmentForm.title.trim()"
+                                            @click="createAssignment">Add</button>
+                                </div>
+                            </div>
+                            <p v-if="gradesError" class="text-danger small mt-2 mb-0">{{ gradesError }}</p>
+                        </div>
+                    </div>
+
+                    <p v-if="!assignments.length" class="text-muted small">No work set yet.</p>
+                    <div v-else class="list-group">
+                        <button v-for="a in assignments" :key="a.id" type="button"
+                                class="list-group-item list-group-item-action d-flex align-items-center gap-3"
+                                @click="openScores(a)">
+                            <div class="flex-grow-1">
+                                <div class="fw-semibold small">{{ a.title }}</div>
+                                <div class="text-muted small">{{ a.assigned_on }} · out of {{ a.points_possible }}</div>
+                            </div>
+                            <span class="badge" :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
+                                {{ a.scored }}/{{ a.roster }} marked
+                            </span>
+                        </button>
+                    </div>
+                </template>
+
+                <template v-else>
+                    <button class="btn btn-link px-0 text-decoration-none mb-2" @click="openAssignment = null">
+                        ← Assignments
+                    </button>
+                    <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
+                    <div class="text-muted small mb-3">Out of {{ openAssignment.points_possible }}</div>
+
+                    <div class="list-group mb-3">
+                        <div v-for="s in openAssignment.students" :key="s.membership_id"
+                             class="list-group-item d-flex align-items-center gap-3 flex-wrap">
+                            <PersonAvatar :avatar="s.contact?.avatar"
+                                          :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="34" />
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-semibold small">{{ name(s.contact) }}</span>
+                                    <span v-if="s.grade_label" class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                                        {{ s.grade_label }}
+                                    </span>
+                                </div>
+                            </div>
+                            <input type="number" min="0" :max="openAssignment.points_possible" step="0.5"
+                                   class="form-control form-control-sm" style="width:5.5rem"
+                                   :disabled="marks_g[s.membership_id]?.status !== 'scored'"
+                                   v-model.number="marks_g[s.membership_id].points_earned"
+                                   placeholder="—">
+                            <div class="btn-group btn-group-sm">
+                                <button v-for="o in SCORE_OPTIONS" :key="o.value" type="button"
+                                        class="btn" :class="marks_g[s.membership_id]?.status === o.value ? o.on : o.off"
+                                        :title="o.label" @click="setScoreStatus(s.membership_id, o.value)">
+                                    {{ o.short }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2">
+                        <button class="btn btn-success btn-sm" :disabled="savingScores" @click="saveScores">
+                            {{ savingScores ? 'Saving…' : 'Save all' }}
+                        </button>
+                        <button class="btn btn-sm btn-link text-danger" @click="withdrawAssignment">Withdraw this work</button>
+                        <span v-if="scoresSaved" class="text-success small"><i class="bi bi-check-circle me-1"></i>Saved</span>
+                        <span v-if="gradesError" class="text-danger small">{{ gradesError }}</span>
+                    </div>
+                </template>
+            </section>
+
+            <!-- ======================================================== FILES -->
+            <section v-else-if="activeTab === 'files'">
+                <div class="card border-0 shadow-sm mb-3">
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-12 col-sm">
+                                <label class="form-label small text-muted mb-1">Title</label>
+                                <input v-model="fileForm.title" type="text" maxlength="200"
+                                       class="form-control form-control-sm" placeholder="e.g. Week 3 worksheet">
+                            </div>
+                            <div class="col-12 col-sm-auto">
+                                <label class="form-label small text-muted mb-1">File</label>
+                                <input ref="fileInput" type="file" class="form-control form-control-sm"
+                                       accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" @change="onFilePicked">
+                            </div>
+                        </div>
+
+                        <div class="mt-2">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" id="vis-staff" value="staff"
+                                       v-model="fileForm.visibility">
+                                <label class="form-check-label small" for="vis-staff">Only me</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" id="vis-fam" value="families"
+                                       v-model="fileForm.visibility">
+                                <label class="form-check-label small" for="vis-fam">Families in this class</label>
+                            </div>
+                        </div>
+
+                        <!-- Named at the moment of the choice, with the count in it.
+                             The server cannot read inside a PDF; this warning is the
+                             only thing standing between a progress report and every
+                             guardian in the room. -->
+                        <div v-if="fileForm.visibility === 'families'" class="alert alert-warning small py-2 mt-2 mb-0">
+                            All {{ students.length }} families in this class will be able to download this file.
+                            Do not upload anything that names another child.
+                        </div>
+
+                        <div class="d-flex align-items-center gap-2 mt-2">
+                            <button class="btn btn-sm btn-success"
+                                    :disabled="uploading || !fileForm.file || !fileForm.title.trim()"
+                                    @click="uploadFile">
+                                {{ uploading ? 'Uploading…' : 'Upload' }}
+                            </button>
+                            <span v-if="filesError" class="text-danger small">{{ filesError }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <p v-if="!resources.length" class="text-muted small">No files yet.</p>
+                <div v-else class="list-group">
+                    <div v-for="r in resources" :key="r.id"
+                         class="list-group-item d-flex align-items-center gap-3 flex-wrap">
+                        <i class="bi bi-file-earmark fs-5 text-muted"></i>
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold small">{{ r.title }}</div>
+                            <div class="text-muted small">
+                                {{ r.original_name }} · {{ Math.max(1, Math.round(r.size_bytes / 1024)) }} KB
+                            </div>
+                        </div>
+                        <span class="badge" :class="r.visibility === 'families' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-light text-muted'">
+                            {{ r.visibility === 'families' ? 'Shared with families' : 'Only me' }}
+                        </span>
+                        <button class="btn btn-sm btn-outline-secondary" @click="downloadResource(r)">
+                            <i class="bi bi-download"></i>
+                        </button>
+                        <button class="btn btn-sm btn-link text-danger" @click="deleteResource(r)">Remove</button>
+                    </div>
+                </div>
+            </section>
         </template>
 
         <!-- Avatar picker modal (Roster tab) -->
@@ -531,7 +760,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages';
+type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
+    | 'lessons' | 'grades' | 'files';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -561,6 +791,16 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'messages', label: 'Messages', icon: 'bi-chat-dots' },
 ];
+
+// Behind "More". Newer and less frequent than the seven above — after a term,
+// re-decide this split from what the teachers actually tap, not from a guess.
+const moreTabs: { key: TabKey; label: string; icon: string }[] = [
+    { key: 'lessons', label: 'Lesson Plans', icon: 'bi-calendar3' },
+    { key: 'grades', label: 'Grades', icon: 'bi-clipboard-check' },
+    { key: 'files', label: 'Files', icon: 'bi-folder2-open' },
+];
+
+const activeMoreTab = computed(() => moreTabs.find((t) => t.key === activeTab.value) ?? null);
 
 const students = computed<any[]>(() => group.value?.students ?? []);
 const avatarFor = ref<any>(null);
@@ -641,6 +881,283 @@ const saveAttendance = async () => {
             ?? 'Could not save the register.';
     } finally {
         attSaving.value = false;
+    }
+};
+
+// ---------- lesson plans ----------
+const startOfWeek = (d: Date): Date => {
+    const c = new Date(d);
+    c.setDate(c.getDate() - c.getDay());   // Sunday-first, matching the school week
+    return c;
+};
+
+const weekStart = ref<string>(localDay(startOfWeek(new Date())));
+const planDate = ref<string>(todayIso);
+const plans = ref<any[]>([]);
+const planForm = ref({ title: '', body: '' });
+const planSaving = ref(false);
+const planSaved = ref(false);
+const planError = ref('');
+
+const weekDays = computed(() => {
+    const out: { iso: string; label: string }[] = [];
+    const start = new Date(weekStart.value + 'T00:00:00');
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        out.push({
+            iso: localDay(d),
+            label: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }),
+        });
+    }
+    return out;
+});
+
+const weekLabel = computed(() => {
+    const days = weekDays.value;
+    return days.length ? `${days[0].label} — ${days[6].label}` : '';
+});
+
+const planFor = (iso: string) => plans.value.find((p) => p.session_date === iso) ?? null;
+
+const loadLessonPlans = async () => {
+    planError.value = '';
+    try {
+        const days = weekDays.value;
+        const res = await TeacherApiService.get(
+            `${base.value}/lesson-plans?from=${days[0].iso}&to=${days[6].iso}`
+        );
+        plans.value = res.data?.data?.plans ?? [];
+        syncPlanForm();
+    } catch {
+        planError.value = 'Could not load this week.';
+    }
+};
+
+/** The form always shows the SELECTED day — never a stale one. */
+const syncPlanForm = () => {
+    const p = planFor(planDate.value);
+    planForm.value = { title: p?.title ?? '', body: p?.body ?? '' };
+    planSaved.value = false;
+};
+
+watch(planDate, syncPlanForm);
+watch(weekStart, loadLessonPlans);
+
+const shiftWeek = (delta: number) => {
+    const d = new Date(weekStart.value + 'T00:00:00');
+    d.setDate(d.getDate() + delta * 7);
+    weekStart.value = localDay(d);
+};
+
+const savePlan = async () => {
+    planSaving.value = true;
+    planError.value = '';
+    planSaved.value = false;
+    try {
+        await TeacherApiService.put(`${base.value}/lesson-plans`, {
+            session_date: planDate.value,
+            title: planForm.value.title || null,
+            body: planForm.value.body,
+        });
+        planSaved.value = true;
+        await loadLessonPlans();
+    } catch (e: any) {
+        planError.value = e?.response?.data?.data?.session_date?.[0]
+            ?? e?.response?.data?.data?.body?.[0]
+            ?? 'That plan could not be saved.';
+    } finally {
+        planSaving.value = false;
+    }
+};
+
+const deletePlan = async () => {
+    try {
+        await TeacherApiService.delete(`${base.value}/lesson-plans?date=${planDate.value}`);
+        await loadLessonPlans();
+    } catch {
+        planError.value = 'That plan could not be removed.';
+    }
+};
+
+// ---------- gradebook ----------
+const SCORE_OPTIONS = [
+    { value: 'scored', short: 'S', label: 'Scored', off: 'btn-outline-success', on: 'btn-success' },
+    { value: 'missing', short: 'M', label: 'Missing — counts as zero', off: 'btn-outline-danger', on: 'btn-danger' },
+    { value: 'excused', short: 'E', label: 'Excused — does not count at all', off: 'btn-outline-secondary', on: 'btn-secondary' },
+];
+
+const assignments = ref<any[]>([]);
+const assignmentForm = ref({ title: '', points_possible: 10, assigned_on: todayIso });
+const creatingAssignment = ref(false);
+const openAssignment = ref<any>(null);
+const marks_g = ref<Record<number, { status: string | null; points_earned: number | null }>>({});
+const savingScores = ref(false);
+const scoresSaved = ref(false);
+const gradesError = ref('');
+
+const loadAssignments = async () => {
+    gradesError.value = '';
+    try {
+        const res = await TeacherApiService.get(`${base.value}/assignments`);
+        assignments.value = res.data?.data ?? [];
+    } catch {
+        gradesError.value = 'Could not load the gradebook.';
+    }
+};
+
+const createAssignment = async () => {
+    creatingAssignment.value = true;
+    gradesError.value = '';
+    try {
+        await TeacherApiService.post(`${base.value}/assignments`, assignmentForm.value);
+        assignmentForm.value = { title: '', points_possible: 10, assigned_on: todayIso };
+        await loadAssignments();
+    } catch (e: any) {
+        gradesError.value = e?.response?.data?.data?.title?.[0]
+            ?? e?.response?.data?.data?.points_possible?.[0]
+            ?? 'That work could not be added.';
+    } finally {
+        creatingAssignment.value = false;
+    }
+};
+
+const openScores = async (a: any) => {
+    gradesError.value = '';
+    scoresSaved.value = false;
+    try {
+        const res = await TeacherApiService.get(`${base.value}/assignments/${a.id}`);
+        openAssignment.value = res.data?.data ?? null;
+        const next: Record<number, any> = {};
+        for (const s of openAssignment.value?.students ?? []) {
+            // An unmarked child stays unmarked. Seeding a default here would
+            // record the whole class the first time anyone tapped Save.
+            next[s.membership_id] = { status: s.status ?? null, points_earned: s.points_earned ?? null };
+        }
+        marks_g.value = next;
+    } catch {
+        gradesError.value = 'Could not open that work.';
+    }
+};
+
+const setScoreStatus = (membershipId: number, status: string) => {
+    const row = marks_g.value[membershipId] ?? { status: null, points_earned: null };
+    row.status = status;
+    // The API refuses a mark on anything but `scored`, so clear it here rather
+    // than let the request fail.
+    if (status !== 'scored') row.points_earned = null;
+    marks_g.value[membershipId] = row;
+};
+
+const saveScores = async () => {
+    if (!openAssignment.value) return;
+    savingScores.value = true;
+    gradesError.value = '';
+    scoresSaved.value = false;
+    try {
+        const scores = Object.entries(marks_g.value)
+            .filter(([, v]) => v.status)
+            .map(([membership_id, v]) => ({
+                membership_id: Number(membership_id),
+                status: v.status,
+                ...(v.status === 'scored' ? { points_earned: v.points_earned } : {}),
+            }));
+
+        if (!scores.length) { savingScores.value = false; return; }
+
+        const res = await TeacherApiService.put(
+            `${base.value}/assignments/${openAssignment.value.id}/scores`, { scores }
+        );
+        openAssignment.value = res.data?.data ?? openAssignment.value;
+        scoresSaved.value = true;
+        await loadAssignments();
+    } catch (e: any) {
+        gradesError.value = e?.response?.data?.data?.scores?.[0] ?? 'Those marks could not be saved.';
+    } finally {
+        savingScores.value = false;
+    }
+};
+
+const withdrawAssignment = async () => {
+    if (!openAssignment.value) return;
+    try {
+        await TeacherApiService.delete(`${base.value}/assignments/${openAssignment.value.id}`);
+        openAssignment.value = null;
+        await loadAssignments();
+    } catch {
+        gradesError.value = 'That work could not be withdrawn.';
+    }
+};
+
+// ---------- class files ----------
+const resources = ref<any[]>([]);
+const fileInput = ref<HTMLInputElement | null>(null);
+const fileForm = ref<{ title: string; visibility: string; file: File | null }>({
+    title: '', visibility: 'staff', file: null,
+});
+const uploading = ref(false);
+const filesError = ref('');
+
+const loadResources = async () => {
+    filesError.value = '';
+    try {
+        const res = await TeacherApiService.get(`${base.value}/resources`);
+        resources.value = res.data?.data ?? [];
+    } catch {
+        filesError.value = 'Could not load this class’s files.';
+    }
+};
+
+const onFilePicked = (e: Event) => {
+    fileForm.value.file = (e.target as HTMLInputElement).files?.[0] ?? null;
+};
+
+const uploadFile = async () => {
+    if (!fileForm.value.file) return;
+    uploading.value = true;
+    filesError.value = '';
+    try {
+        const form = new FormData();
+        form.append('file', fileForm.value.file);
+        form.append('title', fileForm.value.title);
+        form.append('visibility', fileForm.value.visibility);
+
+        // postForm, never put/post: this is the one write that must NOT declare
+        // application/json — the browser has to write the multipart boundary.
+        await TeacherApiService.postForm(`${base.value}/resources`, form);
+
+        fileForm.value = { title: '', visibility: 'staff', file: null };
+        if (fileInput.value) fileInput.value.value = '';
+        await loadResources();
+    } catch (e: any) {
+        filesError.value = e?.response?.data?.data?.file?.[0]
+            ?? e?.response?.data?.data?.title?.[0]
+            ?? 'That file could not be uploaded.';
+    } finally {
+        uploading.value = false;
+    }
+};
+
+const downloadResource = async (r: any) => {
+    try {
+        // A plain <a href> would 401 — the route is bearer-authenticated.
+        const url = await TeacherApiService.blobUrl(`${base.value}/resources/${r.id}/download`);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = r.original_name;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch {
+        filesError.value = 'That file could not be downloaded.';
+    }
+};
+
+const deleteResource = async (r: any) => {
+    try {
+        await TeacherApiService.delete(`${base.value}/resources/${r.id}`);
+        await loadResources();
+    } catch {
+        filesError.value = 'That file could not be removed.';
     }
 };
 
@@ -1067,6 +1584,10 @@ watch(activeTab, (tab) => {
     if (tab === 'points' && !skills.value.length) loadSkills();
     if (tab === 'attendance') loadAttendance();
     if (tab === 'hifz') loadSurahs();
+    if (tab === 'lessons') loadLessonPlans();
+    if (tab === 'grades' && !assignments.value.length) loadAssignments();
+    if (tab === 'files' && !resources.value.length) loadResources();
+    if (tab !== 'grades') { openAssignment.value = null; }
     // Reset any open per-student detail when leaving a grading tab.
     if (tab !== 'letters') { selected.value = null; }
     if (tab !== 'messages') { openedThread.value = null; }
