@@ -62,18 +62,27 @@ class LessonPlanController extends TeacherController
     {
         $group = Group::findOrFail($group_id);
 
-        $plan = LessonPlan::updateOrCreate(
-            [
-                'group_id' => $group->id,
-                'session_date' => $request->validated('session_date'),
-            ],
-            [
-                'masjid_id' => $group->masjid_id,
-                'title' => $request->validated('title'),
-                'body' => $request->validated('body'),
-                'author_user_id' => Auth::id(),
-            ]
-        );
+        $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
+
+        // NOT updateOrCreate. Its WHERE uses the value as given while the INSERT
+        // puts it through the `date` cast, so a lookup by the string
+        // '2026-09-11' does not match a row the cast stored as
+        // '2026-09-11 00:00:00' — the second save then misses and collides with
+        // lesson_plan_class_day_unique. Measured: a 500 on the second save.
+        //
+        // whereDate() compares the DATE PART on both MySQL and SQLite, so this
+        // is right whichever the column ends up holding.
+        $plan = LessonPlan::query()
+            ->where('group_id', $group->id)
+            ->whereDate('session_date', $date->toDateString())
+            ->first()
+            ?? new LessonPlan(['group_id' => $group->id, 'session_date' => $date]);
+
+        $plan->fill([
+            'title' => $request->validated('title'),
+            'body' => $request->validated('body'),
+            'author_user_id' => Auth::id(),
+        ])->save();
 
         return response()->json([
             'status' => 'success',

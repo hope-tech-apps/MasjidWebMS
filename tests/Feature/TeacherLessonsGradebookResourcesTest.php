@@ -155,7 +155,8 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         $students = collect($this->getJson($this->url() . "/assignments/{$id}")->assertOk()->json('data.students'))
             ->mapWithKeys(fn ($s) => [$s['contact']['first_name'] => $s]);
 
-        $this->assertSame(8.0, $students['Kareem']['points_earned']);
+        // (float) cast: JSON encodes 8.00 as 8, so compare numerically.
+        $this->assertSame(8.0, (float) $students['Kareem']['points_earned']);
         $this->assertNull($students['Sama']['status'], 'an unmarked child must be blank, never a zero');
         $this->assertNull($students['Sama']['points_earned']);
         $this->assertSame($second->id, $students['Sama']['membership_id']);
