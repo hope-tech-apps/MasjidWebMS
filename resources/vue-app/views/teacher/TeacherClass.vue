@@ -214,6 +214,7 @@
                                         <span class="badge" :class="badgeClass(d.status)">{{ statusLabel(d.status) }}</span>
                                     </button>
                                 </div>
+                                <p v-if="letterError" class="text-danger small mt-2 mb-0">{{ letterError }}</p>
                                 <p class="text-muted small mt-2 mb-0">Tap to move: Not started → Learning → Mastered.</p>
                             </div>
                         </div>
@@ -315,19 +316,28 @@
                                         <option value="manzil">Manzil (old)</option>
                                     </select>
                                 </div>
-                                <div class="col-6 col-sm-auto">
-                                    <label class="form-label small text-muted mb-1">From surah:ayah</label>
-                                    <div class="d-flex gap-1">
-                                        <input type="number" min="1" class="form-control form-control-sm" style="width:4.5rem" v-model.number="hifzForm.from_surah" placeholder="S">
-                                        <input type="number" min="1" class="form-control form-control-sm" style="width:4.5rem" v-model.number="hifzForm.from_ayah" placeholder="A">
-                                    </div>
+                                <div class="col-12 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Surah</label>
+                                    <select class="form-select form-select-sm" style="min-width:14rem" v-model.number="hifzForm.surah">
+                                        <option :value="null" disabled>Choose a surah…</option>
+                                        <option v-for="s in surahs" :key="s.number" :value="s.number">
+                                            {{ s.number }} · {{ s.name }} ({{ s.ayahs }})
+                                        </option>
+                                    </select>
                                 </div>
                                 <div class="col-6 col-sm-auto">
-                                    <label class="form-label small text-muted mb-1">To surah:ayah</label>
-                                    <div class="d-flex gap-1">
-                                        <input type="number" min="1" class="form-control form-control-sm" style="width:4.5rem" v-model.number="hifzForm.to_surah" placeholder="S">
-                                        <input type="number" min="1" class="form-control form-control-sm" style="width:4.5rem" v-model.number="hifzForm.to_ayah" placeholder="A">
+                                    <label class="form-label small text-muted mb-1">Ayahs</label>
+                                    <div class="d-flex align-items-center gap-1">
+                                        <input type="number" min="1" :max="surahAyahs" class="form-control form-control-sm"
+                                               style="width:4.5rem" v-model.number="hifzForm.from_ayah" placeholder="from">
+                                        <span class="text-muted small">to</span>
+                                        <input type="number" min="1" :max="surahAyahs" class="form-control form-control-sm"
+                                               style="width:4.5rem" v-model.number="hifzForm.to_ayah" placeholder="to">
                                     </div>
+                                </div>
+                                <div v-if="ayahCount" class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">&nbsp;</label>
+                                    <div class="small text-success fw-semibold pt-1">{{ ayahCount }} āyah{{ ayahCount === 1 ? '' : 's' }}</div>
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Quality</label>
@@ -656,6 +666,7 @@ const tracker = ref<any>(null);
 const trackerLoading = ref(false);
 const openLetter = ref<string | null>(null);
 const marking = ref<string | null>(null);
+const letterError = ref('');
 const savingStage = ref(false);
 const stageNote = ref('');
 
@@ -694,6 +705,7 @@ const openLetters = async (s: any) => {
 const advance = async (drill: any) => {
     if (!selected.value) return;
     marking.value = drill.id;
+    letterError.value = '';
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
@@ -701,8 +713,13 @@ const advance = async (drill: any) => {
         );
         // Marking returns the whole tracker, so totals and tile colour move together.
         tracker.value = res.data?.data ?? tracker.value;
-    } catch {
-        // Leave the tile as-is; a transient failure should not lie about progress.
+    } catch (e: any) {
+        // The tile is deliberately left where it was — a failed write must never
+        // lie about progress. But it must SAY SO: this catch was silent, and a
+        // teacher tapping a letter that never moved had no way to tell a refusal
+        // from a dead button. It hid a 422 through 28 consecutive taps.
+        letterError.value = e?.response?.data?.message
+            ?? 'That did not save. Check your connection and tap again.';
     } finally {
         marking.value = null;
     }
@@ -814,17 +831,42 @@ const hifzLoading = ref(false);
 const hifzError = ref('');
 const removingHifz = ref<string | number | null>(null);
 const recordingHifz = ref(false);
+// ONE surah, and the āyāt within it. The API still takes a from/to pair that may
+// cross surahs, but a teacher logging today's recitation is almost never crossing
+// one — and asking for four numbers to say "Al-Fātiḥah 1-7" made the commonest
+// entry the hardest to type. A recitation that genuinely spans two surahs is two
+// entries, which is also how it is heard.
+const surahs = ref<{ number: number; name: string; ayahs: number }[]>([]);
 const hifzForm = ref({
     kind: 'sabak',
-    from_surah: null as number | null,
+    surah: null as number | null,
     from_ayah: null as number | null,
-    to_surah: null as number | null,
     to_ayah: null as number | null,
     quality: 'good',
 });
+
+/** Āyāt in the chosen surah — the ceiling both inputs are bounded by. */
+const surahAyahs = computed(() =>
+    surahs.value.find((s) => s.number === hifzForm.value.surah)?.ayahs ?? 286);
+
+const ayahCount = computed(() => {
+    const { from_ayah: f, to_ayah: t } = hifzForm.value;
+    return f && t && t >= f ? t - f + 1 : 0;
+});
+
 const hifzValid = computed(() =>
-    !!hifzForm.value.from_surah && !!hifzForm.value.from_ayah &&
-    !!hifzForm.value.to_surah && !!hifzForm.value.to_ayah);
+    !!hifzForm.value.surah && ayahCount.value > 0
+    && (hifzForm.value.to_ayah ?? 0) <= surahAyahs.value);
+
+const loadSurahs = async () => {
+    if (surahs.value.length) return;
+    try {
+        const res = await TeacherApiService.get(`/api/teacher/masjids/${masjidId.value}/quran-surahs`);
+        surahs.value = res.data?.data ?? [];
+    } catch {
+        // The form still submits by number if the index cannot be reached.
+    }
+};
 
 const loadHifz = async () => {
     hifz.value = [];
@@ -849,16 +891,19 @@ const recordHifz = async () => {
         await TeacherApiService.post(`${base.value}/hifz`, {
             membership_id: hifzMembership.value,
             kind: hifzForm.value.kind,
-            from_surah: hifzForm.value.from_surah,
+            // The API's interval may cross surahs; this form deliberately does
+            // not, so both ends carry the one chosen surah.
+            from_surah: hifzForm.value.surah,
             from_ayah: hifzForm.value.from_ayah,
-            to_surah: hifzForm.value.to_surah,
+            to_surah: hifzForm.value.surah,
             to_ayah: hifzForm.value.to_ayah,
             quality: hifzForm.value.quality,
             major_mistakes: 0,
             minor_mistakes: 0,
         });
-        hifzForm.value.from_surah = hifzForm.value.from_ayah = null;
-        hifzForm.value.to_surah = hifzForm.value.to_ayah = null;
+        // The surah is KEPT: the next entry for this child is usually the next
+        // few āyāt of the same one.
+        hifzForm.value.from_ayah = hifzForm.value.to_ayah = null;
         await loadHifz();
     } catch (e: any) {
         hifzError.value = e?.response?.data?.message || 'That recitation could not be recorded.';
@@ -997,6 +1042,7 @@ watch(activeTab, (tab) => {
     if (tab === 'messages' && !threads.value.length && !threadsLoading.value) loadThreads();
     if (tab === 'points' && !skills.value.length) loadSkills();
     if (tab === 'attendance') loadAttendance();
+    if (tab === 'hifz') loadSurahs();
     // Reset any open per-student detail when leaving a grading tab.
     if (tab !== 'letters') { selected.value = null; }
     if (tab !== 'messages') { openedThread.value = null; }

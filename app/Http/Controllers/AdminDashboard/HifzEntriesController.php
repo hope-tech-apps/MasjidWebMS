@@ -84,6 +84,36 @@ class HifzEntriesController extends Controller
     }
 
     /**
+     * GET .../masjids/{masjid_id}/quran-surahs
+     *
+     * The sūrah index: number, name, and how many āyāt each holds. Reference
+     * data, identical for every tenant and every caller, which is why it is not
+     * group-scoped and carries no authorization beyond being signed in.
+     *
+     * It exists so a recitation can be recorded by PICKING A SŪRAH BY NAME
+     * instead of typing its number. Hifz.ts states the rule this satisfies —
+     * "so a client never carries its own copy" — and a client-side table of 114
+     * names and counts would be exactly that copy, free to drift from the one
+     * StoreHifzEntryRequest validates against.
+     *
+     * The āyah counts are what make the form bound its own inputs: a teacher
+     * cannot ask for āyah 8 of Al-Fātiḥah before the request is ever sent.
+     */
+    public function surahs()
+    {
+        return response()->json([
+            'status' => 'success',
+            'data' => collect(QuranIndex::SURAHS)
+                ->map(fn (array $s, int $number): array => [
+                    'number' => $number,
+                    'name' => $s['name'],
+                    'ayahs' => $s['ayahs'],
+                ])
+                ->values(),
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * GET .../groups/{group_id}/hifz[?kind=&from=&to=&membership_id=&per_page=]
      *
      * The ḥalaqa's recitation log, newest first, PRE-FILTERED to what this

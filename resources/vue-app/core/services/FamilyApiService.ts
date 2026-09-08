@@ -50,12 +50,21 @@ class FamilyApiService {
         return FamilyApiService.client;
     }
 
+    /**
+     * Writes DECLARE JSON, for the reason recorded on TeacherApiService.JSON_WRITE:
+     * axios.create() inherits axios.defaults, the admin ApiService sets a global
+     * form-urlencoded Content-Type, and a JSON body under that label reaches
+     * Laravel as an unparseable form — every field empty, a 422, and on this
+     * realm that would be a parent's message or sign-in code silently failing.
+     */
+    private static readonly JSON_WRITE = { headers: { "Content-Type": "application/json" } };
+
     public static get(url: string): Promise<AxiosResponse> {
         return FamilyApiService.instance().get(url);
     }
 
     public static post(url: string, data: any = {}): Promise<AxiosResponse> {
-        return FamilyApiService.instance().post(url, data);
+        return FamilyApiService.instance().post(url, data, FamilyApiService.JSON_WRITE);
     }
 
     /**

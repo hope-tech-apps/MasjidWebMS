@@ -32,16 +32,19 @@ const familyStore = useFamilyStore();
 
 const masjidId = computed(() => String(route.params.masjidId ?? familyStore.masjidId ?? ''));
 const orgName = ref('');
+const orgLogo = ref<string | null>(null);
 
 onMounted(async () => {
-    // The school's name, from the public directory endpoint — this is the one
-    // thing the portal shows before a parent has any credential, so a stranger
-    // seeing it learns only what the app directory already publishes.
+    // The school's name and logo, from the public directory endpoint — these are
+    // the only things the portal shows before a parent has any credential, so a
+    // stranger seeing them learns only what the app directory already publishes.
     try {
         const res = await FamilyApiService.get(`/api/mobile/masjids/${masjidId.value}`);
         orgName.value = res.data?.data?.name ?? '';
+        orgLogo.value = res.data?.data?.logo?.original_url ?? null;
     } catch {
         orgName.value = '';
+        orgLogo.value = null;
     }
 });
 

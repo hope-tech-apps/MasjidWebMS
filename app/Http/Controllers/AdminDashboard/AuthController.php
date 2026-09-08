@@ -40,7 +40,14 @@ class AuthController extends Controller
     public function login(LoginRequest $request)
     {
         $user = User::where('email', $request->input('email'))->with('avatar')->first();
-        if (!Hash::check($request->input('password'), $user->password)) {
+
+        // No user is a WRONG PASSWORD, not a 500. LoginRequest's `exists` rule
+        // catches an unknown address, but it does not exclude SOFT-DELETED rows —
+        // so every address the office has ever removed still passes validation,
+        // arrives here as null, and used to die on `$user->password` with
+        // "Attempt to read property password on null". A removed teacher trying
+        // their old login got a server error instead of a refusal.
+        if (! $user || ! Hash::check($request->input('password'), $user->password)) {
             return response()->json(['message' => 'invalid credentials']);
         }
 
@@ -162,7 +169,15 @@ class AuthController extends Controller
                         ], Response::HTTP_OK);
                     }
 
-                    $masjid->logo = $masjid->logo()->first();
+                    $logo = $masjid->logo()->first();
+                    $masjid->logo = $logo;
+                    // The teacher shell reads `logo_url` and falls back to the
+                    // Manara mark. It carried the whole Media object and no
+                    // `logo_url`, so the school's own logo could never appear in
+                    // the header however many were uploaded. Flattened here rather
+                    // than as an $appends on Masjid, which would widen the public
+                    // and mobile payloads too.
+                    $masjid->logo_url = $logo?->original_url;
                     $user->setRelation('masjid', $masjid);
                 }
 

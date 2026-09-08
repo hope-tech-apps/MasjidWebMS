@@ -71,6 +71,10 @@ Route::prefix('teacher')
                 Route::get('/groups', [TeacherGroupsController::class, 'index']);
                 Route::get('/avatars', [ContactAvatarController::class, 'catalogue']);
                 Route::get('/behavior-skills', [BehaviorSkillsController::class, 'index']);
+                // Reference data, so the ḥifẓ form can offer sūrahs BY NAME and
+                // bound its own āyah inputs. A GET: the realm's write list is
+                // unchanged, and TeacherRealmTest still counts fourteen.
+                Route::get('/quran-surahs', [HifzEntriesController::class, 'surahs']);
 
                 // Per-class: every route below is fenced to a class the teacher
                 // LEADS by `teacher.leads`.

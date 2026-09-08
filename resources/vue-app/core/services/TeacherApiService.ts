@@ -69,16 +69,33 @@ class TeacherApiService {
         return TeacherApiService.client;
     }
 
+    /**
+     * Every write DECLARES JSON, and must keep doing so.
+     *
+     * axios.create() inherits axios.defaults, and the admin ApiService sets a
+     * GLOBAL default Content-Type of application/x-www-form-urlencoded
+     * (setHeaderContentType, whose default argument is "url"). Both SPAs are one
+     * bundle sharing one axios, so any admin write performed earlier in the page
+     * life re-labels this instance's writes too — while axios still SERIALIZES a
+     * plain object as JSON. Laravel then parses a JSON body as a form, every
+     * field arrives empty, and the request 422s.
+     *
+     * Measured 2026-09-08: 28 consecutive letter-tracker taps 422'd in exactly
+     * this way while the same payload from curl returned 200, and the caller's
+     * empty catch turned it into a tile that simply never moved.
+     */
+    private static readonly JSON_WRITE = { headers: { "Content-Type": "application/json" } };
+
     public static get(url: string): Promise<AxiosResponse> {
         return TeacherApiService.instance().get(url);
     }
 
     public static post(url: string, data: any = {}): Promise<AxiosResponse> {
-        return TeacherApiService.instance().post(url, data);
+        return TeacherApiService.instance().post(url, data, TeacherApiService.JSON_WRITE);
     }
 
     public static put(url: string, data: any = {}): Promise<AxiosResponse> {
-        return TeacherApiService.instance().put(url, data);
+        return TeacherApiService.instance().put(url, data, TeacherApiService.JSON_WRITE);
     }
 
     public static delete(url: string): Promise<AxiosResponse> {
