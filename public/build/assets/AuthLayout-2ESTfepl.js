@@ -1,0 +1,1 @@
+import{p as e,V as a,k as t,h as o,o as s,ac as c,R as _,e as n}from"./app-DryNZlNB.js";const r={id:"auth_layout",class:"auth-layout"},u={class:"background"},d=e({__name:"AuthLayout",setup(p){return(i,h)=>(a(),t("div",r,[o("div",u,[s(c(_))])]))}}),f=n(d,[["__scopeId","data-v-dbed1a6f"]]);export{f as default};
