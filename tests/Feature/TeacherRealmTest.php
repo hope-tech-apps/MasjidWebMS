@@ -165,6 +165,19 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar/override',
+
+            // Report cards and progress reports (2026-09-08). Still records
+            // ABOUT a child, written by the person who teaches them, so the line
+            // above holds: nothing here touches who belongs in the room.
+            //
+            // Publishing is deliberately its OWN verb rather than a field on the
+            // save. It is the moment a document becomes visible to a family, and
+            // a disclosure that can happen as a side effect of saving a draft is
+            // one that will eventually happen by accident. The DELETE takes it
+            // back.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/report-card',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/report-card/publish',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/report-card/publish',
         ], $writes);
     }
 
