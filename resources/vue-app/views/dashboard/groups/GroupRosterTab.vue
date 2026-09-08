@@ -91,6 +91,7 @@
                         <tr>
                             <th>Member</th>
                             <th>Role</th>
+                            <th>Grade</th>
                             <th>Joined</th>
                             <th class="text-end">Actions</th>
                         </tr>
@@ -135,6 +136,19 @@
                                     {{ membership.role }}
                                 </span>
                             </td>
+                            <!-- Which grade, inside a class that spans several.
+                                 Free text: the vocabulary is the school's. -->
+                            <td style="min-width: 110px">
+                                <input
+                                    type="text"
+                                    class="form-control form-control-sm"
+                                    :value="membership.grade_label ?? ''"
+                                    :disabled="savingGrade === membership.id"
+                                    placeholder="—"
+                                    maxlength="32"
+                                    @change="saveGrade(membership, ($event.target as HTMLInputElement).value)"
+                                />
+                            </td>
                             <td class="text-muted small">{{ formatDate(membership.joined_at) }}</td>
                             <td class="text-end">
                                 <button
@@ -152,7 +166,7 @@
                             </td>
                         </tr>
                         <tr v-if="participants.length === 0">
-                            <td colspan="4" class="text-center text-muted py-3">No members yet</td>
+                            <td colspan="5" class="text-center text-muted py-3">No members yet</td>
                         </tr>
                     </tbody>
                 </table>
@@ -442,6 +456,34 @@ const props = defineProps<{
 const avatarFor = ref<any>(null);
 
 const masjidId = computed(() => masjidStore.masjid?.id ?? 0);
+
+// Which grade a student is in, inside a class that spans more than one. Saved on
+// change rather than behind a Save button: it is one short field on a row the
+// office is already looking at, and a per-row button would be a third control in
+// a cell that is mostly empty. Written straight through ApiService instead of the
+// groups store because nothing else in the app needs to react to it.
+const savingGrade = ref<number | null>(null);
+
+const saveGrade = async (membership: GroupMembership, raw: string) => {
+    const next = raw.trim() === '' ? null : raw.trim();
+    if ((membership.grade_label ?? null) === next) return;
+
+    savingGrade.value = membership.id;
+    try {
+        await ApiService.put(
+            `/api/admin/masjids/${masjidId.value}/groups/${props.groupId}/members/${membership.id}` as BackendApiRoute,
+            // Empty string, never null: this PUT is form-encoded by default, and
+            // a null would arrive as the STRING "null" or vanish entirely. The
+            // controller normalises '' back to NULL.
+            { grade_label: next ?? '' }
+        );
+        membership.grade_label = next;
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Could not save the grade', text: apiErrorText(e) });
+    } finally {
+        savingGrade.value = null;
+    }
+};
 
 const openAvatarPicker = (membership: any) => { avatarFor.value = membership; };
 

@@ -483,6 +483,46 @@ class GroupMembershipsController extends Controller
     }
 
     /**
+     * Edit the roster fields of one membership. Today that is `grade_label` and
+     * nothing else.
+     *
+     * Deliberately NOT a general-purpose membership update. `role`,
+     * `guardian_of_contact_id` and the four provenance/consent columns are all
+     * absent on purpose: each of them changes WHO MAY SEE A CHILD'S RECORDS, and
+     * they have their own accountable verbs (store, confirm, destroy). Widening
+     * this method to accept them would route a disclosure decision through a
+     * field editor.
+     *
+     * Resolved through the group, so a membership id from another class — or
+     * another organization — is a 404 rather than a cross-tenant write.
+     */
+    public function update(Request $request, $masjid_id, $group_id, $membership_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->findOrFail($membership_id);
+
+        $validated = $request->validate([
+            // Nullable and it stays nullable: clearing a grade is a legitimate
+            // edit, and a halaqa never sets one at all.
+            'grade_label' => ['present', 'nullable', 'string', 'max:32'],
+        ]);
+
+        $membership->update([
+            'grade_label' => $validated['grade_label'] !== null && trim($validated['grade_label']) !== ''
+                ? trim($validated['grade_label'])
+                : null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'id' => (int) $membership->id,
+                'grade_label' => $membership->grade_label,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * Remove a membership.
      *
      * Resolved through the group so a membership id from another group — or

@@ -140,6 +140,13 @@ export type GroupMembership = {
     group_id: number;
     contact_id: number;
     role: GroupRole;
+    /**
+     * Which grade this student is in, INSIDE a class that spans more than one
+     * (Pre-K with KG, 1st with 2nd). A property of the enrolment, not of the
+     * person. Null wherever the vertical has no grades at all — a ḥalaqa, a
+     * volunteer team — so never render it unconditionally.
+     */
+    grade_label: string | null;
     guardian_of_contact_id: number | null;
     joined_at: string | null;
     /**

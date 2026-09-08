@@ -41,7 +41,14 @@
                         <PersonAvatar :avatar="s.contact?.avatar"
                                       :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="40" />
                         <div class="flex-grow-1">
-                            <div class="fw-semibold small">{{ name(s.contact) }}</div>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="fw-semibold small">{{ name(s.contact) }}</span>
+                                <!-- A combined class still teaches more than one grade. -->
+                                <span v-if="s.grade_label"
+                                      class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                                    {{ s.grade_label }}
+                                </span>
+                            </div>
                             <div v-if="guardianNames(s)" class="text-muted small">
                                 Guardians: {{ guardianNames(s) }}
                             </div>
@@ -51,6 +58,68 @@
                         </button>
                     </div>
                 </div>
+            </section>
+
+            <!-- ================================================= ATTENDANCE -->
+            <section v-else-if="activeTab === 'attendance'">
+                <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+                    <div>
+                        <label class="form-label small mb-1">Day</label>
+                        <input type="date" class="form-control form-control-sm" style="width: 170px"
+                               v-model="attDate" :max="todayIso" @change="loadAttendance" />
+                    </div>
+                    <div class="flex-grow-1"></div>
+                    <button class="btn btn-sm btn-outline-secondary" :disabled="attLoading || !students.length"
+                            @click="markAllPresent">
+                        <i class="bi bi-check2-all me-1"></i>All present
+                    </button>
+                </div>
+
+                <div v-if="attLoading" class="text-muted small">Loading the register…</div>
+                <div v-else-if="!students.length" class="text-muted small">No students on this roster yet.</div>
+                <template v-else>
+                    <div class="small mb-2" :class="attTaken ? 'text-success' : 'text-muted'">
+                        <i :class="`bi ${attTaken ? 'bi-check-circle' : 'bi-circle'} me-1`"></i>
+                        {{ attTaken ? 'Register taken for this day.' : 'Not taken yet for this day.' }}
+                    </div>
+
+                    <div class="list-group mb-3">
+                        <div v-for="s in students" :key="s.membership_id"
+                             class="list-group-item d-flex align-items-center gap-3 flex-wrap">
+                            <PersonAvatar :avatar="s.contact?.avatar"
+                                          :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="36" />
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-semibold small">{{ name(s.contact) }}</span>
+                                    <span v-if="s.grade_label"
+                                          class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                                        {{ s.grade_label }}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="btn-group btn-group-sm" role="group" :aria-label="`Mark ${name(s.contact)}`">
+                                <button v-for="opt in ATT_OPTIONS" :key="opt.value" type="button"
+                                        class="btn" :class="marks[s.membership_id] === opt.value ? opt.on : opt.off"
+                                        :title="opt.label" :aria-pressed="marks[s.membership_id] === opt.value"
+                                        @click="marks[s.membership_id] = opt.value">
+                                    {{ opt.short }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2">
+                        <button class="btn btn-success btn-sm" :disabled="attSaving || !markedCount"
+                                @click="saveAttendance">
+                            <i class="bi bi-save me-1"></i>
+                            {{ attSaving ? 'Saving…' : `Save register (${markedCount}/${students.length})` }}
+                        </button>
+                        <span v-if="attSaved" class="text-success small">
+                            <i class="bi bi-check-circle me-1"></i>Saved
+                        </span>
+                        <span v-if="attError" class="text-danger small">{{ attError }}</span>
+                    </div>
+                </template>
             </section>
 
             <!-- ==================================================== LETTERS -->
@@ -430,7 +499,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-type TabKey = 'roster' | 'letters' | 'points' | 'hifz' | 'story' | 'messages';
+type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -450,6 +519,8 @@ const activeTab = ref<TabKey>('roster');
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'roster', label: 'Roster', icon: 'bi-people' },
+    // Second, not last: it is the only tab a teacher touches every single morning.
+    { key: 'attendance', label: 'Attendance', icon: 'bi-calendar-check' },
     { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
     { key: 'hifz', label: 'Ḥifẓ', icon: 'bi-book' },
@@ -459,6 +530,85 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
 
 const students = computed<any[]>(() => group.value?.students ?? []);
 const avatarFor = ref<any>(null);
+
+// ---------- attendance ----------
+// Four marks, in the order a teacher reaches for them. `off`/`on` are the
+// unselected/selected button classes; colour carries the meaning at a glance
+// because the register is read in a doorway, not at a desk.
+const ATT_OPTIONS = [
+    { value: 'present', short: 'P', label: 'Present', off: 'btn-outline-success', on: 'btn-success' },
+    { value: 'absent', short: 'A', label: 'Absent', off: 'btn-outline-danger', on: 'btn-danger' },
+    { value: 'late', short: 'L', label: 'Late', off: 'btn-outline-warning', on: 'btn-warning' },
+    { value: 'excused', short: 'E', label: 'Excused', off: 'btn-outline-secondary', on: 'btn-secondary' },
+];
+
+// The LOCAL calendar day. toISOString() would hand back the UTC day, which is
+// yesterday's register for anyone west of Greenwich after 7pm.
+const localDay = (d: Date): string =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const todayIso = localDay(new Date());
+const attDate = ref<string>(todayIso);
+const marks = ref<Record<number, string>>({});
+const attLoading = ref(false);
+const attSaving = ref(false);
+const attSaved = ref(false);
+const attTaken = ref(false);
+const attError = ref('');
+
+const markedCount = computed(() => Object.keys(marks.value).length);
+
+const loadAttendance = async () => {
+    attLoading.value = true;
+    attError.value = '';
+    attSaved.value = false;
+    try {
+        const res = await TeacherApiService.get(`${base.value}/attendance?date=${attDate.value}`);
+        const data = res.data?.data ?? {};
+        attTaken.value = !!data.taken;
+        const next: Record<number, string> = {};
+        for (const s of data.students ?? []) {
+            // Only a REAL mark seeds the form. An unmarked child stays unmarked,
+            // so opening the tab can never silently record a class as present.
+            if (s.status) next[s.membership_id] = s.status;
+        }
+        marks.value = next;
+    } catch {
+        attError.value = 'Could not load the register.';
+    } finally {
+        attLoading.value = false;
+    }
+};
+
+const markAllPresent = () => {
+    const next: Record<number, string> = { ...marks.value };
+    for (const s of students.value) next[s.membership_id] = 'present';
+    marks.value = next;
+};
+
+const saveAttendance = async () => {
+    attSaving.value = true;
+    attError.value = '';
+    attSaved.value = false;
+    try {
+        const payload = {
+            session_date: attDate.value,
+            marks: Object.entries(marks.value).map(([membership_id, status]) => ({
+                membership_id: Number(membership_id),
+                status,
+            })),
+        };
+        const res = await TeacherApiService.put(`${base.value}/attendance`, payload);
+        attTaken.value = !!res.data?.data?.taken;
+        attSaved.value = true;
+    } catch (e: any) {
+        attError.value = e?.response?.data?.data?.marks?.[0]
+            ?? e?.response?.data?.message
+            ?? 'Could not save the register.';
+    } finally {
+        attSaving.value = false;
+    }
+};
 
 // ---------- helpers ----------
 const name = (c: any) => [c?.first_name, c?.last_name].filter(Boolean).join(' ') || 'Student';
@@ -846,6 +996,7 @@ watch(activeTab, (tab) => {
     if (tab === 'story' && !posts.value.length && !postsLoading.value) loadPosts();
     if (tab === 'messages' && !threads.value.length && !threadsLoading.value) loadThreads();
     if (tab === 'points' && !skills.value.length) loadSkills();
+    if (tab === 'attendance') loadAttendance();
     // Reset any open per-student detail when leaving a grading tab.
     if (tab !== 'letters') { selected.value = null; }
     if (tab !== 'messages') { openedThread.value = null; }

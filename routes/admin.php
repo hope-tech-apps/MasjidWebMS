@@ -682,6 +682,13 @@ Route::prefix('admin')->group(function () {
                         // the row in by hand, and it is literally the same write
                         // (`GroupMembership::confirmedByStaff`).
                         Route::post('/confirm', 'confirm')->middleware('permission:manage contacts');
+                        // Which grade this student is in, inside a class that
+                        // spans several. Roster administration, so it takes the
+                        // same `manage contacts` gate as putting them on the
+                        // roster in the first place — and it lives HERE rather
+                        // than in the teacher realm on purpose: a teacher records
+                        // who was in the room, the office says who belongs in it.
+                        Route::put('/{membership_id}', 'update')->middleware('permission:manage contacts');
                         Route::delete('/{membership_id}', 'destroy')->middleware('permission:manage contacts');
                     });
 
