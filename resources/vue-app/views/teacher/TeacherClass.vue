@@ -24,30 +24,43 @@
                  a teacher has muscle memory for do not move, and the new three
                  sit behind More — which renders the ACTIVE one's label, or the
                  teacher loses their place. -->
-            <ul class="nav nav-tabs mb-4 flex-nowrap overflow-auto">
-                <li v-for="t in tabs" :key="t.key" class="nav-item">
-                    <button type="button" class="nav-link text-nowrap"
-                            :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
-                        <i :class="`bi ${t.icon} me-1`"></i>{{ t.label }}
-                    </button>
-                </li>
-                <li class="nav-item dropdown">
-                    <button type="button" class="nav-link dropdown-toggle text-nowrap"
-                            :class="{ active: activeMoreTab !== null }"
-                            data-bs-toggle="dropdown" aria-expanded="false">
+            <!-- The seven scroll; "More" sits OUTSIDE that scroller.
+                 An absolutely-positioned menu inside an `overflow-auto` ancestor
+                 is clipped by it — the menu opened and was simply invisible,
+                 which reads exactly like a dead button. It is also driven by
+                 component state rather than data-bs-toggle, so it cannot depend
+                 on Bootstrap's JS having initialised. -->
+            <div class="d-flex align-items-end gap-2 mb-4 border-bottom position-relative">
+                <ul class="nav nav-tabs flex-nowrap overflow-auto flex-grow-1 border-0">
+                    <li v-for="t in tabs" :key="t.key" class="nav-item">
+                        <button type="button" class="nav-link text-nowrap"
+                                :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
+                            <i :class="`bi ${t.icon} me-1`"></i>{{ t.label }}
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="flex-shrink-0 position-relative" @click.stop>
+                    <button type="button" class="btn btn-sm text-nowrap mb-1"
+                            :class="activeMoreTab ? 'btn-success' : 'btn-outline-secondary'"
+                            @click="moreOpen = !moreOpen">
                         <i :class="`bi ${activeMoreTab?.icon ?? 'bi-three-dots'} me-1`"></i>
-                        {{ activeMoreTab ? `More: ${activeMoreTab.label}` : 'More' }}
+                        {{ activeMoreTab ? activeMoreTab.label : 'More' }}
+                        <i class="bi bi-chevron-down ms-1 small"></i>
                     </button>
-                    <ul class="dropdown-menu">
-                        <li v-for="t in moreTabs" :key="t.key">
-                            <button type="button" class="dropdown-item"
-                                    :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
-                                <i :class="`bi ${t.icon} me-2`"></i>{{ t.label }}
-                            </button>
-                        </li>
-                    </ul>
-                </li>
-            </ul>
+
+                    <div v-if="moreOpen"
+                         class="position-absolute end-0 mt-1 bg-white border rounded-3 shadow py-1"
+                         style="min-width: 12rem; z-index: 1080;">
+                        <button v-for="t in moreTabs" :key="t.key" type="button"
+                                class="btn btn-sm w-100 text-start border-0 rounded-0 px-3 py-2"
+                                :class="activeTab === t.key ? 'bg-success-subtle text-success-emphasis fw-semibold' : ''"
+                                @click="activeTab = t.key; moreOpen = false">
+                            <i :class="`bi ${t.icon} me-2`"></i>{{ t.label }}
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             <!-- ============================================ ROSTER (read only) -->
             <section v-if="activeTab === 'roster'">
@@ -757,7 +770,7 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { useAuthStore } from '@/stores/authStore';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
@@ -801,6 +814,22 @@ const moreTabs: { key: TabKey; label: string; icon: string }[] = [
 ];
 
 const activeMoreTab = computed(() => moreTabs.find((t) => t.key === activeTab.value) ?? null);
+
+const moreOpen = ref(false);
+
+// Close on any click that is not inside the dropdown itself (the trigger stops
+// propagation), and on Escape.
+const closeMore = () => { moreOpen.value = false; };
+const closeMoreOnEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') moreOpen.value = false; };
+
+onMounted(() => {
+    document.addEventListener('click', closeMore);
+    document.addEventListener('keydown', closeMoreOnEscape);
+});
+onBeforeUnmount(() => {
+    document.removeEventListener('click', closeMore);
+    document.removeEventListener('keydown', closeMoreOnEscape);
+});
 
 const students = computed<any[]>(() => group.value?.students ?? []);
 const avatarFor = ref<any>(null);
