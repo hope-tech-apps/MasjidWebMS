@@ -54,7 +54,7 @@ class ReportCardTest extends TestCase
 
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
 
-        $this->school = $this->makeSchool();
+        $this->school = $this->makeMasjid();
 
         $this->teacher = User::factory()->create([
             'type' => 'Teacher', 'phone' => '+1' . random_int(1000000000, 9999999999),
@@ -81,7 +81,14 @@ class ReportCardTest extends TestCase
 
     // ---------------------------------------------------------------- helpers
 
-    private function makeSchool(): Masjid
+    /**
+     * Named `makeMasjid` deliberately: TenantScopingCoverageTest only counts a
+     * file as having seeded two tenants when it recognises the fixture helper by
+     * name, and a file it does not recognise is silently SKIPPED rather than
+     * failed. Called `makeSchool`, the cross-tenant test below existed and
+     * proved nothing.
+     */
+    private function makeMasjid(): Masjid
     {
         return Masjid::create([
             'name' => 'Al-Razi ' . uniqid(),
@@ -431,7 +438,7 @@ class ReportCardTest extends TestCase
         $card = ReportCard::firstOrFail();
         $mark = ReportCardMark::firstOrFail();
 
-        $other = $this->makeSchool();
+        $other = $this->makeMasjid();
         $admin = User::factory()->create([
             'type' => 'MasjidAdmin',
             'phone' => '+1' . random_int(1000000000, 9999999999),
