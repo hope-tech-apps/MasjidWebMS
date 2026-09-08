@@ -300,6 +300,20 @@ return [
      */
     'default_grading_scale' => env('GROUP_DEFAULT_GRADING_SCALE', 'levels'),
 
+    /*
+     * Report cards and progress reports.
+     *
+     * Both bounds are request-boundary guards, not editorial policy. A teacher
+     * writing a long, careful comment about a child must never hit a limit that
+     * makes them cut it short — that comment is often the most useful thing on
+     * the document — so the per-card ceiling is deliberately generous and the
+     * per-criterion one is sized for a sentence or two.
+     */
+    'report_cards' => [
+        'max_comment_length' => (int) env('GROUP_REPORT_MARK_COMMENT_LENGTH', 1000),
+        'max_teacher_comment_length' => (int) env('GROUP_REPORT_TEACHER_COMMENT_LENGTH', 4000),
+    ],
+
     'lessons' => [
 
         /*

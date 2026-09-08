@@ -13,6 +13,7 @@ use App\Http\Controllers\Teacher\CurriculumController;
 use App\Http\Controllers\Teacher\GradebookController;
 use App\Http\Controllers\Teacher\GroupsController as TeacherGroupsController;
 use App\Http\Controllers\Teacher\LessonPlanController;
+use App\Http\Controllers\Teacher\ReportCardController;
 use App\Http\Controllers\Teacher\ResourcesController;
 use App\Http\Controllers\Teacher\StudentAvatarController;
 use Illuminate\Support\Facades\Route;
@@ -133,6 +134,26 @@ Route::prefix('teacher')
                         Route::delete('/assignments/{assignment_id}', [GradebookController::class, 'destroy']);
                         Route::put('/assignments/{assignment_id}/scores', [GradebookController::class, 'saveScores']);
                         Route::get('/members/{membership_id}/grades', [GradebookController::class, 'forMember']);
+
+                        // Report cards and progress reports. Both are the same
+                        // document at different points in the quarter, so they
+                        // share these routes and differ by `?type=`.
+                        //
+                        // `show` may CREATE — an empty card with no judgements in
+                        // it — because making a teacher press "start" before they
+                        // can fill one in is a step that exists only to satisfy a
+                        // rule about verbs. It is idempotent and never resets a
+                        // mark. `index` deliberately does not: a class list is a
+                        // read, and creating twelve draft documents because
+                        // somebody opened a tab makes the audit trail meaningless.
+                        //
+                        // Publishing is its own verb, separate from saving, because
+                        // it is the moment a document becomes visible to a family.
+                        Route::get('/report-cards', [ReportCardController::class, 'index']);
+                        Route::get('/members/{membership_id}/report-card', [ReportCardController::class, 'show']);
+                        Route::put('/members/{membership_id}/report-card', [ReportCardController::class, 'save']);
+                        Route::post('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'publish']);
+                        Route::delete('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'unpublish']);
 
                         // Class resources — the realm's first file upload, and
                         // its first byte-streaming download.

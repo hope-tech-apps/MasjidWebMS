@@ -9,6 +9,7 @@ use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
 use App\Http\Controllers\Family\HifzEntriesController;
 use App\Http\Controllers\Family\MeController;
+use App\Http\Controllers\Family\ReportCardsController as FamilyReportCardsController;
 use App\Http\Controllers\Family\ResourcesController;
 use App\Http\Controllers\Family\StudentSessionController;
 use Illuminate\Support\Facades\Route;
@@ -239,6 +240,17 @@ Route::prefix('family')
                 // Hand the device to the child. Mints a token scoped to THIS
                 // child and nothing else — see StudentSessionController.
                 Route::post('/student-session', [StudentSessionController::class, 'store']);
+
+                // Report cards and progress reports. BOTH ARE GETs, so the
+                // realm's counted write list is untouched.
+                //
+                // `published()` is applied as a SCOPE rather than as a check
+                // after the fetch, so a draft is a 404 in exactly the way a
+                // nonexistent card is — a parent must not be able to learn that
+                // a report about their child exists but is being withheld while
+                // a teacher is still writing it.
+                Route::get('/report-cards', [FamilyReportCardsController::class, 'index']);
+                Route::get('/report-cards/{report_card_id}', [FamilyReportCardsController::class, 'show']);
 
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
