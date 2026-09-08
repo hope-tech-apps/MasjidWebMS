@@ -267,27 +267,54 @@ class GradebookController extends TeacherController
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
-        $scores = AssignmentScore::query()
-            ->where('group_membership_id', $membership->id)
-            ->whereHas('assignment')
-            ->with('assignment')
-            ->limit(200)
-            ->get()
-            ->sortByDesc(fn (AssignmentScore $s) => $s->assignment?->assigned_on)
-            ->values();
+        // THE AVERAGE IS AGGREGATED IN SQL, OVER EVERY MARK.
+        //
+        // It used to be computed from a `limit(200)` with NO ordering applied
+        // before the limit — so past 200 marks a child's average was taken over
+        // an arbitrary database-order subset, with nothing to indicate it. That is
+        // a wrong number on a screen a parent may be shown, which is worse than a
+        // missing one. The join is what keeps withdrawn work out: class_assignments
+        // soft-deletes, so a score can outlive a resolvable parent.
+        $totals = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membership->id)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->groupBy('assignment_scores.status')
+            ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('COUNT(*) as n')
+            ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
+            ->selectRaw('SUM(class_assignments.points_possible) as possible')
+            ->get();
 
-        $counting = $scores->filter->countsTowardAverage();
-        $earned = $counting->sum(fn (AssignmentScore $s) => (float) ($s->points_earned ?? 0));
-        $possible = $counting->sum(fn (AssignmentScore $s) => (float) ($s->assignment?->points_possible ?? 0));
+        $recorded = (int) $totals->sum('n');
+        $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
+        $earned = (float) $countingRows->sum('earned');
+        $possible = (float) $countingRows->sum('possible');
+
+        // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
+        // "the most recent N" rather than whichever rows the database returned.
+        $limit = (int) config('groups.records_page_size', 200);
+
+        $scores = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membership->id)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->orderByDesc('class_assignments.assigned_on')
+            ->orderByDesc('class_assignments.id')
+            ->select('assignment_scores.*')
+            ->with('assignment')
+            ->limit($limit)
+            ->get();
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'student' => $this->student($membership),
+                // Aggregated over the whole term, never over the page below.
                 'summary' => [
-                    'recorded' => $scores->count(),
-                    'counted' => $counting->count(),
-                    'excused' => $scores->where('status', AssignmentScore::STATUS_EXCUSED)->count(),
+                    'recorded' => $recorded,
+                    'counted' => (int) $countingRows->sum('n'),
+                    'excused' => (int) $totals->firstWhere('status', AssignmentScore::STATUS_EXCUSED)?->n ?? 0,
                     'points_earned' => round($earned, 2),
                     'points_possible' => round($possible, 2),
                 ],
@@ -297,6 +324,8 @@ class GradebookController extends TeacherController
                     'points_earned' => $s->points_earned !== null ? (float) $s->points_earned : null,
                     'note' => $s->note,
                 ])->values(),
+                'scores_shown' => $scores->count(),
+                'scores_truncated' => $recorded > $scores->count(),
             ],
         ], Response::HTTP_OK);
     }

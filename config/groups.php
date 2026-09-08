@@ -266,6 +266,20 @@ return [
 
     ],
 
+    /*
+     * How many rows a per-student history returns in one payload.
+     *
+     * A PAGE SIZE, not a cap on what is counted. Every summary beside these
+     * lists — attendance totals, gradebook averages — is aggregated in SQL over
+     * the whole history, because a total computed from a truncated page is a
+     * wrong number rather than a missing one, and it was wrong silently: past
+     * 200 rows a child's attendance summary quietly became "the last 200 days"
+     * and a gradebook average was taken over whatever the database happened to
+     * return. Both payloads now say `*_truncated` so the screen can tell a
+     * teacher the list is a page and the total is not.
+     */
+    'records_page_size' => (int) env('GROUP_RECORDS_PAGE_SIZE', 200),
+
     'lessons' => [
 
         /*

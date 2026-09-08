@@ -136,28 +136,51 @@ class AttendanceController extends TeacherController
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
+        // THE SUMMARY IS COUNTED IN SQL, OVER EVERY ROW.
+        //
+        // It used to be computed from the same limited collection the list below
+        // returns, so after 200 school days a child's totals silently stopped
+        // being the year's totals and became the last 200 days' — with nothing on
+        // screen to say so. At a 180-day year that lands in the second year, which
+        // is exactly when a parent asks how many days their child has missed.
+        $counts = AttendanceRecord::query()
+            ->where('group_membership_id', $membership->id)
+            ->groupBy('status')
+            ->selectRaw('status, COUNT(*) as n')
+            ->pluck('n', 'status');
+
+        // The LIST is still bounded — a payload has to end somewhere — but it is
+        // ordered BEFORE the limit, so it is honestly "the most recent N".
+        $limit = (int) config('groups.records_page_size', 200);
+
         $records = AttendanceRecord::query()
             ->where('group_membership_id', $membership->id)
             ->orderByDesc('session_date')
-            ->limit(200)
+            ->limit($limit)
             ->get();
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'student' => $this->student($membership),
+                // Counted over the whole history, never over the page below.
                 'summary' => [
-                    'recorded' => $records->count(),
-                    'present' => $records->filter->wasPresent()->count(),
-                    'absent' => $records->where('status', AttendanceRecord::STATUS_ABSENT)->count(),
-                    'excused' => $records->where('status', AttendanceRecord::STATUS_EXCUSED)->count(),
-                    'late' => $records->where('status', AttendanceRecord::STATUS_LATE)->count(),
+                    'recorded' => (int) $counts->sum(),
+                    'present' => (int) collect(AttendanceRecord::PRESENT_STATUSES)
+                        ->sum(fn (string $s) => (int) $counts->get($s, 0)),
+                    'absent' => (int) $counts->get(AttendanceRecord::STATUS_ABSENT, 0),
+                    'excused' => (int) $counts->get(AttendanceRecord::STATUS_EXCUSED, 0),
+                    'late' => (int) $counts->get(AttendanceRecord::STATUS_LATE, 0),
                 ],
                 'records' => $records->map(fn (AttendanceRecord $r): array => [
                     'session_date' => $r->session_date->toDateString(),
                     'status' => $r->status,
                     'note' => $r->note,
                 ])->values(),
+                // Said out loud, so a teacher looking at a short list under a big
+                // total knows the list is a page and the total is not.
+                'records_shown' => $records->count(),
+                'records_truncated' => (int) $counts->sum() > $records->count(),
             ],
         ], Response::HTTP_OK);
     }

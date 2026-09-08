@@ -191,3 +191,92 @@ changed files, router matching (`/connect/1/return` → `@complete`,
 fall through to the SPA closure), and the Blade rendering in all four states
 with a regex assertion that no `acct_`/`sk_live`/`whsec_` appears. CI
 (.github/workflows/tests.yml) runs the suite for real.
+
+## 2026-09-08 — MEC app: member accounts on `contacts`, and service detail behind an org switch
+
+The MEC app (target `Muslim Education Center`, `org.meccharlotte.app`, masjid 13)
+gets accounts. Four decisions, taken together because each one constrains the
+next.
+
+**Guest keeps today's app, exactly.** Prayer/iqama times, announcements, events,
+azkar, tasbih, qibla, gallery, donate, contact — unchanged and unauthenticated.
+Sign-in gates the *breakdown detail* of a service, not the front door. A hard
+gate on first open was rejected on two grounds: it costs the walk-up user who
+only wants Maghrib, and App Store guideline 5.1.1(v) tells apps without
+significant account-based features to work without a login — an app whose home
+screen is a prayer timetable is squarely exposed there, and a rejection costs a
+full review cycle.
+
+**Members are `contacts`, not a new table.** The August work already built the
+whole passwordless stack — `contacts.login_email` / `login_enabled_at` /
+`login_revoked_at` / `last_login_at`, `contact_login_codes` (hashed code,
+channel, expiry, attempt cap, requester IP), `contact_login_events` for audit,
+`Contact implements AuthenticatableContract` minting scoped tokens, and the
+custom `sanctum-family` guard that deliberately lets a member session outlive
+the 8-hour staff `sanctum.expiration`. A separate members table was rejected:
+it would duplicate identity and hand a parent who is also a community member
+two logins, which is the same failure the one-login decision for
+manara.hopetechapps.com already rejected.
+
+The real new thing is **self-registration**, and it is a new trust boundary.
+Contact login today is admin-provisioned — staff call `enable()` to set
+`login_enabled_at`. Letting anyone who downloads the app create a row writes
+directly into the CRM staff work in. So self-registered contacts carry a
+`source` and a `verified_at`, and signup merges on `(masjid_id, login_email)`
+rather than inserting: an email already on file must LINK to the existing
+contact, never create a shadow record of a person the office already knows.
+Staff-curated contacts must stay distinguishable from self-serve ones in every
+admin list.
+
+**Entering a service is a tenant switch, so enterable services are orgs, not
+`services` rows.** `services` is a content row (`title`, `summary`,
+`description`, `text`, plus media) hanging off one masjid. It cannot back an
+app context that reloads. A service the member can enter therefore graduates
+into a `masjids` row with its own `org_type` — `masjids` already has
+`org_type` from 2026-08-11, but has NO `parent_id`, so the hierarchy column is
+the missing piece. MEC's eleven services (Mosque, IntelliCor International
+Academy, Al-Bayan Quran Academy, Halal Kitchen, Shifa Free Health Clinic, MAS
+Immigration Justice Center, Career Programs, Facility Rental, MAS Charlotte,
+Islamic Relief, Baitul Hemayah) become children of MEC as each one gets a real
+project behind it; the rest stay content rows until then. This is what makes
+"MEC app reads data from all the sub-projects" mechanical rather than bespoke.
+
+**Interests drive push.** A `contact_service_interests` pivot, a
+`BroadcastAudience::SERVICE` case (the enum is only `everyone | contacts`
+today), and one OneSignal tag per interest. No new delivery infrastructure is
+needed: `OnesignalService` already targets by tag filter — that is how the
+existing `masjid_id` tag works — and `BroadcastChannel` already covers push,
+email, SMS, announcement and signage.
+
+### iOS notes, and three traps
+
+The runtime switch is small. `AppConfig.masjidId` is already a computed
+property (`AppConfig+MasjidID.swift`) over the per-target `BuildMasjid`
+constant, with 18 references across 5 files — 13 of them the path
+interpolations in `APIRouter`, a single choke point. So `BuildMasjid.masjidId`
+becomes the immutable HOME org and `AppConfig.masjidId` resolves to the
+CURRENT org, and every endpoint follows for free.
+
+The cost is state reset, which is why the switch needs the loading screen:
+`Settings.shared.masjid`, the cached features/services, and the UserDefaults
+cache are all keyed to one org. Rather than invent a second load path, the
+switch re-enters the existing splash bootstrap (`SplashViewModel` already loads
+masjid + features + settings and reports the heartbeat) with a new id.
+
+1. **The OneSignal `masjid_id` tag must keep pointing at the HOME org.**
+   `AppDelegate` sets it once from `AppConfig.masjidId`. If that silently
+   becomes the current org, a member browsing IntelliCor stops receiving MEC's
+   notifications — a delivery failure with no error anywhere, the shape logged
+   in the silent-failure pattern.
+2. **`PrayerScheduler` must not carry prayer notifications across a switch.**
+   Local notifications are scheduled from the current masjid's prayer times; a
+   school or clinic child org has none, and stale Adhan alarms for the wrong
+   org would survive the switch.
+3. **The drawer legitimately differs per child org** — `Masjid::defaultFeatureKeys()`
+   is already per `org_type`, so a school child should not show Qibla. This is
+   supported, not new work, but the drawer must rebuild on switch rather than
+   persist the parent's list.
+
+Supersedes the narrower "move services to the first page" reading of the
+2026-08-18 MEC call: services stop being a drawer entry and become the app's
+second axis.

@@ -78,6 +78,23 @@ class Contact extends Model implements AuthenticatableContract
     public const FAMILY_TOKEN_ABILITIES = ['family'];
 
     /**
+     * The abilities stamped on a self-registered APP MEMBER's token.
+     *
+     * A third realm beside `['family']` and `['staff']`, named for the same
+     * reason those are: the `personal_access_tokens` row must say which door a
+     * credential came through, so a later slice can enforce `abilities:` without
+     * a flag day for tokens already on people's phones.
+     *
+     * What actually keeps a member out of the family realm today is NOT this
+     * string — it is that self-registration never sets `login_enabled_at`, so
+     * `familyLoginIsActive()` is false and `family.active`
+     * (EnsureFamilyLoginActive) refuses the token on every family route. A
+     * member and a parent may be the same person and hold one contact; the
+     * parent half of that person is granted by staff, never by signing up.
+     */
+    public const MEMBER_TOKEN_ABILITIES = ['member'];
+
+    /**
      * HOW consent was obtained. A constant set rather than free text: free text
      * produces forty spellings of "website" and cannot answer "show me everyone
      * whose consent came from the admissions form" three years later, which is
@@ -164,6 +181,7 @@ class Contact extends Model implements AuthenticatableContract
             'login_enabled_at' => 'datetime',
             'login_revoked_at' => 'datetime',
             'last_login_at' => 'datetime',
+            'verified_at' => 'datetime',
             'sms_opt_in' => 'boolean',
             'sms_consent_at' => 'datetime',
             'sms_opted_out_at' => 'datetime',
@@ -465,4 +483,72 @@ class Contact extends Model implements AuthenticatableContract
         return $effective['url'] ?? null;
     }
 
+
+    /**
+     * The services this member asked to hear about.
+     *
+     * Deliberately NOT `$fillable` anywhere near this: interests are written
+     * only through App\Services\Member\MemberInterestService, so that every
+     * change is the member's own and is diffed rather than replaced blind.
+     */
+    public function serviceInterests()
+    {
+        return $this->hasMany(ContactServiceInterest::class);
+    }
+
+    /** The Service rows themselves, for rendering a member's picks. */
+    public function interestedServices()
+    {
+        return $this->belongsToMany(Service::class, 'contact_service_interests')
+            ->withTimestamps();
+    }
+
+    /**
+     * Did this contact create itself through an app, rather than being typed
+     * by the office? NULL `signup_source` means staff-authored — every row that
+     * predates app sign-up, and everything an admin creates from now on.
+     */
+    public function isSelfRegistered(): bool
+    {
+        return $this->signup_source === 'app';
+    }
+
+    /** Has somebody proved control of `login_email` by redeeming a code sent to it? */
+    public function isVerified(): bool
+    {
+        return $this->verified_at !== null;
+    }
+
+    /**
+     * Mint an app member's token.
+     *
+     * Carries the member realm's abilities and, like `createFamilyToken`, no
+     * `expiresAt`: lifetime is a property of the guard that reads the token,
+     * not of the token (see that method for why an `expiresAt` here could only
+     * ever shorten it).
+     */
+    public function createMemberToken(string $name = 'member-token'): NewAccessToken
+    {
+        return $this->createToken($name, self::MEMBER_TOKEN_ABILITIES);
+    }
+
+    /**
+     * May this contact use the member app right now?
+     *
+     * Deliberately a DIFFERENT predicate from `familyLoginIsActive()`:
+     *
+     *  - it turns on `verified_at` (the member proved control of the address)
+     *    rather than `login_enabled_at` (the office granted portal access), so
+     *    signing up for an app never quietly hands somebody a parent's view of
+     *    a child's records;
+     *  - it still honours `login_revoked_at`. An administrator who revoked a
+     *    contact revoked the person, not one channel, and self-registration
+     *    must never be a way to restore access staff took away.
+     */
+    public function memberAccessIsActive(): bool
+    {
+        return $this->verified_at !== null
+            && $this->login_revoked_at === null
+            && ! $this->trashed();
+    }
 }
