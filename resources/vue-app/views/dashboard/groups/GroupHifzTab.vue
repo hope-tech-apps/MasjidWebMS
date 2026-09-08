@@ -327,15 +327,15 @@ const rangeLabel = (entry: HifzEntry): string => {
 };
 
 /**
- * English first, the classical term second. The stored value is untouched — this
- * is presentation, exactly as kindHint's note says. The option text used to be
- * the raw enum ("sabak"), which reads as jargon to an office administrator who
- * has not been through a ḥifẓ programme and has to pick correctly anyway.
+ * Plain English. The stored value is untouched — this is presentation, exactly
+ * as kindHint's note says. The option text used to be the raw enum ("sabak"),
+ * which reads as jargon to an office administrator who has not been through a
+ * ḥifẓ programme and has to pick correctly anyway.
  */
 const kindLabel = (kind: HifzKind): string => {
-    if (kind === 'sabak') return 'New memorisation — sabak';
-    if (kind === 'sabqi') return 'Recent revision — sabqi';
-    return 'Older revision — manzil';
+    if (kind === 'sabak') return 'New memorization';
+    if (kind === 'sabqi') return 'Recent revision';
+    return 'Older revision';
 };
 
 /** Explain the classical cycle without renaming it — what a UI LABELS them is presentation. */

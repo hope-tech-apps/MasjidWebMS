@@ -344,13 +344,15 @@
                             <div class="row g-2 align-items-end">
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Type</label>
-                                    <!-- English first, the traditional term second: a teacher
-                                         who has not been through a ḥifẓ programme can pick
-                                         correctly, and still learns the word the school uses. -->
-                                    <select class="form-select form-select-sm" style="min-width:13rem" v-model="hifzForm.kind">
-                                        <option value="sabak">New memorisation — sabak</option>
-                                        <option value="sabqi">Recent revision — sabqi</option>
-                                        <option value="manzil">Older revision — manzil</option>
+                                    <!-- Plain English only. The STORED values are still
+                                         sabak/sabqi/manzil; this is presentation.
+                                         Not "New lesson" for sabak, natural as that
+                                         reads, because there is now a Lesson Plans tab
+                                         and the two would be read as the same thing. -->
+                                    <select class="form-select form-select-sm" style="min-width:12rem" v-model="hifzForm.kind">
+                                        <option value="sabak">New memorization</option>
+                                        <option value="sabqi">Recent revision</option>
+                                        <option value="manzil">Older revision</option>
                                     </select>
                                 </div>
                                 <div class="col-12 col-sm-auto">
@@ -402,15 +404,15 @@
                     <div class="border rounded-3 px-3 py-2 mb-3 bg-body-tertiary">
                         <div class="small fw-semibold text-muted mb-1">Which type do I choose?</div>
                         <dl class="row mb-0 small">
-                            <dt class="col-sm-4 col-lg-3 fw-semibold">New memorisation<span class="text-muted fw-normal"> — sabak</span></dt>
+                            <dt class="col-sm-4 col-lg-3 fw-semibold">New memorization</dt>
                             <dd class="col-sm-8 col-lg-9 mb-1">
-                                The new portion the child learned today.
+                                The new portion the child memorized today.
                                 <span class="text-success-emphasis fw-semibold">Only this moves them forward.</span>
                             </dd>
-                            <dt class="col-sm-4 col-lg-3 fw-semibold">Recent revision<span class="text-muted fw-normal"> — sabqi</span></dt>
-                            <dd class="col-sm-8 col-lg-9 mb-1">The last few lessons, gone over again while still fresh.</dd>
-                            <dt class="col-sm-4 col-lg-3 fw-semibold">Older revision<span class="text-muted fw-normal"> — manzil</span></dt>
-                            <dd class="col-sm-8 col-lg-9 mb-0">Everything memorised earlier, cycled through so it is not lost.</dd>
+                            <dt class="col-sm-4 col-lg-3 fw-semibold">Recent revision</dt>
+                            <dd class="col-sm-8 col-lg-9 mb-1">Recently memorized portions, gone over again while still fresh.</dd>
+                            <dt class="col-sm-4 col-lg-3 fw-semibold">Older revision</dt>
+                            <dd class="col-sm-8 col-lg-9 mb-0">Everything memorized earlier, cycled through so it is not lost.</dd>
                         </dl>
                     </div>
 
