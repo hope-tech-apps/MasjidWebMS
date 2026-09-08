@@ -157,6 +157,22 @@ Route::prefix('teacher')
                         // (a teacher joins the parent conversation, they do not run
                         // its lifecycle).
                         Route::get('/threads', [GroupThreadsController::class, 'index']);
+                        // OPEN a conversation. Until this existed no teacher and
+                        // no parent could start one — only the office could, from
+                        // the admin console, which made "message a family" a thing
+                        // a teacher had to request rather than do.
+                        //
+                        // Reused verbatim from the admin realm: store() takes its
+                        // author from the authenticated user, and refuses an
+                        // `about_membership_id` that is not a participant of THIS
+                        // group. `teacher.leads` has already proven the caller
+                        // leads the class, which is the gate the admin route got
+                        // from `permission:manage contacts`.
+                        //
+                        // Both scopes are allowed. A group-scoped thread reaches
+                        // the same audience as the class story, which a teacher
+                        // can already post to — so it grants no new reach.
+                        Route::post('/threads', [GroupThreadsController::class, 'store']);
                         Route::get('/threads/{thread_id}', [GroupThreadsController::class, 'show']);
                         Route::post('/threads/{thread_id}/messages', [GroupThreadsController::class, 'storeMessage']);
 

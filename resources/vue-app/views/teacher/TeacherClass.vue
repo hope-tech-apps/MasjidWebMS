@@ -475,7 +475,61 @@
 
             <!-- ==================================================== MESSAGES -->
             <section v-else-if="activeTab === 'messages'">
-                <p class="text-muted small">One-to-one conversations with guardians. You can reply to a thread.</p>
+                <p class="text-muted small">
+                    Conversations with your families. Start one with a family, or reply to a thread.
+                </p>
+
+                <div v-if="!openedThread" class="card border-0 shadow-sm mb-3">
+                    <div class="card-body">
+                        <button v-if="!composing" class="btn btn-sm btn-success" @click="startCompose">
+                            <i class="bi bi-pencil-square me-1"></i>New message
+                        </button>
+
+                        <template v-else>
+                            <div class="row g-2">
+                                <div class="col-12 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">About</label>
+                                    <select class="form-select form-select-sm" style="min-width:13rem"
+                                            v-model="composeForm.about_membership_id">
+                                        <option :value="null">Whole class</option>
+                                        <option v-for="s in students" :key="s.membership_id" :value="s.membership_id">
+                                            {{ name(s.contact) }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="col-12 col-sm">
+                                    <label class="form-label small text-muted mb-1">Subject</label>
+                                    <input v-model="composeForm.subject" type="text" maxlength="255"
+                                           class="form-control form-control-sm" placeholder="e.g. Settling in well">
+                                </div>
+                            </div>
+
+                            <textarea v-model="composeForm.body" rows="3" maxlength="5000"
+                                      class="form-control form-control-sm mt-2"
+                                      placeholder="Your first message…"></textarea>
+
+                            <p class="text-muted small mt-2 mb-2">
+                                <template v-if="composeForm.about_membership_id">
+                                    Only that child's guardians will see this.
+                                </template>
+                                <template v-else>
+                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                    Every family in this class will see this conversation.
+                                </template>
+                            </p>
+
+                            <div class="d-flex align-items-center gap-2">
+                                <button class="btn btn-sm btn-success"
+                                        :disabled="sendingCompose || !composeForm.subject.trim() || !composeForm.body.trim()"
+                                        @click="createThread">
+                                    {{ sendingCompose ? 'Sending…' : 'Send' }}
+                                </button>
+                                <button class="btn btn-sm btn-link text-muted" @click="composing = false">Cancel</button>
+                                <span v-if="composeError" class="text-danger small">{{ composeError }}</span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
 
                 <div v-if="threadsLoading" class="text-center py-3"><span class="spinner-border text-success"></span></div>
                 <div v-else-if="!threads.length" class="text-muted small">No messages yet.</div>
@@ -1148,6 +1202,49 @@ const withdrawAssignment = async () => {
         await loadAssignments();
     } catch {
         gradesError.value = 'That work could not be withdrawn.';
+    }
+};
+
+// ---------- starting a conversation ----------
+const composing = ref(false);
+const sendingCompose = ref(false);
+const composeError = ref('');
+const composeForm = ref<{ about_membership_id: number | null; subject: string; body: string }>({
+    about_membership_id: null, subject: '', body: '',
+});
+
+const startCompose = () => {
+    // Defaults to the FIRST student rather than the whole class: the common case
+    // is one family, and a mis-sent class-wide thread cannot be recalled.
+    composeForm.value = {
+        about_membership_id: students.value[0]?.membership_id ?? null,
+        subject: '', body: '',
+    };
+    composeError.value = '';
+    composing.value = true;
+};
+
+const createThread = async () => {
+    sendingCompose.value = true;
+    composeError.value = '';
+    try {
+        const about = composeForm.value.about_membership_id;
+        await TeacherApiService.post(`${base.value}/threads`, {
+            subject: composeForm.value.subject,
+            // `participant` reaches one child's guardians; `group` reaches every
+            // family in the class — the same audience as the class story.
+            scope: about ? 'participant' : 'group',
+            ...(about ? { about_membership_id: about } : {}),
+            body: composeForm.value.body,
+        });
+        composing.value = false;
+        await loadThreads();
+    } catch (e: any) {
+        composeError.value = e?.response?.data?.message
+            ?? e?.response?.data?.data?.subject?.[0]
+            ?? 'That message could not be sent.';
+    } finally {
+        sendingCompose.value = false;
     }
 };
 

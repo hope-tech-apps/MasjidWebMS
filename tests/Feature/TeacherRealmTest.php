@@ -104,9 +104,15 @@ class TeacherRealmTest extends TestCase
     #[Test]
     public function the_teacher_realm_exposes_exactly_these_writes(): void
     {
-        // Counting the write verbs, family-realm style: adding a twenty-fourth —
+        // Counting the write verbs, family-realm style: adding a twenty-fifth —
         // a roster mutation, a donation, a thread lifecycle verb — has to be a
         // DELIBERATE edit here, not a silent widening of what a teacher can do.
+        //
+        // The twenty-fourth is OPENING a thread. Note what it is still not: close,
+        // reopen and delete remain the office's alone, so a teacher may start a
+        // conversation and may never end one. Before it existed, neither a teacher
+        // nor a parent could begin a conversation at all — the office had to open
+        // every one from the admin console.
         //
         // STILL NO ROSTER MUTATION. A teacher marks who was in the room, plans
         // what the room will cover, says what work was set and how each child
@@ -155,6 +161,7 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar/override',
