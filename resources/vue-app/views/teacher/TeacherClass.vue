@@ -1063,6 +1063,260 @@
                     </div>
                 </div>
             </section>
+
+            <!-- ====================================================== REPORTS -->
+            <section v-else-if="activeTab === 'reports'">
+
+                <!-- ------------------------------------------- the whole class -->
+                <template v-if="!openCard">
+                    <p class="text-muted small">
+                        Report cards and progress reports for one quarter. Nothing here reaches a
+                        family until you send it, and a card you have sent is locked until you take
+                        it back.
+                    </p>
+
+                    <!-- The period. A bad value here never 422s — the server clamps it silently —
+                         so the three selects are re-seeded from the period the server echoes back,
+                         and that echo is printed underneath. Without it a mistyped quarter would
+                         save into a different document and still answer 200. -->
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Report</label>
+                                    <select v-model="reportType" class="form-select form-select-sm" style="width:11rem">
+                                        <option value="report_card">Report Card</option>
+                                        <option value="progress">Progress Report</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Quarter</label>
+                                    <select v-model.number="reportTerm" class="form-select form-select-sm" style="width:7rem">
+                                        <option v-for="t in [1, 2, 3, 4]" :key="t" :value="t">{{ t }}</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">School year</label>
+                                    <select v-model="reportYear" class="form-select form-select-sm" style="width:9.5rem">
+                                        <option v-for="y in schoolYearOptions" :key="y" :value="y">{{ y }}</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <p v-if="reportPeriod" class="text-muted small mt-2 mb-0">
+                                Showing {{ reportPeriod.type === 'progress' ? 'progress reports' : 'report cards' }}
+                                for Quarter {{ reportPeriod.term }}, {{ reportPeriod.school_year }}.
+                            </p>
+                            <p v-if="reportsError" class="text-danger small mt-2 mb-0">{{ reportsError }}</p>
+                        </div>
+                    </div>
+
+                    <div v-if="reportsLoading" class="text-center py-4">
+                        <span class="spinner-border spinner-border-sm text-success"></span>
+                    </div>
+                    <p v-else-if="!reportRows.length" class="text-muted small">No students on this roster yet.</p>
+                    <div v-else class="list-group">
+                        <button v-for="r in reportRows" :key="r.membership_id" type="button"
+                                class="list-group-item list-group-item-action d-flex align-items-center gap-3"
+                                @click="openReportCard(r)">
+                            <PersonAvatar :avatar="r.contact?.avatar"
+                                          :first-name="r.contact?.first_name" :last-name="r.contact?.last_name" :size="34" />
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="fw-semibold small">{{ name(r.contact) }}</span>
+                                    <span v-if="r.grade_label" class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                                        {{ r.grade_label }}
+                                    </span>
+                                </div>
+                            </div>
+                            <span class="badge" :class="rowStatus(r).cls">{{ rowStatus(r).text }}</span>
+                            <i class="bi bi-chevron-right text-muted"></i>
+                        </button>
+                    </div>
+                </template>
+
+                <!-- --------------------------------------------- one child's card -->
+                <template v-else>
+                    <button class="btn btn-link px-0 text-decoration-none mb-2" @click="closeOpenCard">
+                        ← All students
+                    </button>
+
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="fw-semibold">{{ name(openCard.student?.contact) }}</span>
+                        <span v-if="openCard.grade_label" class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                            {{ openCard.grade_label }}
+                        </span>
+                    </div>
+                    <div class="text-muted small mb-3">
+                        {{ openCard.type_label }} · {{ openCard.period_label }}
+                        · {{ cardAssessed }} of {{ cardTotal }} marked
+                    </div>
+
+                    <!-- PUBLISHED. The server's 422 is a backstop, not the mechanism: every
+                         control below is disabled and Save is not rendered at all, so a teacher
+                         never types into a form that is going to refuse them. -->
+                    <div v-if="openCard.published" class="alert alert-info py-2 small d-flex flex-wrap align-items-center gap-2">
+                        <span>Sent to the family on {{ when(openCard.published_at) }}. To change anything, take it back first.</span>
+                        <button class="btn btn-sm btn-link text-danger p-0" :disabled="publishing" @click="unpublishReportCard">
+                            {{ publishing ? 'Taking it back…' : 'Take it back' }}
+                        </button>
+                    </div>
+
+                    <!-- The attendance FROZEN at publication. Only shown once published: on a
+                         draft these are null, and rendering a null as 0 would read as "never
+                         absent". `present` already includes the late days, so it says so rather
+                         than leaving a parent to work out whether the numbers double-count. -->
+                    <div v-if="openCard.published" class="card border-0 bg-light mb-3">
+                        <div class="card-body py-2 small">
+                            Present {{ openCard.attendance.present }}
+                            <span class="text-muted">(includes {{ openCard.attendance.late }} late)</span>
+                            · Absent {{ openCard.attendance.absent }}
+                        </div>
+                    </div>
+
+                    <!-- THE KEY, from the payload and never hardcoded — the school's own words,
+                         readable at the moment a teacher is choosing between a 2 and a 3. -->
+                    <details v-if="levelKey.length" class="mb-3">
+                        <summary class="small text-primary" style="cursor:pointer">What do 4, 3, 2 and 1 mean?</summary>
+                        <dl class="row small mt-2 mb-0">
+                            <template v-for="l in levelKey" :key="l.level">
+                                <dt class="col-sm-3 fw-semibold">{{ l.level }} — {{ l.short_label }}</dt>
+                                <dd class="col-sm-9 text-muted">{{ l.description }}</dd>
+                            </template>
+                        </dl>
+                    </details>
+
+                    <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
+                        <div class="card-header bg-white fw-semibold small">{{ sub.subject }}</div>
+                        <div class="list-group list-group-flush">
+                            <div v-for="m in sub.criteria" :key="m.id"
+                                 class="list-group-item d-flex align-items-center gap-3 flex-wrap"
+                                 :class="isDirty(m.id) ? 'border-start border-warning border-3' : ''">
+                                <div class="flex-grow-1" style="min-width:12rem">
+                                    <span class="small">{{ m.criterion }}</span>
+                                </div>
+
+                                <!-- Four levels and a clear. The fifth button is not decoration:
+                                     "not assessed" is a real thing to say about a child who joined
+                                     in week eight, and without it the only way back to unmarked
+                                     would be reloading the page. Number keys do the same while the
+                                     group has focus — sixteen children times twenty-three criteria
+                                     is a keyboard job. -->
+                                <div class="btn-group btn-group-sm flex-shrink-0" @keydown="onLevelKey($event, m.id)">
+                                    <button v-for="l in levelKey" :key="l.level" type="button" class="btn"
+                                            :class="draft[m.id]?.level === l.level ? 'btn-primary' : 'btn-outline-primary'"
+                                            :disabled="openCard.published" :title="l.description"
+                                            @click="setMarkLevel(m.id, l.level)">{{ l.level }}</button>
+                                    <button type="button" class="btn"
+                                            :class="draft[m.id]?.level === null ? 'btn-secondary' : 'btn-outline-secondary'"
+                                            :disabled="openCard.published" title="Not assessed"
+                                            @click="clearMarkLevel(m.id)">—</button>
+                                </div>
+
+                                <input v-if="draft[m.id]" v-model="draft[m.id].comment" type="text" maxlength="1000"
+                                       class="form-control form-control-sm" style="width:18rem"
+                                       :disabled="openCard.published" placeholder="Optional note"
+                                       @input="onCardEdited">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LEARNING BEHAVIOURS, deliberately their own card BELOW the subjects. The
+                         server keeps them beside `subjects` rather than inside one because they
+                         are how a child works, not what a child knows; folding them into a subject
+                         is exactly what that separation exists to prevent. -->
+                    <div v-if="openCard.learning_behaviours.length" class="card border-0 shadow-sm mb-3">
+                        <div class="card-header bg-white fw-semibold small">Learning behaviours</div>
+                        <div class="list-group list-group-flush">
+                            <div v-for="m in openCard.learning_behaviours" :key="m.id"
+                                 class="list-group-item d-flex align-items-center gap-3 flex-wrap"
+                                 :class="isDirty(m.id) ? 'border-start border-warning border-3' : ''">
+                                <div class="flex-grow-1" style="min-width:12rem">
+                                    <span class="small">{{ m.criterion }}</span>
+                                </div>
+                                <div class="btn-group btn-group-sm flex-shrink-0" @keydown="onLevelKey($event, m.id)">
+                                    <button v-for="l in levelKey" :key="l.level" type="button" class="btn"
+                                            :class="draft[m.id]?.level === l.level ? 'btn-primary' : 'btn-outline-primary'"
+                                            :disabled="openCard.published" :title="l.description"
+                                            @click="setMarkLevel(m.id, l.level)">{{ l.level }}</button>
+                                    <button type="button" class="btn"
+                                            :class="draft[m.id]?.level === null ? 'btn-secondary' : 'btn-outline-secondary'"
+                                            :disabled="openCard.published" title="Not assessed"
+                                            @click="clearMarkLevel(m.id)">—</button>
+                                </div>
+                                <input v-if="draft[m.id]" v-model="draft[m.id].comment" type="text" maxlength="1000"
+                                       class="form-control form-control-sm" style="width:18rem"
+                                       :disabled="openCard.published" placeholder="Optional note"
+                                       @input="onCardEdited">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <label class="form-label small text-muted mb-1">Comment to the family</label>
+                            <textarea v-model="teacherComment" rows="4" maxlength="4000"
+                                      class="form-control form-control-sm" :disabled="openCard.published"
+                                      placeholder="What has gone well this quarter, and what to work on next."
+                                      @input="onCardEdited"></textarea>
+                            <p class="text-muted small mt-1 mb-0">The family reads this. Write about this child only.</p>
+                        </div>
+                    </div>
+
+                    <!-- SEND. Its own card rather than a button in the save row: it changes who
+                         can see the document, and it freezes the attendance figures at this
+                         moment. Disabled while anything is unsaved, so a teacher cannot send a
+                         card that does not yet say what is on their screen. -->
+                    <div v-if="!openCard.published" class="card border shadow-none mb-3">
+                        <div class="card-body">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Attendance from</label>
+                                    <input v-model="publishFrom" type="date" class="form-control form-control-sm" style="width:10rem">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">to</label>
+                                    <input v-model="publishTo" type="date" class="form-control form-control-sm" style="width:10rem">
+                                </div>
+                                <div class="col-auto">
+                                    <button class="btn btn-sm btn-outline-success"
+                                            :disabled="publishing || hasUnsaved || !cardAssessed"
+                                            @click="publishReportCard">
+                                        {{ publishing ? 'Sending…' : 'Send to the family' }}
+                                    </button>
+                                </div>
+                            </div>
+                            <p class="text-muted small mt-2 mb-0">
+                                Leave the dates empty for the whole year so far. Sending freezes the
+                                attendance figures and locks the card; taking it back clears them again.
+                                <span v-if="hasUnsaved" class="text-danger-emphasis">Save your changes first.</span>
+                                <span v-else-if="!cardAssessed" class="text-danger-emphasis">Mark at least one criterion first.</span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Sticks to the bottom of the viewport. With twenty-three criteria the Save
+                         button is otherwise a full scroll away from the mark just changed, and the
+                         unsaved count is the only thing between a teacher and losing an afternoon. -->
+                    <div v-if="!openCard.published"
+                         class="position-sticky bottom-0 bg-white border-top pt-2 pb-2 d-flex align-items-center gap-2 flex-wrap">
+                        <template v-if="!leaveWarned">
+                            <button class="btn btn-sm btn-success" :disabled="savingCard || !hasUnsaved" @click="saveReportCard">
+                                {{ savingCard ? 'Saving…' : 'Save' }}
+                            </button>
+                            <span v-if="hasUnsaved" class="text-danger-emphasis small">
+                                {{ unsavedCount }} change{{ unsavedCount === 1 ? '' : 's' }} not saved
+                            </span>
+                            <span v-if="cardSaved" class="text-success small"><i class="bi bi-check-circle me-1"></i>Saved</span>
+                        </template>
+                        <template v-else>
+                            <span class="small">{{ unsavedCount }} change{{ unsavedCount === 1 ? '' : 's' }} not saved.</span>
+                            <button class="btn btn-sm btn-success" :disabled="savingCard" @click="saveAndClose">Save and close</button>
+                            <button class="btn btn-sm btn-link text-danger" @click="discardAndClose">Discard</button>
+                        </template>
+                        <span v-if="reportsError" class="text-danger small">{{ reportsError }}</span>
+                    </div>
+                </template>
+            </section>
         </template>
 
         <!-- Avatar picker modal (Roster tab) -->
@@ -1099,7 +1353,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
-    | 'lessons' | 'grades' | 'files';
+    | 'lessons' | 'grades' | 'files' | 'reports';
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -1135,6 +1389,9 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
 const moreTabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'lessons', label: 'Lesson Plans', icon: 'bi-calendar3' },
     { key: 'grades', label: 'Grades', icon: 'bi-clipboard-check' },
+    // NOT bi-clipboard-data: it sits directly under Grades' bi-clipboard-check
+    // in the same dropdown, and two clipboards read as one entry.
+    { key: 'reports', label: 'Reports', icon: 'bi-file-earmark-bar-graph' },
     { key: 'files', label: 'Files', icon: 'bi-folder2-open' },
 ];
 
@@ -2248,6 +2505,300 @@ const onAvatarSaved = (student: any) => {
 };
 
 // ---------- lazy per-tab loading ----------
+// ---------- report cards ----------
+type ReportType = 'report_card' | 'progress';
+type DraftCell = { level: number | null; comment: string };
+
+// The period. All three are ADOPTED from the server on first load rather than
+// computed here: which quarter it is, and when the school year rolls over, are
+// facts about the school. A copy of them in this component is a copy that goes
+// stale in a year — the same reason `levelKey` is read from the payload.
+const reportType = ref<ReportType>('report_card');
+const reportTerm = ref<number | null>(null);
+const reportYear = ref('');
+const reportPeriod = ref<any>(null);
+
+const reportRows = ref<any[]>([]);
+const reportsLoading = ref(false);
+const reportsError = ref('');
+
+const openCard = ref<any>(null);
+
+// `draft` is what is on screen; `baseline` is the server's last known truth.
+// Keyed by MARK id, because ids are stable and array order is not.
+const draft = ref<Record<number, DraftCell>>({});
+const baseline = ref<Record<number, DraftCell>>({});
+const teacherComment = ref('');
+const teacherCommentBaseline = ref('');
+
+const savingCard = ref(false);
+const cardSaved = ref(false);
+const publishing = ref(false);
+const publishFrom = ref('');
+const publishTo = ref('');
+const leaveWarned = ref(false);
+
+const isDirty = (id: number): boolean => {
+    const a = draft.value[id];
+    const b = baseline.value[id];
+    return !!a && (!b || a.level !== b.level || a.comment !== b.comment);
+};
+
+const dirtyIds = computed(() => Object.keys(draft.value).map(Number).filter(isDirty));
+const commentDirty = computed(() => teacherComment.value !== teacherCommentBaseline.value);
+const unsavedCount = computed(() => dirtyIds.value.length + (commentDirty.value ? 1 : 0));
+const hasUnsaved = computed(() => unsavedCount.value > 0);
+
+// Counted from the DRAFT, so the header moves as the teacher marks rather than
+// only after a save.
+const cardTotal = computed(() => Object.keys(draft.value).length);
+const cardAssessed = computed(() => Object.values(draft.value).filter((c) => c.level !== null).length);
+
+// Three years around whatever the server said the current one is — derived, so
+// nobody has to remember to add next year to a hardcoded list.
+const schoolYearOptions = computed<string[]>(() => {
+    const current = reportPeriod.value?.school_year ?? reportYear.value;
+    const start = parseInt(String(current).slice(0, 4), 10);
+    if (!Number.isFinite(start)) return current ? [current] : [];
+    return [-1, 0, 1].map((d) => `${start + d}-${start + d + 1}`);
+});
+
+const reportQuery = (): string => {
+    const q = new URLSearchParams({ type: reportType.value });
+    if (reportTerm.value) q.set('term', String(reportTerm.value));
+    if (reportYear.value) q.set('school_year', reportYear.value);
+    return q.toString();
+};
+
+const loadReportCards = async () => {
+    reportsLoading.value = true;
+    reportsError.value = '';
+    try {
+        const res = await TeacherApiService.get(`${base.value}/report-cards?${reportQuery()}`);
+        reportRows.value = res.data?.data?.students ?? [];
+        reportPeriod.value = res.data?.data?.period ?? null;
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
+        // Adopt what the server actually used. It clamps a bad term or year
+        // silently, so without this the selects could claim one quarter while
+        // every save landed in another.
+        if (reportPeriod.value) {
+            reportType.value = reportPeriod.value.type;
+            reportTerm.value = reportPeriod.value.term;
+            reportYear.value = reportPeriod.value.school_year;
+        }
+    } catch {
+        reportsError.value = 'Could not load the report cards.';
+    } finally {
+        reportsLoading.value = false;
+    }
+};
+
+/**
+ * Seed the draft from a card. NEVER invents a level: an unmarked criterion
+ * stays null, for the same reason the register does not seed a default mark.
+ *
+ * `preserve` keeps whatever the teacher has already typed while still taking
+ * the server's answer as the new baseline — used when a save is refused, so the
+ * form can lock itself without throwing their work away.
+ */
+const hydrateCardDraft = (card: any, preserve = false) => {
+    const nextDraft: Record<number, DraftCell> = preserve ? { ...draft.value } : {};
+    const nextBaseline: Record<number, DraftCell> = {};
+
+    const take = (m: any) => {
+        const server: DraftCell = { level: m.level ?? null, comment: m.comment ?? '' };
+        nextBaseline[m.id] = { ...server };
+        if (!preserve || !(m.id in nextDraft)) nextDraft[m.id] = { ...server };
+    };
+
+    for (const sub of card?.subjects ?? []) for (const m of sub.criteria ?? []) take(m);
+    for (const m of card?.learning_behaviours ?? []) take(m);
+
+    draft.value = nextDraft;
+    baseline.value = nextBaseline;
+    teacherCommentBaseline.value = card?.teacher_comment ?? '';
+    if (!preserve) teacherComment.value = card?.teacher_comment ?? '';
+};
+
+const openReportCard = async (row: any) => {
+    reportsError.value = '';
+    cardSaved.value = false;
+    leaveWarned.value = false;
+    publishFrom.value = '';
+    publishTo.value = '';
+    try {
+        const res = await TeacherApiService.get(
+            `${base.value}/members/${row.membership_id}/report-card?${reportQuery()}`
+        );
+        openCard.value = res.data?.data ?? null;
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
+        hydrateCardDraft(openCard.value);
+    } catch {
+        reportsError.value = 'Could not open that report card.';
+    }
+};
+
+const onCardEdited = () => { cardSaved.value = false; };
+
+/** Tapping the level a child already has CLEARS it — a mis-tap must be one tap to undo. */
+const setMarkLevel = (id: number, level: number) => {
+    const cell = draft.value[id];
+    if (!cell) return;
+    cell.level = cell.level === level ? null : level;
+    onCardEdited();
+};
+
+const clearMarkLevel = (id: number) => {
+    const cell = draft.value[id];
+    if (!cell) return;
+    cell.level = null;
+    onCardEdited();
+};
+
+/** 4/3/2/1 set a level; 0, Backspace and Delete clear it. Anything else falls through. */
+const onLevelKey = (e: KeyboardEvent, id: number) => {
+    if (['4', '3', '2', '1'].includes(e.key)) {
+        e.preventDefault();
+        setMarkLevel(id, Number(e.key));
+    } else if (e.key === '0' || e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        clearMarkLevel(id);
+    }
+};
+
+const reportErrorFrom = (e: any): string =>
+    e?.response?.data?.data?.marks?.[0]
+    ?? e?.response?.data?.data?.['marks.0.level']?.[0]
+    ?? e?.response?.data?.data?.teacher_comment?.[0]
+    ?? 'Those marks could not be saved.';
+
+const saveReportCard = async (): Promise<boolean> => {
+    if (!hasUnsaved.value) return true;
+
+    savingCard.value = true;
+    reportsError.value = '';
+    try {
+        // Only the rows that MOVED, and each one whole: sending {id, level}
+        // alone would wipe that row's stored comment.
+        const marks = dirtyIds.value.map((id) => ({
+            id,
+            level: draft.value[id].level,
+            comment: draft.value[id].comment.trim() || null,
+        }));
+
+        const body: any = { marks };
+        // Sent only when it changed, and as a string so '' can clear it —
+        // null leaves the stored comment untouched.
+        if (commentDirty.value) body.teacher_comment = teacherComment.value;
+
+        const res = await TeacherApiService.put(
+            `${base.value}/members/${openCard.value.student.membership_id}/report-card?${reportQuery()}`,
+            body
+        );
+
+        openCard.value = res.data?.data ?? openCard.value;
+        hydrateCardDraft(openCard.value);
+        cardSaved.value = true;
+        await loadReportCards();
+        return true;
+    } catch (e: any) {
+        reportsError.value = reportErrorFrom(e);
+        // A refusal means the card was published underneath us. Re-read so the
+        // form locks to the truth, keeping what the teacher had typed.
+        if (e?.response?.status === 422) await reloadOpenCard(true);
+        return false;
+    } finally {
+        savingCard.value = false;
+    }
+};
+
+const reloadOpenCard = async (preserve: boolean) => {
+    try {
+        const res = await TeacherApiService.get(
+            `${base.value}/members/${openCard.value.student.membership_id}/report-card?${reportQuery()}`
+        );
+        openCard.value = res.data?.data ?? openCard.value;
+        hydrateCardDraft(openCard.value, preserve);
+    } catch { /* the message from the failed save is the useful one */ }
+};
+
+const publishReportCard = async () => {
+    if (hasUnsaved.value || !cardAssessed.value) return;
+    publishing.value = true;
+    reportsError.value = '';
+    try {
+        const q = new URLSearchParams(reportQuery());
+        if (publishFrom.value) q.set('from', publishFrom.value);
+        if (publishTo.value) q.set('to', publishTo.value);
+
+        const res = await TeacherApiService.post(
+            `${base.value}/members/${openCard.value.student.membership_id}/report-card/publish?${q.toString()}`
+        );
+        // Deliberately does NOT touch levelKey — the write carries no
+        // performance_levels, and reading it here would blank the key.
+        openCard.value = res.data?.data ?? openCard.value;
+        hydrateCardDraft(openCard.value);
+        await loadReportCards();
+    } catch {
+        reportsError.value = 'That report could not be sent.';
+    } finally {
+        publishing.value = false;
+    }
+};
+
+const unpublishReportCard = async () => {
+    publishing.value = true;
+    reportsError.value = '';
+    try {
+        const res = await TeacherApiService.delete(
+            `${base.value}/members/${openCard.value.student.membership_id}/report-card/publish?${reportQuery()}`
+        );
+        openCard.value = res.data?.data ?? openCard.value;
+        hydrateCardDraft(openCard.value);
+        await loadReportCards();
+    } catch {
+        reportsError.value = 'That report could not be taken back.';
+    } finally {
+        publishing.value = false;
+    }
+};
+
+const closeOpenCard = () => {
+    if (hasUnsaved.value) { leaveWarned.value = true; return; }
+    openCard.value = null;
+    leaveWarned.value = false;
+};
+
+const saveAndClose = async () => {
+    if (await saveReportCard()) { openCard.value = null; leaveWarned.value = false; }
+};
+
+const discardAndClose = () => {
+    openCard.value = null;
+    leaveWarned.value = false;
+    draft.value = {};
+    baseline.value = {};
+};
+
+/** Never "0 of 0": `criteria` counts the learning behaviours too, so the fraction is honest. */
+const rowStatus = (row: any): { text: string; cls: string } => {
+    if (!row.started) return { text: 'Not started', cls: 'bg-light text-muted' };
+    if (row.published) return { text: `Sent ${when(row.published_at)}`, cls: 'bg-success-subtle text-success-emphasis' };
+    return {
+        text: `${row.assessed} of ${row.criteria} marked`,
+        cls: row.assessed >= row.criteria ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted',
+    };
+};
+
+// A different (type, year, term) is a DIFFERENT document, so the open card must
+// not survive the change. Unsaved work stops the switch rather than being lost.
+watch([reportType, reportTerm, reportYear], () => {
+    if (!reportPeriod.value) return;
+    if (hasUnsaved.value) { leaveWarned.value = true; return; }
+    openCard.value = null;
+    loadReportCards();
+});
+
 watch(activeTab, (tab) => {
     if (tab === 'story' && !posts.value.length && !postsLoading.value) loadPosts();
     if (tab === 'messages' && !threads.value.length && !threadsLoading.value) loadThreads();
@@ -2257,7 +2808,12 @@ watch(activeTab, (tab) => {
     if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
+    if (tab === 'reports' && !reportRows.value.length && !reportsLoading.value) loadReportCards();
     if (tab !== 'grades') { openAssignment.value = null; }
+    // Unlike the gradebook above, an open report card is nulled only when there
+    // is nothing unsaved: a half-marked card is not stale state, it is the
+    // teacher's afternoon, and one stray tap on "More" would otherwise bin it.
+    if (tab !== 'reports' && !hasUnsaved.value) { openCard.value = null; leaveWarned.value = false; }
     // Reset any open per-student detail when leaving a grading tab.
     if (tab !== 'letters') { selected.value = null; }
     if (tab !== 'messages') { openedThread.value = null; }
