@@ -11,6 +11,7 @@ use App\Models\ClassAssignment;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Support\PerformanceLevel;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -58,6 +59,11 @@ class GradebookController extends TeacherController
                 'scored' => (int) $a->scores_count,
                 'roster' => $roster,
             ])->values(),
+            // A SIBLING of `data`, not a member of it: `data` is a bare list here
+            // and every existing caller indexes into it, so nesting it inside
+            // would have been a breaking change to read the key off.
+            'performance_levels' => PerformanceLevel::key(),
+            'default_scale' => config('groups.default_grading_scale', ClassAssignment::SCALE_POINTS),
         ], Response::HTTP_OK);
     }
 
@@ -113,6 +119,9 @@ class GradebookController extends TeacherController
                     ];
                 })->values(),
             ],
+            // The marking screen is where a teacher most needs the key — it is
+            // the moment they choose between a 2 and a 3 for a real child.
+            'performance_levels' => PerformanceLevel::key(),
         ], Response::HTTP_OK);
     }
 
@@ -210,6 +219,28 @@ class GradebookController extends TeacherController
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        // A LEVEL IS ONE OF FOUR WHOLE NUMBERS, not a point score that happens
+        // to land in range. The ceiling check above already refuses a 5, but it
+        // would happily accept 2.5 or 0 — and "2.5 Approaching-and-a-half" is not
+        // a thing the school's scale can express, while 0 is not a level at all
+        // (a child who did not hand the work in is `missing`, which is a status).
+        // Same reason this lives here rather than in the FormRequest: the rule
+        // depends on the assignment's scale, which the request cannot see.
+        if ($assignment->usesLevels()) {
+            $notALevel = $rows->filter(fn ($r) => ($r['points_earned'] ?? null) !== null
+                && ! PerformanceLevel::isValid($r['points_earned']));
+
+            if ($notALevel->isNotEmpty()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['scores' => [
+                        'This work is marked on performance levels, so each mark must be one of: '
+                        . implode(', ', array_reverse(PerformanceLevel::ALL)) . '.',
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
         // Which children's marks actually MOVED. One Save writes the whole class,
         // so notifying on every row would mail six families every time a teacher
         // corrected one typo.
@@ -275,12 +306,18 @@ class GradebookController extends TeacherController
         // a wrong number on a screen a parent may be shown, which is worse than a
         // missing one. The join is what keeps withdrawn work out: class_assignments
         // soft-deletes, so a score can outlive a resolvable parent.
+        // GROUPED BY SCALE AS WELL AS STATUS. A class can hold both kinds of work
+        // — a spelling quiz out of 10 and a rubric marked 1-4 — and adding those
+        // denominators together produces a number that is wrong in a way nobody
+        // can see. The two scales are therefore summarised SEPARATELY and never
+        // combined into one figure.
         $totals = AssignmentScore::query()
             ->where('assignment_scores.group_membership_id', $membership->id)
             ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
             ->whereNull('class_assignments.deleted_at')
-            ->groupBy('assignment_scores.status')
+            ->groupBy('assignment_scores.status', 'class_assignments.scale')
             ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('class_assignments.scale as scale')
             ->selectRaw('COUNT(*) as n')
             ->selectRaw('SUM(COALESCE(assignment_scores.points_earned, 0)) as earned')
             ->selectRaw('SUM(class_assignments.points_possible) as possible')
@@ -288,8 +325,15 @@ class GradebookController extends TeacherController
 
         $recorded = (int) $totals->sum('n');
         $countingRows = $totals->whereIn('status', AssignmentScore::COUNTS_TOWARD_AVERAGE);
-        $earned = (float) $countingRows->sum('earned');
-        $possible = (float) $countingRows->sum('possible');
+
+        // Points work only. A levels mark must never reach a numerator over a
+        // denominator: 3 out of 4 rendered as 75% turns "Meets Expectations" into
+        // a C, which is precisely what a standards scale exists to stop.
+        $pointRows = $countingRows->where('scale', ClassAssignment::SCALE_POINTS);
+        $earned = (float) $pointRows->sum('earned');
+        $possible = (float) $pointRows->sum('possible');
+
+        $levels = $this->levelSummary($membership->id);
 
         // The LIST is a bounded page, ordered BEFORE the limit so it is honestly
         // "the most recent N" rather than whichever rows the database returned.
@@ -314,10 +358,19 @@ class GradebookController extends TeacherController
                 'summary' => [
                     'recorded' => $recorded,
                     'counted' => (int) $countingRows->sum('n'),
-                    'excused' => (int) $totals->firstWhere('status', AssignmentScore::STATUS_EXCUSED)?->n ?? 0,
+                    'excused' => (int) $totals->where('status', AssignmentScore::STATUS_EXCUSED)->sum('n'),
+                    // Points work only — see above.
                     'points_earned' => round($earned, 2),
                     'points_possible' => round($possible, 2),
+                    'points_counted' => (int) $pointRows->sum('n'),
+                    // Levels work, reported as levels: a distribution and a mean
+                    // level to one decimal. Never a percentage.
+                    'levels' => $levels,
                 ],
+                // THE KEY, served with the data rather than hardcoded on each
+                // screen, so "what does a 3 mean?" is answerable everywhere in
+                // the school's own words. See App\Support\PerformanceLevel.
+                'performance_levels' => PerformanceLevel::key(),
                 'scores' => $scores->map(fn (AssignmentScore $s): array => [
                     'assignment' => $s->assignment ? $this->assignment($s->assignment) : null,
                     'status' => $s->status,
@@ -375,12 +428,68 @@ class GradebookController extends TeacherController
         }
     }
 
+    /**
+     * One child's performance levels: how many of each, and the mean.
+     *
+     * Aggregated in SQL over EVERY levels mark for the same reason the points
+     * summary is — a total computed from a page stops being a total the moment
+     * the page fills up.
+     *
+     * `missing` is deliberately EXCLUDED from the mean rather than counted as a
+     * 1. On the points scale, work not handed in scores zero and that is fair:
+     * zero out of ten is a real statement about a real denominator. There is no
+     * equivalent on this scale — 1 is not "nothing", it is "Needs Support",
+     * which is a judgement about a child's understanding that nobody made. So a
+     * missing piece of work is counted and shown, and left out of the average.
+     *
+     * @return array{recorded:int, mean:float|null, mean_label:string|null, missing:int, distribution:array<int, array{level:int, label:string, short_label:string, count:int}>}
+     */
+    private function levelSummary(int $membershipId): array
+    {
+        $rows = AssignmentScore::query()
+            ->where('assignment_scores.group_membership_id', $membershipId)
+            ->join('class_assignments', 'class_assignments.id', '=', 'assignment_scores.class_assignment_id')
+            ->whereNull('class_assignments.deleted_at')
+            ->where('class_assignments.scale', ClassAssignment::SCALE_LEVELS)
+            ->whereIn('assignment_scores.status', AssignmentScore::COUNTS_TOWARD_AVERAGE)
+            ->groupBy('assignment_scores.status', 'assignment_scores.points_earned')
+            ->selectRaw('assignment_scores.status as status')
+            ->selectRaw('assignment_scores.points_earned as level')
+            ->selectRaw('COUNT(*) as n')
+            ->get();
+
+        $scored = $rows->where('status', AssignmentScore::STATUS_SCORED);
+        $missing = (int) $rows->where('status', AssignmentScore::STATUS_MISSING)->sum('n');
+
+        $counted = (int) $scored->sum('n');
+        $sum = (float) $scored->sum(fn ($r) => (float) $r->level * (int) $r->n);
+        $mean = $counted > 0 ? round($sum / $counted, 1) : null;
+
+        return [
+            'recorded' => $counted + $missing,
+            'counted' => $counted,
+            'missing' => $missing,
+            'mean' => $mean,
+            'mean_label' => PerformanceLevel::labelForMean($mean),
+            // Every level is present even at zero, so the shape of the bar chart
+            // does not change as a child's marks come in, and "no 4s yet" is
+            // visible rather than absent.
+            'distribution' => array_map(fn (int $level): array => [
+                'level' => $level,
+                'label' => PerformanceLevel::label($level),
+                'short_label' => PerformanceLevel::shortLabel($level),
+                'count' => (int) $scored->where('level', $level)->sum('n'),
+            ], PerformanceLevel::ALL),
+        ];
+    }
+
     private function assignment(ClassAssignment $a): array
     {
         return [
             'id' => (int) $a->id,
             'title' => $a->title,
             'points_possible' => (int) $a->points_possible,
+            'scale' => $a->scale,
             'assigned_on' => $a->assigned_on->toDateString(),
         ];
     }

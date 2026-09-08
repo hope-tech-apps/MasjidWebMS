@@ -280,6 +280,26 @@ return [
      */
     'records_page_size' => (int) env('GROUP_RECORDS_PAGE_SIZE', 200),
 
+    /*
+     * The scale a NEW piece of work is marked on when the teacher does not say.
+     *
+     * `levels` — the school's four performance levels (4 Exceeds down to
+     * 1 Needs Support), which is what Al-Razi's own rubrics use across every
+     * subject. `points` — marked out of a number, the way a spelling quiz is.
+     * Both remain available per assignment; this only decides what the form is
+     * pre-set to.
+     *
+     * NOT the same knob as the COLUMN default in the migration, which is
+     * `points` and must stay `points`: every assignment that existed before this
+     * feature was marked out of points, and a column default of `levels` would
+     * have relabelled real marks as performance levels. One is about history,
+     * the other about what the next form offers.
+     *
+     * See App\Support\PerformanceLevel for what the four levels mean, and why a
+     * level is never rendered as a percentage.
+     */
+    'default_grading_scale' => env('GROUP_DEFAULT_GRADING_SCALE', 'levels'),
+
     'lessons' => [
 
         /*

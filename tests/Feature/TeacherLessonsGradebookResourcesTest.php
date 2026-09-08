@@ -334,6 +334,134 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
         $this->assertTrue($data['scores_truncated'], 'a short list under a full average must say so');
     }
 
+    // ------------------------------------------- the four performance levels
+
+    /**
+     * THE POINT OF THE WHOLE SCALE: a level is never a percentage.
+     *
+     * A child who "Meets Expectations" on every criterion is at level 3. The
+     * cheap implementation — points_possible = 4, run the existing average —
+     * would render that as 3/4 = 75%, turning solid grade-level proficiency into
+     * a C on a screen a parent may be shown. This asserts the levels summary
+     * reports a MEAN LEVEL and a distribution, and that the points numerator and
+     * denominator stay empty because no points work exists.
+     */
+    #[Test]
+    public function a_levels_average_is_a_mean_level_and_never_a_percentage(): void
+    {
+        $this->mark($this->newLevelsAssignment('Reading'), 3);
+        $this->mark($this->newLevelsAssignment('Writing'), 3);
+        $this->mark($this->newLevelsAssignment('Math'), 4);
+        $this->mark($this->newLevelsAssignment('Science'), 2);
+
+        $summary = $this->getJson($this->url() . "/members/{$this->student->id}/grades")
+            ->assertOk()->json('data.summary');
+
+        $this->assertSame(3.0, (float) $summary['levels']['mean'], '(3+3+4+2)/4');
+        $this->assertSame('Meets', $summary['levels']['mean_label']);
+        $this->assertSame(4, $summary['levels']['counted']);
+
+        // The points half stays EMPTY. A levels mark reaching the points
+        // numerator is the bug this whole slice exists to prevent.
+        $this->assertSame(0.0, (float) $summary['points_earned']);
+        $this->assertSame(0.0, (float) $summary['points_possible']);
+        $this->assertSame(0, $summary['points_counted']);
+
+        $byLevel = collect($summary['levels']['distribution'])->keyBy('level');
+        $this->assertSame(1, $byLevel[4]['count']);
+        $this->assertSame(2, $byLevel[3]['count']);
+        $this->assertSame(1, $byLevel[2]['count']);
+        $this->assertSame(0, $byLevel[1]['count'], 'every level is present even at zero');
+    }
+
+    /**
+     * A class may hold both kinds of work at once. Adding a 4-level denominator
+     * to a 10-point one produces a number nobody can see is wrong.
+     */
+    #[Test]
+    public function points_work_and_levels_work_are_summarised_separately(): void
+    {
+        $points = $this->newAssignment();
+        $this->putJson($this->url() . "/assignments/{$points}/scores", [
+            'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => 8]],
+        ])->assertOk();
+
+        $this->mark($this->newLevelsAssignment(), 4);
+
+        $summary = $this->getJson($this->url() . "/members/{$this->student->id}/grades")
+            ->assertOk()->json('data.summary');
+
+        $this->assertSame(8.0, (float) $summary['points_earned']);
+        $this->assertSame(10.0, (float) $summary['points_possible'], 'the level must not enlarge the denominator');
+        $this->assertSame(4.0, (float) $summary['levels']['mean']);
+        $this->assertSame(2, $summary['recorded'], 'both are still counted as recorded work');
+    }
+
+    /**
+     * `missing` counts on the points scale as a real zero over a real
+     * denominator. There is no equivalent here: 1 is not "nothing", it is "Needs
+     * Support" — a judgement about a child's understanding that nobody made.
+     */
+    #[Test]
+    public function missing_levels_work_is_shown_but_left_out_of_the_mean(): void
+    {
+        $this->mark($this->newLevelsAssignment('Done'), 4);
+
+        $skipped = $this->newLevelsAssignment('Not handed in');
+        $this->putJson($this->url() . "/assignments/{$skipped}/scores", [
+            'scores' => [['membership_id' => $this->student->id, 'status' => 'missing']],
+        ])->assertOk();
+
+        $levels = $this->getJson($this->url() . "/members/{$this->student->id}/grades")
+            ->assertOk()->json('data.summary.levels');
+
+        $this->assertSame(1, $levels['missing']);
+        $this->assertSame(2, $levels['recorded'], 'the missing piece is still shown');
+        $this->assertSame(1, $levels['counted']);
+        $this->assertSame(4.0, (float) $levels['mean'], 'and must not drag the mean toward 1');
+    }
+
+    #[Test]
+    public function a_levels_assignment_only_accepts_the_four_whole_levels(): void
+    {
+        $id = $this->newLevelsAssignment();
+
+        $this->assertSame(4, ClassAssignment::find($id)->points_possible, 'the maximum is implied, not asked for');
+
+        foreach ([0, 5, 2.5] as $notALevel) {
+            $this->putJson($this->url() . "/assignments/{$id}/scores", [
+                'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => $notALevel]],
+            ])->assertUnprocessable();
+        }
+
+        $this->assertDatabaseCount('assignment_scores', 0);
+    }
+
+    /**
+     * The key travels WITH the data, so no screen hardcodes "4 means Exceeds"
+     * and every surface says it in the school's own words.
+     */
+    #[Test]
+    public function every_gradebook_payload_carries_the_key_to_the_levels(): void
+    {
+        $id = $this->newLevelsAssignment();
+
+        foreach ([
+            $this->url() . '/assignments',
+            $this->url() . "/assignments/{$id}",
+            $this->url() . "/members/{$this->student->id}/grades",
+        ] as $url) {
+            $key = $this->getJson($url)->assertOk()->json('performance_levels')
+                ?? $this->getJson($url)->assertOk()->json('data.performance_levels');
+
+            $this->assertCount(4, $key, "no key on {$url}");
+            $this->assertSame(4, $key[0]['level'], 'highest first, as the school lays it out');
+            $this->assertSame('Exceeds Expectations', $key[0]['label']);
+            $this->assertStringContainsString('mastery', $key[0]['description']);
+            $this->assertSame('Needs Support', $key[3]['label']);
+        }
+    }
+
     // -------------------------------------------------------------- resources
 
     #[Test]
@@ -430,11 +558,41 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
 
     // ---------------------------------------------------------------- helpers
 
+    /**
+     * A POINTS assignment, out of 10.
+     *
+     * `scale` is stated EXPLICITLY even though it used to be absent. Since the
+     * performance-level scale landed, an omitted scale takes
+     * `config('groups.default_grading_scale')`, which is `levels` — and a levels
+     * assignment forces points_possible to 4. Every points test below would then
+     * have gone on passing while testing the other scale entirely, which is the
+     * worst kind of green.
+     */
     private function newAssignment(): int
     {
         return (int) $this->postJson($this->url() . '/assignments', [
-            'title' => 'Spelling', 'points_possible' => 10, 'assigned_on' => now()->toDateString(),
+            'title' => 'Spelling',
+            'points_possible' => 10,
+            'scale' => ClassAssignment::SCALE_POINTS,
+            'assigned_on' => now()->toDateString(),
         ])->assertCreated()->json('data.id');
+    }
+
+    /** A performance-LEVELS assignment, marked 4 down to 1. */
+    private function newLevelsAssignment(string $title = 'Reading Fluency'): int
+    {
+        return (int) $this->postJson($this->url() . '/assignments', [
+            'title' => $title,
+            'scale' => ClassAssignment::SCALE_LEVELS,
+            'assigned_on' => now()->toDateString(),
+        ])->assertCreated()->json('data.id');
+    }
+
+    private function mark(int $assignment, int $level): void
+    {
+        $this->putJson($this->url() . "/assignments/{$assignment}/scores", [
+            'scores' => [['membership_id' => $this->student->id, 'status' => 'scored', 'points_earned' => $level]],
+        ])->assertOk();
     }
 
     private function upload(string $visibility = GroupResource::VISIBILITY_STAFF): int
