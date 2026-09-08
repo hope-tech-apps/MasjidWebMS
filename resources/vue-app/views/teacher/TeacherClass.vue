@@ -589,7 +589,7 @@
 
             <!-- ================================================ LESSON PLANS -->
             <section v-else-if="activeTab === 'lessons'">
-                <div class="d-flex align-items-center gap-2 mb-3">
+                <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
                     <button class="btn btn-sm btn-outline-secondary" @click="shiftWeek(-1)">
                         <i class="bi bi-chevron-left"></i>
                     </button>
@@ -597,37 +597,197 @@
                     <button class="btn btn-sm btn-outline-secondary" @click="shiftWeek(1)">
                         <i class="bi bi-chevron-right"></i>
                     </button>
+                    <div class="flex-grow-1"></div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn" :class="planView === 'day' ? 'btn-success' : 'btn-outline-secondary'"
+                                @click="planView = 'day'">Day</button>
+                        <button class="btn" :class="planView === 'week' ? 'btn-success' : 'btn-outline-secondary'"
+                                @click="planView = 'week'">Week</button>
+                    </div>
                 </div>
 
-                <div class="d-flex gap-1 mb-3 flex-wrap">
+                <div v-if="planView === 'day'" class="d-flex gap-1 mb-3 flex-wrap">
                     <button v-for="d in weekDays" :key="d.iso" type="button"
-                            class="btn btn-sm" :class="d.iso === planDate ? 'btn-success' : (planFor(d.iso) ? 'btn-outline-success' : 'btn-outline-secondary')"
+                            class="btn btn-sm"
+                            :class="d.iso === planDate ? 'btn-success' : (planFor(d.iso) ? 'btn-outline-success' : 'btn-outline-secondary')"
                             @click="planDate = d.iso">
-                        {{ d.label }}
-                        <i v-if="planFor(d.iso)" class="bi bi-dot"></i>
+                        {{ d.label }}<i v-if="planFor(d.iso)" class="bi bi-dot"></i>
                     </button>
                 </div>
 
-                <div class="card border-0 shadow-sm">
-                    <div class="card-body">
-                        <input v-model="planForm.title" type="text" maxlength="255"
-                               class="form-control form-control-sm mb-2" placeholder="Title (optional)">
-                        <textarea v-model="planForm.body" rows="7" class="form-control form-control-sm"
-                                  placeholder="What will this class cover?"></textarea>
-                        <div class="d-flex align-items-center gap-2 mt-2">
-                            <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim()"
-                                    @click="savePlan">
-                                {{ planSaving ? 'Saving…' : 'Save plan' }}
-                            </button>
-                            <button v-if="planFor(planDate)" class="btn btn-sm btn-link text-danger"
-                                    @click="deletePlan">Remove</button>
-                            <span v-if="planSaved" class="text-success small">
-                                <i class="bi bi-check-circle me-1"></i>Saved
-                            </span>
-                            <span v-if="planError" class="text-danger small">{{ planError }}</span>
+                <!-- ------------------------------------------------ DAY VIEW -->
+                <template v-if="planView === 'day'">
+                    <!-- The card holds exactly what is touched daily. Everything
+                         else is one tap away, never zero taps in the way. -->
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <!-- Derived, never stored: storing the teacher's name
+                                 or the roster count would let a row disagree with
+                                 the account and the roster it came from. -->
+                            <div class="text-muted small mb-2">
+                                {{ planDayLabel }} · {{ group?.name }} · {{ students.length }} students
+                            </div>
+
+                            <div class="row g-2 mb-2">
+                                <div class="col-12 col-sm">
+                                    <label class="form-label small text-muted mb-1">Subject</label>
+                                    <input v-model="planForm.subject" type="text" maxlength="64"
+                                           class="form-control form-control-sm" placeholder="e.g. Mathematics">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Grade</label>
+                                    <input v-model="planForm.grade_label" type="text" maxlength="32"
+                                           class="form-control form-control-sm" style="width:7rem" placeholder="e.g. Pre-K">
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Week</label>
+                                    <input v-model.number="planForm.curriculum_week_no" type="number" min="1" max="52"
+                                           class="form-control form-control-sm" style="width:5.5rem" placeholder="#">
+                                </div>
+                            </div>
+
+                            <label class="form-label small text-muted mb-1">
+                                Activities <span class="text-danger">*</span>
+                            </label>
+                            <textarea v-model="planForm.body" rows="4" class="form-control form-control-sm"
+                                      placeholder="What will this class actually do?"></textarea>
+
+                            <label class="form-label small text-muted mb-1 mt-2">Formative check</label>
+                            <input v-model="planForm.assessment_formative" type="text"
+                                   class="form-control form-control-sm"
+                                   placeholder="How will you know they got it?">
                         </div>
                     </div>
-                </div>
+
+                    <!-- Accordion, not a stepper: a plan is written on Sunday and
+                         its reflection on Tuesday afternoon. A section opens
+                         itself when it already has content, or nobody would know
+                         a written plan was not empty. -->
+                    <div v-for="sec in planSections" :key="sec.key" class="card border-0 shadow-sm mb-2">
+                        <button type="button"
+                                class="card-body d-flex align-items-center gap-2 w-100 text-start border-0 bg-transparent"
+                                @click="togglePlanSection(sec.key)">
+                            <i :class="`bi ${planOpen[sec.key] ? 'bi-chevron-down' : 'bi-chevron-right'} text-muted`"></i>
+                            <span class="fw-semibold small">{{ sec.label }}</span>
+                            <i class="bi bi-circle-fill ms-1"
+                               :class="sectionFilled(sec) ? 'text-success' : 'text-body-tertiary'"
+                               style="font-size:.5rem"></i>
+                            <span class="text-muted small d-none d-sm-inline ms-auto">{{ sec.hint }}</span>
+                        </button>
+
+                        <div v-if="planOpen[sec.key]" class="card-body pt-0">
+                            <template v-for="f in sec.fields" :key="f.key">
+                                <label class="form-label small text-muted mb-1">{{ f.label }}</label>
+
+                                <!-- Learning outcomes: a real list, not a textarea
+                                     pretending. Stored as json. -->
+                                <template v-if="f.key === 'learning_outcomes'">
+                                    <div v-for="(o, i) in planForm.learning_outcomes" :key="i"
+                                         class="d-flex gap-1 mb-1">
+                                        <input v-model="planForm.learning_outcomes[i]" type="text" maxlength="500"
+                                               class="form-control form-control-sm" :placeholder="`Outcome ${i + 1}`">
+                                        <button class="btn btn-sm btn-link text-danger px-1"
+                                                @click="planForm.learning_outcomes.splice(i, 1)">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </div>
+                                    <button class="btn btn-sm btn-link px-0 mb-2"
+                                            :disabled="planForm.learning_outcomes.length >= 10"
+                                            @click="planForm.learning_outcomes.push('')">+ Add an outcome</button>
+                                </template>
+
+                                <!-- Teaching methods: the template's checkbox set. -->
+                                <template v-else-if="f.key === 'teaching_methods'">
+                                    <div class="d-flex flex-wrap gap-2 mb-2">
+                                        <button v-for="m in TEACHING_METHODS" :key="m.value" type="button"
+                                                class="btn btn-sm"
+                                                :class="planForm.teaching_methods.includes(m.value) ? 'btn-success' : 'btn-outline-secondary'"
+                                                @click="toggleMethod(m.value)">
+                                            {{ m.label }}
+                                        </button>
+                                    </div>
+                                    <input v-if="planForm.teaching_methods.includes('other')"
+                                           v-model="planForm.teaching_methods_other" type="text" maxlength="255"
+                                           class="form-control form-control-sm mb-2" placeholder="Other — which?">
+                                </template>
+
+                                <textarea v-else v-model="planForm[f.key]" :rows="f.rows || 2"
+                                          class="form-control form-control-sm mb-2"
+                                          :placeholder="f.placeholder || ''"></textarea>
+                            </template>
+
+                            <!-- The template asks for "students needing follow-up".
+                                 It is deliberately not a field here: a free-text box
+                                 naming children would be a record ABOUT a child on a
+                                 row GroupAudience cannot govern. Naming a child is
+                                 already a governed act, one tab over. -->
+                            <div v-if="sec.key === 'reflection'" class="alert alert-light border small mb-0">
+                                Someone needs following up?
+                                <button class="btn btn-sm btn-link p-0 align-baseline"
+                                        @click="activeTab = 'messages'">Message their family</button>
+                                rather than naming them here.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 mt-3">
+                        <button class="btn btn-sm btn-success" :disabled="planSaving || !planForm.body.trim()"
+                                @click="savePlan">
+                            {{ planSaving ? 'Saving…' : 'Save plan' }}
+                        </button>
+                        <button v-if="planFor(planDate)" class="btn btn-sm btn-link text-danger"
+                                @click="deletePlan">Remove</button>
+                        <span v-if="planSaved" class="text-success small">
+                            <i class="bi bi-check-circle me-1"></i>Saved
+                        </span>
+                        <span v-if="planError" class="text-danger small">{{ planError }}</span>
+                    </div>
+                </template>
+
+                <!-- ----------------------------------------------- WEEK VIEW -->
+                <!-- Template section 3, rendered from the five daily plans the tab
+                     already fetched. NOT a second store: a weekly table would be a
+                     copy of these same fields and would drift the first time a
+                     teacher edited Tuesday and not the grid. -->
+                <template v-else>
+                    <div class="table-responsive d-none d-md-block">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th style="width:6rem">Day</th>
+                                    <th>Standard</th>
+                                    <th>Objective</th>
+                                    <th>Activities</th>
+                                    <th>Differentiation</th>
+                                    <th>Assessment</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="d in weekdaysOnly" :key="d.iso"
+                                    style="cursor:pointer" @click="jumpToDay(d.iso)">
+                                    <td class="fw-semibold small">{{ d.label }}</td>
+                                    <td class="small">{{ planFor(d.iso)?.standard_code || '—' }}</td>
+                                    <td class="small">{{ planFor(d.iso)?.objective || '—' }}</td>
+                                    <td class="small">{{ planFor(d.iso)?.body || '—' }}</td>
+                                    <td class="small">{{ planFor(d.iso)?.differentiation_support || '—' }}</td>
+                                    <td class="small">{{ planFor(d.iso)?.assessment_formative || '—' }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Below md the grid stacks: a six-column table on a phone is
+                         unreadable however it scrolls. -->
+                    <div class="d-md-none d-flex flex-column gap-2">
+                        <button v-for="d in weekdaysOnly" :key="d.iso" type="button"
+                                class="card border-0 shadow-sm text-start" @click="jumpToDay(d.iso)">
+                            <div class="card-body py-2">
+                                <div class="fw-semibold small">{{ d.label }}</div>
+                                <div class="text-muted small">{{ planFor(d.iso)?.body || 'No plan yet' }}</div>
+                            </div>
+                        </button>
+                    </div>
+                </template>
             </section>
 
             <!-- ======================================================= GRADES -->
@@ -991,11 +1151,82 @@ const startOfWeek = (d: Date): Date => {
 
 const weekStart = ref<string>(localDay(startOfWeek(new Date())));
 const planDate = ref<string>(todayIso);
+const planView = ref<'day' | 'week'>('day');
 const plans = ref<any[]>([]);
-const planForm = ref({ title: '', body: '' });
 const planSaving = ref(false);
 const planSaved = ref(false);
 const planError = ref('');
+
+/** The template's teaching-method checkboxes. Values mirror LessonPlan::TEACHING_METHODS. */
+const TEACHING_METHODS = [
+    { value: 'modeling', label: 'Modeling' },
+    { value: 'guided_practice', label: 'Guided Practice' },
+    { value: 'cooperative_learning', label: 'Cooperative Learning' },
+    { value: 'inquiry_discussion', label: 'Inquiry / Discussion' },
+    { value: 'hands_on_activity', label: 'Hands-On Activity' },
+    { value: 'storytelling', label: 'Storytelling' },
+    { value: 'other', label: 'Other' },
+];
+
+const emptyPlan = () => ({
+    title: '', body: '',
+    subject: '', grade_label: '', curriculum_week_no: null as number | null,
+    standard_code: '', standard_description: '',
+    objective: '', learning_outcomes: [] as string[],
+    differentiation_support: '', differentiation_extension: '',
+    differentiation_learning_styles: '', differentiation_ell_aal: '', differentiation_sen: '',
+    cross_integration_subject: '', cross_integration_islamic: '', cross_integration_stem: '',
+    teaching_methods: [] as string[], teaching_methods_other: '', teaching_aids: '',
+    assessment_formative: '', assessment_exit_ticket: '',
+    reflection_worked: '', reflection_improve: '',
+});
+
+const planForm = ref<any>(emptyPlan());
+
+// The school's template, in its own order. The hint on each header is the
+// guiding question from the school's own poster version.
+const planSections = [
+    { key: 'standard', label: 'Standard', hint: 'What standard am I teaching?', fields: [
+        { key: 'standard_code', label: 'Code', rows: 1, placeholder: 'e.g. K.CC.A.1' },
+        { key: 'standard_description', label: 'Description', rows: 2 },
+    ] },
+    { key: 'objective', label: 'Objective & Outcomes', hint: 'What will students be able to do?', fields: [
+        { key: 'objective', label: 'Objective', rows: 2 },
+        { key: 'learning_outcomes', label: 'Learning outcomes' },
+    ] },
+    { key: 'differentiation', label: 'Differentiation', hint: 'How will I support all learners?', fields: [
+        { key: 'differentiation_support', label: 'Support for struggling learners' },
+        { key: 'differentiation_extension', label: 'Extension for advanced learners' },
+        { key: 'differentiation_learning_styles', label: 'Learning-style adjustments' },
+        { key: 'differentiation_ell_aal', label: 'ELL / AAL' },
+        { key: 'differentiation_sen', label: 'SEN' },
+    ] },
+    { key: 'cross', label: 'Cross-Integration', hint: 'How does this connect to other subjects, Islamic values, STEM?', fields: [
+        { key: 'cross_integration_subject', label: 'Subject integration' },
+        { key: 'cross_integration_islamic', label: 'Islamic integration' },
+        { key: 'cross_integration_stem', label: 'STEM' },
+    ] },
+    { key: 'teaching', label: 'Teaching Methods & Aids', hint: 'How will I teach it? What do I need?', fields: [
+        { key: 'teaching_methods', label: 'Methods' },
+        { key: 'teaching_aids', label: 'Teaching aids', rows: 2 },
+    ] },
+    { key: 'assessment', label: 'Assessment', hint: 'How will I measure learning?', fields: [
+        { key: 'assessment_exit_ticket', label: 'Exit ticket / final task', rows: 2 },
+    ] },
+    { key: 'reflection', label: 'Reflection', hint: 'What will I adjust next time?', fields: [
+        { key: 'reflection_worked', label: 'What worked well' },
+        { key: 'reflection_improve', label: 'What needs improvement' },
+    ] },
+];
+
+const planOpen = ref<Record<string, boolean>>({});
+const togglePlanSection = (key: string) => { planOpen.value[key] = !planOpen.value[key]; };
+
+/** Does this section hold anything? Drives the dot on its header. */
+const sectionFilled = (sec: any): boolean => sec.fields.some((f: any) => {
+    const v = planForm.value[f.key];
+    return Array.isArray(v) ? v.filter(Boolean).length > 0 : !!(v && String(v).trim());
+});
 
 const weekDays = computed(() => {
     const out: { iso: string; label: string }[] = [];
@@ -1011,12 +1242,27 @@ const weekDays = computed(() => {
     return out;
 });
 
+/** The school week. The template's grid is Monday to Friday. */
+const weekdaysOnly = computed(() => weekDays.value.slice(1, 6));
+
 const weekLabel = computed(() => {
     const days = weekDays.value;
     return days.length ? `${days[0].label} — ${days[6].label}` : '';
 });
 
+const planDayLabel = computed(() =>
+    new Date(planDate.value + 'T00:00:00')
+        .toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' }));
+
 const planFor = (iso: string) => plans.value.find((p) => p.session_date === iso) ?? null;
+
+const jumpToDay = (iso: string) => { planDate.value = iso; planView.value = 'day'; };
+
+const toggleMethod = (value: string) => {
+    const list: string[] = planForm.value.teaching_methods;
+    const i = list.indexOf(value);
+    if (i === -1) list.push(value); else list.splice(i, 1);
+};
 
 const loadLessonPlans = async () => {
     planError.value = '';
@@ -1035,7 +1281,24 @@ const loadLessonPlans = async () => {
 /** The form always shows the SELECTED day — never a stale one. */
 const syncPlanForm = () => {
     const p = planFor(planDate.value);
-    planForm.value = { title: p?.title ?? '', body: p?.body ?? '' };
+    const blank = emptyPlan();
+
+    planForm.value = p
+        ? { ...blank, ...Object.fromEntries(Object.entries(p).map(([k, v]) => [k, v ?? blank[k as keyof typeof blank]])) }
+        : blank;
+
+    // Arrays must never come back null, or v-model has nothing to bind.
+    planForm.value.learning_outcomes = planForm.value.learning_outcomes ?? [];
+    planForm.value.teaching_methods = planForm.value.teaching_methods ?? [];
+
+    // A section that already has content opens itself: seven closed rows on a
+    // written plan reads as an empty plan. Reflection also opens once the day
+    // has happened, because it is written after the lesson, not at planning time.
+    const opened: Record<string, boolean> = {};
+    for (const sec of planSections) opened[sec.key] = sectionFilled(sec);
+    if (planDate.value <= todayIso) opened.reflection = true;
+    planOpen.value = opened;
+
     planSaved.value = false;
 };
 
@@ -1053,10 +1316,15 @@ const savePlan = async () => {
     planError.value = '';
     planSaved.value = false;
     try {
+        // The WHOLE object, every time. The API declares every template field
+        // nullable rather than sometimes, so an omitted field CLEARS — which is
+        // why there is deliberately no per-section autosave here.
         await TeacherApiService.put(`${base.value}/lesson-plans`, {
+            ...planForm.value,
             session_date: planDate.value,
             title: planForm.value.title || null,
-            body: planForm.value.body,
+            curriculum_week_no: planForm.value.curriculum_week_no || null,
+            learning_outcomes: planForm.value.learning_outcomes.filter((o: string) => o && o.trim()),
         });
         planSaved.value = true;
         await loadLessonPlans();

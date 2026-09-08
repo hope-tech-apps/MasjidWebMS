@@ -280,6 +280,16 @@ return [
          */
         'max_body_length' => (int) env('GROUP_LESSON_MAX_BODY_LENGTH', 5000),
 
+        /*
+         * Ceiling on each of the template's other prose sections — objective,
+         * differentiation, cross-integration, assessment, reflection.
+         *
+         * Lower than the body on purpose. Activities is the narrative of a
+         * lesson; the rest are a line or two each on the school's own paper
+         * form, and a section that invites an essay gets left blank.
+         */
+        'max_section_length' => (int) env('GROUP_LESSON_MAX_SECTION_LENGTH', 2000),
+
     ],
 
     'gradebook' => [

@@ -134,6 +134,69 @@ class TeacherLessonsGradebookResourcesTest extends TestCase
     }
 
     #[Test]
+    public function a_plan_carries_the_schools_whole_template(): void
+    {
+        $day = now()->addDay()->toDateString();
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day,
+            'body' => 'Count to five with objects.',
+            'subject' => 'Mathematics',
+            'grade_label' => 'Pre-K',
+            'curriculum_week_no' => 5,
+            'standard_code' => 'K.CC.A.1',
+            'standard_description' => 'Count to 100 by ones.',
+            'objective' => 'Students will count to five.',
+            'learning_outcomes' => ['Counts to 5', 'One-to-one touch'],
+            'differentiation_support' => 'Count to 3 with hand-over-hand.',
+            'cross_integration_islamic' => 'Counting the blessings of Allah.',
+            'teaching_methods' => ['modeling', 'hands_on_activity'],
+            'assessment_formative' => 'Observe at the table.',
+            'reflection_worked' => 'They loved the counting bears.',
+        ])->assertOk();
+
+        $plan = LessonPlan::first();
+        $this->assertSame('Mathematics', $plan->subject);
+        $this->assertSame(5, $plan->curriculum_week_no);
+        $this->assertSame(['Counts to 5', 'One-to-one touch'], $plan->learning_outcomes);
+        $this->assertSame(['modeling', 'hands_on_activity'], $plan->teaching_methods);
+
+        // Read back whole: the client must be able to re-send the entire object.
+        $read = $this->getJson($this->url() . "/lesson-plans?from={$day}&to={$day}")
+            ->assertOk()->json('data.plans.0');
+        $this->assertSame('K.CC.A.1', $read['standard_code']);
+        $this->assertSame('Counting the blessings of Allah.', $read['cross_integration_islamic']);
+        $this->assertArrayHasKey('reflection_improve', $read, 'every template field is present even when null');
+    }
+
+    /** An omitted field CLEARS — the endpoint is a whole-row upsert, not a patch. */
+    #[Test]
+    public function saving_without_a_section_clears_it_rather_than_keeping_stale_prose(): void
+    {
+        $day = now()->toDateString();
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'body' => 'First draft.', 'objective' => 'Typed by mistake.',
+        ])->assertOk();
+
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => $day, 'body' => 'Second draft.',
+        ])->assertOk();
+
+        $this->assertNull(LessonPlan::first()->objective);
+    }
+
+    #[Test]
+    public function an_unknown_teaching_method_is_refused(): void
+    {
+        $this->putJson($this->url() . '/lesson-plans', [
+            'session_date' => now()->toDateString(),
+            'body' => 'Something.',
+            'teaching_methods' => ['telepathy'],
+        ])->assertUnprocessable();
+    }
+
+    #[Test]
     public function a_plan_can_be_removed_because_its_body_cannot_be_blanked(): void
     {
         $day = now()->toDateString();

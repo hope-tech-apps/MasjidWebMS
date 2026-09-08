@@ -84,7 +84,15 @@ class LessonPlanController extends TeacherController
             ->first()
             ?? new LessonPlan(['group_id' => $group->id, 'session_date' => $date]);
 
-        $plan->fill([
+        // The whole object, every time. The request declares every template
+        // field `nullable` rather than `sometimes` precisely so that an omitted
+        // field CLEARS — a partial payload must not silently keep stale prose.
+        // The frontend consequence is that there is no per-section autosave.
+        $fields = collect(LessonPlan::TEMPLATE_FIELDS)
+            ->mapWithKeys(fn (string $f) => [$f => $request->validated($f)])
+            ->all();
+
+        $plan->fill($fields + [
             'title' => $request->validated('title'),
             'body' => $request->validated('body'),
             'author_user_id' => Auth::id(),
@@ -125,13 +133,24 @@ class LessonPlanController extends TeacherController
         return response()->json(['status' => 'success', 'data' => ['session_date' => $date]], Response::HTTP_OK);
     }
 
+    /**
+     * The whole plan. Every template field is present even when null, so the
+     * client can render the form and send the whole object back without having
+     * to know which keys the server happened to omit.
+     */
     private function plan(LessonPlan $plan): array
     {
-        return [
+        $template = collect(LessonPlan::TEMPLATE_FIELDS)
+            ->mapWithKeys(fn (string $f) => [$f => $plan->{$f}])
+            ->all();
+
+        return $template + [
             'id' => (int) $plan->id,
             'session_date' => $plan->session_date->toDateString(),
             'title' => $plan->title,
+            // The template's ACTIVITIES, and the one required section.
             'body' => $plan->body,
+            'prefill_source' => $plan->prefill_source,
             'updated_at' => optional($plan->updated_at)->toIso8601String(),
         ];
     }
