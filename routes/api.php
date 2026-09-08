@@ -9,6 +9,8 @@ use App\Http\Controllers\Mobile\EventsController;
 use App\Http\Controllers\Mobile\HadithsController;
 use App\Http\Controllers\Mobile\MasjidsController;
 use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
+use App\Http\Controllers\Mobile\Member\MemberAuthController;
+use App\Http\Controllers\Mobile\Member\MemberInterestsController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\NotificationsController;
 use App\Http\Controllers\Mobile\PrayersController;
@@ -108,6 +110,58 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         Route::prefix('{masjid_id}/features')->controller(MasjidMobileAppFeaturesController::class)->group(function () {
             Route::get('/', 'index');
         });
+
+        /*
+        |--------------------------------------------------------------------
+        | App member identity — self-serve sign-up and sign-in
+        |--------------------------------------------------------------------
+        |
+        | The two UNAUTHENTICATED member endpoints. A caller with no token is
+        | exactly who they are for, so they cannot sit behind a guard; what they
+        | carry instead is `family.guest`, which binds TenantContext from the
+        | {masjid_id} in the URL or 404s.
+        |
+        | THAT MIDDLEWARE IS NOT OPTIONAL. The rest of this file runs UNBOUND
+        | (.claude/rules/tenant-scoping.md), and unbound means the global scope
+        | adds NO filter — so a Contact lookup here would search every masjid in
+        | the database and the mailer would become a cross-tenant existence
+        | oracle. ResolveFamilyGuestTenant documents that trap in full.
+        |
+        | `whereNumber` is load-bearing for the same reason routes/family.php
+        | says it is: the per-address throttle bucket is keyed on (int) masjid,
+        | so "1", "01" and "1abc" must not be three different doors.
+        |
+        | There is deliberately no /register — see MemberAuthController.
+        */
+        Route::prefix('{masjid_id}/auth')
+            ->controller(MemberAuthController::class)
+            ->middleware(['family.guest', 'crm'])
+            ->whereNumber('masjid_id')
+            ->group(function () {
+                Route::post('/request-code', 'requestCode')->middleware('throttle:member-login');
+                Route::post('/verify-code', 'verifyCode')->middleware('throttle:member-verify');
+            });
+
+        /*
+        | The authenticated member realm.
+        |
+        | `family.tenant` binds the tenant from the TOKEN's contact, not from
+        | the URL — the {masjid_id} segment is kept only so these paths match
+        | every other mobile endpoint, and nothing downstream reads it. That is
+        | what stops a member's token being pointed at another organisation by
+        | editing the path.
+        |
+        | `member.active` gates on `verified_at`, where the family realm's
+        | `family.active` gates on `login_enabled_at`. A self-registered member
+        | therefore reaches these routes and NO family route.
+        */
+        Route::prefix('{masjid_id}')
+            ->middleware(['auth:family', 'member.active', 'family.tenant', 'crm'])
+            ->whereNumber('masjid_id')
+            ->group(function () {
+                Route::get('/interests', [MemberInterestsController::class, 'index']);
+                Route::put('/interests', [MemberInterestsController::class, 'update']);
+            });
 
     });
 

@@ -95,6 +95,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // authenticated request through UNBOUND — unbound means unfiltered
             // for every BelongsToMasjid model (.claude/rules/tenant-scoping.md).
             'family.active' => EnsureFamilyLoginActive::class,
+
+            // The member realm's liveness check. Gates on `verified_at` where
+            // `family.active` gates on `login_enabled_at`, which is what keeps a
+            // self-registered app member out of a parent's view of a child.
+            'member.active' => \App\Http\Middleware\EnsureMemberAccessActive::class,
             'family.tenant' => ResolveFamilyTenant::class,
             // Abilities, finally used: `family.parent` keeps a child's hand-off
             // token off the parent surfaces, and `family.student` pins a

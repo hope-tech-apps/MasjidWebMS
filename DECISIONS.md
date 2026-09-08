@@ -222,7 +222,8 @@ The real new thing is **self-registration**, and it is a new trust boundary.
 Contact login today is admin-provisioned — staff call `enable()` to set
 `login_enabled_at`. Letting anyone who downloads the app create a row writes
 directly into the CRM staff work in. So self-registered contacts carry a
-`source` and a `verified_at`, and signup merges on `(masjid_id, login_email)`
+`signup_source` (named in full because `group_memberships` already has a
+`provenance` concept) and a `verified_at`, and signup merges on `(masjid_id, login_email)`
 rather than inserting: an email already on file must LINK to the existing
 contact, never create a shadow record of a person the office already knows.
 Staff-curated contacts must stay distinguishable from self-serve ones in every
@@ -280,3 +281,45 @@ masjid + features + settings and reports the heartbeat) with a new id.
 Supersedes the narrower "move services to the first page" reading of the
 2026-08-18 MEC call: services stop being a drawer entry and become the app's
 second axis.
+
+### Built 2026-09-08 — what actually shipped for auth + interests
+
+Migrations `2026_09_08_1600{00,01,02}`: `contacts.signup_source` + `verified_at`
+(NULL source = staff-authored, which is every pre-existing row);
+`app_signup_codes`; `contact_service_interests`.
+
+**`app_signup_codes` is a separate table from `contact_login_codes` on purpose.**
+That column's `contact_id` is a non-nullable constrained FK and the premise of
+app sign-up is a first code sent to an address with no contact behind it.
+Widening it would have loosened a shipped auth table for a newer, less trusted
+flow. Same shape otherwise, so the redeem rules cannot drift.
+
+**Verification sets `verified_at` and NEVER `login_enabled_at`.** This is the
+whole separation: `family.active` gates the family realm on `login_enabled_at`,
+so a self-registered member's token is refused by every family route without
+any new enforcement, while `member.active` (new) gates the member routes on
+`verified_at`. Both honour `login_revoked_at` — staff revoked the person, not a
+channel, and signing up is not a way back in.
+
+There is no `/register`. Sign-up and sign-in are the same two endpoints, because
+a separate registration route could not avoid answering "is this address already
+known here?". The contact is created only inside the transaction that burns a
+redeemed code, so spraying `request-code` with a dictionary writes expiring code
+rows and never a person into the CRM (pinned by
+`AppSignupCodeTenantIsolationTest::requesting_a_code_creates_no_contact`).
+
+Linking copies NOTHING from the request — a submitted name is used only when
+creating a new contact — or anyone able to receive mail at a known congregant's
+address could rename that congregant in the office's own CRM.
+
+`Service` has no `BelongsToMasjid` trait, so `MemberInterestService` hand-scopes
+every submitted service id by `masjid_id`. Without it a member could subscribe
+to another organisation's service and receive its sends; pinned by
+`ContactServiceInterestTenantIsolationTest::a_member_cannot_subscribe_to_another_organisations_service`.
+
+Routes carry `crm`, matching the family realm: contacts ARE the CRM, so member
+accounts should not exist where it is switched off.
+
+STILL TO DO: `BroadcastAudience::SERVICE` and the OneSignal tag sync — interests
+are stored and served but nothing yet ROUTES on them — plus the iOS side
+(`OneSignal.login()` still keys on device id, not contact).

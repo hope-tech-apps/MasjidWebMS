@@ -41,5 +41,22 @@ return [
         | requesting twenty codes does not buy a hundred guesses.
         */
         'max_attempts' => (int) env('MEMBER_SIGNUP_MAX_ATTEMPTS', 5),
+
+        /*
+        | Request/verify ceilings, per address and per IP.
+        |
+        | These sit ON TOP of `app_signup_codes.attempts`. The column is the
+        | per-code lockout and survives a cache flush because it is a fact about
+        | a record; these stop an attacker cycling FRESH codes, which a per-code
+        | counter cannot see. Both are required.
+        |
+        | The per-address ceiling is also what stands between a stranger who
+        | knows somebody's address and an unbounded stream of "your sign-in
+        | code" mail apparently from their masjid.
+        */
+        'requests_per_hour_per_address' => (int) env('MEMBER_SIGNUP_REQUESTS_PER_HOUR_PER_ADDRESS', 5),
+        'requests_per_hour_per_ip' => (int) env('MEMBER_SIGNUP_REQUESTS_PER_HOUR_PER_IP', 20),
+        'verifications_per_hour_per_address' => (int) env('MEMBER_SIGNUP_VERIFICATIONS_PER_HOUR_PER_ADDRESS', 10),
+        'verifications_per_hour_per_ip' => (int) env('MEMBER_SIGNUP_VERIFICATIONS_PER_HOUR_PER_IP', 40),
     ],
 ];

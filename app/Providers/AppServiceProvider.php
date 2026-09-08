@@ -348,6 +348,38 @@ class AppServiceProvider extends ServiceProvider
                 });
         });
 
+        /*
+         * App member sign-up / sign-in, the self-serve twin of `family-login`.
+         *
+         * Same ceilings as the family realm and for the same reasons, but this
+         * door is reached by strictly more people — anybody who installs a
+         * tenant's app — so it has no business being looser. The bucket helper
+         * is shared deliberately: it (int)-casts the masjid and hashes the
+         * address, and that normalisation was a fix for a real bypass. A second
+         * hand-rolled key would be a second chance to reintroduce it.
+         */
+        RateLimiter::for('member-login', function (Request $request) {
+            return [
+                Limit::perHour((int) config('member.signup.requests_per_hour_per_address', 5))
+                    ->by($this->familyLoginKey($request, 'member-addr'))
+                    ->response($this->tooManyLoginAttempts()),
+                Limit::perHour((int) config('member.signup.requests_per_hour_per_ip', 20))
+                    ->by('member-login-ip:' . $request->ip())
+                    ->response($this->tooManyLoginAttempts()),
+            ];
+        });
+
+        RateLimiter::for('member-verify', function (Request $request) {
+            return [
+                Limit::perHour((int) config('member.signup.verifications_per_hour_per_address', 10))
+                    ->by($this->familyLoginKey($request, 'member-verify'))
+                    ->response($this->tooManyLoginAttempts()),
+                Limit::perHour((int) config('member.signup.verifications_per_hour_per_ip', 40))
+                    ->by('member-verify-ip:' . $request->ip())
+                    ->response($this->tooManyLoginAttempts()),
+            ];
+        });
+
         RateLimiter::for('mobile', function (Request $request) {
             return Limit::perMinute(60)->by($request->ip());
         });
