@@ -115,11 +115,21 @@ class SecondAdministratorTest extends TestCase
         Mail::assertSent(AccountAccessMail::class,
             fn (AccountAccessMail $m) => $m->user->email === 'juldeh@example.test');
 
-        $body = $this->postJson($this->url(), ['name' => 'Sr. Hikmat', 'email' => 'hikmat@example.test'])
-            ->getContent();
+        $res = $this->postJson($this->url(), ['name' => 'Sr. Hikmat', 'email' => 'hikmat@example.test'])
+            ->assertCreated();
 
-        $this->assertStringNotContainsString('password', strtolower($body),
-            'no response may carry or mention a password we generated');
+        // The MESSAGE may say "set their own password" — that is the whole
+        // point. What must never travel is a VALUE: neither the 40-char random
+        // string we generated nor its hash.
+        $hikmat = User::where('email', 'hikmat@example.test')->firstOrFail();
+        $body = $res->getContent();
+
+        $this->assertStringNotContainsString($hikmat->password, $body, 'the hash must not travel');
+        $this->assertStringNotContainsString('$2y$', $body);
+        $this->assertArrayNotHasKey('password', $res->json('data'));
+
+        // And nobody was handed a credential out of band.
+        $this->assertNotEmpty($hikmat->password, 'the account still has an unusable random password');
     }
 
     // ---------------------------------------------------------------- removal
