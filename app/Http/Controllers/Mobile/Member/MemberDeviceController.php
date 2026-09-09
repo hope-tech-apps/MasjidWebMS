@@ -90,6 +90,9 @@ class MemberDeviceController extends Controller
             ->where('contact_id', $contact->id)
             ->update(['contact_id' => null]);
 
-        return response()->json(['status' => 'success']);
+        // An empty `data` object, not an omitted key: the client decodes every
+        // mobile response through one `Response<T>` envelope whose `data` is
+        // non-optional, so omitting it fails on the device and nowhere else.
+        return response()->json(['status' => 'success', 'data' => new \stdClass()]);
     }
 }

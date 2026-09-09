@@ -55,6 +55,13 @@ class MemberAuthController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'If that address can be used here, a sign-in code is on its way.',
+            // An empty `data` object, not an omitted key. Every mobile response
+            // carries one and the client decodes them all through a single
+            // `Response<T>` envelope whose `data` is non-optional, so omitting
+            // it here would fail to decode on the device rather than in any
+            // test. Empty because there is nothing to say: the body is
+            // identical for a known address, an unknown one and a revoked one.
+            'data' => new \stdClass(),
         ], Response::HTTP_ACCEPTED);
     }
 
