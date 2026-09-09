@@ -23,6 +23,7 @@ class UpdateMealMenuRequest extends BaseFormRequest
             'notes' => 'nullable|string|max:2000',
             'allow_online_payment' => 'sometimes|boolean',
             'allow_pay_at_pickup' => 'sometimes|boolean',
+            'collect_customer_email' => 'sometimes|boolean',
             'currency' => 'sometimes|string|size:3',
         ];
     }

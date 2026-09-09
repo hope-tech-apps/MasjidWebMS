@@ -48,7 +48,7 @@
                         <label>{{ t('phone') }}</label>
                         <input v-model="form.customer_phone" type="tel" maxlength="32" required :placeholder="t('phone_ph')" />
                     </div>
-                    <div class="lunch-field">
+                    <div v-if="collectEmail" class="lunch-field">
                         <label>{{ t('email') }} <span class="lunch-opt">{{ t('optional') }}</span></label>
                         <input v-model="form.customer_email" type="email" maxlength="190" :placeholder="t('email_ph')" />
                     </div>
@@ -85,7 +85,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePublicLunchStore } from "@/stores/publicLunchStore";
 import { useLunchLang } from "./lunchI18n";
@@ -123,6 +123,17 @@ const form = reactive({
     customer_email: "",
     customer_notes: "",
     payment_method: "pickup",
+});
+
+// Whether this week's menu asks for an email at all. `!== false` rather than a
+// truthy check so a payload without the key — an older cached response, or a
+// client running against a backend that predates the column — keeps showing the
+// field, matching the server's default of true. The value is also cleared when
+// hidden, so a stale address typed before a toggle change is never submitted.
+const collectEmail = computed<boolean>(() => menu.value?.collect_customer_email !== false);
+
+watch(collectEmail, (on) => {
+    if (!on) form.customer_email = "";
 });
 
 const methods = computed<string[]>(() => {

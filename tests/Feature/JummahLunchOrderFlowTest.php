@@ -276,4 +276,60 @@ class JummahLunchOrderFlowTest extends TestCase
             'stripe_payouts_enabled' => true,
         ]);
     }
+    // ---------------------------------------------- asking for an email, or not
+
+    #[Test]
+    public function the_menu_payload_says_whether_to_ask_for_an_email(): void
+    {
+        // Default is ON, so nothing that exists today changes behaviour.
+        $this->getJson('/api/v1/lunch-menu', $this->header())
+            ->assertOk()
+            ->assertJsonPath('data.menu.collect_customer_email', true);
+
+        $this->menu->forceFill(['collect_customer_email' => false])->save();
+
+        $this->getJson('/api/v1/lunch-menu', $this->header())
+            ->assertOk()
+            ->assertJsonPath('data.menu.collect_customer_email', false);
+    }
+
+    #[Test]
+    public function an_email_is_stored_when_the_masjid_asks_for_one(): void
+    {
+        $this->postJson('/api/v1/lunch-orders', [
+            'menu_uuid' => $this->menu->uuid,
+            'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]],
+            'customer_name' => 'Yusuf Ali',
+            'customer_phone' => '3365551234',
+            'customer_email' => 'yusuf@example.test',
+            'payment_method' => 'pickup',
+        ], $this->header())->assertOk();
+
+        $this->assertSame(
+            'yusuf@example.test',
+            MealOrder::withoutMasjidScope()->latest('id')->first()->customer_email
+        );
+    }
+
+    #[Test]
+    public function an_email_is_dropped_when_the_masjid_turned_the_field_off(): void
+    {
+        // Hiding an input does not stop a crafted request from carrying one, and
+        // the point of switching it off is not to hold the address at all.
+        $this->menu->forceFill(['collect_customer_email' => false])->save();
+
+        $this->postJson('/api/v1/lunch-orders', [
+            'menu_uuid' => $this->menu->uuid,
+            'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]],
+            'customer_name' => 'Yusuf Ali',
+            'customer_phone' => '3365551234',
+            'customer_email' => 'yusuf@example.test',
+            'payment_method' => 'pickup',
+        ], $this->header())->assertOk();
+
+        $order = MealOrder::withoutMasjidScope()->latest('id')->first();
+        $this->assertNull($order->customer_email, 'the address must not be stored');
+        // The order itself still goes through — the field is optional, not a gate.
+        $this->assertSame('Yusuf Ali', $order->customer_name);
+    }
 }

@@ -171,7 +171,13 @@ class JummahLunchOrdersController extends Controller
                     'meal_menu_id' => $menu->id,
                     'customer_name' => trim((string) $request->input('customer_name')),
                     'customer_phone' => trim((string) $request->input('customer_phone')),
-                    'customer_email' => $request->input('customer_email'),
+                    // Dropped when the masjid turned the field off. Hiding an
+                    // input does not stop a crafted request from carrying one,
+                    // and storing an address the organisation deliberately chose
+                    // not to ask for is the whole thing they were avoiding.
+                    'customer_email' => $menu->collect_customer_email
+                        ? $request->input('customer_email')
+                        : null,
                     'customer_notes' => $request->input('customer_notes'),
                     'payment_method' => $method,
                 ]);
@@ -296,6 +302,7 @@ class JummahLunchOrdersController extends Controller
             'ordering_closes_at' => optional($menu->ordering_closes_at)->toIso8601String(),
             'allow_online_payment' => (bool) $menu->allow_online_payment,
             'allow_pay_at_pickup' => (bool) $menu->allow_pay_at_pickup,
+            'collect_customer_email' => (bool) $menu->collect_customer_email,
             'currency' => $menu->currency,
             'items' => $menu->items->map(fn (MealMenuItem $i) => [
                 'id' => $i->id,

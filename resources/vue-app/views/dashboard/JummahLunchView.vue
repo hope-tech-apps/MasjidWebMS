@@ -152,7 +152,12 @@
                         <div v-if="uploadingFlyer" class="text-muted small mt-1">Uploading…</div>
                     </div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_online_payment" id="jlaop" /><label class="form-check-label" for="jlaop">Allow pay online (Stripe)</label></div>
-                    <div class="form-check mb-2"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_pay_at_pickup" id="jlapp" /><label class="form-check-label" for="jlapp">Allow pay at pickup</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_pay_at_pickup" id="jlapp" /><label class="form-check-label" for="jlapp">Allow pay at pickup</label></div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" v-model="menuModal.form.collect_customer_email" id="jlcce" />
+                        <label class="form-check-label" for="jlcce">Ask for an email address</label>
+                        <div class="text-muted small">Untick to drop the email field from the order form. Nothing emails customers from it, and paying online still collects an address for the Stripe receipt.</div>
+                    </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="menuModal.show = false">Cancel</button>
@@ -217,7 +222,7 @@ function emptyMenuForm() {
     return {
         title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at: "",
         pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
-        allow_online_payment: true, allow_pay_at_pickup: true,
+        allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true,
     };
 }
 function emptyItemForm() {
@@ -259,6 +264,9 @@ function openEditMenu(m: any) {
         ordering_closes_at: m.ordering_closes_at ? String(m.ordering_closes_at).slice(0, 16) : "",
         pickup_instructions: m.pickup_instructions ?? "", pickup_instructions_ar: m.pickup_instructions_ar ?? "", flyer_image_url: m.flyer_image_url ?? "",
         allow_online_payment: !!m.allow_online_payment, allow_pay_at_pickup: !!m.allow_pay_at_pickup,
+        // `!== false` so a menu row from before the column existed edits as ON,
+        // which is what the database default gives it.
+        collect_customer_email: m.collect_customer_email !== false,
     };
     menuModal.show = true;
 }

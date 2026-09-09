@@ -46,6 +46,7 @@ class MealMenu extends Model
         'notes',
         'allow_online_payment',
         'allow_pay_at_pickup',
+        'collect_customer_email',
         'currency',
     ];
 
@@ -65,6 +66,7 @@ class MealMenu extends Model
             'ordering_closes_at' => 'datetime',
             'allow_online_payment' => 'boolean',
             'allow_pay_at_pickup' => 'boolean',
+            'collect_customer_email' => 'boolean',
         ];
     }
 
