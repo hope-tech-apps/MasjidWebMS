@@ -157,6 +157,39 @@ class PublicMasjidDirectoryTest extends TestCase
         );
     }
 
+    /**
+     * A VALUE-shaped guard, because the column-shaped one above is structurally
+     * blind.
+     *
+     * `every_masjids_column_is_deliberately_classified` enumerates
+     * `Schema::getColumnListing('masjids')` against the SQLite test database.
+     * `active_stripe_account_id` is a MySQL GENERATED column and does not exist
+     * there, so the census could not see it, and it published Burlington's live
+     * Connect account id to anonymous callers until 2026-09-09.
+     *
+     * This test asks a different question — not "is every column classified?"
+     * but "does anything credential-SHAPED reach the wire?" — so it still fires
+     * when a column is invisible to the schema listing, which is exactly the
+     * case that got through.
+     */
+    #[Test]
+    public function nothing_credential_shaped_reaches_an_anonymous_caller(): void
+    {
+        $masjid = $this->makeListedMasjid();
+
+        foreach (["/api/mobile/masjids", "/api/mobile/masjids/{$masjid->id}"] as $url) {
+            $body = $this->getJson($url)->assertOk()->getContent();
+
+            foreach (['acct_', 'sk_live', 'sk_test', 'pk_live', 'whsec_', 'AIza'] as $marker) {
+                $this->assertStringNotContainsString(
+                    $marker,
+                    $body,
+                    "a value shaped like a credential ({$marker}…) reached an anonymous caller on {$url}"
+                );
+            }
+        }
+    }
+
     private function makeListedMasjid(): Masjid
     {
         $masjid = Masjid::create([
