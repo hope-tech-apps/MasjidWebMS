@@ -56,15 +56,34 @@ class SecurityHeaders
         // are the only legitimate cross-origin script/image/connect destinations
         // the admin currently uses. Tighten further by environment if needed.
         //
-        // ONE EXCEPTION, on the public Jummah-lunch order page only: it is
-        // PROXIED onto masjids' own domains (e.g. burlingtonmasjid.com/jummah-
-        // lunch/{id} → this app), so the document origin there is that domain and
-        // 'self' no longer covers THIS app's own bundle, fonts, icons or API. On
-        // that path — and only that path — this app's own origin (and the Figtree
+        // THE PROXIED PAGES, and only these: they are served from an
+        // organisation's OWN domain (burlingtonmasjid.com/jummah-lunch/{id},
+        // alrazischool.org/portal) with this app behind the rewrite. The
+        // document origin there is the school's or masjid's domain, so 'self'
+        // no longer covers THIS app's bundle, fonts, icons or API — every one of
+        // which the Blade emits as an absolute URL back to config('app.url').
+        // On these paths, and no others, this app's own origin (and the Figtree
         // font CDN the SPA loads) are named explicitly so the proxied page can
         // boot and reach its API. Every other page's CSP is unchanged.
+        //
+        // A LIST, not a second `if`: the next proxied page must be one string
+        // here rather than a copied branch that drifts from this one. Note that
+        // the CSP is only half of what a proxied page needs — the other half is
+        // CORS_ALLOWED_ORIGINS naming that domain, without which the page still
+        // renders perfectly and every API call is refused by the browser.
+        $proxiedPaths = ['jummah-lunch', 'portal'];
+
         $ownOrigin = $ownStyle = $ownFont = $ownImg = $ownConnect = '';
-        if (str_starts_with($request->path(), 'jummah-lunch')) {
+        $isProxied = false;
+
+        foreach ($proxiedPaths as $prefix) {
+            if (str_starts_with($request->path(), $prefix)) {
+                $isProxied = true;
+                break;
+            }
+        }
+
+        if ($isProxied) {
             $app = rtrim((string) config('app.url'), '/');
             $bunny = 'https://fonts.bunny.net';
             $ownOrigin = " {$app}";

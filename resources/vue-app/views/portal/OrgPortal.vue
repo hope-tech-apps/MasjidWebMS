@@ -117,7 +117,20 @@ import { useRoute } from 'vue-router';
 import FamilyApiService from '@/core/services/FamilyApiService';
 
 const route = useRoute();
-const masjidId = computed(() => String(route.params.masjidId ?? ''));
+
+/**
+ * The organisation, from the path where there is one, or from the global the
+ * proxy injects where there is not.
+ *
+ * On masjid.hopetechapps.com/portal/14 the id is in the URL. On
+ * alrazischool.org/portal the path carries no id — the school's own domain
+ * rewrites to this app, and the proxy, which is the thing that knows whose
+ * domain it is, injects `window.__PORTAL_MASJID__`. Reading the param FIRST
+ * means the explicit URL always wins over the ambient one.
+ */
+const masjidId = computed(() => String(
+    route.params.masjidId ?? (window as any).__PORTAL_MASJID__ ?? ''
+));
 
 const orgName = ref('');
 const logo = ref<string | null>(null);

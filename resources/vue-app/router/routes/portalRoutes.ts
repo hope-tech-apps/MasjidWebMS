@@ -25,6 +25,27 @@ const portalRoutes: RouteRecordRaw[] = [
         component: () => import("@/views/portal/OrgPortal.vue"),
         meta: { pageTitle: "Portal" },
     },
+    {
+        /**
+         * The same page, WITHOUT the id in the path.
+         *
+         * This is the address as a school's own domain serves it —
+         * alrazischool.org/portal rewrites to this app, so the browser's path is
+         * `/portal` and there is no id to read. The organisation comes instead
+         * from `window.__PORTAL_MASJID__`, injected by the proxy that knows
+         * which school's domain the request arrived on.
+         *
+         * Declared AFTER the id form so a real `/portal/14` still matches that
+         * one, and kept as a separate record rather than making the param
+         * optional: an optional param would also match `/portal/` and quietly
+         * render an id-less page on this app's own domain, where no proxy has
+         * injected anything and there is nothing to fall back to.
+         */
+        path: '/portal',
+        name: 'orgPortalHosted',
+        component: () => import("@/views/portal/OrgPortal.vue"),
+        meta: { pageTitle: "Portal" },
+    },
 ];
 
 export default portalRoutes;
