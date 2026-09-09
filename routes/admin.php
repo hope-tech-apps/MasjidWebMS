@@ -32,6 +32,7 @@ use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
+use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
 use App\Http\Controllers\AdminDashboard\TeachersController;
@@ -664,6 +665,23 @@ Route::prefix('admin')->group(function () {
                     // Re-send the set-password invite ("they never got it").
                     Route::post('/{user_id}/invite', 'invite')->middleware('permission:manage contacts');
                 });
+
+                // THE SCHOOL'S OWN RECORDS, as files it can take away.
+                //
+                // Closes R1: without this a school that leaves has its academic
+                // records sitting in a database it does not control, and cannot
+                // get them out without asking us. A school that cannot leave has
+                // not chosen us.
+                //
+                // `manage contacts` — the same gate that guards the roster this
+                // exports. A dedicated `export records` permission was designed
+                // and dropped: roles are minted 1:1 from users.type and
+                // masjid-admin is granted every permission automatically, so it
+                // would have gated nobody while reading as though it gated
+                // somebody. This one genuinely excludes teachers and members,
+                // who hold zero CRM permissions by design.
+                Route::get('{masjid_id}/records/export', [SchoolRecordsExportController::class, 'export'])
+                    ->middleware('permission:manage contacts');
 
                 // Group rosters. A membership links an existing Contact to a
                 // group with a role; a guardian membership additionally names the
