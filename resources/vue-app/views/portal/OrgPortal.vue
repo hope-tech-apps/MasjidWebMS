@@ -219,7 +219,13 @@ const staffHref = computed(() => `${linkBase.value}/auth/sign-in`);
 
 onMounted(async () => {
     try {
-        const res = await FamilyApiService.get(`/api/mobile/masjids/${masjidId.value}`);
+        // Prefixed for the same reason the hrefs are. FamilyApiService's baseURL
+        // is that same empty build-time constant, so a root-relative path here
+        // resolves against the SCHOOL's domain and 404s — which is why this page
+        // rendered with no name, no logo and default colours when proxied.
+        // CORS_ALLOWED_ORIGINS already names both school hostnames, and the
+        // client pins withCredentials:false, so the cross-origin GET is allowed.
+        const res = await FamilyApiService.get(`${linkBase.value}/api/mobile/masjids/${masjidId.value}`);
         const d = res.data?.data ?? {};
         orgName.value = d.name ?? '';
         logo.value = d.logo?.original_url ?? d.logo?.url ?? null;
