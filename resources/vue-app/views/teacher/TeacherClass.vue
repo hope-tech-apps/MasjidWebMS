@@ -281,10 +281,15 @@
                                         </option>
                                     </select>
                                 </div>
+                                <!-- Blank means "whatever this skill is normally worth".
+                                     A number here overrides it for THIS award only, so
+                                     recognising something exceptional never means editing
+                                     the whole school's vocabulary. -->
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Points</label>
                                     <input type="number" class="form-control form-control-sm" style="width:6rem"
-                                           v-model.number="awardPoints" placeholder="default">
+                                           v-model.number="awardPoints"
+                                           :placeholder="String(selectedSkillPoints ?? 'default')">
                                 </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Note (optional)</label>
@@ -300,9 +305,52 @@
                         </div>
                     </div>
                     <div v-else class="alert alert-light border small">
-                        No behaviour skills are defined for this school yet, so points cannot be given here.
-                        An administrator can add them.
+                        No behaviour skills are defined for this school yet. Add the first one below.
                     </div>
+
+                    <!-- ADD YOUR OWN. What a school chooses to notice about a child is a
+                         teaching decision, and the person holding it is the teacher in the
+                         room — Al-Razi ran a whole term on one skill because adding another
+                         meant asking the office. Collapsed by default so it never competes
+                         with the thing a teacher opened this tab to do. -->
+                    <details class="mb-3">
+                        <summary class="small text-primary" style="cursor:pointer">Add your own</summary>
+                        <div class="card border mt-2">
+                            <div class="card-body">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-12 col-sm">
+                                        <label class="form-label small text-muted mb-1">What are you recognising?</label>
+                                        <input type="text" maxlength="80" class="form-control form-control-sm"
+                                               v-model.trim="newSkill.label" placeholder="e.g. Helped without being asked">
+                                    </div>
+                                    <div class="col-6 col-sm-auto">
+                                        <label class="form-label small text-muted mb-1">Kind</label>
+                                        <select class="form-select form-select-sm" style="width:9rem" v-model="newSkill.polarity">
+                                            <option value="positive">Encouragement</option>
+                                            <option value="negative">Correction</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-6 col-sm-auto">
+                                        <label class="form-label small text-muted mb-1">Worth</label>
+                                        <input type="number" class="form-control form-control-sm" style="width:6rem"
+                                               v-model.number="newSkill.default_points">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button class="btn btn-sm btn-outline-success"
+                                                :disabled="addingSkill || !newSkill.label"
+                                                @click="createSkill">
+                                            {{ addingSkill ? 'Adding…' : 'Add' }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <p class="text-muted small mt-2 mb-0">
+                                    This is added for the whole school, so the other teachers will see it too.
+                                    Renaming or retiring one is still the office's to do.
+                                </p>
+                                <p v-if="skillError" class="text-danger small mt-1 mb-0">{{ skillError }}</p>
+                            </div>
+                        </div>
+                    </details>
 
                     <div v-if="awardError" class="alert alert-danger small py-2">{{ awardError }}</div>
 
@@ -2258,6 +2306,60 @@ const awardSkillId = ref<string | number>('');
 const awardPoints = ref<number | null>(null);
 const awardNote = ref('');
 const awarding = ref(false);
+
+// Adding to the school's vocabulary from the teacher's own screen.
+const newSkill = ref<{ label: string; polarity: string; default_points: number }>({
+    label: '', polarity: 'positive', default_points: 1,
+});
+const addingSkill = ref(false);
+const skillError = ref('');
+
+// What the chosen skill is normally worth, shown as the Points placeholder so a
+// teacher can see what leaving it blank will do before they leave it blank.
+const selectedSkillPoints = computed<number | null>(() => {
+    const sk = skills.value.find((s: any) => String(s.id) === String(awardSkillId.value));
+    if (!sk) return null;
+    const n = Math.abs(sk.default_points ?? 1);
+    return sk.polarity === 'negative' ? -n : n;
+});
+
+/**
+ * Add a skill to the school's vocabulary and select it straight away.
+ *
+ * Selecting it is the point: a teacher adds "Helped without being asked"
+ * BECAUSE a child just did it, and making them then find it in the dropdown is
+ * a step that exists for no one.
+ */
+const createSkill = async () => {
+    if (!newSkill.value.label) return;
+    addingSkill.value = true;
+    skillError.value = '';
+    try {
+        const res = await TeacherApiService.post(
+            `/api/teacher/masjids/${masjidId.value}/behavior-skills`,
+            {
+                label: newSkill.value.label,
+                polarity: newSkill.value.polarity,
+                // Stored as the magnitude; polarity carries the direction, which
+                // is why a school can legitimately run "Disruption, 1, negative".
+                default_points: Math.abs(newSkill.value.default_points || 1),
+                is_active: true,
+            }
+        );
+        const created = res.data?.data;
+        if (created?.id) {
+            skills.value = [...skills.value, created];
+            awardSkillId.value = created.id;
+        }
+        newSkill.value = { label: '', polarity: 'positive', default_points: 1 };
+    } catch (e: any) {
+        skillError.value = e?.response?.data?.data?.label?.[0]
+            ?? e?.response?.data?.data?.default_points?.[0]
+            ?? 'That could not be added.';
+    } finally {
+        addingSkill.value = false;
+    }
+};
 
 const loadAwards = async () => {
     awards.value = [];

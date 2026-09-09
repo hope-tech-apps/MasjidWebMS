@@ -76,6 +76,21 @@ Route::prefix('teacher')
                 Route::get('/groups', [TeacherGroupsController::class, 'index']);
                 Route::get('/avatars', [ContactAvatarController::class, 'catalogue']);
                 Route::get('/behavior-skills', [BehaviorSkillsController::class, 'index']);
+
+                // A teacher ADDS to the vocabulary. The realm's first
+                // school-level create, and the exception is deliberate: what a
+                // school chooses to notice about a child is a pedagogical
+                // decision, and the person holding it is the teacher in the room,
+                // not whoever has `manage contacts`. Al-Razi ran a whole term on
+                // a single skill because adding one meant asking the office.
+                //
+                // SCHOOL-WIDE, not class-scoped — `behavior_skills` has no
+                // group_id and every teacher's picker reads the same list. That
+                // is a real consequence and the screen says so out loud rather
+                // than letting a teacher discover it from a colleague's dropdown.
+                // Editing and retiring a skill stay with the office, because
+                // those touch a vocabulary other people are already using.
+                Route::post('/behavior-skills', [BehaviorSkillsController::class, 'store']);
                 // Reference data, so the ḥifẓ form can offer sūrahs BY NAME and
                 // bound its own āyah inputs. A GET: the realm's write list is
                 // unchanged — a GET adds no write verb to the counted list.

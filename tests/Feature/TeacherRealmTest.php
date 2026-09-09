@@ -144,6 +144,10 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/logout',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/letters/stage',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/letters',
+            // The realm's only SCHOOL-level create. See routes/teacher.php for
+            // why the behaviour vocabulary is the one thing a teacher may add
+            // without the office, and why editing it is still not.
+            'POST /api/teacher/masjids/{masjid_id}/behavior-skills',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/awards/{award_id}',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/attendance',
