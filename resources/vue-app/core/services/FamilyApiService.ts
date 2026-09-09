@@ -30,6 +30,19 @@ class FamilyApiService {
                 Accept: 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
             },
+            // PINNED FALSE, and this is not belt-and-braces. The admin
+            // ApiService sets `axios.defaults.withCredentials = true` globally
+            // and axios.create() inherits the defaults — the same poisoning that
+            // made JSON bodies arrive as empty forms, in a second costume.
+            //
+            // This realm authenticates with a BEARER TOKEN and never a cookie,
+            // so credentials are never needed. Sending them breaks the moment a
+            // page is served from an organisation's own domain: a credentialed
+            // cross-origin request requires Access-Control-Allow-Credentials:
+            // true, config/cors.php sets supports_credentials to false, and the
+            // browser refuses the preflight. The page renders and every call
+            // fails.
+            withCredentials: false,
         });
 
         // Read the token per-request rather than pinning it at init: the portal

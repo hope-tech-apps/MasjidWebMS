@@ -29,6 +29,16 @@ class TeacherApiService {
                 Accept: "application/json",
                 "X-Requested-With": "XMLHttpRequest",
             },
+            // The same inheritance problem JSON_WRITE documents below, in its
+            // other costume: the admin ApiService sets
+            // `axios.defaults.withCredentials = true` globally and
+            // axios.create() inherits it. This realm is bearer-token only and
+            // never uses a cookie, so credentials are dead weight here — and
+            // they become a hard failure the moment a page is served from an
+            // organisation's own domain, because a credentialed cross-origin
+            // request needs Access-Control-Allow-Credentials: true and
+            // config/cors.php sets supports_credentials to false.
+            withCredentials: false,
         });
 
         TeacherApiService.client.interceptors.request.use((config) => {
