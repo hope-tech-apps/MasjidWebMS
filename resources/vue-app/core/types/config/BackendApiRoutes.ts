@@ -7,6 +7,9 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/` |
     `/api/admin/masjids/${string}/search?search_for=${string}` |
     `/api/admin/masjids/${string}/details` |
+    `/api/admin/masjids/${string}/broadcasts` |
+    `/api/admin/masjids/${string}/broadcasts?page=${number}` |
+    `/api/admin/masjids/${string}/broadcasts/${string}` |
     `/api/admin/masjids/${string}/announcements` |
     `/api/admin/masjids/${string}/announcements?page=${number}` |
     `/api/admin/masjids/${string}/announcements/${string}/` |

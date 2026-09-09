@@ -18,6 +18,9 @@ export type MasjidDashboardRoute =
     '/masjid/dashboard' |
     '/masjid/details' |
     '/masjid/announcements' |
+    // The unified publish composer and its history.
+    '/masjid/broadcasts' |
+    '/masjid/broadcasts/compose' |
     `/masjid/announcements/${number}` |
     '/masjid/events' |
     `/masjid/events/${number}` |

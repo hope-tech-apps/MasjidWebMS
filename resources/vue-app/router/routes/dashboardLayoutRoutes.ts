@@ -5,6 +5,7 @@ import generalDataManagementRoutes from "@/router/routes/generalDataManagementRo
 import eventsManagementRoutes from "@/router/routes/EventsManagementRoutes"
 import pagesManagementRoutes from "@/router/routes/pagesManagementRoutes"
 import splashAnnouncementsManagementRoutes from "@/router/routes/splashAnnouncementsManagementRoutes"
+import broadcastsManagementRoutes from "@/router/routes/broadcastsManagementRoutes"
 import appointmentsManagementRoutes from "@/router/routes/appointmentsManagementRoutes"
 import offeringsManagementRoutes from "@/router/routes/offeringsManagementRoutes"
 
@@ -38,6 +39,7 @@ const dashboardRoutes: RouteRecordRaw[] = [
             },
             ...announcementsManagementRoutes,
             ...splashAnnouncementsManagementRoutes,
+            ...broadcastsManagementRoutes,
             ...eventsManagementRoutes,
             ...servicesManagementRoutes,
             ...pagesManagementRoutes,
