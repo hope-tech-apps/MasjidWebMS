@@ -190,7 +190,11 @@ class SchoolRecordsExportTest extends TestCase
 
         Sanctum::actingAs($teacher, ['*']);
 
-        $this->get($this->url('contacts'))->assertForbidden();
+        // 401, not 403, and that is the stronger answer: `UserAdminMiddleware`
+        // admits only SuperAdmin and MasjidAdmin, so a Teacher is refused at the
+        // REALM gate before `tenant` binds or any permission is consulted. They
+        // are not an admin who lacks a grant; they are not in this realm at all.
+        $this->get($this->url('contacts'))->assertUnauthorized();
     }
 
     #[Test]
