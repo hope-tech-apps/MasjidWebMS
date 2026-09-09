@@ -90,7 +90,7 @@ class RosterEditKeepsAcademicRecordsTest extends TestCase
 
     private function url(GroupMembership $m): string
     {
-        return "/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/memberships/{$m->id}";
+        return "/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/members/{$m->id}";
     }
 
     #[Test]
