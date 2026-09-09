@@ -79,7 +79,23 @@ class AccountAccessService
     {
         $token = Password::broker()->createToken($user);
 
-        $url = rtrim((string) config('app.url'), '/').'/auth/reset-password?'.http_build_query([
+        // THE CREDENTIAL GOES IN THE FRAGMENT, NOT THE QUERY STRING.
+        //
+        // A fragment is never transmitted to the server. It is not in the
+        // request line, so nginx cannot log it; it is not in `Referer`, so the
+        // next site the user visits cannot read it; and it does not reach any
+        // proxy, CDN or WAF in between.
+        //
+        // As a query string this token WAS being logged — measured on this
+        // production host, in the rotated nginx access logs, alongside the
+        // account's email address. `combined` logs the full request line, so
+        // anyone with log access (or a log shipper, or a backup of one) held a
+        // working password-reset link for a staff account. The 60-minute expiry
+        // limited the window; it did not make the log entry acceptable.
+        //
+        // The SPA reads `location.hash` and then scrubs it — see
+        // resources/vue-app/views/auth/ResetPassword.vue.
+        $url = rtrim((string) config('app.url'), '/').'/auth/reset-password#'.http_build_query([
             'token' => $token,
             'email' => $user->email,
         ]);

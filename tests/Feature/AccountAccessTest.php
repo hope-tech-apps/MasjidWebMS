@@ -67,6 +67,46 @@ class AccountAccessTest extends TestCase
     }
 
     #[Test]
+    /**
+     * The credential must live in the FRAGMENT, never the query string.
+     *
+     * A query string is in the request line, so nginx logs it — measured on
+     * production, where a working reset token sat in a rotated access log next
+     * to the account's email. It is also sent in `Referer` and visible to every
+     * proxy in between. A fragment reaches no server at all.
+     *
+     * Asserted on the URL's SHAPE rather than by looking for the token, because
+     * the failure this guards against is someone "tidying" the `#` back to a
+     * `?` and every test still passing.
+     */
+    #[Test]
+    public function the_reset_link_carries_its_token_in_the_fragment_not_the_query(): void
+    {
+        Mail::fake();
+
+        $user = $this->makeUser(['email' => 'linkshape@example.test']);
+
+        $this->postJson('/api/admin/forgot-password', ['email' => $user->email])
+            ->assertStatus(200);
+
+        Mail::assertSent(AccountAccessMail::class, function (AccountAccessMail $mail) {
+            [$beforeHash] = explode('#', $mail->url, 2);
+
+            $this->assertStringNotContainsString('token=', $beforeHash,
+                'the token is in the part of the URL that reaches the server, and is therefore logged');
+            $this->assertStringNotContainsString('email=', $beforeHash,
+                'the account email is in the part of the URL that reaches the server');
+            $this->assertStringNotContainsString('?', $beforeHash,
+                'a query string on this link will be written to the access log');
+
+            $this->assertStringContainsString('#', $mail->url);
+            $this->assertStringContainsString('token=', $mail->url, 'the link must still carry a token');
+
+            return true;
+        });
+    }
+
+    #[Test]
     public function an_unknown_address_gets_the_same_answer_and_no_email(): void
     {
         // The whole point: this endpoint is unauthenticated, so an answer that

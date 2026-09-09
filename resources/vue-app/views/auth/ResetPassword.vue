@@ -69,9 +69,33 @@ import { object, ref as yupRef, string } from 'yup';
 
 const route = useRoute();
 
-const token = ref(String(route.query.token ?? ''));
-const email = ref(String(route.query.email ?? ''));
+/**
+ * Read the credential from the URL FRAGMENT, then remove it from the address bar.
+ *
+ * AccountAccessService puts the token and email after a `#` precisely so they
+ * never reach a server: a fragment is not in the request line (so nginx cannot
+ * log it — it was being logged), not in `Referer` (so the next site cannot read
+ * it), and not visible to any proxy or CDN in between.
+ *
+ * The QUERY fallback is deliberate and TEMPORARY. Links already sitting in
+ * inboxes were minted with `?token=…`, and breaking them would lock staff out
+ * of an invite they were just sent. Those tokens expire in 60 minutes
+ * (config/auth.php), so this branch stops mattering an hour after deploy and
+ * can be deleted on the next pass.
+ */
+const fromHash = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+
+const token = ref(String(fromHash.get('token') ?? route.query.token ?? ''));
+const email = ref(String(fromHash.get('email') ?? route.query.email ?? ''));
 const hasLink = computed(() => token.value !== '' && email.value !== '');
+
+// Scrub it. The values are captured above, so the address bar does not need to
+// keep holding a working credential where a screenshot, a shoulder, or a
+// copied URL would pick it up. replaceState rather than a router push: this
+// must not add a history entry, and the component must not re-resolve.
+if (window.location.hash) {
+    window.history.replaceState(null, '', window.location.pathname);
+}
 
 const password = ref('');
 const passwordConfirmation = ref('');
