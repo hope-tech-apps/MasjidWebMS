@@ -135,8 +135,21 @@ money value on the tuition table is display text; nothing charges from it.
    query constraint, not a setting.
 5. **Ḥifẓ (60s).** Open the ḥalaqa and a student's progress. Show that their
    position is a **surah and āyah**, never a percentage, and that their manzil
-   over an earlier surah did not move them backwards. This is the flagship
-   differentiator — no ClassDojo-style product tracks memorisation at all.
+   over an earlier surah did not move them backwards.
+
+   **Say it this way:** *"Other products in this space do track ḥifẓ. What we do
+   differently is refuse to score it."* Position rather than percentage, no
+   ranking, and revision that cannot move a child backwards.
+
+   > **Do not say "nobody else tracks memorisation."** It was in this script and
+   > it was wrong. Purpose-built Islamic-school products track ḥifẓ, MarkTrack at
+   > sabaq/sabqi/manzil granularity, and Alif Cloud tracks Arabic at chapter
+   > level. The sentence was literally true only if "ClassDojo-style product"
+   > excludes every product that actually competes with us — which is exactly
+   > the kind of claim a customer who has demoed Alif Cloud will catch, and it
+   > costs the whole demo's credibility to be caught on it. The refusal to
+   > gamify is a real differentiator and survives scrutiny; "we are the only
+   > ones" does not. See the vendor assessment of 8 September for the sources.
 6. **Money and the public site (45s).** Show the two offerings, one free and one
    paid with a confirmed and an outstanding seat. Then open *Admissions* in the
    page builder — tuition table, programs, staff directory — and note it is the
