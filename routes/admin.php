@@ -31,6 +31,7 @@ use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
 use App\Http\Controllers\AdminDashboard\GroupConsentController;
+use App\Http\Controllers\AdminDashboard\AdministratorsController;
 use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
@@ -656,6 +657,25 @@ Route::prefix('admin')->group(function () {
                 // (the roster-administration permission every MasjidAdmin holds);
                 // the login is always type='Teacher' and its reach is bound to
                 // this school by masjid_user + group_staff. See TeachersController.
+                // A SECOND PERSON IN THE OFFICE (R3).
+                //
+                // Not a schema change: two MasjidAdmins on one masjid already
+                // bind — the owner through `masjids.user_id`, the second through
+                // a `masjid_user` row, because TenantResolver falls through to
+                // staffMemberships() for a principal who owns nothing. What was
+                // missing was a way to CREATE the second one; the only path that
+                // wrote a membership row hardcoded type='Teacher'.
+                //
+                // Ownership is never touched here. `manage contacts` gates it —
+                // the same grant that already provisions teachers.
+                Route::prefix('{masjid_id}/administrators')
+                    ->controller(AdministratorsController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
+                        Route::delete('/{user_id}', 'destroy')->middleware('permission:manage contacts');
+                    });
+
                 Route::prefix('{masjid_id}/teachers')->controller(TeachersController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
