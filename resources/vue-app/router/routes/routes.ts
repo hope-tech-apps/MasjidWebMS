@@ -3,6 +3,7 @@ import authRoutes from "@/router/routes/authLayoutRoutes";
 import dashboardRoutes from "@/router/routes/dashboardLayoutRoutes";
 import superDashboardRoutes from "@/router/routes/superDashboardRoutes";
 import familyRoutes from "@/router/routes/familyRoutes";
+import portalRoutes from "@/router/routes/portalRoutes";
 import teacherRoutes from "@/router/routes/teacherRoutes";
 import jummahLunchRoutes from "@/router/routes/jummahLunchRoutes";
 
@@ -18,6 +19,9 @@ const routes: RouteRecordRaw[] = [
             ...superDashboardRoutes
         ]
     },
+    // The school's own branded front door — one page, two labelled doors.
+    // Above familyRoutes only for readability; the paths do not overlap.
+    ...portalRoutes,
     // The parent portal — its own realm, outside the admin app's guard.
     ...familyRoutes,
     // The teacher shell — a scoped staff realm, top-level so it carries no
