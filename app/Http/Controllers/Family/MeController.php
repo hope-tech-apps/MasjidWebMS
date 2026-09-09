@@ -56,6 +56,11 @@ class MeController extends Controller
                 // The address this login answers to, so the app can show the
                 // parent which of their mailboxes the school has on file.
                 'login_email' => $contact->login_email,
+                // Whether THIS caller has chosen a password. Not an oracle: the
+                // subject is the authenticated contact themselves, so it tells
+                // them only what they already know. Never the hash — see
+                // Contact::$hidden — and never a fact about anybody else.
+                'has_password' => $contact->hasFamilyPassword(),
             ],
         ], Response::HTTP_OK);
     }

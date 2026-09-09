@@ -4,7 +4,7 @@
             <div class="card-body p-4">
                 <h1 class="h4 mb-1">Parent sign in</h1>
                 <p class="text-muted small mb-4">
-                    No password needed — we email you a six-digit code each time.
+                    We email you a six-digit code. If you've set a password, you can use that instead.
                 </p>
 
                 <!-- Step 1: the address -->
@@ -16,10 +16,40 @@
                         Use the address the school has on file for you.
                     </p>
 
-                    <button class="btn btn-success w-100 mt-2" :disabled="!emailLooksValid || busy" @click="requestCode">
-                        <span v-if="busy" class="spinner-border spinner-border-sm"></span>
-                        <span v-else>Email me a code</span>
-                    </button>
+                    <!-- The password box is ALWAYS offered, never revealed
+                         conditionally. Showing it only to parents who have one
+                         would make this page answer "does this address have a
+                         password here?" — which is a question about a specific
+                         family at a specific school, and exactly what the
+                         backend's single 410 exists to refuse. -->
+                    <template v-if="usePassword">
+                        <label class="form-label small text-muted mt-3">Your password</label>
+                        <input v-model="password" type="password" class="form-control"
+                               autocomplete="current-password" @keyup.enter="signInWithPassword">
+
+                        <div v-if="error" class="alert alert-danger small mt-3 mb-0">{{ error }}</div>
+
+                        <button class="btn btn-success w-100 mt-3"
+                                :disabled="!emailLooksValid || !password || busy" @click="signInWithPassword">
+                            <span v-if="busy" class="spinner-border spinner-border-sm"></span>
+                            <span v-else>Sign in</span>
+                        </button>
+                        <button class="btn btn-link w-100 mt-1 text-decoration-none" :disabled="busy"
+                                @click="usePassword = false; error = ''">
+                            Email me a code instead
+                        </button>
+                    </template>
+
+                    <template v-else>
+                        <button class="btn btn-success w-100 mt-2" :disabled="!emailLooksValid || busy" @click="requestCode">
+                            <span v-if="busy" class="spinner-border spinner-border-sm"></span>
+                            <span v-else>Email me a code</span>
+                        </button>
+                        <button class="btn btn-link w-100 mt-1 text-decoration-none" :disabled="busy"
+                                @click="usePassword = true; error = ''">
+                            I have a password
+                        </button>
+                    </template>
                 </template>
 
                 <!-- Step 2: the code -->
@@ -63,6 +93,8 @@ const masjidId = computed(() => String(route.params.masjidId));
 const step = ref<'email' | 'code'>('email');
 const email = ref('');
 const code = ref('');
+const password = ref('');
+const usePassword = ref(false);
 const busy = ref(false);
 const error = ref('');
 
@@ -107,9 +139,33 @@ const verify = async () => {
     }
 };
 
+/**
+ * The password door.
+ *
+ * Every failure — unknown address, revoked login, no password set, wrong
+ * password — comes back as the same 410, so there is one message here too. A
+ * kinder, more specific error would be the disclosure the whole realm is built
+ * to avoid: "no password set for that address" tells a stranger that the
+ * address IS on file at this school.
+ */
+const signInWithPassword = async () => {
+    if (!emailLooksValid.value || !password.value) return;
+    busy.value = true;
+    error.value = '';
+    try {
+        await familyStore.signInWithPassword(masjidId.value, email.value.trim(), password.value);
+        router.replace(`/family/${masjidId.value}`);
+    } catch {
+        error.value = 'That email and password did not match. You can ask for a code instead.';
+    } finally {
+        busy.value = false;
+    }
+};
+
 const restart = () => {
     step.value = 'email';
     code.value = '';
+    password.value = '';
     error.value = '';
 };
 </script>

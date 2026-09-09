@@ -410,6 +410,36 @@ class FamilyPasswordTest extends TestCase
         ])->assertStatus(410);
     }
 
+    /**
+     * The portal has to be able to ASK whether this parent has a password, or
+     * the screen cannot offer "set one" versus "change it".
+     *
+     * Not an oracle: the subject is the authenticated caller themselves, so it
+     * discloses nothing they do not already know — unlike the sign-in doors,
+     * where the same fact about a STRANGER'S address is exactly what the shared
+     * 410 exists to hide.
+     */
+    #[Test]
+    public function a_parent_can_see_whether_they_have_a_password_but_never_the_hash(): void
+    {
+        $masjid = $this->makeMasjid();
+        $parent = $this->makeParent($masjid);
+
+        $before = $this->withToken($this->tokenFor($parent))
+            ->getJson("/api/family/masjids/{$masjid->id}/me")->assertOk();
+        $this->assertFalse($before->json('data.has_password'));
+        $this->asANewRequest();
+
+        $this->choosePassword($masjid, $parent);
+
+        $after = $this->withToken($this->tokenFor($parent))
+            ->getJson("/api/family/masjids/{$masjid->id}/me")->assertOk();
+
+        $this->assertTrue($after->json('data.has_password'));
+        $this->assertStringNotContainsString('$2y$', $after->getContent(), 'the hash must never travel');
+        $this->assertStringNotContainsString(self::GOOD, $after->getContent());
+    }
+
     // --------------------------------------------------- 6. the rule and trail
 
     #[Test]

@@ -68,6 +68,21 @@ class FamilyApiService {
     }
 
     /**
+     * PUT and DELETE carry the same JSON_WRITE pin as post(), for the same
+     * reason — the global form-urlencoded Content-Type would otherwise reach
+     * Laravel as an unparseable form and empty every field. DELETE takes no
+     * body: the two routes that use it (`/password`, and any future one) say
+     * everything in the URL.
+     */
+    public static put(url: string, data: any = {}): Promise<AxiosResponse> {
+        return FamilyApiService.instance().put(url, data, FamilyApiService.JSON_WRITE);
+    }
+
+    public static delete(url: string): Promise<AxiosResponse> {
+        return FamilyApiService.instance().delete(url, FamilyApiService.JSON_WRITE);
+    }
+
+    /**
      * Attachment bytes. The API serves the FILE, not a signed URL (deliberately
      * — a signed URL would outlive the consent that authorised it), so the
      * bearer token has to travel on the request. An <img src> cannot carry a

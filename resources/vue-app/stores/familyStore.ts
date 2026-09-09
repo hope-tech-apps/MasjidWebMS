@@ -41,6 +41,37 @@ export const useFamilyStore = defineStore('family', {
 
         async verifyCode(masjidId: string, email: string, code: string) {
             const res = await FamilyApiService.post(`${this.base(masjidId)}/auth/verify-code`, { email, code });
+            return this.adoptSession(masjidId, res);
+        },
+
+        /**
+         * The second door: a password the parent chose for themselves.
+         *
+         * Refuses with the SAME 410 the code door does, for all four of its
+         * causes — unknown address, revoked login, no password set, wrong
+         * password — so a caller cannot use the difference to learn whether an
+         * address belongs to a parent at this school.
+         */
+        async signInWithPassword(masjidId: string, email: string, password: string) {
+            const res = await FamilyApiService.post(`${this.base(masjidId)}/auth/password`, { email, password });
+            return this.adoptSession(masjidId, res);
+        },
+
+        /** Choose or change a password. Requires an existing session. */
+        async setPassword(masjidId: string, password: string, confirmation: string) {
+            return FamilyApiService.put(`${this.base(masjidId)}/password`, {
+                password,
+                password_confirmation: confirmation,
+            });
+        },
+
+        /** Remove it, going back to emailed codes only. */
+        async clearPassword(masjidId: string) {
+            return FamilyApiService.delete(`${this.base(masjidId)}/password`);
+        },
+
+        /** Both doors mint the same session, so both land here. */
+        adoptSession(masjidId: string, res: any) {
             const data = res.data?.data ?? {};
 
             this.token = data.token ?? null;
