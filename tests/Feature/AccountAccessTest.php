@@ -66,7 +66,6 @@ class AccountAccessTest extends TestCase
         });
     }
 
-    #[Test]
     /**
      * The credential must live in the FRAGMENT, never the query string.
      *
