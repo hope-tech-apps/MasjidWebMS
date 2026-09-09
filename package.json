@@ -3,7 +3,8 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+        "build:prod": "VITE_APP_URL=https://masjid.hopetechapps.com vite build"
     },
     "devDependencies": {
         "@types/bootstrap": "^5.2.10",
