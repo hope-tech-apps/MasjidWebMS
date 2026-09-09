@@ -49,14 +49,6 @@ class Masjid extends Model implements HasMedia
         'google_play_link',
         'google_maps_key',
         'stripe_account_id',
-        // The GENERATED column that resolves which Connect account is live.
-        // It slipped past this list because the guard below enumerates columns
-        // from the test database, and a MySQL generated column does not exist
-        // in SQLite — so the census could not see it and it published itself.
-        // Measured on production 2026-09-09: Burlington's live
-        // acct_… was being served to anonymous callers on
-        // GET /api/mobile/masjids/1.
-        'active_stripe_account_id',
         'stripe_charges_enabled',
         'stripe_payouts_enabled',
         'crm_enabled',
@@ -132,6 +124,14 @@ class Masjid extends Model implements HasMedia
         'deleted_at',
         'email_verified_at',
         'phone_verified_at',
+        // The GENERATED column that resolves which Connect account is live.
+        // `stripe_account_id` above was denylisted; this one was added later and
+        // slipped past, because the guard that enumerates every masjids column
+        // reads the SQLite test schema and a MySQL generated column does not
+        // exist there. The census could not see the column, so the column
+        // published itself. Measured on production 2026-09-09: Burlington's
+        // live acct_… served to anonymous callers on GET /api/mobile/masjids/1.
+        'active_stripe_account_id',
         // Plan/feature flags — they describe the organisation's account, not its
         // public identity.
         'crm_enabled',
