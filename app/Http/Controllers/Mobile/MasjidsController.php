@@ -41,6 +41,54 @@ class MasjidsController extends Controller
         ]);
     }
 
+    /**
+     * The organisations this app may switch into: this one, plus the children
+     * it has published.
+     *
+     * The app is BUILT for one organisation — its home — and switching is how a
+     * member walks into a sub-organisation (a school, a clinic, an academy) that
+     * has outgrown being a paragraph on the services screen. The home org is
+     * returned first and flagged, because the client has to be able to get back
+     * and must not depend on remembering which id it started from.
+     *
+     * PUBLIC, like every other endpoint in this file. Names and logos are the
+     * same public identity `index()` already serves to anonymous callers, and
+     * the same `PUBLIC_DIRECTORY_DENYLIST` applies. Being able to SEE a child
+     * organisation is not being able to read anything inside it: every scoped
+     * query still goes through the tenant guardrail.
+     *
+     * Unlisted children are omitted — `listed_at` is the deliberate act of
+     * publishing an organisation, and a child mid-setup must not appear in a
+     * switcher on somebody's phone.
+     */
+    public function orgs($masjid_id)
+    {
+        $payload = Cache::remember(
+            MobileCache::masjidKey((int) $masjid_id, MobileCache::ORGS),
+            MobileCache::TTL_MEDIUM,
+            function () use ($masjid_id) {
+                $home = Masjid::with('logo')->findOrFail($masjid_id);
+
+                $orgs = collect([$home])->concat(
+                    $home->listedChildren()->with('logo')->orderBy('name')->get()
+                );
+
+                return $orgs->map(fn (Masjid $org) => [
+                    'id' => (int) $org->id,
+                    'name' => $org->name,
+                    'org_type' => $org->orgType(),
+                    'is_home' => (int) $org->id === (int) $home->id,
+                    'logo_url' => $org->logo?->original_url,
+                ])->values()->all();
+            }
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $payload,
+        ]);
+    }
+
     public function show($masjid_id)
     {
         $masjid = Cache::remember(

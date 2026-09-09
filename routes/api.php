@@ -57,6 +57,9 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             Route::get('/{masjid_id}/gallery', 'gallery');
             Route::get('/{masjid_id}/donation-link', 'donationLink');
             Route::get('/{masjid_id}/about', 'about');
+            // The organisations this app may switch into: this one + its
+            // published children. See MasjidsController::orgs.
+            Route::get('/{masjid_id}/orgs', 'orgs');
         });
 
         // Emergency app-version gate. iOS + Android read this on launch to decide

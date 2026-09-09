@@ -1191,10 +1191,13 @@ class TenancyCanaryTest extends TestCase
 
         $this->assertSame(0, $exit, 'a healthy --all run stopped being clean');
         $this->assertSame('clean', $run['status']);
-        // 32, not 31, since the global /api/mobile/app-config route (the
-        // backward-compat splash gate) was added — a reached endpoint that is
-        // exempt from the fail-open check via canary.global_endpoints, not a leak.
-        $this->assertSame(32, $run['coverage']['endpoints_reached']);
+        // 33: 31, plus the global /api/mobile/app-config route (the
+        // backward-compat splash gate) — a reached endpoint that is exempt from
+        // the fail-open check via canary.global_endpoints, not a leak — plus
+        // /api/mobile/masjids/{id}/orgs, the organisation switcher. `orgs` IS
+        // graded and IS tenant-scoped: it answers with one masjid's own family,
+        // so two tenants must never see the same payload.
+        $this->assertSame(33, $run['coverage']['endpoints_reached']);
 
         $comparison = $run['coverage']['cross_tenant_comparison'];
 

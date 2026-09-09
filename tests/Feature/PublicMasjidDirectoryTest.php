@@ -55,6 +55,12 @@ class PublicMasjidDirectoryTest extends TestCase
         'id', 'name', 'email', 'phone', 'address',
         'country_id', 'city_id', 'latitude', 'longitude',
         'website_link', 'timezone', 'org_type', 'listed_at',
+        // Which organisation this one belongs to. Structural identity, exactly
+        // like `org_type` and `listed_at` above, and the relationship is
+        // already served to anonymous callers by
+        // MasjidsController::orgs — the switcher a member uses to walk into a
+        // published sub-organisation. Masjid ids are public throughout this API.
+        'parent_id',
         'created_at', 'updated_at',
         // Branding/storefront metadata an app or site is meant to render.
         'copyright_text', 'app_store_link', 'google_play_link',

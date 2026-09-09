@@ -28,6 +28,9 @@ class MobileCache
     public const PRAYERS_SETTINGS = 'prayers_settings';
     public const CONTACT_REASONS = 'contact_reasons';
     public const SPLASH = 'splash';
+    /** The organisations an app may switch into: this one plus its listed children. */
+    public const ORGS = 'orgs';
+
     public const APP_CONFIG = 'app.config';   // per-masjid emergency app-version gate
     // Signage board payload (tvOS). Written by the unified composer's signage
     // channel, read by GET /mobile/masjids/{id}/signage. See T-008.

@@ -403,6 +403,113 @@ class Masjid extends Model implements HasMedia
         return $this->hasMany(MobileAppUser::class);
     }
 
+    /**
+     * Orphan this organisation's children when it is destroyed for good.
+     *
+     * The job a database `ON DELETE SET NULL` would normally do. It lives here
+     * instead because adding a real foreign key to `masjids` makes SQLite
+     * rebuild the table and silently drops the PARTIAL unique index on
+     * `user_id` — see the migration for the measurement. Enforcing it in the
+     * model is the same guarantee on both drivers, and unlike a driver-guarded
+     * FK it is the behaviour the test suite actually exercises.
+     *
+     * NEVER a cascade. Deleting MEC must not delete IntelliCor — its roster,
+     * donations, media and every row scoped to it. Orphaned children become
+     * top-level organisations, which is recoverable by setting the link again.
+     *
+     * `forceDeleted` only. A SOFT-deleted parent keeps its children pointing at
+     * it, because a soft delete is reversible and severing the links would
+     * quietly make it not so.
+     *
+     * `withTrashed()` because a soft-deleted child still holds the link, and a
+     * link to a row that no longer exists is exactly what this prevents.
+     */
+    protected static function booted(): void
+    {
+        static::forceDeleted(function (Masjid $masjid) {
+            Masjid::withTrashed()
+                ->where('parent_id', $masjid->id)
+                ->update(['parent_id' => null]);
+        });
+    }
+
+    /**
+     * The organisation this one belongs to, if any.
+     *
+     * Deliberately absent from `$fillable`, like `listed_at`: re-parenting an
+     * organisation moves it in every directory and switcher at once, so it is
+     * not something a request body should be able to do as a side effect of
+     * editing a phone number. Set it explicitly with `setParent()`.
+     */
+    public function parent()
+    {
+        return $this->belongsTo(Masjid::class, 'parent_id');
+    }
+
+    /** The organisations that belong to this one. */
+    public function children()
+    {
+        return $this->hasMany(Masjid::class, 'parent_id');
+    }
+
+    /** The children a mobile app may offer as somewhere to switch into. */
+    public function listedChildren()
+    {
+        return $this->children()->whereNotNull('listed_at');
+    }
+
+    public function isChildOrg(): bool
+    {
+        return $this->parent_id !== null;
+    }
+
+    /**
+     * Re-parent this organisation, refusing anything that would make the tree
+     * unwalkable.
+     *
+     * A cycle here is not a cosmetic problem: the app walks parent links to
+     * find the org it started from, and the admin directory groups by them —
+     * both loop forever on `A → B → A`. The database cannot express "no
+     * cycles", so this method is the only place that may set the column, and
+     * it walks the ancestor chain before committing.
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function setParent(?Masjid $parent): void
+    {
+        if ($parent === null) {
+            $this->forceFill(['parent_id' => null])->save();
+
+            return;
+        }
+
+        if ((int) $parent->id === (int) $this->id) {
+            throw new \InvalidArgumentException('An organisation cannot be its own parent.');
+        }
+
+        // Walk UP from the proposed parent. If this organisation appears in its
+        // ancestry, the link would close a loop. Bounded so a tree that is
+        // already corrupt cannot hang the request that is trying to fix it.
+        $seen = [];
+        $cursor = $parent;
+        $hops = 0;
+
+        while ($cursor !== null && $hops++ < 32) {
+            if ((int) $cursor->id === (int) $this->id) {
+                throw new \InvalidArgumentException('That would make the organisation its own ancestor.');
+            }
+
+            if (isset($seen[$cursor->id])) {
+                throw new \InvalidArgumentException('The organisation tree already contains a cycle.');
+            }
+
+            $seen[$cursor->id] = true;
+            $cursor = $cursor->parent_id ? Masjid::find($cursor->parent_id) : null;
+        }
+
+        $this->forceFill(['parent_id' => $parent->id])->save();
+    }
+
     public function jumaaSettings() {
         return $this->hasOne(JumaaSetting::class);
     }
