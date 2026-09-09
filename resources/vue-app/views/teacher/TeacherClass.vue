@@ -1161,6 +1161,12 @@
                         </button>
                     </div>
 
+                    <!-- The one error outlet for this view, OUTSIDE the published guard.
+                         It used to live only inside the sticky save bar, which is hidden on a
+                         published card — so a failed "Take it back" changed nothing on screen
+                         and was indistinguishable from a no-op. -->
+                    <p v-if="reportsError" class="text-danger small">{{ reportsError }}</p>
+
                     <!-- The attendance FROZEN at publication. Only shown once published: on a
                          draft these are null, and rendering a null as 0 would read as "never
                          absent". `present` already includes the late days, so it says so rather
@@ -1297,9 +1303,23 @@
                     <!-- Sticks to the bottom of the viewport. With twenty-three criteria the Save
                          button is otherwise a full scroll away from the mark just changed, and the
                          unsaved count is the only thing between a teacher and losing an afternoon. -->
-                    <div v-if="!openCard.published"
+                    <div v-if="!openCard.published || hasUnsaved"
                          class="position-sticky bottom-0 bg-white border-top pt-2 pb-2 d-flex align-items-center gap-2 flex-wrap">
-                        <template v-if="!leaveWarned">
+                        <!-- `|| hasUnsaved` is not belt-and-braces. If the card is published
+                             from elsewhere while a teacher is marking, the save is refused and
+                             the card re-reads as published WITH their typing preserved — and a
+                             bar hidden on `published` would then strand them: no Save, and a
+                             back button that silently refuses to leave. -->
+                        <template v-if="openCard.published">
+                            <span class="small text-danger-emphasis">
+                                This card was sent to the family while you were working.
+                                {{ unsavedCount }} change{{ unsavedCount === 1 ? '' : 's' }} of yours
+                                {{ unsavedCount === 1 ? 'is' : 'are' }} still here — take it back to save
+                                {{ unsavedCount === 1 ? 'it' : 'them' }}.
+                            </span>
+                            <button class="btn btn-sm btn-link text-danger" @click="discardAndClose">Discard mine</button>
+                        </template>
+                        <template v-else-if="!leaveWarned">
                             <button class="btn btn-sm btn-success" :disabled="savingCard || !hasUnsaved" @click="saveReportCard">
                                 {{ savingCard ? 'Saving…' : 'Save' }}
                             </button>
@@ -1349,7 +1369,7 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { useAuthStore } from '@/stores/authStore';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 type TabKey = 'roster' | 'attendance' | 'letters' | 'points' | 'hifz' | 'story' | 'messages'
@@ -1404,13 +1424,31 @@ const moreOpen = ref(false);
 const closeMore = () => { moreOpen.value = false; };
 const closeMoreOnEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') moreOpen.value = false; };
 
+/**
+ * The browser's own "leave site?" prompt, armed only while a report card has
+ * unsaved marks.
+ *
+ * The in-app back link routes through `closeOpenCard`, but a refresh, a closed
+ * tab or the browser's back button do not, and there is nowhere else the draft
+ * lives — an afternoon of marking is in memory until Save. preventDefault() is
+ * what actually arms the dialog in current browsers; the returnValue assignment
+ * is the legacy spelling some still want.
+ */
+const warnOnUnload = (e: BeforeUnloadEvent) => {
+    if (!hasUnsaved.value) return;
+    e.preventDefault();
+    e.returnValue = '';
+};
+
 onMounted(() => {
     document.addEventListener('click', closeMore);
     document.addEventListener('keydown', closeMoreOnEscape);
+    window.addEventListener('beforeunload', warnOnUnload);
 });
 onBeforeUnmount(() => {
     document.removeEventListener('click', closeMore);
     document.removeEventListener('keydown', closeMoreOnEscape);
+    window.removeEventListener('beforeunload', warnOnUnload);
 });
 
 const students = computed<any[]>(() => group.value?.students ?? []);
@@ -2563,6 +2601,16 @@ const schoolYearOptions = computed<string[]>(() => {
     return [-1, 0, 1].map((d) => `${start + d}-${start + d + 1}`);
 });
 
+// Monotonic, so a slow response for a quarter the teacher has already moved on
+// from cannot land and rewrite the period underneath them. Without it the
+// adoption below would drag the selects back to whatever finished last.
+let reportReq = 0;
+
+// Set while the loader is copying the server's period into the three selects, so
+// the watcher does not treat OUR OWN adoption as the teacher changing quarter
+// and fire a second identical fetch.
+let adoptingPeriod = false;
+
 const reportQuery = (): string => {
     const q = new URLSearchParams({ type: reportType.value });
     if (reportTerm.value) q.set('term', String(reportTerm.value));
@@ -2571,10 +2619,13 @@ const reportQuery = (): string => {
 };
 
 const loadReportCards = async () => {
+    const mine = ++reportReq;
     reportsLoading.value = true;
     reportsError.value = '';
     try {
         const res = await TeacherApiService.get(`${base.value}/report-cards?${reportQuery()}`);
+        if (mine !== reportReq) return;   // a newer request has already answered
+
         reportRows.value = res.data?.data?.students ?? [];
         reportPeriod.value = res.data?.data?.period ?? null;
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
@@ -2582,14 +2633,17 @@ const loadReportCards = async () => {
         // silently, so without this the selects could claim one quarter while
         // every save landed in another.
         if (reportPeriod.value) {
+            adoptingPeriod = true;
             reportType.value = reportPeriod.value.type;
             reportTerm.value = reportPeriod.value.term;
             reportYear.value = reportPeriod.value.school_year;
+            await nextTick();
+            adoptingPeriod = false;
         }
     } catch {
-        reportsError.value = 'Could not load the report cards.';
+        if (mine === reportReq) reportsError.value = 'Could not load the report cards.';
     } finally {
-        reportsLoading.value = false;
+        if (mine === reportReq) reportsLoading.value = false;
     }
 };
 
@@ -2697,8 +2751,17 @@ const saveReportCard = async (): Promise<boolean> => {
         );
 
         openCard.value = res.data?.data ?? openCard.value;
-        hydrateCardDraft(openCard.value);
-        cardSaved.value = true;
+        // preserve, NOT a clean re-hydrate. The inputs stay live during a save
+        // (a teacher on a classroom phone keeps marking while the PUT is in
+        // flight), and a clean hydrate would overwrite anything they touched in
+        // that window with the server's older value and then show a green
+        // "Saved" over the top of it. With preserve the server becomes the new
+        // baseline, rows nobody touched come out clean, and rows edited mid-save
+        // stay correctly counted as unsaved.
+        hydrateCardDraft(openCard.value, true);
+        // Only claim success if the screen now matches the server. If they kept
+        // marking, "Saved" would be a lie about the marks still on screen.
+        cardSaved.value = !hasUnsaved.value;
         await loadReportCards();
         return true;
     } catch (e: any) {
@@ -2750,11 +2813,16 @@ const unpublishReportCard = async () => {
     publishing.value = true;
     reportsError.value = '';
     try {
+        const keep = hasUnsaved.value;
         const res = await TeacherApiService.delete(
             `${base.value}/members/${openCard.value.student.membership_id}/report-card/publish?${reportQuery()}`
         );
         openCard.value = res.data?.data ?? openCard.value;
-        hydrateCardDraft(openCard.value);
+        // Keep the draft when there is one. "Take it back" is the ONLY exit the
+        // screen offers after a save is refused, and that path deliberately kept
+        // the teacher's marks — hydrating clean here would destroy exactly the
+        // work it preserved, at the moment they followed our own instruction.
+        hydrateCardDraft(openCard.value, keep);
         await loadReportCards();
     } catch {
         reportsError.value = 'That report could not be taken back.';
@@ -2778,6 +2846,13 @@ const discardAndClose = () => {
     leaveWarned.value = false;
     draft.value = {};
     baseline.value = {};
+    // The comment is half of `hasUnsaved`, and forgetting it left the whole tab
+    // wedged: with no card open and nothing on screen to show it, `hasUnsaved`
+    // stayed true forever, the period watcher then refused every change while
+    // the <select> still moved, and clicking a student from a Quarter 2 list
+    // opened — and saved into — Quarter 3.
+    teacherComment.value = '';
+    teacherCommentBaseline.value = '';
 };
 
 /** Never "0 of 0": `criteria` counts the learning behaviours too, so the fraction is honest. */
@@ -2792,12 +2867,31 @@ const rowStatus = (row: any): { text: string; cls: string } => {
 
 // A different (type, year, term) is a DIFFERENT document, so the open card must
 // not survive the change. Unsaved work stops the switch rather than being lost.
-watch([reportType, reportTerm, reportYear], () => {
+/** Put the selects back to the period actually loaded, without re-entering the watcher. */
+const restorePeriod = async () => {
     if (!reportPeriod.value) return;
-    if (hasUnsaved.value) { leaveWarned.value = true; return; }
+    adoptingPeriod = true;
+    reportType.value = reportPeriod.value.type;
+    reportTerm.value = reportPeriod.value.term;
+    reportYear.value = reportPeriod.value.school_year;
+    await nextTick();
+    adoptingPeriod = false;
+};
+
+watch([reportType, reportTerm, reportYear], () => {
+    // Our own adoption of the server's period, not the teacher choosing one.
+    if (adoptingPeriod) return;
+
+    // Unsaved work blocks the switch — but ONLY while a card is open, where the
+    // warning is actually visible. Blocking it with no card open was a silent
+    // wedge: the <select> moved, nothing said why the list did not, and the next
+    // student opened a different quarter's document.
+    if (openCard.value && hasUnsaved.value) { leaveWarned.value = true; restorePeriod(); return; }
+
     openCard.value = null;
     loadReportCards();
 });
+
 
 watch(activeTab, (tab) => {
     if (tab === 'story' && !posts.value.length && !postsLoading.value) loadPosts();

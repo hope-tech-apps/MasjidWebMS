@@ -129,7 +129,12 @@ class ReportCardController extends TeacherController
         $saved = $this->cards->saveMarks(
             $card,
             $request->validated('marks', []),
-            $request->validated('teacher_comment'),
+            // has(), not filled(): a teacher who empties the box sends "", which
+            // the global ConvertEmptyStringsToNull turns into null. `has()` still
+            // sees the key, so "clear it" survives; `filled()` would read as
+            // "leave it alone" and the deleted text would come back.
+            $request->has('teacher_comment'),
+            (string) $request->input('teacher_comment'),
         );
 
         if (! $saved) {

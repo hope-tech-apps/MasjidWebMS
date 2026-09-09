@@ -137,15 +137,26 @@ class ReportCardService
      * worse than making the teacher unpublish first. The caller turns `false`
      * into the message a teacher sees.
      *
+     * `$comment` is only written when `$updateComment` is true. The two
+     * arguments exist rather than one nullable because "leave the comment alone"
+     * and "clear the comment" are different instructions that arrive looking
+     * identical: `ConvertEmptyStringsToNull` is global middleware in this
+     * application, so a teacher who selects their comment and deletes it sends
+     * `teacher_comment: ""` and the controller reads NULL. Branching on
+     * `$comment !== null` therefore made clearing a comment impossible — the
+     * emptied text silently reappeared after a green "Saved". The caller uses
+     * `$request->has()`, which sees the key the middleware nulled, NOT
+     * `filled()`, which does not.
+     *
      * @param  array<int, array{id:int, level:int|null, comment:string|null}>  $marks
      */
-    public function saveMarks(ReportCard $card, array $marks, ?string $comment = null): bool
+    public function saveMarks(ReportCard $card, array $marks, bool $updateComment = false, ?string $comment = null): bool
     {
         if ($card->isPublished()) {
             return false;
         }
 
-        DB::transaction(function () use ($card, $marks, $comment): void {
+        DB::transaction(function () use ($card, $marks, $updateComment, $comment): void {
             // Scoped to THIS card's rows, so a payload naming another child's
             // mark id updates nothing rather than updating them.
             $owned = $card->marks()->get()->keyBy('id');
@@ -168,7 +179,9 @@ class ReportCardService
                 ]);
             }
 
-            if ($comment !== null) {
+            if ($updateComment) {
+                // '' clears it. See the docblock for why this cannot branch on
+                // the value being null.
                 $card->update(['teacher_comment' => $comment]);
             }
         });

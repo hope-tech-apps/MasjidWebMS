@@ -288,6 +288,51 @@ class ReportCardTest extends TestCase
         }
     }
 
+    /**
+     * A teacher must be able to DELETE the comment they wrote.
+     *
+     * `ConvertEmptyStringsToNull` is global middleware here, so an emptied box
+     * arrives as null, and the service used to branch on `$comment !== null` —
+     * which read a deletion as "leave it alone". The emptied text then
+     * reappeared after a green "Saved", which is the worst shape of bug: the UI
+     * confirms the opposite of what happened. The fix is `$request->has()`,
+     * which sees the key the middleware nulled; `filled()` would not.
+     */
+    #[Test]
+    public function a_teacher_can_clear_the_comment_they_wrote(): void
+    {
+        $this->open();
+
+        $this->putJson($this->url() . self::PERIOD, [
+            'teacher_comment' => 'A good quarter.',
+        ])->assertOk();
+
+        $this->assertSame('A good quarter.', ReportCard::firstOrFail()->teacher_comment);
+
+        $this->putJson($this->url() . self::PERIOD, [
+            'teacher_comment' => '',
+        ])->assertOk();
+
+        $this->assertSame('', (string) ReportCard::firstOrFail()->fresh()->teacher_comment,
+            'an emptied comment must stay empty, not come back');
+    }
+
+    /** Omitting the key entirely still means "leave it alone". */
+    #[Test]
+    public function a_save_that_does_not_mention_the_comment_leaves_it_alone(): void
+    {
+        $card = $this->open();
+
+        $this->putJson($this->url() . self::PERIOD, ['teacher_comment' => 'Keep me.'])->assertOk();
+
+        $id = collect($card['subjects'])->first()['criteria'][0]['id'];
+        $this->putJson($this->url() . self::PERIOD, [
+            'marks' => [['id' => $id, 'level' => 3]],
+        ])->assertOk();
+
+        $this->assertSame('Keep me.', ReportCard::firstOrFail()->fresh()->teacher_comment);
+    }
+
     // ------------------------------------------- 3. publication freezes it
 
     #[Test]
