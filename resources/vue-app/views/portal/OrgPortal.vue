@@ -54,7 +54,7 @@
                             <p class="small mb-4" style="color: var(--org-muted);">
                                 Take the register, plan lessons, mark work and write report cards.
                             </p>
-                            <a class="btn btn-brand-outline w-100 mt-auto" href="/auth/sign-in">Staff sign in</a>
+                            <a class="btn btn-brand-outline w-100 mt-auto" :href="staffHref">Staff sign in</a>
                         </div>
                     </div>
                 </div>
@@ -169,7 +169,30 @@ const cssVars = computed(() => {
     };
 });
 
-const parentHref = computed(() => `/family/${masjidId.value}/sign-in`);
+/**
+ * WHERE THE TWO DOORS ACTUALLY LIVE.
+ *
+ * Both are root-relative in the app's own world (`/auth/sign-in`,
+ * `/family/14/sign-in`), and that is wrong the moment this page is served from
+ * the school's domain: on alrazischool.org/portal a root-relative href resolves
+ * to alrazischool.org, which has no such route, and both buttons 404. That is
+ * exactly what shipped — the page was verified on masjid.hopetechapps.com,
+ * where relative and absolute are the same thing, and the proxied case was not
+ * clicked.
+ *
+ * So the links are prefixed with the app's own origin whenever this page is NOT
+ * being served from it. On the app's own domain the prefix is empty, which
+ * keeps them in-router (no full page reload); on a school's domain they become
+ * absolute and cross over.
+ */
+const appOrigin = String(import.meta.env.VITE_APP_URL ?? '').replace(/\/$/, '');
+const hostedElsewhere = computed(() =>
+    appOrigin !== '' && appOrigin !== window.location.origin
+);
+const linkBase = computed(() => (hostedElsewhere.value ? appOrigin : ''));
+
+const parentHref = computed(() => `${linkBase.value}/family/${masjidId.value}/sign-in`);
+const staffHref = computed(() => `${linkBase.value}/auth/sign-in`);
 
 onMounted(async () => {
     try {
