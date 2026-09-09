@@ -70,7 +70,7 @@ class ImportSchoolRosterTest extends TestCase
             . $body);
     }
 
-    private function run(array $opts = []): int
+    private function importCsv(array $opts = []): int
     {
         return $this->artisan('schools:import-roster', array_merge([
             'csv' => $this->csv,
@@ -85,7 +85,7 @@ class ImportSchoolRosterTest extends TestCase
     {
         $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
 
-        $this->run();
+        $this->importCsv();
 
         $this->assertSame(0, Contact::count(), 'a dry run must not create a soul');
         $this->assertSame(0, GroupMembership::count());
@@ -96,7 +96,7 @@ class ImportSchoolRosterTest extends TestCase
     {
         $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
 
-        $this->assertSame(0, $this->run(['--execute' => true]));
+        $this->assertSame(0, $this->importCsv(['--execute' => true]));
 
         $child = Contact::where('first_name', 'Aalaa')->firstOrFail();
         $guardian = Contact::where('email', 'musa@example.test')->firstOrFail();
@@ -121,7 +121,7 @@ class ImportSchoolRosterTest extends TestCase
     {
         $this->write("Grade 9,Aalaa,Salim,9th,Musa,Salim,musa@example.test,555\n");
 
-        $this->assertSame(1, $this->run(['--execute' => true]), 'the command must fail');
+        $this->assertSame(1, $this->importCsv(['--execute' => true]), 'the command must fail');
 
         $this->assertSame(0, Contact::count(), 'nothing written');
         $this->assertSame(1, Group::count(), 'a typo must not found a second classroom');
@@ -140,7 +140,7 @@ class ImportSchoolRosterTest extends TestCase
             . "Grade 9,Bilal,Khan,2nd,Ali,Khan,ali@example.test,555\n"
         );
 
-        $this->assertSame(1, $this->run(['--execute' => true]));
+        $this->assertSame(1, $this->importCsv(['--execute' => true]));
 
         $this->assertSame(0, Contact::count(), 'the good row must not land either');
     }
@@ -150,7 +150,7 @@ class ImportSchoolRosterTest extends TestCase
     public function the_import_cannot_grant_consent(): void
     {
         $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
-        $this->run(['--execute' => true]);
+        $this->importCsv(['--execute' => true]);
 
         foreach (GroupMembership::all() as $m) {
             $this->assertNull($m->consent_granted_at, 'no imported row may carry consent');
@@ -165,8 +165,8 @@ class ImportSchoolRosterTest extends TestCase
     {
         $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
 
-        $this->run(['--execute' => true]);
-        $this->run(['--execute' => true]);
+        $this->importCsv(['--execute' => true]);
+        $this->importCsv(['--execute' => true]);
 
         $this->assertSame(2, Contact::count(), 'one child, one guardian');
         $this->assertSame(2, GroupMembership::count(), 'one enrolment, one edge');
@@ -180,7 +180,7 @@ class ImportSchoolRosterTest extends TestCase
             . "Grade 2,Aalaa,Salim,2nd,Huda,Salim,huda@example.test,556\n"
         );
 
-        $this->run(['--execute' => true]);
+        $this->importCsv(['--execute' => true]);
 
         $this->assertSame(1, Contact::where('first_name', 'Aalaa')->count(), 'one child');
         $this->assertSame(2, GroupMembership::where('role', GroupMembership::ROLE_GUARDIAN)->count());
@@ -192,7 +192,7 @@ class ImportSchoolRosterTest extends TestCase
     public function a_batch_can_be_rolled_back(): void
     {
         $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
-        $this->run(['--execute' => true, '--batch' => 'try-1']);
+        $this->importCsv(['--execute' => true, '--batch' => 'try-1']);
 
         $this->assertSame(2, Contact::count());
 
@@ -213,7 +213,7 @@ class ImportSchoolRosterTest extends TestCase
     public function a_round_tripped_formula_guard_is_stripped_on_the_way_back_in(): void
     {
         $this->write("Grade 2,'=Ali,Khan,2nd,Musa,Khan,musa2@example.test,555\n");
-        $this->run(['--execute' => true]);
+        $this->importCsv(['--execute' => true]);
 
         $this->assertSame(1, Contact::where('first_name', '=Ali')->count(),
             'the export guard must be undone on import, not stored');
