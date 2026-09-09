@@ -185,7 +185,30 @@ const cssVars = computed(() => {
  * keeps them in-router (no full page reload); on a school's domain they become
  * absolute and cross over.
  */
-const appOrigin = String(import.meta.env.VITE_APP_URL ?? '').replace(/\/$/, '');
+/**
+ * WHERE THE APP LIVES IS A RUNTIME FACT, NOT A BUILD-TIME ONE.
+ *
+ * This was `import.meta.env.VITE_APP_URL`, and that is why the fix never
+ * actually worked in production: the deployed bundle is built with plain
+ * `npm run build`, deliberately leaving VITE_APP_URL EMPTY so the SPA's API
+ * calls stay relative and same-origin on BOTH masjid.* and manara.*
+ * (see the deploy notes — baking a host there breaks the second one). With it
+ * empty, `hostedElsewhere` was always false, the hrefs stayed root-relative,
+ * and both portal buttons went on 404ing on the school's domain.
+ *
+ * The chunk's OWN url is the honest answer and needs no env var: when this page
+ * is proxied onto a school's domain the script is still fetched absolutely from
+ * the app's origin, so `import.meta.url` points there. Served from the app
+ * itself, it equals `location.origin` and the prefix stays empty, which keeps
+ * the links in-router with no full page reload.
+ */
+const appOrigin = (() => {
+    try {
+        return new URL(import.meta.url).origin;
+    } catch {
+        return '';
+    }
+})();
 const hostedElsewhere = computed(() =>
     appOrigin !== '' && appOrigin !== window.location.origin
 );
