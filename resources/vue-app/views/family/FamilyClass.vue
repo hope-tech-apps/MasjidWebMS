@@ -24,6 +24,11 @@
                         {{ group.children.length === 1 ? childName(group.children[0]) : 'My children' }}
                     </button>
                 </li>
+                <li v-if="group.children?.length" class="nav-item">
+                    <button class="nav-link" :class="{ active: tab === 'reports' }" @click="tab = 'reports'">
+                        Report cards
+                    </button>
+                </li>
                 <!-- "Handouts", not "Resources" — that is the word a parent uses. -->
                 <li class="nav-item">
                     <button class="nav-link" :class="{ active: tab === 'handouts' }" @click="tab = 'handouts'">
@@ -197,7 +202,7 @@
             </section>
 
             <!-- -------------------------------------------------- children -->
-            <section v-else>
+            <section v-else-if="tab === 'children'">
                 <div v-for="child in group.children" :key="child.membership_id" class="card border-0 shadow-sm mb-3">
                     <div class="card-body">
                         <div class="d-flex align-items-center gap-3 mb-3">
@@ -274,6 +279,168 @@
                         </ul>
                     </div>
                 </div>
+            </section>
+
+            <!-- ---------------------------------------------- report cards -->
+            <!-- A report card is a document a family KEEPS, so this reads as a
+                 document and not as a dashboard: no averages, no progress bars,
+                 no red/amber/green. App\Support\PerformanceLevel argues at
+                 length that a standards scale shown as a percentage or a
+                 pass/fail is a misreading of it — a 2 is "Approaching
+                 Expectations", which is a description of where a child is, and
+                 painting it red says something the teacher did not say. The
+                 teacher's own screen has no colour scale either; inventing one
+                 here would be diverging from it, not matching it. -->
+            <section v-else-if="tab === 'reports'">
+                <p v-if="reportsError" class="text-danger small">{{ reportsError }}</p>
+
+                <!-- ------------------------------------------ one open report -->
+                <template v-if="openCard">
+                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none mb-3"
+                            @click="openCard = null">
+                        &larr; All reports
+                    </button>
+
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="fw-semibold">{{ childName(openCardFor) }}</span>
+                        <span v-if="openCard.grade_label"
+                              class="badge bg-primary-subtle text-primary-emphasis fw-normal">
+                            {{ openCard.grade_label }}
+                        </span>
+                    </div>
+                    <div class="text-muted small mb-3">
+                        {{ openCard.type_label }} &middot; {{ openCard.period_label }}
+                        <span v-if="openCard.published_at">&middot; Sent {{ when(openCard.published_at) }}</span>
+                    </div>
+
+                    <!-- THE KEY, from the payload and never hardcoded. Open by
+                         default, unlike the teacher's collapsed copy: a teacher
+                         knows the scale by heart, a parent is meeting it for the
+                         first time, and "what does a 3 mean?" has to be
+                         answerable without emailing the school. Full labels
+                         here, not the teacher's abbreviations. -->
+                    <details v-if="levelKey.length" class="mb-3" open>
+                        <summary class="small text-primary" style="cursor:pointer">
+                            What do 4, 3, 2 and 1 mean?
+                        </summary>
+                        <dl class="row small mt-2 mb-0">
+                            <template v-for="l in levelKey" :key="l.level">
+                                <dt class="col-sm-4 fw-semibold">{{ l.level }} &mdash; {{ l.label }}</dt>
+                                <dd class="col-sm-8 text-muted">{{ l.description }}</dd>
+                            </template>
+                        </dl>
+                    </details>
+
+                    <!-- The attendance FROZEN at publication, not recomputed.
+                         `present` already includes the late days, so it says so
+                         rather than leaving a parent to work out whether the
+                         three figures are meant to add up. -->
+                    <div v-if="hasAttendance" class="card border-0 bg-light mb-3">
+                        <div class="card-body py-2 small">
+                            Present {{ openCard.attendance.present }}
+                            <span class="text-muted">(includes {{ openCard.attendance.late }} late)</span>
+                            &middot; Absent {{ openCard.attendance.absent }}
+                        </div>
+                    </div>
+
+                    <div v-for="sub in openCard.subjects" :key="sub.subject" class="card border-0 shadow-sm mb-2">
+                        <div class="card-header bg-white fw-semibold small">{{ sub.subject }}</div>
+                        <div class="list-group list-group-flush">
+                            <!-- Keyed by subject+criterion, NOT by id. The family
+                                 payload deliberately carries no mark ids, so a
+                                 `:key="m.id"` copied from the teacher's template
+                                 would collapse every row onto one undefined key. -->
+                            <div v-for="(m, i) in sub.criteria" :key="`${sub.subject}-${m.criterion}-${i}`"
+                                 class="list-group-item d-flex align-items-start gap-3 flex-wrap">
+                                <div class="flex-grow-1" style="min-width:12rem">
+                                    <span class="small">{{ m.criterion }}</span>
+                                    <!-- The per-criterion note. A screen that shows
+                                         only the card-level comment silently drops
+                                         most of what a teacher actually wrote. -->
+                                    <div v-if="m.comment" class="text-muted small fst-italic mt-1">{{ m.comment }}</div>
+                                </div>
+                                <span class="badge fw-normal flex-shrink-0" :class="levelClass(m)">
+                                    {{ levelText(m) }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- LEARNING BEHAVIOURS, deliberately their own card BELOW the
+                         subjects, exactly as the teacher sees them: they are how a
+                         child works, not what a child knows, and folding them in
+                         beside a subject is what that separation exists to stop. -->
+                    <div v-if="openCard.learning_behaviours?.length" class="card border-0 shadow-sm mb-3">
+                        <div class="card-header bg-white fw-semibold small">Learning behaviours</div>
+                        <div class="list-group list-group-flush">
+                            <div v-for="(m, i) in openCard.learning_behaviours" :key="`behaviour-${m.criterion}-${i}`"
+                                 class="list-group-item d-flex align-items-start gap-3 flex-wrap">
+                                <div class="flex-grow-1" style="min-width:12rem">
+                                    <span class="small">{{ m.criterion }}</span>
+                                    <div v-if="m.comment" class="text-muted small fst-italic mt-1">{{ m.comment }}</div>
+                                </div>
+                                <span class="badge fw-normal flex-shrink-0" :class="levelClass(m)">
+                                    {{ levelText(m) }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="openCard.teacher_comment" class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <div class="small text-muted mb-1">Comment from the teacher</div>
+                            <p class="mb-0 small report-comment">{{ openCard.teacher_comment }}</p>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- ---------------------------------- the reports, per child -->
+                <template v-else>
+                    <div v-if="reportsLoading && !reportsLoaded" class="text-center py-4">
+                        <span class="spinner-border spinner-border-sm text-success"></span>
+                    </div>
+
+                    <template v-else>
+                        <div v-for="child in group.children" :key="child.membership_id"
+                             class="card border-0 shadow-sm mb-3">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center gap-3 mb-3">
+                                    <PersonAvatar
+                                        :avatar="child.contact?.avatar"
+                                        :first-name="child.contact?.first_name"
+                                        :last-name="child.contact?.last_name"
+                                        :size="42" />
+                                    <h2 class="h6 mb-0">{{ childName(child) }}</h2>
+                                </div>
+
+                                <!-- "sent home", never "none published yet". A draft
+                                     is a 404 to this realm by design, so the screen
+                                     cannot say a report exists but is being withheld
+                                     — and must not imply it either. -->
+                                <p v-if="!reportCards[child.membership_id]?.length" class="text-muted small mb-0">
+                                    No reports have been sent home yet. When one is, it will appear here.
+                                </p>
+
+                                <div v-else class="list-group list-group-flush">
+                                    <button v-for="row in reportCards[child.membership_id]" :key="row.id"
+                                            type="button"
+                                            class="list-group-item list-group-item-action d-flex align-items-center gap-3 px-0"
+                                            :disabled="openingCard === row.id"
+                                            @click="openReportCard(child, row)">
+                                        <div class="flex-grow-1">
+                                            <div class="fw-semibold small">{{ row.type_label }}</div>
+                                            <div class="text-muted small">{{ row.period_label }}</div>
+                                        </div>
+                                        <span class="badge bg-success-subtle text-success-emphasis fw-normal">
+                                            Sent {{ when(row.published_at) }}
+                                        </span>
+                                        <i class="bi bi-chevron-right text-muted"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </template>
             </section>
         </template>
     </div>
@@ -368,7 +535,7 @@ const onAvatarSaved = (student: any) => {
     avatarFor.value = null;
 };
 const openedMessages = ref<any[]>([]);
-const tab = ref<'story' | 'messages' | 'children' | 'handouts'>('story');
+const tab = ref<'story' | 'messages' | 'children' | 'reports' | 'handouts'>('story');
 
 // ---------- starting a conversation ----------
 const composing = ref(false);
@@ -444,6 +611,11 @@ const downloadHandout = async (h: any) => {
 
 watch(tab, (t) => {
     if (t === 'handouts' && !handouts.value.length) loadHandouts();
+    // Guarded on `reportsLoaded`, not on an empty list: having no reports yet is
+    // the ordinary state for most of a school year, so a length check would
+    // refetch on every visit to the tab. `reportsLoading` stops a double-tap
+    // firing two rounds of requests.
+    if (t === 'reports' && !reportsLoaded.value && !reportsLoading.value) loadReportCards();
 });
 const loading = ref(true);
 const error = ref('');
@@ -546,6 +718,91 @@ const loadChildRecords = async () => {
     }
 };
 
+// ---------- report cards ----------
+// The list and the document are two requests: the index carries no marks (and
+// no level key), because a parent with three children should not pay for three
+// full report cards to find out whether any exist.
+const reportCards = ref<Record<number, any[]>>({});
+const reportsLoaded = ref(false);
+const reportsLoading = ref(false);
+const reportsError = ref('');
+const levelKey = ref<any[]>([]);
+const openCard = ref<any>(null);
+const openCardFor = ref<any>(null);
+const openingCard = ref<number | null>(null);
+
+const loadReportCards = async () => {
+    reportsLoading.value = true;
+    reportsError.value = '';
+
+    try {
+        for (const child of group.value?.children ?? []) {
+            try {
+                const res = await FamilyApiService.get(
+                    `${base.value}/members/${child.membership_id}/report-cards`,
+                );
+                reportCards.value[child.membership_id] = rowsOf(res.data?.data);
+            } catch (e) {
+                if (fail(e)) return;
+                // Per child, so one sibling's failure does not blank the other's
+                // reports — the same reason loadChildRecords() catches inside
+                // its loop rather than around it.
+                reportCards.value[child.membership_id] = [];
+                reportsError.value = 'Some reports could not be loaded just now.';
+            }
+        }
+
+        reportsLoaded.value = true;
+    } finally {
+        reportsLoading.value = false;
+    }
+};
+
+/** Open one report in full. */
+const openReportCard = async (child: any, row: any) => {
+    openingCard.value = row.id;
+    reportsError.value = '';
+
+    try {
+        const res = await FamilyApiService.get(
+            `${base.value}/members/${child.membership_id}/report-cards/${row.id}`,
+        );
+        openCard.value = res.data?.data ?? null;
+        openCardFor.value = child;
+        // `performance_levels` is a SIBLING of `data`, not a member of it. The
+        // `?? existing` keeps an already-loaded key rather than blanking the
+        // legend if a response ever arrives without one.
+        levelKey.value = res.data?.performance_levels ?? levelKey.value;
+    } catch (e) {
+        if (!fail(e)) reportsError.value = 'That report could not be opened.';
+    } finally {
+        openingCard.value = null;
+    }
+};
+
+/**
+ * NULL is "not assessed" — a true thing to say about a child who joined in week
+ * eight — and is never a zero, never an empty pill, and never folded into an
+ * average. Both the model and both controllers state this rule explicitly.
+ */
+const levelText = (m: any): string => {
+    if (m?.level === null || m?.level === undefined) return 'Not assessed';
+
+    const short = levelKey.value.find((l: any) => l.level === m.level)?.short_label;
+
+    return `${m.level} · ${short ?? m.level_label ?? ''}`.trim();
+};
+
+const levelClass = (m: any): string =>
+    m?.level === null || m?.level === undefined
+        ? 'bg-light text-muted'
+        : 'bg-primary-subtle text-primary-emphasis';
+
+/** Null is "no figure recorded", which is not the same as a zero. */
+const hasAttendance = computed(() =>
+    openCard.value?.attendance != null && openCard.value.attendance.present !== null,
+);
+
 onMounted(async () => {
     try {
         const res = await FamilyApiService.get(base.value);
@@ -569,7 +826,10 @@ onMounted(async () => {
     }
 });
 
-watch(tab, () => { openedThread.value = null; });
+watch(tab, () => {
+    openedThread.value = null;
+    openCard.value = null;
+});
 </script>
 
 <style scoped>
@@ -580,5 +840,9 @@ watch(tab, () => { openedThread.value = null; });
 }
 .letter-chip--learning { background: rgba(255, 193, 7, .28); }
 .letter-chip--mastered { background: rgba(25, 135, 84, .26); color: #0f5132; }
+
+/* A teacher's comment is 4000 characters of free text, and where they put the
+   line breaks is part of what they wrote. */
+.report-comment { white-space: pre-wrap; }
 </style>
 

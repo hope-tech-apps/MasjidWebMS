@@ -23,7 +23,11 @@ use Symfony\Component\HttpFoundation\Response;
  * 1. THE WARD EDGE. The membership must be a child this caller is the guardian
  *    of. `FamilyController::subject()` is that gate and is shared with every
  *    other per-child route in this realm, so a parent naming another family's
- *    child gets a 404 — not a 403, which would confirm the child exists.
+ *    child gets a 403, exactly as they do on awards, ḥifẓ and letters. The two
+ *    gates therefore answer differently ON PURPOSE, and the difference is the
+ *    point: the ward edge is about a child the caller has no business naming at
+ *    all, while publication is about a child who IS theirs — which is the case
+ *    where the status code has something to give away.
  *
  * 2. PUBLICATION. `->published()` is applied as a SCOPE, not as an `if` after
  *    the fetch. A draft card is therefore a 404 in exactly the way a

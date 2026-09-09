@@ -12,6 +12,8 @@ use App\Models\GroupPost;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
 use App\Models\Masjid;
+use App\Models\ReportCard;
+use App\Models\ReportCardMark;
 use App\Support\GroupAudience;
 use App\Support\GroupPostAttachments;
 use App\Support\TenantContext;
@@ -1188,6 +1190,205 @@ class FamilyPortalTest extends TestCase
     }
 
     // ------------------------------------------------ 6. the realm stays read-only
+
+    // ------------------------------------------------------------------
+    // REPORT CARDS
+    //
+    // These endpoints shipped with the teacher's side of the feature and had no
+    // parent-facing coverage at all: every test in ReportCardTest authenticates
+    // as a staff User against /api/teacher, and the two sweep tests above
+    // enumerate their surfaces by hand rather than from the route table, so a
+    // regression here would have passed the suite green.
+    // ------------------------------------------------------------------
+
+    #[Test]
+    public function a_parent_reads_their_own_childs_published_report_card(): void
+    {
+        $card = $this->makeCard($this->childAMembership, published: true);
+
+        $index = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership));
+
+        $index->assertOk();
+        $index->assertJsonCount(1, 'data');
+        $index->assertJsonPath('data.0.id', $card->id);
+        $index->assertJsonPath('data.0.type_label', 'Report Card');
+        $index->assertJsonPath('data.0.period_label', 'Quarter 2, 2026-2027');
+
+        $show = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership, $card->id));
+
+        $show->assertOk();
+        $show->assertJsonPath('data.grade_label', '3rd');
+        $show->assertJsonPath('data.teacher_comment', 'A good quarter.');
+        $show->assertJsonPath('data.subjects.0.subject', 'Qur\'an');
+        $show->assertJsonPath('data.subjects.0.criteria.0.criterion', 'Tajweed');
+        $show->assertJsonPath('data.subjects.0.criteria.0.level', 3);
+        $show->assertJsonPath('data.subjects.0.criteria.0.comment', 'Clear makhraj.');
+
+        // Beside the subjects, never inside one.
+        $show->assertJsonPath('data.learning_behaviours.0.criterion', 'Works well with others');
+        $show->assertJsonPath('data.learning_behaviours.0.level', 4);
+    }
+
+    /**
+     * The claim the controller is built around: a draft is a 404 in exactly the
+     * way a nonexistent card is.
+     *
+     * `published()` is applied as a SCOPE inside the query rather than as a
+     * check after the fetch, so a parent cannot learn that a report about their
+     * own child exists but is being withheld while a teacher is still writing
+     * it. If someone ever "simplifies" that into an `if ($card->isPublished())`
+     * after a findOrFail, this is the test that says no.
+     */
+    #[Test]
+    public function a_draft_report_card_does_not_exist_as_far_as_a_parent_is_concerned(): void
+    {
+        $draft = $this->makeCard($this->childAMembership, published: false);
+
+        $this->as($this->parentA)
+            ->getJson($this->reportCardsUrl($this->childAMembership))
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->as($this->parentA)
+            ->getJson($this->reportCardsUrl($this->childAMembership, $draft->id))
+            ->assertNotFound();
+    }
+
+    #[Test]
+    public function a_parent_cannot_open_another_familys_childs_report_card(): void
+    {
+        $bilals = $this->makeCard($this->childBMembership, published: true);
+
+        $this->as($this->parentA)
+            ->getJson($this->reportCardsUrl($this->childBMembership))
+            ->assertForbidden();
+
+        $this->as($this->parentA)
+            ->getJson($this->reportCardsUrl($this->childBMembership, $bilals->id))
+            ->assertForbidden();
+    }
+
+    /**
+     * A report card a parent cannot decode has not communicated anything, so the
+     * key travels WITH the document — as a sibling of `data`, which is the shape
+     * both the teacher screen and the parent screen read it from.
+     */
+    #[Test]
+    public function the_performance_level_key_travels_with_the_card(): void
+    {
+        $card = $this->makeCard($this->childAMembership, published: true);
+
+        $show = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership, $card->id));
+
+        $show->assertOk();
+        $show->assertJsonCount(4, 'performance_levels');
+        $show->assertJsonPath('performance_levels.0.level', 4);
+        $show->assertJsonPath('performance_levels.0.label', 'Exceeds Expectations');
+        $show->assertJsonPath('performance_levels.3.level', 1);
+
+        // A sibling of `data`, not a member of it. A screen reading
+        // data.performance_levels gets undefined and renders no legend at all.
+        $this->assertArrayNotHasKey('performance_levels', $show->json('data'));
+    }
+
+    /**
+     * NULL is "not assessed" — true of a child who joined in week eight — and
+     * must survive the trip to the family as a null, never as a zero.
+     */
+    #[Test]
+    public function an_unassessed_criterion_reaches_the_family_as_null_and_never_as_a_zero(): void
+    {
+        $card = $this->makeCard($this->childAMembership, published: true);
+
+        $show = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership, $card->id));
+
+        $show->assertOk();
+        $this->assertNull($show->json('data.subjects.0.criteria.1.level'));
+        $this->assertNull($show->json('data.subjects.0.criteria.1.level_label'));
+    }
+
+    /** The document a family keeps must not rewrite its own attendance later. */
+    #[Test]
+    public function the_family_reads_the_attendance_frozen_at_publication(): void
+    {
+        $card = $this->makeCard($this->childAMembership, published: true);
+
+        $show = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership, $card->id));
+
+        $show->assertJsonPath('data.attendance.present', 30);
+        $show->assertJsonPath('data.attendance.absent', 2);
+        $show->assertJsonPath('data.attendance.late', 3);
+    }
+
+    #[Test]
+    public function report_cards_are_listed_newest_first(): void
+    {
+        $first = $this->makeCard($this->childAMembership, published: true, term: 1);
+        $second = $this->makeCard($this->childAMembership, published: true, term: 2);
+
+        $index = $this->as($this->parentA)->getJson($this->reportCardsUrl($this->childAMembership));
+
+        $index->assertOk();
+        $index->assertJsonPath('data.0.id', $second->id);
+        $index->assertJsonPath('data.1.id', $first->id);
+    }
+
+    private function reportCardsUrl(GroupMembership $membership, ?int $cardId = null): string
+    {
+        return $this->groupUrl(
+            "/members/{$membership->id}/report-cards" . ($cardId !== null ? "/{$cardId}" : '')
+        );
+    }
+
+    /**
+     * A card with one marked criterion, one deliberately unmarked one, and one
+     * learning behaviour.
+     *
+     * `published_at` is written with forceFill because it is deliberately absent
+     * from ReportCard::$fillable — publication is what makes a document visible
+     * to a family and must never happen as a side effect of saving a draft.
+     */
+    private function makeCard(GroupMembership $membership, bool $published, int $term = 2): ReportCard
+    {
+        $card = ReportCard::create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'group_membership_id' => $membership->id,
+            'type' => ReportCard::TYPE_REPORT_CARD,
+            'school_year' => '2026-2027',
+            'term' => $term,
+            'grade_label' => '3rd',
+            'teacher_comment' => 'A good quarter.',
+            'days_present' => 30,
+            'days_absent' => 2,
+            'days_late' => 3,
+        ]);
+
+        $rows = [
+            [ReportCardMark::KIND_ACADEMIC, 'Qur\'an', 'Tajweed', 3, 'Clear makhraj.', 0],
+            [ReportCardMark::KIND_ACADEMIC, 'Qur\'an', 'Memorisation', null, null, 1],
+            [ReportCardMark::KIND_BEHAVIOUR, 'Learning Behaviours', 'Works well with others', 4, null, 2],
+        ];
+
+        foreach ($rows as [$kind, $subject, $criterion, $level, $comment, $position]) {
+            ReportCardMark::create([
+                'masjid_id' => $this->masjid->id,
+                'report_card_id' => $card->id,
+                'kind' => $kind,
+                'subject' => $subject,
+                'criterion' => $criterion,
+                'level' => $level,
+                'comment' => $comment,
+                'position' => $position,
+            ]);
+        }
+
+        if ($published) {
+            $card->forceFill(['published_at' => now()])->save();
+        }
+
+        return $card;
+    }
 
     #[Test]
     public function the_family_realm_writes_exactly_nine_things(): void
