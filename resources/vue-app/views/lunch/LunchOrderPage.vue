@@ -124,7 +124,7 @@
 
                     <label v-if="showFeeOffer" class="lunch-cover">
                         <input type="checkbox" v-model="coverFees" />
-                        <span>{{ t('cover_fees', money(feeCoveredMinor)) }}</span>
+                        <span>{{ t('cover_fees', money(feeOfferMinor)) }}</span>
                     </label>
 
                     <p v-if="error" class="lunch-error" role="alert">{{ error }}</p>
@@ -250,17 +250,22 @@ const showFeeOffer = computed<boolean>(() =>
     && subtotalMinor.value > 0
 );
 
-// The same gross-up the server runs, so the box states the exact figure the
-// customer will be charged. The server recomputes it either way — this number
-// is never submitted, only `coverFees` is.
-const feeCoveredMinor = computed<number>(() => {
-    if (!showFeeOffer.value || !coverFees.value) return 0;
+// What covering the fee WOULD cost — the same gross-up the server runs, so the
+// offer states the exact figure. Independent of whether the box is ticked,
+// because the label has to name a price before anyone agrees to it; a label
+// reading "Add $0.00" until you tick it tells the customer nothing.
+const feeOfferMinor = computed<number>(() => {
+    if (!showFeeOffer.value) return 0;
     const intended = subtotalMinor.value + donationMinor.value;
     if (intended <= 0) return 0;
     const pct = Number(menu.value?.stripe_fee_percentage ?? 0.029);
     const fixed = Number(menu.value?.stripe_fee_fixed_minor ?? 30);
     return Math.max(0, Math.round((intended + fixed) / (1 - pct)) - intended);
 });
+
+// What is actually charged. The server recomputes it either way — this number
+// is never submitted, only `coverFees` is.
+const feeCoveredMinor = computed<number>(() => (coverFees.value ? feeOfferMinor.value : 0));
 
 const totalMinor = computed(() => subtotalMinor.value + donationMinor.value + feeCoveredMinor.value);
 
