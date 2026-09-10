@@ -101,7 +101,7 @@ class MobileAppUsersController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $user->masjid
+                'data' => $user->masjid?->makeHidden(Masjid::PUBLIC_DIRECTORY_DENYLIST)
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([

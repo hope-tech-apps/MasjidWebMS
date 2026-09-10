@@ -196,6 +196,34 @@ class PublicMasjidDirectoryTest extends TestCase
         }
     }
 
+    /**
+     * GET /api/mobile/user/masjid returned the raw masjids row to anyone who had
+     * registered a device id, for ANY organisation, listed or not: the Maps key,
+     * the Stripe account, the tax id and the capability overrides. The same rule
+     * applies there as on the directory. Found by review, 2026-09-10.
+     */
+    #[Test]
+    public function the_device_masjid_endpoint_applies_the_same_rule(): void
+    {
+        $masjid = $this->makeListedMasjid();
+        // Unlisted, so directory visibility is not what stops the leak.
+        if (Schema::hasColumn('masjids', 'listed_at')) {
+            $masjid->forceFill(['listed_at' => null])->save();
+        }
+        $masjid->forceFill(['capability_overrides' => ['web_pages' => true]])->save();
+
+        $this->postJson('/api/mobile/user', ['masjid_id' => $masjid->id, 'device_id' => 'probe-device-1'])->assertSuccessful();
+        $response = $this->getJson('/api/mobile/user/masjid?device_id=probe-device-1')->assertOk();
+        $row = $response->json('data');
+
+        $this->assertIsArray($row);
+        $this->assertSame($masjid->id, $row['id'] ?? null);
+        foreach (Masjid::PUBLIC_DIRECTORY_DENYLIST as $column) {
+            $this->assertArrayNotHasKey($column, $row, "`{$column}` reached an anonymous caller on the device endpoint");
+        }
+        $this->assertStringNotContainsString('AIzaSyTESTKEY', $response->getContent());
+    }
+
     private function makeListedMasjid(): Masjid
     {
         $masjid = Masjid::create([
