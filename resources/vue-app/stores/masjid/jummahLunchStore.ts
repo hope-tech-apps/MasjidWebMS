@@ -45,6 +45,28 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
             : `/api/admin/masjids/${masjidStore.masjid?.id}/jummah-lunch`;
     }
 
+    /**
+     * Whether this store cannot address a masjid yet.
+     *
+     * ONE function on purpose. This guard was written inline in four places,
+     * and when the lunch realm arrived three were updated and `fetchOrders`
+     * was not — so a volunteer opened the Orders tab, no request was ever made,
+     * and the page said "No orders yet." for a menu with real orders on it. A
+     * silent early return is the worst failure available here: it is
+     * indistinguishable from an empty list.
+     *
+     * A LunchStaff is never "not ready": their shell never loads masjidStore,
+     * and their masjid comes from the login payload instead.
+     */
+    function notReady(): boolean {
+        return !isLunchStaff() && !masjidStore.masjid?.id;
+    }
+
+    /** Admin-only calls: these endpoints sit behind `admin` and refuse lunch staff. */
+    function adminOnly(): boolean {
+        return isLunchStaff() || !masjidStore.masjid?.id;
+    }
+
     function ensureMasjid(): void {
         if (isLunchStaff()) {
             return;
@@ -58,7 +80,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     // ---------------------------------------------------------------- menus
 
     async function fetchMenus(): Promise<void> {
-        if (!isLunchStaff() && !masjidStore.masjid?.id) return;
+        if (notReady()) return;
         menus.value = [];
         const res: AxiosResponse = await ApiService.get(`${base()}/menus`);
         if (res.data?.status === "success" && Array.isArray(res.data?.data)) {
@@ -67,7 +89,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     async function fetchMenu(id: number | string): Promise<any | null> {
-        if (!isLunchStaff() && !masjidStore.masjid?.id) return null;
+        if (notReady()) return null;
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${id}`);
         if (res.data?.status === "success" && res.data?.data) {
             currentMenu.value = res.data.data;
@@ -122,7 +144,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     // --------------------------------------------------------------- orders
 
     async function fetchOrders(menuId: number | string): Promise<void> {
-        if (!masjidStore.masjid?.id) return;
+        if (notReady()) return;
         orders.value = [];
         orderSummary.value = null;
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${menuId}/orders`);
@@ -237,7 +259,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     const staff = ref<any[]>([]);
 
     async function fetchStaff(): Promise<void> {
-        if (isLunchStaff() || !masjidStore.masjid?.id) return;
+        if (adminOnly()) return;
         const res: AxiosResponse = await ApiService.get(`${base()}/staff`);
         staff.value = Array.isArray(res.data?.data) ? res.data.data : [];
     }
@@ -276,7 +298,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         // Admin-only: the picker chooses which SERVICE subscribers are notified
         // about, and the services endpoint lives behind `admin`. Lunch staff
         // simply do not see that field.
-        if (isLunchStaff() || !masjidStore.masjid?.id) return;
+        if (adminOnly()) return;
         try {
             const res: AxiosResponse = await ApiService.get(
                 `/api/admin/masjids/${masjidStore.masjid.id}/services?page=1`

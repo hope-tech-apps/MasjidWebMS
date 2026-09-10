@@ -172,6 +172,34 @@ class LunchStaffRealmTest extends TestCase
     // ---------------------------------------------------- what they CANNOT do
 
     #[Test]
+    public function the_realm_can_re_identify_its_own_principal(): void
+    {
+        // The SPA re-fetches the signed-in user on EVERY page load, and the
+        // admin /user route is `admin`-gated. Without a realm-local one the
+        // reload 401s, boot reads that as a dead session, and the login works
+        // while refreshing the page signs them straight back out.
+        Sanctum::actingAs($this->lunchStaff);
+
+        $this->getJson('/api/lunch/user')
+            ->assertOk()
+            ->assertJsonPath('data.type', User::TYPE_LUNCH_STAFF)
+            // Their masjid rides along, because their shell names the org and
+            // the store builds its URLs from it.
+            ->assertJsonPath('data.masjid.id', $this->masjid->id);
+
+        // ...and the admin one still refuses them, which is why the above exists.
+        $this->getJson('/api/admin/user')->assertStatus(401);
+    }
+
+    #[Test]
+    public function an_admin_cannot_re_identify_through_the_lunch_realm(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->getJson('/api/lunch/user')->assertStatus(401);
+    }
+
+    #[Test]
     public function lunch_staff_are_refused_by_every_admin_endpoint(): void
     {
         Sanctum::actingAs($this->lunchStaff);
