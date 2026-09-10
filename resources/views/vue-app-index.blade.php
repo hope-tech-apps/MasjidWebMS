@@ -42,6 +42,28 @@
     <link rel="icon" type="image/png" sizes="32x32" href="{{ asset('manara-icon-32.png') }}">
     <link rel="apple-touch-icon" href="{{ asset('manara-icon-180.png') }}">
 
+    {{--
+        WHICH ORGANISATION IS THIS, WHEN THE URL DOES NOT SAY?
+
+        `/portal` carries no id. On this app's own domain nobody asks — the
+        id-bearing `/portal/14` is what gets linked. But a school can point its
+        own hostname at this application, and then the hostname IS the answer.
+
+        Previously the only source of this was the Cloudflare Worker proxying
+        alrazischool.org/portal, which injected the same global after `<head>`.
+        That works for a proxied path and cannot work for a hostname pointed
+        straight here, because there is no proxy in between to inject anything.
+
+        Emitted for every request on a mapped host rather than only on /portal:
+        the SPA is a single bundle and the router decides the page client-side,
+        so the value has to be present before the app boots. Only OrgPortal.vue
+        reads it, and an unmapped host emits nothing at all.
+    --}}
+    @php($portalMasjidId = config('portal.hosts')[strtolower(request()->getHost())] ?? null)
+    @if ($portalMasjidId)
+        <script>window.__PORTAL_MASJID__ = {{ (int) $portalMasjidId }};</script>
+    @endif
+
     @vite('resources/js/app.js')
 
 </head>

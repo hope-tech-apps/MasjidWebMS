@@ -24,6 +24,20 @@ Route::middleware('throttle:20,1')->group(function () {
         ->name('connect.refresh');
 });
 
+/*
+ * On a hostname a school has pointed at this application, the root of that
+ * hostname is the school's portal — not this app's dashboard.
+ *
+ * A parent told "go to portal.alrazischool.org" types exactly that and nothing
+ * more, and landing them on a staff-shaped app root would be a dead end. Hosts
+ * that are not mapped are untouched and keep serving the SPA at `/`.
+ */
+Route::get('/', function () {
+    $masjidId = config('portal.hosts')[strtolower(request()->getHost())] ?? null;
+
+    return $masjidId ? redirect('/portal') : view('vue-app-index');
+});
+
 Route::get('/{any}', function () {
     return view('vue-app-index');
 })->where('any', '^(?!api).*$');
