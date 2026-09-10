@@ -1,5 +1,5 @@
 import { MasjidDashboardRoute, SuperDashboardRoute } from "@/core/types/config/SystemRoutes"
-import { UserType } from "@/core/types/data/User";
+import { UserGrant, UserType } from "@/core/types/data/User";
 import { OrgType, TerminologyKey } from "@/core/types/data/Vertical";
 
 export type AsideMenuItem = {
@@ -13,6 +13,11 @@ export type AsideMenuItem = {
     svg_icon: string;
     to: MasjidDashboardRoute | SuperDashboardRoute;
     allowed_types: UserType[];
+    // When set, an account whose type is NOT in `allowed_types` still sees the
+    // item if this per-account grant is true on its user record — one named
+    // administrator, rather than every user of that type. Like
+    // `requiresOrgTypes`, this is menu visibility, never authorization.
+    grant?: UserGrant;
     // When true, the item is only shown if the active masjid's crm_enabled is true.
     requiresCrm?: boolean;
     // When true, the item is only shown if the active masjid's assistant_enabled is true.

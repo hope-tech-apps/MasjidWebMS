@@ -142,13 +142,17 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 <path d="M9 21V9" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>`,
         to: '/masjid/pages',
-        allowed_types: ['SuperAdmin']
+        allowed_types: ['SuperAdmin'],
+        // A MasjidAdmin sees it only once their own account is granted
+        // (`users.can_manage_web_pages`), not because of their type.
+        grant: 'can_manage_web_pages'
     },
     {
         // Deliberately open to MasjidAdmin as well as SuperAdmin: a masjid runs its own
         // registrations, so its own admins have to be able to read who signed up. (The
-        // Web Pages item above is SuperAdmin-only even though its routes are not — that
-        // is a separate decision and is left alone here.)
+        // Web Pages item above is SuperAdmin-only by type, plus any admin whose account
+        // is granted it, even though its routes are open to every MasjidAdmin — that is
+        // a separate decision and is left alone here.)
         title: "Form Responses",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M9 4H7C5.89543 4 5 4.89543 5 6V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V6C19 4.89543 18.1046 4 17 4H15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
