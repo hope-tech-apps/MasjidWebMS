@@ -51,9 +51,19 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::middleware(['auth:sanctum', 'lunch'])->prefix('lunch')->group(function () {
-    // No `tenant`: signing out is not about a masjid, and a principal whose
-    // membership was just removed must still be able to end their session
-    // rather than be met with a 403 by the tenant binding.
+    // Session endpoints — no `tenant`, and reusing AuthController's LunchStaff
+    // branch (which attaches their masjid from the membership).
+    //
+    // `/user` is not a convenience: the SPA re-fetches the principal on every
+    // page load, and the admin `/user` route is `admin`-gated and rejects this
+    // type. Without this route a reload 401s, the boot sequence treats that as
+    // a failed session and signs them out — so the login worked and refreshing
+    // the page logged them straight back out. The teacher realm carries its own
+    // for exactly the same reason.
+    Route::get('/user', [AuthController::class, 'user']);
+
+    // A principal whose membership was just removed must still be able to end
+    // their session rather than be met with a 403 by the tenant binding.
     Route::post('/logout', [AuthController::class, 'logout']);
 });
 

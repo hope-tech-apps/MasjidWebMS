@@ -72,28 +72,56 @@ export const useAuthStore = defineStore('authStore', () => {
 
     }
 
+    /**
+     * The realms a staff principal can be re-identified through, in order.
+     *
+     * Every scoped realm needs its own `/user`, because the admin one is
+     * `admin`-gated and answers 401 for anything else — and this runs on EVERY
+     * page load. A missing entry here does not degrade gracefully: the boot
+     * sequence reads the 401 as a dead session and signs the user out, so the
+     * login succeeds and refreshing the page logs them straight back out.
+     *
+     * Tried in order rather than driven by a stored type, so the chain repairs
+     * itself if the persisted value is ever stale or absent.
+     */
+    const USER_ENDPOINTS = ['/api/admin/user', '/api/teacher/user', '/api/lunch/user'];
+
     async function fetchAuthUser(): Promise<SystemRoute | void> {
-        await ApiService.get('/api/admin/user')
-            .then((res: AxiosResponse) => {
+        let lastError: unknown = null;
+
+        for (const url of USER_ENDPOINTS) {
+            try {
+                const res: AxiosResponse = await ApiService.get(url);
+
                 if (res.data?.status === 'success' && res.data?.data) {
                     user.value = res.data.data;
+
                     if (user.value?.type === 'SuperAdmin') {
-                        let expectedMasjidId = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id)
+                        const expectedMasjidId = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
                         if (expectedMasjidId)
                             dashboardMasjidId.value = parseInt(expectedMasjidId);
-                    } else if (user.value?.type === 'MasjidAdmin' && user.value.masjid?.id) {
-                        saveDashboardMasjidId(user.value.masjid.id);
-                    } else if (user.value?.type === 'Teacher' && user.value.masjid?.id) {
-                        // A teacher is bound to exactly one school; seed the id the
-                        // teacher shell and any masjid-scoped fetch lean on.
+                    } else if (user.value?.masjid?.id) {
+                        // MasjidAdmin, Teacher and LunchStaff are each bound to
+                        // exactly one organisation; seed the id their shells and
+                        // any masjid-scoped fetch lean on.
                         saveDashboardMasjidId(user.value.masjid.id);
                     }
+
+                    return;
                 }
-            })
-            .catch((e: Error) => {
-                console.log(e);
-                throw e;
-            });
+            } catch (e) {
+                lastError = e;
+                // Only a refusal is worth trying the next realm for. Anything
+                // else (offline, 500) means the session is not the problem.
+                const status = (e as AxiosError)?.response?.status;
+                if (status !== 401 && status !== 403 && status !== 404) {
+                    throw e;
+                }
+            }
+        }
+
+        console.log(lastError);
+        throw lastError ?? new Error('Could not identify the signed-in user.');
     }
 
     async function logout(): Promise<SystemRoute | void> {

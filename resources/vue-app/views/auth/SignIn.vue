@@ -100,6 +100,16 @@ async function signIn () : Promise<void> {
                         authStore.saveDashboardMasjidId(authStore.user.masjid.id);
                     }
                     router.push("/teacher");
+                }
+                else if(authStore.user?.type === 'LunchStaff') {
+                    // Same shape as Teacher: seed the masjid id their shell reads
+                    // and do NOT call the admin-scoped masjidStore.fetchMasjid(),
+                    // which this login has no access to. Their masjid rides on the
+                    // login payload, attached from their membership.
+                    if (authStore.user.masjid) {
+                        authStore.saveDashboardMasjidId(authStore.user.masjid.id);
+                    }
+                    router.push("/lunch");
                 } else {
                     router.push("/auth/401");
                 }
