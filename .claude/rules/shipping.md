@@ -78,6 +78,27 @@ A nullable id clears with `""`.
 one never did. The email toggle had been unsaveable-by-edit since the day it shipped
 and nobody noticed, because the UI reported success.
 
+## When a rule is written down in several places, it has already broken
+
+Adding one scoped login type (`LunchStaff`) produced FOUR bugs in an hour, all
+the same shape: a fact that lived in several places, and only some were updated.
+
+| the parallel lists | what the miss looked like |
+|---|---|
+| the admin form and `menuUrlParams` | a toggle that saved successfully and changed nothing |
+| `router.ts`, `SignIn.vue`, `main.ts` — three separate `users.type` switches | login worked, landed on 401, and a reload signed the user out |
+| the same `masjidStore` guard written inline four times | the Orders tab said "No orders yet." for a menu with paid orders |
+| a `v-if` and its `v-else` | the entire page rendered blank |
+
+None errored. Every one of them reported success while doing nothing, which is
+why the test suite could not see any of them.
+
+So: **before adding a value to any of these, grep for its siblings.**
+`grep -rn "'Teacher'" resources/vue-app/` finds every place a user type is
+branched on; the same trick works for a form field name or a guard. And when
+the same condition is written inline more than twice, give it a name — one
+`notReady()` cannot be updated in three places out of four.
+
 ## A swallowed failure must be logged at or above the deployed level
 
 Production runs `LOG_LEVEL=warning`. A deliberate `catch (\Throwable)` that logs at
