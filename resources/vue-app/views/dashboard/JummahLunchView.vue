@@ -648,8 +648,12 @@ onBeforeMount(load);
 </script>
 
 <style scoped>
-.jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; z-index: 1080; }
-.jl-dialog { width: 100%; max-width: 460px; }
+/* A dialog taller than the window must still reach its Save button: the
+   dialog is capped to the viewport with its header and footer pinned, and the
+   body scrolls. The overlay scrolls too, as a fallback on very short screens. */
+.jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 12px; z-index: 1080; overflow-y: auto; }
+.jl-dialog { width: 100%; max-width: 460px; max-height: 92vh; max-height: calc(100dvh - 8vh); display: flex; flex-direction: column; }
+.jl-dialog > .card-body { overflow-y: auto; min-height: 0; }
 .stat { background: #f6f8fa; border-radius: 10px; padding: 12px; text-align: center; }
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
 .stat-l { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .03em; }
