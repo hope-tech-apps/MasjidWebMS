@@ -21,6 +21,8 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 - `.claude/rules/` — path-scoped conventions (`tenant-scoping.md`,
   `stripe-payments.md`, `migrations.md`, `auth-permissions.md`, `verticals.md`,
   `private-uploads.md`, `groups.md`, `section-types.md`).
+  **Read `shipping.md` before touching anything a customer or admin uses** — it is
+  the one written from bugs that reached a live page past a green suite.
 
 ## Status
 
