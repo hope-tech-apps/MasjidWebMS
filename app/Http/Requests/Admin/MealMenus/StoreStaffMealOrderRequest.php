@@ -7,22 +7,13 @@ use App\Http\Requests\BaseFormRequest;
 /**
  * An order taken by staff on the lunch board (POST .../menus/{menu_id}/orders).
  *
- * Prices are never accepted: the server reads them from the menu. `paid` is
- * the only flag, and the SPA posts it form-encoded, so "1"/"0"/"true"/"false"
- * are coerced here — Laravel's `boolean` rule rejects the words, which once
- * blocked every live lunch order (see .claude/rules/shipping.md).
+ * Prices are never accepted: the server reads them from the menu. Nor is any
+ * payment field: the order is charged through Stripe like a public order, and
+ * only Stripe marks it paid. There is deliberately no "paid" flag — a
+ * volunteer once marked their own order paid with no money changing hands.
  */
 class StoreStaffMealOrderRequest extends BaseFormRequest
 {
-    protected function prepareForValidation(): void
-    {
-        if ($this->has('paid')) {
-            $this->merge([
-                'paid' => filter_var($this->input('paid'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
-            ]);
-        }
-    }
-
     public function rules(): array
     {
         return [
@@ -34,7 +25,6 @@ class StoreStaffMealOrderRequest extends BaseFormRequest
             'customer_phone' => 'nullable|string|max:32',
             'customer_email' => 'nullable|email|max:190',
             'customer_notes' => 'nullable|string|max:500',
-            'paid' => 'required|boolean',
         ];
     }
 

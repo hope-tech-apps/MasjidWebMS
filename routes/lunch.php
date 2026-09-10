@@ -90,6 +90,7 @@ Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'capability:jummah_lunch']
             Route::get('/menus/{menu_id}/orders', 'index');
             // Staff-entered orders (table, phone, no link) — MealOrdersController::store.
             Route::post('/menus/{menu_id}/orders', 'store');
+            Route::post('/menus/{menu_id}/orders/{order_id}/payment-link', 'paymentLink');
             Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
             Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
             Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');

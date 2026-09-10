@@ -157,11 +157,12 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     /**
      * An order taken by staff on the board (table, phone, no link). Admins and
      * lunch volunteers share it through base(). Prices are NOT sent — the server
-     * reads them from the menu. Form-encoded, `paid` as '1'/'0'.
+     * reads them from the menu — and there is no "paid" flag: the order is
+     * charged through Stripe, and the reply carries checkout_url. Form-encoded.
      */
     async function createOrder(menuId: number | string, payload: {
         customer_name: string; customer_phone?: string; customer_email?: string; customer_notes?: string;
-        paid: boolean; items: { item_id: number; quantity: number }[];
+        items: { item_id: number; quantity: number }[];
     }): Promise<any> {
         ensureMasjid();
         const body = new FormData();
@@ -169,7 +170,6 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (payload.customer_phone?.trim()) body.append("customer_phone", payload.customer_phone.trim());
         if (payload.customer_email?.trim()) body.append("customer_email", payload.customer_email.trim());
         if (payload.customer_notes?.trim()) body.append("customer_notes", payload.customer_notes.trim());
-        body.append("paid", payload.paid ? "1" : "0");
         payload.items.forEach((it, i) => {
             body.append(`items[${i}][item_id]`, String(it.item_id));
             body.append(`items[${i}][quantity]`, String(it.quantity));
@@ -177,6 +177,14 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders`, body);
         if (res.data?.status === "success") return res.data;
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not add the order.");
+    }
+
+    /** The Stripe payment page for an unpaid order (an open one is reused). */
+    async function paymentLink(menuId: number | string, orderId: number | string): Promise<string> {
+        ensureMasjid();
+        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/payment-link`, new FormData());
+        if (res.data?.status === "success" && res.data?.data?.checkout_url) return res.data.data.checkout_url;
+        throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not create the payment page.");
     }
 
     async function markOrderPaid(menuId: number | string, orderId: number | string): Promise<any> {
@@ -341,6 +349,6 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,
-        fetchOrders, createOrder, markOrderPaid, updateOrderStatus, uploadFlyer,
+        fetchOrders, createOrder, paymentLink, markOrderPaid, updateOrderStatus, uploadFlyer,
     };
 });

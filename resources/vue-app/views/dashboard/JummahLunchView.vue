@@ -133,7 +133,9 @@
                                             <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s">{{ s }}</option>
                                         </select>
                                     </td>
-                                    <td class="text-end">
+                                    <td class="text-end text-nowrap">
+                                        <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled' && currentMenu?.allow_online_payment"
+                                            class="btn btn-sm btn-outline-primary me-1" @click="openPayLink(o)">Payment link</button>
                                         <button v-if="o.payment_method === 'pickup' && o.payment_status === 'unpaid'"
                                             class="btn btn-sm btn-success" @click="markPaid(o)">Mark paid</button>
                                     </td>
@@ -312,17 +314,39 @@
                         </div>
                     </div>
                     <div class="mb-2"><label class="form-label" for="jlo-notes">Notes <span class="text-muted small">(optional)</span></label><input id="jlo-notes" v-model="orderModal.form.customer_notes" class="form-control" maxlength="500" /></div>
-                    <fieldset class="mb-2">
-                        <legend class="form-label fs-6 mb-1">Payment</legend>
-                        <div class="form-check"><input id="jlo-paid" v-model="orderModal.form.paid" class="form-check-input" type="radio" name="jlo-pay" :value="true" /><label class="form-check-label" for="jlo-paid">Paid now — cash or card at the table</label></div>
-                        <div class="form-check"><input id="jlo-later" v-model="orderModal.form.paid" class="form-check-input" type="radio" name="jlo-pay" :value="false" /><label class="form-check-label" for="jlo-later">Will pay at pickup</label></div>
-                    </fieldset>
+                    <div class="mb-2 small">
+                        <div class="form-label fs-6 mb-1">Payment</div>
+                        <div v-if="currentMenu?.allow_online_payment" class="text-muted">
+                            Paid by card through Stripe, like any online order. Next you can open the payment page on this device or send the link to the customer. The order is marked paid when Stripe confirms it.
+                        </div>
+                        <div v-else class="alert alert-warning py-2 mb-0" role="alert">
+                            Orders added here are paid online through Stripe, and online payment is switched off for this lunch. Switch it on under Edit menu first.
+                        </div>
+                    </div>
                     <div class="d-flex justify-content-between fw-semibold mt-3"><span>Total</span><span>{{ money(orderTotal) }}</span></div>
                     <div v-if="orderError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ orderError }}</div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="orderModal.show = false">Cancel</button>
-                    <button class="btn btn-success" :disabled="savingOrder || !orderTotal" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order' }}</button>
+                    <button class="btn btn-success" :disabled="savingOrder || !orderTotal || !currentMenu?.allow_online_payment" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order and get payment link' }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Payment page for an order: open it here, or send the link to the customer. -->
+        <div v-if="payModal.show" class="jl-modal">
+            <div class="jl-dialog card">
+                <div class="card-header"><h5 class="mb-0">Payment for order #{{ payModal.orderNumber }}</h5></div>
+                <div class="card-body">
+                    <p class="mb-2">{{ money(payModal.total) }} for {{ payModal.name }}. Stripe marks the order paid as soon as they pay. The link works for 24 hours; after that, press "Payment link" on the order for a new one.</p>
+                    <div class="input-group input-group-sm mb-2">
+                        <input class="form-control" :value="payModal.url" readonly aria-label="Payment link" @focus="($event.target as HTMLInputElement).select()" />
+                        <button class="btn btn-outline-secondary" type="button" @click="copyPayLink">{{ payModal.copied ? 'Copied' : 'Copy link' }}</button>
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" @click="payModal.show = false">Done</button>
+                    <a class="btn btn-success" :href="payModal.url" target="_blank" rel="noopener">Open payment page</a>
                 </div>
             </div>
         </div>
@@ -432,7 +456,7 @@ const orderTotal = computed(() => orderableItems.value.reduce(
     (sum: number, i: any) => sum + (orderModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
 
 function openAddOrder() {
-    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "", paid: true };
+    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "" };
     orderModal.qty = {};
     orderError.value = "";
     orderModal.show = true;
@@ -440,6 +464,28 @@ function openAddOrder() {
 function bump(it: any, delta: number) {
     const next = Math.max(0, (orderModal.qty[it.id] || 0) + delta);
     orderModal.qty[it.id] = it.max_quantity ? Math.min(next, Number(it.max_quantity)) : next;
+}
+const payModal = reactive({ show: false, url: "", orderNumber: "", name: "", total: 0, copied: false });
+function showPayLink(order: any, url: string) {
+    Object.assign(payModal, {
+        show: true, url, copied: false,
+        orderNumber: order?.order_number ?? "", name: order?.customer_name ?? "", total: Number(order?.total_minor || 0),
+    });
+}
+async function openPayLink(o: any) {
+    if (!currentMenu.value) return;
+    try {
+        showPayLink(o, await store.paymentLink(currentMenu.value.id, o.id));
+        await store.fetchOrders(currentMenu.value.id);
+    } catch (e: any) {
+        // The server's reason (already paid, cancelled, online payment off), not axios's "status code 422".
+        const reason = e?.response?.data?.data;
+        Swal.fire({ icon: "warning", title: "No payment page", text: typeof reason === "string" ? reason : (e?.message || "Could not create the payment page.") });
+    }
+}
+async function copyPayLink() {
+    try { await navigator.clipboard.writeText(payModal.url); payModal.copied = true; }
+    catch { payModal.copied = false; }
 }
 function orderErrorText(e: any): string {
     const data = e?.response?.data?.data;
@@ -459,8 +505,9 @@ async function saveOrder() {
     try {
         const res = await store.createOrder(currentMenu.value.id, { ...orderModal.form, items });
         orderModal.show = false;
-        toast(res?.message || "Order added");
         await store.fetchOrders(currentMenu.value.id);
+        if (res?.checkout_url) showPayLink(res.data, res.checkout_url);
+        else Swal.fire({ icon: "warning", title: "Order added", text: res?.message || "The payment page could not be created." });
     } catch (e) {
         orderError.value = orderErrorText(e);
     } finally { savingOrder.value = false; }

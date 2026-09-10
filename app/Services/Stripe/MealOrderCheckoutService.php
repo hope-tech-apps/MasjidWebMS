@@ -170,6 +170,45 @@ class MealOrderCheckoutService
      *
      * @throws RuntimeException
      */
+    /**
+     * The payment page for an unpaid order, for staff to open or send on. An
+     * open page is handed back as it is, so a customer never holds two live
+     * ways to pay the same order; an expired page is replaced (with a new
+     * idempotency key, or Stripe would replay the old one); a completed page
+     * is left to the webhook to record.
+     *
+     * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
+     */
+    public function paymentLink(MealOrder $order): array
+    {
+        $masjid = $this->preflight($order);
+
+        if ($order->stripe_checkout_session_id) {
+            $session = $this->retrieveCheckoutSession(
+                (string) $order->stripe_checkout_session_id,
+                (string) $masjid->stripe_account_id
+            );
+
+            if ($session['status'] === 'open' && $session['url']) {
+                return [
+                    'order' => $order,
+                    'checkout_url' => (string) $session['url'],
+                    'session_id' => $order->stripe_checkout_session_id,
+                ];
+            }
+
+            if ($session['status'] === 'complete') {
+                throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
+            }
+
+            $order->idempotency_key = null;
+            $order->stripe_checkout_session_id = null;
+            $order->save();
+        }
+
+        return $this->checkout($order);
+    }
+
     private function preflight(MealOrder $order): Masjid
     {
         if ($order->payment_status === MealOrder::PAYMENT_PAID) {
@@ -213,5 +252,15 @@ class MealOrderCheckoutService
                 ? $session->payment_intent
                 : ($session->payment_intent?->id ?? null),
         ];
+    }
+
+    /** @return array{status: string, url: ?string} Stripe's 'open' | 'complete' | 'expired'. */
+    protected function retrieveCheckoutSession(string $sessionId, string $connectedAccountId): array
+    {
+        $session = $this->stripe->checkout->sessions->retrieve($sessionId, [], [
+            'stripe_account' => $connectedAccountId,
+        ]);
+
+        return ['status' => (string) $session->status, 'url' => $session->url];
     }
 }

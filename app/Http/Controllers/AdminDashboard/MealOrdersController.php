@@ -5,7 +5,9 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
+use App\Models\Masjid;
 use App\Models\MealMenuItem;
+use App\Services\Stripe\MealOrderCheckoutService;
 use Illuminate\Support\Facades\DB;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
@@ -23,6 +25,10 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class MealOrdersController extends Controller
 {
+    public function __construct(private MealOrderCheckoutService $checkout)
+    {
+    }
+
     /**
      * GET orders for a menu, newest first, with a summary the board header shows.
      * Optional filters: ?status= and ?payment_status=.
@@ -90,8 +96,10 @@ class MealOrdersController extends Controller
      * never the request — with three deliberate differences:
      *   - the online ordering window does not apply: walk-ups happen after
      *     online ordering closes. Only a DRAFT menu (not yet opened) refuses;
-     *   - payment is always in person (no Stripe, so no card-fee coverage and
-     *     no online donation), recorded as paid now or owed at pickup;
+     *   - an order never starts paid: it is charged through Stripe like any
+     *     public order. The payment page comes back as checkout_url, to open on
+     *     this device or send to the customer, and Stripe marks it paid. No
+     *     card-fee coverage and no online donation on this door;
      *   - no SMS opt-in, ever: consent to texts must come from the customer.
      * The order records who took it (`entered_by_user_id`).
      */
@@ -149,17 +157,24 @@ class MealOrdersController extends Controller
             ];
         }
 
-        $paid = $request->boolean('paid');
+        // Checked before anything is written, so a refusal leaves no order behind.
+        if (! $menu->allow_online_payment) {
+            return $this->refuse('Orders added here are paid online through Stripe, and online payment is switched off for this lunch. Switch it on under Edit menu.');
+        }
+
+        if (! Masjid::find($menu->masjid_id)?->canAcceptDonations()) {
+            return $this->refuse('Orders added here are paid online through Stripe, and this organisation cannot take online payments yet.');
+        }
 
         try {
-            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $paid) {
+            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal) {
                 $order = new MealOrder([
                     'meal_menu_id' => $menu->id,
                     'customer_name' => trim((string) $request->validated('customer_name')),
                     'customer_phone' => trim((string) ($request->validated('customer_phone') ?? '')),
                     'customer_email' => $request->validated('customer_email'),
                     'customer_notes' => $request->validated('customer_notes'),
-                    'payment_method' => MealOrder::METHOD_PICKUP,
+                    'payment_method' => MealOrder::METHOD_ONLINE,
                 ]);
                 $order->masjid_id = $menu->masjid_id;
                 $order->currency = $menu->currency;
@@ -169,13 +184,7 @@ class MealOrdersController extends Controller
                 $order->placed_at = now();
                 $order->source = MealOrder::SOURCE_STAFF;
                 $order->entered_by_user_id = $request->user()?->id;
-
-                if ($paid) {
-                    $order->payment_status = MealOrder::PAYMENT_PAID;
-                    $order->paid_at = now();
-                    $order->status = MealOrder::STATUS_CONFIRMED;
-                }
-
+                // Never paid at creation: Stripe marks it paid when the customer pays.
                 $order->save();
 
                 foreach ($lines as $line) {
@@ -191,11 +200,78 @@ class MealOrdersController extends Controller
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
 
+        // The order stands whatever Stripe says; "Payment link" on the board
+        // makes its page again.
+        $checkoutUrl = null;
+        $retry = 'Use "Payment link" on the order to try again.';
+
+        try {
+            $checkoutUrl = $this->checkout->checkout($order->load('items'))['checkout_url'] ?: null;
+            $message = "Order #{$order->order_number} added. Open the payment page or send the link to the customer.";
+        } catch (\RuntimeException $e) {
+            $message = "Order #{$order->order_number} added, but the payment page could not be created: {$e->getMessage()} {$retry}";
+        } catch (\Stripe\Exception\ExceptionInterface $e) {
+            report($e);
+            $message = "Order #{$order->order_number} added, but Stripe did not answer. {$retry}";
+        }
+
         return response()->json([
             'status' => 'success',
-            'message' => "Order #{$order->order_number} added" . ($paid ? ' and marked paid.' : ' — to be paid at pickup.'),
+            'message' => $message,
             'data' => $order->load(['items', 'enteredBy:id,name']),
+            'checkout_url' => $checkoutUrl,
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * POST .../orders/{order_id}/payment-link — a Stripe payment page for an
+     * unpaid order: open it on this device, or send it to the customer. An
+     * open page is reused, so nobody holds two ways to pay; an expired one is
+     * replaced. A pay-at-pickup order becomes an online one, so it can no
+     * longer be marked paid by hand as well. Paid and cancelled orders are
+     * refused, as is a lunch with online payment switched off. Stripe marks
+     * the order paid when the customer pays (StripeWebhookController).
+     */
+    public function paymentLink($masjid_id, $menu_id, $order_id)
+    {
+        $menu = MealMenu::findOrFail($menu_id);
+        $order = MealOrder::where('meal_menu_id', $menu->id)->with('items')->findOrFail($order_id);
+
+        if ($order->payment_status === MealOrder::PAYMENT_PAID) {
+            return $this->refuse('This order is already paid.');
+        }
+
+        if ($order->status === MealOrder::STATUS_CANCELLED) {
+            return $this->refuse('This order was cancelled. Set it back to pending first.');
+        }
+
+        if (! $menu->allow_online_payment) {
+            return $this->refuse('Online payment is switched off for this lunch.');
+        }
+
+        try {
+            $result = $this->checkout->paymentLink($order);
+        } catch (\RuntimeException $e) {
+            return $this->refuse($e->getMessage());
+        } catch (\Stripe\Exception\ExceptionInterface $e) {
+            report($e);
+
+            return $this->refuse('Stripe did not answer. Try again in a moment.');
+        }
+
+        if ($order->payment_method !== MealOrder::METHOD_ONLINE) {
+            $order->payment_method = MealOrder::METHOD_ONLINE;
+            $order->save();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Payment page ready for order #{$order->order_number}.",
+            'data' => [
+                'checkout_url' => $result['checkout_url'],
+                'order' => $order->fresh()->load(['items', 'enteredBy:id,name']),
+            ],
+        ], Response::HTTP_OK);
     }
 
     private function refuse(string $message)
