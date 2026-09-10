@@ -21,7 +21,10 @@ use Illuminate\Support\Str;
  * `donation_minor` is the one amount a CUSTOMER chooses, but it is still not
  * fillable: it is clamped to a ceiling in the controller and forced to 0 when
  * the menu does not offer it, so it reaches the row through that gate or not at
- * all. `total_minor` is always subtotal + donation.
+ * all. `fee_covered_minor` is chosen by the customer too, but only as a yes/no —
+ * the AMOUNT is always computed on the server from Stripe's published rate, so
+ * no request body ever states a surcharge. `total_minor` is always
+ * subtotal + donation + fee_covered.
  *
  * Server-computed columns (totals, the two status columns, the Stripe ids,
  * `order_number`, the timestamps) are DELIBERATELY not fillable — they move only
@@ -85,6 +88,7 @@ class MealOrder extends Model
         'payment_status' => self::PAYMENT_UNPAID,
         'subtotal_minor' => 0,
         'donation_minor' => 0,
+        'fee_covered_minor' => 0,
         'total_minor' => 0,
         'currency' => 'usd',
     ];
@@ -94,6 +98,7 @@ class MealOrder extends Model
         return [
             'subtotal_minor' => 'integer',
             'donation_minor' => 'integer',
+            'fee_covered_minor' => 'integer',
             'total_minor' => 'integer',
             'placed_at' => 'datetime',
             'paid_at' => 'datetime',

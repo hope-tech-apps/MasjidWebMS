@@ -57,10 +57,7 @@ class DonationService
         ?float $feePercentage = null,
         ?int $feeFixed = null
     ): int {
-        $feePercentage ??= (float) config('services.stripe.fee_percentage', 0.029);
-        $feeFixed ??= (int) config('services.stripe.fee_fixed', 30);
-
-        return (int) round(($intendedAmount + $feeFixed) / (1 - $feePercentage));
+        return \App\Support\StripeFees::grossUp($intendedAmount, $feePercentage, $feeFixed);
     }
 
     /**
@@ -74,10 +71,7 @@ class DonationService
         ?float $feePercentage = null,
         ?int $feeFixed = null
     ): int {
-        $feePercentage ??= (float) config('services.stripe.fee_percentage', 0.029);
-        $feeFixed ??= (int) config('services.stripe.fee_fixed', 30);
-
-        return (int) round($chargedAmount * $feePercentage) + $feeFixed;
+        return \App\Support\StripeFees::on($chargedAmount, $feePercentage, $feeFixed);
     }
 
     /** The platform's application fee (Connect) for an intended amount. */

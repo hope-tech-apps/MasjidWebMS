@@ -10,6 +10,7 @@ use App\Models\MealOrder;
 use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
+use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -167,7 +168,17 @@ class JummahLunchOrdersController extends Controller
                 : 0;
             $donation = max($donation, 0);
 
-            $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation) {
+            // Stripe's fee, absorbed by the customer so the masjid nets the food
+            // plus the extra in full. ONLINE ONLY — a pay-at-pickup order never
+            // touches Stripe, so there is nothing to cover and charging for it
+            // would be charging for nothing. The customer sends a yes/no; the
+            // AMOUNT is derived here from the published rate, never from the body.
+            $coverFees = $menu->allow_fee_coverage
+                && $method === MealOrder::METHOD_ONLINE
+                && $request->boolean('cover_fees');
+            $feeCovered = $coverFees ? StripeFees::coverage($subtotal + $donation) : 0;
+
+            $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation, $feeCovered) {
                 // A pickup number unique within this menu; the count is locked so
                 // two concurrent orders can't claim the same one.
                 $seq = MealOrder::withoutMasjidScope()
@@ -195,7 +206,8 @@ class JummahLunchOrdersController extends Controller
                 $order->currency = $menu->currency;
                 $order->subtotal_minor = $subtotal;
                 $order->donation_minor = $donation;
-                $order->total_minor = $subtotal + $donation;
+                $order->fee_covered_minor = $feeCovered;
+                $order->total_minor = $subtotal + $donation + $feeCovered;
                 $order->order_number = str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
                 $order->placed_at = now();
                 $order->save();
@@ -315,6 +327,11 @@ class JummahLunchOrdersController extends Controller
             'collect_customer_email' => (bool) $menu->collect_customer_email,
             'allow_donation' => (bool) $menu->allow_donation,
             'max_donation_minor' => MealOrder::MAX_DONATION_MINOR,
+            'allow_fee_coverage' => (bool) $menu->allow_fee_coverage,
+            // Stripe's published rate, so the form can show the exact surcharge
+            // before submitting. The server recomputes it regardless.
+            'stripe_fee_percentage' => StripeFees::percentage(),
+            'stripe_fee_fixed_minor' => StripeFees::fixed(),
             'currency' => $menu->currency,
             'items' => $menu->items->map(fn (MealMenuItem $i) => [
                 'id' => $i->id,
@@ -342,6 +359,7 @@ class JummahLunchOrdersController extends Controller
             'payment_status' => $order->payment_status,
             'subtotal_minor' => (int) $order->subtotal_minor,
             'donation_minor' => (int) $order->donation_minor,
+            'fee_covered_minor' => (int) $order->fee_covered_minor,
             'total_minor' => (int) $order->total_minor,
             'currency' => $order->currency,
             'placed_at' => optional($order->placed_at)->toIso8601String(),

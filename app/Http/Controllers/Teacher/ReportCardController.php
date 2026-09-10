@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
+use App\Services\Schools\ReportCardPdfService;
 use App\Services\Schools\ReportCardService;
 use App\Support\PerformanceLevel;
 use Illuminate\Http\JsonResponse;
@@ -194,6 +195,35 @@ class ReportCardController extends TeacherController
             'status' => 'success',
             'data' => $this->card($card->refresh(), $membership),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * The printable copy.
+     *
+     * Unlike the family's, this one does NOT require publication — a teacher
+     * proofreading a draft on paper before sending it home is the ordinary use,
+     * and refusing to print until it is already in a family's hands would get
+     * the order backwards. `prepare()` is used rather than a bare lookup so the
+     * behaviour matches every other route on this screen: opening a card that
+     * does not exist yet builds its rows and prints an empty one.
+     */
+    public function pdf(
+        Request $request,
+        ReportCardPdfService $pdfs,
+        $masjid_id,
+        $group_id,
+        $membership_id,
+    ): Response {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
+        [$type, $year, $term] = $this->period($request);
+
+        $card = $this->cards->prepare($membership, $type, $year, $term);
+
+        return response($pdfs->render($card, $membership), Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $pdfs->filename($card, $membership) . '"',
+        ]);
     }
 
     // ------------------------------------------------------------- internals

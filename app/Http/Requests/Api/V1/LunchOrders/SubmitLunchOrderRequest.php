@@ -42,6 +42,10 @@ class SubmitLunchOrderRequest extends BaseFormRequest
             // Session on the masjid's account; the controller clamps to the same
             // ceiling and zeroes it when the menu does not offer it.
             'donation_minor' => 'nullable|integer|min:0|max:' . MealOrder::MAX_DONATION_MINOR,
+            // Whether the customer absorbs Stripe's processing fee. Deliberately
+            // a yes/no: the surcharge itself is computed on the server from the
+            // published rate, so no request body ever states an amount.
+            'cover_fees' => 'sometimes|boolean',
             // Honeypot — real submitters leave it empty; checked in the controller.
             'website' => 'nullable|string|max:255',
         ];

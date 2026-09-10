@@ -28,6 +28,7 @@ class StoreMealMenuRequest extends BaseFormRequest
             'allow_pay_at_pickup' => 'sometimes|boolean',
             'collect_customer_email' => 'sometimes|boolean',
             'allow_donation' => 'sometimes|boolean',
+            'allow_fee_coverage' => 'sometimes|boolean',
             'currency' => 'sometimes|string|size:3',
         ];
     }

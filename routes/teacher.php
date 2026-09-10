@@ -166,6 +166,11 @@ Route::prefix('teacher')
                         // it is the moment a document becomes visible to a family.
                         Route::get('/report-cards', [ReportCardController::class, 'index']);
                         Route::get('/members/{membership_id}/report-card', [ReportCardController::class, 'show']);
+
+                        // The printable copy. A teacher needs this for the
+                        // family without a printer at home, and for the paper
+                        // file the office keeps.
+                        Route::get('/members/{membership_id}/report-card/pdf', [ReportCardController::class, 'pdf']);
                         Route::put('/members/{membership_id}/report-card', [ReportCardController::class, 'save']);
                         Route::post('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'publish']);
                         Route::delete('/members/{membership_id}/report-card/publish', [ReportCardController::class, 'unpublish']);

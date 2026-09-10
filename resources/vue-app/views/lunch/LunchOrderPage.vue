@@ -73,13 +73,17 @@
                 </section>
 
                 <section v-if="subtotalMinor > 0" class="lunch-totals">
-                    <div v-if="donationMinor > 0" class="lunch-total-line">
+                    <div v-if="hasExtras" class="lunch-total-line">
                         <span>{{ t('subtotal') }}</span>
                         <span>{{ money(subtotalMinor) }}</span>
                     </div>
                     <div v-if="donationMinor > 0" class="lunch-total-line">
                         <span>{{ t('give_line') }}</span>
                         <span>{{ money(donationMinor) }}</span>
+                    </div>
+                    <div v-if="feeCoveredMinor > 0" class="lunch-total-line">
+                        <span>{{ t('fee_line') }}</span>
+                        <span>{{ money(feeCoveredMinor) }}</span>
                     </div>
                     <div class="lunch-total-row">
                         <span>{{ t('total') }}</span>
@@ -117,6 +121,11 @@
                             <span>🤝 {{ t('pay_pickup') }}</span>
                         </label>
                     </div>
+
+                    <label v-if="showFeeOffer" class="lunch-cover">
+                        <input type="checkbox" v-model="coverFees" />
+                        <span>{{ t('cover_fees', money(feeCoveredMinor)) }}</span>
+                    </label>
 
                     <p v-if="error" class="lunch-error" role="alert">{{ error }}</p>
 
@@ -230,7 +239,32 @@ const donationCapped = computed<boolean>(() => {
     return Number.isFinite(parsed) && Math.round(parsed * 100) > maxDonationMinor.value;
 });
 
-const totalMinor = computed(() => subtotalMinor.value + donationMinor.value);
+// Stripe's cut, which on a Connect direct charge comes out of the MASJID's
+// balance — a flat 30c is 3.75% of a single $8 plate on its own. Offered only
+// for an online order: a pay-at-pickup order never touches Stripe.
+const coverFees = ref(false);
+
+const showFeeOffer = computed<boolean>(() =>
+    menu.value?.allow_fee_coverage !== false
+    && form.payment_method === "online"
+    && subtotalMinor.value > 0
+);
+
+// The same gross-up the server runs, so the box states the exact figure the
+// customer will be charged. The server recomputes it either way — this number
+// is never submitted, only `coverFees` is.
+const feeCoveredMinor = computed<number>(() => {
+    if (!showFeeOffer.value || !coverFees.value) return 0;
+    const intended = subtotalMinor.value + donationMinor.value;
+    if (intended <= 0) return 0;
+    const pct = Number(menu.value?.stripe_fee_percentage ?? 0.029);
+    const fixed = Number(menu.value?.stripe_fee_fixed_minor ?? 30);
+    return Math.max(0, Math.round((intended + fixed) / (1 - pct)) - intended);
+});
+
+const totalMinor = computed(() => subtotalMinor.value + donationMinor.value + feeCoveredMinor.value);
+
+const hasExtras = computed<boolean>(() => donationMinor.value > 0 || feeCoveredMinor.value > 0);
 
 function setDonation(minor: number): void {
     donationInput.value = minor > 0 ? (minor / 100).toFixed(2) : "";
@@ -303,6 +337,7 @@ async function submit() {
         customer_notes: form.customer_notes || null,
         payment_method: form.payment_method,
         donation_minor: donationMinor.value,
+        cover_fees: coverFees.value,
         website: honeypot.value,
     });
     submitting.value = false;
@@ -431,6 +466,20 @@ onMounted(() => store.fetchMenu(masjidId));
     font-size: 15px;
 }
 .lunch-give-cap { margin: 8px 0 0; font-size: 12px; color: #8a5a1e; }
+.lunch-cover {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #cfe3d8;
+    border-radius: 10px;
+    background: #f7fbf9;
+    font-size: 14px;
+    color: #24503f;
+    cursor: pointer;
+}
+.lunch-cover input { margin-top: 2px; flex: none; }
 .lunch-totals { margin-top: 14px; }
 .lunch-total-line {
     display: flex;

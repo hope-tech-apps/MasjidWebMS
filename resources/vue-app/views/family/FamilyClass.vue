@@ -296,10 +296,20 @@
 
                 <!-- ------------------------------------------ one open report -->
                 <template v-if="openCard">
-                    <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none mb-3"
-                            @click="openCard = null">
-                        &larr; All reports
-                    </button>
+                    <div class="d-flex justify-content-between align-items-center mb-3 gap-2">
+                        <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none"
+                                @click="openCard = null">
+                            &larr; All reports
+                        </button>
+                        <!-- The printable copy. A report card is a document a
+                             family keeps, and "keeps" for most people means a
+                             file or a sheet of paper, not a tab. -->
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                :disabled="downloadingCard"
+                                @click="downloadCard">
+                            {{ downloadingCard ? 'Preparing…' : 'Download PDF' }}
+                        </button>
+                    </div>
 
                     <div class="d-flex align-items-center gap-2 mb-1">
                         <span class="fw-semibold">{{ childName(openCardFor) }}</span>
@@ -777,6 +787,36 @@ const openReportCard = async (child: any, row: any) => {
         if (!fail(e)) reportsError.value = 'That report could not be opened.';
     } finally {
         openingCard.value = null;
+    }
+};
+
+const downloadingCard = ref(false);
+
+/**
+ * Fetch the PDF as a blob rather than pointing the browser at the URL.
+ *
+ * The route is bearer-authenticated like every other call in this realm, and a
+ * plain link carries no Authorization header — it would arrive unauthenticated
+ * and 401. Same reason, and the same helper, as the handout download above.
+ */
+const downloadCard = async () => {
+    if (!openCard.value || !openCardFor.value) return;
+
+    downloadingCard.value = true;
+
+    try {
+        const url = await FamilyApiService.blobUrl(
+            `${base.value}/members/${openCardFor.value.membership_id}/report-cards/${openCard.value.id}/pdf`,
+        );
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${childName(openCardFor.value)} - ${openCard.value.period_label}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        if (!fail(e)) reportsError.value = 'That report could not be downloaded just now.';
+    } finally {
+        downloadingCard.value = false;
     }
 };
 

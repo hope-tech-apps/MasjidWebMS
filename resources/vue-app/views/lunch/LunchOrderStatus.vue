@@ -36,6 +36,11 @@
                         <span>{{ money(order.donation_minor) }}</span>
                     </div>
 
+                    <div v-if="Number(order.fee_covered_minor) > 0" class="lunch-total-line">
+                        <span>{{ t('fee_line') }}</span>
+                        <span>{{ money(order.fee_covered_minor) }}</span>
+                    </div>
+
                     <div class="lunch-total-row">
                         <span>{{ t('total') }}</span>
                         <strong>{{ money(order.total_minor) }}</strong>

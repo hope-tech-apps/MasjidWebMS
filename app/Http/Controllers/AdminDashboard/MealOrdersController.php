@@ -51,6 +51,7 @@ class MealOrdersController extends Controller
             // columns: what has actually settled, and what is still owed on
             // live orders. `revenue_paid_minor` already includes it.
             'donations_paid_minor' => (int) (clone $paid)->sum('donation_minor'),
+            'fees_covered_paid_minor' => (int) (clone $paid)->sum('fee_covered_minor'),
             'expected_total_minor' => (int) (clone $all)
                 ->whereIn('status', [
                     MealOrder::STATUS_PENDING,

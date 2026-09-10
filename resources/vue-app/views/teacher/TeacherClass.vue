@@ -1184,9 +1184,19 @@
 
                 <!-- --------------------------------------------- one child's card -->
                 <template v-else>
-                    <button class="btn btn-link px-0 text-decoration-none mb-2" @click="closeOpenCard">
-                        ← All students
-                    </button>
+                    <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                        <button class="btn btn-link px-0 text-decoration-none" @click="closeOpenCard">
+                            ← All students
+                        </button>
+                        <!-- Deliberately available on a DRAFT too: proofreading a
+                             card on paper before it goes home is the ordinary use,
+                             and the office keeps a printed file. -->
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                :disabled="downloadingCard"
+                                @click="downloadCard">
+                            {{ downloadingCard ? 'Preparing…' : 'Download PDF' }}
+                        </button>
+                    </div>
 
                     <div class="d-flex align-items-center gap-2 mb-1">
                         <span class="fw-semibold">{{ name(openCard.student?.contact) }}</span>
@@ -2692,6 +2702,41 @@ const hasUnsaved = computed(() => unsavedCount.value > 0);
 // Counted from the DRAFT, so the header moves as the teacher marks rather than
 // only after a save.
 const cardTotal = computed(() => Object.keys(draft.value).length);
+const downloadingCard = ref(false);
+
+/**
+ * Fetched as a blob, not linked: this route is bearer-authenticated like the
+ * rest of the realm and a plain <a href> carries no Authorization header.
+ */
+const downloadCard = async () => {
+    if (!openCard.value) return;
+
+    downloadingCard.value = true;
+
+    try {
+        // The period comes off the OPEN CARD, not off the three period selects.
+        // They are the same until a teacher changes a select without reopening,
+        // and then they are not — and a PDF that quietly differs from the card
+        // on screen is the kind of wrong nobody checks for.
+        const c = openCard.value;
+        const url = await TeacherApiService.blobUrl(
+            `${base.value}/members/${c.student.membership_id}/report-card/pdf`
+            + `?type=${encodeURIComponent(c.type)}`
+            + `&school_year=${encodeURIComponent(c.school_year)}`
+            + `&term=${encodeURIComponent(String(c.term))}`,
+        );
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${name(c.student?.contact)} - ${c.period_label}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch {
+        reportsError.value = 'That report could not be downloaded just now.';
+    } finally {
+        downloadingCard.value = false;
+    }
+};
+
 const cardAssessed = computed(() => Object.values(draft.value).filter((c) => c.level !== null).length);
 
 // Three years around whatever the server said the current one is — derived, so

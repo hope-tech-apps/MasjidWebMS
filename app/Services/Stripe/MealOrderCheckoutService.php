@@ -99,6 +99,20 @@ class MealOrderCheckoutService
             ];
         }
 
+        // Named, for the same reason as the extra: the customer agreed to a
+        // processing fee, so the hosted page says so rather than quietly
+        // inflating the food.
+        if ((int) $order->fee_covered_minor > 0) {
+            $lineItems[] = [
+                'quantity' => 1,
+                'price_data' => [
+                    'currency' => $currency,
+                    'unit_amount' => (int) $order->fee_covered_minor,
+                    'product_data' => ['name' => 'Card processing fee'],
+                ],
+            ];
+        }
+
         if ($lineItems === []) {
             // Defensive: an order always has items, but never mint a $0 session.
             $lineItems[] = [

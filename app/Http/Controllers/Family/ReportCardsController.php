@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Family;
 use App\Models\Group;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
+use App\Services\Schools\ReportCardPdfService;
 use App\Support\PerformanceLevel;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -116,6 +117,38 @@ class ReportCardsController extends FamilyController
             // school.
             'performance_levels' => PerformanceLevel::key(),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * The same published report, as a file to keep.
+     *
+     * Resolved through the SAME query as show() — the ward gate, then
+     * `published()` as a scope — so a draft is a 404 here too. A separate,
+     * looser lookup for the printable copy is exactly how a withheld document
+     * escapes; there isn't one.
+     */
+    public function pdf(
+        Request $request,
+        ReportCardPdfService $pdfs,
+        $masjid_id,
+        $group_id,
+        $membership_id,
+        $report_card_id,
+    ): Response {
+        $group = $this->group($group_id);
+        $membership = $this->subject($group, $membership_id);
+
+        $card = ReportCard::query()
+            ->where('group_membership_id', $membership->id)
+            ->published()
+            ->findOrFail($report_card_id);
+
+        $membership->loadMissing('contact');
+
+        return response($pdfs->render($card, $membership), Response::HTTP_OK, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $pdfs->filename($card, $membership) . '"',
+        ]);
     }
 
     /** @return array<string, mixed> */

@@ -114,6 +114,7 @@
                                     <td>
                                         {{ money(o.total_minor) }}
                                         <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
+                                        <span v-if="Number(o.fee_covered_minor) > 0" class="badge bg-secondary-subtle text-secondary-emphasis ms-1" :title="'Customer covered ' + money(o.fee_covered_minor) + ' of card fees'">+fee</span>
                                     </td>
                                     <td>
                                         <span class="badge" :class="o.payment_status === 'paid' ? 'bg-success' : 'bg-warning text-dark'">{{ o.payment_status }}</span>
@@ -167,6 +168,11 @@
                         <input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_donation" id="jlad" />
                         <label class="form-check-label" for="jlad">Offer an optional extra donation</label>
                         <div class="text-muted small">Lets a customer add any amount on top of the food, up to $1,000. It settles on the same payment and is reported separately below — it is not a receipted donation against a fund.</div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_fee_coverage" id="jlafc" />
+                        <label class="form-check-label" for="jlafc">Offer to cover the card processing fee</label>
+                        <div class="text-muted small">Stripe takes 2.9% + 30&cent; out of your balance on an online order — an $8 plate settles at $7.47. This offers the customer the choice to add it so you receive the full amount. Online orders only; pay-at-pickup never touches Stripe.</div>
                     </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
@@ -238,7 +244,7 @@ function emptyMenuForm() {
     return {
         title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at_local: "",
         pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
-        allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true, allow_donation: true,
+        allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true, allow_donation: true, allow_fee_coverage: true,
     };
 }
 function emptyItemForm() {
@@ -286,6 +292,7 @@ function openEditMenu(m: any) {
         // which is what the database default gives it.
         collect_customer_email: m.collect_customer_email !== false,
         allow_donation: m.allow_donation !== false,
+        allow_fee_coverage: m.allow_fee_coverage !== false,
     };
     menuModal.show = true;
 }

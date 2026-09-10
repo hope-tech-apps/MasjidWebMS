@@ -48,6 +48,7 @@ class MealMenu extends Model
         'allow_pay_at_pickup',
         'collect_customer_email',
         'allow_donation',
+        'allow_fee_coverage',
         'currency',
     ];
 
@@ -69,6 +70,7 @@ class MealMenu extends Model
             'allow_pay_at_pickup' => 'boolean',
             'collect_customer_email' => 'boolean',
             'allow_donation' => 'boolean',
+            'allow_fee_coverage' => 'boolean',
         ];
     }
 

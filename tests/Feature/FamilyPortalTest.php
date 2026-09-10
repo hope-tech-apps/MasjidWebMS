@@ -1333,6 +1333,47 @@ class FamilyPortalTest extends TestCase
         $index->assertJsonPath('data.1.id', $first->id);
     }
 
+    /**
+     * The printable copy goes through the SAME two gates as the readable one.
+     *
+     * A separate, looser lookup for the download is exactly how a withheld
+     * document escapes — so these three cases mirror the ones above rather than
+     * trusting that the route "obviously" inherits them.
+     */
+    #[Test]
+    public function a_parent_can_download_their_own_childs_report_card(): void
+    {
+        $card = $this->makeCard($this->childAMembership, published: true);
+
+        $response = $this->as($this->parentA)
+            ->get($this->reportCardsUrl($this->childAMembership, $card->id) . '/pdf');
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/pdf');
+        $this->assertStringContainsString('attachment;', (string) $response->headers->get('content-disposition'));
+        $this->assertStringStartsWith('%PDF-', (string) $response->getContent());
+    }
+
+    #[Test]
+    public function a_draft_report_card_cannot_be_downloaded_either(): void
+    {
+        $draft = $this->makeCard($this->childAMembership, published: false);
+
+        $this->as($this->parentA)
+            ->get($this->reportCardsUrl($this->childAMembership, $draft->id) . '/pdf')
+            ->assertNotFound();
+    }
+
+    #[Test]
+    public function a_parent_cannot_download_another_familys_childs_report_card(): void
+    {
+        $bilals = $this->makeCard($this->childBMembership, published: true);
+
+        $this->as($this->parentA)
+            ->get($this->reportCardsUrl($this->childBMembership, $bilals->id) . '/pdf')
+            ->assertForbidden();
+    }
+
     private function reportCardsUrl(GroupMembership $membership, ?int $cardId = null): string
     {
         return $this->groupUrl(

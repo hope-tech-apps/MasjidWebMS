@@ -252,6 +252,11 @@ Route::prefix('family')
                 Route::get('/report-cards', [FamilyReportCardsController::class, 'index']);
                 Route::get('/report-cards/{report_card_id}', [FamilyReportCardsController::class, 'show']);
 
+                // The same document, as a file to keep. A GET, so still nothing
+                // added to the counted write list, and it goes through the same
+                // two gates — a draft is a 404 here exactly as it is above.
+                Route::get('/report-cards/{report_card_id}/pdf', [FamilyReportCardsController::class, 'pdf']);
+
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);
