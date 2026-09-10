@@ -94,7 +94,13 @@ const payLabel = computed(() => {
 });
 
 function money(minor: number): string {
-    return "$" + (Number(minor) / 100).toFixed(2);
+    // Grouped, because the optional extra is the first field on these pages that
+    // can render a four-figure number and "$1000.00" reads like a typo. Always
+    // en-US grouping: the prices are US dollars whichever language is showing.
+    return "$" + (Number(minor) / 100).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
 }
 
 onMounted(() => store.fetchOrder(masjidId, uuid));
