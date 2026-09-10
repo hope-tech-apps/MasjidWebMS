@@ -37,86 +37,6 @@
             </div>
         </div>
 
-        <!-- Lunch-only logins. Admin surface: a LunchStaff never sees this,
-             and the server refuses them the endpoints behind it. -->
-        <div v-if="!currentMenu && !isLunchStaff" class="card shadow-sm mt-4">
-            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div>
-                    <strong>Who can run the lunch</strong>
-                    <div class="text-muted small">
-                        These logins reach this board and nothing else — no donations, no member
-                        directory, no masjid settings. They can't add or remove each other.
-                    </div>
-                </div>
-                <button class="btn btn-sm btn-success" @click="openAddStaff">+ Give someone access</button>
-            </div>
-            <div class="card-body">
-                <div v-if="staff.length === 0" class="text-muted small">
-                    Nobody yet. The people you add here get an email to set their own password.
-                </div>
-                <table v-else class="table table-sm align-middle mb-0">
-                    <thead>
-                        <tr>
-                            <th>Name</th><th>Email</th><th>Phone</th><th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="p in staff" :key="p.id">
-                            <td>
-                                {{ p.name }}
-                                <span v-if="p.invited" class="badge bg-warning-subtle text-warning-emphasis ms-1"
-                                      title="Created, but they haven't signed in yet">Invited</span>
-                            </td>
-                            <td class="text-muted">{{ p.email }}</td>
-                            <td class="text-muted">{{ p.phone ?? '—' }}</td>
-                            <td class="text-end">
-                                <button class="btn btn-sm btn-outline-secondary me-1" @click="openEditStaff(p)">Edit</button>
-                                <button class="btn btn-sm btn-outline-secondary me-1" @click="resendInvite(p)">Re-send invite</button>
-                                <button class="btn btn-sm btn-outline-danger" @click="revokeStaff(p)">Remove</button>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Staff modal -->
-        <div v-if="staffModal.show" class="jl-modal">
-            <div class="card shadow-lg" style="max-width: 460px; width: 100%;">
-                <div class="card-header">{{ staffModal.isEdit ? 'Edit access' : 'Give someone lunch access' }}</div>
-                <div class="card-body">
-                    <div class="mb-2">
-                        <label class="form-label">Name</label>
-                        <input v-model="staffModal.form.name" class="form-control" maxlength="120" />
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">Email</label>
-                        <input v-model="staffModal.form.email" type="email" class="form-control" maxlength="190"
-                               :disabled="staffModal.isEdit" />
-                        <div class="text-muted small">
-                            <template v-if="staffModal.isEdit">
-                                The email can't be changed — it's what their sign-in and invite are tied to.
-                                Remove the access and issue it again instead.
-                            </template>
-                            <template v-else>
-                                They'll get an email here to set their own password. You never see it.
-                            </template>
-                        </div>
-                    </div>
-                    <div class="mb-2">
-                        <label class="form-label">Phone <span class="text-muted small">(optional)</span></label>
-                        <input v-model="staffModal.form.phone" class="form-control" maxlength="32" />
-                    </div>
-                </div>
-                <div class="card-footer d-flex justify-content-end gap-2">
-                    <button class="btn btn-light" @click="staffModal.show = false">Cancel</button>
-                    <button class="btn btn-success" :disabled="savingStaff" @click="saveStaff">
-                        {{ savingStaff ? 'Saving…' : 'Save' }}
-                    </button>
-                </div>
-            </div>
-        </div>
-
         <!-- Menu detail -->
         <div v-else class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -213,6 +133,86 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lunch-only logins. Admin surface: a LunchStaff never sees this,
+             and the server refuses them the endpoints behind it. -->
+        <div v-if="!currentMenu && !isLunchStaff" class="card shadow-sm mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <strong>Who can run the lunch</strong>
+                    <div class="text-muted small">
+                        These logins reach this board and nothing else — no donations, no member
+                        directory, no masjid settings. They can't add or remove each other.
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-success" @click="openAddStaff">+ Give someone access</button>
+            </div>
+            <div class="card-body">
+                <div v-if="staff.length === 0" class="text-muted small">
+                    Nobody yet. The people you add here get an email to set their own password.
+                </div>
+                <table v-else class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th><th>Email</th><th>Phone</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="p in staff" :key="p.id">
+                            <td>
+                                {{ p.name }}
+                                <span v-if="p.invited" class="badge bg-warning-subtle text-warning-emphasis ms-1"
+                                      title="Created, but they haven't signed in yet">Invited</span>
+                            </td>
+                            <td class="text-muted">{{ p.email }}</td>
+                            <td class="text-muted">{{ p.phone ?? '—' }}</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @click="openEditStaff(p)">Edit</button>
+                                <button class="btn btn-sm btn-outline-secondary me-1" @click="resendInvite(p)">Re-send invite</button>
+                                <button class="btn btn-sm btn-outline-danger" @click="revokeStaff(p)">Remove</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Staff modal -->
+        <div v-if="staffModal.show" class="jl-modal">
+            <div class="card shadow-lg" style="max-width: 460px; width: 100%;">
+                <div class="card-header">{{ staffModal.isEdit ? 'Edit access' : 'Give someone lunch access' }}</div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input v-model="staffModal.form.name" class="form-control" maxlength="120" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Email</label>
+                        <input v-model="staffModal.form.email" type="email" class="form-control" maxlength="190"
+                               :disabled="staffModal.isEdit" />
+                        <div class="text-muted small">
+                            <template v-if="staffModal.isEdit">
+                                The email can't be changed — it's what their sign-in and invite are tied to.
+                                Remove the access and issue it again instead.
+                            </template>
+                            <template v-else>
+                                They'll get an email here to set their own password. You never see it.
+                            </template>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Phone <span class="text-muted small">(optional)</span></label>
+                        <input v-model="staffModal.form.phone" class="form-control" maxlength="32" />
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-light" @click="staffModal.show = false">Cancel</button>
+                    <button class="btn btn-success" :disabled="savingStaff" @click="saveStaff">
+                        {{ savingStaff ? 'Saving…' : 'Save' }}
+                    </button>
                 </div>
             </div>
         </div>
