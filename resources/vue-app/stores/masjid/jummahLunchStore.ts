@@ -166,8 +166,19 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (p.pickup_instructions_ar !== undefined) b.append("pickup_instructions_ar", p.pickup_instructions_ar ?? "");
         if (p.flyer_image_url !== undefined) b.append("flyer_image_url", p.flyer_image_url ?? "");
         if (p.notes != null) b.append("notes", p.notes ?? "");
+        // Booleans go as "1"/"0", NEVER "true"/"false": Laravel's `boolean` rule
+        // rejects those two strings outright, and this body is form-encoded.
         if (p.allow_online_payment != null) b.append("allow_online_payment", p.allow_online_payment ? "1" : "0");
         if (p.allow_pay_at_pickup != null) b.append("allow_pay_at_pickup", p.allow_pay_at_pickup ? "1" : "0");
+        // Every one of these was missing, so editing a menu silently discarded
+        // the toggle the admin had just changed and the form redisplayed the
+        // old value as if the save had worked.
+        if (p.collect_customer_email != null) b.append("collect_customer_email", p.collect_customer_email ? "1" : "0");
+        if (p.allow_donation != null) b.append("allow_donation", p.allow_donation ? "1" : "0");
+        if (p.allow_fee_coverage != null) b.append("allow_fee_coverage", p.allow_fee_coverage ? "1" : "0");
+        if (p.allow_sms_optin != null) b.append("allow_sms_optin", p.allow_sms_optin ? "1" : "0");
+        // Nullable: "" clears it, which is how an admin turns the text off.
+        if (p.notify_service_id !== undefined) b.append("notify_service_id", p.notify_service_id == null ? "" : String(p.notify_service_id));
         return b;
     }
 

@@ -20,9 +20,44 @@ use Illuminate\Validation\Rule;
  */
 class SubmitLunchOrderRequest extends BaseFormRequest
 {
+    /** The yes/no answers on this form, whatever shape they arrive in. */
+    private const FLAGS = ['cover_fees', 'notify_sms'];
+
     public function authorize(): bool
     {
         return true;
+    }
+
+    /**
+     * Coerce the checkbox answers to real booleans before validating.
+     *
+     * Laravel's `boolean` rule accepts true, false, 1, 0, "1" and "0" — and
+     * REJECTS the strings "true" and "false". The admin SPA pins a global axios
+     * Content-Type of application/x-www-form-urlencoded, which every axios
+     * instance in the app inherits, so the public order form's booleans arrive
+     * as those two exact strings and every order 422'd with "The cover fees
+     * field must be true or false."
+     *
+     * Normalising here rather than at the call site is deliberate: it fixes the
+     * browsers that already have the old bundle cached, which a frontend-only
+     * fix cannot reach. A public endpoint should not be brittle about how a
+     * client encodes a checkbox.
+     */
+    protected function prepareForValidation(): void
+    {
+        foreach (self::FLAGS as $field) {
+            if (! $this->has($field)) {
+                continue;
+            }
+
+            $value = $this->input($field);
+
+            // FILTER_NULL_ON_FAILURE so genuine nonsense still fails validation
+            // rather than being silently read as false.
+            $this->merge([
+                $field => filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE),
+            ]);
+        }
     }
 
     public function rules(): array

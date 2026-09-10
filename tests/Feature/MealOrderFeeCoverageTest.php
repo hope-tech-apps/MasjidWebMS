@@ -263,6 +263,63 @@ class MealOrderFeeCoverageTest extends TestCase
         $this->assertSame(10330, DonationService::grossUp(10000));
     }
 
+    // ------------------------------------------------- how the browser encodes
+
+    #[Test]
+    public function the_checkbox_answers_survive_being_sent_as_strings(): void
+    {
+        // THIS BLOCKED EVERY LIVE ORDER. Laravel's `boolean` rule accepts true,
+        // false, 1, 0, "1" and "0" — and REJECTS "true" and "false". The SPA
+        // pins a global axios Content-Type of x-www-form-urlencoded which every
+        // instance inherits, so the public form's booleans arrived as exactly
+        // those two strings and every order 422'd with "The cover fees field
+        // must be true or false."
+        //
+        // Every test here had used postJson with real booleans, which is the one
+        // encoding the browser never sends.
+        $this->stubCheckout(new \ArrayObject());
+
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody([
+            'cover_fees' => 'true',
+            'notify_sms' => 'false',
+        ]), $this->header())
+            ->assertOk()
+            ->assertJsonPath('data.order.fee_covered_minor', 55);
+
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody([
+            'cover_fees' => 'false',
+        ]), $this->header())
+            ->assertOk()
+            ->assertJsonPath('data.order.fee_covered_minor', 0);
+    }
+
+    #[Test]
+    public function an_order_posted_form_encoded_like_the_browser_goes_through(): void
+    {
+        // The transport the SPA actually uses, end to end.
+        $this->stubCheckout(new \ArrayObject());
+
+        $this->post('/api/v1/lunch-orders', $this->orderBody([
+            'cover_fees' => 'true',
+            'notify_sms' => 'false',
+            'donation_minor' => '200',
+        ]), $this->header() + ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('data.order.donation_minor', 200)
+            ->assertJsonPath('data.order.fee_covered_minor', StripeFees::coverage(1000));
+    }
+
+    #[Test]
+    public function genuine_nonsense_in_a_flag_is_still_rejected(): void
+    {
+        // The coercion must not turn every unparseable value into a quiet false.
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody([
+            'cover_fees' => 'yes-please',
+        ]), $this->header())
+            ->assertStatus(422)
+            ->assertJsonStructure(['data' => ['cover_fees']]);
+    }
+
     #[Test]
     public function an_explicit_rate_override_is_still_honoured(): void
     {
