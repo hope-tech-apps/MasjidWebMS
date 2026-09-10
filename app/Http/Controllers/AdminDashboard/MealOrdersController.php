@@ -208,7 +208,7 @@ class MealOrdersController extends Controller
                 }
 
                 return $order;
-            });
+            }, 3); // retried on a deadlock rather than failing the customer
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
@@ -224,6 +224,10 @@ class MealOrdersController extends Controller
         try {
             $checkoutUrl = $this->checkout->checkout($order->load('items'))['checkout_url'] ?: null;
             $message = "Order #{$order->order_number} added. Open the payment page or send the link to the customer.";
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Before RuntimeException, which it extends: never show SQL to staff.
+            report($e);
+            $message = "Order #{$order->order_number} added, but the payment page could not be created. {$retry}";
         } catch (\RuntimeException $e) {
             $message = "Order #{$order->order_number} added, but the payment page could not be created: {$e->getMessage()} {$retry}";
         } catch (\Stripe\Exception\ExceptionInterface $e) {
@@ -267,6 +271,11 @@ class MealOrdersController extends Controller
 
         try {
             $result = $this->checkout->paymentLink($order);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Before RuntimeException, which it extends: never show SQL to staff.
+            report($e);
+
+            return $this->refuse('That order is busy. Try again in a moment.');
         } catch (\RuntimeException $e) {
             return $this->refuse($e->getMessage());
         } catch (\Stripe\Exception\ExceptionInterface $e) {

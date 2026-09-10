@@ -4,6 +4,7 @@ namespace App\Services\Stripe;
 
 use App\Models\Masjid;
 use App\Models\MealOrder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Stripe\StripeClient;
@@ -181,32 +182,45 @@ class MealOrderCheckoutService
      */
     public function paymentLink(MealOrder $order): array
     {
-        $masjid = $this->preflight($order);
+        // Serialised on the order row: when two people press "Payment link" at
+        // once, the second waits here, then finds the first one's open session
+        // and gets that same page — never a second payable one.
+        return DB::transaction(function () use ($order) {
+            $order = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
+            $masjid = $this->preflight($order);
 
-        if ($order->stripe_checkout_session_id) {
-            $session = $this->retrieveCheckoutSession(
-                (string) $order->stripe_checkout_session_id,
-                (string) $masjid->stripe_account_id
-            );
+            if ($order->stripe_checkout_session_id) {
+                $session = $this->retrieveCheckoutSession(
+                    (string) $order->stripe_checkout_session_id,
+                    (string) $masjid->stripe_account_id
+                );
 
-            if ($session['status'] === 'open' && $session['url']) {
-                return [
-                    'order' => $order,
-                    'checkout_url' => (string) $session['url'],
-                    'session_id' => $order->stripe_checkout_session_id,
-                ];
+                if ($session['status'] === 'open' && $session['url']) {
+                    return [
+                        'order' => $order,
+                        'checkout_url' => (string) $session['url'],
+                        'session_id' => $order->stripe_checkout_session_id,
+                    ];
+                }
+
+                if ($session['status'] === 'complete') {
+                    throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
+                }
+
+                $order->stripe_checkout_session_id = null;
             }
 
-            if ($session['status'] === 'complete') {
-                throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
-            }
-
+            // A fresh key whenever no live page exists. A key saved by an attempt
+            // that never recorded a session would otherwise be replayed: Stripe
+            // repeats a saved failure for 24h, and rejects the key outright when
+            // the parameters differ (the public page's own return URLs). That
+            // attempt handed nobody a page, so a new key cannot create a second
+            // payable one — and the row lock above rules out a concurrent one.
             $order->idempotency_key = null;
-            $order->stripe_checkout_session_id = null;
             $order->save();
-        }
 
-        return $this->checkout($order);
+            return $this->checkout($order);
+        });
     }
 
     private function preflight(MealOrder $order): Masjid

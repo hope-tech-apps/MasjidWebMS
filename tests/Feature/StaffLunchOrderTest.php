@@ -36,6 +36,8 @@ class StaffLunchOrderTest extends TestCase
     public static bool $stripeDown = false;
     /** The parameters of the last Checkout Session asked for — what Stripe would charge. */
     public static array $lastParams = [];
+    /** Every idempotency key Stripe was sent, in order — including failed attempts. */
+    public static array $keys = [];
 
     private Masjid $masjid;
     private User $admin;
@@ -79,12 +81,15 @@ class StaffLunchOrderTest extends TestCase
         self::$pageStatus = 'open';
         self::$stripeDown = false;
         self::$lastParams = [];
+        self::$keys = [];
 
         $this->app->bind(MealOrderCheckoutService::class, function ($app) {
             return new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
             {
                 protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
                 {
+                    StaffLunchOrderTest::$keys[] = $idempotencyKey;
+
                     if (StaffLunchOrderTest::$stripeDown) {
                         throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
                     }
@@ -256,6 +261,29 @@ class StaffLunchOrderTest extends TestCase
 
         self::$stripeDown = false;
         $this->linkFor($order)->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
+
+        // The retry went out under a NEW key: the failed attempt's key could have
+        // a saved failure replayed for 24h, or clash with different parameters.
+        $this->assertCount(2, self::$keys);
+        $this->assertNotSame(self::$keys[0], self::$keys[1]);
+        $this->assertSame(self::$keys[1], $order->fresh()->idempotency_key);
+    }
+
+    #[Test]
+    public function a_removed_volunteer_is_still_named_on_the_orders_they_took(): void
+    {
+        $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
+        Sanctum::actingAs($volunteer);
+        $this->order('/api/lunch', $this->onePlate())->assertCreated();
+
+        // Removing a login soft-deletes it; the office still needs to know who took the order.
+        $volunteer->delete();
+        $this->assertSoftDeleted('users', ['id' => $volunteer->id]);
+
+        Sanctum::actingAs($this->admin);
+        $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
+            ->assertOk()
+            ->assertJsonPath('data.orders.0.entered_by.name', $volunteer->name);
     }
 
     #[Test]

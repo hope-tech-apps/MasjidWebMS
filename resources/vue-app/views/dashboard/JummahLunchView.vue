@@ -535,14 +535,27 @@ function showPayLink(order: any, url: string) {
 }
 async function openPayLink(o: any) {
     if (!currentMenu.value) return;
+    let url: string;
     try {
-        showPayLink(o, await store.paymentLink(currentMenu.value.id, o.id));
-        await store.fetchOrders(currentMenu.value.id);
+        url = await store.paymentLink(currentMenu.value.id, o.id);
     } catch (e: any) {
-        // The server's reason (already paid, cancelled, online payment off), not axios's "status code 422".
-        const reason = e?.response?.data?.data;
-        Swal.fire({ icon: "warning", title: "No payment page", text: typeof reason === "string" ? reason : (e?.message || "Could not create the payment page.") });
+        Swal.fire({ icon: "warning", title: "No payment page", text: serverReason(e, "Could not create the payment page.") });
+        return;
     }
+    showPayLink(o, url);
+    await refreshOrders();
+}
+// The server's own reason (already paid, cancelled, went online on another
+// device), never axios's "Request failed with status code 422".
+function serverReason(e: any, fallback: string): string {
+    const reason = e?.response?.data?.data;
+    return typeof reason === "string" ? reason : (e?.message || fallback);
+}
+// A refresh failure is only that: the action it follows already happened.
+async function refreshOrders() {
+    if (!currentMenu.value) return;
+    try { await store.fetchOrders(currentMenu.value.id); }
+    catch { toastError({ message: "Couldn't refresh the orders. Reload the page to see the latest." }); }
 }
 async function copyPayLink() {
     try { await navigator.clipboard.writeText(payModal.url); payModal.copied = true; }
@@ -570,9 +583,15 @@ async function saveOrder() {
             cover_fees: showFeeOffer.value && orderModal.coverFees,
         });
         orderModal.show = false;
-        await store.fetchOrders(currentMenu.value.id);
-        if (res?.checkout_url) showPayLink(res.data, res.checkout_url);
-        else Swal.fire({ icon: "warning", title: "Order added", text: res?.message || "The payment page could not be created." });
+        // Hand over the payment page FIRST. The order exists now; a board refresh
+        // that fails on a weak connection must not lose the link.
+        if (res?.checkout_url) {
+            showPayLink(res.data, res.checkout_url);
+            await refreshOrders();
+        } else {
+            await refreshOrders();
+            Swal.fire({ icon: "warning", title: "Order added", text: res?.message || "The payment page could not be created." });
+        }
     } catch (e) {
         orderError.value = orderErrorText(e);
     } finally { savingOrder.value = false; }
@@ -738,7 +757,14 @@ async function removeItem(it: any) {
 
 async function markPaid(o: any) {
     if (!currentMenu.value) return;
-    try { await store.markOrderPaid(currentMenu.value.id, o.id); await store.fetchOrders(currentMenu.value.id); toast("Marked paid"); } catch (e) { toastError(e); }
+    try {
+        await store.markOrderPaid(currentMenu.value.id, o.id);
+        toast("Marked paid");
+    } catch (e: any) {
+        Swal.fire({ icon: "warning", title: "Not marked paid", text: serverReason(e, "Could not mark it paid.") });
+    }
+    // Either way, show the order's real state: a refused button may be stale.
+    await refreshOrders();
 }
 async function setOrderStatus(o: any, status: string) {
     if (!currentMenu.value || status === o.status) return;

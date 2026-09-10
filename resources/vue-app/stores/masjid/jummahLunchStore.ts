@@ -143,14 +143,23 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
 
     // --------------------------------------------------------------- orders
 
+    // Which menu `orders` belongs to. The list is cleared only when switching
+    // menus: a failed refresh of the SAME menu leaves it on screen rather than
+    // blanking the board mid-service (an empty board invites a duplicate order).
+    let ordersMenuId: string | null = null;
+
     async function fetchOrders(menuId: number | string): Promise<void> {
         if (notReady()) return;
-        orders.value = [];
-        orderSummary.value = null;
+        if (ordersMenuId !== String(menuId)) {
+            orders.value = [];
+            orderSummary.value = null;
+            ordersMenuId = null;
+        }
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${menuId}/orders`);
         if (res.data?.status === "success" && res.data?.data) {
             orders.value = res.data.data.orders ?? [];
             orderSummary.value = res.data.data.summary ?? null;
+            ordersMenuId = String(menuId);
         }
     }
 

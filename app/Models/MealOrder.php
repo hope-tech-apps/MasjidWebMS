@@ -131,20 +131,31 @@ class MealOrder extends Model
         return $this->hasMany(MealOrderItem::class);
     }
 
-    /** The staff login that took this order on the board (null for online orders). */
+    /**
+     * The staff login that took this order on the board (null for online orders).
+     * withTrashed: removing a volunteer soft-deletes their login, and "who took
+     * this order?" must still have an answer afterwards.
+     */
     public function enteredBy(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'entered_by_user_id');
+        return $this->belongsTo(User::class, 'entered_by_user_id')->withTrashed();
     }
 
     /**
      * The next per-menu order number ("007"), shared by every door that creates
      * an order — the public page and staff entry — so the two can never number
-     * differently. Call inside the transaction that saves the order: the row
-     * lock serialises concurrent orders so two never take the same number.
+     * differently. Call inside the transaction that saves the order.
+     *
+     * The MENU row is locked first. It always exists, so two first orders on an
+     * empty menu queue here; locking only meal_orders would give each a gap lock
+     * (compatible with each other) and InnoDB would deadlock their inserts,
+     * failing one customer. The unique index on (masjid_id, meal_menu_id,
+     * order_number) stays the final guarantee against a duplicate number.
      */
     public static function nextOrderNumber(int $masjidId, int $menuId): string
     {
+        MealMenu::withoutMasjidScope()->whereKey($menuId)->lockForUpdate()->first();
+
         $seq = static::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
             ->where('meal_menu_id', $menuId)

@@ -209,7 +209,7 @@ class JummahLunchOrdersController extends Controller
                 }
 
                 return $order;
-            });
+            }, 3); // retried on a deadlock rather than failing the customer
 
             // After the order is safely written, never before, and never in a
             // way that can fail it. See LunchSmsOptIn.
