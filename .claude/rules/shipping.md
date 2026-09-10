@@ -108,6 +108,20 @@ consent checkbox reading *"Add $0.00"* until it was ticked.
 
 Every one of those was invisible in the source and obvious on screen.
 
+**There is a way to do this for admin-authenticated screens.** A QA sandbox
+organisation exists in production — an UNLISTED masjid with its own MasjidAdmin —
+so the admin SPA can be driven in a browser without touching a real tenant. Its
+account is hard-scoped by the ordinary tenant rules: 403 on every other masjid,
+verified. Authentication is by a minted Sanctum token dropped into
+`localStorage.MASJID_APP_AUTH_TOKEN` (the store persists only the token and
+re-fetches the user), so no password for it exists anywhere.
+
+It was created because two admin-UI bugs shipped in one day for want of it — a
+serialiser that silently dropped every menu toggle, and a `v-else` separated
+from its `v-if` that blanked the whole page. Both were invisible to 2486 tests
+and obvious in a browser within seconds. Use it before saying an admin screen
+works, and never point it at a real organisation's id.
+
 **Deploy order for a live page.** Land a new customer-visible option **off**
 (`allow_* = false` for every row), ship the assets, confirm the page is unchanged, then
 enable it for the one menu that wants it. A customer mid-order must never meet a
