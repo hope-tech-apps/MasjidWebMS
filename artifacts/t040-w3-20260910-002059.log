@@ -1,0 +1,519 @@
+=== T-040 W3 verification — 2026-09-10T04:20:59Z ===
+
+### 1. bash -n (syntax) ###
+PASS  bash -n bin/deploy
+PASS  bash -n scripts/ship.sh
+PASS  bash -n deploy/staging/provision.sh
+PASS  bash -n deploy/staging/cloudflare-dns.sh
+
+### 2. shellcheck (version: 0.11.0) ###
+NOTE  shellcheck findings in bin/deploy:
+      
+      In bin/deploy line 227:
+      as_web php -r '
+                    ^-- SC2016 (info): Expressions don't expand in single quotes, use double quotes for that.
+      
+      For more information:
+        https://www.shellcheck.net/wiki/SC2016 -- Expressions don't expand in singl...
+PASS  shellcheck clean: scripts/ship.sh
+PASS  shellcheck clean: deploy/staging/provision.sh
+PASS  shellcheck clean: deploy/staging/cloudflare-dns.sh
+
+### 3. rsync flag acceptance (Apple openrsync) ###
+openrsync: protocol version 29
+rsync version 2.6.9 compatible
+PASS  -az --no-perms --no-owner --no-group accepted; copied: f.txt
+
+### 4. bin/deploy argument parsing (fake .env in a temp dir, --dry-run stops before git fetch) ###
+
+--- APP_ENV=production, no --ref ---
+
+[1m==> Environment[0m
+  APP_ENV : production
+  ref     : main
+  app dir : /var/folders/6y/dbdq6tcs2dn9kcly5971h6s00000gn/T/tmp.VRslRVZYP7
+  mode    : fast-forward merge of origin/main (--ref refused)
+
+[1m==> Dry run[0m
+  Would run, in order:
+    git fetch --quiet origin main && git merge --quiet --ff-only origin/main
+    composer install --no-dev --optimize-autoloader
+    chown -R www-data:www-data app bootstrap/cache config database resources routes storage vendor/composer
+    php artisan migrate --force
+    php artisan config:clear route:clear view:clear config:cache route:cache
+    systemctl restart masjid-queue.service
+    php -r '<class-load check>'
+  Stopped before 'git fetch'. Nothing was changed.
+exit=0
+
+--- APP_ENV=production, --ref feature/x  (MUST REFUSE) ---
+
+[1;31mdeploy: this host is APP_ENV=production; --ref is refused.
+     Production deploys only what is already on main, as a fast-forward, so that
+     the deployed commit is always reachable from the branch everyone reviews.
+     To try a branch, deploy it to STAGING:  scripts/ship.sh staging feature/x[0m
+
+exit=1 (expect 1)
+
+--- APP_ENV=staging, --ref feature/x  (MUST ACCEPT) ---
+
+[1m==> Environment[0m
+  APP_ENV : staging
+  ref     : feature/x
+  app dir : /var/folders/6y/dbdq6tcs2dn9kcly5971h6s00000gn/T/tmp.VRslRVZYP7
+  mode    : detached checkout of the requested ref
+
+[1m==> Dry run[0m
+  Would run, in order:
+    git fetch --quiet origin && git checkout --detach <resolved feature/x>
+    composer install --no-dev --optimize-autoloader
+    chown -R www-data:www-data app bootstrap/cache config database resources routes storage vendor/composer
+    php artisan migrate --force
+    php artisan config:clear route:clear view:clear config:cache route:cache
+    systemctl restart masjid-queue.service
+    php -r '<class-load check>'
+  Stopped before 'git fetch'. Nothing was changed.
+exit=0
+
+--- APP_ENV=staging, no --ref (defaults to main) ---
+
+[1m==> Environment[0m
+  APP_ENV : staging
+  ref     : main
+  app dir : /var/folders/6y/dbdq6tcs2dn9kcly5971h6s00000gn/T/tmp.VRslRVZYP7
+  mode    : detached checkout of the requested ref
+
+[1m==> Dry run[0m
+  Would run, in order:
+    git fetch --quiet origin && git checkout --detach <resolved main>
+    composer install --no-dev --optimize-autoloader
+    chown -R www-data:www-data app bootstrap/cache config database resources routes storage vendor/composer
+    php artisan migrate --force
+    php artisan config:clear route:clear view:clear config:cache route:cache
+    systemctl restart masjid-queue.service
+    php -r '<class-load check>'
+  Stopped before 'git fetch'. Nothing was changed.
+exit=0
+
+--- APP_ENV=staging, --ref=abc123 (equals form) ---
+  ref     : abc123
+  mode    : detached checkout of the requested ref
+exit=0
+
+--- APP_ENV absent  -> treated as production, --ref MUST REFUSE ---
+
+[1;31mdeploy: this host is APP_ENV=production; --ref is refused.
+     Production deploys only what is already on main, as a fast-forward, so that
+     the deployed commit is always reachable from the branch everyone reviews.
+     To try a branch, deploy it to STAGING:  scripts/ship.sh staging foo[0m
+
+exit=1 (expect 1)
+
+--- no .env at all (MUST REFUSE) ---
+
+[1;31mdeploy: no .env in /var/folders/6y/dbdq6tcs2dn9kcly5971h6s00000gn/T/tmp.VRslRVZYP7 — refusing to guess which environment this is.[0m
+
+exit=1 (expect 1)
+
+--- unknown argument (MUST REFUSE) ---
+usage: sudo bin/deploy [--ref <branch-or-sha>] [--dry-run]
+
+  --ref      the ref to deploy. Accepted on NON-production hosts only.
+             Defaults to main. May be a branch name or a full/short sha.
+  --dry-run  print the environment, the ref and the resolved plan, then stop
+             BEFORE `git fetch`. Changes nothing. Used to test this script.
+
+[1;31mdeploy: unknown argument: --nope[0m
+
+exit=1 (expect 1)
+
+--- --ref with no value (MUST REFUSE) ---
+
+[1;31mdeploy: --ref needs a value.[0m
+
+exit=1 (expect 1)
+
+### 5. scripts/ship.sh argument validation + --dry-run (nothing built, nothing sent) ###
+
+--- no arguments (MUST REFUSE) ---
+usage: scripts/ship.sh <staging|production> [ref] [--dry-run]
+
+  staging      deploys any ref (default main) to masjid-staging.hopetechapps.com
+  production   deploys main ONLY, after you type the confirmation phrase
+
+  ref          branch name or sha. Refused on production unless it is "main".
+  --dry-run    print every command instead of running it. Builds nothing,
+               connects to nothing.
+
+  The staging droplet's IP comes from $STAGING_IP, else from
+  deploy/staging/host (written by deploy/staging/provision.sh).
+
+[1;31mship: which environment? staging or production.[0m
+
+exit=1 (expect 1)
+
+--- unknown environment (MUST REFUSE) ---
+
+[1;31mship: unknown environment 'prod'. Valid: staging, production.[0m
+
+exit=1 (expect 1)
+
+--- production with a non-main ref (MUST REFUSE) ---
+
+[1;31mship: production ships main only (you asked for 'feature/x').
+     bin/deploy refuses --ref on a production host, so the PHP would stay on main
+     while the SPA became 'feature/x' — a split deploy. Ship it to staging first:
+         scripts/ship.sh staging feature/x[0m
+
+exit=1 (expect 1)
+
+--- staging with no STAGING_IP and no deploy/staging/host (MUST REFUSE) ---
+
+[1;31mship: no staging IP.
+     Set STAGING_IP=<ip> or write it to deploy/staging/host
+     (deploy/staging/provision.sh prints it, and deploy/staging/RUNBOOK.md
+     step 1 tells you where to put it).[0m
+
+exit=1 (expect 1)
+
+--- staging pointed at PRODUCTION's IP (MUST REFUSE) ---
+
+[1;31mship: refusing: staging IP resolved to 159.65.239.51, which is a PRODUCTION
+     (or prod-DB-connected) address. Fix STAGING_IP / deploy/staging/host.[0m
+
+exit=1 (expect 1)
+
+--- staging pointed at the reserved IP (MUST REFUSE) ---
+
+[1;31mship: refusing: staging IP resolved to 164.90.253.138, which is a PRODUCTION
+     (or prod-DB-connected) address. Fix STAGING_IP / deploy/staging/host.[0m
+
+exit=1 (expect 1)
+
+--- staging pointed at the STALE droplet (MUST REFUSE) ---
+
+[1;31mship: refusing: staging IP resolved to 147.182.210.42, which is a PRODUCTION
+     (or prod-DB-connected) address. Fix STAGING_IP / deploy/staging/host.[0m
+
+exit=1 (expect 1)
+
+--- VITE_APP_URL exported (MUST REFUSE — this is the build:prod defect) ---
+
+[1m==> Shipping[0m
+  environment : staging
+  ref         : main
+  http host   : https://masjid-staging.hopetechapps.com
+  ssh target  : root@203.0.113.10
+  app dir     : /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+  mode        : DRY RUN (nothing will be built, sent or run)
+
+[1m==> Checking the build environment[0m
+
+[1;31mship: VITE_APP_URL is set in this shell ('https://masjid.hopetechapps.com').
+     vite bakes it into the bundle and every non-matching host then calls that
+     host instead of itself. Run:  unset VITE_APP_URL   and ship again.[0m
+
+exit=1 (expect 1)
+
+--- too many arguments (MUST REFUSE) ---
+usage: scripts/ship.sh <staging|production> [ref] [--dry-run]
+
+  staging      deploys any ref (default main) to masjid-staging.hopetechapps.com
+  production   deploys main ONLY, after you type the confirmation phrase
+
+  ref          branch name or sha. Refused on production unless it is "main".
+  --dry-run    print every command instead of running it. Builds nothing,
+               connects to nothing.
+
+  The staging droplet's IP comes from $STAGING_IP, else from
+  deploy/staging/host (written by deploy/staging/provision.sh).
+
+[1;31mship: too many arguments (got an extra 'extra').[0m
+
+exit=1 (expect 1)
+
+--- staging happy path, --dry-run (placeholder IP 203.0.113.10, TEST-NET-3) ---
+
+[1m==> Shipping[0m
+  environment : staging
+  ref         : feature/lunch-sms
+  http host   : https://masjid-staging.hopetechapps.com
+  ssh target  : root@203.0.113.10
+  app dir     : /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+  mode        : DRY RUN (nothing will be built, sent or run)
+
+[1m==> Checking the build environment[0m
+[1;32m   ok VITE_APP_URL is unset[0m
+
+[1m==> Building the SPA (npm run build)[0m
+   [dry-run] npm run build   (log -> /Users/moneebsayed/Developer/MasjidWebMS/artifacts/vue_build_ship_staging_20260910-002130.log)
+
+[1m==> Shipping public/build/ (rsync, no --delete)[0m
+   [dry-run] rsync -az --no-perms --no-owner --no-group -e ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp /Users/moneebsayed/Developer/MasjidWebMS/public/build/ root@203.0.113.10:/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public/build/
+
+[1m==> Fixing ownership on the server[0m
+   [dry-run] ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp root@203.0.113.10 chown -R www-data:www-data /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public/build
+[1;32m   ok public/build owned by www-data[0m
+
+[1m==> Running bin/deploy on the server[0m
+   [dry-run] ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp root@203.0.113.10 cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem && sudo bin/deploy --ref feature/lunch-sms
+
+[1m==> Verifying https://masjid-staging.hopetechapps.com/auth/sign-in[0m
+   [dry-run] curl -fsS https://masjid-staging.hopetechapps.com/auth/sign-in
+   [dry-run] extract /build/assets/app-*.js from that HTML
+   [dry-run] curl -o /dev/null -w %{http_code} the chunk (expect 200)
+   [dry-run] grep -c masjid.hopetechapps.com in the chunk (expect 0)
+
+[1m==> Dry run complete — nothing was built, sent or run.[0m
+exit=0
+
+--- production happy path, --dry-run (no confirmation prompt in dry-run) ---
+
+[1m==> Shipping[0m
+  environment : production
+  ref         : main
+  http host   : https://masjid.hopetechapps.com
+  ssh target  : root@159.65.239.51
+  app dir     : /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+  mode        : DRY RUN (nothing will be built, sent or run)
+
+[1m==> Checking the build environment[0m
+[1;32m   ok VITE_APP_URL is unset[0m
+
+[1m==> Building the SPA (npm run build)[0m
+   [dry-run] npm run build   (log -> /Users/moneebsayed/Developer/MasjidWebMS/artifacts/vue_build_ship_production_20260910-002130.log)
+
+[1m==> Shipping public/build/ (rsync, no --delete)[0m
+   [dry-run] rsync -az --no-perms --no-owner --no-group -e ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp /Users/moneebsayed/Developer/MasjidWebMS/public/build/ root@159.65.239.51:/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public/build/
+
+[1m==> Fixing ownership on the server[0m
+   [dry-run] ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp root@159.65.239.51 chown -R www-data:www-data /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public/build
+[1;32m   ok public/build owned by www-data[0m
+
+[1m==> Running bin/deploy on the server[0m
+   [dry-run] ssh -o BatchMode=yes -o ConnectTimeout=15 -i /Users/moneebsayed/.ssh/do_mcp root@159.65.239.51 cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem && sudo bin/deploy
+
+[1m==> Verifying https://masjid.hopetechapps.com/auth/sign-in[0m
+   [dry-run] curl -fsS https://masjid.hopetechapps.com/auth/sign-in
+   [dry-run] extract /build/assets/app-*.js from that HTML
+   [dry-run] curl -o /dev/null -w %{http_code} the chunk (expect 200)
+   [dry-run] grep -c masjid.hopetechapps.com in the chunk (expect 0)
+
+[1m==> Dry run complete — nothing was built, sent or run.[0m
+exit=0
+
+--- deploy/staging/host is read when STAGING_IP is unset ---
+
+[1m==> Shipping[0m
+  environment : staging
+  ref         : main
+  http host   : https://masjid-staging.hopetechapps.com
+  ssh target  : root@203.0.113.99
+  app dir     : /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+  mode        : DRY RUN (nothing will be built, sent or run)
+exit=0
+(removed the placeholder deploy/staging/host — provision.sh writes the real one)
+
+### 6. Entry-chunk extraction regex, proven against the LIVE production sign-in page (read-only GET) ###
+fetched 1741 bytes
+extracted entry chunk: /build/assets/app-RRKHdq8X.js
+PASS  the regex in ship.sh resolves a real entry chunk from a real page
+(the chunk was NOT downloaded and nothing on production was changed)
+
+### 7. deploy/staging/cloudflare-dns.sh — validation + --dry-run (GETs only; NO record created) ###
+
+--- no IP (MUST REFUSE) ---
+usage: deploy/staging/cloudflare-dns.sh <ip> [--dry-run]
+
+  <ip>        the staging droplet's public IPv4 address (provision.sh prints it
+              and writes it to deploy/staging/host on the box).
+  --dry-run   print the exact HTTP requests that would be sent, and send none.
+              Reads are still performed so the plan is real.
+
+[1;31mcloudflare-dns: no IP given.[0m
+
+exit=1 (expect 1)
+
+--- not an IPv4 address (MUST REFUSE) ---
+
+[1;31mcloudflare-dns: 'masjid-staging.hopetechapps.com' is not an IPv4 address.[0m
+
+exit=1 (expect 1)
+
+--- production IP (MUST REFUSE) ---
+
+[1;31mcloudflare-dns: 159.65.239.51 is PRODUCTION. Refusing to point a staging hostname at it.[0m
+
+exit=1 (expect 1)
+
+--- reserved IP (MUST REFUSE) ---
+
+[1;31mcloudflare-dns: 164.90.253.138 is PRODUCTION. Refusing to point a staging hostname at it.[0m
+
+exit=1 (expect 1)
+
+--- stale droplet IP (MUST REFUSE) ---
+
+[1;31mcloudflare-dns: 147.182.210.42 is the stale droplet 480119186, which shares production's
+     database. Refusing.[0m
+
+exit=1 (expect 1)
+
+--- --dry-run against a placeholder IP (203.0.113.10, TEST-NET-3) ---
+
+[1m==> Zone[0m
+[1;32m    ok zone hopetechapps.com (859eddb9bce48f4f35e6197f6c0b8e15)[0m
+
+[1m==> Records[0m
+    target IP: 203.0.113.10
+    mode: DRY RUN — no POST or PUT will be sent
+    [dry-run] POST /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records
+    [dry-run]   {"type":"A","name":"masjid-staging.hopetechapps.com","content":"203.0.113.10","ttl":1,"proxied":true,"comment":"Manara staging (T-040) — managed by deploy/staging/cloudflare-dns.sh"}
+    [dry-run] POST /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records
+    [dry-run]   {"type":"A","name":"manara-staging.hopetechapps.com","content":"203.0.113.10","ttl":1,"proxied":true,"comment":"Manara staging (T-040) — managed by deploy/staging/cloudflare-dns.sh"}
+    [dry-run] POST /zones/859eddb9bce48f4f35e6197f6c0b8e15/dns_records
+    [dry-run]   {"type":"A","name":"portal-staging.hopetechapps.com","content":"203.0.113.10","ttl":1,"proxied":true,"comment":"Manara staging (T-040) — managed by deploy/staging/cloudflare-dns.sh"}
+
+[1m==> Resulting staging records[0m
+    (none)
+    (none)
+    (none)
+
+[1m==> Dry run complete — nothing was created or changed.[0m
+exit=0
+
+### 8. provision.sh .env merge + DENY-LIST, exercised in isolation ###
+(the two spans read_env_value()/set_env_key()+merge+deny were EXTRACTED VERBATIM from
+ deploy/staging/provision.sh by line range, so this tests the shipped code, not a copy)
+
+8a. Full merge against a synthetic .env carrying production's key names and value shapes:
+        ok 45 keys overridden from env.staging.example
+        blanked AWS_ACCESS_KEY_ID
+        blanked AWS_SECRET_ACCESS_KEY
+        blanked MAIL_PASSWORD
+        blanked MAIL_USERNAME
+        blanked VITE_PUSHER_APP_KEY
+        ok deny-list blanked 5 credential key(s)
+        ok no live-looking credential values remain
+    --- keys still needing a human:  STRIPE_KEY STRIPE_SECRET STRIPE_WEBHOOK_SECRET STRIPE_CONNECT_WEBHOOK_SECRET ---
+    --- key count: 55 ---
+    result: 55 keys
+    PASS  no production secret survived
+    PASS  preserved on purpose: APP_KEY GOOGLE_MAPS_GEOCODING_KEY FLYER_CUTOUT_PYTHON 
+
+8b. THE SAFETY PROPERTY: the example is sabotaged to FORGET four secret keys.
+    (RESEND_KEY, ONESIGNAL_REST_API_KEY, STRIPE_SECRET, GITHUB_DISPATCH_TOKEN removed
+     from env.staging.example — i.e. the failure where someone edits the example badly)
+    removed: 4 override lines
+        ok 41 keys overridden from env.staging.example
+        blanked AWS_ACCESS_KEY_ID
+        blanked AWS_SECRET_ACCESS_KEY
+        blanked GITHUB_DISPATCH_TOKEN
+        blanked MAIL_PASSWORD
+        blanked MAIL_USERNAME
+        blanked ONESIGNAL_REST_API_KEY
+        blanked RESEND_KEY
+        blanked STRIPE_SECRET
+        blanked VITE_PUSHER_APP_KEY
+        ok deny-list blanked 9 credential key(s)
+        ok no live-looking credential values remain
+    --- keys still needing a human:  STRIPE_KEY STRIPE_WEBHOOK_SECRET STRIPE_CONNECT_WEBHOOK_SECRET ---
+    --- key count: 55 ---
+    values of the four forgotten keys after the deny-list:
+      RESEND_KEY=
+      ONESIGNAL_REST_API_KEY=
+      STRIPE_SECRET=
+      GITHUB_DISPATCH_TOKEN=
+    PASS  the deny-list blanked every key the example forgot
+
+### 9. nginx vhost rewrite, applied to PRODUCTION's REAL vhost text (fetched read-only) ###
+fetched: masjid 53 lines, portal 64 lines (read-only; prod untouched)
+
+diff of the app vhost (only server_name + cert paths should change):
+    4c4
+    <     server_name masjid.hopetechapps.com;
+    ---
+    >     server_name masjid-staging.hopetechapps.com manara-staging.hopetechapps.com;
+    10,12c10,12
+    <     server_name masjid.hopetechapps.com;
+    <     ssl_certificate     /etc/letsencrypt/live/masjid.hopetechapps.com/fullchain.pem;
+    <     ssl_certificate_key /etc/letsencrypt/live/masjid.hopetechapps.com/privkey.pem;
+    ---
+    >     server_name masjid-staging.hopetechapps.com manara-staging.hopetechapps.com;
+    >     ssl_certificate     /etc/ssl/manara-staging/fullchain.pem;
+    >     ssl_certificate_key /etc/ssl/manara-staging/privkey.pem;
+diff of the portal vhost:
+    26c26
+    <     server_name portal.alrazischool.org;
+    ---
+    >     server_name portal-staging.hopetechapps.com;
+    33c33
+    <     server_name portal.alrazischool.org;
+    ---
+    >     server_name portal-staging.hopetechapps.com;
+    35,36c35,36
+    <     ssl_certificate     /etc/letsencrypt/live/portal.alrazischool.org/fullchain.pem;
+    <     ssl_certificate_key /etc/letsencrypt/live/portal.alrazischool.org/privkey.pem;
+    ---
+    >     ssl_certificate     /etc/ssl/manara-staging/fullchain.pem;
+    >     ssl_certificate_key /etc/ssl/manara-staging/privkey.pem;
+
+post-rewrite assertions:
+    default_server directives on the app vhost: 4 (prod had 4)
+    default_server on the portal vhost: 2 (must be 0 — a duplicate makes nginx refuse to start)
+    PASS  no production hostname remains in either server_name
+    PASS  both vhosts serve /etc/ssl/manara-staging, so certbot delete is safe
+
+    NOTE: 'nginx -t' cannot be run from the Mac (no nginx). provision.sh runs it
+    on the box and refuses to reload if it fails, leaving the old config serving.
+
+    CORRECTION to the default_server counts above: grep -c counted COMMENT lines
+    (the portal vhost's comments explain why it must not repeat default_server).
+    Counting the actual listen directives instead:
+      app vhost   prod=4  staged=4  (listen ... default_server)
+      portal vhost prod=0  staged=0  (must be 0 — a duplicate makes nginx refuse to start)
+      PASS  default_server preserved on exactly one vhost, on both :80 and :443 (v4+v6)
+
+### 10. Files produced by W3 ###
+    bin/deploy                                      272 lines
+    scripts/ship.sh                                 325 lines
+    deploy/staging/provision.sh                     696 lines
+    deploy/staging/env.staging.example              194 lines
+    deploy/staging/nginx-staging.conf.example       153 lines
+    deploy/staging/cloudflare-dns.sh                213 lines
+
+### NOT tested here (cannot be, and why) ###
+    * provision.sh end-to-end — needs the staging droplet, which does not exist yet
+      (blocked on the owner: DO token / console). Its guards are the parts that
+      matter most and they refuse to run anywhere that exists today.
+    * a real ship — would build and deploy; explicitly out of scope for this slice.
+    * cloudflare POST/PUT — the target IP does not exist; only GETs were sent.
+    * nginx -t — no nginx on the Mac.
+
+=== end 2026-09-10T04:23:46Z ===
+
+### 11. Documents produced (not executable; reviewed by reading) ###
+    deploy/staging/RUNBOOK.md                       333 lines
+    deploy/staging/CLAUDE.md                        158 lines
+    .claude/rules/environments.md                   170 lines
+    deploy/README.md                                330 lines
+
+    deploy/README.md: the two stale GitHub-Actions claims (an Actions deploy that
+    pulls/migrates/rebuilds, and one that runs queue:restart) are replaced with what
+    is true — tests.yml is the only workflow on main, and bin/deploy is what restarts
+    the worker. Verified: 1 remaining mention(s), all historical.
+
+### 12. Consistency checks across the new files ###
+    PASS  env.staging.example's FORCE_HTTPS matches W1's config/app.php key
+    PASS  RUNBOOK's link to W2's DATA-REFRESH.md resolves
+    PASS  the staging:scrub command the rules/runbook reference exists (W2)
+    PASS  provision.sh runs neither migrate nor staging:scrub: 0 occurrences outside comments
+
+### 13. Working tree ###
+    Nothing committed, nothing staged (git status --short, W3-owned paths only):
+       M bin/deploy
+       M deploy/README.md
+      ?? .claude/rules/environments.md
+      ?? deploy/staging/
+      ?? scripts/ship.sh
+    Untouched by W3: app/, config/, resources/, routes/, tests/, STATE.md, PLAN.md, LOG.md, DECISIONS.md, NOTES.md, CLAUDE.md

@@ -1,7 +1,36 @@
 <?php
 
 use App\Http\Controllers\ConnectOnboardingLandingController;
+use App\Support\Environment;
 use Illuminate\Support\Facades\Route;
+
+/*
+ * robots.txt for a NON-production deployment: refuse everything.
+ *
+ * Paired with the X-Robots-Tag header in SecurityHeaders — that one tells a
+ * crawler not to keep a page it already fetched, this one asks it not to fetch
+ * at all. A staging box is a scrubbed copy of production carrying the same
+ * organisation names and the same donation pages; it must never appear in a
+ * congregant's search results.
+ *
+ * Production 404s here rather than answering, because production already has a
+ * STATIC public/robots.txt ("User-agent: * / Disallow:") and that file must
+ * remain the single answer there. Note that nginx's `try_files $uri ... ` serves
+ * that static file BEFORE PHP is reached, so on any box where the file is
+ * present this route is only reachable in tests and via a `location = /robots.txt`
+ * that skips straight to index.php — which the staging nginx site must add (or
+ * the staging deploy must remove public/robots.txt). Recorded in the T-040
+ * handoff; deliberately not solved by deleting the production file here.
+ *
+ * Declared BEFORE the SPA catch-all below, which would otherwise swallow it.
+ */
+Route::get('/robots.txt', function () {
+    abort_if(Environment::isProduction(), 404);
+
+    return response("User-agent: *\nDisallow: /\n", 200, [
+        'Content-Type' => 'text/plain; charset=UTF-8',
+    ]);
+});
 
 /*
  * Public Stripe Connect onboarding landings.

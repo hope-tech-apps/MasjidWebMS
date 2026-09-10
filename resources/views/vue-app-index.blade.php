@@ -64,6 +64,25 @@
         <script>window.__PORTAL_MASJID__ = {{ (int) $portalMasjidId }};</script>
     @endif
 
+    {{--
+        WHICH DEPLOYMENT IS THIS?
+
+        The SPA is one bundle served from every host, and staging is a scrubbed
+        copy of production — same branding, same screens, same donation forms.
+        Without this a staging tab is visually indistinguishable from the live
+        site, which is how someone ends up entering a real card number, or
+        "fixing" a record on a box whose data is thrown away weekly.
+
+        Emitted before @vite, like __PORTAL_MASJID__ above, because the value has
+        to exist before the app boots — EnvironmentRibbon reads it during setup.
+
+        Always emitted, including "production": a MISSING global and a
+        production one must not be distinguishable, or a build served from a
+        stale Blade would read as "unknown" and the ribbon would have to guess.
+        The ribbon renders nothing for production, so this costs one inert line.
+    --}}
+    <script>window.__APP_ENV__ = @json(\App\Support\Environment::name());</script>
+
     @vite('resources/js/app.js')
 
 </head>

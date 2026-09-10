@@ -18,6 +18,7 @@ use Symfony\Component\HttpFoundation\Response;
  *                                  whitelisted for the admin SPA + future apps
  *  - Cross-Origin-Opener-Policy — process isolation (Spectre defense)
  *  - X-Permitted-Cross-Domain-Policies — block Flash / Acrobat cross-domain
+ *  - X-Robots-Tag               — noindex, nofollow on NON-production only
  *
  * Notes:
  *  - HSTS is only emitted over HTTPS (browsers ignore it on HTTP and including
@@ -41,6 +42,23 @@ class SecurityHeaders
         );
         $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin', false);
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none', false);
+
+        // Keep every non-production deployment out of search results.
+        //
+        // Staging is a scrubbed COPY of production — same page titles, same
+        // organisation names, same donation and registration pages. Indexed, it
+        // would compete with the real site for the congregation's own searches
+        // and hand people a link that takes real-looking payment details on a
+        // box nobody is watching. robots.txt alone is not enough: it asks a
+        // crawler not to FETCH, while this header tells one that already has the
+        // page not to KEEP it, and it covers the API and any deep link a crawler
+        // reached from elsewhere. Emitted here because this middleware is the
+        // one appended to both the web and api stacks (bootstrap/app.php).
+        //
+        // Production emits nothing at all, so its responses are byte-identical.
+        if (!\App\Support\Environment::isProduction()) {
+            $response->headers->set('X-Robots-Tag', 'noindex, nofollow', false);
+        }
 
         // HSTS only over HTTPS so it doesn't get ignored / cause local-dev confusion.
         if ($request->isSecure()) {

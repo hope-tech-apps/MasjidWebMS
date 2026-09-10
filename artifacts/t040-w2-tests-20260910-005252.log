@@ -1,0 +1,1381 @@
+
+   PASS  Tests\Unit\AdhanPrayerTimesTest
+  ✓ it reproduces every adhan javascript golden vector exactly           0.97s  
+  ✓ it matches the payload production stored before the outage
+  ✓ it agrees with published sunrise and sunset for real cities
+  ✓ it returns null for prayers that do not occur inside the polar circle
+  ✓ a range is inclusive of both ends and ordered by day                 0.08s  
+  ✓ a range that ends before it starts produces nothing
+  ✓ a range spanning a month and year boundary stays on consecutive days
+  ✓ the calculation never reads the process timezone
+
+   PASS  Tests\Unit\ArabicCurriculumTest
+  ✓ there are exactly twenty eight letters in hijai order                0.67s  
+  ✓ the six non connecting letters are the six that do not join forward  0.11s  
+  ✓ a non connecting letter has two shapes and a connecting one has fou… 0.16s  
+  ✓ stages are cumulative and unlock the marks in teaching order         0.18s  
+  ✓ the syllabus is the progress denominator                             0.16s  
+  ✓ one letters drills are a slice of the same syllabus                  0.12s  
+  ✓ a drill from a later stage is not valid for an earlier one           0.15s  
+  ✓ a marked drill renders the letter carrying the real combining mark   0.10s  
+  ✓ an unset stage is the first stage rather than an error               0.16s  
+  ✓ the avatar catalogue is the forty drawings that ship                 0.10s  
+  ✓ an incomplete or unknown avatar resolves to null not a default       0.10s  
+  ✓ every catalogued avatar has a file on disk                           0.11s  
+
+   PASS  Tests\Unit\Backup\ArchiveIntegrityTest
+  ✓ directories symlinks and long name records are entries but are not…  0.28s  
+  ✓ an archive of nothing but directories holds no files at all          0.11s  
+  ✓ a regular file written with the older nul type flag still counts     0.12s  
+  ✓ a hard link record is not counted as a second file                   0.12s  
+  ✓ a truncated archive is not ok and reports no files                   0.12s  
+
+   PASS  Tests\Unit\Backup\MediaTargetTest
+  ✓ it follows the disk media library is configured on                   0.19s  
+  ✓ moving media to another local disk moves the backup with it          0.12s  
+  ✓ an explicit backup media disk overrides media library                0.11s  
+  ✓ the media prefix is part of the archive root and of a rows path      0.16s  
+  ✓ a row with no prefix maps to the id directory media library uses     0.08s  
+  ✓ media on s3 with no configured strategy is refused not downgraded    0.11s  
+  ✓ media on s3 with a strategy and a bucket resolves to a sync          0.12s  
+  ✓ an s3 disk with no bucket is refused                                 0.24s  
+  ✓ a disk filesystems does not define is refused and lists the ones it… 0.29s  
+  ✓ a local disk with no root is refused                                 0.37s  
+  ✓ no media disk at all is refused                                      0.26s  
+
+   PASS  Tests\Unit\DonorCoversFeesTest
+  ✓ grosses up 100 dollars to 103 30 at 2 9 percent plus 30c             0.64s  
+  ✓ net after stripe fee equals intended for 100 dollars                 0.27s  
+  ✓ net after stripe fee equals intended for a small gift                0.23s  
+  ✓ compute stripe fee matches the expected charge breakdown             0.28s  
+  ✓ gross up honours explicit rate overrides without config              0.19s  
+  ✓ application fee is zero by default                                   0.10s  
+  ✓ application fee scales with configured platform percentage           0.10s  
+
+   PASS  Tests\Unit\ExampleTest
+  ✓ that true is true                                                    0.19s  
+
+   PASS  Tests\Unit\FormSchemaTest
+  ✓ a complete submission passes                                         0.19s  
+  ✓ missing required top level field fails                               0.10s  
+  ✓ malformed email fails                                                0.11s  
+  ✓ zero attendees fails the minimum                                     0.11s  
+  ✓ more attendees than max entries fails                                0.12s  
+  ✓ attendee below minimum age fails on that row                         0.14s  
+  ✓ invented select option is rejected                                   0.11s  
+  ✓ unticked required checkbox fails                                     0.12s  
+  ✓ guardian name required when an attendee is a minor                   0.12s  
+  ✓ guardian name not required when all attendees are adults             0.11s  
+  ✓ guardian name supplied satisfies the conditional                     0.12s  
+  ✓ entry count follows the repeatable section                           0.16s  
+  ✓ amount due is per entry                                              0.11s  
+  ✓ a form without a fee has no amount due                               0.11s  
+  ✓ a composite identity slot joins its parts                            0.11s  
+  ✓ a composite identity slot tolerates a missing part                   0.11s  
+  ✓ identity is extracted per the declared map                           0.10s  
+  ✓ undeclared fields are stripped                                       0.14s  
+
+   PASS  Tests\Unit\OnesignalUnconfiguredTest
+  ✓ it constructs with blank credentials                                 0.34s  
+  ✓ the container can resolve it with blank credentials                  0.11s  
+  ✓ is configured is false when credentials are blank                    0.11s  
+  ✓ is configured is false when only some credentials are present        0.11s  
+  ✓ send prayer alert returns the not sent shape and sends nothing       0.14s  
+  ✓ send data sync returns the not sent shape and sends nothing          0.15s  
+  ✓ an empty recipient list still returns null exactly as before         0.10s  
+  ✓ get notification details returns an empty array and sends nothing    0.10s  
+  ✓ configured credentials still send                                    0.18s  
+
+   PASS  Tests\Unit\QuranIndexTest
+  ✓ the mushaf has one hundred and fourteen surahs and 6236 ayahs        0.21s  
+  ✓ the surah table is contiguous and every entry is complete            0.12s  
+  ✓ the familiar landmarks are where they should be                      0.09s  
+  ✓ a coordinate that does not exist is refused rather than guessed      0.12s  
+  ✓ the thirty juz start in order and partition the whole mushaf         0.09s  
+  ✓ an ayah reports the juz it actually falls in                         0.09s  
+  ✓ overlapping and touching ranges merge into one                       0.10s  
+  ✓ a juz counts as complete only when every ayah of it is covered       0.14s  
+  ✓ completion is coverage so memorising backwards reports the truth     0.11s  
+  ✓ completed surahs are counted the same way                            0.11s  
+  ✓ a described coordinate carries its name and its juz                  0.11s  
+
+   PASS  Tests\Unit\SettingsCalculationParametersTest
+  ✓ it maps every stored combination onto the parameters adhan javascri… 0.33s  
+  ✓ an absent settings row produces the historical default parameters    0.07s  
+  ✓ an unrecognised method degrades to moonsighting committee rather th… 0.08s  
+  ✓ an unrecognised madhab or high latitude rule degrades to the defaul… 0.07s  
+  ✓ a row whose every column is unusable still produces the historical…  0.09s  
+  ✓ the enum cast throws on access not on hydration which is what lets…  0.09s  
+  ✓ a column holding a backed enum instance maps the same as the raw st… 0.13s  
+  ✓ each call returns a fresh object so one masjid cannot poison the ne… 0.11s  
+  ✓ a degraded setting is logged with the masjid that carries it         0.12s  
+  ✓ a healthy row logs nothing                                           0.11s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\AccountAccessTest
+  ✓ a real address is sent a reset link                                  2.91s  
+  ✓ the reset link carries its token in the fragment not the query       0.22s  
+  ✓ an unknown address gets the same answer and no email                 0.22s  
+  ✓ a valid token sets the password and the new one works                0.30s  
+  ✓ a token cannot be used twice                                         0.22s  
+  ✓ a forged token is refused                                            0.40s  
+  ✓ a weak password is refused                                           0.19s  
+  ✓ resetting revokes the sessions the old password opened               0.26s  
+  ✓ an invited account is created without anyone choosing its password   0.27s  
+  ✓ an invite can make the new user the owning admin of an organisation  0.21s  
+  ✓ the type to role bridge still runs for an invited user               0.24s  
+  ✓ re inviting invalidates the previous link                            0.48s  
+  ✓ inviting requires super admin                                        0.22s  
+
+   PASS  Tests\Feature\AdversarialFindingsRegressionTest
+  ✓ a non numeric masjid segment cannot reach the family sign in endpoi… 0.30s  
+  ✓ zero padded masjid spellings share one sign in allowance             0.17s  
+  ✓ a non scalar email is rejected rather than raising a server error    0.13s  
+  ✓ a zero masjid option does not turn a scoped purge into a platform w… 0.12s  
+  ✓ an absurd aid grant is refused by validation                         0.07s  
+  ✓ an offering past its window does not report itself as open           0.08s  
+
+   PASS  Tests\Feature\AnnouncementsFeedTest
+  ✓ an announcement without an image is still served                     0.15s  
+  ✓ the image field is present and decodable even when there is no imag… 0.13s  
+  ✓ the body the board renders survives                                  0.17s  
+  ✓ the feed is still scoped to one masjid                               0.13s  
+
+   PASS  Tests\Feature\AnnualStatementDeliveryTest
+  ✓ send all rejects unauthenticated requests                            0.29s  
+  ✓ send queues one statement to the named donor                         1.54s  
+  ✓ send refuses a donor with no email and queues nothing                0.24s  
+  ✓ send is a 404 for a donor with no giving that year                   0.24s  
+  ✓ send cannot mail another masjids donor                               0.28s  
+  ✓ send in another masjids route is a 403                               0.19s  
+  ✓ show does not disclose another masjids donor                         0.27s  
+  ✓ send all reaches every donor with an email and skips the rest        1.86s  
+  ✓ send all never crosses into another organizations donors             1.87s  
+  ✓ send all in another masjids route is a 403 and mails nobody          0.24s  
+  ✓ send all only mails donors who gave in the requested year            1.78s  
+  ✓ send all ignores gifts that never settled                            1.63s  
+  ✓ the summary report totals only this organizations giving             0.23s  
+  ✓ a super admin send all stays inside the routed masjid                1.98s  
+  ✓ send all is behind the per masjid crm gate                           0.25s  
+  ✓ the queued statement carries the letter pdf                          1.07s  
+
+   PASS  Tests\Feature\AppProvisioningTest
+  ✓ a superadmin dispatches both platforms and jobs flip to dispatched   0.23s  
+  ✓ a failed dispatch marks the job failed with detail                   0.14s  
+  ✓ a masjid admin cannot dispatch                                       0.19s  
+  ✓ provision requires at least one valid platform                       0.15s  
+  ✓ the jobs index never leaks the callback token                        0.15s  
+  ✓ a valid callback token advances the job                              0.12s  
+  ✓ a valid callback can attach an artifact url on success               0.13s  
+  ✓ a wrong callback token is rejected and the job is unchanged          0.16s  
+  ✓ a missing callback token is rejected                                 0.10s  
+  ✓ an unknown job id is an opaque 404                                   0.12s  
+  ✓ a valid token with an invalid status is 422                          0.11s  
+
+   PASS  Tests\Feature\AppSignupCodeTenantIsolationTest
+  ✓ a bound tenant cannot read another organizations app signup code     0.18s  
+  ✓ a code minted at one masjid cannot be redeemed at another            0.18s  
+  ✓ requesting a code creates no contact                                 0.18s  
+
+   PASS  Tests\Feature\AppointmentRequestCrudTest
+  ✓ index rejects unauthenticated requests                               0.28s  
+  ✓ index returns only the admins own requests                           0.38s  
+  ✓ index filters by status                                              0.30s  
+  ✓ index serves the status vocabulary in meta                           0.29s  
+  ✓ show returns the admins own request with its notes                   0.32s  
+  ✓ show cannot read another organizations request via own route         0.26s  
+  ✓ admin cannot target another masjid in the route                      0.26s  
+  ✓ status can be moved through triage                                   0.27s  
+  ✓ an unknown status is rejected                                        0.25s  
+  ✓ status cannot be changed on another organizations request            0.23s  
+  ✓ a note is stored with a server derived author and tenant             0.29s  
+  ✓ a note cannot be added to another organizations request              0.26s  
+  ✓ a note requires a body                                               0.27s  
+
+   PASS  Tests\Feature\AppointmentRequestEncryptionTest
+  ✓ date of birth is ciphertext at rest                                  0.20s  
+  ✓ reason is ciphertext at rest                                         0.11s  
+  ✓ note bodies are ciphertext at rest                                   0.13s  
+  ✓ the casts round trip back to plaintext                               0.13s  
+  ✓ contact identity columns remain readable                             0.13s  
+
+   PASS  Tests\Feature\AppointmentRequestQueueTest
+  ✓ search matches the applicant name                                    0.34s  
+  ✓ search matches the phone and the email                               0.32s  
+  ✓ search never matches the encrypted reason                            0.34s  
+  ✓ search stays inside the callers own tenant                           0.33s  
+  ✓ search cannot escape an active status filter                         0.33s  
+  ✓ a wildcard in the search term is matched literally                   0.51s  
+  ✓ an array shaped filter degrades instead of 500ing                    0.29s  
+  ✓ the queue is newest first by default                                 0.22s  
+  ✓ the queue can be read oldest first                                   0.40s  
+  ✓ an unrecognized sort falls back to newest first                      0.30s  
+  ✓ the queue payload omits the encrypted fields                         0.31s  
+  ✓ the detail endpoint still serves the encrypted fields                0.36s  
+  ✓ status counts describe the whole queue not the filtered page         0.29s  
+  ✓ per page is clamped                                                  0.43s  
+
+   PASS  Tests\Feature\AppointmentRequestSubmissionTest
+  ✓ a request is stored for the masjid the header names                  0.35s  
+  ✓ a client supplied masjid id in the body is ignored                   0.15s  
+  ✓ a client supplied status and source are ignored                      0.12s  
+  ✓ a missing masjid header is a 400                                     0.11s  
+  ✓ an unknown masjid is a 404                                           0.11s  
+  ✓ the honeypot reports success but stores nothing                      0.15s  
+  ✓ validation failures return the legacy failed envelope                0.13s  
+  ✓ a future date of birth is rejected                                   0.14s  
+  ✓ reason and phone are required                                        0.14s  
+  ✓ email is optional                                                    0.11s  
+
+   PASS  Tests\Feature\AppointmentRequestTenantIsolationTest
+  ✓ request queries are scoped to the bound tenant                       0.21s  
+  ✓ a bound tenant cannot read another organizations request             0.11s  
+  ✓ request create stamps the bound tenant over client input             0.13s  
+  ✓ an unbound context sees every organizations requests                 0.11s  
+  ✓ without masjid scope bypasses the filter                             0.12s  
+  ✓ a bound tenant cannot update another organizations request           0.18s  
+  ✓ note queries are scoped to the bound tenant                          0.15s  
+  ✓ a bound tenant cannot read another organizations note                0.14s  
+  ✓ note create stamps the bound tenant over client input                0.13s  
+  ✓ deleting a request removes its notes through the model               0.14s  
+
+   PASS  Tests\Feature\ArabicLetterProgressTenantIsolationTest
+  ✓ the scope hides another schools letter progress                      0.22s  
+  ✓ the creating hook stamps the bound tenant                            0.14s  
+  ✓ mastered at is stamped once and never moved                          0.16s  
+  ✓ a student cannot hold two rows for one drill                         0.14s  
+  ✓ two students may hold the same drill                                 0.14s  
+  ✓ progress cannot outlive the student it describes                     0.15s  
+
+   PASS  Tests\Feature\ArabicLetterTrackerTest
+  ✓ a students tracker shows every letter and only the stages drills     0.33s  
+  ✓ a teacher marks a drill and the totals follow                        0.20s  
+  ✓ marking the same drill twice does not mint a second cell             0.29s  
+  ✓ a drill from a later stage is refused                                0.35s  
+  ✓ moving the class forward widens the syllabus without losing work     0.32s  
+  ✓ moving the class back hides later work without deleting it           0.44s  
+  ✓ the class overview never reads over one hundred percent              0.41s  
+  ✓ the overview carries each students avatar                            0.27s  
+  ✓ an unknown drill id is refused                                       0.30s  
+
+   PASS  Tests\Feature\AttendanceRecordTenantIsolationTest
+  ✓ the scope hides another schools register                             0.18s  
+  ✓ another schools register cannot be updated or deleted                0.14s  
+  ✓ create stamps the bound tenant over a client supplied masjid id      0.14s  
+
+   PASS  Tests\Feature\Backup\BackupRestoreDatabaseHalfTest
+  ✓ the whole dump is delivered to the client on stdin                   0.20s  
+  ✓ no argument asks the client to source the dump                       0.20s  
+  ✓ a client that fails partway makes this command report failure        0.19s  
+  ✓ the media half is on the disk before the database is touched         0.22s  
+  ✓ a clean restore puts both halves where they belong                   0.18s  
+  ✓ the credentials file does not outlive the restore                    0.17s  
+
+   PASS  Tests\Feature\Backup\BackupRestoreTest
+  ✓ a set holding no media rows is refused over a populated table        0.14s  
+  ✓ an empty set can still be restored deliberately                      0.13s  
+  ✓ an empty set never reads as all with files                           0.11s  
+  ✓ an ordinarily stale set still restores without a flag                0.14s  
+  ✓ a valid set preflights without restoring anything                    0.16s  
+  ✓ it refuses a database only dump by name                              0.12s  
+  ✓ it refuses a directory with no manifest                              0.12s  
+  ✓ it refuses a set whose media half is missing                         0.11s  
+  ✓ it refuses a set the manifest marks incomplete                       0.14s  
+  ✓ it refuses a set whose bytes changed after it was verified           0.15s  
+  ✓ it refuses a set whose checksum does not match                       0.11s  
+  ✓ it refuses a manifest version it does not understand                 0.13s  
+  ✓ it refuses a set that already had media rows without files unless t… 0.13s  
+  ✓ it refuses when the media half would have nowhere to go              0.12s  
+  ✓ it refuses a connection it cannot restore into                       0.16s  
+  ✓ it says so when there is nothing to restore                          0.12s  
+  ✓ it defaults to the newest set                                        0.13s  
+  ✓ a labelled set does not outrank a newer one just because of its nam… 0.12s  
+  ✓ a partial directory left by a killed run is never a candidate        0.11s  
+
+   PASS  Tests\Feature\Backup\BackupRunTest
+  ✓ it writes one set holding both halves and a manifest that binds the… 0.26s  
+  ✓ the media archive really contains the files that were on the disk    0.20s  
+  ✓ it refuses the whole run when the media disk cannot be archived      0.13s  
+  ✓ it refuses when the media root does not exist                        0.12s  
+  ✓ a dump that captured nothing is not a backup                         0.17s  
+  ✓ a truncated dump is not a backup                                     0.12s  
+  ✓ a failed dump leaves no partial directory behind                     0.11s  
+  ✓ the database password never reaches a command line                   0.15s  
+  ✓ the credentials file is not left inside the finished set             0.14s  
+  ✓ it records how many media rows have their file and flags the ones t… 0.21s  
+  ✓ a set whose rows all have files is a clean run                       0.16s  
+  ✓ files on the disk with no row do not downgrade a run                 0.16s  
+  ✓ it refuses before writing anything when the volume cannot take anot… 0.10s  
+  ✓ retention keeps the newest sets and never the one just written       0.18s  
+  ✓ retention never empties the destination when a run fails             0.12s  
+  ✓ a dry run writes nothing                                             0.10s  
+  ✓ a label names the set                                                0.15s  
+  ✓ it refuses a connection it cannot dump                               0.11s  
+  ✓ it refuses when the destination does not exist                       0.15s  
+  ✓ a dry run reports the plan even when the destination is missing      0.13s  
+  ✓ an archive whose headers are directories is still a short archive    0.19s  
+  ✓ an archive that really holds the files still passes                  0.19s  
+  ✓ it refuses when a media row names a disk this set does not archive   0.15s  
+  ✓ a conversions disk the set does not cover is a refusal too           0.19s  
+  ✓ a finished set records which disks its rows named                    0.17s  
+  ✓ it refuses when it cannot tell which disks the rows name             0.18s  
+  ✓ a media root that has lost its files is not a backup                 0.14s  
+  ✓ a set that captured far fewer files than the one before it does not… 0.18s  
+  ✓ a set that captured far fewer media rows than the one before it doe… 0.22s  
+  ✓ a set whose row count held still prunes                              0.18s  
+  ✓ a set written before the row field existed does not block retention  0.18s  
+  ✓ a set that captured what the one before it captured still prunes     0.16s  
+  ✓ the regression guard never compares files against tar headers        0.17s  
+  ✓ a dry run says which disks the rows name                             0.20s  
+
+   PASS  Tests\Feature\BehaviorAwardsTest
+  ✓ the module rejects unauthenticated requests                          0.44s  
+  ✓ an admin defines edits and deletes a skill                           0.41s  
+  ✓ a skill requires a label and a recognized polarity                   0.85s  
+  ✓ a skill label is unique within one organization                      0.99s  
+  ✓ a skill point value is bounded in both directions                    0.83s  
+  ✓ another organizations skill is a miss not a leak                     0.36s  
+  ✓ a leader awards a skill and the values are snapshotted               0.38s  
+  ✓ an award may override the skills default points                      0.31s  
+  ✓ editing the skill afterwards does not rewrite the award              0.36s  
+  ✓ an award must name a participant of this group                       0.33s  
+  ✓ an award must name a skill of this organization that is active       0.33s  
+  ✓ an award cannot be dated in the future                               0.34s  
+  ✓ an admin not in the group can award but not read it back             0.40s  
+  ✓ a leader reads every award in the group                              0.39s  
+  ✓ a member reads only their own record                                 0.40s  
+  ✓ a guardian reads their own wards record without any consent on file  0.31s  
+  ✓ another guardian is refused a different childs record                0.30s  
+  ✓ another guardians awards are absent from the listing query           0.39s  
+  ✓ an admin with no standing in the group is refused the listing        0.30s  
+  ✓ the date range filter narrows a listing by when it happened          0.33s  
+  ✓ the per student summary totals the snapshotted values                0.35s  
+  ✓ a guardians summary of their own ward ignores every other child      0.29s  
+  ✓ revoking an award removes it from listings and totals                0.39s  
+  ✓ revoking is idempotent                                               0.32s  
+  ✓ another organizations group is a miss and its route is a refusal     0.29s  
+  ✓ another organizations award cannot be revoked                        0.31s  
+
+   PASS  Tests\Feature\BehaviorTenantIsolationTest
+  ✓ the scope hides another organizations skills                         0.23s  
+  ✓ the creating hook stamps the bound tenant on a skill                 0.13s  
+  ✓ two organizations may both define the same skill label               0.13s  
+  ✓ without masjid scope sees every organizations skills                 0.17s  
+  ✓ the scope hides another organizations awards                         0.16s  
+  ✓ the creating hook stamps the bound tenant on an award                0.14s  
+  ✓ without masjid scope sees every organizations awards                 0.14s  
+  ✓ an award defaults its awarded at to now                              0.14s  
+  ✓ editing a skill never rewrites an award already given                0.14s  
+  ✓ deleting a skill keeps the awards it produced                        0.19s  
+  ✓ an unreadable stored polarity degrades rather than inventing a buck… 0.13s  
+  ✓ revoking an award removes it from ordinary queries                   0.15s  
+  ✓ removing a student from the roster takes their awards                0.14s  
+  ✓ force deleting a group takes its awards                              0.15s  
+  ✓ soft deleting a group keeps its awards                               0.14s  
+  ✓ a new award inherits the configured retention window                 0.16s  
+  ✓ a retention window the caller sets is respected                      0.13s  
+  ✓ retention days of zero leaves the window open                        0.14s  
+  ✓ the purge sweep removes awards past their retention date             0.15s  
+  ✓ the purge sweep leaves awards inside their window                    0.16s  
+  ✓ the purge sweep can be limited to one organization                   0.22s  
+  ✓ a dry run purge deletes no awards                                    0.16s  
+  ✓ an award records which account gave it and survives that account     0.15s  
+
+   PASS  Tests\Feature\Broadcasts\BroadcastChannelRegressionTest
+  ✓ the existing announcements endpoint is unchanged                     0.29s  
+  ✓ the announcements endpoint still enforces its own rules              0.19s  
+  ✓ the public announcements feed is unchanged                           0.20s  
+  ✓ the existing push endpoint is unchanged                              0.19s  
+  ✓ the public notifications feed is unchanged                           0.15s  
+  ✓ the composer mints no permission                                     0.24s  
+
+   PASS  Tests\Feature\Broadcasts\BroadcastComposerTest
+  ✓ it rejects unauthenticated requests                                  0.22s  
+  ✓ one post publishes to every selected channel                         0.39s  
+  ✓ each channel is opt in per send                                      0.29s  
+  ✓ the push delivery records how many devices it addressed              0.23s  
+  ✓ a channel with nobody to reach is skipped not failed                 0.23s  
+  ✓ a failing channel does not roll back the channels that succeeded     0.44s  
+  ✓ a failed channel can be retried without re sending the others        0.47s  
+  ✓ at least one channel is required                                     0.21s  
+  ✓ the announcements feed enforces its own validation rules             0.26s  
+  ✓ those rules do not apply when the announcement channel is not selec… 0.32s  
+  ✓ push cannot be narrowed to selected contacts                         0.24s  
+  ✓ a contacts audience reaches only the selected contacts               0.25s  
+  ✓ the email channel is refused when the crm is off and nothing is sen… 0.21s  
+  ✓ the other channels still work when the crm is off                    0.34s  
+  ✓ a future send is only a delayed queue job                            0.24s  
+  ✓ the scheduled job publishes when it runs                             0.24s  
+  ✓ the signage board serves only broadcasts published to it             0.31s  
+  ✓ the signage board hides a notice whose window has closed             0.23s  
+  ✓ an admin can read back what happened on each channel                 0.32s  
+
+   PASS  Tests\Feature\Broadcasts\BroadcastTenantIsolationTest
+  ✓ the global scope hides another tenants broadcasts                    0.24s  
+  ✓ the creating hook stamps the bound tenant over client input          0.14s  
+  ✓ the documented bypass still crosses tenants                          0.17s  
+  ✓ another tenants broadcast id under your own route is a 404           0.16s  
+  ✓ targeting another masjid in the route is a 403                       0.17s  
+  ✓ the index lists only your own tenants sends                          0.24s  
+  ✓ the public signage board is scoped by the masjid in its url          0.17s  
+  ✓ the public board omits a broadcast whose signage delivery failed     0.18s  
+
+   PASS  Tests\Feature\Broadcasts\ServiceAudienceCompositionTest
+  ✓ the composer can send push to one services interested members        0.55s  
+  ✓ a service audience still requires a service                          0.32s  
+  ✓ another organisations service cannot be addressed                    0.24s  
+  ✓ push to a hand picked contact list is still refused                  0.22s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\CommunitySectionTypesTest
+  ✓ the three community types are registered in the enum                 2.11s  
+  ✓ community types are author supplied not external data                1.99s  
+  ✓ the section type validation rule accepts the new types and still re… 1.86s  
+  ✓ the new types are offered to every tenant by the section types payl… 2.03s  
+  ✓ services eligibility default content has the documented shape        1.99s  
+  ✓ providers directory default content has the documented shape         2.11s  
+  ✓ impact stats default content has the documented shape                1.82s  
+  ✓ a services eligibility section survives the round trip including th… 2.03s  
+  ✓ an empty eligibility block comes back as lists and objects not null  1.84s  
+  ✓ the services eligibility button resolves an internal page id to a u… 2.13s  
+  ✓ a providers directory survives the round trip as a flat list groupe… 2.25s  
+  ✓ impact stat values survive as display text and are never numbers     2.05s  
+  ✓ the content binder leaves community sections alone                   2.10s  
+  ✓ per item images are wired into both upload maps at one array level   1.93s  
+  ✓ every pre existing section type still exists with the same value     1.97s  
+  ✓ pre existing default content is unchanged                            2.00s  
+  ✓ the pre existing stats type is untouched by the new impact type      1.70s  
+  ✓ an existing section type still serializes exactly as before          2.07s  
+  ✓ pre existing external data flags are unchanged                       2.93s  
+
+   PASS  Tests\Feature\ConnectOnboardingLandingTest
+  ✓ return landing is public and reports pending when charges are disab… 0.52s  
+  ✓ return landing reports connected once stripe enables charges         0.35s  
+  ✓ return landing never exposes the connected account id                0.33s  
+  ✓ return landing still renders when stripe is unreachable              0.41s  
+  ✓ refresh landing explains expiry and never mints a new link           0.26s  
+  ✓ unknown masjid renders a friendly page not a 500                     0.18s  
+  ✓ non numeric masjid id does not reach the landing controller          0.20s  
+  ✓ admin status endpoint still requires authentication                  0.28s  
+
+   PASS  Tests\Feature\ContactCardTenantIsolationTest
+  ✓ card queries are scoped to the bound tenant                          0.32s  
+  ✓ a bound tenant cannot read another organizations card                0.24s  
+  ✓ the who is card lookup answers only within the bound tenant          0.32s  
+  ✓ card create stamps the bound tenant over client input                0.25s  
+  ✓ an unbound context sees every organizations cards                    0.25s  
+  ✓ without masjid scope bypasses the filter                             0.26s  
+  ✓ the same last4 is allowed in two organizations                       0.24s  
+  ✓ a contacts cards relation never reaches across tenants               0.35s  
+  ✓ show discloses only the admins own contacts cards                    0.32s  
+  ✓ show cannot read another masjids contact cards                       0.29s  
+  ✓ naming another masjid in the route is a 403                          0.34s  
+  ✓ merge moves cards within the tenant                                  0.36s  
+  ✓ merge cannot absorb another masjids contact                          0.29s  
+  ✓ merge cannot target another masjids contact                          0.37s  
+
+   PASS  Tests\Feature\ContactCredentialCrudTest
+  ✓ index rejects unauthenticated requests                               0.32s  
+  ✓ an unauthenticated caller cannot download a document                 0.26s  
+  ✓ index lists only this contacts credentials                           0.35s  
+  ✓ index on another organizations contact is a 404                      0.28s  
+  ✓ an admin cannot target another masjid in the route                   0.25s  
+  ✓ index filters to credentials expiring within the window              0.38s  
+  ✓ a garbage expiring window is rejected                                0.34s  
+  ✓ the status in the payload is derived from expires at                 0.37s  
+  ✓ store creates a credential with an identifier encrypted at rest      0.30s  
+  ✓ store stamps the tenant and contact server side                      0.30s  
+  ✓ store on another organizations contact is a 404                      0.28s  
+  ✓ store rejects an unknown kind                                        0.31s  
+  ✓ kind other requires a label                                          0.29s  
+  ✓ an expiry before the issue date is rejected                          0.29s  
+  ✓ store accepts a document and keeps it private and unguessable        0.36s  
+  ✓ a disallowed document type is rejected and nothing is stored         0.29s  
+  ✓ an oversized document is rejected                                    0.30s  
+  ✓ replacing the document removes the old bytes                         0.40s  
+  ✓ show returns the admins own credential                               0.30s  
+  ✓ show cannot read another organizations credential via own route      0.35s  
+  ✓ update changes the admins own credential                             0.30s  
+  ✓ update cannot touch another organizations credential                 0.29s  
+  ✓ destroy removes the credential and its document bytes                0.32s  
+  ✓ destroy cannot delete another organizations credential               0.34s  
+  ✓ an admin can download their own credential document                  0.32s  
+  ✓ another organizations admin cannot download the document             0.46s  
+  ✓ a foreign credential id under the admins own contact is a 404        0.40s  
+  ✓ a credential without a document downloads nothing                    0.34s  
+
+   PASS  Tests\Feature\ContactCredentialTenantIsolationTest
+  ✓ credential queries are scoped to the bound tenant                    0.39s  
+  ✓ a bound tenant cannot read another organizations credential          0.16s  
+  ✓ credential create stamps the bound tenant over client input          0.18s  
+  ✓ an unbound context sees every organizations credentials              0.14s  
+  ✓ without masjid scope bypasses the filter                             0.15s  
+  ✓ the identifier is encrypted at rest                                  0.14s  
+  ✓ a non expiring credential is valid                                   0.15s  
+  ✓ a far future expiry is valid                                         0.13s  
+  ✓ an expiry inside the window is expiring                              0.15s  
+  ✓ a credential expiring today is still expiring not expired            0.16s  
+  ✓ a past expiry is expired                                             0.12s  
+  ✓ status is never a column                                             0.15s  
+  ✓ expiring within includes the window and excludes everything else     0.17s  
+  ✓ expired scope returns only past expiries                             0.14s  
+  ✓ deleting a credential removes its document bytes                     0.14s  
+  ✓ the document path is random and tenant scoped                        0.13s  
+  ✓ force deleting a contact removes credential rows and bytes           0.15s  
+  ✓ soft deleting a contact keeps credentials and bytes                  0.16s  
+
+   PASS  Tests\Feature\ContactCrudTest
+  ✓ index rejects unauthenticated requests                               0.28s  
+  ✓ index returns only the admins own masjid contacts                    0.30s  
+  ✓ index search filters by name                                         0.37s  
+  ✓ store creates a contact scoped to the admins masjid                  0.31s  
+  ✓ store requires first and last name                                   0.29s  
+  ✓ store rejects a malformed email                                      0.31s  
+  ✓ store ignores a client supplied masjid id                            0.26s  
+  ✓ show returns the admins own contact                                  0.27s  
+  ✓ show cannot read another masjids contact via own route               0.32s  
+  ✓ admin cannot target another masjid in the route                      0.24s  
+  ✓ update changes the admins own contact                                0.28s  
+  ✓ update cannot touch another masjids contact                          0.30s  
+  ✓ destroy soft deletes the admins own contact                          0.33s  
+  ✓ destroy cannot delete another masjids contact                        0.32s  
+
+   PASS  Tests\Feature\ContactIdentityTest
+  ✓ two contacts with no address are never the same person               0.44s  
+  ✓ an identity with no address is not even the same person as itself    0.18s  
+  ✓ an empty string and a whitespace address are the same absence as nu… 0.18s  
+  ✓ an absent address never matches a real one in either direction       0.18s  
+  ✓ a missing contact is an absence and not a match                      0.18s  
+  ✓ one real address matches itself across case and whitespace           0.23s  
+  ✓ two different real addresses are two people                          0.18s  
+  ✓ a shared phone number is not an identity                             0.18s  
+  ✓ a staff principal with no address resolves to no identity            0.20s  
+  ✓ two contacts on one address resolve to no identity                   0.16s  
+  ✓ a roster row that renders no name at all is always contested         0.23s  
+
+   PASS  Tests\Feature\ContactLoginCodeTenantIsolationTest
+  ✓ contact login codes are invisible across tenants                     0.17s  
+  ✓ the prune sweep crosses tenants on purpose and spares live codes     0.15s  
+  ✓ a code request is scoped to the masjid in the url                    0.20s  
+  ✓ one address can hold a separate login at two organisations           0.17s  
+  ✓ a code minted at one masjid cannot be redeemed at another            0.20s  
+  ✓ a parent cannot read another organisations group by any route        0.34s  
+  ✓ the family listing never spans organisations even unbound            0.22s  
+
+   PASS  Tests\Feature\ContactLoginEventTenantIsolationTest
+  ✓ a bound tenant cannot read another organizations contact login even… 0.27s  
+  ✓ a client supplied masjid id cannot plant an audit row in another or… 0.24s  
+  ✓ an admin never reads another organizations grant history             0.48s  
+
+   PASS  Tests\Feature\ContactServiceInterestTenantIsolationTest
+  ✓ a bound tenant cannot read another organizations contact service in… 0.17s  
+  ✓ a member cannot subscribe to another organisations service           0.14s  
+  ✓ the catalogue a member sees is only their own organisations          0.13s  
+  ✓ setting interests is a diff and keeps the original opt in timestamp  0.19s  
+
+   PASS  Tests\Feature\ContactUsIdentityTest
+  ✓ an established account is never overwritten by a public request      0.16s  
+  ✓ a device id from another masjid cannot reach that masjids record     0.12s  
+  ✓ the mobile route refuses a device registered to another masjid       0.12s  
+  ✓ a blank field is still filled in so legitimate use is unaffected     0.16s  
+  ✓ a first time sender still gets an account created                    0.10s  
+  ✓ a tenant less or unknown organization is refused                     0.12s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\ContentUnification\BackfillMigrationTest
+  ✓ backfills about into empty model                                     2.22s  
+  ✓ keeps existing model about and ignores section copy                  2.19s  
+  ✓ backfills donation link into empty model                             2.06s  
+  ✓ backfills mission and vision from items                              1.88s  
+  ✓ conflict keeps model when both differ                                2.00s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\ContentUnification\PageSectionContentUnificationTest
+  ✓ about us section renders masjid about model over stored content      2.07s  
+  ✓ editing masjid about model changes about us section output           2.32s  
+  ✓ about us keeps stored text when model field is empty                 2.00s  
+  ✓ mission vision section renders model mission and vision              2.01s  
+  ✓ editing model mission changes mission vision output                  2.00s  
+  ✓ donation section renders donation link model                         2.09s  
+  ✓ editing donation link model changes donation section output          1.94s  
+  ✓ contact form section injects masjid contact block and reasons        2.03s  
+  ✓ platforms round trips through v1 serializer                          2.20s  
+  ✓ null platforms placement defaults to both                            3.50s  
+  ✓ platforms persists on the pivot when attached                        2.12s  
+
+   PASS  Tests\Feature\CrmFeatureGateTest
+  ✓ a new masjid has crm disabled by default                             0.28s  
+  ✓ crm endpoints are forbidden while crm is disabled                    0.29s  
+  ✓ crm endpoints are accessible after a superadmin enables crm          0.34s  
+  ✓ a masjid admin cannot toggle crm access                              0.33s  
+  ✓ a superadmin can toggle crm access and the flag flips                0.27s  
+  ✓ the crm access toggle validates the enabled flag                     0.21s  
+  ✓ two factor endpoints stay reachable when crm is disabled             0.46s  
+
+   PASS  Tests\Feature\DemoSchoolSeederTest
+  ✓ it provisions a school tenant through the real onboarding path       1.40s  
+  ✓ every address it creates is inside the unroutable demo namespace     1.35s  
+  ✓ it seeds rosters guardian edges and one deliberately unconsented ed… 1.54s  
+  ✓ it writes feed images to the private disk the way the upload endpoi… 1.47s  
+  ✓ it seeds threads behaviour and hifz with shape                       1.35s  
+  ✓ it seeds local money rows and nothing at stripe                      1.29s  
+  ✓ it seeds public pages built from the school section types            1.41s  
+  ✓ running it twice adds nothing and clobbers no edits                  1.48s  
+  ✓ rollback removes the demo tenant and leaves a real one completely u… 1.58s  
+  ✓ rollback on a database with no demo tenant removes nothing           0.22s  
+  ✓ fresh rebuilds the tenant rather than duplicating it                 1.81s  
+  ✓ it refuses to run on production without force                        0.06s  
+  ✓ nothing that runs on its own references the demo seeder              0.07s  
+
+   PASS  Tests\Feature\DonationEditLegacyMethodTest
+  ✓ a legacy unknown method does not block changing the fund             0.20s  
+  ✓ a null method does not block changing the fund                       0.27s  
+  ✓ a real method selection still updates normally                       0.28s  
+
+   PASS  Tests\Feature\DonationFlowTest
+  ✓ create checkout persists a pending donation and returns the url      0.20s  
+  ✓ create checkout grosses up when the donor covers fees                0.21s  
+  ✓ create checkout rejects a masjid that cannot accept donations        0.36s  
+  ✓ create checkout rejects a fund from another masjid                   0.33s  
+  ✓ checkout completed webhook succeeds donation stores ids and issues…  0.44s  
+  ✓ eligible amount equals gross minus advantage for a donor covered gi… 0.28s  
+  ✓ payment intent succeeded stores charge and balance transaction       0.20s  
+  ✓ replaying the same event id issues only one receipt                  0.25s  
+  ✓ two different events for the same donation still issue one receipt   0.22s  
+  ✓ webhook rejects a bad signature                                      0.18s  
+  ✓ receipt serials are gap free and independent per masjid              0.24s  
+  ✓ admin funds index is scoped to the admins masjid                     0.22s  
+  ✓ admin store fund stamps the bound masjid                             0.17s  
+  ✓ admin donations index is scoped and blocks cross masjid routes       0.29s  
+
+   PASS  Tests\Feature\DonationLedgerFilterTest
+  ✓ a from that is not a date is rejected rather than ignored            0.50s  
+  ✓ the export rejects the same malformed date                           0.30s  
+  ✓ a to only filter is accepted                                         0.34s  
+  ✓ a reversed range is still rejected when both ends are given          0.27s  
+  ✓ an offline gift is inside the window of the year it was given        0.36s  
+  ✓ an offline gift is outside the window of the year it was imported    0.37s  
+  ✓ the export returns the same row count as the ledger total            0.33s  
+  ✓ the export matches the ledger for a narrow date window too           0.40s  
+
+   PASS  Tests\Feature\DonationMetricsTest
+  ✓ metrics use the masjids own timezone                                 0.19s  
+  ✓ the boundary gift really is stored on two different calendar days    0.16s  
+  ✓ only succeeded gifts count as money                                  0.16s  
+  ✓ net falls back to the charged amount when net amount is null         0.15s  
+  ✓ this month is the masjids month not utcs                             0.19s  
+  ✓ an offline gift lands in its own month not the month it was importe… 0.17s  
+  ✓ average gift is integer cents floored                                0.16s  
+  ✓ average gift is zero for a masjid with no gifts                      0.14s  
+  ✓ summary is scoped to the bound masjid                                0.15s  
+  ✓ gifts with no contact still count as money and are reported separat… 0.17s  
+  ✓ by fund lists the funds gifts under the same money rules             0.14s  
+  ✓ a fund that has taken nothing is still listed at zero                0.10s  
+
+   PASS  Tests\Feature\DonationReadTest
+  ✓ index rejects unauthenticated requests                               0.27s  
+  ✓ index returns only the admins own masjid donations                   0.31s  
+  ✓ index filters by status                                              0.31s  
+  ✓ index filters by fund                                                0.38s  
+  ✓ show returns the admins own donation with fund and receipt           0.32s  
+  ✓ show cannot read another masjids donation via own route              0.33s  
+  ✓ admin cannot target another masjid in the route                      0.35s  
+  ✓ donations store route validates the offline gift body                0.30s  
+  ✓ a stripe donation is refused by the update route                     0.28s  
+  ✓ the update route cannot move money or flip a status                  0.30s  
+  ✓ donations have no destroy route                                      0.30s  
+
+   PASS  Tests\Feature\DonationReceiptPdfTest
+  ✓ the service renders a non empty pdf for an issued receipt            1.04s  
+  ✓ the pdf carries the serial donor fund amounts and the jurisdiction…  0.95s  
+  ✓ the pdf reads the stored row and never recomputes                    0.83s  
+  ✓ the annual statement letter still renders on the shared letterhead   0.97s  
+  ✓ an admin downloads the receipt pdf with private no store headers     0.93s  
+  ✓ downloading a donation that never issued a receipt is a 404          0.25s  
+  ✓ another masjids donation under your own route is a 404               0.31s  
+  ✓ naming another masjid in the route is a 403                          0.22s  
+  ✓ the download requires authentication                                 0.28s  
+  ✓ the receipt email carries the pdf as an attachment                   1.05s  
+  ✓ the attachment does not change issuance or delivery marking          1.13s  
+
+   PASS  Tests\Feature\DonationReceiptTenantIsolationTest
+  ✓ receipt queries are scoped to the bound tenant                       0.43s  
+  ✓ a bound tenant cannot read another organizations receipt             0.27s  
+  ✓ a bound tenant cannot find another organizations receipt by its ser… 0.24s  
+  ✓ an unbound context sees every organizations receipts                 0.40s  
+  ✓ without masjid scope bypasses the filter                             0.27s  
+  ✓ receipt create stamps the bound tenant over client input             0.37s  
+  ✓ the serial sequence is per masjid so serial one exists in both       0.35s  
+  ✓ a duplicate serial inside one masjid is refused by the database      0.23s  
+  ✓ a donations receipt relation never crosses tenants                   0.39s  
+  ✓ the unbound issuer files the receipt under the gifts masjid          0.29s  
+  ✓ the ledger discloses only the admins own receipts                    0.37s  
+  ✓ reading another masjids receipt through your own route is a 404      0.28s  
+  ✓ naming another masjid in the route is a 403                          0.36s  
+  ✓ issuing cannot mint a receipt against another masjids gift           0.25s  
+  ✓ issuing takes the next serial in the admins own sequence             0.29s  
+  ✓ a receipt has no update or delete verb at all                        0.40s  
+
+   PASS  Tests\Feature\DonationSubscriptionTenantIsolationTest
+  ✓ subscription queries are scoped to the bound tenant                  0.26s  
+  ✓ a bound tenant cannot read another organizations subscription        0.21s  
+  ✓ subscription create stamps the bound tenant over client input        0.13s  
+  ✓ an unbound context sees every organizations subscriptions            0.14s  
+  ✓ without masjid scope bypasses the filter                             0.16s  
+  ✓ the charges relation never reaches another tenants donations         0.18s  
+  ✓ index rejects unauthenticated requests                               0.13s  
+  ✓ index lists only the admins own commitments                          0.17s  
+  ✓ show cannot read another masjids commitment                          0.23s  
+  ✓ naming another masjid in the route is a 403                          0.15s  
+  ✓ a commitment has no update or delete verb                            0.29s  
+  ✓ cancel stops the admins own commitment at stripe and locally         0.24s  
+  ✓ cancel cannot stop another masjids commitment                        0.24s  
+  ✓ cancel in another masjids route is a 403 and touches nothing         0.30s  
+  ✓ cancelling an already canceled commitment calls stripe once          0.29s  
+  ✓ a stripe failure still cancels the commitment locally                0.26s  
+  ✓ cancelling a pending commitment with no stripe id calls nothing      0.31s  
+  ✓ a super admin cannot cancel across the masjid named in the route     0.25s  
+  ✓ a donor named on another masjids commitment is never disclosed       0.33s  
+
+   PASS  Tests\Feature\ExampleTest
+  ✓ it returns a successful response                                     0.19s  
+
+   PASS  Tests\Feature\FamilyAuthGuardTest
+  ✓ the family guard is pinned to the contacts provider                  0.17s  
+  ✓ a contact is authenticatable and holds no password                   0.12s  
+  ✓ a family token reads its own identity                                0.18s  
+  ✓ a family token carries the family ability and never the staff one    0.16s  
+  ✓ a family token is refused on every authenticated admin route         1.25s  
+  ✓ the sanctum guard resolves a contact tokenable to null               0.06s  
+  ✓ control without the sanctum pin a family token authenticates on the… 0.06s  
+  ✓ control without the sanctum pin only the admin middleware stands in… 0.08s  
+  ✓ a staff token is refused on every family route                       0.17s  
+  ✓ the family guard resolves a staff tokenable to null                  0.07s  
+  ✓ control without the family provider a staff token authenticates on…  0.09s  
+  ✓ a staff session satisfies the family guard and is refused only by f… 0.06s  
+  ✓ a revoked contacts existing token stops working immediately          0.08s  
+  ✓ a soft deleted contacts existing token stops working immediately     0.10s  
+  ✓ a merged away contacts existing token stops working immediately      0.09s  
+  ✓ a contact that was never enabled cannot use a token                  0.10s  
+  ✓ family active refuses a trashed contact on its own                   0.08s  
+  ✓ family active admits a live contact and refuses every other princip… 0.08s  
+  ✓ the family guard does not perturb spatie guard resolution            0.09s  
+  ✓ the seeded permission set is unchanged by the family guard           0.10s  
+  ✓ staff authentication is observably unchanged                         0.13s  
+  ✓ an authenticated contact resolves to its own identity and nothing m… 0.09s  
+  ✓ a revoked or foreign contact resolves to no identity                 0.09s  
+
+   PASS  Tests\Feature\FamilyLoginCodeTest
+  ✓ a parent exchanges an emailed code for a working family token        0.14s  
+  ✓ the code is never in a response body and never stored in plaintext   0.06s  
+  ✓ requesting a code is byte identical for every kind of address        0.11s  
+  ✓ verifying is byte identical for every kind of failure                0.12s  
+  ✓ a code is single use                                                 0.08s  
+  ✓ a code expires                                                       0.07s  
+  ✓ a code locks out after the configured number of wrong attempts       0.11s  
+  ✓ a wrong guess charges every live code the parent holds               0.09s  
+  ✓ requesting codes is throttled per address and identically for a str… 0.13s  
+  ✓ verification is throttled per address                                0.14s  
+  ✓ the code goes to login email and never to the crm email or a phone   0.08s  
+  ✓ the login mailable is not queued                                     0.05s  
+  ✓ a mail relay outage does not become an existence oracle              0.06s  
+  ✓ the sign in endpoints carry no admin permission or staff middleware  0.04s  
+  ✓ a staff token gains nothing at the sign in endpoints                 0.11s  
+  ✓ the crm feature gate applies to signing in                           0.06s  
+  ✓ a malformed payload is a 422 and never a lookup                      0.07s  
+
+   PASS  Tests\Feature\FamilyLoginEnablementTest
+  ✓ enable then revoke is a complete round trip                          0.18s  
+  ✓ a contact with no login reads as never enabled                       0.11s  
+  ✓ revoking a login that was never enabled is refused rather than sile… 0.11s  
+  ✓ enabling never copies the imported contact email into the credentia… 0.15s  
+  ✓ the login columns stay unreachable from the ordinary contact endpoi… 0.13s  
+  ✓ a second contact cannot take an address already in use               0.15s  
+  ✓ a case differing address is refused because the lookup is case inse… 0.16s  
+  ✓ the stored address is normalised so the index and the lookup agree   0.12s  
+  ✓ a soft deleted contact still pins its address                        0.14s  
+  ✓ the same address may be used by a different organisation             0.18s  
+  ✓ re enabling the same contact at the same address is not a self coll… 0.14s  
+  ✓ a placeholder card stub cannot be given a login                      0.30s  
+  ✓ revoking through the endpoint kills a token already in a parents ph… 0.50s  
+  ✓ the middleware alone refuses a revoked login even with the token ro… 0.39s  
+  ✓ changing the address ends sessions opened under the old one          0.45s  
+  ✓ re typing the same address does not sign the parent out              0.38s  
+  ✓ revoking twice is allowed and does not rewrite when access ended     0.35s  
+  ✓ an admin of one organisation cannot enable a contact of another      0.22s  
+  ✓ the audit trail is tenant scoped                                     0.14s  
+  ✓ reading and writing are gated by the contacts permissions            0.17s  
+  ✓ the endpoints reject an unauthenticated caller                       0.11s  
+  ✓ every act writes an audit row naming who did it                      0.19s  
+  ✓ the audit trail survives the staff member who wrote it               0.12s  
+  ✓ an audit row cannot be edited or deleted through the model           0.11s  
+  ✓ an enabled parent signs in and reads their own child and no other    0.24s  
+
+   PASS  Tests\Feature\FamilyLoginLifecycleTest
+  ✓ merging a member with a live login no longer destroys it silently    0.22s  
+  ✓ a merge that ends portal access kills the token already in the pare… 0.15s  
+  ✓ the absorbed address is free so the survivor can be given it delibe… 0.16s  
+  ✓ an ordinary placeholder merge still writes nothing at all            0.15s  
+  ✓ carrying a trail is the only mutation an audit row permits           0.17s  
+  ✓ a household address moves to the other parent without re granting t… 0.16s  
+  ✓ a holder who can sign in right now is refused even with the confirm… 0.19s  
+  ✓ a deleted members address can be reissued by an operator who confir… 0.18s  
+  ✓ deleting a member revokes their portal access on the record          0.31s  
+  ✓ a reassignment never reaches another organisations holder            0.36s  
+  ✓ a concurrent enable is a refusal not a five hundred                  0.28s  
+
+   PASS  Tests\Feature\FamilyPasswordTest
+  ✓ a parent sets a password and signs in with it                        0.24s  
+  ✓ the password is stored hashed and never returned                     0.17s  
+  ✓ the hash does not survive serialization                              0.14s  
+  ✓ a parent who never chose a password cannot sign in with any          0.18s  
+  ✓ a revoked login cannot be reopened with a password set earlier       0.16s  
+  ✓ a stranger and a wrong password get byte identical refusals          0.11s  
+  ✓ the password door refuses in the same words as the code door         0.09s  
+  ✓ a password does not work against another school                      0.07s  
+  ✓ setting a password requires a token and changes only its owner       0.06s  
+  ✓ choosing a password ends other sessions but not this one             0.06s  
+  ✓ removing a password returns the family to codes only                 0.10s  
+  ✓ a parent can see whether they have a password but never the hash     0.07s  
+  ✓ a weak or mistyped password is refused with a reason                 0.08s  
+  ✓ the family not the office is recorded as having acted                0.09s  
+
+   PASS  Tests\Feature\FamilyPortalTest
+  ✓ a parent can reply in a thread about their own child                 0.10s  
+  ✓ the author comes from the token and never from the payload           0.12s  
+  ✓ a parent cannot reply in another familys thread                      0.09s  
+  ✓ replying is refused on a thread the school has closed                0.09s  
+  ✓ a parent may start a conversation only about their own child         0.11s  
+  ✓ a parent session outlives the staff window                           0.10s  
+  ✓ a parent cannot reach the whole class even by asking                 0.08s  
+  ✓ an empty reply is refused                                            0.11s  
+  ✓ reading a thread bookmarks it for the parent and not for any staff…  0.12s  
+  ✓ two parents reading one thread do not collide                        0.11s  
+  ✓ a message cannot have two authors                                    0.08s  
+  ✓ a parent can hand the device to their own child                      0.08s  
+  ✓ a parent cannot hand the device to someone elses child               0.11s  
+  ✓ a child in student mode can choose their own avatar                  0.12s  
+  ✓ a student token cannot open the parents portal                       0.19s  
+  ✓ a student token minted for one sibling cannot address the other      0.10s  
+  ✓ a parent token cannot use the student screen                         0.08s  
+  ✓ a staff override hides the childs avatar without erasing it          0.24s  
+  ✓ a parent watches their own childs letters                            0.13s  
+  ✓ a parent cannot watch another familys child                          0.11s  
+  ✓ a parent cannot mark a drill                                         0.11s  
+  ✓ a parent can choose an avatar for their own child                    0.09s  
+  ✓ a parent cannot dress another familys child                          0.09s  
+  ✓ two thirds of an avatar is refused                                   0.10s  
+  ✓ clearing all three returns the child to initials                     0.08s  
+  ✓ a childs avatar reaches the parent on the group payload              0.08s  
+  ✓ a parent sees their own group and their own child in it              0.10s  
+  ✓ a parent is refused a group they are not in                          0.15s  
+  ✓ each parent sees only their own child across every record surface    0.24s  
+  ✓ a parents own childs summary and progress are computed over their c… 0.15s  
+  ✓ a guardian with no consent record gets no feed but keeps their own…  0.21s  
+  ✓ feed consent opens the words and withholds the pictures              0.25s  
+  ✓ media consent opens the bytes and never a signed url                 0.28s  
+  ✓ withdrawing consent darkens the feed on the very next request        0.30s  
+  ✓ removing the guardian edge empties the parents whole surface         0.39s  
+  ✓ removing the child from the roster takes the guardian edge with the… 0.38s  
+  ✓ a revoked login closes every read endpoint not only me               0.53s  
+  ✓ a group wide thread is consent gated and a participant thread is no… 0.43s  
+  ✓ a parent reads their own childs published report card                0.27s  
+  ✓ a draft report card does not exist as far as a parent is concerned   0.26s  
+  ✓ a parent cannot open another familys childs report card              0.32s  
+  ✓ the performance level key travels with the card                      0.23s  
+  ✓ an unassessed criterion reaches the family as null and never as a z… 0.19s  
+  ✓ the family reads the attendance frozen at publication                0.24s  
+  ✓ report cards are listed newest first                                 0.24s  
+  ✓ a parent can download their own childs report card                   0.52s  
+  ✓ a draft report card cannot be downloaded either                      0.07s  
+  ✓ a parent cannot download another familys childs report card          0.06s  
+  ✓ the family realm writes exactly nine things                          0.05s  
+  ✓ a login enabled participant reads nothing through their own roster…  0.17s  
+  ✓ unread is computed from the parents own bookmark                     0.16s  
+  ✓ one parents bookmark is not another parents                          0.14s  
+
+   PASS  Tests\Feature\FamilyTenantBindingTest
+  ✓ a family request leaves the tenant bound to the contacts own organi… 0.15s  
+  ✓ a family token naming another organisation is refused                0.10s  
+  ✓ the crm feature gate still applies to the family tree                0.07s  
+  ✓ family tenant binds the contact and hides every other tenants rows   0.06s  
+  ✓ family tenant refuses every principal it cannot bind                 0.06s  
+  ✓ control the staff tenant middleware refuses a contact outright       0.06s  
+
+   PASS  Tests\Feature\FlyerApiSmokeTest
+  ✓ the seeded designs are listed for a masjid                           0.09s  
+  ✓ a draft can be created and read back                                 0.09s  
+  ✓ updating a flyer does not wipe its palette                           0.11s  
+  ✓ content that does not match the template is rejected                 0.07s  
+  ✓ a flyer can be deleted                                               0.08s  
+
+   PASS  Tests\Feature\FlyerTenantIsolationTest
+  ✓ bound tenant sees shared templates and its own but not another masj… 0.06s  
+  ✓ bound tenant find returns the shared template                        0.07s  
+  ✓ bound tenant find returns null for another masjids template          0.05s  
+  ✓ creating a template stamps the bound masjid                          0.06s  
+  ✓ creating a template ignores a client supplied masjid id              0.05s  
+  ✓ owned by tenant excludes the shared templates                        0.05s  
+  ✓ owned by tenant excludes another masjids template                    0.06s  
+  ✓ shared scope returns only the product owned designs                  0.05s  
+  ✓ template without masjid scope bypasses the filter even when bound    0.06s  
+  ✓ unbound context sees every masjids templates                         0.05s  
+  ✓ template registers the masjid tenant global scope                    0.05s  
+  ✓ bound tenant sees only its own flyers                                0.05s  
+  ✓ another masjids flyer is a 404 not a leak                            0.06s  
+  ✓ another masjids flyer is filtered out but not destroyed              0.06s  
+  ✓ bound tenant cannot update another masjids flyer                     0.06s  
+  ✓ bound tenant cannot delete another masjids flyer                     0.05s  
+  ✓ creating a flyer stamps the bound masjid                             0.05s  
+  ✓ flyer without masjid scope bypasses the filter even when bound       0.05s  
+  ✓ unbound context sees every masjids flyers                            0.07s  
+  ✓ flyer registers the masjid tenant global scope                       0.05s  
+
+   PASS  Tests\Feature\FormAttachmentTest
+  ✓ a submission with a valid file is stored                             0.07s  
+  ✓ the uploaded file is private and unguessable                         0.05s  
+  ✓ an optional file field submits without one                           0.04s  
+  ✓ an upload for an undeclared field is ignored                         0.08s  
+  ✓ a disallowed file type is rejected                                   0.05s  
+  ✓ an oversized file is rejected                                        0.05s  
+  ✓ a missing required file is rejected                                  0.05s  
+  ✓ a file field cannot live inside a repeatable section                 0.04s  
+  ✓ a form without file fields submits exactly as before                 0.07s  
+  ✓ an admin can see and download an attachment                          0.07s  
+  ✓ the response list does not carry attachments                         0.06s  
+  ✓ another masjids attachment does not resolve                          0.06s  
+  ✓ a masjid admin cannot download another masjids attachment            0.08s  
+  ✓ an unauthenticated caller cannot download an attachment              0.05s  
+  ✓ deleting a response removes its attachment and the file              0.06s  
+
+   PASS  Tests\Feature\FormDoorEquivalenceTest
+  ✓ every door accepts and refuses the same documents                    0.63s  
+  ✓ every door stores the same form                                      0.22s  
+  ✓ a partial write cannot point the fee at a section that does not exi… 0.05s  
+  ✓ a partial write cannot delete the section the stored fee is charged… 0.05s  
+  ✓ a partial write cannot delete the question the identity map names    0.08s  
+  ✓ ordinary partial edits are untouched                                 0.09s  
+  ✓ an already broken form stays editable except where the break is      0.10s  
+  ✓ a partial write applies the cutoff contract                          0.10s  
+
+   PASS  Tests\Feature\FormInsightsTest
+  ✓ insights are refused when the masjid has no assistant entitlement    0.11s  
+  ✓ insights are available when the entitlement is on                    0.08s  
+  ✓ no personal data appears anywhere in the payload                     0.08s  
+  ✓ free text fields are not summarised at all                           0.10s  
+  ✓ totals distinguish submissions from people                           0.07s  
+  ✓ outstanding money excludes confirmed responses                       0.08s  
+  ✓ choice fields are broken down by option                              0.07s  
+  ✓ numeric fields are bucketed not listed                               0.10s  
+  ✓ the filters from the responses list apply to insights too            0.08s  
+  ✓ status breakdown counts both responses and people                    0.08s  
+  ✓ breakdowns are suppressed for very small groups                      0.07s  
+  ✓ another masjid cannot read these insights                            0.10s  
+
+   PASS  Tests\Feature\FormNotificationTest
+  ✓ it emails the coordinators when a registration lands                 0.08s  
+  ✓ it emails a receipt back to whoever registered                       0.06s  
+  ✓ the receipt states the amount stored on the response                 0.07s  
+  ✓ a form that charges nothing shows no total                           0.08s  
+  ✓ the coordinator email carries names and choices but never health de… 0.07s  
+  ✓ the people summary drops free text answers                           0.07s  
+  ✓ it falls back to the masjid address when no coordinators are config… 0.05s  
+  ✓ it accepts a comma separated list and discards what is not an addre… 0.05s  
+  ✓ a form can switch the submitter receipt off                          0.08s  
+  ✓ a honeypot submission writes nothing and notifies nobody             0.04s  
+  ✓ a rejected submission notifies nobody                                0.05s  
+  ✓ the registration survives the mailer throwing                        0.06s  
+
+   PASS  Tests\Feature\FormResponsesAdminTest
+  ✓ a masjid cannot read another masjids responses                       0.08s  
+  ✓ the list only returns responses for the requested form               0.09s  
+  ✓ search matches name and email                                        0.07s  
+  ✓ status filter narrows the list                                       0.07s  
+  ✓ date range filter narrows the list                                   0.07s  
+  ✓ an unknown status is rejected rather than ignored                    0.07s  
+  ✓ sorting is applied in sql across the whole result set                0.07s  
+  ✓ sorting descending reverses the order                                0.07s  
+  ✓ an unlisted sort column is rejected                                  0.09s  
+  ✓ the list omits full submission data but the detail includes it       0.07s  
+  ✓ an admin can triage a response but not rewrite the submission        0.07s  
+  ✓ the export streams csv for the current filter                        0.06s  
+  ✓ the export neutralises spreadsheet formula injection                 0.08s  
+  ✓ deleting a response decrements the forms counter                     0.06s  
+
+   PASS  Tests\Feature\FormRosterTest
+  ✓ the roster returns one row per person not per submission             0.08s  
+  ✓ each row carries the attendees own answers                           0.07s  
+  ✓ each row carries who registered them and how to reach them           0.09s  
+  ✓ the roster exposes a column per attendee question                    0.07s  
+  ✓ the summary gives the brothers sisters split                         0.07s  
+  ✓ a family stays together and in order by default                      0.07s  
+  ✓ sorting by age is numeric                                            0.09s  
+  ✓ the roster can be sorted by any attendee column                      0.07s  
+  ✓ an attendee column is not accepted as a sql sort on the list         0.06s  
+  ✓ a dangerous sort value is still rejected on the roster               0.07s  
+  ✓ the roster honours the status filter                                 0.09s  
+  ✓ the roster honours the search filter                                 0.07s  
+  ✓ the roster is paginated                                              0.07s  
+  ✓ the roster exports a check in sheet                                  0.07s  
+  ✓ another masjid cannot read the roster                                0.09s  
+  ✓ a submission with no entries still appears                           0.08s  
+
+   PASS  Tests\Feature\FormSubmissionTest
+  ✓ a valid submission is stored                                         0.10s  
+  ✓ the identity columns are populated for search                        0.09s  
+  ✓ entry count and amount due are computed server side                  0.07s  
+  ✓ a client supplied amount is ignored                                  0.07s  
+  ✓ submitting increments the forms counter                              0.08s  
+  ✓ a form cannot be submitted against another masjids header            0.06s  
+  ✓ a missing masjid header is rejected rather than ignored              0.06s  
+  ✓ a missing required field is rejected with a field bag                0.08s  
+  ✓ an unticked required consent checkbox is rejected                    0.06s  
+  ✓ exceeding the repeatable maximum is rejected                         0.06s  
+  ✓ an attendee below the minimum age is rejected                        0.06s  
+  ✓ undeclared fields never reach storage                                0.07s  
+  ✓ a non array data payload is rejected                                 0.08s  
+  ✓ an inactive form refuses submissions                                 0.06s  
+  ✓ a closed form refuses submissions                                    0.05s  
+  ✓ a form that has not opened yet refuses submissions                   0.06s  
+  ✓ capacity is enforced                                                 0.08s  
+  ✓ the honeypot silently discards a bot submission                      0.06s  
+  ✓ a soft deleted form is not submittable                               0.08s  
+
+   PASS  Tests\Feature\FormTemplateTest
+  ✓ every org type has a template list and no stranger does              0.07s  
+  ✓ every template passes the schema rule and its identity map resolves  0.05s  
+  ✓ provisioning a school seeds the three school templates               0.11s  
+  ✓ provisioning a masjid seeds no forms                                 0.07s  
+  ✓ provisioning a community organization seeds no forms                 0.07s  
+  ✓ a seeded admissions form accepts a submission                        0.07s  
+  ✓ a seeded admissions form rejects an invented grade                   0.10s  
+  ✓ a seeded careers form accepts a submission with a resume             0.11s  
+  ✓ a seeded careers form requires the resume                            0.09s  
+  ✓ a seeded withdrawal form accepts a submission                        0.12s  
+  ✓ reapplying skips a form the admin has edited                         0.10s  
+  ✓ reapplying does not resurrect a form the admin deleted               0.10s  
+  ✓ the command seeds templates for an existing school tenant            0.08s  
+  ✓ the command is a noop for a masjid tenant                            0.05s  
+  ✓ a dry run writes nothing                                             0.06s  
+
+   PASS  Tests\Feature\FundCrudTest
+  ✓ index rejects unauthenticated requests                               0.12s  
+  ✓ index returns only the admins own masjid funds                       0.10s  
+  ✓ store creates a fund scoped to the admins masjid                     0.09s  
+  ✓ store requires a name                                                0.11s  
+  ✓ store rejects an invalid type                                        0.10s  
+  ✓ store ignores a client supplied masjid id                            0.12s  
+  ✓ show returns the admins own fund                                     0.12s  
+  ✓ show cannot read another masjids fund via own route                  0.10s  
+  ✓ admin cannot target another masjid in the route                      0.10s  
+  ✓ update changes the admins own fund                                   0.14s  
+  ✓ update rejects an invalid type                                       0.12s  
+  ✓ update cannot touch another masjids fund                             0.13s  
+  ✓ destroy deletes the admins own fund                                  0.15s  
+  ✓ destroy cannot delete another masjids fund                           0.13s  
+  ✓ funds endpoints are forbidden while crm is disabled                  0.12s  
+  ✓ managing a fund requires the manage funds permission                 0.16s  
+
+   PASS  Tests\Feature\GroupAudienceForeignPrincipalTest
+  ✓ every group audience signature takes a nullable authenticatable      0.10s  
+  ✓ a non user principal reaches every public signature and is refused   0.09s  
+  ✓ a non user principal reaches the private signatures too              0.11s  
+  ✓ the refusal is the instanceof narrowing and not a broken fixture     0.08s  
+  ✓ a null principal is still refused rather than widened into           0.09s  
+
+   PASS  Tests\Feature\GroupCrudTest
+  ✓ index rejects unauthenticated requests                               0.15s  
+  ✓ index returns only the admins own groups                             0.18s  
+  ✓ index search filters by name                                         0.12s  
+  ✓ index labels groups with the tenants own vocabulary                  0.07s  
+  ✓ the group label follows the tenants vertical                         0.12s  
+  ✓ store creates a group and derives the slug from the name             0.12s  
+  ✓ store defaults an absent kind to general                             0.09s  
+  ✓ store rejects an unknown kind                                        0.12s  
+  ✓ store rejects a slug already used in this organization               0.11s  
+  ✓ store allows a slug another organization already uses                0.12s  
+  ✓ store ignores a client supplied masjid id                            0.13s  
+  ✓ store requires a name                                                0.11s  
+  ✓ show returns the admins own group                                    0.12s  
+  ✓ show cannot read another organizations group via own route           0.14s  
+  ✓ admin cannot target another masjid in the route                      0.07s  
+  ✓ update changes the admins own group                                  0.11s  
+  ✓ update cannot touch another organizations group                      0.10s  
+  ✓ destroy soft deletes the admins own group                            0.11s  
+  ✓ destroy cannot delete another organizations group                    0.12s  
+  ✓ a contact can be added as a member                                   0.13s  
+  ✓ a contact can be added as a leader                                   0.21s  
+  ✓ a guardian is linked to a named member                               0.19s  
+  ✓ a guardian membership without a named member is rejected             0.10s  
+  ✓ a non guardian membership may not name a member                      0.19s  
+  ✓ nobody can be their own guardian                                     0.22s  
+  ✓ a guardian cannot be linked to someone outside the group             0.15s  
+  ✓ the same membership cannot be added twice                            0.33s  
+  ✓ a contact from another organization cannot be added                  0.15s  
+  ✓ a group from another organization has no reachable roster            0.11s  
+  ✓ the roster lists the groups memberships                              0.16s  
+  ✓ a membership can be removed                                          0.12s  
+  ✓ removing a member also removes the guardian edges over them          0.13s  
+  ✓ a membership belonging to another organization is a 404              0.14s  
+
+   PASS  Tests\Feature\GroupFeedTenantIsolationTest
+  ✓ the scope hides another organizations posts                          0.10s  
+  ✓ another organizations post is not findable by id                     0.06s  
+  ✓ the creating hook stamps the bound tenant on a post                  0.05s  
+  ✓ without masjid scope sees every organizations posts                  0.08s  
+  ✓ the scope hides another organizations attachments                    0.06s  
+  ✓ the creating hook stamps the bound tenant on an attachment           0.05s  
+  ✓ an image lands on the private disk under a random name               0.05s  
+  ✓ soft deleting a post keeps its bytes                                 0.06s  
+  ✓ force deleting a post removes its attachment rows and the bytes      0.07s  
+  ✓ force deleting a group purges its feed and the bytes                 0.10s  
+  ✓ soft deleting a group leaves its feed alone                          0.05s  
+  ✓ a new post inherits the configured retention window                  0.05s  
+  ✓ a retention window the caller sets is respected                      0.06s  
+  ✓ retention days of zero leaves the window open                        0.06s  
+  ✓ the purge removes posts past their retention date and the bytes      0.07s  
+  ✓ the purge leaves posts still inside their retention window           0.10s  
+  ✓ the purge can be limited to one organization                         0.07s  
+  ✓ a dry run purge deletes nothing                                      0.07s  
+  ✓ a guardian edge without a record covers nothing                      0.06s  
+  ✓ feed consent does not reach the images                               0.06s  
+  ✓ media consent covers the feed as well                                0.07s  
+  ✓ a scope nobody recognizes grants nothing                             0.04s  
+  ✓ consent on a participant row still grants nothing                    0.04s  
+
+   PASS  Tests\Feature\GroupFeedTest
+  ✓ the feed rejects unauthenticated requests                            0.14s  
+  ✓ a leader can publish a post                                          0.14s  
+  ✓ a post requires a body                                               0.10s  
+  ✓ an image is written to the private disk and recorded                 0.15s  
+  ✓ a file that is not an accepted image is refused                      0.12s  
+  ✓ an oversized image is refused                                        0.12s  
+  ✓ a post can be edited                                                 0.13s  
+  ✓ a post is soft deleted and its bytes survive                         0.15s  
+  ✓ a soft deleted post is no longer readable                            0.13s  
+  ✓ a member can read the feed                                           0.16s  
+  ✓ a contact who is not in the group cannot read the feed               0.12s  
+  ✓ an admin with no person in this organization cannot read the feed    0.13s  
+  ✓ an ambiguous identity is no identity                                 0.18s  
+  ✓ an admin who cannot read the feed can still publish to it            0.14s  
+  ✓ a guardian without consent cannot read the feed                      0.25s  
+  ✓ a guardian without consent cannot fetch an image                     0.34s  
+  ✓ a guardian with feed consent reads the words and not the pictures    0.32s  
+  ✓ a guardian with feed consent still cannot fetch an image             0.25s  
+  ✓ a guardian with media consent receives the image                     0.33s  
+  ✓ a member receives the image without any consent record               0.26s  
+  ✓ consent can be recorded against a guardian edge                      0.25s  
+  ✓ consent can be withdrawn                                             0.28s  
+  ✓ consent cannot be recorded against a participant                     0.25s  
+  ✓ an unknown consent scope is refused                                  0.29s  
+  ✓ consent on another organizations membership is a 404                 0.32s  
+  ✓ another organizations group has no reachable feed                    0.30s  
+  ✓ another organizations post is a 404 under your own route             0.34s  
+  ✓ another organizations attachment is a 404                            0.22s  
+  ✓ an admin cannot target another masjid in the route                   0.11s  
+  ✓ a client supplied masjid id cannot plant a post elsewhere            0.13s  
+
+   PASS  Tests\Feature\GroupMessagingTenantIsolationTest
+  ✓ the scope hides another organizations threads                        0.12s  
+  ✓ the creating hook stamps the bound tenant on a thread                0.05s  
+  ✓ without masjid scope sees every organizations threads                0.05s  
+  ✓ the scope hides another organizations messages                       0.07s  
+  ✓ the creating hook stamps the bound tenant on a message               0.06s  
+  ✓ the scope hides another organizations read markers                   0.08s  
+  ✓ the creating hook stamps the bound tenant on a read marker           0.06s  
+  ✓ writing a message touches its thread                                 0.06s  
+  ✓ soft deleting a thread keeps its messages                            0.04s  
+  ✓ purging a thread removes its messages and read markers               0.04s  
+  ✓ force deleting a group takes its threads and messages                0.06s  
+  ✓ a new thread inherits the configured retention window                0.08s  
+  ✓ a retention window the caller sets is respected                      0.05s  
+  ✓ retention days of zero leaves the window open                        0.05s  
+  ✓ the purge sweep removes threads past their retention date            0.07s  
+  ✓ the purge sweep leaves threads inside their window                   0.06s  
+  ✓ the purge sweep can be limited to one organization                   0.09s  
+  ✓ a dry run purge deletes no threads                                   0.06s  
+
+   PASS  Tests\Feature\GroupMessagingTest
+  ✓ threads reject unauthenticated requests                              0.12s  
+  ✓ a leader can open a group wide thread with a first message           0.14s  
+  ✓ a thread requires a subject and a recognized scope                   0.10s  
+  ✓ a participant thread requires its target membership                  0.11s  
+  ✓ a group wide thread must not name a target                           0.14s  
+  ✓ the target must be a participant of this group                       0.12s  
+  ✓ an admin not in the group can open a thread but not read it          0.13s  
+  ✓ a member can read a group wide thread                                0.16s  
+  ✓ a guardian without consent cannot read a group wide thread           0.12s  
+  ✓ a guardian with feed consent can read a group wide thread            0.15s  
+  ✓ a guardian without consent can read a thread about their own ward    0.12s  
+  ✓ another guardian cannot read a thread about a different member       0.13s  
+  ✓ the member a thread concerns can read it                             0.16s  
+  ✓ a leader reads every participant thread                              0.13s  
+  ✓ the list shows a guardian only their own conversations               0.13s  
+  ✓ feed consent adds the group wide threads to a guardians list         0.16s  
+  ✓ the scope filter narrows the list                                    0.13s  
+  ✓ posting a message requires being able to read the thread             0.12s  
+  ✓ an entitled reader can post a message and authorship is recorded     0.08s  
+  ✓ a message requires a body                                            0.11s  
+  ✓ a closed thread takes no messages until reopened                     0.15s  
+  ✓ a closed thread is still readable                                    0.12s  
+  ✓ a thread is soft deleted and disappears from reads                   0.11s  
+  ✓ reading a thread marks it read                                       0.16s  
+  ✓ another organizations group has no reachable threads                 0.08s  
+  ✓ another organizations thread is a 404 under your own route           0.09s  
+  ✓ an admin cannot target another masjid in the route                   0.11s  
+  ✓ a client supplied masjid id cannot plant a thread elsewhere          0.09s  
+
+   PASS  Tests\Feature\GroupNotificationTest
+  ✓ a class story reaches only feed consented guardians                  0.16s  
+  ✓ a ward thread reaches that wards guardians with no consent gate      0.09s  
+  ✓ a parent reply reaches the class teachers                            0.10s  
+  ✓ the author is never notified about their own post                    0.10s  
+  ✓ a guardian with no active login is unreachable                       0.11s  
+  ✓ the class story job emails consented guardians only                  0.13s  
+  ✓ a ward message job emails both of that wards guardians               0.10s  
+  ✓ a parent reply job emails the teacher                                0.10s  
+  ✓ the nudge email carries the class name but no child content          0.10s  
+
+   PASS  Tests\Feature\GroupStaffTenantIsolationTest
+  ✓ the scope hides another schools staff rows                           0.10s  
+  ✓ attach under a bound tenant stamps that tenant                       0.06s  
+  ✓ an explicit masjid id lands under the bound tenant                   0.06s  
+  ✓ deleting the class cascades its staff rows                           0.06s  
+  ✓ deleting the teacher cascades their staff rows                       0.05s  
+  ✓ a teacher leads only their own classes                               0.07s  
+
+   PASS  Tests\Feature\GroupTenantIsolationTest
+  ✓ group queries are scoped to the bound tenant                         0.06s  
+  ✓ a bound tenant cannot read another organizations group               0.05s  
+  ✓ group create stamps the bound tenant over client input               0.04s  
+  ✓ an unbound context sees every organizations groups                   0.04s  
+  ✓ without masjid scope bypasses the filter                             0.07s  
+  ✓ the same slug is allowed in two organizations                        0.05s  
+  ✓ membership queries are scoped to the bound tenant                    0.06s  
+  ✓ a bound tenant cannot read another organizations membership          0.06s  
+  ✓ membership create stamps the bound tenant over client input          0.06s  
+  ✓ a guardian edge names the member it is attached to                   0.06s  
+  ✓ one guardian can hold an edge per child in the same group            0.08s  
+  ✓ removing a member removes the guardian edges pointing at them        0.06s  
+  ✓ removing a guardian leaves the member in place                       0.05s  
+
+   PASS  Tests\Feature\GuardianEdgeProvenanceLifecycleTest
+  ✓ one anonymous post cannot 403 a teacher out of her own classroom     0.19s  
+  ✓ the fork is shut whatever name the caller pairs with her address     0.17s  
+  ✓ a returning child is one person however many times the form is subm… 0.12s  
+  ✓ three spellings of one address are one person                        0.14s  
+  ✓ a merge does not launder a self asserted edge onto the real child    0.20s  
+  ✓ a merge that re points a confirmed edge at a different ward returns… 0.14s  
+  ✓ a merge of two adult records does not quietly revoke a confirmed gu… 0.14s  
+  ✓ the roster counts the pending claims and one call confirms them all  0.19s  
+  ✓ confirming reaches only this group and only named rows when asked    0.19s  
+  ✓ confirming is gated and tenant scoped                                0.11s  
+  ✓ typing in the entry a claim already holds confirms it instead of re… 0.12s  
+  ✓ the family login panel says a claim is pending rather than denying…  0.17s  
+  ✓ a second seasons registration does not downgrade a confirmed edge    0.19s  
+  ✓ a pending enrolment is still a roster line its teacher can work fro… 0.14s  
+  ✓ a first shot address reassignment says whose address it took         0.17s  

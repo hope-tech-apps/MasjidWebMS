@@ -1,0 +1,214 @@
+T-040 Scout A — read-only recon for a production-faithful STAGING env
+Collected 2026-09-10 ~04:00 UTC. No secret VALUES recorded.
+
+================ 1. OS / RUNTIME ================
+                    PRODUCTION 159.65.239.51        STALE 147.182.210.42
+droplet             586894889 masjid-backend-24-04  480119186 masjid-backend-service
+OS                  Ubuntu 24.04.4 LTS (noble)      Ubuntu 24.10 (oracular) [EOL]
+kernel              6.8.0-124-generic               6.11.0-29-generic
+uptime              48d                             191d
+PHP CLI             8.3.6                           8.2.32 (8.2 + 8.3 installed)
+PHP-FPM             php8.3-fpm (unix sock)          php8.2-fpm
+composer            2.10.2                          2.8.6
+node                NOT installed                   v20.16.0
+nginx               1.24.0                          1.26.0
+redis-server        not installed / inactive        n/a
+
+php -m PRODUCTION (8.3):
+bcmath calendar Core ctype curl date dom exif FFI fileinfo filter ftp gd gettext hash
+iconv intl json libxml mbstring mysqli mysqlnd openssl pcntl pcre PDO pdo_mysql
+pdo_sqlite Phar posix random readline Reflection session shmop SimpleXML sockets sodium
+SPL sqlite3 standard sysvmsg sysvsem sysvshm tokenizer xml xmlreader xmlwriter xsl
+Zend OPcache zip zlib
+
+php -m STALE (8.2) — DIFFS vs prod: MISSING intl, pdo_sqlite, sqlite3.
+(NOTES.md already records "stale droplet has no pdo_sqlite, suite cannot run there".)
+
+PHP-FPM pool (prod, /etc/php/8.3/fpm/pool.d/www.conf):
+  user/group www-data, listen /run/php/php8.3-fpm.sock
+  pm=dynamic  max_children=12  start_servers=3  min_spare=2  max_spare=5
+  opcache.enable=On  opcache.memory_consumption=128
+
+================ 2. SIZE / DISK ================
+                    PRODUCTION              STALE
+vcpu                1                       1
+RAM                 2.0 GB (1.9Gi)          1.0 GB (960Mi)
+swap                /swapfile 2G (25M used) (not checked)
+disk /              48G, 6.6G used (14%)    24G, 9.0G used (39%)
+app dir             333 MB                  688 MB
+  storage/app        14 MB                   35 MB
+  storage/app/private 628 KB                 -
+  storage/app/public  12 MB                  -
+  public/build        69 MB (1,240+ chunks)  2.9 MB
+  storage/logs       580 KB                  334 MB (!! laravel.log, LOG_LEVEL=debug)
+  vendor             164 MB                  -
+DO metadata: prod image ubuntu-24-04-x64, tags[masjid], created 2026-07-23, nyc1
+             stale image slug null (old), created 2025-03-01, nyc1
+
+================ 3. NGINX / TLS ================
+PRODUCTION sites-enabled: masjid.hopetechapps.com, portal.alrazischool.org
+ masjid.hopetechapps.com
+   listen 80 default_server; listen [::]:80 default_server;
+   listen 443 ssl default_server; listen [::]:443 ssl default_server;
+   server_name masjid.hopetechapps.com
+   root .../MasjidsManagementSystem/public ; client_max_body_size 25M
+   add_header X-Content-Type-Options nosniff
+   location ~* ^/(build|fonts)/ { add_header Access-Control-Allow-Origin "*" always; access_log off; }
+   fastcgi_pass unix:/run/php/php8.3-fpm.sock
+   ssl_certificate /etc/letsencrypt/live/masjid.hopetechapps.com/{fullchain,privkey}.pem
+ portal.alrazischool.org
+   listen 80/443 ssl — deliberately NO default_server (comment in file says so)
+   server_name portal.alrazischool.org ; same root, same 25M, same /(build|fonts)/ CORS block
+   ssl_certificate /etc/letsencrypt/live/portal.alrazischool.org/{fullchain,privkey}.pem
+ NO proxy_pass anywhere. Marketing Worker sits in Cloudflare, not nginx.
+
+certbot /usr/bin/certbot
+  masjid.hopetechapps.com   expires 2026-11-05  (authenticator = nginx, renew_hook = systemctl reload nginx)
+  portal.alrazischool.org   expires 2026-12-09  (authenticator = webroot, webroot_path = <app>/public)
+  /etc/letsencrypt/renewal-hooks/deploy/ is EMPTY — hook lives in the renewal .conf, not the dir.
+
+STALE sites-enabled: masjid.hopetechapps.com only. Cert for masjid.hopetechapps.com
+  still on the box, expires 2026-11-06, still auto-renewing.
+
+================ 4. SERVICES / CRON ================
+PRODUCTION
+  systemd: masjid-queue.service (active) — Masjid Laravel Queue Worker
+    User/Group www-data, Restart=always
+    ExecStart=/usr/bin/php artisan queue:work database --sleep=3 --tries=3 --timeout=90 --max-time=3600
+    WorkingDirectory=<app>, logs -> /var/log/masjid-queue.log
+  root crontab: * * * * * cd <app> && sudo -u www-data HOME=/tmp php artisan schedule:run
+  www-data crontab: none
+  /etc/cron.d: certbot e2scrub_all php sysstat
+  schedule:list (9 tasks): sanctum:prune-expired --hours=24, prayers:send-due (every min),
+    prayers:daily-resync, groups:purge-feed, registrations:reap-expired (every min),
+    tenancy:canary --json, media:verify --json, backup:run
+
+STALE  ** NOT IDLE **
+  systemd: masjid-queue.service ACTIVE (restarted 2026-09-10 03:50 UTC)
+    same ExecStart: queue:work database  -> SAME production jobs table
+  root crontab: * * * * * cd <app> && /usr/bin/php artisan schedule:run   (runs as ROOT, not www-data)
+  its routes/console.php schedules only: inspire, prayers:daily-resync, prayers:send-due
+    (no tenancy:canary / media:verify / backup:run on this box — those are newer code)
+  Evidence it is running against prod:
+    /var/log/masjid-queue.log — App\Jobs\SendPrayerSyncJob DONE daily through 2026-09-09 07:00
+    storage/logs/laravel.log — "prayers:send-due adhan Maghrib masjid=1 recipients=103"
+      and iqama Isha masjid=1 recipients=103 as recently as 2026-09-10 00:55
+    ss -tnp shows an ESTABLISHED php connection 10.116.0.2 -> 10.116.0.3:25060 right now
+
+================ 5. .ENV ================
+PRODUCTION .env — 84 keys (names only, sorted):
+ANTHROPIC_API_KEY APPLE_DEVELOPMENT_TEAM APP_DEBUG APP_ENV APP_FAKER_LOCALE
+APP_FALLBACK_LOCALE APP_KEY APP_LOCALE APP_MAINTENANCE_DRIVER APP_NAME APP_TIMEZONE
+APP_URL ASSISTANT_ESCALATION_EMAIL AWS_ACCESS_KEY_ID AWS_BUCKET AWS_DEFAULT_REGION
+AWS_SECRET_ACCESS_KEY AWS_USE_PATH_STYLE_ENDPOINT BCRYPT_ROUNDS BROADCAST_CONNECTION
+CACHE_PREFIX CACHE_STORE CANARY_LOG_CHANNEL CORS_ALLOWED_ORIGINS DB_CONNECTION
+DB_DATABASE DB_HOST DB_PASSWORD DB_PORT DB_USERNAME FILESYSTEM_DISK
+FLYER_CUTOUT_ENABLED FLYER_CUTOUT_PYTHON FLYER_CUTOUT_SCRIPT GITHUB_DISPATCH_TOKEN
+GOOGLE_MAPS_GEOCODING_KEY LOG_CHANNEL LOG_DEPRECATIONS_CHANNEL LOG_LEVEL LOG_STACK
+MAIL_FROM_ADDRESS MAIL_FROM_NAME MAIL_HOST MAIL_MAILER MAIL_PASSWORD MAIL_PORT
+MAIL_SCHEME MAIL_USERNAME MEDIA_VERIFY_LOG_CHANNEL MEMCACHED_HOST MYSQL_ATTR_SSL_CA
+ONESIGNAL_APP_ID ONESIGNAL_REST_API_KEY ONESIGNAL_REST_API_URL ONESIGNAL_USER_AUTH_KEY
+OPS_ALERT_EMAIL PHP_CLI_SERVER_WORKERS PORTAL_HOSTS PUSHER_APP_CLUSTER PUSHER_APP_ID
+PUSHER_APP_KEY PUSHER_APP_SECRET PUSHER_HOST PUSHER_SCHEME QUEUE_CONNECTION
+REDIS_CLIENT REDIS_HOST REDIS_PASSWORD REDIS_PORT RESEND_KEY SESSION_DOMAIN
+SESSION_DRIVER SESSION_ENCRYPT SESSION_LIFETIME SESSION_PATH STRIPE_KEY STRIPE_SECRET
+STRIPE_WEBHOOK_SECRET VITE_APP_NAME VITE_APP_URL VITE_PUSHER_APP_CLUSTER
+VITE_PUSHER_APP_KEY VITE_PUSHER_HOST VITE_PUSHER_PORT VITE_PUSHER_SCHEME
+
+PRODUCTION values / presence:
+  APP_ENV=production   APP_URL=https://masjid.hopetechapps.com   ASSET_URL=(empty)
+  CACHE_STORE=database QUEUE_CONNECTION=database SESSION_DRIVER=database
+  LOG_LEVEL=warning    MAIL_MAILER=resend  FILESYSTEM_DISK=local
+  DB_HOST=private-db-mysql-nyc1-51565-do-user-19431136-0.f.db.ondigitalocean.com
+  DB_PORT=25060  DB_DATABASE=masjids_app_management_system_db  DB_USERNAME=masjids_app
+  CORS_ALLOWED_ORIGINS=https://www.burlingtonmasjid.com,https://burlingtonmasjid.com,
+    https://masjid.hopetechapps.com,https://mec-charlotte-prototype.vercel.app,
+    https://alrazischool.org,https://www.alrazischool.org
+  PORTAL_HOSTS=portal.alrazischool.org=14
+  SANCTUM_STATEFUL_DOMAINS=(EMPTY / not in .env at all)
+  STRIPE_KEY            SET prefix pk_live_ len 107
+  STRIPE_SECRET         SET prefix sk_live_ len 107   <-- LIVE
+  STRIPE_WEBHOOK_SECRET SET prefix whsec_   len 38
+  RESEND_KEY            SET prefix re_      len 36
+  ANTHROPIC_API_KEY     SET prefix sk-ant-  len 108
+  ONESIGNAL_APP_ID len 36, ONESIGNAL_REST_API_KEY len 115, ONESIGNAL_USER_AUTH_KEY len 115,
+    ONESIGNAL_REST_API_URL len 48
+  PUSHER_APP_ID len 9, PUSHER_APP_KEY len 22, PUSHER_APP_SECRET len 22,
+    PUSHER_APP_CLUSTER len 2, PUSHER_SCHEME len 5, PUSHER_HOST EMPTY
+  SMS_* / TWILIO_* : NO SUCH KEYS on prod (matches STATE.md "SMS cannot send yet")
+  MAIL_* all set (host len 9 = resend host, username/password len 4 = placeholder-ish)
+PRODUCTION backup .env files (names only):
+  .env.bak.1788920877 (3539 B), .env.bak.20260910-012114 (3593 B), .env.example, .env.testing
+
+STALE .env — 72 keys; superset differences vs prod: MISSING
+  APPLE_DEVELOPMENT_TEAM CANARY_LOG_CHANNEL FLYER_CUTOUT_* GITHUB_DISPATCH_TOKEN
+  GOOGLE_MAPS_GEOCODING_KEY MEDIA_VERIFY_LOG_CHANNEL OPS_ALERT_EMAIL
+STALE values / presence:
+  APP_ENV=production (!)  APP_URL=https://masjid.hopetechapps.com
+  CACHE_STORE=file  QUEUE_CONNECTION=database  SESSION_DRIVER=database  LOG_LEVEL=debug
+  MAIL_MAILER=resend  PORTAL_HOSTS=(empty)
+  DB_HOST/PORT/DATABASE/USERNAME IDENTICAL to production (same managed cluster + schema)
+  CORS_ALLOWED_ORIGINS=https://www.burlingtonmasjid.com,https://burlingtonmasjid.com,
+    https://masjid.hopetechapps.com
+  STRIPE_KEY = EMPTY, STRIPE_SECRET = EMPTY, STRIPE_WEBHOOK_SECRET = EMPTY
+    -> NO sk_test_ key either. Stripe truly scrubbed (blank, not test).
+  RESEND_KEY        SET prefix re_5uXT7 len 36  <-- SAME PREFIX AS PROD, still live
+  ANTHROPIC_API_KEY SET prefix sk-ant-  len 108 <-- still live
+  ONESIGNAL_APP_ID  SET len 36 ; ONESIGNAL_REST_API_KEY SET prefix os_v2_ap len 113 <-- live
+  PUSHER_APP_ID SET len 7
+STALE backup .env files (names only):
+  .env.bak.pre-anthropic (Jul 19), .env.bak.resend (Jun 25),
+  .env.pre-managed-20260712-172706 (Jul 12), .env.example
+  (.env itself last modified Aug 11 01:08)
+
+================ 6. GIT ================
+PRODUCTION
+  HEAD  60f31d7  2026-09-09 23:56:35 -0400  "Let a scoped login survive a page reload"
+  remote origin https://github.com/hope-tech-apps/MasjidWebMS.git (fetch+push)
+  git ls-remote origin -h refs/heads/main -> 60f31d7f05...  == HEAD (fetch works, no creds prompt)
+  working tree DIRTY: 1,129 entries — 1,126 staged 'A' + 1 'AM' + 2 '??',
+    all public/build/assets/* (the rsynced SPA bundle, staged but never committed)
+STALE
+  HEAD  be7c486  2026-07-22 23:56:08 -0400  "chore(deps): regenerate composer.lock for Laravel 12.64..."
+  remote origin git@github.com:hope-tech-apps/MasjidWebMS.git  (SSH, not HTTPS)
+  ~7 weeks / 100+ commits behind production
+
+================ 7. MANAGED MYSQL (read-only, via prod app creds) ================
+SELECT VERSION()  -> 8.4.8
+SHOW DATABASES    -> information_schema, masjids_app_management_system_db, performance_schema
+  (app user cannot see defaultdb; cluster db_names = defaultdb + masjids_app_management_system_db)
+tables in schema  -> 112
+schema size       -> 23.8 MB total (14.4 MB data + ~9.4 MB index)
+approx rows       -> ~124,026
+largest tables    -> cities 12.0MB, sessions 2.0MB, cache 2.0MB, donations 0.8MB,
+                     curriculum_weeks 0.5MB, prayers 0.2MB, masjids 0.2MB, contacts 0.2MB
+jobs=0  failed_jobs=5
+Cluster (DO API): db-mysql-nyc1-51565, id 9c980810-97a1-4a84-ab30-17ec333e59c3,
+  engine mysql 8.4.8, size db-s-1vcpu-1gb, num_nodes 1 (NO standby), nyc1,
+  storage 10240 MiB with autoscale on at 80% (+10 GiB), status online,
+  created 2026-07-12, maintenance window Friday 17:15 (pending),
+  users: doadmin (primary), masjids_app (normal),
+  private_network_uuid 6d7eef52-b54d-4a7e-9787-0ae1a312281d
+  -> a staging droplet placed in the same VPC can reach the private DB host.
+
+================ 8-9. MAC-SIDE CAPABILITY ================
+doctl        installed /opt/homebrew/bin/doctl v1.163.0-release
+             NOT AUTHENTICATED. `doctl account get` -> "access token is required".
+             `doctl auth list` prints "default (current)" but the context has no token:
+             neither ~/.config/doctl/ nor ~/Library/Application Support/doctl/ exists.
+DO token     NOT present on this Mac: no DIGITALOCEAN*/DO_* env vars, no ~/.digitalocean*,
+             no shell rc referencing DIGITALOCEAN_ACCESS_TOKEN / DO_API_TOKEN.
+             A token DOES exist inside the `digitalocean` MCP server's own config
+             (server-side DO_API_TOKEN); it is not readable/usable from the shell.
+mysql client NOT installed (no mysql, no mysqldump, no mysql-client keg)
+docker       CLI 20.10.11 installed; daemon NOT running / unreachable
+DO MCP (account moneeb@hopetechapps.com, team "My Team", droplet_limit 15, 2 used)
+  available tools: do_get_account, do_list_droplets, do_get_droplet, do_list_databases,
+    do_list_apps, do_get_app_deployment_logs, do_run_command, do_run_script,
+    do_tail_log, do_droplet_action, do_get_droplet_action
+  do_droplet_action accepts: reboot|power_cycle|shutdown|power_on|power_off|SNAPSHOT
+  There is NO create-droplet, NO list-snapshots, NO list-sizes tool.
+droplet list (MCP): see section 2.
+apps: not queried (read-only budget); databases: see section 7.
+size/pricing list: UNAVAILABLE (needs doctl auth or the API directly).
+snapshot list: UNAVAILABLE (no tool; needs doctl auth).

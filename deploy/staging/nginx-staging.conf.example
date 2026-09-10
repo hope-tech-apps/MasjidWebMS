@@ -1,0 +1,161 @@
+# deploy/staging/nginx-staging.conf.example
+#
+# The intended FINAL state of /etc/nginx/sites-available on the staging droplet,
+# derived line-for-line from production's two vhosts (read read-only on
+# 2026-09-10 from 159.65.239.51). deploy/staging/provision.sh edits the cloned
+# files into this shape; this file is the reference for what it should look like
+# afterwards, and the thing to diff against if staging stops answering.
+#
+# Two files on the box:
+#   /etc/nginx/sites-available/masjid.hopetechapps.com  (kept under its prod
+#       FILENAME on purpose — the certbot renewal config, the symlink in
+#       sites-enabled and anyone's muscle memory all reference that name; the
+#       server_name inside is what changes)
+#   /etc/nginx/sites-available/portal.alrazischool.org  (repointed, see below)
+#
+# ---------------------------------------------------------------------------
+# WHY THE CERTIFICATE IS STILL PRODUCTION'S, UNDER A NEW PATH
+# ---------------------------------------------------------------------------
+# The staging hostnames are PROXIED Cloudflare A records and the hopetechapps.com
+# zone runs SSL mode `full` — not `full (strict)`. In `full`, Cloudflare encrypts
+# to the origin but does NOT validate the origin certificate's name, expiry or
+# chain. The browser sees Cloudflare's own Universal SSL cert, which already
+# covers `*.hopetechapps.com` one label deep, so `masjid-staging.…` and
+# `manara-staging.…` are covered with nothing to issue and no wait.
+#
+# So the clone's inherited Let's Encrypt files are kept purely as *a* certificate
+# for the TLS handshake with Cloudflare — the name on it is never checked.
+# Running certbot on the staging box would be worse than useless: it would
+# compete for the ACME authorisations of the PRODUCTION names it inherited, and a
+# proxied record cannot pass an HTTP-01 challenge to this box anyway.
+#
+# provision.sh therefore COPIES the certificate material out of
+# /etc/letsencrypt/live/masjid.hopetechapps.com/ into /etc/ssl/manara-staging/
+# BEFORE running `certbot delete` on both production certificate names. The copy
+# is why :443 stays up: `certbot delete` removes the live/ directory with it, and
+# a vhost pointing at a deleted certificate makes nginx refuse to start.
+#
+# The consequence to know: hitting the origin IP directly on :443 presents a cert
+# named masjid.hopetechapps.com and a browser will warn. That is expected — reach
+# staging through its hostname, never its IP.
+#
+# ---------------------------------------------------------------------------
+# WHY default_server STAYS on this vhost
+# ---------------------------------------------------------------------------
+# Production is `default_server` on both :80 and :443 so any Host lands on the
+# app; the whole "a new vhost is for SNI, not routing" property depends on it.
+# Staging keeps it for the same reason — and it must appear on EXACTLY ONE vhost
+# per port. Repeating it on the portal block makes nginx refuse to start with
+# "a duplicate default server", which takes every staging hostname down at once.
+
+# ===========================================================================
+# /etc/nginx/sites-available/masjid.hopetechapps.com
+# ===========================================================================
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name masjid-staging.hopetechapps.com manara-staging.hopetechapps.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name masjid-staging.hopetechapps.com manara-staging.hopetechapps.com;
+
+    # Production's certificate material, copied here by provision.sh before
+    # certbot was told to forget the production names. See the note above: with
+    # Cloudflare SSL mode `full`, the name on this certificate is never validated.
+    ssl_certificate     /etc/ssl/manara-staging/fullchain.pem;
+    ssl_certificate_key /etc/ssl/manara-staging/privkey.pem;
+
+    root /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public;
+    index index.php index.html;
+    client_max_body_size 25M;
+    add_header X-Content-Type-Options "nosniff";
+    charset utf-8;
+
+    # PUBLIC BUILD ARTEFACTS, readable cross-origin. Kept identical to production
+    # (comment abridged): Vite builds ES modules, a cross-origin module script is
+    # fetched in CORS mode, and without this header the page renders blank with a
+    # 200 for every request. Laravel's CORS middleware cannot do it — these files
+    # never reach PHP.
+    location ~* ^/(build|fonts)/ {
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    location / { try_files $uri $uri/ /index.php?$query_string; }
+    location = /favicon.ico { access_log off; log_not_found off; }
+    # robots.txt goes to PHP on purpose: public/robots.txt is checked in and
+    # allow-all, so try_files would serve it before the environment-aware route
+    # in routes/web.php (disallow-all off production) could answer. Production
+    # keeps the static file.
+    location = /robots.txt  { try_files /dev/null /index.php$is_args$args; }
+    error_page 404 /index.php;
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+    location ~ /\.(?!well-known).* { deny all; }
+}
+
+# ===========================================================================
+# /etc/nginx/sites-available/portal.alrazischool.org  — REPOINTED
+# ===========================================================================
+# The clone arrives serving portal.alrazischool.org, a REAL school's front door,
+# from a box that is about to hold scrubbed data and test Stripe keys. If anyone
+# ever points that name here — or sends a Host header for it — a live tenant's
+# parents reach staging. So the name is replaced rather than the file deleted:
+# PORTAL_HOSTS on staging maps portal-staging.hopetechapps.com=14, and the branded
+# portal needs a vhost carrying that name for SNI.
+#
+# Deleting the file instead is also correct, and provision.sh supports it — but
+# then PORTAL_HOSTS must be emptied to match, or the portal door has no cert.
+#
+# NOTE the absence of `default_server` below; see the top of this file.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name portal-staging.hopetechapps.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name portal-staging.hopetechapps.com;
+
+    # The same copied certificate — same reasoning. Cloudflare's Universal SSL
+    # covers portal-staging.hopetechapps.com (one label) at the edge.
+    ssl_certificate     /etc/ssl/manara-staging/fullchain.pem;
+    ssl_certificate_key /etc/ssl/manara-staging/privkey.pem;
+
+    root /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem/public;
+    index index.php index.html;
+    client_max_body_size 25M;
+    add_header X-Content-Type-Options "nosniff";
+    charset utf-8;
+
+    location ~* ^/(build|fonts)/ {
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    location / { try_files $uri $uri/ /index.php?$query_string; }
+    location = /favicon.ico { access_log off; log_not_found off; }
+    # robots.txt goes to PHP on purpose: public/robots.txt is checked in and
+    # allow-all, so try_files would serve it before the environment-aware route
+    # in routes/web.php (disallow-all off production) could answer. Production
+    # keeps the static file.
+    location = /robots.txt  { try_files /dev/null /index.php$is_args$args; }
+    error_page 404 /index.php;
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+    }
+    location ~ /\.(?!well-known).* { deny all; }
+}

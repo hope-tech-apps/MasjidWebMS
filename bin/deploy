@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy the current origin/main to this host.
+# Deploy code to THIS host.
 #
 # This exists because deploying by hand loses a step. The step it lost was
 # `composer dump-autoload`: composer.json sets "optimize-autoloader", so production
@@ -13,7 +13,34 @@
 # So the last thing this script does is prove the new code is reachable, rather than
 # assume it. Run it as root:
 #
-#     sudo bin/deploy
+#     sudo bin/deploy                    # production: fast-forward to origin/main
+#     sudo bin/deploy --ref my-branch    # staging only: deploy any branch or sha
+#     sudo bin/deploy --dry-run          # print the plan, touch nothing
+#
+# ENVIRONMENT AWARENESS (T-040)
+#
+# The script reads APP_ENV out of this host's own .env and branches on it:
+#
+#   APP_ENV=production  -> the original flow, unchanged: fetch origin/main and
+#                          `git merge --ff-only`. `--ref` is REFUSED. Production
+#                          only ever runs a commit that is already on main, and a
+#                          diverged checkout blocks the deploy loudly instead of
+#                          being silently rewritten.
+#   anything else       -> `--ref <branch-or-sha>` (default main) is accepted and
+#                          deployed with `git checkout --detach`.
+#
+# WHY `checkout --detach` RATHER THAN a `deploy` branch + `reset --hard`:
+#   1. Staging exists to try a branch and then go BACK. `merge --ff-only` cannot
+#      move backwards at all, and `reset --hard` on a long-lived branch would do it
+#      by silently discarding whatever was there — including any commit made on the
+#      box — with no way to tell afterwards that it happened.
+#   2. A detached HEAD cannot be pushed by accident and cannot be fast-forwarded
+#      into by a later deploy, so staging can never quietly become the source of
+#      truth for a branch.
+#   3. `checkout` REFUSES when the working tree would lose a modification, which is
+#      the loud failure we want; `reset --hard` deletes it without a word.
+# The cost is that `git status` on staging says "HEAD detached" — intended: it is a
+# deployment target, not a place to write code.
 #
 set -euo pipefail
 
@@ -21,24 +48,150 @@ APP_DIR="${APP_DIR:-/var/www/html/Masjids_App_Management_System/MasjidsManagemen
 WEB_USER="${WEB_USER:-www-data}"
 QUEUE_SERVICE="${QUEUE_SERVICE:-masjid-queue.service}"
 
-cd "$APP_DIR"
+REF=""
+DRY_RUN=0
 
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
+die() { printf '\n\033[1;31mdeploy: %s\033[0m\n\n' "$1" >&2; exit 1; }
 as_web() { sudo -u "$WEB_USER" HOME=/tmp "$@"; }
+
+usage() {
+    cat <<'USAGE'
+usage: sudo bin/deploy [--ref <branch-or-sha>] [--dry-run]
+
+  --ref      the ref to deploy. Accepted on NON-production hosts only.
+             Defaults to main. May be a branch name or a full/short sha.
+  --dry-run  print the environment, the ref and the resolved plan, then stop
+             BEFORE `git fetch`. Changes nothing. Used to test this script.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --ref)
+            [ "$#" -ge 2 ] || die "--ref needs a value."
+            REF="$2"
+            shift 2
+            ;;
+        --ref=*)
+            REF="${1#--ref=}"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            die "unknown argument: $1"
+            ;;
+    esac
+done
+
+cd "$APP_DIR"
+
+# Read APP_ENV from the app's own .env rather than from the shell environment.
+# WHY: `sudo` sanitises the environment, and an operator exporting APP_ENV=staging
+# in their shell must NOT be able to talk a production box into accepting --ref.
+# The file on disk is the same thing php-fpm boots from, so it is the only honest
+# answer to "which environment is this host?".
+read_env_value() {
+    # First assignment wins, quotes and inline comments stripped. Deliberately
+    # simple: .env is a flat KEY=VALUE file here, not a shell script to source.
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=//p" .env 2>/dev/null \
+        | head -n 1 \
+        | sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+              -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+[ -f .env ] || die "no .env in $APP_DIR — refusing to guess which environment this is."
+
+APP_ENV="$(read_env_value APP_ENV)"
+
+# An empty APP_ENV is treated as production. WHY: config/app.php defaults 'env' to
+# 'production' when the key is missing, so the app itself would already be running
+# as production; the deploy script must not be more permissive than the app.
+[ -n "$APP_ENV" ] || APP_ENV="production"
+
+if [ "$APP_ENV" = "production" ]; then
+    if [ -n "$REF" ]; then
+        die "this host is APP_ENV=production; --ref is refused.
+     Production deploys only what is already on main, as a fast-forward, so that
+     the deployed commit is always reachable from the branch everyone reviews.
+     To try a branch, deploy it to STAGING:  scripts/ship.sh staging $REF"
+    fi
+    REF="main"
+else
+    [ -n "$REF" ] || REF="main"
+fi
+
+say "Environment"
+printf '  APP_ENV : %s\n' "$APP_ENV"
+printf '  ref     : %s\n' "$REF"
+printf '  app dir : %s\n' "$APP_DIR"
+if [ "$APP_ENV" = "production" ]; then
+    printf '  mode    : fast-forward merge of origin/main (--ref refused)\n'
+else
+    printf '  mode    : detached checkout of the requested ref\n'
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    say "Dry run"
+    echo "  Would run, in order:"
+    if [ "$APP_ENV" = "production" ]; then
+        echo "    git fetch --quiet origin main && git merge --quiet --ff-only origin/main"
+    else
+        echo "    git fetch --quiet origin && git checkout --detach <resolved $REF>"
+    fi
+    echo "    composer install --no-dev --optimize-autoloader"
+    echo "    chown -R $WEB_USER:$WEB_USER app bootstrap/cache config database resources routes storage vendor/composer"
+    echo "    php artisan migrate --force"
+    echo "    php artisan config:clear route:clear view:clear config:cache route:cache"
+    echo "    systemctl restart $QUEUE_SERVICE"
+    echo "    php -r '<class-load check>'"
+    echo "  Stopped before 'git fetch'. Nothing was changed."
+    exit 0
+fi
 
 say "Before"
 git log --oneline -1
-
-say "Fetching origin/main"
-git fetch --quiet origin main
 BEFORE="$(git rev-parse HEAD)"
-git merge --quiet --ff-only origin/main
+
+if [ "$APP_ENV" = "production" ]; then
+    say "Fetching origin/main"
+    git fetch --quiet origin main
+    git merge --quiet --ff-only origin/main
+else
+    say "Fetching origin"
+    # Fetch everything, not just one branch: --ref may name any branch, and a bare
+    # sha is only reachable if its branch was fetched too.
+    git fetch --quiet origin
+
+    # Resolve the ref: prefer the remote-tracking branch, fall back to a raw sha.
+    # WHY prefer origin/<ref>: a stale LOCAL branch of the same name on the box
+    # would otherwise win and deploy week-old code that looks right in `git log`.
+    if git rev-parse --verify --quiet "origin/${REF}^{commit}" >/dev/null; then
+        TARGET="origin/${REF}"
+    elif git rev-parse --verify --quiet "${REF}^{commit}" >/dev/null; then
+        TARGET="$REF"
+    else
+        die "cannot resolve '$REF' — no origin/$REF and no such commit after fetch."
+    fi
+
+    say "Checking out ${TARGET} (detached)"
+    git checkout --detach --quiet "$TARGET"
+fi
+
 AFTER="$(git rev-parse HEAD)"
 
 if [ "$BEFORE" = "$AFTER" ]; then
     echo "Already up to date."
 else
-    git --no-pager log --oneline "$BEFORE..$AFTER"
+    git --no-pager log --oneline "$BEFORE..$AFTER" || git --no-pager log --oneline -5
 fi
 
 say "Dependencies"
@@ -115,4 +268,5 @@ echo "  {$checked} classes, all resolvable.\n";
 '
 
 say "Deployed"
+printf '  APP_ENV : %s\n  ref     : %s\n  HEAD    : %s\n' "$APP_ENV" "$REF" "$(git rev-parse HEAD)"
 git log --oneline -1

@@ -77,18 +77,29 @@ class AppServiceProvider extends ServiceProvider
 
         $this->responseMacro();
         $this->configureRateLimiters();
-        $this->forceHttpsInProduction();
+        $this->forceHttpsWhenConfigured();
     }
 
     /**
-     * Force HTTPS scheme generation in production so URL::route(), URL::asset(),
-     * route('foo') etc. always emit https:// regardless of what proxy headers say.
-     * Combined with the SecurityHeaders middleware's HSTS, this prevents mixed-
-     * content downgrades.
+     * Force HTTPS scheme generation so URL::route(), URL::asset(), route('foo')
+     * etc. always emit https:// regardless of what proxy headers say. Combined
+     * with the SecurityHeaders middleware's HSTS, this prevents mixed-content
+     * downgrades.
+     *
+     * Keyed off config, NOT the environment NAME. The old `environment('production')`
+     * test conflated "is this the live site" with "is this deployment behind TLS",
+     * and those are different questions the moment a second TLS-terminated
+     * deployment exists: a staging box running APP_ENV=staging would emit http://
+     * in every generated URL — Stripe success/return URLs and emailed
+     * password-reset links included — because nothing here trusts
+     * X-Forwarded-Proto (there is no TrustProxies configuration).
+     *
+     * `app.force_https` defaults to `APP_ENV === 'production'`, so production
+     * behaviour is unchanged when FORCE_HTTPS is unset. See config/app.php.
      */
-    private function forceHttpsInProduction(): void
+    private function forceHttpsWhenConfigured(): void
     {
-        if ($this->app->environment('production')) {
+        if (config('app.force_https')) {
             URL::forceScheme('https');
         }
     }

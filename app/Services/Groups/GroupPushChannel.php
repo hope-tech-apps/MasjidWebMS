@@ -21,9 +21,13 @@ use Illuminate\Support\Facades\Log;
  * them regardless.
  *
  * Two things this must NEVER do, both of which the design review flagged:
- *   - construct OnesignalService inline — its constructor THROWS on missing
- *     shared config, which under the test sync-queue would turn a successful
- *     post into a 500;
+ *   - construct OnesignalService inline — resolve it from the container like
+ *     every other caller. (Historically the sharper reason was that its
+ *     constructor THREW on missing shared config, which under the test
+ *     sync-queue turned a successful post into a 500. T-040 W1 removed that
+ *     throw — the service now constructs on any configuration and its send
+ *     methods no-op when unconfigured — so this is now a consistency rule
+ *     rather than a crash guard.)
  *   - reuse the masjid-wide PushChannel / SendMasjidNotificationJob — those write
  *     a per-masjid device broadcast, which would push "Grade 3 has an update" to
  *     every device in the whole organisation.

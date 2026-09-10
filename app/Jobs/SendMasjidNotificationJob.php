@@ -68,6 +68,20 @@ class SendMasjidNotificationJob implements ShouldQueue
             return;
         }
 
+        // A deployment with no OneSignal credentials cannot deliver this, and
+        // no number of retries will change that — so do not spend three
+        // attempts on it and then let failed() DELETE the admin's notification
+        // as if it were an OneSignal rejection. The row is what the admin
+        // created and can see; keep it, and say plainly why nothing was pushed.
+        if (!$onesignal->isConfigured()) {
+            Log::warning('SendMasjidNotificationJob: OneSignal not configured — nothing pushed', [
+                'masjid_id' => $this->masjid->id,
+                'notification_id' => $this->notification->id,
+                'recipients' => count($this->subscriptionIds),
+            ]);
+            return;
+        }
+
         // Include the notification's image (if any) so the push renders it —
         // big_picture on Android, ios_attachments on iOS.
         $imageUrl = $this->notification->getFirstMediaUrl('notifications') ?: null;

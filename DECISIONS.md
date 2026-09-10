@@ -323,3 +323,49 @@ accounts should not exist where it is switched off.
 STILL TO DO: `BroadcastAudience::SERVICE` and the OneSignal tag sync — interests
 are stored and served but nothing yet ROUTES on them — plus the iOS side
 (`OneSignal.login()` still keys on device id, not contact).
+
+## 2026-09-10 — Staging environment: a second droplet cloned from prod, its own MySQL, no real egress
+
+**Decision.** Staging is a **new droplet created from a snapshot of production**
+(same size `s-1vcpu-2gb`, region nyc1, same VPC), named `masjid-staging`, with
+**MySQL 8 installed locally on the box** as its database, reachable at
+`masjid-staging.hopetechapps.com` and `manara-staging.hopetechapps.com`
+(both proxied Cloudflare A records — Universal SSL covers `*.hopetechapps.com`
+one label deep only, so two-label names like `staging.masjid.…` are out).
+`APP_ENV=staging`; all outbound integrations are blank or sunk (mail → `log`,
+OneSignal blank with the service made a no-op when unconfigured, SMS → none,
+Anthropic blank, GitHub dispatch unset); Stripe runs on **test-mode** keys with
+its own test webhook. Data is a **scrubbed copy of production** produced by an
+artisan command that refuses to run outside staging; private-disk files (family
+media, documents) are never copied. Deploys: `bin/deploy` accepts `--ref` on
+staging only (prod stays ff-only `main`); a local `scripts/ship.sh <env> [ref]`
+builds the SPA (`npm run build`, never `build:prod`) and rsyncs it. A visible
+STAGING ribbon + `X-Robots-Tag: noindex` appear whenever `APP_ENV` is not
+production. Convention: `.claude/rules/environments.md`.
+
+**Alternatives.** (1) *Repurpose droplet 480119186 in place* — rejected: Ubuntu
+24.10 is EOL (apt is dead), 1 GB RAM, PHP 8.2 default, no pdo_sqlite/intl; it
+would be a false mirror. It should be destroyed once staging is up (owner's
+call; it still holds prod DB credentials and live Resend/Anthropic/OneSignal
+keys, and until 2026-09-10 it was running prod's queue and cron). (2) *A second
+database on the managed cluster* — rejected: DO MySQL users see every schema on
+the cluster, one wrong `.env` line points staging at prod, and the cluster is a
+single node with no standby that staging load would share. Local MySQL is free,
+fully isolated, and lets `migrate:fresh` and the never-run concurrency test
+execute. (3) *Local Docker dev on the Mac* — deferred, not rejected: it does not
+prove nginx/cron/queue/Cloudflare behaviour, which is where the last month's
+prod surprises lived. (4) *Synthetic seed data only* — rejected as the sole
+source: the bugs that reached prod were data-shaped (column widths, unique
+indexes, timezone round-trips); a scrubbed prod copy catches those.
+
+**Rubric** (request-fit 40 / risk 20 / testability 15 / simplicity 15 /
+reversibility 10): clone-from-snapshot + local MySQL 36/18/14/12/9 = **89**;
+repurpose-in-place 30/10/10/13/6 = 69; Docker-only 22/16/9/12/10 = 69. Scouts
+ran (infra, codebase, external); critic/supervisor phases were folded into this
+entry because the risks were concrete and enumerable, not contested.
+
+**Blocked on the owner, deliberately not worked around:** creating the droplet
+needs a DigitalOcean API token or console click (doctl here is unauthenticated
+and the MCP cannot create droplets), and test-mode Stripe keys come only from
+the dashboard. Everything else is built ahead so the box is live within an hour
+of those two inputs.

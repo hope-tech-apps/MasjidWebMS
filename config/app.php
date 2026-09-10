@@ -56,6 +56,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Force HTTPS URL Generation
+    |--------------------------------------------------------------------------
+    |
+    | Whether AppServiceProvider calls URL::forceScheme('https'), so route(),
+    | url() and asset() always emit https:// no matter what the request or the
+    | proxy claims. It matters because this app has no TrustProxies config, so
+    | X-Forwarded-Proto is ignored and nothing else makes a TLS-terminated
+    | deployment generate https:// links — Stripe return_urls and emailed
+    | password-reset links included.
+    |
+    | This used to be keyed off APP_ENV === 'production' inside the provider,
+    | which silently made every non-production deployment emit http:// links.
+    | The default below reproduces that exact behaviour when FORCE_HTTPS is
+    | unset, so production is unchanged by construction; a TLS-terminated
+    | staging box sets FORCE_HTTPS=true and gets correct links.
+    |
+    */
+
+    'force_https' => env('FORCE_HTTPS', env('APP_ENV') === 'production'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

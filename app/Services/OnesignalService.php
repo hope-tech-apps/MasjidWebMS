@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Masjid;
 use App\Models\Notification;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class OnesignalService
@@ -15,15 +16,78 @@ class OnesignalService
     protected $app_key;
     protected $default_channel_id;
 
+    /**
+     * Constructs on ANY configuration, including none.
+     *
+     * It used to throw when the shared api_url/app_id/REST key were blank. That
+     * is a bad shape for a dependency that is type-hinted into `handle()`:
+     * `prayers:send-due` is scheduled every minute, so a deployment without
+     * OneSignal credentials — every non-production environment — raised an
+     * unhandled exception sixty times an hour and the scheduler never completed
+     * cleanly. The failure also arrived at the CONSTRUCTOR, i.e. before any
+     * caller could decide whether it even wanted to send anything.
+     *
+     * Fail-closed is preserved and moved one layer in: with blank credentials
+     * every send method logs one warning and returns a "not sent" result
+     * WITHOUT touching the network (see notConfiguredResult()). Nothing can
+     * reach a real device by accident; it simply stops being an exception.
+     */
     public function __construct()
     {
         $this->api_url = config('onesignal.api_url');
         $this->app_id = config('onesignal.app_id');
         $this->app_key = config('onesignal.app_rest_api_key');
+    }
 
-        if (empty($this->api_url) || empty($this->app_id) || empty($this->app_key)) {
-            throw new \RuntimeException('Missing some Onesignal app configurations.');
-        }
+    /**
+     * Are the SHARED app credentials present?
+     *
+     * Deliberately the shared app and not the per-masjid one, because these
+     * three values are exactly the condition the constructor used to throw on —
+     * so gating every send on them keeps "blank shared config sends nothing"
+     * true, which is what a staging box restored from a production dump needs.
+     * A masjid row that still carries its own provisioned app id and REST key
+     * must NOT become a way to push to real phones from a deployment that was
+     * given no OneSignal configuration of its own.
+     */
+    public function isConfigured(): bool
+    {
+        return !empty($this->api_url) && !empty($this->app_id) && !empty($this->app_key);
+    }
+
+    /**
+     * The shaped result every send method returns when credentials are absent.
+     *
+     * Shape rules, both load-bearing:
+     *   - `id` is present and null, because that is the key callers read to
+     *     decide whether OneSignal accepted the send (SendMasjidNotificationJob).
+     *     A missing key and a null key must not read differently.
+     *   - `not_sent` + `reason` let a caller distinguish "we chose not to send"
+     *     from "OneSignal rejected it", which the old null return could not.
+     *
+     * Logged once per call at warning level, with a COUNT and never the
+     * recipients themselves: subscription ids identify a device, and titles and
+     * bodies can carry a person's name.
+     *
+     * $recipients is null for the segment/tag broadcast, whose audience size
+     * only OneSignal knows — saying "0 recipients" there would be a lie.
+     *
+     * @return array{id:null, not_sent:true, reason:string, recipients:int|null}
+     */
+    private function notConfiguredResult(string $method, ?int $recipients): array
+    {
+        $dropped = $recipients === null ? 'a broadcast' : "{$recipients} recipients";
+
+        Log::warning("onesignal: not configured, dropped {$dropped}", [
+            'method' => $method,
+        ]);
+
+        return [
+            'id' => null,
+            'not_sent' => true,
+            'reason' => 'onesignal_not_configured',
+            'recipients' => $recipients,
+        ];
     }
 
     /**
@@ -98,6 +162,10 @@ class OnesignalService
      */
     public function notifyAll(Masjid $masjid, Notification $notification)
     {
+        if (!$this->isConfigured()) {
+            return $this->notConfiguredResult('notifyAll', null);
+        }
+
         [$appId, $appKey, $isDedicated] = $this->resolveConfig($masjid);
 
         $payload = [
@@ -140,6 +208,13 @@ class OnesignalService
      */
     public function notifyAllOfMasjid(Masjid $masjid, Notification $notification, array $subscription_ids, ?string $imageUrl = null)
     {
+        if (!$this->isConfigured()) {
+            return $this->notConfiguredResult(
+                'notifyAllOfMasjid',
+                count(array_filter($subscription_ids)),
+            );
+        }
+
         try {
             [$appId, $appKey] = $this->resolveConfig($masjid);
 
@@ -204,6 +279,13 @@ class OnesignalService
             return null;
         }
 
+        // AFTER the empty check on purpose: with no devices there is nothing to
+        // drop and no call to suppress, so the pre-existing null return stands
+        // and an unconfigured deployment does not log a warning per idle sweep.
+        if (!$this->isConfigured()) {
+            return $this->notConfiguredResult('sendDataSync', count($subscription_ids));
+        }
+
         [$appId, $appKey] = $this->resolveConfig($masjid);
 
         try {
@@ -261,6 +343,12 @@ class OnesignalService
             return null;
         }
 
+        // See sendDataSync: guard placed after the empty check so the idle case
+        // keeps returning null and logs nothing.
+        if (!$this->isConfigured()) {
+            return $this->notConfiguredResult('sendPrayerAlert', count($subscription_ids));
+        }
+
         [$appId, $appKey] = $this->resolveConfig($masjid);
 
         try {
@@ -305,6 +393,15 @@ class OnesignalService
      */
     public function getNotificationDetails($messageId)
     {
+        // Not a send, so it does not use the "not sent" shape — but it must
+        // still not build a request against a blank api_url, which throws.
+        // An empty array is the same "nothing to report" a lookup miss gives.
+        if (!$this->isConfigured()) {
+            Log::warning('onesignal: not configured, notification lookup skipped');
+
+            return [];
+        }
+
         // Construct the URL for the View Message API
         $url = "{$this->api_url}/{$messageId}?app_id={$this->app_id}";
 

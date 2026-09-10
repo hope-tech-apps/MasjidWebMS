@@ -83,11 +83,23 @@ class AuthController extends Controller
         $token = $user->createToken('login-token', self::STAFF_TOKEN_ABILITIES)->plainTextToken;
 
         if ($user->type === 'MasjidAdmin') {
-            $user->masjid;
-            if ($user->masjid) {
-                $user->masjid->logo = $user->masjid->logo()->first();
+            // `masjid()` is a hasOne over masjids.user_id — OWNERSHIP. An admin
+            // added by AdministratorsController owns nothing; their organisation
+            // is a masjid_user row, which is exactly what TenantResolver binds
+            // them from on every subsequent request. Without the fallback below
+            // they set a password from their invite and were then refused here
+            // with "you don't have a related masjid", so the whole "second
+            // person in the office" feature produced logins that could not log
+            // in. Strictly additive: an owner-admin still takes the first branch
+            // unchanged, and the refusal still stands for an admin with neither.
+            $masjid = $user->masjid ?: $this->staffMembershipMasjid($user);
+
+            if ($masjid) {
+                $masjid->logo = $masjid->logo()->first();
+                $user->setRelation('masjid', $masjid);
             } else {
                 Auth::logout();
+
                 return response()->json([
                     'status' => 'failed',
                     'message' => "Sorry, you don't have a related masjid to your account."
@@ -98,7 +110,7 @@ class AuthController extends Controller
             // MasjidAdmin `hasOne` above is null for them. Their school is their
             // masjid_user membership, resolved and attached as the `masjid`
             // relation so the SPA reads user.masjid uniformly for both staff types.
-            $masjid = $this->teacherMasjid($user);
+            $masjid = $this->staffMembershipMasjid($user);
 
             if (! $masjid) {
                 Auth::logout();
@@ -141,32 +153,21 @@ class AuthController extends Controller
     }
 
     /**
-     * The school a teacher belongs to — their sole `masjid_user` membership.
+     * The organisation of a staff principal resolved from their `masjid_user`
+     * membership — the same source ResolveMasjidTenant binds them from.
      *
-     * `whereHas('masjid')` drops a membership whose organisation has been trashed
-     * (Masjid soft-deletes), matching TenantResolver::staffMemberships so the
-     * login payload and the tenant binding cannot disagree about which school a
-     * teacher has. Runs UNBOUND (login is a public route), which is correct:
-     * memberships() is not tenant-scoped, exactly as the resolver reads it.
-     */
-    /**
-     * The masjid of a staff principal who OWNS none — resolved from their single
-     * `masjid_user` membership, the same source ResolveMasjidTenant binds from.
+     * Used by every principal who may own no masjid: a Teacher, a LunchStaff,
+     * and a MasjidAdmin added by AdministratorsController rather than one who
+     * owns the row. Deliberately ONE method — it briefly existed twice, byte for
+     * byte, and two copies of "which organisation does this login belong to" is
+     * how the login payload and the tenant binding start disagreeing.
      *
-     * Shared by Teacher and LunchStaff so the two can never disagree about which
-     * organisation a login belongs to: the tenant middleware and the payload the
-     * SPA renders read the same row.
+     * `whereHas('masjid')` drops a membership whose organisation has been
+     * trashed (Masjid soft-deletes), matching TenantResolver::staffMemberships.
+     * Runs UNBOUND (login is a public route), which is correct: memberships()
+     * is not tenant-scoped, exactly as the resolver reads it.
      */
     private function staffMembershipMasjid(User $user): ?\App\Models\Masjid
-    {
-        return $user->memberships()
-            ->whereHas('masjid')
-            ->with('masjid')
-            ->orderBy('masjid_id')
-            ->first()?->masjid;
-    }
-
-    private function teacherMasjid(User $user): ?\App\Models\Masjid
     {
         return $user->memberships()
             ->whereHas('masjid')
@@ -184,11 +185,18 @@ class AuthController extends Controller
                 $user->avatar = $user->avatar()->first();
 
                 if ($user->type === 'MasjidAdmin') {
-                    $user->masjid;
-                    if ($user->masjid) {
-                        $user->masjid->logo = $user->masjid->logo()->first();
+                    // Same fallback as login(): ownership first, membership
+                    // second. This runs on EVERY page load, so an admin who can
+                    // sign in but not be re-identified here is signed straight
+                    // back out on their first refresh.
+                    $masjid = $user->masjid ?: $this->staffMembershipMasjid($user);
+
+                    if ($masjid) {
+                        $masjid->logo = $masjid->logo()->first();
+                        $user->setRelation('masjid', $masjid);
                     } else {
                         Auth::logout();
+
                         return response()->json([
                             'status' => 'failed',
                             'message' => "Sorry, you don't have a related masjid to your account."
@@ -209,7 +217,7 @@ class AuthController extends Controller
                     $masjid->logo = $masjid->logo()->first();
                     $user->setRelation('masjid', $masjid);
                 } elseif ($user->type === 'Teacher') {
-                    $masjid = $this->teacherMasjid($user);
+                    $masjid = $this->staffMembershipMasjid($user);
 
                     if (! $masjid) {
                         Auth::logout();

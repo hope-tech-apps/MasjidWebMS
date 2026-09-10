@@ -1,9 +1,21 @@
 # Deploy / ops artifacts
 
-Infrastructure files for the production Droplet (`masjid.hopetechapps.com`).
-These are committed for reproducibility — they are NOT auto-applied by the
-GitHub Actions deploy (that only pulls code, migrates, rebuilds the SPA).
-Apply them manually once per server.
+Infrastructure files for the Manara droplets — production
+(`masjid.hopetechapps.com`) and, since T-040, staging
+(`masjid-staging.hopetechapps.com`; see `staging/`). These are committed for
+reproducibility. **Nothing applies them automatically.** Apply them by hand once
+per server.
+
+> **There is no deploy pipeline.** `.github/workflows/tests.yml` is the only
+> workflow on `main`, and it runs the test suite — it does not deploy. (A
+> `chore/github-actions-deploy` branch exists and is unmerged.) An earlier
+> version of this file described a GitHub Actions deploy that pulls code,
+> migrates and restarts the queue; that deploy has never existed on `main`, and
+> believing in it is how a "deployed" change turns out never to have shipped.
+>
+> Deploys are: `scripts/ship.sh <staging|production> [ref]` from the Mac, which
+> builds and rsyncs the SPA and then runs `sudo bin/deploy` on the box. See
+> `.claude/rules/environments.md`.
 
 ## Queue worker — `masjid-queue.service`
 
@@ -37,11 +49,17 @@ journalctl -u masjid-queue.service -f
 
 ### Interaction with deploys
 
-The GitHub Actions deploy already runs `php artisan queue:restart`, which writes
-a cache flag the worker checks after each job; the worker then exits and systemd
-respawns it with the freshly-pulled code. No manual restart needed on deploy.
+`bin/deploy` runs `systemctl restart masjid-queue.service` near the end, then
+`sleep 2` and `systemctl is-active` to prove it came back. **That restart is the
+only thing that gets new code into the worker** — a long-running worker holds the
+old code in memory, so without it a deployed fix keeps not happening for up to
+`--max-time` (3600s).
+
+Nothing else restarts it. There is no pipeline running `queue:restart`; if you
+deploy by hand instead of through `bin/deploy`, restart the worker yourself.
 (Both php-fpm and the worker run as `www-data` against the same `database` cache
-store, so the restart signal propagates.)
+store, so a `queue:restart` cache flag would propagate — but only if something
+writes it.)
 
 ### Path note
 
