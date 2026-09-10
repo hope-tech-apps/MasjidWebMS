@@ -105,6 +105,12 @@ class LunchStaffRealmTest extends TestCase
         return $user;
     }
 
+    /** The lunch realm's own prefix — the id is CHECKED by the resolver, not trusted. */
+    private function lunchBase(): string
+    {
+        return '/api/lunch/masjids/' . $this->masjid->id . '/jummah-lunch';
+    }
+
     private function adminBase(): string
     {
         return '/api/admin/masjids/' . $this->masjid->id;
@@ -119,15 +125,15 @@ class LunchStaffRealmTest extends TestCase
 
         // The menu list, resolved against a tenant bound from their membership —
         // there is no masjid id in any of these URLs to get wrong.
-        $this->getJson('/api/lunch/menus')
+        $this->getJson($this->lunchBase() . '/menus')
             ->assertOk()
             ->assertJsonPath('data.0.id', $this->menu->id);
 
-        $this->getJson('/api/lunch/menus/' . $this->menu->id)
+        $this->getJson($this->lunchBase() . '/menus/' . $this->menu->id)
             ->assertOk()
             ->assertJsonPath('data.id', $this->menu->id);
 
-        $this->getJson('/api/lunch/menus/' . $this->menu->id . '/orders')
+        $this->getJson($this->lunchBase() . '/menus/' . $this->menu->id . '/orders')
             ->assertOk()
             ->assertJsonPath('data.menu.id', $this->menu->id);
     }
@@ -138,7 +144,7 @@ class LunchStaffRealmTest extends TestCase
         Sanctum::actingAs($this->lunchStaff);
 
         // Open next week's menu...
-        $created = $this->postJson('/api/lunch/menus', [
+        $created = $this->postJson($this->lunchBase() . '/menus', [
             'title' => 'Jummah Lunch',
             'service_date' => '2027-05-07',
         ])->assertStatus(201);
@@ -146,13 +152,13 @@ class LunchStaffRealmTest extends TestCase
         $menuId = $created->json('data.id');
 
         // ...add a dish...
-        $this->postJson('/api/lunch/menus/' . $menuId . '/items', [
+        $this->postJson($this->lunchBase() . '/menus/' . $menuId . '/items', [
             'name' => 'Biryani',
             'price_minor' => 900,
         ])->assertStatus(201);
 
         // ...and open it for orders.
-        $this->putJson('/api/lunch/menus/' . $menuId, [
+        $this->putJson($this->lunchBase() . '/menus/' . $menuId, [
             'status' => MealMenu::STATUS_OPEN,
         ])->assertOk();
 
@@ -230,7 +236,7 @@ class LunchStaffRealmTest extends TestCase
         // owner's decision, so the route is simply not in their realm.
         Sanctum::actingAs($this->lunchStaff);
 
-        $this->deleteJson('/api/lunch/menus/' . $this->menu->id)->assertStatus(405);
+        $this->deleteJson($this->lunchBase() . '/menus/' . $this->menu->id)->assertStatus(405);
     }
 
     #[Test]
@@ -242,12 +248,18 @@ class LunchStaffRealmTest extends TestCase
         Sanctum::actingAs($this->lunchStaff);
 
         // Their list contains theirs and not the other masjid's...
-        $ids = collect($this->getJson('/api/lunch/menus')->assertOk()->json('data'))->pluck('id');
+        $ids = collect($this->getJson($this->lunchBase() . '/menus')->assertOk()->json('data'))->pluck('id');
         $this->assertTrue($ids->contains($this->menu->id));
         $this->assertFalse($ids->contains($foreignMenu->id));
 
-        // ...and naming the foreign id directly is a miss, not a read.
-        $this->getJson('/api/lunch/menus/' . $foreignMenu->id)->assertStatus(404);
+        // ...naming the foreign MENU under their own masjid is a miss...
+        $this->getJson($this->lunchBase() . '/menus/' . $foreignMenu->id)->assertStatus(404);
+
+        // ...and putting the other masjid's id in the URL is refused by the
+        // resolver before any controller runs. This is the assertion that makes
+        // the id in the path safe.
+        $this->getJson('/api/lunch/masjids/' . $this->other->id . '/jummah-lunch/menus')
+            ->assertStatus(403);
     }
 
     #[Test]
@@ -262,7 +274,7 @@ class LunchStaffRealmTest extends TestCase
 
         Sanctum::actingAs($orphan);
 
-        $this->getJson('/api/lunch/menus')->assertStatus(403);
+        $this->getJson($this->lunchBase() . '/menus')->assertStatus(403);
     }
 
     #[Test]
@@ -272,13 +284,13 @@ class LunchStaffRealmTest extends TestCase
         // door. This keeps the two realms from quietly becoming one.
         Sanctum::actingAs($this->admin);
 
-        $this->getJson('/api/lunch/menus')->assertStatus(401);
+        $this->getJson($this->lunchBase() . '/menus')->assertStatus(401);
     }
 
     #[Test]
     public function the_lunch_realm_refuses_an_unauthenticated_caller(): void
     {
-        $this->getJson('/api/lunch/menus')->assertStatus(401);
+        $this->getJson($this->lunchBase() . '/menus')->assertStatus(401);
     }
 
     // ------------------------------------------------------------ provisioning
@@ -381,7 +393,7 @@ class LunchStaffRealmTest extends TestCase
         $this->assertSame(0, $this->lunchStaff->tokens()->count());
 
         $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->getJson('/api/lunch/menus')
+            ->getJson($this->lunchBase() . '/menus')
             ->assertStatus(401);
     }
 

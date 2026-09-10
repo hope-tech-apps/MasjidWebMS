@@ -31,16 +31,17 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * A LunchStaff login reaches the SAME controllers through its own realm, so
      * this store serves both and only the prefix differs.
      *
-     * The lunch realm carries NO masjid id: the server binds the tenant from the
-     * principal's membership, which is the point — there is no id in the URL for
-     * a volunteer to change. So `base()` must not interpolate one for them, and
-     * `ensureMasjid()` must not demand a masjidStore that their shell never loads.
+     * Their masjid id comes from the LOGIN PAYLOAD (AuthController attaches it
+     * from their membership), not from masjidStore, which their shell never
+     * loads. Putting the id in the URL is not a hole: ResolveMasjidTenant's
+     * LunchStaff branch resolves it against that same membership and 403s
+     * anything else.
      */
     const isLunchStaff = () => authStore.user?.type === "LunchStaff";
 
     function base(): string {
         return isLunchStaff()
-            ? "/api/lunch"
+            ? `/api/lunch/masjids/${authStore.user?.masjid?.id}/jummah-lunch`
             : `/api/admin/masjids/${masjidStore.masjid?.id}/jummah-lunch`;
     }
 
