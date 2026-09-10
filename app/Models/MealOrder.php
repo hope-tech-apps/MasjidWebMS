@@ -57,6 +57,10 @@ class MealOrder extends Model
         self::METHOD_PICKUP,
     ];
 
+    /** Which door the order came through. */
+    public const SOURCE_ONLINE = 'online'; // the public order page
+    public const SOURCE_STAFF = 'staff';   // taken on the lunch board by an admin or volunteer
+
     public const PAYMENT_UNPAID = 'unpaid';
     public const PAYMENT_PAID = 'paid';
     public const PAYMENT_REFUNDED = 'refunded';
@@ -91,6 +95,7 @@ class MealOrder extends Model
         'fee_covered_minor' => 0,
         'total_minor' => 0,
         'currency' => 'usd',
+        'source' => self::SOURCE_ONLINE,
     ];
 
     protected function casts(): array
@@ -103,6 +108,7 @@ class MealOrder extends Model
             'placed_at' => 'datetime',
             'paid_at' => 'datetime',
             'picked_up_at' => 'datetime',
+            'entered_by_user_id' => 'integer',
         ];
     }
 
@@ -123,6 +129,29 @@ class MealOrder extends Model
     public function items(): HasMany
     {
         return $this->hasMany(MealOrderItem::class);
+    }
+
+    /** The staff login that took this order on the board (null for online orders). */
+    public function enteredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'entered_by_user_id');
+    }
+
+    /**
+     * The next per-menu order number ("007"), shared by every door that creates
+     * an order — the public page and staff entry — so the two can never number
+     * differently. Call inside the transaction that saves the order: the row
+     * lock serialises concurrent orders so two never take the same number.
+     */
+    public static function nextOrderNumber(int $masjidId, int $menuId): string
+    {
+        $seq = static::withoutMasjidScope()
+            ->where('masjid_id', $masjidId)
+            ->where('meal_menu_id', $menuId)
+            ->lockForUpdate()
+            ->count() + 1;
+
+        return str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
     }
 
     public function contact(): BelongsTo

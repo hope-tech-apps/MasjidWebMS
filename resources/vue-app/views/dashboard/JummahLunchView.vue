@@ -91,6 +91,10 @@
 
                 <!-- Orders tab -->
                 <div v-else>
+                    <!-- Staff order entry: the table after Jummah, a phone call, someone without the link. -->
+                    <div class="d-flex justify-content-end mb-2">
+                        <button class="btn btn-sm btn-success" :disabled="!orderableItems.length" @click="openAddOrder">+ Add order</button>
+                    </div>
                     <div v-if="summary" class="row g-2 mb-3">
                         <div class="col"><div class="stat"><div class="stat-n">{{ summary.orders }}</div><div class="stat-l">Orders</div></div></div>
                         <div class="col"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
@@ -107,7 +111,11 @@
                                 <tr v-for="o in orders" :key="o.id">
                                     <td class="fw-bold">{{ o.order_number }}</td>
                                     <td>
-                                        <div>{{ o.customer_name }}</div>
+                                        <div>
+                                            {{ o.customer_name }}
+                                            <span v-if="o.source === 'staff'" class="badge bg-info-subtle text-info-emphasis ms-1"
+                                                :title="o.entered_by?.name ? 'Entered by ' + o.entered_by.name : 'Entered on the board'">staff</span>
+                                        </div>
                                         <div class="text-muted small">{{ o.customer_phone }}</div>
                                     </td>
                                     <td class="small">{{ itemsLabel(o) }}</td>
@@ -279,6 +287,46 @@
             </div>
         </div>
 
+        <!-- Add-order modal: an order taken by staff, priced by the server. -->
+        <div v-if="orderModal.show" class="jl-modal">
+            <div class="jl-dialog card">
+                <div class="card-header"><h5 class="mb-0">Add an order</h5></div>
+                <div class="card-body">
+                    <div class="mb-2"><label class="form-label" for="jlo-name">Customer name</label><input id="jlo-name" v-model="orderModal.form.customer_name" class="form-control" maxlength="120" /></div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-sm-6"><label class="form-label" for="jlo-phone">Phone <span class="text-muted small">(optional)</span></label><input id="jlo-phone" v-model="orderModal.form.customer_phone" type="tel" class="form-control" maxlength="32" /></div>
+                        <div class="col-sm-6"><label class="form-label" for="jlo-email">Email <span class="text-muted small">(optional)</span></label><input id="jlo-email" v-model="orderModal.form.customer_email" type="email" class="form-control" maxlength="190" /></div>
+                    </div>
+                    <div class="mb-2">
+                        <div class="form-label mb-1">Items</div>
+                        <div v-for="it in orderableItems" :key="it.id" class="d-flex align-items-center justify-content-between gap-2 py-2 border-bottom">
+                            <div>
+                                <div>{{ it.name }}</div>
+                                <div class="text-muted small">{{ money(it.price_minor) }}<span v-if="it.max_quantity"> · max {{ it.max_quantity }} per order</span></div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" :aria-label="`One fewer ${it.name}`" :disabled="!(orderModal.qty[it.id] > 0)" @click="bump(it, -1)">−</button>
+                                <span class="jlo-qty" aria-live="polite">{{ orderModal.qty[it.id] || 0 }}</span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" :aria-label="`One more ${it.name}`" :disabled="!!it.max_quantity && (orderModal.qty[it.id] || 0) >= Number(it.max_quantity)" @click="bump(it, 1)">+</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-2"><label class="form-label" for="jlo-notes">Notes <span class="text-muted small">(optional)</span></label><input id="jlo-notes" v-model="orderModal.form.customer_notes" class="form-control" maxlength="500" /></div>
+                    <fieldset class="mb-2">
+                        <legend class="form-label fs-6 mb-1">Payment</legend>
+                        <div class="form-check"><input id="jlo-paid" v-model="orderModal.form.paid" class="form-check-input" type="radio" name="jlo-pay" :value="true" /><label class="form-check-label" for="jlo-paid">Paid now — cash or card at the table</label></div>
+                        <div class="form-check"><input id="jlo-later" v-model="orderModal.form.paid" class="form-check-input" type="radio" name="jlo-pay" :value="false" /><label class="form-check-label" for="jlo-later">Will pay at pickup</label></div>
+                    </fieldset>
+                    <div class="d-flex justify-content-between fw-semibold mt-3"><span>Total</span><span>{{ money(orderTotal) }}</span></div>
+                    <div v-if="orderError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ orderError }}</div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" @click="orderModal.show = false">Cancel</button>
+                    <button class="btn btn-success" :disabled="savingOrder || !orderTotal" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order' }}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Item modal -->
         <div v-if="itemModal.show" class="jl-modal">
             <div class="jl-dialog card">
@@ -370,6 +418,52 @@ async function revokeStaff(p: any) {
     if (!confirm(`Remove ${p.name}'s lunch access? They'll be signed out straight away.`)) return;
     try { await store.removeStaff(p.id); toast("Access removed"); }
     catch (e) { toastError(e); }
+}
+
+// ------------------------------------------------------- staff-entered orders
+// Admins, SuperAdmins and lunch volunteers can add an order here without the
+// public link. The total shown is for the person at the table only — the server
+// prices the order from the menu and never reads a price from this form.
+const savingOrder = ref(false);
+const orderError = ref("");
+const orderModal = reactive<{ show: boolean; form: any; qty: Record<number, number> }>({ show: false, form: {}, qty: {} });
+const orderableItems = computed(() => (currentMenu.value?.items || []).filter((i: any) => i.is_available));
+const orderTotal = computed(() => orderableItems.value.reduce(
+    (sum: number, i: any) => sum + (orderModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
+
+function openAddOrder() {
+    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "", paid: true };
+    orderModal.qty = {};
+    orderError.value = "";
+    orderModal.show = true;
+}
+function bump(it: any, delta: number) {
+    const next = Math.max(0, (orderModal.qty[it.id] || 0) + delta);
+    orderModal.qty[it.id] = it.max_quantity ? Math.min(next, Number(it.max_quantity)) : next;
+}
+function orderErrorText(e: any): string {
+    const data = e?.response?.data?.data;
+    if (typeof data === "string") return data;
+    if (data && typeof data === "object") return Object.values(data).flat().join(" ");
+    return e?.message || "Could not add the order.";
+}
+async function saveOrder() {
+    if (!currentMenu.value) return;
+    orderError.value = "";
+    if (!String(orderModal.form.customer_name || "").trim()) { orderError.value = "Enter the customer's name."; return; }
+    const items = Object.entries(orderModal.qty)
+        .filter(([, q]) => Number(q) > 0)
+        .map(([id, q]) => ({ item_id: Number(id), quantity: Number(q) }));
+    if (!items.length) { orderError.value = "Add at least one item."; return; }
+    savingOrder.value = true;
+    try {
+        const res = await store.createOrder(currentMenu.value.id, { ...orderModal.form, items });
+        orderModal.show = false;
+        toast(res?.message || "Order added");
+        await store.fetchOrders(currentMenu.value.id);
+    } catch (e) {
+        orderError.value = orderErrorText(e);
+    } finally { savingOrder.value = false; }
 }
 
 const menuModal = reactive({
@@ -560,4 +654,6 @@ onBeforeMount(load);
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
 .stat-l { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .03em; }
 .nav-tabs .nav-link { cursor: pointer; }
+
+.jlo-qty { min-width: 1.75rem; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
 </style>

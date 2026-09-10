@@ -154,6 +154,31 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         }
     }
 
+    /**
+     * An order taken by staff on the board (table, phone, no link). Admins and
+     * lunch volunteers share it through base(). Prices are NOT sent — the server
+     * reads them from the menu. Form-encoded, `paid` as '1'/'0'.
+     */
+    async function createOrder(menuId: number | string, payload: {
+        customer_name: string; customer_phone?: string; customer_email?: string; customer_notes?: string;
+        paid: boolean; items: { item_id: number; quantity: number }[];
+    }): Promise<any> {
+        ensureMasjid();
+        const body = new FormData();
+        body.append("customer_name", payload.customer_name.trim());
+        if (payload.customer_phone?.trim()) body.append("customer_phone", payload.customer_phone.trim());
+        if (payload.customer_email?.trim()) body.append("customer_email", payload.customer_email.trim());
+        if (payload.customer_notes?.trim()) body.append("customer_notes", payload.customer_notes.trim());
+        body.append("paid", payload.paid ? "1" : "0");
+        payload.items.forEach((it, i) => {
+            body.append(`items[${i}][item_id]`, String(it.item_id));
+            body.append(`items[${i}][quantity]`, String(it.quantity));
+        });
+        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders`, body);
+        if (res.data?.status === "success") return res.data;
+        throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not add the order.");
+    }
+
     async function markOrderPaid(menuId: number | string, orderId: number | string): Promise<any> {
         ensureMasjid();
         const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/mark-paid`, new FormData());
@@ -316,6 +341,6 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,
-        fetchOrders, markOrderPaid, updateOrderStatus, uploadFlyer,
+        fetchOrders, createOrder, markOrderPaid, updateOrderStatus, uploadFlyer,
     };
 });

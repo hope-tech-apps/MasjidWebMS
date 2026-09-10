@@ -182,11 +182,7 @@ class JummahLunchOrdersController extends Controller
             $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation, $feeCovered) {
                 // A pickup number unique within this menu; the count is locked so
                 // two concurrent orders can't claim the same one.
-                $seq = MealOrder::withoutMasjidScope()
-                    ->where('masjid_id', $masjidId)
-                    ->where('meal_menu_id', $menu->id)
-                    ->lockForUpdate()
-                    ->count() + 1;
+                $orderNumber = MealOrder::nextOrderNumber($masjidId, $menu->id);
 
                 $order = new MealOrder([
                     'meal_menu_id' => $menu->id,
@@ -209,7 +205,7 @@ class JummahLunchOrdersController extends Controller
                 $order->donation_minor = $donation;
                 $order->fee_covered_minor = $feeCovered;
                 $order->total_minor = $subtotal + $donation + $feeCovered;
-                $order->order_number = str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
+                $order->order_number = $orderNumber;
                 $order->placed_at = now();
                 $order->save();
 

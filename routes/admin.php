@@ -317,6 +317,8 @@ Route::prefix('admin')->group(function () {
 
                 Route::controller(MealOrdersController::class)->group(function () {
                     Route::get('/menus/{menu_id}/orders', 'index');
+                    // Staff-entered orders (table, phone, no link) — MealOrdersController::store.
+                    Route::post('/menus/{menu_id}/orders', 'store');
                     Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
                     Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');
                     Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
