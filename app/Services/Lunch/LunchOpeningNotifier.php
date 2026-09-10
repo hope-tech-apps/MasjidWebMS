@@ -7,6 +7,7 @@ use App\Models\Broadcast;
 use App\Models\Masjid;
 use App\Models\MealMenu;
 use App\Services\Broadcast\BroadcastComposer;
+use App\Support\MasjidTime;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -122,25 +123,37 @@ class LunchOpeningNotifier
     }
 
     /**
-     * The message body.
+     * The one line of detail under the headline.
      *
-     * Short on purpose: every segment past 160 characters is billed again to the
-     * organisation, and a link the recipient has to hunt for defeats the point.
-     * The organisation's name leads, because a text from an unknown number that
-     * does not identify its sender is the definition of the thing carriers
-     * filter. STOP is not appended here — the carrier-level reply handling and
-     * the platform's own footer own that.
+     * DELIBERATELY carries no organisation name, no link and no STOP line:
+     * SmsBodyComposer prepends the registered sender identity, appends the
+     * broadcast's `link`, and appends the opt-out language — writing any of them
+     * here sends each of them TWICE. Segments are billed per message per
+     * recipient, so a duplicated 47-character URL across a congregation is a
+     * real invoice, and a carrier reviewing the campaign against its registered
+     * sample messages sees a mess.
+     *
+     * The cutoff is rendered in the MASJID'S timezone. A cutoff shown in UTC is
+     * how this module's worst bug read to an admin, and it would read the same
+     * way to a customer.
      */
     private function body(MealMenu $menu): string
     {
-        $when = optional($menu->service_date)->format('D M j');
+        $tz = MasjidTime::zoneFor($menu->masjid_id);
 
-        return trim(sprintf(
-            '%s is open for orders%s. Order here: %s',
-            $menu->title ?: 'Jummah Lunch',
-            $when ? ' for ' . $when : '',
-            $this->orderUrl($menu),
-        ));
+        $when = $menu->service_date
+            ? $menu->service_date->copy()->timezone($tz)->format('l, F j')
+            : null;
+
+        $cutoff = $menu->ordering_closes_at
+            ? $menu->ordering_closes_at->copy()->timezone($tz)->format('g:i A')
+            : null;
+
+        if ($when && $cutoff) {
+            return sprintf('%s — order by %s.', $when, $cutoff);
+        }
+
+        return $when ? $when . '.' : 'Order now.';
     }
 
     private function orderUrl(MealMenu $menu): string

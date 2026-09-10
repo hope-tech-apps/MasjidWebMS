@@ -12,6 +12,7 @@ use App\Models\Service;
 use App\Models\SmsSuppression;
 use App\Models\User;
 use App\Services\Lunch\LunchSmsOptIn;
+use App\Services\Sms\SmsBodyComposer;
 use App\Services\Sms\SmsConsentService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -261,9 +262,67 @@ class LunchSmsNotificationTest extends TestCase
         $this->assertSame('service', $b->audience);
         $this->assertSame($this->lunchService->id, (int) $b->audience_service_id);
         $this->assertStringContainsString('/jummah-lunch/' . $this->masjid->id, (string) $b->link);
-        $this->assertStringContainsString('open for orders', (string) $b->body);
+        $this->assertStringContainsString('open for orders', (string) $b->title);
 
         $this->assertNotNull($menu->fresh()->opening_notified_at);
+    }
+
+    #[Test]
+    public function the_composed_text_states_the_link_the_org_and_stop_exactly_once(): void
+    {
+        // SmsBodyComposer owns the identity prefix, the link and the opt-out
+        // line. The notifier writing any of them too would send each TWICE —
+        // and segments are billed per recipient, so a duplicated 47-character
+        // URL across a congregation is a real invoice, not a cosmetic bug. It
+        // would also stop matching the sample messages filed with the carrier.
+        $menu = MealMenu::factory()->forMasjid($this->masjid)->create([
+            'status' => MealMenu::STATUS_DRAFT,
+            'title' => 'Jummah Lunch',
+            'service_date' => '2027-04-02',
+            'ordering_closes_at' => '2027-04-02 15:00:00',
+            'notify_service_id' => $this->lunchService->id,
+        ]);
+
+        Sanctum::actingAs($this->admin);
+        $this->putJson($this->adminBase() . '/menus/' . $menu->id, [
+            'status' => MealMenu::STATUS_OPEN,
+        ])->assertOk();
+
+        $broadcast = Broadcast::withoutGlobalScopes()->latest('id')->first();
+        $text = app(SmsBodyComposer::class)->compose($broadcast, $this->masjid->fresh());
+
+        $url = 'jummah-lunch/' . $this->masjid->id;
+        $this->assertSame(1, substr_count($text, $url), "the link appears twice:\n" . $text);
+        $this->assertSame(1, substr_count($text, $this->masjid->name), "the org name appears twice:\n" . $text);
+        $this->assertSame(1, substr_count($text, 'STOP'), "the opt-out line appears twice:\n" . $text);
+
+        // It identifies the sender, which is what carriers filter on.
+        $this->assertStringStartsWith($this->masjid->name . ':', $text);
+    }
+
+    #[Test]
+    public function the_text_states_the_cutoff_in_the_masjids_own_timezone(): void
+    {
+        // A cutoff shown in UTC is how this module's worst bug read to an admin.
+        // It would read exactly as wrong to a customer.
+        $this->masjid->update(['timezone' => 'America/New_York']);
+
+        $menu = MealMenu::factory()->forMasjid($this->masjid)->create([
+            'status' => MealMenu::STATUS_DRAFT,
+            'service_date' => '2027-04-09',
+            'ordering_closes_at' => '2027-04-09 15:00:00', // 11:00 EDT
+            'notify_service_id' => $this->lunchService->id,
+        ]);
+
+        Sanctum::actingAs($this->admin);
+        $this->putJson($this->adminBase() . '/menus/' . $menu->id, [
+            'status' => MealMenu::STATUS_OPEN,
+        ])->assertOk();
+
+        $body = (string) Broadcast::withoutGlobalScopes()->latest('id')->first()->body;
+
+        $this->assertStringContainsString('11:00 AM', $body);
+        $this->assertStringNotContainsString('3:00 PM', $body);
     }
 
     #[Test]
