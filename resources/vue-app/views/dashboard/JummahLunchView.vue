@@ -96,6 +96,8 @@
                         <div class="col"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
                         <div class="col"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
                         <div class="col"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
+                        <!-- Only worth a tile once someone has actually added something. -->
+                        <div class="col" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div></div></div>
                     </div>
                     <div v-if="orders.length === 0" class="text-muted text-center py-4">No orders yet.</div>
                     <div v-else class="table-responsive">
@@ -109,7 +111,10 @@
                                         <div class="text-muted small">{{ o.customer_phone }}</div>
                                     </td>
                                     <td class="small">{{ itemsLabel(o) }}</td>
-                                    <td>{{ money(o.total_minor) }}</td>
+                                    <td>
+                                        {{ money(o.total_minor) }}
+                                        <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
+                                    </td>
                                     <td>
                                         <span class="badge" :class="o.payment_status === 'paid' ? 'bg-success' : 'bg-warning text-dark'">{{ o.payment_status }}</span>
                                         <div class="text-muted small">{{ o.payment_method === 'online' ? 'online' : 'at pickup' }}</div>
@@ -157,6 +162,11 @@
                         <input class="form-check-input" type="checkbox" v-model="menuModal.form.collect_customer_email" id="jlcce" />
                         <label class="form-check-label" for="jlcce">Ask for an email address</label>
                         <div class="text-muted small">Untick to drop the email field from the order form. Nothing emails customers from it, and paying online still collects an address for the Stripe receipt.</div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_donation" id="jlad" />
+                        <label class="form-check-label" for="jlad">Offer an optional extra donation</label>
+                        <div class="text-muted small">Lets a customer add any amount on top of the food, up to $1,000. It settles on the same payment and is reported separately below — it is not a receipted donation against a fund.</div>
                     </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
@@ -228,7 +238,7 @@ function emptyMenuForm() {
     return {
         title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at_local: "",
         pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
-        allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true,
+        allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true, allow_donation: true,
     };
 }
 function emptyItemForm() {
@@ -275,6 +285,7 @@ function openEditMenu(m: any) {
         // `!== false` so a menu row from before the column existed edits as ON,
         // which is what the database default gives it.
         collect_customer_email: m.collect_customer_email !== false,
+        allow_donation: m.allow_donation !== false,
     };
     menuModal.show = true;
 }

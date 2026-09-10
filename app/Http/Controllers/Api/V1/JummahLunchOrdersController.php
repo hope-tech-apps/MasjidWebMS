@@ -158,7 +158,16 @@ class JummahLunchOrdersController extends Controller
                 ];
             }
 
-            $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal) {
+            // The one figure the CUSTOMER sets. Clamped to the model's ceiling
+            // and forced to 0 when this menu does not offer the extra — hiding
+            // the input does not stop a crafted body from carrying one, exactly
+            // as with the email field.
+            $donation = $menu->allow_donation
+                ? min((int) $request->input('donation_minor', 0), MealOrder::MAX_DONATION_MINOR)
+                : 0;
+            $donation = max($donation, 0);
+
+            $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation) {
                 // A pickup number unique within this menu; the count is locked so
                 // two concurrent orders can't claim the same one.
                 $seq = MealOrder::withoutMasjidScope()
@@ -185,7 +194,8 @@ class JummahLunchOrdersController extends Controller
                 $order->masjid_id = $masjidId;
                 $order->currency = $menu->currency;
                 $order->subtotal_minor = $subtotal;
-                $order->total_minor = $subtotal;
+                $order->donation_minor = $donation;
+                $order->total_minor = $subtotal + $donation;
                 $order->order_number = str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
                 $order->placed_at = now();
                 $order->save();
@@ -303,6 +313,8 @@ class JummahLunchOrdersController extends Controller
             'allow_online_payment' => (bool) $menu->allow_online_payment,
             'allow_pay_at_pickup' => (bool) $menu->allow_pay_at_pickup,
             'collect_customer_email' => (bool) $menu->collect_customer_email,
+            'allow_donation' => (bool) $menu->allow_donation,
+            'max_donation_minor' => MealOrder::MAX_DONATION_MINOR,
             'currency' => $menu->currency,
             'items' => $menu->items->map(fn (MealMenuItem $i) => [
                 'id' => $i->id,
@@ -329,6 +341,7 @@ class JummahLunchOrdersController extends Controller
             'payment_method' => $order->payment_method,
             'payment_status' => $order->payment_status,
             'subtotal_minor' => (int) $order->subtotal_minor,
+            'donation_minor' => (int) $order->donation_minor,
             'total_minor' => (int) $order->total_minor,
             'currency' => $order->currency,
             'placed_at' => optional($order->placed_at)->toIso8601String(),

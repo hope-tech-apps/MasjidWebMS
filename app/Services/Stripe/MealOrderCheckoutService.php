@@ -70,7 +70,8 @@ class MealOrderCheckoutService
         ];
 
         // Itemised so the hosted page shows the breakdown. The line items sum to
-        // total_minor by construction (each line = unit_price × quantity).
+        // total_minor by construction (each food line = unit_price × quantity,
+        // plus the optional donation line added below).
         $lineItems = [];
         foreach ($order->items as $item) {
             $lineItems[] = [
@@ -79,6 +80,21 @@ class MealOrderCheckoutService
                     'currency' => $currency,
                     'unit_amount' => (int) $item->unit_price_minor,
                     'product_data' => ['name' => (string) $item->item_name],
+                ],
+            ];
+        }
+
+        // The optional extra rides on the SAME charge, as its own line so the
+        // hosted page names it rather than inflating the price of a plate — and
+        // so the line items keep summing to total_minor, which is what the
+        // application fee is computed from.
+        if ((int) $order->donation_minor > 0) {
+            $lineItems[] = [
+                'quantity' => 1,
+                'price_data' => [
+                    'currency' => $currency,
+                    'unit_amount' => (int) $order->donation_minor,
+                    'product_data' => ['name' => 'Additional donation'],
                 ],
             ];
         }

@@ -18,6 +18,11 @@ use Illuminate\Support\Str;
  * to paid by the webhook — never by the browser redirect. Money is integer
  * minor units; status/payment columns are strings backed by the constants here.
  *
+ * `donation_minor` is the one amount a CUSTOMER chooses, but it is still not
+ * fillable: it is clamped to a ceiling in the controller and forced to 0 when
+ * the menu does not offer it, so it reaches the row through that gate or not at
+ * all. `total_minor` is always subtotal + donation.
+ *
  * Server-computed columns (totals, the two status columns, the Stripe ids,
  * `order_number`, the timestamps) are DELIBERATELY not fillable — they move only
  * through the methods below or the checkout/payment services, never a request
@@ -53,6 +58,16 @@ class MealOrder extends Model
     public const PAYMENT_PAID = 'paid';
     public const PAYMENT_REFUNDED = 'refunded';
 
+    /**
+     * Ceiling on the optional extra, in minor units ($1,000).
+     *
+     * Not a judgement about generosity — a bound on what an unauthenticated,
+     * public endpoint can put into a Checkout Session on a masjid's live Stripe
+     * account. Anyone wanting to give more than this should be giving through
+     * the donations module, where it is designated to a fund and receipted.
+     */
+    public const MAX_DONATION_MINOR = 100000;
+
     protected $fillable = [
         'masjid_id',
         'meal_menu_id',
@@ -69,6 +84,7 @@ class MealOrder extends Model
         'payment_method' => self::METHOD_PICKUP,
         'payment_status' => self::PAYMENT_UNPAID,
         'subtotal_minor' => 0,
+        'donation_minor' => 0,
         'total_minor' => 0,
         'currency' => 'usd',
     ];
@@ -77,6 +93,7 @@ class MealOrder extends Model
     {
         return [
             'subtotal_minor' => 'integer',
+            'donation_minor' => 'integer',
             'total_minor' => 'integer',
             'placed_at' => 'datetime',
             'paid_at' => 'datetime',

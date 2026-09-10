@@ -29,6 +29,13 @@
                         </li>
                     </ul>
 
+                    <!-- Shown only when there IS an extra, so an ordinary order
+                         reads exactly as it did before. -->
+                    <div v-if="Number(order.donation_minor) > 0" class="lunch-total-line">
+                        <span>{{ t('give_line') }}</span>
+                        <span>{{ money(order.donation_minor) }}</span>
+                    </div>
+
                     <div class="lunch-total-row">
                         <span>{{ t('total') }}</span>
                         <strong>{{ money(order.total_minor) }}</strong>
@@ -115,6 +122,13 @@ onMounted(() => store.fetchOrder(masjidId, uuid));
 .lunch-pad { padding: 22px; }
 .lunch-lines { list-style: none; margin: 0 0 4px; padding: 0; }
 .lunch-lines li { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #f2f2f2; font-size: 15px; gap: 12px; }
+.lunch-total-line {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 14px;
+    color: #5d7a6d;
+}
 .lunch-total-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; font-size: 17px; }
 .lunch-total-row strong { color: #0c3d2b; font-size: 20px; }
 .lunch-status-grid { display: flex; gap: 12px; margin: 8px 0 18px; }

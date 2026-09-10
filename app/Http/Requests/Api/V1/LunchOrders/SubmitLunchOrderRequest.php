@@ -37,6 +37,11 @@ class SubmitLunchOrderRequest extends BaseFormRequest
             'customer_email' => 'nullable|email|max:190',
             'customer_notes' => 'nullable|string|max:500',
             'payment_method' => ['required', 'string', Rule::in(MealOrder::METHODS)],
+            // The optional extra on top of the food, in integer minor units.
+            // Bounded here so a crafted body cannot open a five-figure Checkout
+            // Session on the masjid's account; the controller clamps to the same
+            // ceiling and zeroes it when the menu does not offer it.
+            'donation_minor' => 'nullable|integer|min:0|max:' . MealOrder::MAX_DONATION_MINOR,
             // Honeypot — real submitters leave it empty; checked in the controller.
             'website' => 'nullable|string|max:255',
         ];

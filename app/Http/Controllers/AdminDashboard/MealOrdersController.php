@@ -47,6 +47,10 @@ class MealOrdersController extends Controller
             'unpaid_orders' => (clone $all)->where('payment_status', MealOrder::PAYMENT_UNPAID)->count(),
             'picked_up' => (clone $all)->where('status', MealOrder::STATUS_PICKED_UP)->count(),
             'revenue_paid_minor' => (int) (clone $paid)->sum('total_minor'),
+            // The optional extra, kept separate from food revenue in both
+            // columns: what has actually settled, and what is still owed on
+            // live orders. `revenue_paid_minor` already includes it.
+            'donations_paid_minor' => (int) (clone $paid)->sum('donation_minor'),
             'expected_total_minor' => (int) (clone $all)
                 ->whereIn('status', [
                     MealOrder::STATUS_PENDING,
@@ -54,6 +58,13 @@ class MealOrdersController extends Controller
                     MealOrder::STATUS_READY,
                     MealOrder::STATUS_PICKED_UP,
                 ])->sum('total_minor'),
+            'donations_expected_minor' => (int) (clone $all)
+                ->whereIn('status', [
+                    MealOrder::STATUS_PENDING,
+                    MealOrder::STATUS_CONFIRMED,
+                    MealOrder::STATUS_READY,
+                    MealOrder::STATUS_PICKED_UP,
+                ])->sum('donation_minor'),
         ];
 
         return response()->json([

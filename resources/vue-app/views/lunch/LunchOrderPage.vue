@@ -34,9 +34,57 @@
                     </div>
                 </section>
 
-                <section v-if="totalMinor > 0" class="lunch-total-row">
-                    <span>{{ t('total') }}</span>
-                    <strong>{{ money(totalMinor) }}</strong>
+                <section v-if="allowDonation && subtotalMinor > 0" class="lunch-give">
+                    <div class="lunch-give-head">
+                        <span class="lunch-give-title">{{ t('give_title') }}</span>
+                        <span class="lunch-opt">{{ t('optional') }}</span>
+                    </div>
+                    <p class="lunch-give-sub">{{ t('give_sub') }}</p>
+                    <div class="lunch-give-chips">
+                        <button
+                            v-for="preset in donationPresets"
+                            :key="preset"
+                            type="button"
+                            class="lunch-chip"
+                            :class="{ active: donationMinor === preset }"
+                            @click="setDonation(preset)"
+                        >{{ money(preset) }}</button>
+                        <button
+                            type="button"
+                            class="lunch-chip"
+                            :class="{ active: donationMinor === 0 }"
+                            @click="setDonation(0)"
+                        >{{ t('give_none') }}</button>
+                    </div>
+                    <div class="lunch-give-custom">
+                        <span class="lunch-give-cur">$</span>
+                        <input
+                            v-model="donationInput"
+                            type="number"
+                            min="0"
+                            :max="maxDonationMajor"
+                            step="0.01"
+                            inputmode="decimal"
+                            :placeholder="t('give_other_ph')"
+                            :aria-label="t('give_title')"
+                        />
+                    </div>
+                    <p v-if="donationCapped" class="lunch-give-cap">{{ t('give_cap', money(maxDonationMinor)) }}</p>
+                </section>
+
+                <section v-if="subtotalMinor > 0" class="lunch-totals">
+                    <div v-if="donationMinor > 0" class="lunch-total-line">
+                        <span>{{ t('subtotal') }}</span>
+                        <span>{{ money(subtotalMinor) }}</span>
+                    </div>
+                    <div v-if="donationMinor > 0" class="lunch-total-line">
+                        <span>{{ t('give_line') }}</span>
+                        <span>{{ money(donationMinor) }}</span>
+                    </div>
+                    <div class="lunch-total-row">
+                        <span>{{ t('total') }}</span>
+                        <strong>{{ money(totalMinor) }}</strong>
+                    </div>
                 </section>
 
                 <form class="lunch-form" @submit.prevent="submit">
@@ -72,7 +120,7 @@
 
                     <p v-if="error" class="lunch-error" role="alert">{{ error }}</p>
 
-                    <button class="lunch-submit" type="submit" :disabled="submitting || totalMinor === 0">
+                    <button class="lunch-submit" type="submit" :disabled="submitting || subtotalMinor === 0">
                         <template v-if="submitting">{{ t('placing') }}</template>
                         <template v-else-if="form.payment_method === 'online'">{{ t('pay_and_order', money(totalMinor)) }}</template>
                         <template v-else>{{ t('place_order') }} · {{ money(totalMinor) }}</template>
@@ -143,12 +191,55 @@ const methods = computed<string[]>(() => {
     return m;
 });
 
-const totalMinor = computed(() => {
+// What the FOOD costs. Kept distinct from the order total now that a customer
+// can add something on top: the submit button gates on this, so an extra with an
+// empty cart is never orderable (the server rejects an empty order too).
+const subtotalMinor = computed(() => {
     if (!menu.value) return 0;
     return (menu.value.items || []).reduce(
         (sum: number, it: any) => sum + (cart[it.id] || 0) * Number(it.price_minor),
         0
     );
+});
+
+// Whether this week's menu offers the extra at all. `!== false` for the same
+// reason as collectEmail: a payload without the key predates the column and
+// should behave as the server's default, which is true.
+const allowDonation = computed<boolean>(() => menu.value?.allow_donation !== false);
+
+// The server's own ceiling when it sends one, so the two never drift apart.
+const maxDonationMinor = computed<number>(() => Number(menu.value?.max_donation_minor ?? 100000));
+const maxDonationMajor = computed<number>(() => maxDonationMinor.value / 100);
+
+const donationPresets = [100, 200, 500];
+const donationInput = ref("");
+
+// Minor units, from a free-text dollar box. Rounded rather than truncated so
+// "1.005" cannot silently become 100, and floored at 0 so a typed "-5" is inert.
+const donationMinor = computed<number>(() => {
+    if (!allowDonation.value) return 0;
+    const parsed = Number.parseFloat(donationInput.value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return Math.min(Math.round(parsed * 100), maxDonationMinor.value);
+});
+
+// True once the typed figure has actually been trimmed, so the notice appears
+// only when it is telling the customer something they cannot otherwise see.
+const donationCapped = computed<boolean>(() => {
+    const parsed = Number.parseFloat(donationInput.value);
+    return Number.isFinite(parsed) && Math.round(parsed * 100) > maxDonationMinor.value;
+});
+
+const totalMinor = computed(() => subtotalMinor.value + donationMinor.value);
+
+function setDonation(minor: number): void {
+    donationInput.value = minor > 0 ? (minor / 100).toFixed(2) : "";
+}
+
+// A menu that stops offering the extra must not carry a figure typed before the
+// switch flipped — the same clearing rule the email field uses.
+watch(allowDonation, (on) => {
+    if (!on) donationInput.value = "";
 });
 
 function money(minor: number): string {
@@ -205,6 +296,7 @@ async function submit() {
         customer_email: form.customer_email || null,
         customer_notes: form.customer_notes || null,
         payment_method: form.payment_method,
+        donation_minor: donationMinor.value,
         website: honeypot.value,
     });
     submitting.value = false;
@@ -295,6 +387,52 @@ onMounted(() => store.fetchMenu(masjidId));
 }
 .lunch-stepper button:disabled { opacity: 0.3; cursor: default; }
 .lunch-stepper span { min-width: 18px; text-align: center; font-weight: 600; }
+.lunch-give {
+    margin-top: 14px;
+    padding: 14px;
+    border: 1px dashed #cfe3d8;
+    border-radius: 12px;
+    background: #f7fbf9;
+}
+.lunch-give-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.lunch-give-title { font-weight: 700; color: #0c3d2b; }
+.lunch-give-sub { margin: 4px 0 10px; font-size: 13px; color: #5d7a6d; }
+.lunch-give-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.lunch-chip {
+    padding: 7px 14px;
+    border: 1px solid #cfe3d8;
+    border-radius: 999px;
+    background: #fff;
+    color: #0c3d2b;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.lunch-chip.active { background: #0c3d2b; border-color: #0c3d2b; color: #fff; }
+.lunch-give-custom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+}
+.lunch-give-cur { color: #5d7a6d; font-weight: 600; }
+.lunch-give-custom input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid #cfe3d8;
+    border-radius: 8px;
+    font-size: 15px;
+}
+.lunch-give-cap { margin: 8px 0 0; font-size: 12px; color: #8a5a1e; }
+.lunch-totals { margin-top: 14px; }
+.lunch-total-line {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 14px;
+    color: #5d7a6d;
+}
 .lunch-total-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 16px 22px; background: #faf7ef; font-size: 17px;
