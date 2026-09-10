@@ -141,8 +141,12 @@ class LunchOpeningNotifier
     {
         $tz = MasjidTime::zoneFor($menu->masjid_id);
 
+        // service_date is a CALENDAR DATE, already the masjid's own Friday, and
+        // is cast to a Carbon at 00:00 UTC. Shifting it into a western timezone
+        // moves it to the previous evening — a Friday lunch announced as
+        // "Thursday, September 10". Only the cutoff below is a real instant.
         $when = $menu->service_date
-            ? $menu->service_date->copy()->timezone($tz)->format('l, F j')
+            ? $menu->service_date->format('l, F j')
             : null;
 
         $cutoff = $menu->ordering_closes_at

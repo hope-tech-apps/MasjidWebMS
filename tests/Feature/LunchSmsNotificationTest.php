@@ -323,6 +323,11 @@ class LunchSmsNotificationTest extends TestCase
 
         $this->assertStringContainsString('11:00 AM', $body);
         $this->assertStringNotContainsString('3:00 PM', $body);
+
+        // ...but the SERVICE DATE is a calendar date, not an instant. Timezone-
+        // converting it walks a Friday lunch back to Thursday evening.
+        $this->assertStringContainsString('Friday, April 9', $body);
+        $this->assertStringNotContainsString('Thursday', $body);
     }
 
     #[Test]
