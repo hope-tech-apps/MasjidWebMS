@@ -100,7 +100,13 @@ class LunchSmsOptIn
         } catch (\Throwable $e) {
             // A suppressed number lands here, and so does anything else. The
             // order is already saved and stays saved.
-            Log::info('Lunch SMS opt-in not recorded.', [
+            //
+            // WARNING, not info: production runs LOG_LEVEL=warning, and an
+            // info-level line about a swallowed failure is a failure nobody can
+            // see. This exact combination — catch everything, log below the
+            // deployed level — hid a column-length rejection that silently
+            // dropped every single opt-in.
+            Log::warning('Lunch SMS opt-in not recorded.', [
                 'masjid_id' => $masjidId,
                 'reason' => $e->getMessage(),
             ]);

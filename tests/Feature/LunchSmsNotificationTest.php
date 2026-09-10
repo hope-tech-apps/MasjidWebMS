@@ -16,6 +16,7 @@ use App\Services\Sms\SmsConsentService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -369,6 +370,22 @@ class LunchSmsNotificationTest extends TestCase
         $this->assertSame('2027-01-01', $contact->sms_consent_at->toDateString());
 
         $this->travelBack();
+    }
+
+    #[Test]
+    public function the_evidence_column_can_actually_hold_the_disclosure(): void
+    {
+        // This is asserted on the column TYPE, not by round-tripping a value,
+        // because SQLite does not enforce varchar lengths at all. A green suite
+        // once sat on top of a varchar(255) column that MySQL rejected in
+        // production — silently, because the opt-in swallows its own failures.
+        // A round-trip test would have passed then too, and still would.
+        $this->assertSame('text', Schema::getColumnType('contacts', 'sms_consent_evidence'));
+
+        // And this is why it has to be text: any wording carrying the required
+        // identity / frequency / not-a-condition / rates / STOP disclosures runs
+        // past 255 characters.
+        $this->assertGreaterThan(255, strlen(LunchSmsOptIn::DISCLOSURE));
     }
 
     #[Test]
