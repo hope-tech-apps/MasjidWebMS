@@ -49,6 +49,8 @@ class MealMenu extends Model
         'collect_customer_email',
         'allow_donation',
         'allow_fee_coverage',
+        'notify_service_id',
+        'allow_sms_optin',
         'currency',
     ];
 
@@ -71,6 +73,8 @@ class MealMenu extends Model
             'collect_customer_email' => 'boolean',
             'allow_donation' => 'boolean',
             'allow_fee_coverage' => 'boolean',
+            'allow_sms_optin' => 'boolean',
+            'opening_notified_at' => 'datetime',
         ];
     }
 

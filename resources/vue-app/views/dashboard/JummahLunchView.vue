@@ -174,6 +174,23 @@
                         <label class="form-check-label" for="jlafc">Offer to cover the card processing fee</label>
                         <div class="text-muted small">Stripe takes 2.9% + 30&cent; out of your balance on an online order — an $8 plate settles at $7.47. This offers the customer the choice to add it so you receive the full amount. Online orders only; pay-at-pickup never touches Stripe.</div>
                     </div>
+
+                    <hr class="my-3" />
+                    <div class="mb-2">
+                        <label class="form-label">Text subscribers when this opens</label>
+                        <select v-model="menuModal.form.notify_service_id" class="form-select">
+                            <option :value="null">Don't send a text</option>
+                            <option v-for="s in services" :key="s.id" :value="s.id">{{ s.title }}</option>
+                        </select>
+                        <div class="text-muted small">Picks the service people subscribe to on the order form. The text goes out once, the first time this menu becomes Open — reopening it later never sends a second one.</div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_sms_optin" id="jlsms" :disabled="!menuModal.form.notify_service_id" />
+                        <label class="form-check-label" for="jlsms">Ask customers if they want a text next week</label>
+                        <div class="text-muted small">
+                            Adds an unticked opt-in box to the order form with the required consent wording. Choose a service above first — without one there is nobody to subscribe them to.
+                        </div>
+                    </div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="menuModal.show = false">Cancel</button>
@@ -230,6 +247,7 @@ const menuTimezoneLabel = computed(() => {
 const currentMenu = computed(() => store.currentMenu);
 const orders = computed(() => store.orders);
 const summary = computed(() => store.orderSummary);
+const services = computed(() => store.services);
 
 const menuModal = reactive({
     show: false, isEdit: false, id: null as number | null,
@@ -245,6 +263,7 @@ function emptyMenuForm() {
         title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at_local: "",
         pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
         allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true, allow_donation: true, allow_fee_coverage: true,
+        notify_service_id: null, allow_sms_optin: false,
     };
 }
 function emptyItemForm() {
@@ -273,6 +292,8 @@ function itemsLabel(o: any): string {
 async function load() {
     loading.value = true;
     try { await store.fetchMenus(); } catch (e) { toastError(e); }
+    // The picker's options. Never fatal — fetchServices swallows its own errors.
+    store.fetchServices();
     loading.value = false;
 }
 
@@ -293,6 +314,8 @@ function openEditMenu(m: any) {
         collect_customer_email: m.collect_customer_email !== false,
         allow_donation: m.allow_donation !== false,
         allow_fee_coverage: m.allow_fee_coverage !== false,
+        notify_service_id: m.notify_service_id ?? null,
+        allow_sms_optin: m.allow_sms_optin === true,
     };
     menuModal.show = true;
 }

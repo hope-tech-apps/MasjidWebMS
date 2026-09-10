@@ -46,6 +46,11 @@ class SubmitLunchOrderRequest extends BaseFormRequest
             // a yes/no: the surcharge itself is computed on the server from the
             // published rate, so no request body ever states an amount.
             'cover_fees' => 'sometimes|boolean',
+            // "Text me when ordering opens again." A yes/no; what the customer
+            // agreed to is recorded server-side from the canonical disclosure,
+            // never from the body — a client-supplied consent string is not
+            // evidence of anything.
+            'notify_sms' => 'sometimes|boolean',
             // Honeypot — real submitters leave it empty; checked in the controller.
             'website' => 'nullable|string|max:255',
         ];

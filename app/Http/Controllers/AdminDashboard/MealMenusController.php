@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\MealMenus\StoreMealMenuRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
 use App\Support\Errors;
+use App\Services\Lunch\LunchOpeningNotifier;
 use App\Support\MasjidTime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -41,6 +42,10 @@ class MealMenusController extends Controller
             // masjid_id + uuid are set by the model (creating hook / booted).
             $menu = MealMenu::create($request->validated());
 
+            // A menu can be created already open. Once-only is enforced inside
+            // the notifier, not by the caller.
+            app(LunchOpeningNotifier::class)->notifyOpened($menu, $request->user()?->id);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $this->withLocalWindow($menu->loadCount('items'), $masjid_id),
@@ -72,6 +77,8 @@ class MealMenusController extends Controller
 
         try {
             $menu->update($request->validated());
+
+            app(LunchOpeningNotifier::class)->notifyOpened($menu, $request->user()?->id);
 
             return response()->json([
                 'status' => 'success',
@@ -154,6 +161,9 @@ class MealMenusController extends Controller
             'ordering_opens_at_local' => MasjidTime::toLocalInput($menu->ordering_opens_at, $tz),
             'ordering_closes_at_local' => MasjidTime::toLocalInput($menu->ordering_closes_at, $tz),
             'timezone' => $tz,
+            // So the board can say "announced" rather than leaving an admin
+            // guessing whether the text went out.
+            'opening_notified_at' => optional($menu->opening_notified_at)->toIso8601String(),
         ];
     }
 }

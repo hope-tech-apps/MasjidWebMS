@@ -19,6 +19,9 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     const currentMenu = ref<any | null>(null);
     const orders = ref<any[]>([]);
     const orderSummary = ref<any | null>(null);
+    // The masjid's services, for the "notify subscribers of" picker. Read from
+    // the existing services endpoint rather than widening the lunch API.
+    const services = ref<any[]>([]);
 
     const masjidStore = useMasjidStore();
 
@@ -194,8 +197,22 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         return b;
     }
 
+    async function fetchServices(): Promise<void> {
+        if (!masjidStore.masjid?.id) return;
+        try {
+            const res: AxiosResponse = await ApiService.get(
+                `/api/admin/masjids/${masjidStore.masjid.id}/services?page=1`
+            );
+            const d = res.data?.data;
+            services.value = Array.isArray(d) ? d : (d?.data ?? []);
+        } catch {
+            // A missing picker must not break the board; the field just stays empty.
+            services.value = [];
+        }
+    }
+
     return {
-        menus, currentMenu, orders, orderSummary,
+        menus, currentMenu, orders, orderSummary, services, fetchServices,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,
         fetchOrders, markOrderPaid, updateOrderStatus, uploadFlyer,

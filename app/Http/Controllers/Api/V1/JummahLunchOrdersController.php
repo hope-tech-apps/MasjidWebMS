@@ -10,6 +10,7 @@ use App\Models\MealOrder;
 use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
+use App\Services\Lunch\LunchSmsOptIn;
 use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
@@ -219,6 +220,18 @@ class JummahLunchOrdersController extends Controller
                 return $order;
             });
 
+            // After the order is safely written, never before, and never in a
+            // way that can fail it. See LunchSmsOptIn.
+            if ($request->boolean('notify_sms')) {
+                app(LunchSmsOptIn::class)->attempt(
+                    $menu,
+                    $masjidId,
+                    $order->customer_phone,
+                    $order->customer_name,
+                    LunchSmsOptIn::DISCLOSURE,
+                );
+            }
+
             if ($method === MealOrder::METHOD_ONLINE) {
                 try {
                     // Return to the SAME site the order was placed from (this page
@@ -328,6 +341,11 @@ class JummahLunchOrdersController extends Controller
             'allow_donation' => (bool) $menu->allow_donation,
             'max_donation_minor' => MealOrder::MAX_DONATION_MINOR,
             'allow_fee_coverage' => (bool) $menu->allow_fee_coverage,
+            // Offered only once a service has been chosen to subscribe people
+            // to; without one there is no audience and the box would collect
+            // consent that could never be acted on.
+            'allow_sms_optin' => (bool) $menu->allow_sms_optin && $menu->notify_service_id !== null,
+            'sms_disclosure' => LunchSmsOptIn::DISCLOSURE,
             // Stripe's published rate, so the form can show the exact surcharge
             // before submitting. The server recomputes it regardless.
             'stripe_fee_percentage' => StripeFees::percentage(),

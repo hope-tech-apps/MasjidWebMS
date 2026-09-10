@@ -29,6 +29,14 @@ class StoreMealMenuRequest extends BaseFormRequest
             'collect_customer_email' => 'sometimes|boolean',
             'allow_donation' => 'sometimes|boolean',
             'allow_fee_coverage' => 'sometimes|boolean',
+            // The service subscribers opt into. Must belong to THIS masjid —
+            // otherwise a crafted id would aim a text at another organisation's
+            // interest list. `exists` alone would not catch that.
+            'notify_service_id' => [
+                'nullable', 'integer',
+                Rule::exists('services', 'id')->where('masjid_id', $this->route('masjid_id')),
+            ],
+            'allow_sms_optin' => 'sometimes|boolean',
             'currency' => 'sometimes|string|size:3',
         ];
     }

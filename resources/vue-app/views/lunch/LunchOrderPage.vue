@@ -127,6 +127,18 @@
                         <span>{{ t('cover_fees', money(feeOfferMinor)) }}</span>
                     </label>
 
+                    <label v-if="showSmsOptIn" class="lunch-sms">
+                        <input type="checkbox" v-model="notifySms" />
+                        <span>
+                            <strong>{{ t('sms_title') }}</strong>
+                            <!-- The disclosure comes from the server verbatim and is
+                                 NOT translated: it is the exact sentence stored as
+                                 consent evidence, and evidence that does not match
+                                 what was on screen is not evidence. -->
+                            <span class="lunch-sms-fine">{{ smsDisclosure }}</span>
+                        </span>
+                    </label>
+
                     <p v-if="error" class="lunch-error" role="alert">{{ error }}</p>
 
                     <button class="lunch-submit" type="submit" :disabled="submitting || subtotalMinor === 0">
@@ -271,6 +283,13 @@ const totalMinor = computed(() => subtotalMinor.value + donationMinor.value + fe
 
 const hasExtras = computed<boolean>(() => donationMinor.value > 0 || feeCoveredMinor.value > 0);
 
+// "Text me when ordering opens again." Unticked by default and never
+// pre-checked: a pre-ticked box is not express consent in any reading of the
+// rules this disclosure exists to satisfy.
+const notifySms = ref(false);
+const showSmsOptIn = computed<boolean>(() => menu.value?.allow_sms_optin === true);
+const smsDisclosure = computed<string>(() => String(menu.value?.sms_disclosure ?? ""));
+
 function setDonation(minor: number): void {
     donationInput.value = minor > 0 ? (minor / 100).toFixed(2) : "";
 }
@@ -343,6 +362,7 @@ async function submit() {
         payment_method: form.payment_method,
         donation_minor: donationMinor.value,
         cover_fees: coverFees.value,
+        notify_sms: notifySms.value,
         website: honeypot.value,
     });
     submitting.value = false;
@@ -485,6 +505,22 @@ onMounted(() => store.fetchMenu(masjidId));
     cursor: pointer;
 }
 .lunch-cover input { margin-top: 2px; flex: none; }
+.lunch-sms {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fbfcfd;
+    font-size: 14px;
+    color: #24503f;
+    cursor: pointer;
+}
+.lunch-sms input { margin-top: 3px; flex: none; }
+.lunch-sms strong { display: block; font-weight: 600; }
+.lunch-sms-fine { display: block; margin-top: 4px; font-size: 11.5px; line-height: 1.45; color: #6b7f76; }
 .lunch-totals { margin-top: 14px; }
 .lunch-total-line {
     display: flex;
