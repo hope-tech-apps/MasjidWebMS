@@ -67,7 +67,9 @@ Route::middleware(['auth:sanctum', 'lunch'])->prefix('lunch')->group(function ()
     Route::post('/logout', [AuthController::class, 'logout']);
 });
 
-Route::middleware(['auth:sanctum', 'lunch', 'tenant'])
+// `capability:jummah_lunch` — a lunch login at an organisation whose lunch
+// capability is off reaches nothing (config/capabilities.php).
+Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'capability:jummah_lunch'])
     ->prefix('lunch/masjids/{masjid_id}/jummah-lunch')
     ->group(function () {
         Route::controller(MealMenusController::class)->group(function () {

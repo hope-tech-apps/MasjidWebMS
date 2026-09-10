@@ -129,6 +129,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // Same shape for the Masjid Assistant: 403s unless masjids.assistant_enabled.
             // The SuperAdmin assistant-access toggle is NOT gated (it opens the gate).
             'assistant' => EnsureAssistantEnabled::class,
+            // Organisation capabilities (config/capabilities.php), e.g.
+            // `capability:web_pages`. 403s unless the BOUND organisation has it;
+            // SuperAdmins pass. Runs after `tenant`, like `crm`. The SuperAdmin
+            // toggle that sets them (PATCH .../capabilities/{key}) is NOT gated.
+            'capability' => \App\Http\Middleware\EnsureOrgCapability::class,
             // Additive spatie/laravel-permission aliases — applied ONLY to the new
             // CRM endpoints (see routes/admin.php). Its UnauthorizedException is an
             // HttpException(403), so the JSON renderer below returns a clean 403.

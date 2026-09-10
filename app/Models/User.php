@@ -129,10 +129,6 @@ class User extends Authenticatable implements HasMedia
             // transparently decrypts it. Requires APP_KEY (already set).
             'two_factor_secret' => 'encrypted',
             'two_factor_confirmed_at' => 'datetime',
-            // Shows Web Pages Management to a MasjidAdmin. Deliberately NOT
-            // fillable: an account is granted it explicitly, never through a
-            // request payload.
-            'can_manage_web_pages' => 'boolean',
         ];
     }
 

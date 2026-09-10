@@ -7,6 +7,8 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+            // The page builder is an organisation capability (config/capabilities.php).
+            requiresCapability: 'web_pages',
             pageTitle: 'Pages Management'
         },
         component: () => import("@/views/dashboard/pages/PagesView.vue")
@@ -17,6 +19,8 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+            // The page builder is an organisation capability (config/capabilities.php).
+            requiresCapability: 'web_pages',
             pageTitle: 'Sections Library'
         },
         component: () => import("@/views/dashboard/sections/SectionsLibraryView.vue")
@@ -27,6 +31,8 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+            // The page builder is an organisation capability (config/capabilities.php).
+            requiresCapability: 'web_pages',
             pageTitle: 'Page Sections'
         },
         component: () => import("@/views/dashboard/pages/PageSectionsView.vue")

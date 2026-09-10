@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Masjids\SetAssistantAccessRequest;
+use App\Http\Requests\Admin\Masjids\SetCapabilityRequest;
 use App\Http\Requests\Admin\Masjids\SetCrmAccessRequest;
 use App\Http\Requests\Admin\Masjids\SetDirectoryListingRequest;
 use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
@@ -211,6 +212,49 @@ class MasjidsController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $masjid,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only: switch one catalogue capability on or off for an
+     * organisation (config/capabilities.php -> masjids.capability_overrides).
+     *
+     * Column-backed capabilities (crm, assistant) are refused here and keep
+     * their own endpoints, so every capability has exactly one writer. The
+     * decision is stored explicitly even when it equals the default, so a later
+     * change to a catalogue default never silently moves an organisation a
+     * SuperAdmin already decided about.
+     */
+    public function setCapability(SetCapabilityRequest $request, string $masjid_id, string $capability)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can change what an organisation has.');
+        }
+
+        $definition = config("capabilities.{$capability}");
+
+        if (! is_array($definition) || ! empty($definition['column'])) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['capability' => [
+                    is_array($definition)
+                        ? 'This capability has its own switch on this screen.'
+                        : 'There is no such capability.',
+                ]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+        $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
+        $overrides[$capability] = $request->boolean('enabled');
+
+        $masjid->capability_overrides = $overrides;
+        $masjid->updated_by = Auth::id();
+        $masjid->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $masjid->fresh()->append(Masjid::ADMIN_APPENDS),
         ], Response::HTTP_OK);
     }
 

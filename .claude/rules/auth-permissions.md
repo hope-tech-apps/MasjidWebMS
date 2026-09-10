@@ -326,3 +326,32 @@ being true.
 - `config('crm.require_admin_2fa')` (default **false**) is a forward-looking
   enforcement flag. It must stay false and must NOT be consulted in `login()` today
   (turning it on would require an enrollment UX first).
+
+## Organisation capabilities and team access — the layered model (2026-09-10)
+
+**Layer 1 — what an ORGANISATION has** is `config/capabilities.php`. Two kinds:
+- **Column-backed** (`crm` → `crm_enabled`, `assistant` → `assistant_enabled`): listed so every
+  capability reads from one catalogue; their own middleware (`crm`, `assistant`) and SuperAdmin
+  endpoints are unchanged and stay the only writers.
+- **Override-backed** (`web_pages`, `jummah_lunch`): stored in `masjids.capability_overrides`
+  (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`), enforced by `capability:<key>`
+  (`EnsureOrgCapability`, after `tenant`). Absent key → the catalogue default for the org_type,
+  chosen to reproduce what each vertical reached before the catalogue existed.
+- `Masjid::hasCapability()` is the one reader; an unknown key is never granted. The admin masjid
+  payload carries `capabilities` (via `ADMIN_APPENDS`) for the SPA's `requiresCapability`.
+- **SuperAdmins pass every `capability:` gate** — they are the platform operator and set
+  organisations up. The only writer is `PATCH .../capabilities/{key}` (in-controller 403 for
+  non-super, outside every gate, refuses column-backed and unknown keys with 422).
+- `CapabilityGateTest` lints every `capability:` in the route table against the catalogue. Do not
+  constrain `{capability}` in the route: `FamilyAuthGuardTest` sweeps admin routes with a dummy
+  value and needs auth to answer first.
+
+**Layer 2 — what a PERSON in the organisation can do** is the Team screen (`TeamController`,
+`/api/admin/masjids/{id}/team`), outside `crm` and without `permission:`:
+- `admin` (MasjidAdmin) = everything the organisation has; `jummah_lunch` (LunchStaff) = the lunch
+  board only; `teacher` is listed but managed on the Teachers screen.
+- It creates only those two, never reads `type`, binds to the BOUND tenant, refuses the owner /
+  yourself / teachers on removal, deletes tokens, and retires a login left with no organisation.
+- This REPLACED the per-account `users.can_manage_web_pages` grant (6f5dbd6), which never reached
+  the server; the fold migration gave `web_pages` to every organisation where someone held it.
+- `Permission::count()` stays 8: neither layer is a spatie permission.

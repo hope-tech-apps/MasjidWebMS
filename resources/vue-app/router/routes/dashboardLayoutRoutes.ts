@@ -221,9 +221,21 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    requiresCapability: 'jummah_lunch',
                     pageTitle: 'Jummah Lunch'
                 },
                 component: () => import("@/views/dashboard/JummahLunchView.vue")
+            },
+            {
+                // Layer 2 of the access model: who in this organisation can do what.
+                path: 'team',
+                name: 'masjid.team',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Team & Access'
+                },
+                component: () => import("@/views/dashboard/TeamView.vue")
             },
             {
                 path: 'donations',

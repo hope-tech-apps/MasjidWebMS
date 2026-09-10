@@ -193,7 +193,7 @@ class SectionTypeRendererTruthTest extends TestCase
 
     private function makeMasjid(array $overrides = []): Masjid
     {
-        return Masjid::create(array_merge([
+        $masjid = Masjid::create(array_merge([
             'name' => 'Test Masjid ' . uniqid(),
             'email' => 'masjid-' . uniqid() . '@test.local',
             'phone' => '+1' . random_int(1000000000, 9999999999),
@@ -204,6 +204,12 @@ class SectionTypeRendererTruthTest extends TestCase
             'longitude' => 0.0,
             'crm_enabled' => true,
         ], $overrides));
+
+        // The page builder is an organisation capability (config/capabilities.php).
+        // These tests drive it as the organisation's admin, so the organisation has it.
+        $masjid->forceFill(['capability_overrides' => ['web_pages' => true]])->save();
+
+        return $masjid;
     }
 
     private function makeAdminFor(Masjid $masjid): User

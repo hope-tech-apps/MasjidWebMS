@@ -69,6 +69,13 @@ router.beforeEach((to, from, next) => {
                         // navigation through to avoid a race that would break the route.
                         if (to.meta.requiresCrm && masjidStore.masjid && !masjidStore.masjid.crm_enabled) {
                             next('/auth/401');
+                        } else if (to.meta.requiresCapability && authStore.user.type !== 'SuperAdmin'
+                            && masjidStore.masjid?.capabilities
+                            && masjidStore.masjid.capabilities[to.meta.requiresCapability] !== true) {
+                            // Organisation capabilities, same shape as the CRM gate: only
+                            // hard-block once the payload says the organisation does not
+                            // have it. The server's `capability:` gate is the boundary.
+                            next('/auth/401');
                         } else if (to.meta.requiresAssistant && masjidStore.masjid && !masjidStore.masjid.assistant_enabled) {
                             // Same shape as the CRM gate: only hard-block once we know the
                             // flag is false. The backend gate (EnsureAssistantEnabled) is

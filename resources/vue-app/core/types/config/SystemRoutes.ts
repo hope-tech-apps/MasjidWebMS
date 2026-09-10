@@ -59,6 +59,7 @@ export type MasjidDashboardRoute =
     `/masjid/offerings/${number}/registrations/${number}` |
     '/masjid/funds' |
     '/masjid/jummah-lunch' |
+    '/masjid/team' |
     '/masjid/donations' |
     '/masjid/recurring-donations' |
     '/masjid/annual-statements' |

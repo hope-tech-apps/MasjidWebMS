@@ -67,6 +67,7 @@ use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
 use App\Http\Controllers\AdminDashboard\SectionsController;
+use App\Http\Controllers\AdminDashboard\TeamController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
@@ -280,7 +281,7 @@ Route::prefix('admin')->group(function () {
             // directory. The `admin` middleware already restricts this to
             // MasjidAdmin/SuperAdmin (Teachers cannot reach it), so no extra
             // permission gate is added. Orders carry customer name/phone.
-            Route::prefix('{masjid_id}/jummah-lunch')->group(function () {
+            Route::prefix('{masjid_id}/jummah-lunch')->middleware('capability:jummah_lunch')->group(function () {
                 Route::controller(MealMenusController::class)->group(function () {
                     Route::get('/menus', 'index');
                     Route::post('/menus', 'store');
@@ -323,6 +324,20 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid color theme settings
+            // Team & access — layer 2 of the access model: every staff login this
+            // organisation has, whichever door created it, and adding/removing
+            // administrators and lunch-only logins. OUTSIDE `crm` on purpose (an
+            // organisation without the member directory must still be able to add
+            // a second administrator) and with no `permission:` — `admin` +
+            // `tenant` already mean "an administrator of this organisation". The
+            // controller never reads `type` from the request. See TeamController.
+            Route::prefix('{masjid_id}/team')->controller(TeamController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::post('/{user_id}/invite', 'invite')->whereNumber('user_id');
+                Route::delete('/{user_id}', 'destroy')->whereNumber('user_id');
+            });
+
             Route::prefix('{masjid_id}/theme')->controller(ThemeSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
@@ -361,37 +376,43 @@ Route::prefix('admin')->group(function () {
                     Route::put('/', 'update');
                 });
 
-            // Pages & Sections Management
-            Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
-                Route::get('/', 'index');
-                Route::post('/', 'store');
-                Route::post('/reorder', 'reorder'); // Reorder pages
-                Route::get('/{page_id}', 'show');
-                Route::put('/{page_id}', 'update');
-                Route::delete('/{page_id}', 'destroy');
-            });
+            // Web Pages Management — only for organisations that HAVE the `web_pages`
+            // capability (config/capabilities.php); SuperAdmins always pass. This
+            // replaces the per-account users.can_manage_web_pages menu grant, which
+            // never reached the server. Layer 1 of the access model.
+            Route::middleware('capability:web_pages')->group(function () {
+                // Pages & Sections Management
+                Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store');
+                    Route::post('/reorder', 'reorder'); // Reorder pages
+                    Route::get('/{page_id}', 'show');
+                    Route::put('/{page_id}', 'update');
+                    Route::delete('/{page_id}', 'destroy');
+                });
 
-            // Sections Library Management
-            Route::prefix('{masjid_id}/sections')->controller(SectionsController::class)->group(function () {
-                Route::get('/', 'index');
-                Route::post('/', 'store');
-                Route::get('/{section_id}', 'show');
-                Route::put('/{section_id}', 'update');
-                Route::delete('/{section_id}', 'destroy');
-            });
+                // Sections Library Management
+                Route::prefix('{masjid_id}/sections')->controller(SectionsController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store');
+                    Route::get('/{section_id}', 'show');
+                    Route::put('/{section_id}', 'update');
+                    Route::delete('/{section_id}', 'destroy');
+                });
 
-            // Page Sections Management (attach/detach sections to pages)
-            Route::prefix('{masjid_id}/pages/{page_id}/sections')->controller(PageSectionsController::class)->group(function () {
-                Route::get('/', 'index');
-                Route::post('/', 'store'); // Create new section and attach to page
-                Route::post('/attach', 'attach'); // Attach existing section to page
-                Route::get('/{section_id}', 'show');
-                Route::put('/{section_id}', 'update');
-                Route::delete('/{section_id}', 'destroy'); // Detach section from page
-            });
+                // Page Sections Management (attach/detach sections to pages)
+                Route::prefix('{masjid_id}/pages/{page_id}/sections')->controller(PageSectionsController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store'); // Create new section and attach to page
+                    Route::post('/attach', 'attach'); // Attach existing section to page
+                    Route::get('/{section_id}', 'show');
+                    Route::put('/{section_id}', 'update');
+                    Route::delete('/{section_id}', 'destroy'); // Detach section from page
+                });
 
-            // Get available section types
-            Route::get('{masjid_id}/section-types', [PageSectionsController::class, 'sectionTypes']);
+                // Get available section types
+                Route::get('{masjid_id}/section-types', [PageSectionsController::class, 'sectionTypes']);
+            });
 
             // Sign-up Forms Management (event RSVPs, membership, camp registration).
             // Open to MasjidAdmin as well as SuperAdmin — a masjid builds its own forms.
@@ -501,6 +522,14 @@ Route::prefix('admin')->group(function () {
             // published to the mobile app's picker once it is actually ready.
             // Same 403-for-non-super contract as the two toggles above.
             Route::patch('{masjid_id}/directory-listing', [MasjidsController::class, 'setDirectoryListing']);
+            // SuperAdmin-only: switch one catalogue capability on/off for an
+            // organisation (config/capabilities.php -> masjids.capability_overrides).
+            // Same 403-for-non-super contract as the toggles above, and deliberately
+            // outside every `capability:` gate — it is how those gates are opened.
+            // No route constraint on {capability}: an unknown key must still reach
+            // auth first (FamilyAuthGuardTest sweeps every admin route with a
+            // family token), and the controller refuses it with a 422.
+            Route::patch('{masjid_id}/capabilities/{capability}', [MasjidsController::class, 'setCapability']);
 
             // App-provisioning control plane (SuperAdmin only). "Generate apps"
             // dispatches a GitHub Actions workflow (self-hosted runner) that

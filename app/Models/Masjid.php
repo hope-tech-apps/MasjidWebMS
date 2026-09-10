@@ -136,6 +136,8 @@ class Masjid extends Model implements HasMedia
         // public identity.
         'crm_enabled',
         'assistant_enabled',
+        // What the organisation's account includes (config/capabilities.php).
+        'capability_overrides',
         // An internal delivery preference for receipts and statements. Neither
         // app decodes it and it is not part of an organisation's public
         // identity, so it stays in — classified deliberately rather than
@@ -153,6 +155,9 @@ class Masjid extends Model implements HasMedia
             // Per-masjid CRM feature gate; default false = CRM off (SuperAdmin-only toggle).
             'crm_enabled' => 'boolean',
             'assistant_enabled' => 'boolean',
+            // A SuperAdmin's explicit capability decisions; absent keys fall
+            // back to config/capabilities.php defaults. See hasCapability().
+            'capability_overrides' => 'array',
             // Public directory listing gate — see scopeListed() below.
             'listed_at' => 'datetime',
         ];
@@ -264,7 +269,7 @@ class Masjid extends Model implements HasMedia
      * would also widen the public/mobile API responses — which have no business
      * knowing about verticals in this slice.
      */
-    public const ADMIN_APPENDS = ['vertical'];
+    public const ADMIN_APPENDS = ['vertical', 'capabilities'];
 
     /**
      * This tenant's vertical as the admin SPA consumes it: the discriminator
@@ -283,6 +288,61 @@ class Masjid extends Model implements HasMedia
             'plural' => $config['plural'] ?? '',
             'terminology' => $config['terminology'] ?? [],
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // Organisation capabilities — layer 1 of the access model
+    // ------------------------------------------------------------------
+
+    /**
+     * Does this organisation HAVE the capability (config/capabilities.php)?
+     *
+     * Column-backed entries read their own column (crm_enabled,
+     * assistant_enabled), so the catalogue can never disagree with the gates
+     * that already enforce them. Everything else is the SuperAdmin's override
+     * if one exists, otherwise the catalogue default for this org_type —
+     * which reproduces what each vertical reached before the catalogue, so
+     * nothing moves until someone decides it should. A key that is not in the
+     * catalogue is never granted.
+     *
+     * `capability_overrides` is deliberately not fillable: its only writer is
+     * MasjidsController::setCapability.
+     */
+    public function hasCapability(string $key): bool
+    {
+        $definition = config("capabilities.{$key}");
+
+        if (! is_array($definition)) {
+            return false;
+        }
+
+        if (! empty($definition['column'])) {
+            return (bool) $this->getAttribute($definition['column']);
+        }
+
+        $overrides = $this->capability_overrides;
+
+        if (is_array($overrides) && array_key_exists($key, $overrides)) {
+            return (bool) $overrides[$key];
+        }
+
+        return (bool) ($definition['defaults'][$this->orgType()] ?? false);
+    }
+
+    /**
+     * Every catalogue capability => whether this organisation has it. Rides the
+     * ADMIN payload only (ADMIN_APPENDS), where the SPA reads it to show the
+     * menu items and routes this organisation has.
+     */
+    public function getCapabilitiesAttribute(): array
+    {
+        $out = [];
+
+        foreach (array_keys(config('capabilities', [])) as $key) {
+            $out[$key] = $this->hasCapability($key);
+        }
+
+        return $out;
     }
 
     /** Limit a query to one vertical. */

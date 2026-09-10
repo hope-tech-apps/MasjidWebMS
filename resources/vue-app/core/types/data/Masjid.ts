@@ -2,6 +2,7 @@ import { Admin } from "@/core/types/data/Admin"
 import { Media } from "./Media"
 import { City, Country } from "./Country"
 import { OrgType, Vertical } from "./Vertical"
+import { CapabilityKey } from "./Capability"
 
 export type Masjid = {
     id: number;
@@ -46,6 +47,11 @@ export type Masjid = {
     website_link: string;
     crm_enabled: boolean;
     assistant_enabled: boolean;
+    /**
+     * What this organisation HAS (config/capabilities.php), key -> has it. Only
+     * the ADMIN endpoints append it; a payload without it reads as "has none".
+     */
+    capabilities?: Partial<Record<CapabilityKey, boolean>>;
     /**
      * This tenant's vertical and its terminology pack. Optional because only the
      * ADMIN endpoints append it — a payload from anywhere else, or one cached
