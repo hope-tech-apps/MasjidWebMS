@@ -159,10 +159,13 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * lunch volunteers share it through base(). Prices are NOT sent — the server
      * reads them from the menu — and there is no "paid" flag: the order is
      * charged through Stripe, and the reply carries checkout_url. Form-encoded.
+     * The optional extra goes as whole cents; the card fee only as a yes/no —
+     * the server computes its amount.
      */
     async function createOrder(menuId: number | string, payload: {
         customer_name: string; customer_phone?: string; customer_email?: string; customer_notes?: string;
         items: { item_id: number; quantity: number }[];
+        donation_minor?: number; cover_fees?: boolean;
     }): Promise<any> {
         ensureMasjid();
         const body = new FormData();
@@ -170,6 +173,8 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (payload.customer_phone?.trim()) body.append("customer_phone", payload.customer_phone.trim());
         if (payload.customer_email?.trim()) body.append("customer_email", payload.customer_email.trim());
         if (payload.customer_notes?.trim()) body.append("customer_notes", payload.customer_notes.trim());
+        if (payload.donation_minor && payload.donation_minor > 0) body.append("donation_minor", String(Math.round(payload.donation_minor)));
+        body.append("cover_fees", payload.cover_fees ? "1" : "0");
         payload.items.forEach((it, i) => {
             body.append(`items[${i}][item_id]`, String(it.item_id));
             body.append(`items[${i}][quantity]`, String(it.quantity));
@@ -227,6 +232,14 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (p.notes != null) b.append("notes", p.notes);
         b.append("allow_online_payment", p.allow_online_payment ? "1" : "0");
         b.append("allow_pay_at_pickup", p.allow_pay_at_pickup ? "1" : "0");
+        // The same toggles menuUrlParams sends on edit, as "1"/"0". Without them a
+        // NEW menu took the column defaults (all on) whatever the admin unticked,
+        // and the board's extra and card-fee offers read two of these flags.
+        if (p.collect_customer_email != null) b.append("collect_customer_email", p.collect_customer_email ? "1" : "0");
+        if (p.allow_donation != null) b.append("allow_donation", p.allow_donation ? "1" : "0");
+        if (p.allow_fee_coverage != null) b.append("allow_fee_coverage", p.allow_fee_coverage ? "1" : "0");
+        if (p.allow_sms_optin != null) b.append("allow_sms_optin", p.allow_sms_optin ? "1" : "0");
+        if (p.notify_service_id != null && p.notify_service_id !== "") b.append("notify_service_id", String(p.notify_service_id));
         return b;
     }
 

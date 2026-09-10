@@ -164,6 +164,12 @@ class MealMenusController extends Controller
             // So the board can say "announced" rather than leaving an admin
             // guessing whether the text went out.
             'opening_notified_at' => optional($menu->opening_notified_at)->toIso8601String(),
+            // What the board's add-order form needs to price the optional extra
+            // and the covered fee exactly as the server will (the public menu
+            // payload carries the same three).
+            'max_donation_minor' => \App\Models\MealOrder::MAX_DONATION_MINOR,
+            'stripe_fee_percentage' => \App\Support\StripeFees::percentage(),
+            'stripe_fee_fixed_minor' => \App\Support\StripeFees::fixed(),
         ];
     }
 }

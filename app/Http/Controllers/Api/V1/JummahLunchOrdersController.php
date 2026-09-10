@@ -11,6 +11,7 @@ use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
 use App\Services\Lunch\LunchSmsOptIn;
+use App\Support\LunchOrderExtras;
 use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
@@ -160,24 +161,18 @@ class JummahLunchOrdersController extends Controller
                 ];
             }
 
-            // The one figure the CUSTOMER sets. Clamped to the model's ceiling
-            // and forced to 0 when this menu does not offer the extra — hiding
-            // the input does not stop a crafted body from carrying one, exactly
-            // as with the email field.
-            $donation = $menu->allow_donation
-                ? min((int) $request->input('donation_minor', 0), MealOrder::MAX_DONATION_MINOR)
-                : 0;
-            $donation = max($donation, 0);
-
-            // Stripe's fee, absorbed by the customer so the masjid nets the food
-            // plus the extra in full. ONLINE ONLY — a pay-at-pickup order never
-            // touches Stripe, so there is nothing to cover and charging for it
-            // would be charging for nothing. The customer sends a yes/no; the
-            // AMOUNT is derived here from the published rate, never from the body.
-            $coverFees = $menu->allow_fee_coverage
-                && $method === MealOrder::METHOD_ONLINE
-                && $request->boolean('cover_fees');
-            $feeCovered = $coverFees ? StripeFees::coverage($subtotal + $donation) : 0;
+            // The optional extra (the one figure the CUSTOMER sets) and Stripe's
+            // fee if they cover it — on the rule the staff board shares
+            // (LunchOrderExtras): the extra clamped, and zeroed when this menu
+            // does not offer it; the fee a yes/no whose amount comes from the
+            // published rate, never the body, and only on an online order.
+            ['donation_minor' => $donation, 'fee_covered_minor' => $feeCovered] = LunchOrderExtras::compute(
+                $menu,
+                $subtotal,
+                (int) $request->input('donation_minor', 0),
+                $request->boolean('cover_fees'),
+                $method === MealOrder::METHOD_ONLINE,
+            );
 
             $order = DB::transaction(function () use ($masjidId, $menu, $method, $request, $lines, $subtotal, $donation, $feeCovered) {
                 // A pickup number unique within this menu; the count is locked so

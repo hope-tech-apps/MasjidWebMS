@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
 use App\Models\MealMenuItem;
 use App\Services\Stripe\MealOrderCheckoutService;
+use App\Support\LunchOrderExtras;
 use Illuminate\Support\Facades\DB;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
@@ -98,8 +99,9 @@ class MealOrdersController extends Controller
      *     online ordering closes. Only a DRAFT menu (not yet opened) refuses;
      *   - an order never starts paid: it is charged through Stripe like any
      *     public order. The payment page comes back as checkout_url, to open on
-     *     this device or send to the customer, and Stripe marks it paid. No
-     *     card-fee coverage and no online donation on this door;
+     *     this device or send to the customer, and Stripe marks it paid. The
+     *     optional extra and covering the card fee are offered on exactly the
+     *     public page's rule (LunchOrderExtras);
      *   - no SMS opt-in, ever: consent to texts must come from the customer.
      * The order records who took it (`entered_by_user_id`).
      */
@@ -166,8 +168,20 @@ class MealOrdersController extends Controller
             return $this->refuse('Orders added here are paid online through Stripe, and this organisation cannot take online payments yet.');
         }
 
+        // An extra on top of the food, and/or the card fee covered so the
+        // organisation nets everything: the public page's rule and arithmetic,
+        // not a copy of them. Every staff order is online, so the fee can be
+        // covered wherever the menu offers it.
+        ['donation_minor' => $donation, 'fee_covered_minor' => $feeCovered] = LunchOrderExtras::compute(
+            $menu,
+            $subtotal,
+            (int) ($request->validated('donation_minor') ?? 0),
+            $request->boolean('cover_fees'),
+            true,
+        );
+
         try {
-            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal) {
+            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $donation, $feeCovered) {
                 $order = new MealOrder([
                     'meal_menu_id' => $menu->id,
                     'customer_name' => trim((string) $request->validated('customer_name')),
@@ -179,7 +193,9 @@ class MealOrdersController extends Controller
                 $order->masjid_id = $menu->masjid_id;
                 $order->currency = $menu->currency;
                 $order->subtotal_minor = $subtotal;
-                $order->total_minor = $subtotal;
+                $order->donation_minor = $donation;
+                $order->fee_covered_minor = $feeCovered;
+                $order->total_minor = $subtotal + $donation + $feeCovered;
                 $order->order_number = MealOrder::nextOrderNumber((int) $menu->masjid_id, (int) $menu->id);
                 $order->placed_at = now();
                 $order->source = MealOrder::SOURCE_STAFF;

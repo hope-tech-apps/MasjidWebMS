@@ -323,12 +323,33 @@
                             Orders added here are paid online through Stripe, and online payment is switched off for this lunch. Switch it on under Edit menu first.
                         </div>
                     </div>
-                    <div class="d-flex justify-content-between fw-semibold mt-3"><span>Total</span><span>{{ money(orderTotal) }}</span></div>
+                    <div v-if="allowExtra && orderSubtotal > 0" class="mb-2">
+                        <div class="form-label mb-1">Extra on top <span class="text-muted small">(optional; goes to the masjid)</span></div>
+                        <div class="d-flex flex-wrap gap-1 mb-1">
+                            <button v-for="p in extraPresets" :key="p" type="button" class="btn btn-sm" :class="orderExtraMinor === p ? 'btn-primary' : 'btn-outline-secondary'" @click="setExtra(p)">{{ money(p) }}</button>
+                            <button type="button" class="btn btn-sm" :class="orderExtraMinor === 0 ? 'btn-primary' : 'btn-outline-secondary'" @click="setExtra(0)">No extra</button>
+                        </div>
+                        <div class="input-group input-group-sm jlo-extra">
+                            <span class="input-group-text">$</span>
+                            <input id="jlo-extra" v-model="orderModal.extraInput" type="number" min="0" :max="maxExtraMinor / 100" step="0.01" inputmode="decimal" class="form-control" placeholder="Other amount" aria-label="Extra on top, in dollars" />
+                        </div>
+                        <div v-if="extraCapped" class="text-warning small mt-1">The most that can be added here is {{ money(maxExtraMinor) }}.</div>
+                    </div>
+                    <div v-if="showFeeOffer" class="form-check mb-2">
+                        <input id="jlo-fee" v-model="orderModal.coverFees" class="form-check-input" type="checkbox" />
+                        <label class="form-check-label" for="jlo-fee">Add {{ money(orderFeeOfferMinor) }} to cover the card processing fee, so the masjid receives the full amount</label>
+                    </div>
+                    <div v-if="orderExtraMinor > 0 || orderFeeMinor > 0" class="small text-muted mt-2">
+                        <div class="d-flex justify-content-between"><span>Food</span><span>{{ money(orderSubtotal) }}</span></div>
+                        <div v-if="orderExtraMinor > 0" class="d-flex justify-content-between"><span>Extra</span><span>{{ money(orderExtraMinor) }}</span></div>
+                        <div v-if="orderFeeMinor > 0" class="d-flex justify-content-between"><span>Processing fee</span><span>{{ money(orderFeeMinor) }}</span></div>
+                    </div>
+                    <div class="d-flex justify-content-between fw-semibold mt-2"><span>Total</span><span>{{ money(orderTotal) }}</span></div>
                     <div v-if="orderError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ orderError }}</div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="orderModal.show = false">Cancel</button>
-                    <button class="btn btn-success" :disabled="savingOrder || !orderTotal || !currentMenu?.allow_online_payment" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order and get payment link' }}</button>
+                    <button class="btn btn-success" :disabled="savingOrder || !orderSubtotal || !currentMenu?.allow_online_payment" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order and get payment link' }}</button>
                 </div>
             </div>
         </div>
@@ -450,14 +471,54 @@ async function revokeStaff(p: any) {
 // prices the order from the menu and never reads a price from this form.
 const savingOrder = ref(false);
 const orderError = ref("");
-const orderModal = reactive<{ show: boolean; form: any; qty: Record<number, number> }>({ show: false, form: {}, qty: {} });
+const orderModal = reactive<{ show: boolean; form: any; qty: Record<number, number>; extraInput: string | number; coverFees: boolean }>(
+    { show: false, form: {}, qty: {}, extraInput: "", coverFees: false });
 const orderableItems = computed(() => (currentMenu.value?.items || []).filter((i: any) => i.is_available));
-const orderTotal = computed(() => orderableItems.value.reduce(
+// What the FOOD costs. Save gates on this, so an extra with no food is never orderable.
+const orderSubtotal = computed(() => orderableItems.value.reduce(
     (sum: number, i: any) => sum + (orderModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
+
+// The optional extra and the covered card fee, priced exactly as the server will
+// (LunchOrderExtras) from the menu's own ceiling and published rate. Only the
+// extra in cents and a yes/no are sent; the server recomputes the fee either way.
+const allowExtra = computed<boolean>(() => currentMenu.value?.allow_donation !== false);
+const maxExtraMinor = computed<number>(() => Number(currentMenu.value?.max_donation_minor ?? 100000));
+const extraPresets = [100, 200, 500];
+// Rounded, not truncated, so "1.005" cannot silently become 100; "-5" is inert.
+// Zero while there is no food: its controls are hidden then, so a figure left
+// over from before the plates were removed must not show up in the total.
+const orderExtraMinor = computed<number>(() => {
+    if (!allowExtra.value || orderSubtotal.value <= 0) return 0;
+    const parsed = Number.parseFloat(String(orderModal.extraInput ?? ""));
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return Math.min(Math.round(parsed * 100), maxExtraMinor.value);
+});
+const extraCapped = computed<boolean>(() => {
+    const parsed = Number.parseFloat(String(orderModal.extraInput ?? ""));
+    return Number.isFinite(parsed) && Math.round(parsed * 100) > maxExtraMinor.value;
+});
+function setExtra(minor: number) {
+    orderModal.extraInput = minor > 0 ? (minor / 100).toFixed(2) : "";
+}
+const showFeeOffer = computed<boolean>(() => currentMenu.value?.allow_fee_coverage !== false && orderSubtotal.value > 0);
+// What covering the fee WOULD cost, named before anyone ticks the box: the same
+// gross-up of food + extra that the server runs.
+const orderFeeOfferMinor = computed<number>(() => {
+    if (!showFeeOffer.value) return 0;
+    const intended = orderSubtotal.value + orderExtraMinor.value;
+    if (intended <= 0) return 0;
+    const pct = Number(currentMenu.value?.stripe_fee_percentage ?? 0.029);
+    const fixed = Number(currentMenu.value?.stripe_fee_fixed_minor ?? 30);
+    return Math.max(0, Math.round((intended + fixed) / (1 - pct)) - intended);
+});
+const orderFeeMinor = computed<number>(() => (orderModal.coverFees ? orderFeeOfferMinor.value : 0));
+const orderTotal = computed<number>(() => orderSubtotal.value + orderExtraMinor.value + orderFeeMinor.value);
 
 function openAddOrder() {
     orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "" };
     orderModal.qty = {};
+    orderModal.extraInput = "";
+    orderModal.coverFees = false;
     orderError.value = "";
     orderModal.show = true;
 }
@@ -503,7 +564,11 @@ async function saveOrder() {
     if (!items.length) { orderError.value = "Add at least one item."; return; }
     savingOrder.value = true;
     try {
-        const res = await store.createOrder(currentMenu.value.id, { ...orderModal.form, items });
+        const res = await store.createOrder(currentMenu.value.id, {
+            ...orderModal.form, items,
+            donation_minor: orderExtraMinor.value,
+            cover_fees: showFeeOffer.value && orderModal.coverFees,
+        });
         orderModal.show = false;
         await store.fetchOrders(currentMenu.value.id);
         if (res?.checkout_url) showPayLink(res.data, res.checkout_url);
@@ -701,6 +766,7 @@ onBeforeMount(load);
 .jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 12px; z-index: 1080; overflow-y: auto; }
 .jl-dialog { width: 100%; max-width: 460px; max-height: 92vh; max-height: calc(100dvh - 8vh); display: flex; flex-direction: column; }
 .jl-dialog > .card-body { overflow-y: auto; min-height: 0; }
+.jlo-extra { max-width: 180px; }
 .stat { background: #f6f8fa; border-radius: 10px; padding: 12px; text-align: center; }
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
 .stat-l { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .03em; }

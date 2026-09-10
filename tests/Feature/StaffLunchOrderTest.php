@@ -9,6 +9,7 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\User;
 use App\Services\Stripe\MealOrderCheckoutService;
+use App\Support\StripeFees;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -22,7 +23,8 @@ use Tests\TestCase;
  * Prices come from the menu, never the request; the online ordering window
  * does not apply (walk-ups happen after it closes); nobody is opted into
  * texts; the order says who took it; and it is CHARGED like any public order —
- * through Stripe, never marked paid by the person entering it.
+ * through Stripe, never marked paid by the person entering it — with the same
+ * optional extra and covered card fee the public page offers.
  */
 class StaffLunchOrderTest extends TestCase
 {
@@ -32,6 +34,8 @@ class StaffLunchOrderTest extends TestCase
     public static int $pagesMade = 0;
     public static string $pageStatus = 'open';
     public static bool $stripeDown = false;
+    /** The parameters of the last Checkout Session asked for — what Stripe would charge. */
+    public static array $lastParams = [];
 
     private Masjid $masjid;
     private User $admin;
@@ -74,6 +78,7 @@ class StaffLunchOrderTest extends TestCase
         self::$pagesMade = 0;
         self::$pageStatus = 'open';
         self::$stripeDown = false;
+        self::$lastParams = [];
 
         $this->app->bind(MealOrderCheckoutService::class, function ($app) {
             return new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
@@ -84,6 +89,7 @@ class StaffLunchOrderTest extends TestCase
                         throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
                     }
 
+                    StaffLunchOrderTest::$lastParams = $params;
                     $n = ++StaffLunchOrderTest::$pagesMade;
 
                     return ['id' => "cs_test_{$n}", 'url' => "https://stripe.test/pay/{$n}", 'payment_intent' => null];
@@ -296,6 +302,127 @@ class StaffLunchOrderTest extends TestCase
 
         $order->forceFill(['status' => MealOrder::STATUS_CONFIRMED, 'payment_status' => MealOrder::PAYMENT_PAID, 'paid_at' => now()])->save();
         $this->linkFor($order)->assertStatus(422);
+    }
+
+    #[Test]
+    public function staff_can_add_an_extra_cover_the_card_fee_or_both(): void
+    {
+        Sanctum::actingAs($this->admin);
+        // Pinned, so the expected cents below are literals rather than the
+        // output of the StripeFees call the code under test also makes.
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+        $food = 1600; // two plates
+        $plate = 'Chicken Biryani Plate';
+
+        foreach ([
+            // Every shape a form-encoded client sends a yes/no in.
+            'extra only' => ['donation_minor' => '500', 'cover_fees' => 'false', 'donation' => 500, 'fee' => 0,
+                'lines' => [$plate, 'Additional donation']],
+            'fee only' => ['donation_minor' => '0', 'cover_fees' => 'true', 'donation' => 0, 'fee' => 79,
+                'lines' => [$plate, 'Card processing fee']],
+            'both' => ['donation_minor' => '500', 'cover_fees' => '1', 'donation' => 500, 'fee' => 94,
+                'lines' => [$plate, 'Additional donation', 'Card processing fee']],
+        ] as $case => $c) {
+            $this->order('/api/admin', [
+                'customer_name' => $case,
+                'items' => [['item_id' => $this->biryani->id, 'quantity' => 2]],
+                'donation_minor' => $c['donation_minor'],
+                'cover_fees' => $c['cover_fees'],
+                // Ignored: the fee is a yes/no, never an amount from the body.
+                'fee_covered_minor' => '1',
+            ])->assertCreated();
+
+            $order = MealOrder::withoutMasjidScope()->where('customer_name', $case)->firstOrFail();
+            $this->assertSame($food, $order->subtotal_minor, $case);
+            $this->assertSame($c['donation'], $order->donation_minor, $case);
+            $this->assertSame($c['fee'], $order->fee_covered_minor, $case);
+            $this->assertSame($food + $c['donation'] + $c['fee'], $order->total_minor, $case);
+
+            // What Stripe is asked to charge: exactly these named lines, once
+            // each, in this order, summing to the stored total. Raw lines, not
+            // keyed by name — a duplicated line must not be able to hide.
+            $raw = self::$lastParams['line_items'];
+            $this->assertSame($c['lines'], array_map(fn ($l) => $l['price_data']['product_data']['name'], $raw), $case);
+            $this->assertSame($order->total_minor, array_sum(array_map(fn ($l) => $l['price_data']['unit_amount'] * $l['quantity'], $raw)), $case);
+        }
+
+        // $8 of food + $5 extra with the fee covered: the organisation nets $13.
+        $this->assertSame(2100, StripeFees::grossUp(2100) - StripeFees::on(StripeFees::grossUp(2100)));
+    }
+
+    #[Test]
+    public function the_extra_and_the_fee_follow_the_menu_and_the_bounds(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $one = fn (array $extra) => $this->order('/api/admin', $this->onePlate() + $extra);
+
+        // Beyond the ceiling, negative, a fraction, or a non-answer: refused, not rounded.
+        $one(['donation_minor' => (string) (MealOrder::MAX_DONATION_MINOR + 1)])->assertStatus(422);
+        $one(['donation_minor' => '-100'])->assertStatus(422);
+        $one(['donation_minor' => '2.5'])->assertStatus(422);
+        $one(['cover_fees' => 'maybe'])->assertStatus(422);
+        $this->assertSame(0, MealOrder::withoutMasjidScope()->count());
+
+        // A menu that offers neither charges neither, whatever the body says.
+        $this->menu->forceFill(['allow_donation' => false, 'allow_fee_coverage' => false])->save();
+        $one(['donation_minor' => '500', 'cover_fees' => '1'])->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $this->assertSame(0, $order->donation_minor);
+        $this->assertSame(0, $order->fee_covered_minor);
+        $this->assertSame(800, $order->total_minor);
+    }
+
+    #[Test]
+    public function the_fee_is_grossed_up_on_what_is_actually_charged_not_on_a_refused_extra(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+
+        // Extra switched off, fee coverage on: the $5 asked for is refused, so
+        // the fee must cover the food alone. Grossing up on the refused extra
+        // would charge the payer for money nobody is sending.
+        $this->menu->forceFill(['allow_donation' => false, 'allow_fee_coverage' => true])->save();
+        $this->order('/api/admin', $this->onePlate() + ['donation_minor' => '500', 'cover_fees' => 'true'])->assertCreated();
+
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $this->assertSame(0, $order->donation_minor);
+        $this->assertSame(55, $order->fee_covered_minor);   // on $8.00, not on $13.00 (which would be 70)
+        $this->assertSame(855, $order->total_minor);
+    }
+
+    #[Test]
+    public function the_board_prices_from_the_menu_payload_in_both_realms(): void
+    {
+        // Non-default, so a match proves the values come from config rather than
+        // agreeing with the board's own fallbacks (2.9% + 30c, $1,000).
+        config(['services.stripe.fee_percentage' => 0.022, 'services.stripe.fee_fixed' => 25]);
+        $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
+
+        foreach (['/api/admin' => $this->admin, '/api/lunch' => $volunteer] as $prefix => $user) {
+            Sanctum::actingAs($user);
+            $this->getJson("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}")
+                ->assertOk()
+                ->assertJsonPath('data.max_donation_minor', MealOrder::MAX_DONATION_MINOR)
+                ->assertJsonPath('data.stripe_fee_percentage', 0.022)
+                ->assertJsonPath('data.stripe_fee_fixed_minor', 25);
+        }
+    }
+
+    #[Test]
+    public function a_new_menu_keeps_the_extra_and_fee_switches_the_admin_chose(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        // Form-encoded "0"s, exactly as the board's create form now sends them.
+        $this->post("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus", [
+            'title' => 'Switches off', 'service_date' => now()->addWeeks(9)->toDateString(),
+            'status' => MealMenu::STATUS_DRAFT, 'allow_donation' => '0', 'allow_fee_coverage' => '0',
+        ], ['Accept' => 'application/json'])->assertSuccessful();
+
+        $menu = MealMenu::withoutMasjidScope()->where('title', 'Switches off')->firstOrFail();
+        $this->assertFalse((bool) $menu->allow_donation);
+        $this->assertFalse((bool) $menu->allow_fee_coverage);
     }
 
     #[Test]
