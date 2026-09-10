@@ -110,6 +110,25 @@ class AuthController extends Controller
 
             $masjid->logo = $masjid->logo()->first();
             $user->setRelation('masjid', $masjid);
+        } elseif ($user->type === User::TYPE_LUNCH_STAFF) {
+            // Same shape as Teacher and for the same reason: lunch staff own no
+            // masjid, so the hasOne above is null and their organisation is their
+            // membership. Refusing the login when there is none is not politeness
+            // — ResolveMasjidTenant fails a memberless principal closed on every
+            // request, so a token here would be one that can do nothing at all.
+            $masjid = $this->staffMembershipMasjid($user);
+
+            if (! $masjid) {
+                Auth::logout();
+
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Sorry, your account is not linked to a masjid yet.',
+                ], Response::HTTP_OK);
+            }
+
+            $masjid->logo = $masjid->logo()->first();
+            $user->setRelation('masjid', $masjid);
         }
 
         return response()->json([
@@ -130,6 +149,23 @@ class AuthController extends Controller
      * teacher has. Runs UNBOUND (login is a public route), which is correct:
      * memberships() is not tenant-scoped, exactly as the resolver reads it.
      */
+    /**
+     * The masjid of a staff principal who OWNS none — resolved from their single
+     * `masjid_user` membership, the same source ResolveMasjidTenant binds from.
+     *
+     * Shared by Teacher and LunchStaff so the two can never disagree about which
+     * organisation a login belongs to: the tenant middleware and the payload the
+     * SPA renders read the same row.
+     */
+    private function staffMembershipMasjid(User $user): ?\App\Models\Masjid
+    {
+        return $user->memberships()
+            ->whereHas('masjid')
+            ->with('masjid')
+            ->orderBy('masjid_id')
+            ->first()?->masjid;
+    }
+
     private function teacherMasjid(User $user): ?\App\Models\Masjid
     {
         return $user->memberships()
@@ -158,6 +194,20 @@ class AuthController extends Controller
                             'message' => "Sorry, you don't have a related masjid to your account."
                         ], Response::HTTP_OK);
                     }
+                } elseif ($user->type === User::TYPE_LUNCH_STAFF) {
+                    $masjid = $this->staffMembershipMasjid($user);
+
+                    if (! $masjid) {
+                        Auth::logout();
+
+                        return response()->json([
+                            'status' => 'failed',
+                            'message' => 'Sorry, your account is not linked to a masjid yet.',
+                        ], Response::HTTP_OK);
+                    }
+
+                    $masjid->logo = $masjid->logo()->first();
+                    $user->setRelation('masjid', $masjid);
                 } elseif ($user->type === 'Teacher') {
                     $masjid = $this->teacherMasjid($user);
 

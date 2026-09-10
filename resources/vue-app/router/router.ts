@@ -35,6 +35,9 @@ router.beforeEach((to, from, next) => {
                 } else if (authStore.user?.type === 'Teacher') {
                     // A teacher's home is its own scoped shell, not the admin app.
                     next('/teacher');
+                } else if (authStore.user?.type === 'LunchStaff') {
+                    // Likewise: the lunch board IS their whole application.
+                    next('/lunch');
                 } else {
                     next('/auth/401');
                 }

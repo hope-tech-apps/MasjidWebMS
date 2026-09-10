@@ -5,6 +5,7 @@ import superDashboardRoutes from "@/router/routes/superDashboardRoutes";
 import familyRoutes from "@/router/routes/familyRoutes";
 import portalRoutes from "@/router/routes/portalRoutes";
 import teacherRoutes from "@/router/routes/teacherRoutes";
+import lunchRoutes from "@/router/routes/lunchRoutes";
 import jummahLunchRoutes from "@/router/routes/jummahLunchRoutes";
 
 const routes: RouteRecordRaw[] = [
@@ -27,6 +28,7 @@ const routes: RouteRecordRaw[] = [
     // The teacher shell — a scoped staff realm, top-level so it carries no
     // admin sidebar or dashboard chrome.
     ...teacherRoutes,
+    ...lunchRoutes,
     // Public Jummah-lunch ordering — no auth, no chrome.
     ...jummahLunchRoutes,
     {

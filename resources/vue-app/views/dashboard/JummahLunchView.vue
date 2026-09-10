@@ -29,10 +29,90 @@
                             <div class="d-flex gap-2">
                                 <button class="btn btn-sm btn-primary" @click="manageMenu(m.id)">Manage</button>
                                 <button class="btn btn-sm btn-outline-secondary" @click="openEditMenu(m)">Edit</button>
-                                <button class="btn btn-sm btn-outline-danger" @click="removeMenu(m)">Delete</button>
+                                <button v-if="!isLunchStaff" class="btn btn-sm btn-outline-danger" @click="removeMenu(m)">Delete</button>
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lunch-only logins. Admin surface: a LunchStaff never sees this,
+             and the server refuses them the endpoints behind it. -->
+        <div v-if="!currentMenu && !isLunchStaff" class="card shadow-sm mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <strong>Who can run the lunch</strong>
+                    <div class="text-muted small">
+                        These logins reach this board and nothing else — no donations, no member
+                        directory, no masjid settings. They can't add or remove each other.
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-success" @click="openAddStaff">+ Give someone access</button>
+            </div>
+            <div class="card-body">
+                <div v-if="staff.length === 0" class="text-muted small">
+                    Nobody yet. The people you add here get an email to set their own password.
+                </div>
+                <table v-else class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th><th>Email</th><th>Phone</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="p in staff" :key="p.id">
+                            <td>
+                                {{ p.name }}
+                                <span v-if="p.invited" class="badge bg-warning-subtle text-warning-emphasis ms-1"
+                                      title="Created, but they haven't signed in yet">Invited</span>
+                            </td>
+                            <td class="text-muted">{{ p.email }}</td>
+                            <td class="text-muted">{{ p.phone ?? '—' }}</td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary me-1" @click="openEditStaff(p)">Edit</button>
+                                <button class="btn btn-sm btn-outline-secondary me-1" @click="resendInvite(p)">Re-send invite</button>
+                                <button class="btn btn-sm btn-outline-danger" @click="revokeStaff(p)">Remove</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Staff modal -->
+        <div v-if="staffModal.show" class="jl-modal">
+            <div class="card shadow-lg" style="max-width: 460px; width: 100%;">
+                <div class="card-header">{{ staffModal.isEdit ? 'Edit access' : 'Give someone lunch access' }}</div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input v-model="staffModal.form.name" class="form-control" maxlength="120" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Email</label>
+                        <input v-model="staffModal.form.email" type="email" class="form-control" maxlength="190"
+                               :disabled="staffModal.isEdit" />
+                        <div class="text-muted small">
+                            <template v-if="staffModal.isEdit">
+                                The email can't be changed — it's what their sign-in and invite are tied to.
+                                Remove the access and issue it again instead.
+                            </template>
+                            <template v-else>
+                                They'll get an email here to set their own password. You never see it.
+                            </template>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Phone <span class="text-muted small">(optional)</span></label>
+                        <input v-model="staffModal.form.phone" class="form-control" maxlength="32" />
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-light" @click="staffModal.show = false">Cancel</button>
+                    <button class="btn btn-success" :disabled="savingStaff" @click="saveStaff">
+                        {{ savingStaff ? 'Saving…' : 'Save' }}
+                    </button>
                 </div>
             </div>
         </div>
@@ -175,8 +255,8 @@
                         <div class="text-muted small">Stripe takes 2.9% + 30&cent; out of your balance on an online order — an $8 plate settles at $7.47. This offers the customer the choice to add it so you receive the full amount. Online orders only; pay-at-pickup never touches Stripe.</div>
                     </div>
 
-                    <hr class="my-3" />
-                    <div class="mb-2">
+                    <hr v-if="!isLunchStaff" class="my-3" />
+                    <div v-if="!isLunchStaff" class="mb-2">
                         <label class="form-label">Text subscribers when this opens</label>
                         <select v-model="menuModal.form.notify_service_id" class="form-select">
                             <option :value="null">Don't send a text</option>
@@ -184,7 +264,7 @@
                         </select>
                         <div class="text-muted small">Picks the service people subscribe to on the order form. The text goes out once, the first time this menu becomes Open — reopening it later never sends a second one.</div>
                     </div>
-                    <div class="form-check mb-2">
+                    <div v-if="!isLunchStaff" class="form-check mb-2">
                         <input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_sms_optin" id="jlsms" :disabled="!menuModal.form.notify_service_id" />
                         <label class="form-check-label" for="jlsms">Ask customers if they want a text next week</label>
                         <div class="text-muted small">
@@ -248,6 +328,49 @@ const currentMenu = computed(() => store.currentMenu);
 const orders = computed(() => store.orders);
 const summary = computed(() => store.orderSummary);
 const services = computed(() => store.services);
+// A LunchStaff reaches the same board through their own realm. Two controls are
+// hidden from them because the server will not serve them either: deleting a
+// menu is not in their routes at all, and the notify-subscribers picker reads an
+// admin-only services endpoint. A button that 401s is worse than no button.
+const isLunchStaff = computed(() => store.isLunchStaff());
+
+// ---------------------------------------------------------- lunch-only logins
+const staff = computed(() => store.staff);
+const savingStaff = ref(false);
+const staffModal = reactive<{ show: boolean; isEdit: boolean; id: number | null; form: any }>({
+    show: false, isEdit: false, id: null,
+    form: { name: "", email: "", phone: "" },
+});
+
+function openAddStaff() {
+    staffModal.isEdit = false; staffModal.id = null;
+    staffModal.form = { name: "", email: "", phone: "" };
+    staffModal.show = true;
+}
+function openEditStaff(p: any) {
+    staffModal.isEdit = true; staffModal.id = p.id;
+    staffModal.form = { name: p.name, email: p.email, phone: p.phone ?? "" };
+    staffModal.show = true;
+}
+async function saveStaff() {
+    savingStaff.value = true;
+    try {
+        if (staffModal.isEdit && staffModal.id) await store.updateStaff(staffModal.id, staffModal.form);
+        else await store.createStaff(staffModal.form);
+        staffModal.show = false;
+        toast(staffModal.isEdit ? "Access updated" : "Access granted — invitation sent");
+    } catch (e) { toastError(e); } finally { savingStaff.value = false; }
+}
+async function resendInvite(p: any) {
+    try { await store.inviteStaff(p.id); toast("Invitation re-sent to " + p.email); }
+    catch (e) { toastError(e); }
+}
+async function revokeStaff(p: any) {
+    // Named consequence, not "Are you sure?" — this signs them out immediately.
+    if (!confirm(`Remove ${p.name}'s lunch access? They'll be signed out straight away.`)) return;
+    try { await store.removeStaff(p.id); toast("Access removed"); }
+    catch (e) { toastError(e); }
+}
 
 const menuModal = reactive({
     show: false, isEdit: false, id: null as number | null,
@@ -294,6 +417,10 @@ async function load() {
     try { await store.fetchMenus(); } catch (e) { toastError(e); }
     // The picker's options. Never fatal — fetchServices swallows its own errors.
     store.fetchServices();
+    // Admin-only; the store no-ops for a LunchStaff.
+    if (!isLunchStaff.value) {
+        try { await store.fetchStaff(); } catch { /* the board matters more */ }
+    }
     loading.value = false;
 }
 

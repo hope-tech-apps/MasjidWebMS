@@ -10,6 +10,7 @@ use App\Http\Middleware\ResolveFamilyTenant;
 use App\Http\Middleware\ResolveMasjidTenant;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
+use App\Http\Middleware\LunchStaffMiddleware;
 use App\Http\Middleware\TeacherMiddleware;
 use App\Http\Middleware\UserAdminMiddleware;
 use App\Support\Errors;
@@ -57,6 +58,15 @@ return Application::configure(basePath: dirname(__DIR__))
             Route::prefix('api')
                 ->middleware('api')
                 ->group(base_path('routes/teacher.php'));
+
+            // The lunch realm — a staff login scoped to the Jummah-lunch board
+            // and nothing else. Its own file for the same reason as the two
+            // above: the only way admin.php's single `auth:sanctum` group can
+            // keep always carrying `admin` is for every other realm to live
+            // outside it. See routes/lunch.php.
+            Route::prefix('api')
+                ->middleware('api')
+                ->group(base_path('routes/lunch.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
@@ -71,6 +81,8 @@ return Application::configure(basePath: dirname(__DIR__))
             // `admin`: a teacher must never reach the admin API. Per-class
             // authority is a finer check done in the controllers via GroupAudience.
             'teacher' => TeacherMiddleware::class,
+            // The Jummah-lunch-only staff realm (routes/lunch.php).
+            'lunch' => LunchStaffMiddleware::class,
             // The per-class boundary: the {group_id} in the route must be a class
             // this teacher LEADS (group_staff). Runs after `tenant` so the group
             // lookup is scoped to the teacher's school. This is what fences the

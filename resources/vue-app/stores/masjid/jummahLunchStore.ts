@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { useMasjidStore } from "../masjidStore";
+import { useAuthStore } from "@/stores/authStore";
 import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 
@@ -24,12 +25,30 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     const services = ref<any[]>([]);
 
     const masjidStore = useMasjidStore();
+    const authStore = useAuthStore();
+
+    /**
+     * A LunchStaff login reaches the SAME controllers through its own realm, so
+     * this store serves both and only the prefix differs.
+     *
+     * The lunch realm carries NO masjid id: the server binds the tenant from the
+     * principal's membership, which is the point — there is no id in the URL for
+     * a volunteer to change. So `base()` must not interpolate one for them, and
+     * `ensureMasjid()` must not demand a masjidStore that their shell never loads.
+     */
+    const isLunchStaff = () => authStore.user?.type === "LunchStaff";
 
     function base(): string {
-        return `/api/admin/masjids/${masjidStore.masjid?.id}/jummah-lunch`;
+        return isLunchStaff()
+            ? "/api/lunch"
+            : `/api/admin/masjids/${masjidStore.masjid?.id}/jummah-lunch`;
     }
 
     function ensureMasjid(): void {
+        if (isLunchStaff()) {
+            return;
+        }
+
         if (!masjidStore.masjid?.id) {
             throw new Error("Masjid not specified.");
         }
@@ -38,7 +57,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     // ---------------------------------------------------------------- menus
 
     async function fetchMenus(): Promise<void> {
-        if (!masjidStore.masjid?.id) return;
+        if (!isLunchStaff() && !masjidStore.masjid?.id) return;
         menus.value = [];
         const res: AxiosResponse = await ApiService.get(`${base()}/menus`);
         if (res.data?.status === "success" && Array.isArray(res.data?.data)) {
@@ -47,7 +66,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     async function fetchMenu(id: number | string): Promise<any | null> {
-        if (!masjidStore.masjid?.id) return null;
+        if (!isLunchStaff() && !masjidStore.masjid?.id) return null;
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${id}`);
         if (res.data?.status === "success" && res.data?.data) {
             currentMenu.value = res.data.data;
@@ -208,8 +227,55 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         return b;
     }
 
+    // ------------------------------------------------------- lunch-only staff
+    //
+    // Admin-side only. These live under the ADMIN prefix even when the store is
+    // serving a LunchStaff, and the server refuses them for that principal — so
+    // the UI never renders them for one. See LunchStaffController.
+
+    const staff = ref<any[]>([]);
+
+    async function fetchStaff(): Promise<void> {
+        if (isLunchStaff() || !masjidStore.masjid?.id) return;
+        const res: AxiosResponse = await ApiService.get(`${base()}/staff`);
+        staff.value = Array.isArray(res.data?.data) ? res.data.data : [];
+    }
+
+    async function createStaff(payload: Record<string, any>): Promise<void> {
+        ensureMasjid();
+        const b = new FormData();
+        b.append("name", payload.name ?? "");
+        b.append("email", payload.email ?? "");
+        if (payload.phone) b.append("phone", payload.phone);
+        await ApiService.post(`${base()}/staff`, b);
+        await fetchStaff();
+    }
+
+    async function updateStaff(id: number, payload: Record<string, any>): Promise<void> {
+        ensureMasjid();
+        const b = new URLSearchParams();
+        b.append("name", payload.name ?? "");
+        b.append("phone", payload.phone ?? "");
+        await ApiService.put(`${base()}/staff/${id}`, b);
+        await fetchStaff();
+    }
+
+    async function inviteStaff(id: number): Promise<void> {
+        ensureMasjid();
+        await ApiService.post(`${base()}/staff/${id}/invite`, new FormData());
+    }
+
+    async function removeStaff(id: number): Promise<void> {
+        ensureMasjid();
+        await ApiService.delete(`${base()}/staff/${id}`);
+        await fetchStaff();
+    }
+
     async function fetchServices(): Promise<void> {
-        if (!masjidStore.masjid?.id) return;
+        // Admin-only: the picker chooses which SERVICE subscribers are notified
+        // about, and the services endpoint lives behind `admin`. Lunch staff
+        // simply do not see that field.
+        if (isLunchStaff() || !masjidStore.masjid?.id) return;
         try {
             const res: AxiosResponse = await ApiService.get(
                 `/api/admin/masjids/${masjidStore.masjid.id}/services?page=1`
@@ -223,7 +289,8 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     return {
-        menus, currentMenu, orders, orderSummary, services, fetchServices,
+        menus, currentMenu, orders, orderSummary, services, fetchServices, isLunchStaff,
+        staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,
         fetchOrders, markOrderPaid, updateOrderStatus, uploadFlyer,

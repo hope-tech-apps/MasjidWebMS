@@ -141,6 +141,23 @@ class ResolveMasjidTenant
             if ($resolution->membership() !== null) {
                 $this->tenant->setFromMembership($resolution->membership());
             }
+        } elseif ($user instanceof User && $user->type === User::TYPE_LUNCH_STAFF) {
+            // Lunch staff name NO masjid in the URL — routes/lunch.php binds the
+            // tenant from the PRINCIPAL, like the teacher and family realms, not
+            // from the route. The resolver answers from their persisted
+            // `masjid_user` membership, written at invite time: one live
+            // membership binds, none or several fails closed. Placed after the
+            // three branches above for the same load-bearing ordering reason
+            // documented on the class.
+            $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
+
+            if ($resolution->isDenied()) {
+                abort(403, self::FORBIDDEN_MESSAGE);
+            }
+
+            if ($resolution->membership() !== null) {
+                $this->tenant->setFromMembership($resolution->membership());
+            }
         } else {
             // Fail closed. Falling through here would leave the context unbound
             // and hand an unfiltered view of every masjid to a principal that

@@ -48,6 +48,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $masjidAdmin = Role::firstOrCreate(['name' => 'masjid-admin', 'guard_name' => $guard]);
         $member = Role::firstOrCreate(['name' => 'member', 'guard_name' => $guard]);
         $teacher = Role::firstOrCreate(['name' => 'teacher', 'guard_name' => $guard]);
+        $lunchStaff = Role::firstOrCreate(['name' => 'lunch-staff', 'guard_name' => $guard]);
 
         // super-admin: everything.
         $superAdmin->syncPermissions(Permission::all());
@@ -66,6 +67,12 @@ class RolesAndPermissionsSeeder extends Seeder
         // would gain roster/donor/property reach across the whole organisation.
         // This keeps Permission::count() at 8 (pinned in four tests).
         $teacher->syncPermissions([]);
+
+        // lunch-staff: ZERO CRM permissions, exactly like teacher and member.
+        // What this login may do is decided entirely by which ROUTES it can
+        // reach (routes/lunch.php), never by a grant that would also open the
+        // CRM. This keeps Permission::count() at 8 (pinned in four tests).
+        $lunchStaff->syncPermissions([]);
 
         // Backfill existing users: mirror each one's `type` onto its bridged role
         // (SuperAdmin -> super-admin, MasjidAdmin -> masjid-admin, User -> member).

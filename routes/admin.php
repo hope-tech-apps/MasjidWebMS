@@ -45,6 +45,7 @@ use App\Http\Controllers\AdminDashboard\HadithsController;
 use App\Http\Controllers\AdminDashboard\IqamaTimeSettingsController;
 use App\Http\Controllers\AdminDashboard\JumaaSettingsController;
 use App\Http\Controllers\AdminDashboard\MealMenuItemsController;
+use App\Http\Controllers\AdminDashboard\LunchStaffController;
 use App\Http\Controllers\AdminDashboard\MealMenusController;
 use App\Http\Controllers\AdminDashboard\MealOrdersController;
 use App\Http\Controllers\AdminDashboard\MasjidAboutUsController;
@@ -293,6 +294,24 @@ Route::prefix('admin')->group(function () {
                     Route::post('/menus/{menu_id}/items', 'store');
                     Route::put('/menus/{menu_id}/items/{item_id}', 'update');
                     Route::delete('/menus/{menu_id}/items/{item_id}', 'destroy');
+                });
+
+                // Who may run the lunch board. SuperAdmin and this masjid's own
+                // MasjidAdmin only — `admin` already means exactly those two, so
+                // no permission is minted (Permission::count() stays 8) and the
+                // group's deliberate absence of `crm` is preserved: a masjid
+                // selling lunch must not first switch on the member directory.
+                //
+                // The controller never reads `type` from the body — every login
+                // it creates is LunchStaff bound to the BOUND tenant — so a
+                // MasjidAdmin holding this cannot mint an admin or reach another
+                // masjid. See LunchStaffController.
+                Route::prefix('staff')->controller(LunchStaffController::class)->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/', 'store');
+                    Route::put('/{user_id}', 'update');
+                    Route::post('/{user_id}/invite', 'invite');
+                    Route::delete('/{user_id}', 'destroy');
                 });
 
                 Route::controller(MealOrdersController::class)->group(function () {

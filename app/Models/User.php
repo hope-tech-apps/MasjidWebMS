@@ -32,6 +32,17 @@ class User extends Authenticatable implements HasMedia
      * endpoints can authorize via granular permissions. See
      * .claude/rules/auth-permissions.md and syncRoleFromType() below.
      */
+    /**
+     * A staff login that can reach the Jummah-lunch board and nothing else.
+     *
+     * Deliberately NOT one of UserAdminMiddleware::ADMIN_TYPES. The value is a
+     * constant because it is compared in four places (the gate, the tenant
+     * resolver branch, the provisioning controller, the SPA payload) and a typo
+     * in any of them fails OPEN in the direction that matters least — it would
+     * simply lock the user out — but a typo in the ADMIN list would not.
+     */
+    public const TYPE_LUNCH_STAFF = 'LunchStaff';
+
     public const TYPE_ROLE_MAP = [
         'SuperAdmin' => 'super-admin',
         'MasjidAdmin' => 'masjid-admin',
@@ -41,6 +52,12 @@ class User extends Authenticatable implements HasMedia
         // is per-class, decided by group_staff via GroupAudience, never by a
         // global CRM permission — so this must not grant one. See group_staff.
         'Teacher' => 'teacher',
+        // A login scoped to ONE module — the Jummah-lunch board — and nothing
+        // else. Bridged to a PERMISSION-LESS 'lunch-staff' role for the same
+        // reason as 'teacher': their authority is the realm they can reach
+        // (routes/lunch.php), not a masjid-wide grant. Permission::count()
+        // stays 8.
+        self::TYPE_LUNCH_STAFF => 'lunch-staff',
     ];
 
     /**
