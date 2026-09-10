@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Users\StoreUserRequest;
 use App\Http\Requests\Admin\Users\UpdateUserRequest;
 use App\Models\User;
+use App\Support\OrganisationAccess;
 use Symfony\Component\HttpFoundation\Response;
 
 class UsersController extends Controller
@@ -20,7 +21,18 @@ class UsersController extends Controller
      */
     public function index()
     {
-        $users = User::where('type', 'User')->orWhere('type', 'MasjidAdmin')->with('avatar')->get();
+        // Every login a SuperAdmin manages — including the scoped ones (lunch
+        // staff, teachers) this list used to hide — with the organisation each
+        // belongs to and what they can do there (config/capabilities.php, the
+        // layered access model). SuperAdmins themselves are not listed.
+        $users = User::whereIn('type', ['User', 'MasjidAdmin', User::TYPE_LUNCH_STAFF, 'Teacher'])
+            ->with('avatar')
+            ->orderBy('name')
+            ->get();
+
+        $access = OrganisationAccess::forUsers($users);
+        $users->each(fn (User $user) => $user->setAttribute('organisations', $access[$user->id] ?? []));
+
         return response()->json([
             'status' => 'success',
             'data' => $users
@@ -148,6 +160,10 @@ class UsersController extends Controller
     public function show($user_id)
     {
         $user = User::with('avatar')->findOrFail($user_id);
+
+        // What they can do, per organisation, with what each organisation has.
+        $user->setAttribute('organisations', OrganisationAccess::forUsers(collect([$user]), withCapabilities: true)[$user->id] ?? []);
+
         return response()->json([
             'status' => 'success',
             'data' => $user
@@ -162,9 +178,16 @@ class UsersController extends Controller
         try {
             $user = User::findOrFail($user_id);
 
-            $user->update($request->safe()->only([
-                'name', 'email', 'phone', 'type', 'password',
-            ]));
+            // A scoped login's type IS its boundary (routes/lunch.php,
+            // routes/teacher.php). Re-typing one here would leave its membership
+            // role behind and silently widen it, so this generic form never
+            // does; the Team access endpoint moves type and role together.
+            $fields = ['name', 'email', 'phone', 'password'];
+            if (! in_array($user->type, OrganisationAccess::SCOPED_TYPES, true)) {
+                $fields[] = 'type';
+            }
+
+            $user->update($request->safe()->only($fields));
 
             if ($user && $request->hasFile('avatar')) {
                 $user->addMediaFromRequest('avatar')->toMediaCollection('avatars');

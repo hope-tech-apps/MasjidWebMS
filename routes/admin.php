@@ -335,6 +335,7 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::post('/{user_id}/invite', 'invite')->whereNumber('user_id');
+                Route::patch('/{user_id}', 'update')->whereNumber('user_id');
                 Route::delete('/{user_id}', 'destroy')->whereNumber('user_id');
             });
 

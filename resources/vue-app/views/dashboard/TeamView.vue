@@ -68,6 +68,11 @@
                                     <router-link v-if="p.access === 'teacher'" to="/masjid/teachers"
                                         class="btn btn-sm btn-outline-secondary">Manage on Teachers</router-link>
                                     <template v-else>
+                                        <button v-if="p.removable && (p.access === 'jummah_lunch' || canAdd.includes('jummah_lunch'))"
+                                            class="btn btn-sm btn-outline-primary me-2" :disabled="busyId === p.user_id"
+                                            @click="switchAccess(p)">
+                                            {{ p.access === 'admin' ? 'Make lunch-only' : 'Make administrator' }}
+                                        </button>
                                         <button class="btn btn-sm btn-outline-secondary" :disabled="busyId === p.user_id"
                                             @click="resend(p)">Resend invite</button>
                                         <button v-if="p.removable" class="btn btn-sm btn-outline-danger ms-2"
@@ -255,6 +260,30 @@ async function resend(p: TeamMember): Promise<void> {
         Swal.fire({ icon: 'success', title: 'Invitation sent', text: message });
     } catch (e) {
         Swal.fire({ icon: 'error', title: 'Not sent', text: apiErrorText(e, 'Could not send the invitation.') });
+    } finally {
+        busyId.value = null;
+    }
+}
+
+async function switchAccess(p: TeamMember): Promise<void> {
+    const target: TeamAccess = p.access === 'admin' ? 'jummah_lunch' : 'admin';
+    const answer = await Swal.fire({
+        icon: 'question',
+        title: target === 'admin' ? `Make ${p.name} an administrator?` : `Limit ${p.name} to Friday lunch?`,
+        text: target === 'admin'
+            ? `They'll be able to use everything ${orgName.value} has. They'll be signed out and sign in again with the new access.`
+            : `They'll only be able to run the lunch board. They'll be signed out and sign in again with the new access.`,
+        showCancelButton: true,
+        confirmButtonText: 'Change access',
+    });
+    if (!answer.isConfirmed) return;
+
+    busyId.value = p.user_id;
+    try {
+        const message = await teamStore.changeAccess(p.user_id, target);
+        Swal.fire({ icon: 'success', title: 'Access changed', text: message });
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Not changed', text: apiErrorText(e, 'Could not change their access.') });
     } finally {
         busyId.value = null;
     }

@@ -16,7 +16,9 @@ class UpdateUserRequest extends BaseFormRequest
             'name' => 'required|string',
             'email' => 'required|email',
             'phone' => 'required|string|regex:/^\+?[0-9 ]+$/',
-            'type' => ['required', new UserTypeRule()],
+            // Lunch staff and teachers keep their type (UsersController::update);
+            // their access is changed on the Team screen, not here.
+            'type' => $this->targetIsScopedLogin() ? ['nullable'] : ['required', new UserTypeRule()],
             'avatar' => 'image|mimes:jpeg,png,jpg,gif,webp|max:25600',
             'old_password' => ['nullable', 'required_with:password', new MatchOldUserPasswordRule($userId)],
             'password' => [
@@ -31,5 +33,12 @@ class UpdateUserRequest extends BaseFormRequest
                 'confirmed',
             ],
         ];
+    }
+
+    private function targetIsScopedLogin(): bool
+    {
+        $type = \App\Models\User::whereKey($this->route('user_id'))->value('type');
+
+        return in_array($type, \App\Support\OrganisationAccess::SCOPED_TYPES, true);
     }
 }

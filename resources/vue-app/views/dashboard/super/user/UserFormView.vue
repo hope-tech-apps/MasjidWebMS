@@ -50,7 +50,10 @@
             </div>
 
             <!-- Type Select Input -->
-            <ColumnInputContainer label="Type" name="type_input" :show_error="true" class="w-100 w-md-50">
+            <!-- A lunch-only login or a teacher keeps its type here: its access is
+                 changed from the Access card or Team & Access, which move the
+                 type and the membership together. -->
+            <ColumnInputContainer v-if="!isScopedLogin" label="Type" name="type_input" :show_error="true" class="w-100 w-md-50">
                 <Field name="type_input" type="text" v-model="type" class="dashboard-input"
                     :class="{ 'placeholder': !type }" v-slot="{ field }">
                     <select v-bind="field" class="dashboard-input" :class="{ 'placeholder': !type }">
@@ -171,6 +174,8 @@ type UserEntry = {
 const isEditForm = ref(false);
 const userId = ref<string>('');
 const user = ref<User>();
+// Lunch-only logins and teachers: their type is their boundary (see the template).
+const isScopedLogin = computed(() => ['LunchStaff', 'Teacher'].includes(user.value?.type ?? ''));
 const entryModel = ref<UserEntry>({
     name: '',
     email: '',
@@ -205,6 +210,8 @@ const formValidationSchema = computed(() => {
     let initialSchema = {
         avatar_image: string().required(),
         type_input: string().test('is_accepted_type', 'The selected value should be a valid user type.', (val) => {
+            // A lunch-only login or teacher keeps its own type (the field is hidden).
+            if (isScopedLogin.value) return true;
             return val ? ['MasjidAdmin', 'User'].includes(val) : false;
         }),
         name_input: string().required(),
@@ -279,11 +286,11 @@ const onSubmit = async () => {
 
                 apiRequestData = new FormData();
 
-                if (type.value) apiRequestData.append('user_id', type.value + '');
+                if (type.value && !isScopedLogin.value) apiRequestData.append('user_id', type.value + '');
                 apiRequestData.append('name', name.value);
                 apiRequestData.append(`email`, email.value);
                 apiRequestData.append(`phone`, phone.value);
-                apiRequestData.append(`type`, type.value);
+                if (!isScopedLogin.value) apiRequestData.append(`type`, type.value);
 
                 if (avatarFile.value) {
                     apiRequestData.append(`avatar`, avatarFile.value);

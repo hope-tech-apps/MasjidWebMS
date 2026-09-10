@@ -151,6 +151,19 @@
                 </div>
             </div>
 
+            <!-- Layer 2: who can sign in to this organisation and what each can do. -->
+            <div class="d-flex flex-column gap-2 w-100">
+                <span class="fs-5 fw-semibold">
+                    Team &amp; Access
+                </span>
+                <div class="d-flex flex-wrap align-items-center gap-3 w-100">
+                    <span class="fs-6 fw-semibold text-muted">
+                        Who can sign in to this organisation, and what each person can do.
+                    </span>
+                    <button type="button" class="btn btn-sm btn-success" @click="openTeam">Open Team &amp; Access</button>
+                </div>
+            </div>
+
             <!-- Generate Apps (SuperAdmin-only; dispatches the provisioning pipeline) -->
             <div class="d-flex flex-column gap-3 w-100">
                 <span class="fs-5 fw-semibold">
@@ -222,6 +235,8 @@ import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { Admin } from '@/core/types/data/Admin';
 import { Masjid } from '@/core/types/data/Masjid';
 import { CapabilityKey } from '@/core/types/data/Capability';
+import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useMasjidsStore } from '@/stores/super/masjidsStore';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
@@ -496,6 +511,19 @@ const toggleableCapabilities: { key: CapabilityKey; label: string; help: string 
     { key: 'web_pages', label: 'Website Pages', help: "Let this organisation's admins build and edit their public website (pages and sections)." },
     { key: 'jummah_lunch', label: 'Friday Lunch Ordering', help: 'Jummah lunch ordering, the order board, and lunch-only volunteer logins.' },
 ];
+
+// Enter this organisation's dashboard on its Team & Access screen — the same way
+// the Masjids list enters a dashboard.
+const openTeam = async () => {
+    if (!masjid.value?.id) return;
+    const id = masjid.value.id;
+    const orgStore = useMasjidStore();
+    const auth = useAuthStore();
+    await orgStore.fetchMasjid(id).finally(async () => {
+        auth.saveDashboardMasjidId(id);
+        await router.push('/masjid/team');
+    });
+}
 
 const toggleCapability = (key: CapabilityKey, enabled: boolean) => {
     QSwal.fire("Question", `Are you sure you want to ${enabled ? 'switch on' : 'switch off'} this for the organisation? Its administrators ${enabled ? 'will' : 'will no longer'} see it.`, 'question')

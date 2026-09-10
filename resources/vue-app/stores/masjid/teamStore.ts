@@ -45,11 +45,19 @@ export const useTeamStore = defineStore('teamStore', () => {
         return res.data?.message ?? 'Invitation sent.';
     }
 
+    async function changeAccess(userId: number, access: TeamAccess): Promise<string> {
+        const body = new URLSearchParams();
+        body.append('access', access);
+        const res = await ApiService.patch(`${base()}/${userId}`, body);
+        await fetchTeam();
+        return res.data?.message ?? 'Access changed.';
+    }
+
     async function removePerson(userId: number): Promise<string> {
         const res = await ApiService.delete(`${base()}/${userId}`);
         await fetchTeam();
         return res.data?.message ?? 'Removed.';
     }
 
-    return { team, fetchTeam, addPerson, resendInvite, removePerson };
+    return { team, fetchTeam, addPerson, resendInvite, changeAccess, removePerson };
 });

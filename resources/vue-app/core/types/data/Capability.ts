@@ -32,6 +32,24 @@ export type TeamMember = {
     removable: boolean;
 };
 
+/** Human names for the catalogue keys (mirror config/capabilities.php labels). */
+export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
+    web_pages: 'Website pages',
+    jummah_lunch: 'Friday lunch ordering',
+    crm: 'Members, classes & giving',
+    assistant: 'Manara Assistant',
+};
+
+/** One organisation a login belongs to, as the SuperAdmin's user screens see it. */
+export type UserOrganisation = {
+    masjid_id: number;
+    name: string;
+    access: TeamAccess | null;
+    is_owner: boolean;
+    /** What that organisation has — only on the single-user payload. */
+    capabilities?: CapabilityKey[];
+};
+
 export type TeamPayload = {
     people: TeamMember[];
     capabilities: CapabilityInfo[];

@@ -1,5 +1,5 @@
 <template>
-    <PageDataContainer title="Users List" @headerButtonClick="router.push('/dashboard/super/users/create')">
+    <PageDataContainer title="Users & Access" @headerButtonClick="router.push('/dashboard/super/users/create')">
         <div class="container">
             <div class="row justify-content-center">
                 <div class="col-12">
@@ -10,8 +10,8 @@
                                     <th scope="col" class="th-border">Avatar</th>
                                     <th scope="col" class="th-border">Name</th>
                                     <th scope="col" class="th-border">Email</th>
-                                    <th scope="col" class="th-border">Phone</th>
-                                    <th scope="col" class="th-border">Type</th>
+                                    <th scope="col" class="th-border">Organisation</th>
+                                    <th scope="col" class="th-border">Access</th>
                                     <th scope="col" class="th-border">Actions</th>
                                 </tr>
                             </thead>
@@ -20,7 +20,10 @@
                                     <tr class="border-0">
                                         <td class="border-0 align-middle">
                                             <div class="avatar-container">
-                                                <img :src="user.avatar?.original_url" alt="icon" />
+                                                <img v-if="user.avatar?.original_url && !brokenAvatars[user.id]"
+                                                    :src="user.avatar.original_url" :alt="`${user.name}'s picture`"
+                                                    @error="brokenAvatars[user.id] = true" />
+                                                <span v-else class="avatar-initials" aria-hidden="true">{{ initials(user.name) }}</span>
                                             </div>
                                         </td>
                                         <td class="border-0 fw-bold align-middle">
@@ -30,10 +33,18 @@
                                             {{ user.email }}
                                         </td>
                                         <td class="border-0 align-middle">
-                                            {{ user.phone }}
+                                            <template v-if="user.organisations?.length">
+                                                <div v-for="org in user.organisations" :key="org.masjid_id">{{ org.name }}</div>
+                                            </template>
+                                            <span v-else class="text-muted">None</span>
                                         </td>
                                         <td class="border-0 align-middle">
-                                            {{ user.type }}
+                                            <template v-if="user.organisations?.length">
+                                                <div v-for="org in user.organisations" :key="org.masjid_id">
+                                                    <span class="badge" :class="accessBadge(org)">{{ accessLabel(org) }}</span>
+                                                </div>
+                                            </template>
+                                            <span v-else class="badge text-bg-light border">{{ user.type === 'User' ? 'App user' : 'No access' }}</span>
                                         </td>
                                         <td class="border-0 align-middle">
                                             <div class="d-flex align-items-start gap-2 flex-wrap">
@@ -59,7 +70,8 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import router from '@/router/router';
 import { useAuthStore } from '@/stores/authStore';
 import { useUsersStore } from '@/stores/super/usersStore';
-import { computed, onBeforeMount } from 'vue';
+import { computed, onBeforeMount, reactive } from 'vue';
+import { accessBadge, accessLabel, initials } from '@/core/helpers/access';
 
 // Lifecycle hooks
 onBeforeMount(async () => {
@@ -71,6 +83,9 @@ const usersStore = useUsersStore();
 const authStore = useAuthStore();
 
 // Custom constants
+
+// An avatar URL that fails to load shows initials instead of broken-image text.
+const brokenAvatars = reactive<Record<number, boolean>>({});
 
 // Computed
 const users = computed(() => {
@@ -114,5 +129,16 @@ const users = computed(() => {
 
 .avatar-container img {
     height: 100%;
+}
+
+.avatar-initials {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-weight: 600;
+    color: var(--cgreen, #198754);
+    background: rgba(25, 135, 84, .08);
 }
 </style>

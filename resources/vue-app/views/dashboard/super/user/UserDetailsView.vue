@@ -26,6 +26,36 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Access: what this login can do, per organisation (the layered access model). -->
+            <div class="d-flex flex-column gap-3 w-100">
+                <span class="fs-5 fw-semibold">Access</span>
+                <div v-if="!user.organisations?.length" class="text-muted">
+                    This login doesn't belong to any organisation{{ user.type === 'User' ? ' — it is an app user.' : '.' }}
+                </div>
+                <div v-for="org in user.organisations ?? []" :key="org.masjid_id" class="access-card">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div>
+                            <div class="fw-semibold">{{ org.name }}</div>
+                            <span class="badge mt-1" :class="accessBadge(org)">{{ accessLabel(org) }}</span>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-success" @click="openTeam(org.masjid_id)">
+                            Open Team &amp; Access
+                        </button>
+                    </div>
+                    <p class="small text-muted mt-2 mb-2">{{ accessIncludes(org) }}</p>
+                    <div v-if="canChange(org)" class="d-flex flex-wrap align-items-center gap-2">
+                        <label :for="`access-${org.masjid_id}`" class="small fw-semibold mb-0">Change access</label>
+                        <select :id="`access-${org.masjid_id}`" class="form-select form-select-sm w-auto"
+                            :value="org.access ?? ''" :disabled="changing"
+                            @change="changeAccess(org, ($event.target as HTMLSelectElement).value as TeamAccess)">
+                            <option value="admin">Administrator — everything {{ org.name }} has</option>
+                            <option value="jummah_lunch" :disabled="!org.capabilities?.includes('jummah_lunch')">Friday lunch only</option>
+                        </select>
+                    </div>
+                    <p v-else class="small text-muted mb-0">{{ whyFixed(org) }}</p>
+                </div>
+            </div>
         </div>
     </DataItemContainer>
 </template>
@@ -38,6 +68,10 @@ import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { User } from '@/core/types/data/User';
 import { useUsersStore } from '@/stores/super/usersStore';
+import { useAuthStore } from '@/stores/authStore';
+import { useMasjidStore } from '@/stores/masjidStore';
+import { CAPABILITY_LABELS, TeamAccess, UserOrganisation } from '@/core/types/data/Capability';
+import { accessBadge, accessLabel } from '@/core/helpers/access';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { onBeforeMount, ref } from 'vue';
@@ -64,6 +98,70 @@ const usersStore = useUsersStore();
 // Custom constants
 const user = ref<User>();
 const PROFILE_ATTRIBUTES = ['name', 'email', 'phone', 'type'];
+
+// ---- Access (the layered access model) -------------------------------------
+const authStore = useAuthStore();
+const masjidStore = useMasjidStore();
+const changing = ref(false);
+
+function accessIncludes(org: UserOrganisation): string {
+    if (org.access === 'admin') {
+        const has = (org.capabilities ?? []).map(k => CAPABILITY_LABELS[k] ?? k);
+        return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus announcements, events, services and settings.`;
+    }
+    if (org.access === 'jummah_lunch') return 'Can only run the Friday lunch board: menus, orders and payments.';
+    if (org.access === 'teacher') return 'Can only see and manage the classes they lead.';
+    return '';
+}
+
+// Same rules the server applies (TeamController::update); the server decides.
+function canChange(org: UserOrganisation): boolean {
+    return (org.access === 'admin' || org.access === 'jummah_lunch')
+        && !org.is_owner
+        && (user.value?.organisations?.length ?? 0) === 1;
+}
+
+function whyFixed(org: UserOrganisation): string {
+    if (org.is_owner) return 'The owner is always an administrator.';
+    if (org.access === 'teacher') return "Teachers are managed on that organisation's Teachers screen, with their classes.";
+    if ((user.value?.organisations?.length ?? 0) > 1) return 'This login belongs to more than one organisation, and its access applies to all of them.';
+    return '';
+}
+
+const changeAccess = async (org: UserOrganisation, access: TeamAccess) => {
+    const reload = () => usersStore.fetchUser(route.params.user_id as string, user);
+    if (!user.value?.id || access === org.access) return;
+
+    const label = access === 'admin' ? 'an Administrator' : 'Friday lunch only';
+    const answer = await QSwal.fire("Question", `Make ${user.value.name} ${label} at ${org.name}? They'll be signed out and sign in again with the new access.`, 'question');
+    if (!answer.isConfirmed) { await reload(); return; }
+
+    changing.value = true;
+    const body = new URLSearchParams();
+    body.append('access', access);
+    let swalInstance: SweetAlertOptions = { title: "Info", text: "Nothing", icon: "info" };
+    await ApiService.patch(`/api/admin/masjids/${org.masjid_id}/team/${user.value.id}`, body)
+        .then(res => {
+            swalInstance = { title: "Success", text: res.data?.message ?? 'Access changed.', icon: "success" };
+        })
+        .catch((e: AxiosError<BackendResponseData>) => {
+            swalInstance = { title: "Not changed", text: getMessageFromObj(e), icon: "error" };
+        })
+        .finally(async () => {
+            changing.value = false;
+            await reload();
+            MSwal.fire(swalInstance);
+        });
+}
+
+// Enter that organisation's dashboard on its Team & Access screen, the same
+// way the Masjids list enters a dashboard.
+const openTeam = async (masjidId: number) => {
+    await masjidStore.fetchMasjid(masjidId).finally(async () => {
+        authStore.saveDashboardMasjidId(masjidId);
+        await router.push('/masjid/team');
+    });
+}
 
 // Functions
 const deleteUser = async () => {
@@ -195,5 +293,11 @@ const archiveUser = async () => {
     .info-attribute {
         width: 100%;
     }
+}
+
+.access-card {
+    border: 1px solid var(--input-border);
+    border-radius: .5rem;
+    padding: .75rem 1rem;
 }
 </style>

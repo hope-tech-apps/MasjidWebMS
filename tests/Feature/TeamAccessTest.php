@@ -207,6 +207,77 @@ class TeamAccessTest extends TestCase
         $this->assertTrue(MasjidUser::where('user_id', $stranger->id)->exists());
     }
 
+    private function changeAccess(Masjid $masjid, User $user, string $access)
+    {
+        // Form-encoded, exactly as the SPA sends it.
+        return $this->patch("/api/admin/masjids/{$masjid->id}/team/{$user->id}", ['access' => $access], ['Accept' => 'application/json']);
+    }
+
+    #[Test]
+    public function an_administrator_can_be_limited_to_lunch_and_back(): void
+    {
+        $person = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
+        $person->createToken('session', ['staff']);
+        Sanctum::actingAs($this->owner);
+
+        $this->changeAccess($this->masjid, $person, 'jummah_lunch')->assertOk()->assertJsonPath('data.access', 'jummah_lunch');
+        $person->refresh();
+        $this->assertSame(User::TYPE_LUNCH_STAFF, $person->type);
+        $this->assertSame('lunch-staff', MasjidUser::where('user_id', $person->id)->value('role'));
+        // A session minted for the admin realm must not survive the change.
+        $this->assertSame(0, $person->tokens()->count());
+
+        $this->changeAccess($this->masjid, $person, 'admin')->assertOk()->assertJsonPath('data.access', 'admin');
+        $this->assertSame('MasjidAdmin', $person->fresh()->type);
+        $this->assertSame('masjid-admin', MasjidUser::where('user_id', $person->id)->value('role'));
+    }
+
+    #[Test]
+    public function access_changes_are_refused_where_they_would_be_wrong(): void
+    {
+        $second = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
+        $teacher = $this->staff($this->masjid, 'Teacher', 'teacher');
+        $shared = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
+        $other = $this->org('masjid', crm: true);
+        MasjidUser::create(['masjid_id' => $other->id, 'user_id' => $shared->id, 'role' => 'masjid-admin', 'is_default' => false]);
+
+        Sanctum::actingAs($second);
+        $this->changeAccess($this->masjid, $this->owner, 'jummah_lunch')->assertStatus(409);  // the owner
+        $this->changeAccess($this->masjid, $second, 'jummah_lunch')->assertStatus(409);       // yourself
+        $this->changeAccess($this->masjid, $teacher, 'admin')->assertStatus(422);             // a teacher
+        $this->changeAccess($this->masjid, $shared, 'jummah_lunch')->assertStatus(409);       // two organisations
+
+        $this->assertSame('MasjidAdmin', $this->owner->fresh()->type);
+        $this->assertSame('Teacher', $teacher->fresh()->type);
+        $this->assertSame('MasjidAdmin', $shared->fresh()->type);
+    }
+
+    #[Test]
+    public function lunch_access_needs_an_organisation_with_lunch(): void
+    {
+        $school = $this->org('school', crm: false);
+        $boss = $this->staff($school, 'MasjidAdmin', 'masjid-admin');
+        $person = $this->staff($school, 'MasjidAdmin', 'masjid-admin');
+        Sanctum::actingAs($boss);
+
+        $this->changeAccess($school, $person, 'jummah_lunch')->assertStatus(422);
+        $this->assertSame('MasjidAdmin', $person->fresh()->type);
+    }
+
+    #[Test]
+    public function a_super_admin_can_change_access_at_any_organisation_but_not_reach_a_stranger(): void
+    {
+        $person = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
+        $stranger = $this->staff($this->org('masjid', crm: true), 'MasjidAdmin', 'masjid-admin');
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550001111'])->fresh());
+
+        $this->changeAccess($this->masjid, $person, 'admin')->assertOk();
+        $this->assertSame('MasjidAdmin', $person->fresh()->type);
+
+        // Named through the wrong organisation, a real user is still a 404.
+        $this->changeAccess($this->masjid, $stranger, 'jummah_lunch')->assertNotFound();
+    }
+
     #[Test]
     public function an_invitation_can_be_sent_again(): void
     {

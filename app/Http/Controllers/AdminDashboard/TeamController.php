@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Team\StoreTeamMemberRequest;
+use App\Http\Requests\Admin\Team\UpdateTeamMemberRequest;
 use App\Models\GroupStaff;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
@@ -147,6 +148,71 @@ class TeamController extends Controller
                 : 'Added, but no invitation could be sent — check the address.',
             'data' => $this->serialize($user->fresh(), $masjid, $request->user()),
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * PATCH .../team/{user_id} — switch someone between Administrator and
+     * Friday lunch only.
+     *
+     * users.type IS the realm boundary, so it moves together with the
+     * membership role in one transaction, and the person's sessions end: a
+     * token minted for the lunch board must not stay live as an admin session,
+     * or the other way round. Refused for the owner (always an administrator),
+     * for yourself, for teachers (defined by their classes), for a login that
+     * belongs to more than one organisation (its type is global, so changing it
+     * here would change it everywhere), and for lunch access where the
+     * organisation has no lunch.
+     */
+    public function update(UpdateTeamMemberRequest $request, $masjid_id, $user_id)
+    {
+        $masjid = $this->boundMasjid();
+        $user = $this->member($masjid, $user_id);
+        $level = $request->validated('access');
+
+        if ((int) $user->id === (int) $masjid->user_id) {
+            return $this->refuse('The owner is always an administrator.', Response::HTTP_CONFLICT);
+        }
+
+        if ((int) $user->id === (int) $request->user()?->id) {
+            return $this->refuse('You cannot change your own access. Ask another administrator.', Response::HTTP_CONFLICT);
+        }
+
+        if ($user->type === 'Teacher') {
+            return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)->exists()
+            || Masjid::withoutGlobalScopes()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
+
+        if ($elsewhere) {
+            return $this->refuse('This login also belongs to another organisation, and its access applies to both. Change it with Manara.', Response::HTTP_CONFLICT);
+        }
+
+        if (! in_array($level, $this->creatableFor($masjid), true)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['access' => ['Friday lunch ordering is not switched on for this organisation.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($user->type !== self::TYPE_FOR_ACCESS[$level]) {
+            DB::transaction(function () use ($user, $masjid, $level) {
+                $user->forceFill(['type' => self::TYPE_FOR_ACCESS[$level]])->save();
+
+                MasjidUser::where('masjid_id', $masjid->id)->where('user_id', $user->id)
+                    ->update(['role' => self::ROLE_FOR_ACCESS[$level]]);
+
+                $user->tokens()->delete();
+            });
+        }
+
+        $label = $level === self::ACCESS_ADMIN ? 'an Administrator' : 'Friday lunch only';
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $user->name . ' is now ' . $label . '. They have been signed out and will sign in again with their new access.',
+            'data' => $this->serialize($user->fresh(), $masjid, $request->user()),
+        ], Response::HTTP_OK);
     }
 
     /** POST .../team/{user_id}/invite — send the set-your-password link again. */
