@@ -62,9 +62,10 @@ class SecurityHeaders
         // document origin there is the school's or masjid's domain, so 'self'
         // no longer covers THIS app's bundle, fonts, icons or API — every one of
         // which the Blade emits as an absolute URL back to config('app.url').
-        // On these paths, and no others, this app's own origin (and the Figtree
-        // font CDN the SPA loads) are named explicitly so the proxied page can
-        // boot and reach its API. Every other page's CSP is unchanged.
+        // On these paths, and no others, this app's own origin is named
+        // explicitly so the proxied page can boot and reach its API. Every other
+        // page's CSP is unchanged. (The Figtree CDN used to be widened here too;
+        // it is loaded on every page, so it now lives in the base policy below.)
         //
         // A LIST, not a second `if`: the next proxied page must be one string
         // here rather than a copied branch that drifts from this one. Note that
@@ -85,10 +86,9 @@ class SecurityHeaders
 
         if ($isProxied) {
             $app = rtrim((string) config('app.url'), '/');
-            $bunny = 'https://fonts.bunny.net';
             $ownOrigin = " {$app}";
-            $ownStyle = " {$app} {$bunny}";
-            $ownFont = " {$app} {$bunny}";
+            $ownStyle = " {$app}";
+            $ownFont = " {$app}";
             $ownImg = " {$app}";
             $ownConnect = " {$app}";
         }
@@ -96,8 +96,15 @@ class SecurityHeaders
         $csp = implode('; ', [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com{$ownOrigin}",
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net{$ownStyle}",
-            "font-src 'self' https://fonts.gstatic.com data:{$ownFont}",
+            // fonts.bunny.net sits in the BASE policy, not in the proxied-only
+            // widening above, because vue-app-index.blade.php links Figtree on
+            // EVERY page. It was in the widening, so the font it loads was
+            // refused on every path except /portal and /jummah-lunch — on this
+            // app's own domain too. The failure is quiet: the stylesheet is
+            // blocked, the page falls back to the system font stack and looks
+            // merely a bit off, and only the console says why.
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.bunny.net https://cdn.jsdelivr.net{$ownStyle}",
+            "font-src 'self' https://fonts.gstatic.com https://fonts.bunny.net data:{$ownFont}",
             "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com{$ownImg}",
             "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com{$ownConnect}",
             "frame-src 'self' https://www.google.com https://maps.google.com",
