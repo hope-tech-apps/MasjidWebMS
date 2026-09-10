@@ -139,7 +139,7 @@
                     <div class="mb-2"><label class="form-label">Title</label><input v-model="menuModal.form.title" class="form-control" maxlength="120" /></div>
                     <div class="mb-2"><label class="form-label">Title — Arabic <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.title_ar" class="form-control" dir="rtl" maxlength="120" placeholder="العنوان بالعربية" /></div>
                     <div class="mb-2"><label class="form-label">Service date (Friday)</label><input v-model="menuModal.form.service_date" type="date" class="form-control" /></div>
-                    <div class="mb-2"><label class="form-label">Ordering closes at <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.ordering_closes_at" type="datetime-local" class="form-control" /></div>
+                    <div class="mb-2"><label class="form-label">Ordering closes at <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.ordering_closes_at_local" type="datetime-local" class="form-control" /><div class="form-text">{{ menuTimezoneLabel }}</div></div>
                     <div class="mb-2"><label class="form-label">Pickup instructions</label><input v-model="menuModal.form.pickup_instructions" class="form-control" maxlength="255" /></div>
                     <div class="mb-2"><label class="form-label">Pickup instructions — Arabic <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.pickup_instructions_ar" class="form-control" dir="rtl" maxlength="255" placeholder="تعليمات الاستلام بالعربية" /></div>
                     <div class="mb-2">
@@ -205,6 +205,12 @@ const tab = ref<"items" | "orders">("items");
 
 const masjidId = computed(() => masjidStore.masjid?.id);
 const menus = computed(() => store.menus);
+// Every menu row carries the masjid's timezone; a masjid with no menus yet has
+// nothing to read it from, so the label stays generic until the first save.
+const menuTimezoneLabel = computed(() => {
+    const tz = menus.value.find((m: any) => m.timezone)?.timezone;
+    return tz ? `Times are in ${tz.replace(/_/g, " ")}` : "Times are in the masjid's local timezone";
+});
 const currentMenu = computed(() => store.currentMenu);
 const orders = computed(() => store.orders);
 const summary = computed(() => store.orderSummary);
@@ -220,7 +226,7 @@ const itemModal = reactive({
 
 function emptyMenuForm() {
     return {
-        title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at: "",
+        title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at_local: "",
         pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
         allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true,
     };
@@ -261,7 +267,9 @@ function openEditMenu(m: any) {
     menuModal.isEdit = true; menuModal.id = m.id;
     menuModal.form = {
         title: m.title, title_ar: m.title_ar ?? "", service_date: String(m.service_date ?? "").slice(0, 10),
-        ordering_closes_at: m.ordering_closes_at ? String(m.ordering_closes_at).slice(0, 16) : "",
+        // The API's *_local twin, already in the masjid's timezone. Never slice
+        // the UTC column here: it renders 3 PM for a menu that closes at 11 AM.
+        ordering_closes_at_local: m.ordering_closes_at_local ?? "",
         pickup_instructions: m.pickup_instructions ?? "", pickup_instructions_ar: m.pickup_instructions_ar ?? "", flyer_image_url: m.flyer_image_url ?? "",
         allow_online_payment: !!m.allow_online_payment, allow_pay_at_pickup: !!m.allow_pay_at_pickup,
         // `!== false` so a menu row from before the column existed edits as ON,
@@ -273,8 +281,12 @@ function openEditMenu(m: any) {
 async function saveMenu() {
     savingMenu.value = true;
     try {
-        if (menuModal.isEdit && menuModal.id) await store.updateMenu(menuModal.id, menuModal.form);
-        else await store.createMenu(menuModal.form);
+        // The server reads a naive datetime as the masjid's wall clock and stores
+        // UTC, so the local value goes out under the real column name.
+        const { ordering_closes_at_local, ...rest } = menuModal.form as any;
+        const payload = { ...rest, ordering_closes_at: ordering_closes_at_local || null };
+        if (menuModal.isEdit && menuModal.id) await store.updateMenu(menuModal.id, payload);
+        else await store.createMenu(payload);
         menuModal.show = false;
         await load();
         if (currentMenu.value && menuModal.id === currentMenu.value.id) await store.fetchMenu(menuModal.id);

@@ -2,12 +2,15 @@
 
 namespace App\Http\Requests\Admin\MealMenus;
 
+use App\Http\Requests\Admin\MealMenus\Concerns\NormalizesOrderingWindow;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\MealMenu;
 use Illuminate\Validation\Rule;
 
 class StoreMealMenuRequest extends BaseFormRequest
 {
+    use NormalizesOrderingWindow;
+
     public function rules(): array
     {
         return [

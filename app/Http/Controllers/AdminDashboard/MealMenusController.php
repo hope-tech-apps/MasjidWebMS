@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\MealMenus\StoreMealMenuRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
 use App\Support\Errors;
+use App\Support\MasjidTime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -30,7 +31,7 @@ class MealMenusController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $menus,
+            'data' => $menus->map(fn ($m) => $this->withLocalWindow($m, $masjid_id)),
         ], Response::HTTP_OK);
     }
 
@@ -42,7 +43,7 @@ class MealMenusController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $menu->loadCount('items'),
+                'data' => $this->withLocalWindow($menu->loadCount('items'), $masjid_id),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -61,7 +62,7 @@ class MealMenusController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $menu,
+            'data' => $this->withLocalWindow($menu, $masjid_id),
         ], Response::HTTP_OK);
     }
 
@@ -74,7 +75,7 @@ class MealMenusController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $menu->loadCount('items'),
+                'data' => $this->withLocalWindow($menu->loadCount('items'), $masjid_id),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -135,5 +136,24 @@ class MealMenusController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Adds the ordering window as the masjid's wall clock, for the admin form.
+     *
+     * The stored columns stay UTC in the payload — nothing downstream has to
+     * change — but an <input type="datetime-local"> cannot read a UTC instant,
+     * so the form binds to these *_local twins instead. `timezone` is included
+     * so the UI can label which clock the admin is actually setting.
+     */
+    private function withLocalWindow(MealMenu $menu, $masjid_id): array
+    {
+        $tz = MasjidTime::zoneFor($masjid_id);
+
+        return $menu->toArray() + [
+            'ordering_opens_at_local' => MasjidTime::toLocalInput($menu->ordering_opens_at, $tz),
+            'ordering_closes_at_local' => MasjidTime::toLocalInput($menu->ordering_closes_at, $tz),
+            'timezone' => $tz,
+        ];
     }
 }
