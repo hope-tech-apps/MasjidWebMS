@@ -76,6 +76,19 @@ class BroadcastAudienceResolver
             $query->whereIn('id', $ids);
         }
 
+        // A service audience narrows email too. It used to fall through to
+        // everyone: an admin who addressed "people interested in IntelliCor"
+        // emailed every contact while the confirmation said otherwise.
+        if ($broadcast->audienceType() === BroadcastAudience::SERVICE) {
+            $serviceId = (int) $broadcast->audience_service_id;
+
+            if ($serviceId <= 0) {
+                return collect(); // no service addresses nobody, never everyone
+            }
+
+            $this->narrowContactsToServiceInterest($query, (int) $broadcast->masjid_id, $serviceId);
+        }
+
         return $query->orderBy('id')->get();
     }
 
@@ -130,6 +143,20 @@ class BroadcastAudienceResolver
             }
 
             $query->whereIn('id', $ids);
+        }
+
+        // A service audience narrows SMS too, BEFORE consent and suppression are
+        // applied as for everyone. LunchOpeningNotifier ("text me when lunch
+        // opens") depends on this: without it, every consenting contact of the
+        // organisation would be texted, not the people who asked.
+        if ($broadcast->audienceType() === BroadcastAudience::SERVICE) {
+            $serviceId = (int) $broadcast->audience_service_id;
+
+            if ($serviceId <= 0) {
+                return new SmsAudience(recipients: []);
+            }
+
+            $this->narrowContactsToServiceInterest($query, (int) $broadcast->masjid_id, $serviceId);
         }
 
         $candidates = $query->orderBy('id')->get();
@@ -232,6 +259,23 @@ class BroadcastAudienceResolver
      *    person, not one channel — the same rule `memberAccessIsActive()` and
      *    `MemberSignupService` enforce on the way in.
      */
+    /**
+     * Contacts who registered interest in the service at this organisation, for
+     * email and SMS. Revoked logins are left out, as for push: the interest was
+     * given through that login.
+     */
+    private function narrowContactsToServiceInterest($query, int $masjidId, int $serviceId): void
+    {
+        $query
+            ->whereIn('id', function ($sub) use ($masjidId, $serviceId) {
+                $sub->select('contact_id')
+                    ->from('contact_service_interests')
+                    ->where('masjid_id', $masjidId)
+                    ->where('service_id', $serviceId);
+            })
+            ->whereNull('login_revoked_at');
+    }
+
     private function narrowToServiceInterest($query, Masjid $masjid, int $serviceId): void
     {
         $query

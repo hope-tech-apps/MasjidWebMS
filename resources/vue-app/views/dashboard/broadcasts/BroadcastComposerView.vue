@@ -185,8 +185,10 @@ const hasAnnouncement = computed(() => form.value.channels.includes('announcemen
  * a guard if the options change — but the sentence is the one the admin needs.
  */
 const pushWarning = computed(() => {
-    if (form.value.audience === 'service' && !form.value.channels.includes('push')) {
-        return 'This audience only affects push. Add the push channel, or the other channels will go to everyone.'
+    // A service audience now narrows every channel (email and SMS included), so
+    // the only refused combination left is push to a hand-picked list.
+    if (form.value.audience === 'contacts' && form.value.channels.includes('push')) {
+        return 'Push cannot be narrowed to chosen contacts: most devices are not signed in, so it would reach only a few of them. Send push to everyone, address a service instead, or drop push.'
     }
     return ''
 })
