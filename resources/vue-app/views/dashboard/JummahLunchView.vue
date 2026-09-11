@@ -95,14 +95,22 @@
                     <div class="d-flex justify-content-end mb-2">
                         <button class="btn btn-sm btn-success" :disabled="!orderableItems.length" @click="openAddOrder">+ Add order</button>
                     </div>
-                    <div v-if="summary" class="row g-2 mb-3">
-                        <div class="col"><div class="stat"><div class="stat-n">{{ summary.orders }}</div><div class="stat-l">Orders</div></div></div>
-                        <div class="col"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
-                        <div class="col"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
-                        <div class="col"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
+                    <!-- Two tiles per row on a phone (volunteers use the board at the table), one row from tablet width. -->
+                    <div v-if="summary" class="row g-2 mb-2">
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.orders }}</div><div class="stat-l">Orders</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.items_ordered ?? 0 }}</div><div class="stat-l">Items ordered</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
                         <!-- Only worth a tile once someone has actually added something. -->
-                        <div class="col" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div></div></div>
+                        <div class="col-6 col-md" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div></div></div>
                     </div>
+                    <!-- What the kitchen makes: each item's count on live orders (cancelled excluded). -->
+                    <p v-if="summary?.items_by_item?.length" class="small text-muted mb-3" aria-label="Items ordered by item">
+                        <template v-for="(it, i) in summary.items_by_item" :key="it.meal_menu_item_id">
+                            <span v-if="i" aria-hidden="true"> · </span><span class="text-nowrap"><strong class="text-body">{{ it.quantity }}</strong> × {{ it.item_name }}</span>
+                        </template>
+                    </p>
                     <div v-if="orders.length === 0" class="text-muted text-center py-4">No orders yet.</div>
                     <div v-else class="table-responsive">
                         <table class="table align-middle">

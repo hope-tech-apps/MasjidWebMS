@@ -454,6 +454,32 @@ class StaffLunchOrderTest extends TestCase
     }
 
     #[Test]
+    public function the_board_counts_items_ordered_in_total_and_per_item_without_cancelled_orders(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->order('/api/admin', ['customer_name' => 'A', 'items' => [
+            ['item_id' => $this->biryani->id, 'quantity' => 2],
+            ['item_id' => $this->water->id, 'quantity' => 1],
+        ]])->assertCreated();
+        $this->order('/api/admin', ['customer_name' => 'B', 'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]]])->assertCreated();
+        $this->order('/api/admin', ['customer_name' => 'C', 'items' => [['item_id' => $this->biryani->id, 'quantity' => 2]]])->assertCreated();
+
+        // A cancelled order is not cooked.
+        MealOrder::withoutMasjidScope()->where('customer_name', 'C')->firstOrFail()
+            ->forceFill(['status' => MealOrder::STATUS_CANCELLED])->save();
+
+        $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
+            ->assertOk()
+            ->assertJsonPath('data.summary.orders', 3)
+            ->assertJsonPath('data.summary.items_ordered', 4)
+            ->assertJsonPath('data.summary.items_by_item', [
+                ['meal_menu_item_id' => $this->biryani->id, 'item_name' => 'Chicken Biryani Plate', 'quantity' => 3],
+                ['meal_menu_item_id' => $this->water->id, 'item_name' => 'Water', 'quantity' => 1],
+            ]);
+    }
+
+    #[Test]
     public function items_must_be_on_this_menu_available_and_within_the_cap(): void
     {
         Sanctum::actingAs($this->admin);

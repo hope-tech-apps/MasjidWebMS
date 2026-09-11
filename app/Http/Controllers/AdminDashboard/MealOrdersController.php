@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
 use App\Models\MealMenuItem;
+use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\LunchOrderExtras;
 use Illuminate\Support\Facades\DB;
@@ -51,11 +52,36 @@ class MealOrdersController extends Controller
         $all = MealOrder::query()->where('meal_menu_id', $menu->id);
         $paid = (clone $all)->where('payment_status', MealOrder::PAYMENT_PAID);
 
+        // What the kitchen has to make: items on every live order (cancelled
+        // ones excluded, the same rule as `expected_total_minor`), in total and
+        // per menu item. Grouped by the menu item, so a dish renamed after some
+        // orders came in is still counted once.
+        $live = (clone $all)->whereIn('status', [
+            MealOrder::STATUS_PENDING,
+            MealOrder::STATUS_CONFIRMED,
+            MealOrder::STATUS_READY,
+            MealOrder::STATUS_PICKED_UP,
+        ]);
+        $itemsByItem = MealOrderItem::query()
+            ->whereIn('meal_order_id', (clone $live)->select('id'))
+            ->selectRaw('meal_menu_item_id, MAX(item_name) as item_name, SUM(quantity) as quantity')
+            ->groupBy('meal_menu_item_id')
+            ->orderByDesc('quantity')
+            ->get()
+            ->map(fn ($row) => [
+                'meal_menu_item_id' => (int) $row->meal_menu_item_id,
+                'item_name' => (string) $row->item_name,
+                'quantity' => (int) $row->quantity,
+            ])
+            ->values();
+
         $summary = [
             'orders' => (clone $all)->count(),
             'paid_orders' => (clone $paid)->count(),
             'unpaid_orders' => (clone $all)->where('payment_status', MealOrder::PAYMENT_UNPAID)->count(),
             'picked_up' => (clone $all)->where('status', MealOrder::STATUS_PICKED_UP)->count(),
+            'items_ordered' => (int) $itemsByItem->sum('quantity'),
+            'items_by_item' => $itemsByItem,
             'revenue_paid_minor' => (int) (clone $paid)->sum('total_minor'),
             // The optional extra, kept separate from food revenue in both
             // columns: what has actually settled, and what is still owed on
