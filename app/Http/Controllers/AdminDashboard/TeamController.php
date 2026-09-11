@@ -181,8 +181,12 @@ class TeamController extends Controller
             return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)->exists()
-            || Masjid::withoutGlobalScopes()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
+        // Live organisations only: an archived one grants nothing, so it must not
+        // block a change here. (destroy() stays conservative on purpose — it keeps
+        // a login that still belongs anywhere, archived included.)
+        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)
+                ->whereIn('masjid_id', Masjid::query()->select('id'))->exists()
+            || Masjid::query()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
 
         if ($elsewhere) {
             return $this->refuse('This login also belongs to another organisation, and its access applies to both. Change it with Manara.', Response::HTTP_CONFLICT);

@@ -107,6 +107,7 @@ class DemoSchoolSeederTest extends TestCase
 
         $this->assertSame(Masjid::ORG_TYPE_SCHOOL, $masjid->orgType());
         $this->assertTrue((bool) $masjid->crm_enabled, 'the CRM gate must be open or no group screen loads');
+        $this->assertTrue($masjid->fresh()->hasCapability('web_pages'), 'the demo script opens the page builder as the principal');
 
         // The school FEATURE BUNDLE — proof this went through provisioning and
         // not a hand-written masjids row: a school never gets the worship

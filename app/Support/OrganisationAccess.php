@@ -45,10 +45,12 @@ final class OrganisationAccess
 
         $types = $users->pluck('type', 'id');
 
-        $owned = Masjid::withoutGlobalScopes()->whereIn('user_id', $ids)->get();
+        // Masjid::query(), so SoftDeletes applies: an archived organisation grants
+        // nothing (TenantResolver skips it) and must not be listed as access.
+        $owned = Masjid::query()->whereIn('user_id', $ids)->get();
         $memberships = MasjidUser::whereIn('user_id', $ids)->get(['masjid_id', 'user_id']);
 
-        $masjids = Masjid::withoutGlobalScopes()
+        $masjids = Masjid::query()
             ->whereIn('id', $memberships->pluck('masjid_id')->merge($owned->pluck('id'))->unique()->all())
             ->get()
             ->keyBy('id');

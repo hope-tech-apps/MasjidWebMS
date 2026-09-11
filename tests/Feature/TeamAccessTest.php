@@ -288,4 +288,25 @@ class TeamAccessTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'success');
     }
+
+    #[Test]
+    public function an_archived_organisation_neither_lists_as_access_nor_blocks_a_change(): void
+    {
+        $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550009991'])->fresh();
+        $member = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
+
+        // The member also owns an organisation that has since been archived.
+        $archived = $this->org('masjid', false);
+        $archived->forceFill(['name' => 'Archived Org ' . uniqid(), 'user_id' => $member->id])->save();
+        $archived->delete();
+
+        Sanctum::actingAs($super);
+
+        // Not listed: an archived organisation grants nothing.
+        $this->getJson('/api/admin/users')->assertOk()->assertDontSee($archived->name);
+
+        // Not a reason to refuse: the only live organisation is this one.
+        $this->changeAccess($this->masjid, $member, 'jummah_lunch')->assertOk();
+        $this->assertSame(User::TYPE_LUNCH_STAFF, $member->fresh()->type);
+    }
 }

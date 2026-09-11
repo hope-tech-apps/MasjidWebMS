@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Masjid;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\LunchOrders\SubmitLunchOrderRequest;
 use App\Models\MealMenu;
@@ -54,7 +55,7 @@ class JummahLunchOrdersController extends Controller
             return response()->api(400, 'A masjid must be specified.', null);
         }
 
-        if (! PublicTenant::exists($masjidId)) {
+        if (! PublicTenant::exists($masjidId) || ! self::lunchIsOn($masjidId)) {
             return response()->api(404, 'Ordering is not available.', null);
         }
 
@@ -84,7 +85,7 @@ class JummahLunchOrdersController extends Controller
                 return response()->api(400, 'A masjid must be specified.', null);
             }
 
-            if (! PublicTenant::exists($masjidId)) {
+            if (! PublicTenant::exists($masjidId) || ! self::lunchIsOn($masjidId)) {
                 return response()->api(404, 'Ordering is not available.', null);
             }
 
@@ -381,5 +382,16 @@ class JummahLunchOrdersController extends Controller
                 ])->values()->all()
                 : [],
         ];
+    }
+
+    /**
+     * Friday lunch is an organisation capability (config/capabilities.php).
+     * Switched off, its staff board is closed (EnsureOrgCapability), so the
+     * public page must not keep taking — and charging — orders nobody at the
+     * organisation can see. An existing order's status (show) stays reachable.
+     */
+    private static function lunchIsOn(int $masjidId): bool
+    {
+        return (bool) Masjid::find($masjidId)?->hasCapability('jummah_lunch');
     }
 }

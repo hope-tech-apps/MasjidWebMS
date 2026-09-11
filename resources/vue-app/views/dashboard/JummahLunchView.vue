@@ -775,7 +775,9 @@ function toast(title: string) {
     Swal.fire({ toast: true, position: "top-end", icon: "success", title, showConfirmButton: false, timer: 1800 });
 }
 function toastError(e: any) {
-    Swal.fire({ toast: true, position: "top-end", icon: "error", title: e?.message || "Something went wrong", showConfirmButton: false, timer: 3000 });
+    // The server's own words (e.g. "Friday lunch ordering is not switched on for
+    // this organisation."), not axios's "Request failed with status code 403".
+    Swal.fire({ toast: true, position: "top-end", icon: "error", title: serverReason(e, "Something went wrong"), showConfirmButton: false, timer: 4000 });
 }
 async function confirmDelete(text: string): Promise<boolean> {
     const r = await Swal.fire({ title: text, icon: "warning", showCancelButton: true, confirmButtonText: "Delete", confirmButtonColor: "#c0392b" });

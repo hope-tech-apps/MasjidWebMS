@@ -23,9 +23,31 @@ export const useTeamStore = defineStore('teamStore', () => {
         return `/api/admin/masjids/${id}/team`;
     }
 
+    // Which organisation `team` belongs to. Cleared when it changes, so one
+    // organisation's chips and add options never show under another's name.
+    let teamMasjidId: number | null = null;
+
     async function fetchTeam(): Promise<void> {
+        const id = masjidStore.masjid?.id ?? null;
+        if (teamMasjidId !== id) {
+            team.value = null;
+            teamMasjidId = null;
+        }
         const res = await ApiService.get(base());
         team.value = res.data?.data ?? null;
+        teamMasjidId = id;
+    }
+
+    // Callers report on the WRITE. A refresh that fails afterwards means only that
+    // the list is stale; it must not turn a completed add, change or removal into
+    // "Could not…" (and a retried add into a 422 for an email that now exists).
+    async function afterWrite(message: string): Promise<string> {
+        try {
+            await fetchTeam();
+            return message;
+        } catch {
+            return `${message} The list could not be refreshed; reload to see the latest.`;
+        }
     }
 
     async function addPerson(payload: { name: string; email: string; phone?: string; access: TeamAccess }): Promise<string> {
@@ -36,8 +58,7 @@ export const useTeamStore = defineStore('teamStore', () => {
         body.append('access', payload.access);
 
         const res = await ApiService.post(base(), body);
-        await fetchTeam();
-        return res.data?.message ?? 'Added.';
+        return afterWrite(res.data?.message ?? 'Added.');
     }
 
     async function resendInvite(userId: number): Promise<string> {
@@ -49,14 +70,12 @@ export const useTeamStore = defineStore('teamStore', () => {
         const body = new URLSearchParams();
         body.append('access', access);
         const res = await ApiService.patch(`${base()}/${userId}`, body);
-        await fetchTeam();
-        return res.data?.message ?? 'Access changed.';
+        return afterWrite(res.data?.message ?? 'Access changed.');
     }
 
     async function removePerson(userId: number): Promise<string> {
         const res = await ApiService.delete(`${base()}/${userId}`);
-        await fetchTeam();
-        return res.data?.message ?? 'Removed.';
+        return afterWrite(res.data?.message ?? 'Removed.');
     }
 
     return { team, fetchTeam, addPerson, resendInvite, changeAccess, removePerson };

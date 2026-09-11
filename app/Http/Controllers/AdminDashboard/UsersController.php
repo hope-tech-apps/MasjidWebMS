@@ -124,8 +124,19 @@ class UsersController extends Controller
             // restoring the archived account and updating it with the submitted details.
             $archivedUser = User::onlyTrashed()->where('email', $data['email'])->first();
 
+            $keptScope = false;
+
             if ($archivedUser) {
                 $archivedUser->restore();
+                // A lunch-only login or a teacher is never re-typed from this form
+                // (see update()). Archiving leaves its memberships in place, so
+                // turning it into an administrator here would silently make it a
+                // full administrator of those organisations. Its access is changed
+                // on the organisation's Team & Access screen instead.
+                if (in_array($archivedUser->type, OrganisationAccess::SCOPED_TYPES, true)) {
+                    unset($data['type']);
+                    $keptScope = true;
+                }
                 $archivedUser->update($data);
                 $user = $archivedUser;
                 $restored = true;
@@ -142,7 +153,9 @@ class UsersController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => $restored
-                    ? 'This email belonged to an archived user. That account has been restored and updated with the new details.'
+                    ? ($keptScope
+                        ? 'This email belonged to an archived lunch-only or teacher login. It has been restored with the same access; change that on the organisation\'s Team & Access screen.'
+                        : 'This email belonged to an archived user. That account has been restored and updated with the new details.')
                     : 'User created successfully.',
                 'data' => $user->load('avatar')
             ], Response::HTTP_OK);

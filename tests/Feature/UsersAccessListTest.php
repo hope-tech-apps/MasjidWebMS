@@ -111,4 +111,33 @@ class UsersAccessListTest extends TestCase
         $this->assertSame('Lunch Volunteer Renamed', $fresh->name);
         $this->assertSame(User::TYPE_LUNCH_STAFF, $fresh->type);
     }
+
+    #[Test]
+    public function restoring_an_archived_lunch_login_never_makes_it_an_administrator(): void
+    {
+        Sanctum::actingAs($this->super);
+
+        // Archived, with its Burlington lunch membership still in place.
+        $this->lunch->delete();
+
+        // The Super creates "a new administrator" with the same email, through the
+        // real form rules (an avatar, and a password with every character class).
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $this->post('/api/admin/users', [
+            'name' => 'Fresh Admin',
+            'email' => $this->lunch->email,
+            'phone' => '+15550007777',
+            'type' => 'MasjidAdmin',
+            'avatar' => \Illuminate\Http\UploadedFile::fake()->image('avatar.png', 20, 20),
+            'password' => 'Restore#2026x',
+            'password_confirmation' => 'Restore#2026x',
+        ], ['Accept' => 'application/json'])->assertSuccessful()
+            ->assertJsonFragment(['message' => 'This email belonged to an archived lunch-only or teacher login. It has been restored with the same access; change that on the organisation\'s Team & Access screen.']);
+
+        // Restored, but still lunch-only: its leftover membership must not have
+        // become full administration of the organisation.
+        $user = User::findOrFail($this->lunch->id);
+        $this->assertSame(User::TYPE_LUNCH_STAFF, $user->type);
+        $this->assertTrue(MasjidUser::where('user_id', $user->id)->where('role', 'lunch-staff')->exists());
+    }
 }

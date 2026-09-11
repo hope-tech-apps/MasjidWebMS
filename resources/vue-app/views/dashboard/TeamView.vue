@@ -222,8 +222,17 @@ async function load(): Promise<void> {
     }
 }
 
-// The organisation may still be loading when the screen opens.
-watch(() => masjidStore.masjid?.id, (id) => { if (id) load(); }, { immediate: true });
+// The organisation may still be loading when the screen opens. With none at all
+// (an archived organisation, or /masjid/team opened directly) say so, rather
+// than leaving the spinner running forever.
+watch(() => masjidStore.masjid?.id, (id) => {
+    if (id) {
+        load();
+        return;
+    }
+    loading.value = false;
+    loadError.value = "No organisation is open. Open Team & Access from an organisation's page.";
+}, { immediate: true });
 
 function openAdd(): void {
     form.value = { name: '', email: '', phone: '', access: canAdd.value[0] ?? 'admin' };
