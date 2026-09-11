@@ -38,6 +38,8 @@ class StaffLunchOrderTest extends TestCase
     public static array $lastParams = [];
     /** Every idempotency key Stripe was sent, in order — including failed attempts. */
     public static array $keys = [];
+    /** Payment pages closed (expired), in order. */
+    public static array $expired = [];
 
     private Masjid $masjid;
     private User $admin;
@@ -82,6 +84,7 @@ class StaffLunchOrderTest extends TestCase
         self::$stripeDown = false;
         self::$lastParams = [];
         self::$keys = [];
+        self::$expired = [];
 
         $this->app->bind(MealOrderCheckoutService::class, function ($app) {
             return new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
@@ -98,6 +101,12 @@ class StaffLunchOrderTest extends TestCase
                     $n = ++StaffLunchOrderTest::$pagesMade;
 
                     return ['id' => "cs_test_{$n}", 'url' => "https://stripe.test/pay/{$n}", 'payment_intent' => null];
+                }
+
+                protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void
+                {
+                    StaffLunchOrderTest::$expired[] = $sessionId;
+                    StaffLunchOrderTest::$pageStatus = 'expired';
                 }
 
                 protected function retrieveCheckoutSession(string $sessionId, string $connectedAccountId): array
@@ -139,9 +148,9 @@ class StaffLunchOrderTest extends TestCase
         return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders", $fields, ['Accept' => 'application/json']);
     }
 
-    private function linkFor(MealOrder $order, string $prefix = '/api/admin')
+    private function linkFor(MealOrder $order, string $prefix = '/api/admin', array $fields = [])
     {
-        return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/payment-link", [], ['Accept' => 'application/json']);
+        return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/payment-link", $fields, ['Accept' => 'application/json']);
     }
 
     private function onePlate(): array
@@ -507,6 +516,89 @@ class StaffLunchOrderTest extends TestCase
                 ['meal_menu_item_id' => null, 'item_name' => 'Samosa', 'quantity' => 3],
                 ['meal_menu_item_id' => null, 'item_name' => 'Dates', 'quantity' => 2],
             ]);
+    }
+
+    #[Test]
+    public function a_payment_link_with_a_new_extra_and_fee_closes_the_old_page_and_charges_the_new_amount(): void
+    {
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();   // page 1, open
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '500', 'cover_fees' => 'true'])
+            ->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/2');
+
+        // The page the customer may already hold was closed BEFORE the new one was made.
+        $this->assertSame(['cs_test_1'], self::$expired);
+        $order->refresh();
+        $this->assertSame(500, $order->donation_minor);
+        $this->assertSame(70, $order->fee_covered_minor);   // 2.9% + 30c grossed up on $13.00
+        $this->assertSame(1370, $order->total_minor);
+        $raw = self::$lastParams['line_items'];
+        $this->assertSame(['Chicken Biryani Plate', 'Additional donation', 'Card processing fee'], array_map(fn ($l) => $l['price_data']['product_data']['name'], $raw));
+        $this->assertSame(1370, array_sum(array_map(fn ($l) => $l['price_data']['unit_amount'] * $l['quantity'], $raw)));
+    }
+
+    #[Test]
+    public function the_same_extra_and_fee_reuse_the_open_payment_page(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate() + ['donation_minor' => '500', 'cover_fees' => '1'])->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '500', 'cover_fees' => '1'])
+            ->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
+        $this->assertSame([], self::$expired);
+        $this->assertSame(1, self::$pagesMade);
+    }
+
+    #[Test]
+    public function a_page_already_paid_on_stripe_is_never_repriced(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        self::$pageStatus = 'complete';
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '500'])->assertStatus(422);
+        $this->assertSame([], self::$expired);
+        $this->assertSame(0, $order->fresh()->donation_minor);
+    }
+
+    #[Test]
+    public function cancelling_an_unpaid_online_order_closes_its_payment_page(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        $this->call('PUT', "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/status", ['status' => 'cancelled'], [], [], ['HTTP_ACCEPT' => 'application/json'])
+            ->assertOk()->assertJsonPath('message', 'Cancelled, and its payment page is closed.');
+        $this->assertSame(['cs_test_1'], self::$expired);
+        $this->assertSame(MealOrder::STATUS_CANCELLED, $order->fresh()->status);
+    }
+
+    #[Test]
+    public function marking_a_pickup_order_paid_records_who_took_the_money(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $order->forceFill(['payment_method' => MealOrder::METHOD_PICKUP, 'stripe_checkout_session_id' => null, 'idempotency_key' => null])->save();
+
+        $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
+        Sanctum::actingAs($volunteer);
+        $this->post("/api/lunch/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame((int) $volunteer->id, $order->fresh()->marked_paid_by_user_id);
+
+        // A second press, by someone else, never rewrites who took the money.
+        Sanctum::actingAs($this->admin);
+        $this->post("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])->assertOk();
+        $this->assertSame((int) $volunteer->id, $order->fresh()->marked_paid_by_user_id);
+
+        $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
+            ->assertOk()->assertJsonPath('data.orders.0.marked_paid_by.name', $volunteer->name);
     }
 
     #[Test]

@@ -193,10 +193,19 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not add the order.");
     }
 
-    /** The Stripe payment page for an unpaid order (an open one is reused). */
-    async function paymentLink(menuId: number | string, orderId: number | string): Promise<string> {
+    /**
+     * The Stripe payment page for an unpaid order. With `extras` (the optional
+     * extra in cents and a yes/no for the card fee) a different amount closes the
+     * open page and makes a new one; the same amount reuses it.
+     */
+    async function paymentLink(menuId: number | string, orderId: number | string, extras?: { donation_minor: number; cover_fees: boolean }): Promise<string> {
         ensureMasjid();
-        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/payment-link`, new FormData());
+        const body = new FormData();
+        if (extras) {
+            body.append("donation_minor", String(Math.max(0, Math.round(extras.donation_minor || 0))));
+            body.append("cover_fees", extras.cover_fees ? "1" : "0");
+        }
+        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/payment-link`, body);
         if (res.data?.status === "success" && res.data?.data?.checkout_url) return res.data.data.checkout_url;
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not create the payment page.");
     }
@@ -213,7 +222,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         const body = new URLSearchParams();
         body.append("status", status);
         const res: AxiosResponse = await ApiService.put(`${base()}/menus/${menuId}/orders/${orderId}/status`, body);
-        if (res.data?.status === "success") return res.data.data;
+        if (res.data?.status === "success") return res.data;
         throw new Error("Failed to update order.");
     }
 

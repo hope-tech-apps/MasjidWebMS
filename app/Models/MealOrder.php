@@ -109,6 +109,7 @@ class MealOrder extends Model
             'paid_at' => 'datetime',
             'picked_up_at' => 'datetime',
             'entered_by_user_id' => 'integer',
+            'marked_paid_by_user_id' => 'integer',
         ];
     }
 
@@ -139,6 +140,12 @@ class MealOrder extends Model
     public function enteredBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'entered_by_user_id')->withTrashed();
+    }
+
+    /** The staff login that marked a pay-at-pickup order paid (null for Stripe-paid orders). */
+    public function markedPaidBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'marked_paid_by_user_id')->withTrashed();
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\MealMenus\CreatePaymentLinkRequest;
 use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
@@ -43,7 +44,7 @@ class MealOrdersController extends Controller
             ->where('meal_menu_id', $menu->id)
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('payment_status'), fn ($q) => $q->where('payment_status', $request->string('payment_status')))
-            ->with(['items', 'enteredBy:id,name'])
+            ->with(['items', 'enteredBy:id,name', 'markedPaidBy:id,name'])
             ->orderByDesc('placed_at')
             ->orderByDesc('id')
             ->get();
@@ -286,7 +287,7 @@ class MealOrdersController extends Controller
      * refused, as is a lunch with online payment switched off. Stripe marks
      * the order paid when the customer pays (StripeWebhookController).
      */
-    public function paymentLink($masjid_id, $menu_id, $order_id)
+    public function paymentLink(CreatePaymentLinkRequest $request, $masjid_id, $menu_id, $order_id)
     {
         $menu = MealMenu::findOrFail($menu_id);
         $order = MealOrder::where('meal_menu_id', $menu->id)->with('items')->findOrFail($order_id);
@@ -303,8 +304,21 @@ class MealOrdersController extends Controller
             return $this->refuse('Online payment is switched off for this lunch.');
         }
 
+        // The extra and the card fee staff chose for this page, priced by the
+        // shared rule. Absent, the open page (if any) is reused as it is.
+        $amounts = null;
+        if ($request->has('donation_minor') || $request->has('cover_fees')) {
+            $amounts = LunchOrderExtras::compute(
+                $menu,
+                (int) $order->subtotal_minor,
+                (int) ($request->validated('donation_minor') ?? 0),
+                $request->boolean('cover_fees'),
+                true,
+            );
+        }
+
         try {
-            $result = $this->checkout->paymentLink($order);
+            $result = $this->checkout->paymentLink($order, $amounts);
         } catch (\Illuminate\Database\QueryException $e) {
             // Before RuntimeException, which it extends: never show SQL to staff.
             report($e);
@@ -368,8 +382,26 @@ class MealOrdersController extends Controller
                 $order->save();
             }
 
+            // A cancelled order must not stay payable: close its open Stripe page.
+            // The cancellation stands either way; staff are told what happened.
+            $message = null;
+            if ($status === MealOrder::STATUS_CANCELLED && $order->payment_status !== MealOrder::PAYMENT_PAID && $order->stripe_checkout_session_id) {
+                try {
+                    $closed = $this->checkout->expireOpenSession($order);
+                    if ($closed === 'expired') {
+                        $message = 'Cancelled, and its payment page is closed.';
+                    } elseif ($closed === 'complete') {
+                        $message = 'This order had already been paid on Stripe, so it will show as paid. Refund it in Stripe if it should not stand.';
+                    }
+                } catch (\RuntimeException|\Stripe\Exception\ExceptionInterface $e) {
+                    report($e);
+                    $message = 'Cancelled, but its payment page could not be closed, so the link still works. Try cancelling again, or close it in Stripe.';
+                }
+            }
+
             return response()->json([
                 'status' => 'success',
+                'message' => $message,
                 'data' => $order->load('items'),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
@@ -385,7 +417,7 @@ class MealOrdersController extends Controller
      * paid state is the webhook's to set, and letting staff flip it here would
      * fake a settlement Stripe never confirmed.
      */
-    public function markPaid($masjid_id, $menu_id, $order_id)
+    public function markPaid(Request $request, $masjid_id, $menu_id, $order_id)
     {
         $order = MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
 
@@ -397,11 +429,16 @@ class MealOrdersController extends Controller
         }
 
         try {
+            // Who took the money: recorded the first time only, so a second press
+            // (or a colleague's) never rewrites it.
+            if ($order->payment_status !== MealOrder::PAYMENT_PAID) {
+                $order->marked_paid_by_user_id = $request->user()?->id;
+            }
             $order->markPaid();
 
             return response()->json([
                 'status' => 'success',
-                'data' => $order->load('items'),
+                'data' => $order->load(['items', 'markedPaidBy:id,name']),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([

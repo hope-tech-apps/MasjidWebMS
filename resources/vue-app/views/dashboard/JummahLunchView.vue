@@ -144,6 +144,7 @@
                                     <td>
                                         <span class="badge" :class="o.payment_status === 'paid' ? 'bg-success' : 'bg-warning text-dark'">{{ o.payment_status }}</span>
                                         <div class="text-muted small">{{ o.payment_method === 'online' ? 'online' : 'at pickup' }}</div>
+                                        <div v-if="o.payment_status === 'paid' && o.marked_paid_by?.name" class="text-muted small">marked paid by {{ o.marked_paid_by.name }}</div>
                                     </td>
                                     <td>
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
@@ -371,6 +372,38 @@
             </div>
         </div>
 
+        <!-- Before making a payment page: the optional extra and the card fee, as on the Add-order form. -->
+        <div v-if="linkModal.show" class="jl-modal">
+            <div class="jl-dialog card">
+                <div class="card-header"><h5 class="mb-0">Payment link for order #{{ linkModal.order?.order_number }}</h5></div>
+                <div class="card-body">
+                    <p class="mb-2">{{ linkModal.order?.customer_name }} · food {{ money(linkSubtotal) }}</p>
+                    <div v-if="allowExtra" class="mb-2">
+                        <div class="form-label mb-1">Extra on top <span class="text-muted small">(optional; goes to the masjid)</span></div>
+                        <div class="d-flex flex-wrap gap-1 mb-1">
+                            <button v-for="p in extraPresets" :key="p" type="button" class="btn btn-sm" :class="linkExtra === p ? 'btn-primary' : 'btn-outline-secondary'" @click="setLinkExtra(p)">{{ money(p) }}</button>
+                            <button type="button" class="btn btn-sm" :class="linkExtra === 0 ? 'btn-primary' : 'btn-outline-secondary'" @click="setLinkExtra(0)">No extra</button>
+                        </div>
+                        <div class="input-group input-group-sm jlo-extra">
+                            <span class="input-group-text">$</span>
+                            <input id="jll-extra" v-model="linkModal.extraInput" type="number" min="0" :max="maxExtraMinor / 100" step="0.01" inputmode="decimal" class="form-control" placeholder="Other amount" aria-label="Extra on top, in dollars" />
+                        </div>
+                    </div>
+                    <div v-if="linkFeeOffer > 0" class="form-check mb-2">
+                        <input id="jll-fee" v-model="linkModal.coverFees" class="form-check-input" type="checkbox" />
+                        <label class="form-check-label" for="jll-fee">Add {{ money(linkFeeOffer) }} to cover the card processing fee, so the masjid receives the full amount</label>
+                    </div>
+                    <div class="d-flex justify-content-between fw-semibold mt-2"><span>Total</span><span>{{ money(linkTotal) }}</span></div>
+                    <div class="text-muted small mt-2">If the amount changes, a payment link already sent for this order stops working and a new one is made.</div>
+                    <div v-if="linkError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ linkError }}</div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" @click="linkModal.show = false">Cancel</button>
+                    <button class="btn btn-success" :disabled="linkSaving" @click="createPayLink">{{ linkSaving ? 'Making…' : 'Create payment link' }}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Payment page for an order: open it here, or send the link to the customer. -->
         <div v-if="payModal.show" class="jl-modal">
             <div class="jl-dialog card">
@@ -550,17 +583,61 @@ function showPayLink(order: any, url: string) {
         orderNumber: order?.order_number ?? "", name: order?.customer_name ?? "", total: Number(order?.total_minor || 0),
     });
 }
-async function openPayLink(o: any) {
+// "Payment link" offers the optional extra and the card fee first, pre-filled from
+// the order, priced by the same rule as the Add-order form (the server recomputes).
+const linkModal = reactive<{ show: boolean; order: any; extraInput: string | number; coverFees: boolean }>({ show: false, order: null, extraInput: "", coverFees: false });
+const linkSaving = ref(false);
+const linkError = ref("");
+const linkSubtotal = computed<number>(() => Number(linkModal.order?.subtotal_minor || 0));
+const linkExtra = computed<number>(() => {
+    if (!allowExtra.value || linkSubtotal.value <= 0) return 0;
+    const parsed = Number.parseFloat(String(linkModal.extraInput ?? ""));
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return Math.min(Math.round(parsed * 100), maxExtraMinor.value);
+});
+const linkFeeOffer = computed<number>(() => {
+    if (currentMenu.value?.allow_fee_coverage === false || linkSubtotal.value <= 0) return 0;
+    const intended = linkSubtotal.value + linkExtra.value;
+    const pct = Number(currentMenu.value?.stripe_fee_percentage ?? 0.029);
+    const fixed = Number(currentMenu.value?.stripe_fee_fixed_minor ?? 30);
+    return Math.max(0, Math.round((intended + fixed) / (1 - pct)) - intended);
+});
+const linkTotal = computed<number>(() => linkSubtotal.value + linkExtra.value + (linkModal.coverFees ? linkFeeOffer.value : 0));
+function setLinkExtra(minor: number) {
+    linkModal.extraInput = minor > 0 ? (minor / 100).toFixed(2) : "";
+}
+function openPayLink(o: any) {
     if (!currentMenu.value) return;
+    const offersChoices = allowExtra.value || currentMenu.value?.allow_fee_coverage !== false;
+    if (!offersChoices) { makePayLink(o); return; }
+    Object.assign(linkModal, {
+        show: true, order: o, coverFees: Number(o.fee_covered_minor) > 0,
+        extraInput: Number(o.donation_minor) > 0 ? (Number(o.donation_minor) / 100).toFixed(2) : "",
+    });
+    linkError.value = "";
+}
+async function createPayLink() {
+    if (!linkModal.order) return;
+    linkSaving.value = true;
+    linkError.value = "";
+    const ok = await makePayLink(linkModal.order, { donation_minor: linkExtra.value, cover_fees: linkModal.coverFees && linkFeeOffer.value > 0 }, linkTotal.value);
+    linkSaving.value = false;
+    if (ok) linkModal.show = false;
+}
+async function makePayLink(o: any, extras?: { donation_minor: number; cover_fees: boolean }, total?: number): Promise<boolean> {
+    if (!currentMenu.value) return false;
     let url: string;
     try {
-        url = await store.paymentLink(currentMenu.value.id, o.id);
+        url = await store.paymentLink(currentMenu.value.id, o.id, extras);
     } catch (e: any) {
-        Swal.fire({ icon: "warning", title: "No payment page", text: serverReason(e, "Could not create the payment page.") });
-        return;
+        const reason = serverReason(e, "Could not create the payment page.");
+        if (linkModal.show) linkError.value = reason;
+        else Swal.fire({ icon: "warning", title: "No payment page", text: reason });
+        return false;
     }
-    showPayLink(o, url);
+    showPayLink(total != null ? { ...o, total_minor: total } : o, url);
     await refreshOrders();
+    return true;
 }
 // The server's own reason (already paid, cancelled, went online on another
 // device), never axios's "Request failed with status code 422".
@@ -789,7 +866,12 @@ async function markPaid(o: any) {
 }
 async function setOrderStatus(o: any, status: string) {
     if (!currentMenu.value || status === o.status) return;
-    try { await store.updateOrderStatus(currentMenu.value.id, o.id, status); await store.fetchOrders(currentMenu.value.id); } catch (e) { toastError(e); }
+    try {
+        const res = await store.updateOrderStatus(currentMenu.value.id, o.id, status);
+        await refreshOrders();
+        // e.g. "Cancelled, and its payment page is closed." or a still-live-link warning.
+        if (res?.message) Swal.fire({ icon: "info", text: res.message });
+    } catch (e) { toastError(e); }
 }
 
 function toast(title: string) {

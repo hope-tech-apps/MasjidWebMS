@@ -180,14 +180,21 @@ class MealOrderCheckoutService
      *
      * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
      */
-    public function paymentLink(MealOrder $order): array
+    public function paymentLink(MealOrder $order, ?array $amounts = null): array
     {
         // Serialised on the order row: when two people press "Payment link" at
         // once, the second waits here, then finds the first one's open session
         // and gets that same page — never a second payable one.
-        return DB::transaction(function () use ($order) {
+        return DB::transaction(function () use ($order, $amounts) {
             $order = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $masjid = $this->preflight($order);
+
+            // Staff chose an extra and/or the card fee. A different amount means a
+            // different page: the open one is closed FIRST, so the customer can
+            // never pay the old amount as well as the new one.
+            $reprice = $amounts !== null
+                && ((int) $order->donation_minor !== (int) $amounts['donation_minor']
+                    || (int) $order->fee_covered_minor !== (int) $amounts['fee_covered_minor']);
 
             if ($order->stripe_checkout_session_id) {
                 $session = $this->retrieveCheckoutSession(
@@ -195,7 +202,11 @@ class MealOrderCheckoutService
                     (string) $masjid->stripe_account_id
                 );
 
-                if ($session['status'] === 'open' && $session['url']) {
+                if ($session['status'] === 'complete') {
+                    throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
+                }
+
+                if ($session['status'] === 'open' && $session['url'] && ! $reprice) {
                     return [
                         'order' => $order,
                         'checkout_url' => (string) $session['url'],
@@ -203,11 +214,17 @@ class MealOrderCheckoutService
                     ];
                 }
 
-                if ($session['status'] === 'complete') {
-                    throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
+                if ($session['status'] === 'open') {
+                    $this->closeSession($order, (string) $masjid->stripe_account_id);
                 }
 
                 $order->stripe_checkout_session_id = null;
+            }
+
+            if ($reprice) {
+                $order->donation_minor = (int) $amounts['donation_minor'];
+                $order->fee_covered_minor = (int) $amounts['fee_covered_minor'];
+                $order->total_minor = (int) $order->subtotal_minor + $order->donation_minor + $order->fee_covered_minor;
             }
 
             // A fresh key whenever no live page exists. A key saved by an attempt
@@ -221,6 +238,44 @@ class MealOrderCheckoutService
 
             return $this->checkout($order);
         });
+    }
+
+    /**
+     * Close an unpaid order's open payment page, so a cancelled order does not
+     * stay payable. Returns Stripe's status for the page: 'expired' once closed,
+     * 'complete' when the customer paid first (the webhook records it), or null
+     * when there is no page to close.
+     */
+    public function expireOpenSession(MealOrder $order): ?string
+    {
+        if (! $order->stripe_checkout_session_id || $order->payment_status === MealOrder::PAYMENT_PAID) {
+            return null;
+        }
+
+        $account = (string) Masjid::find($order->masjid_id)?->stripe_account_id;
+        if ($account === '') {
+            return null;
+        }
+
+        $session = $this->retrieveCheckoutSession((string) $order->stripe_checkout_session_id, $account);
+        if ($session['status'] !== 'open') {
+            return $session['status'];
+        }
+
+        $this->closeSession($order, $account);
+
+        return 'expired';
+    }
+
+    private function closeSession(MealOrder $order, string $account): void
+    {
+        try {
+            $this->expireCheckoutSession((string) $order->stripe_checkout_session_id, $account);
+        } catch (\Stripe\Exception\InvalidRequestException $e) {
+            // Stripe refuses to close a page that is no longer open: most likely
+            // it was paid a moment ago, and the webhook will record it.
+            throw new RuntimeException('That payment page could not be closed; it may have just been paid. Refresh the board.');
+        }
     }
 
     private function preflight(MealOrder $order): Masjid
@@ -266,6 +321,11 @@ class MealOrderCheckoutService
                 ? $session->payment_intent
                 : ($session->payment_intent?->id ?? null),
         ];
+    }
+
+    protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void
+    {
+        $this->stripe->checkout->sessions->expire($sessionId, [], ['stripe_account' => $connectedAccountId]);
     }
 
     /** @return array{status: string, url: ?string} Stripe's 'open' | 'complete' | 'expired'. */
