@@ -161,7 +161,9 @@ quote/register/checkout endpoints) fixed these — T-006d..f build on them:
   leaves nothing unbounded.
 - **Public pricing is server-side, always.** `quote` writes nothing; a
   client-supplied `code` is reported back as `code_applied: false` and can never
-  move a price — aid is an admin grant (T-006d). The payer's email is required
+  move a price — aid is an admin grant (T-006d). (Form staff codes are a
+  separate, narrow exception for form checkout only; see DECISIONS 2026-09-11.
+  This offering contract does not change.) The payer's email is required
   because THE PAYER is keyed on (masjid, email): they are asserting their own
   address, so find-or-create on it is what makes a returning family attach to
   their own record instead of spawning a second one.

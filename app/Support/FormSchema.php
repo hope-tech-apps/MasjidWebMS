@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Form;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator as ValidatorInstance;
 
 /**
@@ -122,6 +123,13 @@ class FormSchema
             }
         }
 
+        // A checkboxGroup's rule above only says "an array"; its MEMBERS must each be
+        // one of the declared options, or any value a client sends is stored.
+        foreach ($this->memberRules() as $key => $memberRules) {
+            $rules[$key] = $memberRules;
+            $attributes[$key] = $attributes[substr($key, 0, -2)] ?? $key;
+        }
+
         $validator = Validator::make($data, $rules, [], $attributes);
 
         $this->applyConditionalRequirements($validator, $data);
@@ -214,8 +222,9 @@ class FormSchema
 
     /**
      * checkboxGroup validates its MEMBERS, not the array, so it needs its own rule key.
+     * Rule::in, not an 'in:' string, so an option value with a comma stays one value.
      *
-     * @return array<string,array<int,string>>
+     * @return array<string,array<int,mixed>>
      */
     public function memberRules(): array
     {
@@ -235,7 +244,7 @@ class FormSchema
                 ? $sectionId . '.*.' . $field['name'] . '.*'
                 : $field['name'] . '.*';
 
-            $rules[$key] = ['string', 'in:' . implode(',', $values)];
+            $rules[$key] = ['string', Rule::in($values)];
         }
 
         return $rules;

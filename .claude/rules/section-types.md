@@ -127,10 +127,12 @@ is charged, and it is the reason the next section reads the way it does.
   Stripe charged another. `OfferingSectionTypeTest` asserts the shape carries no
   `amount`/`currency`/`capacity` key at all.
 - `form` and `offering` must not converge. A `form` submission writes a
-  `FormResponse`: it takes no seat and moves no money. An `offering`
-  registration reserves a place and opens a Stripe Checkout Session. An admin who
-  reached for the wrong one would believe sign-ups were being collected when
-  nothing had been.
+  `FormResponse`: it takes no seat, and it moves money only when the form's own
+  settings turn on its single one-time payment (DECISIONS 2026-09-11: festival
+  registration, with per-staff cash codes). It never has a place, a waitlist or
+  installments. An `offering` registration reserves a place and opens a Stripe
+  Checkout Session. An admin who reached for the wrong one would believe
+  sign-ups (or places) were being collected when nothing had been.
 
 ## A type whose renderer has not shipped says so, in ONE string
 
@@ -156,7 +158,7 @@ states the published block would show, and the only surface saying the block is
 not drawn was a note on the Programs screen an admin need never open. An admin
 who believed the first two published a section that renders nothing and — as
 that note warns — reasonably published the intake FORM as a substitute, which
-takes no seat and moves no money.
+takes no seat and, at the time, could move no money.
 
 The type is **not** gated out of the palette. The data is genuinely served, a
 tenant may lay its page out ahead of the renderer, and per-type gating is the

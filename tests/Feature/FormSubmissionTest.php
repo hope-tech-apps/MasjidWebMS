@@ -231,6 +231,39 @@ class FormSubmissionTest extends TestCase
     }
 
     #[Test]
+    public function a_checkbox_group_accepts_only_its_declared_options(): void
+    {
+        $interests = ['name' => 'interests', 'label' => 'Interest areas', 'type' => 'checkboxGroup', 'options' => [
+            ['value' => 'setup', 'label' => 'Setup'],
+            ['value' => 'games, rides', 'label' => 'Games, rides'],   // a comma inside one option
+        ]];
+        $form = $this->makeForm($this->masjidA, ['schema' => ['sections' => [
+            ['id' => 'you', 'title' => 'You', 'fields' => [
+                ['name' => 'registrantName', 'label' => 'Full name', 'type' => 'text', 'required' => true],
+                $interests,
+            ]],
+            ['id' => 'family', 'title' => 'Family', 'repeatable' => true, 'minEntries' => 0, 'maxEntries' => 3, 'fields' => [
+                ['name' => 'fullName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                $interests,
+            ]],
+        ]], 'settings' => ['identity' => ['name' => 'registrantName']]]);
+
+        $ok = ['registrantName' => 'Amal', 'interests' => ['setup', 'games, rides'], 'family' => [['fullName' => 'Yusuf', 'interests' => ['games, rides']]]];
+        $this->submit(['data' => $ok], $this->masjidA->id, $form)->assertOk();
+
+        // A value that is not one of the options, at the top level or in a row, is refused.
+        $bad = $ok;
+        $bad['interests'] = ['setup', 'anything at all'];
+        $this->assertArrayHasKey('interests.1', $this->submit(['data' => $bad], $this->masjidA->id, $form)->assertStatus(422)->json('data'));
+
+        $bad = $ok;
+        $bad['family'][0]['interests'] = ['games'];
+        $this->assertArrayHasKey('family.0.interests.0', $this->submit(['data' => $bad], $this->masjidA->id, $form)->assertStatus(422)->json('data'));
+
+        $this->assertSame(1, FormResponse::where('form_id', $form->id)->count());
+    }
+
+    #[Test]
     public function exceeding_the_repeatable_maximum_is_rejected(): void
     {
         $payload = $this->payload();

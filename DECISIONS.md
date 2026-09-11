@@ -369,3 +369,56 @@ needs a DigitalOcean API token or console click (doctl here is unauthenticated
 and the MCP cannot create droplets), and test-mode Stripe keys come only from
 the dashboard. Everything else is built ahead so the box is live within an hour
 of those two inputs.
+
+## 2026-09-11 — Forms may take one payment; per-staff codes settle cash (a narrow exception to T-006's "no self-service discount")
+
+**Decision (owner, 2026-09-10).** MEC's Fall Festival (Sat 17 Oct, the
+platform's live trial with MEC) takes registrations through the **form
+builder**, with **Stripe Checkout on MEC's own connected account**, not
+through an Offering. Three existing rules are narrowed, and only these:
+
+1. **A form may take one one-time payment** when its settings turn it on.
+   It still takes no seat and has no waitlist or installments; those remain
+   the Offering's (`.claude/rules/section-types.md`). The payments doctrine
+   (2026-08-10) is unchanged: a direct charge on the organisation's account,
+   hosted Checkout only, integer minor units, amounts computed by the server
+   and never taken from the body, and "paid" set only by a verified webhook.
+2. **Secret per-staff codes.** Each staff member gets their own code for one
+   form. A valid code settles that submission as **cash held by that person**
+   at the list price, in the same request, with no Stripe call and never a $0
+   session. The row is stamped with the holder, so the office can total the
+   cash each person owes. This narrowly reverses T-006's "no self-service
+   discount hole" (docs/t006-registration-billing-design.md:45 and :79;
+   `RegistrationAdjustment`) **for form checkout only**: the offering quote
+   still ignores `code` and answers `code_applied: false`
+   (`.claude/rules/registration-billing-data.md`). Every guard rail below is
+   required:
+   - codes are generated on the server;
+   - they are stored only as a keyed hash (the `ContactLoginCode` pattern);
+   - they are scoped to one form and one tenant;
+   - they expire after the event and can be revoked at once;
+   - failed attempts are rate-limited;
+   - a code never appears in a public payload, a log, a URL or an export.
+3. **Cash by code is a staff-asserted settlement.** Like
+   `MealOrdersController::markPaid` for pay-at-pickup lunch, it is a carve-out
+   from "payment state moves only on verified webhooks". It is recorded
+   against a named person and reconciled against their cash, and it is never
+   inferred from a client redirect.
+
+**Alternatives.**
+- **An Offering with admin-granted adjustments.** Rejected: it has no cash
+  walk-up path, its public renderer is not drawn yet, and the owner chose the
+  form builder.
+- **Last year's Wix click-to-pay page.** Kept only as the fallback, used if
+  MEC's Stripe Connect is not live and test-charged by Wed 30 Sep.
+- **One shared staff code.** Rejected: the point is knowing who holds the cash.
+- **Codes that simply make an entry free.** Not the v1 default. Every code
+  entry is cash its holder owes at the list price, which is what makes
+  reconciliation possible. A genuine comp (a volunteer, a guest) is an admin
+  action afterwards, with a note.
+
+**Rationale.** Most festival walk-ups pay cash at the gate. Per-holder codes
+turn "who took the money" from memory into a query, without opening a public
+discount path. A leaked code can only register people against its holder's
+cash total; reconciliation exposes that and revocation stops it.
+
