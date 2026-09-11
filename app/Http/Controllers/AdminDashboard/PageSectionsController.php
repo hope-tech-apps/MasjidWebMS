@@ -137,6 +137,23 @@ class PageSectionsController extends Controller
             // Build update set only with provided keys
             $sectionData = collect($validated)->only(['section_type', 'title', 'content', 'settings', 'is_active'])->toArray();
 
+            // Editors send only the keys they manage (most seed a subset and emit
+            // it on the first keystroke), so replacing `content` wholesale wiped
+            // everything else a section carried: a hero's layout, eyebrow,
+            // subtitle and buttons. Keep the stored top-level keys the request
+            // leaves out. A key the request sends, even empty, still wins; arrays
+            // are sent whole and replace. A change of section type starts afresh.
+            if (array_key_exists('content', $sectionData) && is_array($sectionData['content'])) {
+                $type = fn ($t) => $t instanceof \BackedEnum ? $t->value : (string) $t;
+                $sameType = ! array_key_exists('section_type', $sectionData)
+                    || $type($sectionData['section_type']) === $type($section->section_type);
+
+                if ($sameType) {
+                    $stored = is_array($section->content) ? $section->content : (json_decode((string) $section->content, true) ?: []);
+                    $sectionData['content'] = array_merge($stored, $sectionData['content']);
+                }
+            }
+
             if (!empty($sectionData)) {
                 $section->update($sectionData);
             }

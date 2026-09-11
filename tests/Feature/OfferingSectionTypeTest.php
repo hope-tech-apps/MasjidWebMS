@@ -559,6 +559,42 @@ class OfferingSectionTypeTest extends TestCase
     /* ============================= helpers ============================= */
 
     /** The slice of $haystack between the first $start and the next $end after it. */
+    #[Test]
+    public function a_partial_edit_keeps_the_rest_of_the_sections_content(): void
+    {
+        Sanctum::actingAs($this->adminA);
+        $page = $this->makePage($this->masjidA, 'home');
+        $base = "/api/admin/masjids/{$this->masjidA->id}/pages/{$page->id}/sections";
+
+        $content = [
+            'layout' => 'hero', 'eyebrow' => 'Since 2006', 'title' => 'Welcome',
+            'subtitle' => 'A home for worship', 'background_image_url' => '',
+            'buttons' => [['text' => 'Donate', 'url' => '/donate']],
+        ];
+        $created = $this->post($base, [
+            'section_type' => 'page_title', 'title' => 'Hero', 'content' => json_encode($content), 'order' => 1, 'is_active' => 1,
+        ])->assertStatus(201)->json('data');
+
+        // What the page-title editor emits on its first keystroke: only its own
+        // keys. That used to wipe the layout, eyebrow, subtitle and buttons.
+        $updated = $this->post("{$base}/{$created['id']}", [
+            '_method' => 'PUT', 'content' => json_encode(['title' => 'Welcome home', 'background_image_url' => '']),
+        ])->assertStatus(200)->json('data');
+
+        $this->assertSame('Welcome home', $updated['content']['title']);
+        $this->assertSame('hero', $updated['content']['layout']);
+        $this->assertSame('Since 2006', $updated['content']['eyebrow']);
+        $this->assertSame('A home for worship', $updated['content']['subtitle']);
+        $this->assertSame($content['buttons'], $updated['content']['buttons']);
+
+        // A key the editor does send still wins, even emptied.
+        $cleared = $this->post("{$base}/{$created['id']}", [
+            '_method' => 'PUT', 'content' => json_encode(['subtitle' => '']),
+        ])->assertStatus(200)->json('data');
+        $this->assertEmpty($cleared['content']['subtitle']);
+        $this->assertSame('hero', $cleared['content']['layout']);
+    }
+
     private function between(string $haystack, string $start, string $end): string
     {
         $from = strpos($haystack, $start);
