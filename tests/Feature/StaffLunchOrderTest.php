@@ -526,6 +526,26 @@ class StaffLunchOrderTest extends TestCase
     }
 
     #[Test]
+    public function the_menus_list_counts_orders_to_make_without_cancelled_ones(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->order('/api/admin', ['customer_name' => 'A', 'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]]])->assertCreated();
+        $this->order('/api/admin', ['customer_name' => 'B', 'items' => [['item_id' => $this->biryani->id, 'quantity' => 1]]])->assertCreated();
+
+        // Cancelled on the board: it leaves the kitchen's list, so it leaves the card's count too.
+        MealOrder::withoutMasjidScope()->where('customer_name', 'B')->firstOrFail()
+            ->forceFill(['status' => MealOrder::STATUS_CANCELLED])->save();
+
+        $card = collect($this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus")->assertOk()->json('data'))
+            ->firstWhere('id', $this->menu->id);
+
+        $this->assertSame(1, (int) $card['live_orders_count']);
+        // The existing field keeps its meaning for anything already reading it.
+        $this->assertSame(2, (int) $card['orders_count']);
+    }
+
+    #[Test]
     public function a_renamed_dish_counts_under_its_current_name_and_deleted_dishes_stay_apart(): void
     {
         Sanctum::actingAs($this->admin);

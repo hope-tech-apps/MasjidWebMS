@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\MealMenus\StoreMealMenuRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
+use App\Models\MealOrder;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOpeningNotifier;
 use App\Support\MasjidTime;
@@ -27,6 +28,10 @@ class MealMenusController extends Controller
         $menus = MealMenu::query()
             ->withCount('items')
             ->withCount('orders')
+            // What the menu card shows: orders the kitchen still has to make.
+            // `orders_count` keeps its meaning (every order, cancelled included)
+            // for anything already reading it.
+            ->withCount(['orders as live_orders_count' => fn ($q) => $q->where('status', '!=', MealOrder::STATUS_CANCELLED)])
             ->orderByDesc('service_date')
             ->get();
 
