@@ -92,6 +92,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/forms/${string}/responses?${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/roster?${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}` |
+    `/api/admin/masjids/${string}/forms/${string}/responses/cash-totals?${string}` |
+    `/api/admin/masjids/${string}/forms/${string}/responses/${string}/collect` |
+    `/api/admin/masjids/${string}/forms/${string}/responses/${string}/take-cash` |
+    `/api/admin/masjids/${string}/forms/${string}/responses/${string}/mark-paid-external` |
+    `/api/admin/masjids/${string}/forms/${string}/staff-codes` |
+    `/api/admin/masjids/${string}/forms/${string}/staff-codes/clear-lockout` |
+    `/api/admin/masjids/${string}/forms/${string}/staff-codes/${string}` |
+    `/api/admin/masjids/${string}/forms/${string}/staff-codes/${string}/reset-device` |
     `/api/admin/masjids/${string}/about` |
     `/api/admin/masjids/${string}/gallery` |
     `/api/admin/masjids/${string}/gallery/${string}` |

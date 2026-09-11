@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Mail\FormResponseSubmitted;
 use App\Mail\FormSubmissionReceipt;
 use App\Models\Form;
+use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Support\FormNotifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -27,6 +28,8 @@ use Tests\TestCase;
 class FormNotificationTest extends TestCase
 {
     use RefreshDatabase;
+
+    private const WHATSAPP = 'https://chat.whatsapp.com/CampGroup2026Abcdef';
 
     private Masjid $masjid;
     private Form $form;
@@ -289,6 +292,124 @@ class FormNotificationTest extends TestCase
         Mail::assertNotQueued(FormSubmissionReceipt::class);
     }
 
+    // ------------------------------------------------------------------ the money leg (DECISIONS.md 2026-09-11)
+
+    #[Test]
+    public function a_card_registration_still_waiting_on_stripe_is_never_emailed(): void
+    {
+        Mail::fake();
+
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings());
+        $row = $this->moneyRow($form, [
+            'payment_method' => FormResponse::METHOD_ONLINE,
+            'payment_status' => FormResponse::PAYMENT_UNPAID,
+        ]);
+
+        FormNotifier::submitted($form, $row);
+
+        // The webhook sends both when Stripe says it is paid.
+        Mail::assertNothingOutgoing();
+    }
+
+    #[Test]
+    public function both_emails_say_how_a_registration_was_paid(): void
+    {
+        Mail::fake();
+
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings());
+
+        $cases = [
+            // What the card was charged, the covered card fee included.
+            'Paid $206.00 by card' => ['payment_method' => FormResponse::METHOD_ONLINE, 'fee_covered_minor' => 600, 'total_minor' => 20600],
+            'Paid in cash' => ['payment_method' => FormResponse::METHOD_CASH],
+            'Paid (recorded by staff)' => ['payment_method' => FormResponse::METHOD_EXTERNAL],
+        ];
+
+        foreach ($cases as $line => $money) {
+            $row = $this->moneyRow($form, $money + ['payment_status' => FormResponse::PAYMENT_PAID, 'paid_at' => now()]);
+
+            $this->assertSame($line, FormNotifier::paymentLine($row));
+
+            FormNotifier::submitted($form, $row);
+
+            Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $row->id
+                && $mail->paymentLine === $line
+                && $mail->amountLine === '$200.00');
+            Mail::assertQueued(FormResponseSubmitted::class, fn ($mail) => $mail->responseId === $row->id
+                && $mail->paymentLine === $line);
+        }
+
+        // Nothing paid, nothing said: the camp's receipt is what it always was.
+        $this->assertNull(FormNotifier::paymentLine($this->moneyRow($form, [])));
+    }
+
+    #[Test]
+    public function the_group_link_rides_only_on_a_settled_registration(): void
+    {
+        Mail::fake();
+
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings());
+
+        // Owes money and has not paid: the camp's shape, and every Wix payer's.
+        $owing = $this->moneyRow($form, []);
+        FormNotifier::submitted($form, $owing);
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $owing->id
+            && $mail->whatsappUrl === null
+            && $mail->paymentLine === null
+            && $mail->paymentNote !== null);
+
+        // Paid: the link rides along, and the note on how to pay does not.
+        $paid = $this->moneyRow($form, [
+            'payment_method' => FormResponse::METHOD_CASH,
+            'payment_status' => FormResponse::PAYMENT_PAID,
+            'paid_at' => now(),
+        ]);
+        FormNotifier::submitted($form, $paid);
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $paid->id
+            && $mail->whatsappUrl === self::WHATSAPP
+            && $mail->whatsappLabel === 'Join the camp group'
+            && $mail->paymentNote === null);
+
+        // A form that charges nothing is settled on arrival, through the real submit.
+        $free = $this->makeForm($this->makeMasjid(), ['fee' => null, 'whatsappUrl' => self::WHATSAPP]);
+        $this->submit(null, $free)->assertOk();
+        $freeRow = $free->responses()->sole();
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $freeRow->id
+            && $mail->whatsappUrl === self::WHATSAPP
+            && $mail->paymentLine === null);
+    }
+
+    #[Test]
+    public function the_group_link_is_a_real_escaped_anchor_and_never_anything_but_a_whatsapp_invite(): void
+    {
+        $html = $this->receipt(self::WHATSAPP, 'Join <b>the camp</b> & chat')->render();
+
+        $this->assertStringContainsString('<a href="' . self::WHATSAPP . '" target="_blank" rel="noopener noreferrer"', $html);
+        $this->assertStringContainsString('Join &lt;b&gt;the camp&lt;/b&gt; &amp; chat', $html);
+        $this->assertStringContainsString('Paid in cash', $html);
+        $this->assertStringContainsString('Price', $html);
+        $this->assertStringNotContainsString('Total due', $html);
+
+        // Past every door but this one: a queued mail built by some other caller.
+        foreach ([
+            'javascript:alert(1)',
+            'https://chat.whatsapp.com/Abcdefghij"><script>x</script>',
+            'http://chat.whatsapp.com/Abcdefghijkl',
+            'https://evil.example/Abcdefghijkl',
+            "https://chat.whatsapp.com/Abcdefghijkl\n",
+        ] as $bad) {
+            $html = $this->receipt($bad)->render();
+
+            $this->assertStringNotContainsString('noopener noreferrer', $html, $bad);
+            $this->assertStringNotContainsString('<script>x', $html, $bad);
+            $this->assertStringNotContainsString('javascript:', $html, $bad);
+            $this->assertStringNotContainsString('evil.example', $html, $bad);
+        }
+    }
+
     // ------------------------------------------------------------------ nothing sends
 
     #[Test]
@@ -327,6 +448,64 @@ class FormNotificationTest extends TestCase
         $response = $this->form->responses()->firstOrFail();
         $this->assertSame('Moneeb Sayed', $response->respondent_name);
         $this->assertEquals(200, (float) $response->amount_due);
+    }
+
+    /** The camp form, taking payment and handing out a group link once settled. */
+    private function payingSettings(): array
+    {
+        return [
+            'payment' => ['online' => true, 'staffCodes' => true, 'allowFeeCoverage' => true],
+            'whatsappUrl' => self::WHATSAPP,
+            'whatsappLabel' => 'Join the camp group',
+        ];
+    }
+
+    /** A camp registration of two ($200.00), with whatever money leg the test gives it. */
+    private function moneyRow(Form $form, array $money): FormResponse
+    {
+        $row = new FormResponse([
+            'form_id' => $form->id,
+            'masjid_id' => $form->masjid_id,
+            'data' => $this->payload()['data'],
+            'respondent_name' => 'Moneeb Sayed',
+            'respondent_email' => 'moneeb@example.com',
+            'respondent_phone' => '336-555-0100',
+            'entry_count' => 2,
+            'amount_due' => 200,
+            'status' => 'new',
+            'submitted_at' => now(),
+        ]);
+
+        if ($money !== []) {
+            $money += ['currency' => 'usd', 'amount_due_minor' => 20000, 'fee_covered_minor' => 0, 'total_minor' => 20000];
+        }
+
+        $row->forceFill($money)->save();
+
+        return $row->fresh();
+    }
+
+    /** A paid receipt carrying $whatsappUrl, built directly: the mail's own guard is under test. */
+    private function receipt(?string $whatsappUrl, ?string $label = 'Join the camp group'): FormSubmissionReceipt
+    {
+        return new FormSubmissionReceipt(
+            responseId: 7,
+            formName: 'Burlington Masjid Camp 2026',
+            masjidName: 'Burlington Masjid',
+            registrantName: 'Moneeb Sayed',
+            entryCount: 2,
+            amountLine: '$200.00',
+            tierLabel: null,
+            people: [],
+            title: null,
+            body: null,
+            nextSteps: [],
+            paymentNote: null,
+            masjidEmail: null,
+            paymentLine: 'Paid in cash',
+            whatsappUrl: $whatsappUrl,
+            whatsappLabel: $label,
+        );
     }
 
     /** The rendered HTML of the first mail of the given class, via the array transport. */

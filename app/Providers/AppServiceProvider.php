@@ -3,8 +3,11 @@
 namespace App\Providers;
 
 use App\Listeners\ResetTenantContextBetweenJobs;
+use App\Models\FormResponse;
 use App\Models\User;
 use App\Observers\UserObserver;
+use App\Support\FormStaffCodes;
+use App\Support\TryAgainIn;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobProcessing;
@@ -137,16 +140,132 @@ class AppServiceProvider extends ServiceProvider
         // Public form submissions. Tighter than 'contact' because an RSVP or camp
         // signup form is a materially bigger abuse target than a contact form, and a
         // legitimate person submits once. Keyed by IP AND form so flooding one form
-        // cannot lock a visitor out of a different masjid's form.
+        // cannot lock a visitor out of a different masjid's form. The hourly figure
+        // is config('forms.submit_per_hour') — 8, as it always was, unless an
+        // operator raises it for an event.
+        //
+        // A request carrying a staff credential (a code typed at the gate, or the
+        // token one was exchanged for — App\Support\FormStaffCodes) is limited per
+        // CODE instead, keyed by the code's HMAC digest: every staff phone at the
+        // venue shares one NAT address, and a walk-up every few minutes is a normal
+        // gate. A junk credential cannot be used to get round the public limit: a
+        // request carrying one either presents a good credential for the form or
+        // writes nothing.
+        //
+        // Every staff request but a VERIFIED token also meets a per-connection flood
+        // guard, listed FIRST, so a request it turns away never spends a holder's
+        // hourly allowance. A verified token (genuine, live, from the phone its
+        // code is bound to: FormStaffCodes::throttleBucket()) never meets it. Junk
+        // codes sent from the venue wifi fill that guard, and they would otherwise
+        // stop every staff phone behind the same address from recording cash. A typed
+        // code is charged to its holder's hour only when it would be accepted from
+        // that phone; every refused one meets the guard alone, so knowing a code is
+        // not a way to spend its holder's hour, and the limit headers are the same
+        // for every refusal.
+        //
+        // Each 429 carries the throttle's Retry-After and X-RateLimit-Reset, and says
+        // how long in words: the per-code window runs an hour from its first entry.
         RateLimiter::for('form-submit', function (Request $request) {
-            $key = $request->ip() . '|' . $request->route('form_id');
+            $formId = $request->route('form_id');
+            $staff = FormStaffCodes::throttleBucket($request, $formId);
 
-            return Limit::perHour(8)->by($key)->response(function () {
-                return response()->json([
+            if ($staff === null) {
+                $key = $request->ip() . '|' . $formId;
+
+                return Limit::perHour(max(1, (int) config('forms.submit_per_hour', 8)))->by($key)->response(function () {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Too many submissions from this connection. Please try again later.',
+                    ], 429);
+                });
+            }
+
+            $tooMany = fn (Request $request, array $headers) => response()->json([
+                'status' => 'error',
+                'message' => 'Too many staff entries. ' . TryAgainIn::fromHeaders($headers),
+            ], 429, $headers);
+
+            // The throttle checks and charges these in order, stopping at the first
+            // that is full.
+            $limits = [];
+
+            if (! $staff['verified']) {
+                $limits[] = Limit::perMinute(max(1, (int) config('forms.code_per_minute_per_ip', 30)))
+                    ->by('form-code-ip:' . $request->ip() . '|' . $formId)
+                    ->response($tooMany);
+            }
+
+            // None for a token that did not check out: it writes nothing, and is no
+            // holder's to charge.
+            if ($staff['bucket'] !== null) {
+                $limits[] = Limit::perHour(max(1, (int) config('forms.code_per_hour', 60)))
+                    ->by('form-code:' . $formId . '|' . $staff['bucket'])
+                    ->response($tooMany);
+            }
+
+            return $limits;
+        });
+
+        // The staff-code exchange (POST /forms/{id}/staff-session). A flood guard
+        // only: the brute-force defence is FormStaffCodes' failure limiter. Keyed
+        // per DEVICE as well as per connection, as that limiter is. Every phone at
+        // the venue shares one address, and a guard keyed by the address alone is
+        // one a stranger fills with junk codes to stop every staff phone behind it
+        // swapping its code for a token. A guesser who rotates device ids gets past
+        // this guard and meets the failure limiter's form-wide ceiling instead.
+        // Hashed only to bound the key's length; a non-scalar device_id is refused
+        // inside, so it is merely counted here.
+        RateLimiter::for('form-staff-session', function (Request $request) {
+            $device = $request->input('device_id');
+            $key = 'form-staff-session:' . $request->route('form_id') . '|'
+                . hash('sha256', $request->ip() . '|' . (is_scalar($device) ? (string) $device : ''));
+
+            return Limit::perMinute(max(1, (int) config('forms.code_per_minute_per_ip', 30)))->by($key)
+                ->response(fn (Request $request, array $headers) => response()->json([
                     'status' => 'error',
-                    'message' => 'Too many submissions from this connection. Please try again later.',
-                ], 429);
-            });
+                    'message' => 'Too many staff code attempts. ' . TryAgainIn::fromHeaders($headers),
+                ], 429, $headers));
+        });
+
+        // The card return page (GET /form-responses/{uuid}) and "Return to payment"
+        // (POST /form-responses/{uuid}/checkout). Keyed by the registration's uuid,
+        // NOT the connection (festival brief, blocker 3): every phone at the venue
+        // shares one address, and a per-address bucket would serve a handful of payers
+        // an hour. The return page polls while the webhook lands, so 30 reads per
+        // registration per hour is two full rounds of polling.
+        //
+        // A uuid that names no registration at the header's masjid
+        // (FormResponse::isPaymentHandle(), one query on the unique index) meets a
+        // per-connection flood guard INSTEAD, set far above any queue of real payers: it
+        // only stops one client hammering the lookup with made-up uuids. A real
+        // registration never meets that guard, so the junk that fills it (a stranger on
+        // the venue wifi, or on a carrier's shared address) never stops a payer behind the
+        // same address, and a request it turns away never spends a registration's own
+        // allowance. Each 429 carries the throttle's Retry-After and says how long in
+        // words: a registration's window runs an hour from its first request.
+        RateLimiter::for('form-status', function (Request $request) {
+            $tooMany = fn (Request $request, array $headers) => response()->json([
+                'status' => 'error',
+                'message' => 'Too many requests. ' . TryAgainIn::fromHeaders($headers),
+            ], 429, $headers);
+
+            return FormResponse::isPaymentHandle((string) $request->route('uuid'), (int) $request->header('masjid-id'))
+                ? Limit::perHour(30)->by('form-status:' . strtolower((string) $request->route('uuid')))->response($tooMany)
+                : Limit::perMinute(300)->by('form-status-ip:' . $request->ip())->response($tooMany);
+        });
+
+        // Each "Return to payment" may open a Stripe page on the organisation's
+        // account, so it is tighter than the status read, and still per registration,
+        // with made-up uuids kept to a per-connection guard as above.
+        RateLimiter::for('form-checkout', function (Request $request) {
+            $tooMany = fn (Request $request, array $headers) => response()->json([
+                'status' => 'error',
+                'message' => 'Too many payment attempts. ' . TryAgainIn::fromHeaders($headers),
+            ], 429, $headers);
+
+            return FormResponse::isPaymentHandle((string) $request->route('uuid'), (int) $request->header('masjid-id'))
+                ? Limit::perHour(20)->by('form-checkout:' . strtolower((string) $request->route('uuid')))->response($tooMany)
+                : Limit::perHour(120)->by('form-checkout-ip:' . $request->ip() . '|' . (string) $request->header('masjid-id'))->response($tooMany);
         });
 
         // Public appointment requests (Community vertical, T-021). Same shape as

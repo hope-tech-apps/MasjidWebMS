@@ -163,9 +163,9 @@ class SectionContentBinder
             return $content;
         }
 
-        // Public shape ONLY. `settings` carries notification recipients and the identity
-        // map, which are operational detail and must not be published; the renderer gets
-        // just the parts it draws with.
+        // Public shape ONLY. `settings` carries notification recipients, the identity
+        // map and the WhatsApp group link, none of which may be published; the renderer
+        // gets just the parts it draws with.
         $settings = $form->settings ?? [];
 
         $content['form'] = [
@@ -188,7 +188,65 @@ class SectionContentBinder
             ],
         ];
 
+        // Only on a form that takes payment, so every other form publishes exactly
+        // the payload it always has.
+        $payment = self::publicPayment($form);
+
+        if ($payment !== null) {
+            $content['form']['settings']['payment'] = $payment;
+        }
+
         return $content;
+    }
+
+    /**
+     * The payment switches the renderer draws with (DECISIONS.md 2026-09-11), or
+     * null when the form takes no payment of either kind.
+     *
+     * An allowlist, like the rest of bindForm(), and two things are never on it:
+     *
+     *  - the WhatsApp group link and its label. The link is handed out only once
+     *    a registration is settled (the submit response, the status read, the
+     *    receipt); in the page source it is a group anyone can join without
+     *    registering, let alone paying.
+     *  - anything about staff codes beyond whether to draw the staff-entry link:
+     *    no code, digest, hint, holder or count.
+     *
+     *   online            card payment is on and there is a price (Form::takesOnlinePayment())
+     *   available         …and the organisation can take a card right now (Stripe
+     *                     Connect live), so the page can say so instead of 422ing
+     *   allowFeeCoverage  offer the "cover the card fee" checkbox
+     *   staffEntry        draw the staff-entry link: codes on, and the form is
+     *                     active and not full. The registration WINDOW is ignored,
+     *                     as the gate ignores it (Form::acceptsStaffEntry())
+     *   unitMinor         the price in force today in cents (App\Support\FormPayment),
+     *                     so the page never converts the decimal fee itself
+     *   stripeFee*        Stripe's published rate, so the page can show the fee
+     *                     before submitting. Display only: the server recomputes it
+     *
+     * Pinned by tests/Feature/FormPaymentPayloadTest.php.
+     *
+     * @return array<string,mixed>|null
+     */
+    private static function publicPayment(Form $form): ?array
+    {
+        $online = $form->takesOnlinePayment();
+        $staffCodes = $form->takesStaffCodes();
+
+        if (! $online && ! $staffCodes) {
+            return null;
+        }
+
+        return [
+            'online' => $online,
+            'available' => $online && (bool) $form->masjid?->canAcceptDonations(),
+            'allowFeeCoverage' => $form->allowsFeeCoverage(),
+            'staffEntry' => $staffCodes && $form->acceptsStaffEntry(),
+            'unitMinor' => FormPayment::unitMinor($form),
+            'currency' => FormPayment::currencyFor($form),
+            'stripeFeePercentage' => StripeFees::percentage(),
+            'stripeFeeFixedMinor' => StripeFees::fixed(),
+        ];
     }
 
     /**

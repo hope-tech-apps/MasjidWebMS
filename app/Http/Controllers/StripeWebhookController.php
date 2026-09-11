@@ -12,6 +12,7 @@ use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
+use App\Services\Stripe\FormResponsePaymentService;
 use App\Services\Stripe\MealOrderPaymentService;
 use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
@@ -65,6 +66,13 @@ use Symfony\Component\HttpFoundation\Response;
  * `subscription_schedule.completed` are new arms whose non-registration case is
  * `null` — precisely what `default` did with them yesterday. No donation
  * behaviour is altered; DonationFlowTest passes untouched.
+ *
+ * FORMS (DECISIONS.md 2026-09-11) add one more question, on the two success events
+ * only, asked after the order and registration questions and before the donation
+ * default: an object carrying `metadata.form_response_uuid` goes to
+ * FormResponsePaymentService. A form's expired page is not routed (a form holds no
+ * seat), so it is acked and ignored exactly as before, and every other event takes
+ * the route it took yesterday. Pinned by FormPaymentWebhookTest.
  */
 class StripeWebhookController extends Controller
 {
@@ -76,6 +84,7 @@ class StripeWebhookController extends Controller
         private DonorContactService $donorContacts,
         private RegistrationPaymentService $registrationPayments,
         private MealOrderPaymentService $mealOrderPayments,
+        private FormResponsePaymentService $formResponsePayments,
     ) {
     }
 
@@ -188,21 +197,25 @@ class StripeWebhookController extends Controller
 
         // The branch that decides whose event this is, by DISTINCT metadata key.
         // A meal order carries metadata.order_uuid; a registration carries
-        // metadata.registration_uuid; everything else keeps today's donation
+        // metadata.registration_uuid; a form response carries
+        // metadata.form_response_uuid; everything else keeps today's donation
         // behaviour exactly. The keys never collide, so an order event can never
         // book a donation or a registration, and vice versa.
         $isOrder = MealOrderPaymentService::isOrderEvent($object);
         $isRegistration = ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
+        $isFormResponse = ! $isOrder && ! $isRegistration && FormResponsePaymentService::isFormResponseEvent($object);
 
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
+                $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
             'payment_intent.succeeded' => match (true) {
                 $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
                 $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
+                $isFormResponse => $this->formResponsePayments->handlePaymentIntentSucceeded($object, $account),
                 default => $this->handlePaymentIntentSucceeded($object, $account),
             },
             // New event type for this slice: the seat-release trigger. A

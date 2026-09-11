@@ -3,13 +3,18 @@
 namespace App\Http\Requests\Admin\Forms;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Models\Form;
 use App\Rules\TierCutoff;
 use App\Rules\ValidFormSchema;
+use App\Support\FormPayment;
 use App\Support\FormSchema;
 use Illuminate\Validation\Rule;
 
 class StoreFormRequest extends BaseFormRequest
 {
+    /** The `settings.payment` switches (DECISIONS.md 2026-09-11), coerced alike on every door. */
+    public const PAYMENT_FLAGS = ['online', 'staffCodes', 'allowFeeCoverage'];
+
     /**
      * The builder may post either JSON or FormData depending on the SPA screen, so
      * `schema` and `settings` can arrive as JSON-encoded strings — decode them before
@@ -25,6 +30,14 @@ class StoreFormRequest extends BaseFormRequest
             }
         }
 
+        // After the decode above, so a JSON-string body and a nested form body are
+        // read alike. UpdateFormRequest inherits this, so the PUT coerces too.
+        $settings = $merge['settings'] ?? $this->input('settings');
+
+        if (is_array($settings) && is_array($settings['payment'] ?? null)) {
+            $merge['settings'] = self::coercePaymentFlags($settings);
+        }
+
         if ($this->has('is_active')) {
             $merge['is_active'] = filter_var($this->input('is_active'), FILTER_VALIDATE_BOOLEAN);
         }
@@ -32,6 +45,54 @@ class StoreFormRequest extends BaseFormRequest
         if (! empty($merge)) {
             $this->merge($merge);
         }
+    }
+
+    /**
+     * `settings.payment`'s switches as real booleans, read the way every door must
+     * read them before the `boolean` rule does.
+     *
+     * Laravel's `boolean` accepts true/false/1/0/"1"/"0" and REFUSES the strings
+     * "true" and "false" — exactly what a form-encoded body carries
+     * (.claude/rules/shipping.md: the cover_fees outage of 2026-09-09). So each
+     * switch goes through FILTER_VALIDATE_BOOLEAN ("on"/"off"/"yes"/"no" too),
+     * which is also how Form::paymentFlag() reads the stored value. Only a
+     * readable answer replaces the value: genuine nonsense is left as it came, so
+     * the rule refuses it rather than it quietly meaning "off". A blank becomes
+     * null, as ConvertEmptyStringsToNull already makes it on the HTTP doors, so
+     * `form:import` — which sits behind no middleware and calls this too — stores
+     * exactly what POST stores.
+     */
+    public static function coercePaymentFlags(mixed $settings): mixed
+    {
+        if (! is_array($settings) || ! is_array($settings['payment'] ?? null)) {
+            return $settings;
+        }
+
+        foreach (self::PAYMENT_FLAGS as $flag) {
+            if (! array_key_exists($flag, $settings['payment'])) {
+                continue;
+            }
+
+            $value = $settings['payment'][$flag];
+
+            if (is_string($value) && trim($value) === '') {
+                $settings['payment'][$flag] = null;
+
+                continue;
+            }
+
+            if ($value === null || is_bool($value) || is_array($value)) {
+                continue;
+            }
+
+            $coerced = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+            if ($coerced !== null) {
+                $settings['payment'][$flag] = $coerced;
+            }
+        }
+
+        return $settings;
     }
 
     public function rules(): array
@@ -162,6 +223,29 @@ class StoreFormRequest extends BaseFormRequest
             'settings.fee.tiers.*.label' => 'nullable|string|max:60',
             'settings.fee.currency' => 'nullable|string|size:3',
             'settings.fee.perEntryOfSection' => 'nullable|string|max:255',
+
+            // Payment (DECISIONS.md 2026-09-11). Absent means off, which is every
+            // form written before the festival. Each switch is a real boolean by
+            // the time these run — coercePaymentFlags() reads a form-encoded
+            // "true" first, on POST, PUT and form:import alike — and turning one
+            // on puts the fee under the stricter rules in crossCheck().
+            'settings.payment' => 'nullable|array',
+            'settings.payment.online' => 'nullable|boolean',
+            'settings.payment.staffCodes' => 'nullable|boolean',
+            'settings.payment.allowFeeCoverage' => 'nullable|boolean',
+            // The day of the event: staff codes default to expiring at the end of it, on
+            // the masjid's clock (Form::eventDate()). A calendar date and nothing else.
+            // A form carries no other event day, and guessing one from closes_at put
+            // every code's end at midnight on the festival's own morning.
+            'settings.payment.eventDate' => 'nullable|date_format:Y-m-d',
+
+            // The group link a registrant gets once they are settled. It is never
+            // published on the page (SectionContentBinder::bindForm()), so only a
+            // chat.whatsapp.com invite gets in: the pattern is Form's own, the one
+            // Form::whatsappUrl() re-checks on the way out, so the door and the
+            // reader cannot disagree about what a WhatsApp link is.
+            'settings.whatsappUrl' => ['nullable', 'string', 'max:120', 'regex:' . Form::WHATSAPP_URL_PATTERN],
+            'settings.whatsappLabel' => 'nullable|string|max:80',
         ];
     }
 
@@ -254,7 +338,126 @@ class StoreFormRequest extends BaseFormRequest
                 "\"{$label}\" is not a repeatable section, so the fee cannot be charged per entry of it.";
         }
 
+        // A key already refused above keeps its first, more specific message.
+        foreach (self::paymentProblems($schema, $settings) as $field => $message) {
+            $problems[$field] ??= $message;
+        }
+
         return $problems;
+    }
+
+    /**
+     * NEVER FREE BY ACCIDENT (festival brief, blocker 1): what a form must be
+     * before it may take money — card payment (`payment.online`) or cash by staff
+     * code (`payment.staffCodes`). With either switch on:
+     *
+     *  1. The fee is charged per entry of a repeatable section that DEMANDS at
+     *     least one entry. FormSchema::validator() adds a minimum-rows rule only
+     *     for minEntries > 0 and the renderer's minimum is client-side only, so
+     *     otherwise an empty attendee list posts straight past both, and
+     *     FormSchema::amountDue() multiplies the price by zero. A flat fee is not
+     *     allowed on a paying form: the festival charges per attendee (owner,
+     *     2026-09-10), and one per-entry rule is what the door counts bracelets by.
+     *  2. EVERY price — the flat amount and each tier, not only the tier in force
+     *     today — is at least Stripe's 50¢ and a whole number of cents. A $0
+     *     early-bird tier would make the form free until its cut-off; 12.345 has
+     *     no honest cent value (FormPayment::wholeMinor()).
+     *  3. A card payment is in US dollars, the only currency the Checkout path is
+     *     built and tested for. Cash by code carries no such limit.
+     *
+     * The switches are read as Form::paymentFlag() reads them, so a switch this
+     * lets through is exactly a switch the model acts on. Values the field rules
+     * already refuse (a non-numeric price) are left to those rules.
+     *
+     * @param  array<string,mixed>  $schema
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function paymentProblems(array $schema, array $settings): array
+    {
+        $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
+        $online = self::switchedOn($payment['online'] ?? null);
+
+        if (! $online && ! self::switchedOn($payment['staffCodes'] ?? null)) {
+            return [];
+        }
+
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $problems = [];
+
+        $perEntry = $fee['perEntryOfSection'] ?? null;
+
+        if ($perEntry === null || (is_string($perEntry) && trim($perEntry) === '')) {
+            $problems['settings.fee.perEntryOfSection'] =
+                'A form that takes payment must charge its fee per entry of a repeatable section (for example, per attendee).';
+        } elseif (is_string($perEntry) && ($section = self::repeatableSection($schema, $perEntry)) !== null) {
+            $min = $section['minEntries'] ?? 0;
+
+            if (! is_numeric($min) || (int) $min < 1) {
+                $problems['settings.fee.perEntryOfSection'] =
+                    "\"{$perEntry}\" must require at least one entry on a form that takes payment, or a registration with no entries would owe nothing.";
+            }
+        }
+        // A name that is not a repeatable section at all is refused by crossCheck() above.
+
+        $prices = [];
+
+        if (($fee['amount'] ?? null) !== null) {
+            $prices['settings.fee.amount'] = $fee['amount'];
+        }
+
+        foreach (is_array($fee['tiers'] ?? null) ? $fee['tiers'] : [] as $i => $tier) {
+            $prices["settings.fee.tiers.{$i}.amount"] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
+        if ($prices === []) {
+            $problems['settings.fee'] = 'A form that takes payment needs a price.';
+        }
+
+        foreach ($prices as $field => $amount) {
+            if (! is_numeric($amount)) {
+                continue;
+            }
+
+            $minor = FormPayment::wholeMinor($amount);
+
+            if ($minor === null) {
+                $problems[$field] = 'A price on a form that takes payment must be in whole cents (at most two decimal places).';
+            } elseif ($minor < FormPayment::MIN_CHARGE_MINOR) {
+                $problems[$field] = 'Every price on a form that takes payment must be at least $0.50, the smallest amount a card can be charged.';
+            }
+        }
+
+        $currency = $fee['currency'] ?? null;
+
+        if ($online && $currency !== null && strtoupper(trim((string) $currency)) !== 'USD') {
+            $problems['settings.fee.currency'] = 'Card payment is available in US dollars (USD) only.';
+        }
+
+        return $problems;
+    }
+
+    /** A payment switch, read exactly as Form::paymentFlag() reads the stored value. */
+    private static function switchedOn(mixed $value): bool
+    {
+        return filter_var($value ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true;
+    }
+
+    /**
+     * The repeatable section with this id, or null.
+     *
+     * @param  array<string,mixed>  $schema
+     * @return array<string,mixed>|null
+     */
+    private static function repeatableSection(array $schema, string $id): ?array
+    {
+        foreach (is_array($schema['sections'] ?? null) ? $schema['sections'] : [] as $section) {
+            if (is_array($section) && ! empty($section['repeatable']) && ($section['id'] ?? null) === $id) {
+                return $section;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -296,6 +499,19 @@ class StoreFormRequest extends BaseFormRequest
             'settings.identity.name' => 'name question',
             'settings.identity.email' => 'email question',
             'settings.identity.phone' => 'phone question',
+            'settings.payment.online' => 'card payment switch',
+            'settings.payment.staffCodes' => 'staff codes switch',
+            'settings.payment.allowFeeCoverage' => 'card fee switch',
+            'settings.payment.eventDate' => 'event date',
+            'settings.whatsappUrl' => 'WhatsApp group link',
+            'settings.whatsappLabel' => 'WhatsApp button label',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'settings.whatsappUrl.regex' => 'The WhatsApp group link must be a WhatsApp invite link starting https://chat.whatsapp.com/.',
         ];
     }
 

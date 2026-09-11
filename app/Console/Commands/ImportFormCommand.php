@@ -44,6 +44,9 @@ use Illuminate\Support\Facades\Validator;
  * So it is no longer a promise. FormDoorEquivalenceTest feeds one fixture table through
  * every door and asserts the verdicts and the stored rows are identical; when this
  * sentence next goes false, that test fails instead of a committee's camp.
+ *
+ * What is STORED is what the rules validated, as the builder's POST and PUT store
+ * `$request->safe()->all()`: a `settings` key no rule names is stored by neither door.
  */
 class ImportFormCommand extends Command
 {
@@ -125,6 +128,15 @@ class ImportFormCommand extends Command
             $definition['is_active'] = filter_var($definition['is_active'], FILTER_VALIDATE_BOOLEAN);
         }
 
+        // The payment switches, read EXACTLY as StoreFormRequest reads them on POST
+        // and PUT, before the shared rules run: a file saying "online": "true"
+        // stores the boolean the builder stores, and "maybe" is refused by the same
+        // `boolean` rule. Without this the API would accept a form-encoded "true"
+        // that a file could not carry, or the two would store different values.
+        if (array_key_exists('settings', $definition)) {
+            $definition['settings'] = StoreFormRequest::coercePaymentFlags($definition['settings']);
+        }
+
         // EVERY rule the admin doors apply, from the admin doors themselves — not
         // a paraphrase of them. `slug` is the one deliberate difference and it is
         // argued on StoreFormRequest::rules(): this command is idempotent by
@@ -200,7 +212,12 @@ class ImportFormCommand extends Command
             'name' => $definition['name'],
             'description' => $definition['description'] ?? null,
             'schema' => $definition['schema'],
-            'settings' => $definition['settings'] ?? null,
+            // The validated settings, not the file as it came: the shape the builder's
+            // POST and PUT store. Laravel leaves out every key under `settings` that no
+            // rule names (a tier's `note`, a setting added before its rule), so such a
+            // key is stored by neither door, instead of surviving here until the first
+            // builder save drops it while reporting success.
+            'settings' => $validator->validated()['settings'] ?? null,
             'is_active' => $definition['is_active'] ?? true,
             'opens_at' => $definition['opens_at'] ?? null,
             'closes_at' => $definition['closes_at'] ?? null,

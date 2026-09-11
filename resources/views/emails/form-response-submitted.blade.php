@@ -49,10 +49,16 @@
                                 @endif
                                 @if ($amountLine)
                                     <tr style="background:#fafbfc;">
-                                        <td style="padding:12px 16px; color:#7b8794;">Amount due</td>
+                                        <td style="padding:12px 16px; color:#7b8794;">{{ $amountLabel }}</td>
                                         <td style="padding:12px 16px; text-align:right; font-weight:700; font-size:16px;">
                                             {{ $amountLine }}@if ($tierLabel)<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $tierLabel }} rate</span>@endif
                                         </td>
+                                    </tr>
+                                @endif
+                                @if ($paymentLine)
+                                    <tr>
+                                        <td style="padding:12px 16px; color:#7b8794;">Payment</td>
+                                        <td style="padding:12px 16px; text-align:right; font-weight:600; color:#2f9e57;">{{ $paymentLine }}</td>
                                     </tr>
                                 @endif
                                 <tr>

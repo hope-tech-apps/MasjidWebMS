@@ -43,6 +43,8 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
         public ?string $tierLabel,
         public array $people,
         public string $adminUrl,
+        /** How it was paid ("Paid $30.87 by card"); null for a registration that has paid nothing. */
+        public ?string $paymentLine = null,
     ) {
     }
 
@@ -72,6 +74,8 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
                 'tierLabel' => $this->tierLabel,
                 'people' => $this->people,
                 'adminUrl' => $this->adminUrl,
+                'amountLabel' => $this->paymentLine ? 'Price' : 'Amount due',
+                'paymentLine' => $this->paymentLine,
             ],
         );
     }

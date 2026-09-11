@@ -262,6 +262,13 @@ return [
             'device_id',
             'ip_address',
             'user_agent',
+            'client_payload_hash', // a keyed digest of the answers, for the double-submit guard; meaningless once `data` is scrubbed
+            'stripe_checkout_session_id', // a live Checkout Session on the organisation's account, nulled as registrations and meal_orders null theirs: a NULL opens a fresh page on staging
+            'stripe_payment_intent_id',   // a live payment, the same
+        ],
+
+        'form_staff_codes' => [
+            'bound_device_id', // the phone that claimed a festival staff code — a per-install identifier
         ],
 
         'masjid_sms_senders' => [
@@ -387,6 +394,10 @@ return [
             'respondent_name' => 'full_name',
             'respondent_email' => 'email',
             'respondent_phone' => 'phone',
+        ],
+
+        'form_staff_codes' => [
+            'holder_name' => 'label:Staff', // "Staff 3" — the staff member holding a cash code. The cash totals still group by holder
         ],
 
         'group_posts' => [

@@ -194,7 +194,13 @@ const feeSummary = computed(() => {
     const fee = selectedForm.value?.settings?.fee;
     if (!fee) return null;
 
-    const amount = `${fee.currency || 'USD'} ${fee.amount}`;
+    // A form priced by date steps may carry no flat amount at all (the festival form).
+    const tiers = Array.isArray(fee.tiers) ? fee.tiers : [];
+    if (!tiers.length && (fee.amount === null || fee.amount === undefined)) return null;
+
+    const amount = tiers.length
+        ? `${fee.currency || 'USD'} ${tiers.map(tier => tier.amount).join(' / ')}`
+        : `${fee.currency || 'USD'} ${fee.amount}`;
 
     return fee.perEntryOfSection ? `${amount} per entry of "${fee.perEntryOfSection}"` : `${amount} per submission`;
 });

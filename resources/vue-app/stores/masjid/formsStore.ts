@@ -9,6 +9,9 @@ import {
     FormFieldTypeInfo,
     FormOption,
     FormPayload,
+    FormStaffCode,
+    FormStaffCodeIssued,
+    FormStaffCodesMeta,
     FORM_FIELD_TYPES
 } from "@/core/types/data/masjid-related/Form";
 
@@ -140,6 +143,100 @@ export const useFormsStore = defineStore('formsStore', () => {
         throw new Error('Failed to update form.');
     }
 
+    // ------------------------------------------------------------- staff codes
+    // /forms/{form_id}/staff-codes (FormStaffCodesController): one secret cash code per
+    // staff member. Bodies are FormData, which PHP parses on a POST; nothing sent here is a
+    // boolean. The plaintext code exists only in issueStaffCode()'s answer, and it is
+    // handed straight to the caller, never kept in store state.
+
+    function requireMasjidId(): number | string {
+        const id = masjidId();
+        if (!id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        return id;
+    }
+
+    /** The panel's list, and meta: the timezone, the event day and the default expiry. */
+    async function fetchStaffCodes(formId: number | string): Promise<{ codes: FormStaffCode[]; meta: FormStaffCodesMeta }> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.get(`/api/admin/masjids/${id}/forms/${formId}/staff-codes`);
+        if (res.data?.status === 'success' && Array.isArray(res.data?.data) && res.data?.meta) {
+            return { codes: res.data.data, meta: res.data.meta };
+        }
+
+        throw new Error('Unexpected staff codes response.');
+    }
+
+    /**
+     * Issue a code. `expiresAt` is a calendar day ("2026-10-17", good to midnight at its
+     * end on the masjid's clock) or null for the form's event day. Throws on a 422 so the
+     * panel can put each refusal beside its field.
+     */
+    async function issueStaffCode(
+        formId: number | string,
+        holderName: string,
+        expiresAt: string | null
+    ): Promise<{ code: FormStaffCodeIssued; message: string }> {
+        const id = requireMasjidId();
+
+        const body = new FormData();
+        body.append('holder_name', holderName);
+        // Left out rather than sent blank: absent is what asks for the event day.
+        if (expiresAt) body.append('expires_at', expiresAt);
+
+        const res: AxiosResponse = await ApiService.post(`/api/admin/masjids/${id}/forms/${formId}/staff-codes`, body);
+        if (res.data?.status === 'success' && typeof res.data?.data?.code === 'string' && res.data.data.code) {
+            return { code: res.data.data, message: res.data.message ?? '' };
+        }
+
+        throw new Error('The server did not return the new code. Refresh the list, revoke the code if it appears, and add it again.');
+    }
+
+    /** Revoke: the code stops working at once and its row stays, with the cash it recorded. */
+    async function revokeStaffCode(formId: number | string, codeId: number): Promise<{ code: FormStaffCode; message: string }> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.delete(`/api/admin/masjids/${id}/forms/${formId}/staff-codes/${codeId}`);
+        return codeAnswer(res, 'Could not revoke the code.');
+    }
+
+    /** Release the code from its phone, so the next phone to enter it claims it. */
+    async function resetStaffCodeDevice(formId: number | string, codeId: number): Promise<{ code: FormStaffCode; message: string }> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/forms/${formId}/staff-codes/${codeId}/reset-device`,
+            new FormData()
+        );
+        return codeAnswer(res, 'Could not release the phone.');
+    }
+
+    /** Lift every wrong-code lockout on the form at once. Answers with the server's message. */
+    async function clearStaffCodeLockout(formId: number | string): Promise<string> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/forms/${formId}/staff-codes/clear-lockout`,
+            new FormData()
+        );
+        if (res.data?.status === 'success') {
+            return res.data.message ?? '';
+        }
+
+        throw new Error('Could not clear the lockouts.');
+    }
+
+    function codeAnswer(res: AxiosResponse, failure: string): { code: FormStaffCode; message: string } {
+        if (res.data?.status === 'success' && res.data?.data) {
+            return { code: res.data.data, message: res.data.message ?? '' };
+        }
+
+        throw new Error(failure);
+    }
+
     return {
         formOptions,
         fieldTypes,
@@ -148,6 +245,11 @@ export const useFormsStore = defineStore('formsStore', () => {
         fetchFieldTypes,
         fetchForm,
         createForm,
-        updateForm
+        updateForm,
+        fetchStaffCodes,
+        issueStaffCode,
+        revokeStaffCode,
+        resetStaffCodeDevice,
+        clearStaffCodeLockout
     }
 })

@@ -42,19 +42,60 @@ class FormNotifier
     /**
      * Fire both notifications for an accepted submission.
      *
+     * "Accepted" is the submit for a free entry or cash taken at the gate, and the payment
+     * for a card registration: the signed webhook calls this on the unpaid→paid transition
+     * (App\Services\Stripe\FormResponsePaymentService). A card registration still waiting
+     * on Stripe is not accepted yet, so it is never emailed. A receipt then would confirm
+     * a registration that may never be paid for.
+     *
+     * Once a registration is paid, both emails say how ("Paid $30.87 by card", "Paid in
+     * cash", "Paid (recorded by staff)"), and the receipt carries the WhatsApp group link
+     * only when the registration is settled (FormResponse::isSettled()), never to someone
+     * who still owes.
+     *
      * Deliberately returns void and swallows everything: the caller has already told the
-     * submitter their registration was received, and that statement is true regardless of
-     * what happens to the email.
+     * submitter their registration was received (or Stripe has taken their money), and that
+     * statement is true regardless of what happens to the email.
+     *
+     * $toCoordinators is false when the coordinators were already told about this
+     * registration at submit: a Wix payer an admin marks paid at the door, or cash taken
+     * at the table for a registration made with no money leg. The payer still gets the
+     * paid receipt, which is where the group link travels in the fallback (festival
+     * brief, blocker 5); the coordinators do not hear about the same person twice.
      */
-    public static function submitted(Form $form, FormResponse $response): void
+    public static function submitted(Form $form, FormResponse $response, bool $toCoordinators = true): void
     {
+        if ($response->hasMoneyLeg() && ! $response->isPaid()) {
+            return;
+        }
+
         $masjid = $form->relationLoaded('masjid')
             ? $form->masjid
             : Masjid::find($form->masjid_id);
 
-        $people = self::people($form, $response);
+        try {
+            $people = self::people($form, $response);
+        } catch (\Throwable $e) {
+            // The attendee list is a courtesy; the emails are not. Without this, a schema
+            // the roster cannot read would 500 a submit that is already committed, or a
+            // webhook whose payment is already recorded (whose retry then sends nothing).
+            Log::error('Form notification could not list the attendees; sending without them.', [
+                'form_id' => $form->id,
+                'response_id' => $response->id,
+                'masjid_id' => $form->masjid_id,
+                'exception' => $e->getMessage(),
+            ]);
 
-        self::attempt('coordinators', $form, $response, function () use ($form, $response, $masjid, $people) {
+            $people = [];
+        }
+
+        $paymentLine = self::paymentLine($response);
+
+        self::attempt('coordinators', $form, $response, function () use ($form, $response, $masjid, $people, $paymentLine, $toCoordinators) {
+            if (! $toCoordinators) {
+                return;
+            }
+
             $recipients = self::coordinatorRecipients($form, $masjid);
 
             if ($recipients === []) {
@@ -77,13 +118,14 @@ class FormNotifier
                 registrantPhone: $response->respondent_phone,
                 entryCount: (int) $response->entry_count,
                 amountLine: self::amountLine($form, $response),
-                tierLabel: self::tierLabel($form),
+                tierLabel: self::tierLabel($form, $response),
                 people: $people,
                 adminUrl: self::adminUrl(),
+                paymentLine: $paymentLine,
             ));
         });
 
-        self::attempt('receipt', $form, $response, function () use ($form, $response, $masjid, $people) {
+        self::attempt('receipt', $form, $response, function () use ($form, $response, $masjid, $people, $paymentLine) {
             if (! self::receiptsEnabled($form)) {
                 return;
             }
@@ -103,7 +145,7 @@ class FormNotifier
                 registrantName: $response->respondent_name,
                 entryCount: (int) $response->entry_count,
                 amountLine: self::amountLine($form, $response),
-                tierLabel: self::tierLabel($form),
+                tierLabel: self::tierLabel($form, $response),
                 people: $people,
                 title: $settings['successTitle'] ?? null,
                 body: $settings['successBody'] ?? null,
@@ -111,8 +153,15 @@ class FormNotifier
                     (array) ($settings['successNextSteps'] ?? []),
                     fn ($step) => is_string($step) && trim($step) !== ''
                 )),
-                paymentNote: is_string($settings['paymentNote'] ?? null) ? $settings['paymentNote'] : null,
+                // How to pay is noise once paid, and under the Wix fallback it is the pay-here
+                // link: restated on a paid receipt, it invites a second payment.
+                paymentNote: $paymentLine === null && is_string($settings['paymentNote'] ?? null)
+                    ? $settings['paymentNote']
+                    : null,
                 masjidEmail: $masjid?->email,
+                paymentLine: $paymentLine,
+                whatsappUrl: self::whatsappUrl($form, $response),
+                whatsappLabel: self::whatsappLabel($form),
             ));
         });
     }
@@ -278,18 +327,91 @@ class FormNotifier
             return null;
         }
 
-        $currency = $form->feeRule()['currency'] ?? 'USD';
+        $currency = self::feeAtSubmit($form, $response)['currency'] ?? 'USD';
         $amount = number_format((float) $response->amount_due, 2);
 
         return $currency === 'USD' ? '$' . $amount : $amount . ' ' . $currency;
     }
 
-    /** "Early bird", so a coordinator can see which price this registration locked in. */
-    private static function tierLabel(Form $form): ?string
+    /**
+     * How a paid registration was paid, for a human, or null while nothing has been paid
+     * (a free form, a legacy row, a Wix payer staff have not marked yet).
+     *
+     * A card states what Stripe charged, the card fee included, because that can differ
+     * from the price shown beside it. Cash and a payment staff recorded state only how:
+     * the amount is that price.
+     */
+    public static function paymentLine(FormResponse $response): ?string
     {
-        $label = $form->feeRule()['currentTier']['label'] ?? null;
+        if (! $response->isPaid()) {
+            return null;
+        }
+
+        return match ($response->payment_method) {
+            FormResponse::METHOD_ONLINE => $response->total_minor !== null
+                ? 'Paid ' . self::money((int) $response->total_minor, $response->currency) . ' by card'
+                : 'Paid by card',
+            FormResponse::METHOD_CASH => 'Paid in cash',
+            FormResponse::METHOD_EXTERNAL => 'Paid (recorded by staff)',
+            default => null,
+        };
+    }
+
+    /**
+     * The WhatsApp group link, for a settled registration only (paid, or nothing was ever
+     * owed). A card payer mid-checkout, or a Wix payer staff have not marked yet, gets it
+     * in the receipt sent when the payment is recorded.
+     */
+    private static function whatsappUrl(Form $form, FormResponse $response): ?string
+    {
+        $url = $form->whatsappUrl();
+
+        return $url !== null && $response->setRelation('form', $form)->isSettled() ? $url : null;
+    }
+
+    private static function whatsappLabel(Form $form): ?string
+    {
+        $label = $form->settings['whatsappLabel'] ?? null;
+
+        return is_string($label) && trim($label) !== '' ? trim($label) : null;
+    }
+
+    /**
+     * Integer cents for a human ("$30.87", "30.87 CAD"), with no float ever holding the
+     * amount. Public for the triage answer that names a card payment
+     * (FormResponsesController), so the admin reads it as the payer's receipt states it.
+     */
+    public static function money(int $minor, ?string $currency): string
+    {
+        $code = strtoupper(trim((string) $currency)) ?: 'USD';
+        $amount = number_format(intdiv($minor, 100)) . '.' . str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
+
+        return $code === 'USD' ? '$' . $amount : $amount . ' ' . $code;
+    }
+
+    /** "Early bird", so a coordinator can see which price this registration locked in. */
+    private static function tierLabel(Form $form, FormResponse $response): ?string
+    {
+        $label = self::feeAtSubmit($form, $response)['currentTier']['label'] ?? null;
 
         return is_string($label) && trim($label) !== '' ? $label : null;
+    }
+
+    /**
+     * The fee rule as it stood when this registration was made.
+     *
+     * A payment can be recorded days after the submit (the webhook, "Take cash", "Mark
+     * paid (external)"), when a later tier is in force, and the emails restate the price
+     * this person registered at, not today's. It is the instant
+     * FormResponseCheckoutService::lineItems() names the Stripe line from, so the email and
+     * the hosted page name the same tier. A row with no submitted_at is read as of now, as
+     * every row was before payments moved these emails to payment time.
+     *
+     * @return array<string,mixed>|null
+     */
+    private static function feeAtSubmit(Form $form, FormResponse $response): ?array
+    {
+        return $form->feeRule($response->submitted_at);
     }
 
     private static function adminUrl(): string

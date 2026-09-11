@@ -6,12 +6,16 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import {
+    FORM_CARD_PAGES,
+    FormCashTotals,
     FormOption,
+    FormResponseActionResult,
     FormResponseDetail,
     FormResponseFilters,
     FormResponseRow,
     FormResponsesMeta,
-    FormResponseUpdatePayload
+    FormResponseUpdatePayload,
+    FormRosterMeta
 } from "@/core/types/data/masjid-related/Form";
 
 /**
@@ -23,8 +27,12 @@ import {
  * so one tenant can never read another's registrations by guessing a form id.
  *
  * Search, filtering, sorting and pagination are ALL server-side. buildResponsesQuery()
- * is the single place filters become a query string, so the list and the CSV export
- * can never disagree about what is being shown.
+ * is the single place filters become a query string, so the list, the CSV export, the
+ * roster and the cash totals can never disagree about what is being shown.
+ *
+ * The door (DECISIONS.md 2026-09-11): collect / uncollect, take-cash and
+ * mark-paid-external each answer with the row as it now stands. Their POSTs carry an
+ * empty FormData, the encoding PHP parses; the server reads nothing from the body.
  */
 export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
@@ -35,10 +43,11 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
     /**
      * The attendee roster: one row per PERSON rather than per submission. Kept in its own
-     * slice so switching views does not blank the other one.
+     * slice so switching views does not blank the other one. Its meta carries the door
+     * filters and payment block for the form it was read for, as the list's does.
      */
     const rosterPaginated = ref<PaginatedData<any>>();
-    const rosterMeta = ref<any>();
+    const rosterMeta = ref<FormRosterMeta>();
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -53,9 +62,22 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         return authStore.dashboardMasjidId ?? masjidStore.masjid?.id ?? null;
     }
 
+    function requireMasjidId(): number | string {
+        const id = masjidId();
+        if (!id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        return id;
+    }
+
     /**
      * Serialize the filter set the server understands. Blank values are omitted rather
      * than sent empty — `status=` would fail the Rule::in() check.
+     *
+     * `sort` is omitted when unset for the same reason: the screen clears it when it flips
+     * between the registrations and the roster, and URLSearchParams would otherwise send
+     * the word "undefined", which the list's sort allowlist refuses with a 422.
      *
      * `page` is optional so the export can reuse this untouched: a CSV covers the whole
      * filtered result set, not the page the admin happens to be looking at.
@@ -67,8 +89,15 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         if (filters.status) params.append('status', filters.status);
         if (filters.from) params.append('from', filters.from);
         if (filters.to) params.append('to', filters.to);
-        params.append('sort', filters.sort);
-        params.append('direction', filters.direction);
+        if (filters.payment) params.append('payment', filters.payment);
+        if (filters.collected) params.append('collected', filters.collected);
+        if (filters.staff_code_id !== '' && filters.staff_code_id !== null && filters.staff_code_id !== undefined) {
+            params.append('staff_code_id', String(filters.staff_code_id));
+        }
+        if (filters.sort) {
+            params.append('sort', filters.sort);
+            params.append('direction', filters.direction);
+        }
         if (page !== null) params.append('page', String(page));
 
         return params.toString();
@@ -89,9 +118,9 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
     /**
      * Fetch a page of responses for one form. The response carries both the paginator
-     * and a `meta` block (the form, its schema-derived columns, the status list and the
-     * sortable allowlist) — both are stored so the table can render headers and the
-     * detail modal can label answers without re-parsing the schema.
+     * and a `meta` block (the form, its schema-derived columns, the status list, the
+     * sortable allowlist and the payment block) — both are stored so the table can render
+     * headers and the detail modal can label answers without re-parsing the schema.
      */
     async function fetchResponses(
         formId: number | string,
@@ -151,6 +180,28 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
             });
     }
 
+    /**
+     * The cash each staff member holds, over the list's own filters (FormCashTotals).
+     * The sort is left off: the totals are grouped, and on the roster the sort may be an
+     * attendee column the submission endpoints refuse.
+     */
+    async function fetchCashTotals(formId: number | string, filters: FormResponseFilters): Promise<FormCashTotals> {
+        const id = requireMasjidId();
+
+        const params = new URLSearchParams(buildResponsesQuery(filters));
+        params.delete('sort');
+        params.delete('direction');
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${id}/forms/${formId}/responses/cash-totals?${params.toString()}`
+        );
+        if (res.data?.status === 'success' && res.data?.data && Array.isArray(res.data.data.holders)) {
+            return res.data.data;
+        }
+
+        throw new Error('Unexpected cash totals response.');
+    }
+
     /** Fetch one response — the only endpoint that returns the full submission. */
     async function fetchResponse(
         formId: number | string,
@@ -172,35 +223,33 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     /**
      * Triage a response. Only status and admin_notes are accepted by the API — the
      * submitted answers are evidence of what somebody agreed to and stay immutable.
+     *
+     * Only the keys present in `payload` are sent. A request saying "cancelled" is answered
+     * with `card_page` (what that did about the card payment page), and with a `message`
+     * and `warning` when there is something to say.
      */
     async function updateResponse(
         formId: number | string,
         responseId: number | string,
         payload: FormResponseUpdatePayload
-    ): Promise<FormResponseDetail> {
-        const id = masjidId();
-        if (!id) {
-            throw new Error('Masjid not specified.');
-        }
+    ): Promise<FormResponseActionResult> {
+        const id = requireMasjidId();
 
-        // ApiService.put sends application/x-www-form-urlencoded; serialize the body to
-        // URLSearchParams (matches contactsStore.updateContact).
+        // ApiService.put sends application/x-www-form-urlencoded, the encoding PHP parses
+        // on a PUT; serialize the body to URLSearchParams (matches contactsStore.updateContact).
         const body = new URLSearchParams();
-        body.append('status', payload.status);
-        body.append('admin_notes', payload.admin_notes ?? '');
+        if (payload.status !== undefined) body.append('status', payload.status);
+        if (payload.admin_notes !== undefined) body.append('admin_notes', payload.admin_notes);
 
         const res: AxiosResponse = await ApiService.put(
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}`,
             body
         );
-        if (res.data?.status === 'success' && res.data?.data) {
-            return res.data.data;
-        }
 
-        throw new Error('Failed to update response.');
+        return actionResult(res, 'Failed to update response.');
     }
 
-    /** Delete a response outright — used for spam and test submissions. */
+    /** Delete a response outright — spam and test submissions. Refused for money rows. */
     async function deleteResponse(
         formId: number | string,
         responseId: number | string
@@ -215,6 +264,72 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         return res.data?.status === 'success';
     }
 
+    // ---------------------------------------------------------------- the door
+
+    /** Mark collected: stamped by the first press. Refused unless settled and not cancelled. */
+    async function collectResponse(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/collect`,
+            new FormData()
+        );
+
+        return actionResult(res, 'Could not mark this registration collected.');
+    }
+
+    /** Undo "Mark collected". */
+    async function uncollectResponse(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.delete(
+            `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/collect`
+        );
+
+        return actionResult(res, 'Could not undo the collection.');
+    }
+
+    /**
+     * Cash taken at the table for an unpaid registration. The server closes any open card
+     * payment page first, and records nothing if Stripe says the payer has just paid.
+     */
+    async function takeCash(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/take-cash`,
+            new FormData()
+        );
+
+        return actionResult(res, 'Could not record the cash.');
+    }
+
+    /** "Mark paid (external)": paid somewhere else, the Wix page. Same card-page rule as take-cash. */
+    async function markPaidExternal(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/mark-paid-external`,
+            new FormData()
+        );
+
+        return actionResult(res, 'Could not mark this registration paid.');
+    }
+
+    function actionResult(res: AxiosResponse, failure: string): FormResponseActionResult {
+        if (res.data?.status === 'success' && res.data?.data) {
+            return {
+                data: res.data.data,
+                message: typeof res.data.message === 'string' && res.data.message ? res.data.message : null,
+                warning: res.data.warning === true,
+                // Only a triage save saying "cancelled" carries it (FormResponsesController::update()).
+                card_page: FORM_CARD_PAGES.includes(res.data.card_page) ? res.data.card_page : null
+            };
+        }
+
+        throw new Error(failure);
+    }
+
     return {
         rosterPaginated,
         rosterMeta,
@@ -227,7 +342,12 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         fetchFormOptions,
         fetchResponses,
         fetchResponse,
+        fetchCashTotals,
         updateResponse,
-        deleteResponse
+        deleteResponse,
+        collectResponse,
+        uncollectResponse,
+        takeCash,
+        markPaidExternal
     }
 })

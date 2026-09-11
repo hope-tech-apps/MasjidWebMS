@@ -63,6 +63,7 @@ use App\Http\Controllers\AdminDashboard\OnboardingIntakeController;
 use App\Http\Controllers\AdminDashboard\FormInsightsController;
 use App\Http\Controllers\AdminDashboard\FormResponsesController;
 use App\Http\Controllers\AdminDashboard\FormsController;
+use App\Http\Controllers\AdminDashboard\FormStaffCodesController;
 use App\Http\Controllers\AdminDashboard\PagesController;
 use App\Http\Controllers\AdminDashboard\PageSectionsController;
 use App\Http\Controllers\AdminDashboard\PrayerCalculationSettingsController;
@@ -436,6 +437,8 @@ Route::prefix('admin')->group(function () {
                 // The attendee roster: one row per PERSON, not per submission.
                 Route::get('/roster/export', 'rosterExport');
                 Route::get('/roster', 'roster');
+                // The cash each staff member holds, over the list's own filters.
+                Route::get('/cash-totals', 'cashTotals');
                 Route::get('/', 'index');
                 Route::get('/{response_id}', 'show');
                 // Uploaded files (a careers form's résumé) live on a PRIVATE disk with
@@ -444,7 +447,26 @@ Route::prefix('admin')->group(function () {
                 // can only ever download an attachment their own masjid collected.
                 Route::get('/{response_id}/attachments/{attachment_id}', 'downloadAttachment');
                 Route::put('/{response_id}', 'update');
+                // Refused for a registration with a payment: cancel it instead.
                 Route::delete('/{response_id}', 'destroy');
+                // The door (DECISIONS.md 2026-09-11): bracelets handed out, and payment
+                // recorded by a named admin. The same group middleware, so MasjidAdmin
+                // and SuperAdmin only, and no new permission (Permission::count() === 8).
+                Route::post('/{response_id}/collect', 'collect');
+                Route::delete('/{response_id}/collect', 'uncollect');
+                Route::post('/{response_id}/take-cash', 'takeCash');
+                Route::post('/{response_id}/mark-paid-external', 'markPaidExternal');
+            });
+
+            // Staff codes: one secret code per staff member for taking cash at the gate
+            // (DECISIONS.md 2026-09-11). The plaintext is in store()'s 201 and nowhere
+            // else. DELETE revokes; a code is never deleted, it is the cash's record.
+            Route::prefix('{masjid_id}/forms/{form_id}/staff-codes')->controller(FormStaffCodesController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::post('/clear-lockout', 'clearLockout'); // literal before /{code_id}
+                Route::post('/{code_id}/reset-device', 'resetDevice');
+                Route::delete('/{code_id}', 'revoke');
             });
 
             // Manara Insights — gated on the Assistant entitlement. `assistant` must run

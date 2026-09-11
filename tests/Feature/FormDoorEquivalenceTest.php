@@ -135,6 +135,26 @@ class FormDoorEquivalenceTest extends TestCase
                 unset($d['settings']['fee']['tiers']);
             }, true],
 
+            // Payment (DECISIONS.md 2026-09-11). The baseline charges per attendee,
+            // demands at least one, and every tier clears 50¢ — so it may take money.
+            'card payment, staff codes and fee cover switched on' => [function (&$d) {
+                $d['settings']['payment'] = ['online' => true, 'staffCodes' => true, 'allowFeeCoverage' => true];
+            }, true],
+            // The strings a form-encoded body carries: every door reads them the
+            // same way (StoreFormRequest::coercePaymentFlags()).
+            'payment switches as the strings a form post carries' => [function (&$d) {
+                $d['settings']['payment'] = ['online' => 'true', 'staffCodes' => '1', 'allowFeeCoverage' => 'on'];
+            }, true],
+            // "false" must read as OFF on every door, or this flat fee is refused.
+            'payment switched off, on a flat fee' => [function (&$d) {
+                unset($d['settings']['fee']['perEntryOfSection']);
+                $d['settings']['payment'] = ['online' => 'false', 'staffCodes' => false];
+            }, true],
+            'a WhatsApp invite link and its label' => [function (&$d) {
+                $d['settings']['whatsappUrl'] = 'https://chat.whatsapp.com/AbCdEf1234567890';
+                $d['settings']['whatsappLabel'] = 'Join the camp group';
+            }, true],
+
             // ---------------------------------------------------- refused
             // The cut-off contract, in every shape (App\Rules\TierCutoff).
             "until unpadded '2026-8-14'" => [function (&$d) {
@@ -184,6 +204,50 @@ class FormDoorEquivalenceTest extends TestCase
                 $d['schema']['sections'][0]['fields'][] = [
                     'name' => 'pick', 'label' => 'Pick', 'type' => 'select', 'required' => true,
                 ];
+            }, false],
+
+            // The payment settings contract.
+            'a payment switch that is not a yes or a no' => [function (&$d) {
+                $d['settings']['payment'] = ['online' => 'maybe'];
+            }, false],
+            'a WhatsApp link over plain http' => [function (&$d) {
+                $d['settings']['whatsappUrl'] = 'http://chat.whatsapp.com/AbCdEf1234567890';
+            }, false],
+            'a WhatsApp link on another host' => [function (&$d) {
+                $d['settings']['whatsappUrl'] = 'https://chat.whatsapp.com.evil.example/AbCdEf1234567890';
+            }, false],
+            'a javascript: WhatsApp link' => [function (&$d) {
+                $d['settings']['whatsappUrl'] = 'javascript:alert(1)';
+            }, false],
+
+            // Never free by accident (festival brief, blocker 1).
+            'card payment on a flat fee' => [function (&$d) {
+                unset($d['settings']['fee']['perEntryOfSection']);
+                $d['settings']['payment'] = ['online' => true];
+            }, false],
+            'staff codes on a flat fee' => [function (&$d) {
+                unset($d['settings']['fee']['perEntryOfSection']);
+                $d['settings']['payment'] = ['staffCodes' => true];
+            }, false],
+            'card payment with an attendee list that may be empty' => [function (&$d) {
+                $d['schema']['sections'][1]['minEntries'] = 0;
+                $d['settings']['payment'] = ['online' => true];
+            }, false],
+            'card payment with a $0 tier' => [function (&$d) {
+                $d['settings']['fee']['tiers'][1]['amount'] = 0;
+                $d['settings']['payment'] = ['online' => true];
+            }, false],
+            'staff codes with a 49¢ tier' => [function (&$d) {
+                $d['settings']['fee']['tiers'][0]['amount'] = 0.49;
+                $d['settings']['payment'] = ['staffCodes' => true];
+            }, false],
+            'card payment priced in fractions of a cent' => [function (&$d) {
+                $d['settings']['fee']['tiers'][2]['amount'] = 140.005;
+                $d['settings']['payment'] = ['online' => true];
+            }, false],
+            'card payment in Canadian dollars' => [function (&$d) {
+                $d['settings']['fee']['currency'] = 'CAD';
+                $d['settings']['payment'] = ['online' => true];
             }, false],
         ];
     }
@@ -249,6 +313,17 @@ class FormDoorEquivalenceTest extends TestCase
             "until BLANK '   '" => function (&$d) { $d['settings']['fee']['tiers'][2]['until'] = '   '; },
             "until ' 2026-08-14 '" => function (&$d) { $d['settings']['fee']['tiers'][0]['until'] = ' 2026-08-14 '; },
             'until null' => function (&$d) { $d['settings']['fee']['tiers'][2]['until'] = null; },
+            // The payment switches: the same booleans, whatever spelling arrived.
+            'payment switches as strings' => function (&$d) {
+                $d['settings']['payment'] = ['online' => 'true', 'staffCodes' => '1', 'allowFeeCoverage' => 'on'];
+            },
+            'payment switches off as strings' => function (&$d) {
+                $d['settings']['payment'] = ['online' => 'false', 'staffCodes' => '0', 'allowFeeCoverage' => 'off'];
+            },
+            'a WhatsApp link' => function (&$d) {
+                $d['settings']['whatsappUrl'] = 'https://chat.whatsapp.com/AbCdEf1234567890';
+                $d['settings']['whatsappLabel'] = 'Join the camp group';
+            },
         ];
 
         foreach ($shapes as $label => $mutate) {
@@ -266,6 +341,50 @@ class FormDoorEquivalenceTest extends TestCase
                 "{$label}: the two doors stored different forms"
             );
         }
+    }
+
+    /**
+     * A `settings` key no rule names is stored by NO door. The builder's POST and PUT
+     * store what the validator validated (`$request->safe()->all()`), and Laravel leaves
+     * out an unvalidated key under any array that has rules of its own. `form:import`
+     * stored the file as it came, so a key only the file carried survived there until the
+     * first builder save dropped it, and the save reported success.
+     */
+    #[Test]
+    public function a_settings_key_no_rule_names_is_stored_by_no_door(): void
+    {
+        $doc = $this->doc(function (&$d) {
+            $d['is_active'] = true;
+            $d['settings']['futureSetting'] = 'no rule names this';
+            $d['settings']['fee']['roundTo'] = 5;
+            $d['settings']['fee']['tiers'][0]['note'] = 'Ends at midnight';
+            $d['settings']['identity']['nickname'] = 'fullName';
+        });
+
+        $imported = $this->importedForm($doc, 'imported-unnamed-keys');
+        $posted = $this->postedForm($doc, 'posted-unnamed-keys');
+
+        $this->assertNotNull($imported, 'the importer wrote nothing');
+        $this->assertNotNull($posted, 'the API wrote nothing');
+        $this->assertSame($this->comparable($posted), $this->comparable($imported), 'the two doors stored different forms');
+
+        // Both dropped them, rather than both keeping them, and kept every named key.
+        foreach (['form:import' => $imported, 'POST' => $posted] as $door => $form) {
+            $this->assertArrayNotHasKey('futureSetting', $form->settings, $door);
+            $this->assertArrayNotHasKey('roundTo', $form->settings['fee'], $door);
+            $this->assertArrayNotHasKey('note', $form->settings['fee']['tiers'][0], $door);
+            $this->assertArrayNotHasKey('nickname', $form->settings['identity'], $door);
+            // assertEquals: the validator writes a tier's keys in its rules' order.
+            $this->assertEquals(['label' => 'Early bird', 'amount' => 100, 'until' => '2026-08-14'], $form->settings['fee']['tiers'][0], $door);
+        }
+
+        // The builder's whole-document save of the same file stores the same form again.
+        $saved = $this->seedForm();
+        $doc['slug'] = $saved->slug;
+
+        $this->putJson("/api/admin/masjids/{$this->masjid->id}/forms/{$saved->id}", $doc)->assertOk();
+
+        $this->assertSame($this->comparable($imported), $this->comparable($saved->fresh()));
     }
 
     /**

@@ -241,6 +241,7 @@ class JummahLunchOrderFlowTest extends TestCase
         $this->assertTrue(MealOrderPaymentService::isOrderEvent(['metadata' => ['order_uuid' => 'x']]));
         $this->assertFalse(MealOrderPaymentService::isOrderEvent(['metadata' => ['registration_uuid' => 'y']]));
         $this->assertFalse(MealOrderPaymentService::isOrderEvent(['metadata' => ['donation_uuid' => 'z']]));
+        $this->assertFalse(MealOrderPaymentService::isOrderEvent(['metadata' => ['form_response_uuid' => 'w']]));
         $this->assertFalse(MealOrderPaymentService::isOrderEvent([]));
     }
 

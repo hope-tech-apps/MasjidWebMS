@@ -14,6 +14,11 @@ use Illuminate\Validation\Rule;
  * query builder. The allowlist is exactly the set of real, indexed columns — sorting on
  * a JSON path inside `data` is deliberately not offered, because it would not be
  * portable between MySQL in production and SQLite in the test suite.
+ *
+ * The door's filters (DECISIONS.md 2026-09-11) narrow the list, the CSV, the roster and
+ * the cash totals alike, because all four read FormResponsesController::query():
+ * `payment` (paid | unpaid | settled, or one method), `collected` (yes | no) and
+ * `staff_code_id` (one holder's cash).
  */
 class IndexFormResponsesRequest extends BaseFormRequest
 {
@@ -26,6 +31,21 @@ class IndexFormResponsesRequest extends BaseFormRequest
         'amount_due',
     ];
 
+    /**
+     * paid / unpaid / settled read the way FormResponse::isSettled() does, so a row with
+     * no money leg on a form that charges is unpaid, never free; the rest are a method.
+     */
+    public const PAYMENT_FILTERS = [
+        'paid',
+        'unpaid',
+        'settled',
+        FormResponse::METHOD_CASH,
+        FormResponse::METHOD_ONLINE,
+        FormResponse::METHOD_EXTERNAL,
+    ];
+
+    public const COLLECTED_FILTERS = ['yes', 'no'];
+
     public function rules(): array
     {
         return [
@@ -33,6 +53,9 @@ class IndexFormResponsesRequest extends BaseFormRequest
             'status' => ['nullable', Rule::in(FormResponse::STATUSES)],
             'from' => 'nullable|date',
             'to' => 'nullable|date|after_or_equal:from',
+            'payment' => ['nullable', Rule::in(self::PAYMENT_FILTERS)],
+            'collected' => ['nullable', Rule::in(self::COLLECTED_FILTERS)],
+            'staff_code_id' => 'nullable|integer|min:1',
             // The roster sorts a flattened PHP collection, so it may order by any
             // attendee column — but those keys never reach SQL. The LIST route does reach
             // ORDER BY, so there it stays strictly allowlisted. A safe-identifier regex

@@ -58,6 +58,12 @@ class Form extends Model
         return $this->hasMany(FormResponse::class);
     }
 
+    /** The per-staff cash codes issued on this form (FormStaffCode). */
+    public function staffCodes()
+    {
+        return $this->hasMany(FormStaffCode::class);
+    }
+
     /** Only forms an admin has switched on. */
     public function scopeActive($query)
     {
@@ -128,6 +134,148 @@ class Form extends Model
         }
 
         return null;
+    }
+
+    // ------------------------------------------------------------------ payment
+
+    /**
+     * The only group link a form hands out: a chat.whatsapp.com invite and
+     * nothing else. One definition for every reader — whatsappUrl() checks it on
+     * the way out, and the settings rules should check it on the way in. `\z`,
+     * not `$`: a `$` also matches before a trailing newline.
+     */
+    public const WHATSAPP_URL_PATTERN = '#^https://chat\.whatsapp\.com/[A-Za-z0-9]{10,64}\z#';
+
+    /**
+     * Whether any price on this form is above zero: the flat amount, or any tier
+     * whatever its date.
+     *
+     * Deliberately not `feeRule() !== null`. A $0 fee asks for nothing, and "does
+     * this form charge?" must not change its answer as the tiers step, or a
+     * row's settled state (FormResponse::isSettled()) would flip overnight.
+     */
+    public function chargesFee(): bool
+    {
+        $fee = $this->settings['fee'] ?? null;
+
+        if (! is_array($fee)) {
+            return false;
+        }
+
+        $amounts = [$fee['amount'] ?? null];
+
+        foreach (is_array($fee['tiers'] ?? null) ? $fee['tiers'] : [] as $tier) {
+            $amounts[] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
+        foreach ($amounts as $amount) {
+            if (is_numeric($amount) && (float) $amount > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Card payments are switched on AND there is a price. The flag alone never
+     * routes a submission to Stripe: with nothing to charge there is nothing to
+     * take.
+     */
+    public function takesOnlinePayment(): bool
+    {
+        return $this->paymentFlag('online') && $this->chargesFee();
+    }
+
+    /**
+     * Staff codes are switched on AND there is a price. A code settles an entry
+     * as cash its holder owes at the list price; with no price there is nothing
+     * to owe, and cash for $0 is not a settlement.
+     */
+    public function takesStaffCodes(): bool
+    {
+        return $this->paymentFlag('staffCodes') && $this->chargesFee();
+    }
+
+    /** The optional "cover the card fee" checkbox: card payments only — cash has no card fee. */
+    public function allowsFeeCoverage(): bool
+    {
+        return $this->paymentFlag('allowFeeCoverage') && $this->takesOnlinePayment();
+    }
+
+    /**
+     * Whether a staff member at the gate may record an entry: switched on and
+     * not full. The registration WINDOW is skipped on purpose — walk-ups arrive
+     * after online registration has closed — the way the lunch board ignores the
+     * ordering window. Inactive and full still refuse.
+     */
+    public function acceptsStaffEntry(): bool
+    {
+        return $this->is_active && ! $this->isAtCapacity();
+    }
+
+    /**
+     * The WhatsApp group link, or null. Re-checked against the pattern on the
+     * way out because settings have more than one door (the builder, the PATCH,
+     * form:import). Hand it out only once a response is settled; it never
+     * belongs in the public page payload.
+     */
+    public function whatsappUrl(): ?string
+    {
+        $url = $this->settings['whatsappUrl'] ?? null;
+
+        return is_string($url) && preg_match(self::WHATSAPP_URL_PATTERN, $url) === 1 ? $url : null;
+    }
+
+    /**
+     * Whether this form has been set up to take payment at all: its settings carry a
+     * `payment` block, whatever its switches say now.
+     *
+     * Only then do the admin screens show the money leg (the payment columns in both
+     * CSVs, the payment badge). A fee form that never was, like Burlington's camp,
+     * whose families pay elsewhere and are triaged "confirmed", keeps exactly the
+     * exports it always had instead of every family reading "Unpaid". Not
+     * takesOnlinePayment() or takesStaffCodes(): a festival form with both switched
+     * off after the day is still reconciled from those columns.
+     */
+    public function hasPaymentSettings(): bool
+    {
+        return is_array($this->settings['payment'] ?? null);
+    }
+
+    /**
+     * The day of the event, when the admin has named it (settings.payment.eventDate,
+     * "2026-10-17"), else null. A calendar date, not an instant: staff codes default to
+     * midnight at the end of it on the masjid's own clock
+     * (FormStaffCodesController::defaultExpiry()). Re-checked on the way out, because
+     * settings have more than one door.
+     */
+    public function eventDate(): ?string
+    {
+        $payment = $this->settings['payment'] ?? null;
+        $date = is_array($payment) ? ($payment['eventDate'] ?? null) : null;
+
+        if (! is_string($date) || preg_match('/^(\d{4})-(\d{2})-(\d{2})\z/', $date, $parts) !== 1) {
+            return null;
+        }
+
+        return checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1]) ? $date : null;
+    }
+
+    /**
+     * A settings.payment switch, read the way the form door coerces booleans
+     * (true, 1, "1", "true", "on"). Anything else — "false", "0", absent, junk —
+     * is off.
+     */
+    private function paymentFlag(string $key): bool
+    {
+        $payment = $this->settings['payment'] ?? null;
+
+        if (! is_array($payment)) {
+            return false;
+        }
+
+        return filter_var($payment[$key] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true;
     }
 
     // ------------------------------------------------------------------- schema

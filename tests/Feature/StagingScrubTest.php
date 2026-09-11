@@ -388,6 +388,23 @@ class StagingScrubTest extends TestCase
     }
 
     #[Test]
+    public function a_card_registrations_live_stripe_handles_never_reach_staging(): void
+    {
+        $this->assertSame(2, DB::table('form_responses')
+            ->whereNotNull('stripe_checkout_session_id')
+            ->whereNotNull('stripe_payment_intent_id')
+            ->count(), 'the fixture seeds both handles');
+
+        $this->runScrub();
+
+        // Nulled, as registrations and meal_orders null theirs: on staging a live cs_/pi_
+        // id names an object no test-mode account can find, so "Take cash", a cancel and
+        // "Return to payment" would all fail on it, where a NULL opens a fresh page.
+        $this->assertSame(0, DB::table('form_responses')->whereNotNull('stripe_checkout_session_id')->count());
+        $this->assertSame(0, DB::table('form_responses')->whereNotNull('stripe_payment_intent_id')->count());
+    }
+
+    #[Test]
     public function free_text_about_people_is_replaced(): void
     {
         $this->runScrub();
@@ -716,6 +733,9 @@ class StagingScrubTest extends TestCase
             'admin_notes' => 'Family asked about the fee waiver',
             'ip_address' => '73.12.44.9',
             'user_agent' => 'Mozilla/5.0 (iPhone)',
+            // A card registration's handles on the organisation's LIVE Stripe account.
+            'stripe_checkout_session_id' => 'cs_live_'.uniqid(),
+            'stripe_payment_intent_id' => 'pi_live_'.uniqid(),
             'submitted_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),

@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Models\Form;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -22,6 +23,11 @@ use Illuminate\Queue\SerializesModels;
  * The wording is the form's own success copy, not text written here, so a masjid editing
  * its confirmation screen edits this email too, and nothing Burlington-specific is baked
  * into the codebase.
+ *
+ * On a form that takes payment (DECISIONS.md 2026-09-11) the receipt also says how the
+ * registration was paid, and a settled registration's receipt carries the WhatsApp group
+ * link as a real link. A card registration gets this email when the signed webhook
+ * records its payment, never at submit.
  */
 class FormSubmissionReceipt extends Mailable implements ShouldQueue
 {
@@ -47,6 +53,11 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
         public ?string $paymentNote,
         /** Named masjidEmail, not replyTo: Mailable already owns a $replyTo property. */
         public ?string $masjidEmail,
+        /** "Paid $30.87 by card", "Paid in cash", "Paid (recorded by staff)"; null until paid. */
+        public ?string $paymentLine = null,
+        /** The WhatsApp group link, for a settled registration only. Re-checked in content(). */
+        public ?string $whatsappUrl = null,
+        public ?string $whatsappLabel = null,
     ) {
     }
 
@@ -80,7 +91,27 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
                 'people' => $this->people,
                 'nextSteps' => $this->nextSteps,
                 'paymentNote' => $this->paymentNote,
+                // Once paid, the amount is the price and the payment line says what was paid.
+                'amountLabel' => $this->paymentLine ? 'Price' : 'Total due',
+                'paymentLine' => $this->paymentLine,
+                // groupLink, NOT whatsappUrl: Mailable::buildViewData() lays every public
+                // property over these keys, so a key sharing a property's name would render
+                // the raw, unchecked property instead of this.
+                'groupLink' => $this->groupLink(),
+                'groupLabel' => $this->whatsappLabel ?: 'Join the WhatsApp group',
             ],
         );
+    }
+
+    /**
+     * The group link, only when it is a chat.whatsapp.com invite. FormNotifier already
+     * checks it; this is the template's own guard, because a queued mail can outlive the
+     * code that built it, and an href is where a bad value becomes a live link.
+     */
+    private function groupLink(): ?string
+    {
+        return is_string($this->whatsappUrl) && preg_match(Form::WHATSAPP_URL_PATTERN, $this->whatsappUrl) === 1
+            ? $this->whatsappUrl
+            : null;
     }
 }

@@ -90,11 +90,21 @@ class FormRoster
 
         $rows = collect();
 
+        // Payment is read only on a form set up to take payment (Form::hasPaymentSettings()).
+        // A fee form that never was, the camp, has no payment state to report, and reading
+        // one would call every family on it "Unpaid".
+        $money = $this->form->hasPaymentSettings();
+
         foreach ($responses as $response) {
             $data = $response->data ?? [];
 
+            // Read as the door reads it, with no query per row for the form.
+            $response->setRelation('form', $this->form);
+
             // Shared context so every attendee row can be acted on without opening the
-            // submission it came from.
+            // submission it came from — including, at a paying event, whether this
+            // person's registration is paid and whether their bracelets have gone out
+            // (DECISIONS.md 2026-09-11).
             $context = [
                 'response_id' => $response->id,
                 'registered_by' => $response->respondent_name,
@@ -102,6 +112,11 @@ class FormRoster
                 'registrant_phone' => $response->respondent_phone,
                 'status' => $response->status,
                 'submitted_at' => optional($response->submitted_at)->toIso8601String(),
+                'payment_status' => $money ? $response->paymentState() : null,
+                'payment_method' => $response->payment_method,
+                'payment' => $money ? self::paymentLabel($response) : '',
+                'holder' => self::holder($response),
+                'collected_at' => optional($response->collected_at)->toIso8601String(),
             ];
 
             if (! $sectionId) {
@@ -189,6 +204,43 @@ class FormRoster
             'submissions' => $rows->pluck('response_id')->unique()->count(),
             'breakdowns' => $breakdowns,
         ];
+    }
+
+    /**
+     * The payment badge in words, for the roster and its CSV: "Paid by card", "Cash
+     * (Najd Haddad)", "Paid elsewhere", "Unpaid" — or blank when nothing was ever owed.
+     */
+    public static function paymentLabel(FormResponse $response): string
+    {
+        $state = $response->paymentState();
+
+        if ($state === null) {
+            return '';
+        }
+
+        if ($state === FormResponse::PAYMENT_UNPAID) {
+            return 'Unpaid';
+        }
+
+        return match ($response->payment_method) {
+            FormResponse::METHOD_ONLINE => 'Paid by card',
+            FormResponse::METHOD_CASH => ($holder = self::holder($response)) !== null ? "Cash ({$holder})" : 'Cash',
+            FormResponse::METHOD_EXTERNAL => 'Paid elsewhere',
+            default => 'Paid',
+        };
+    }
+
+    /**
+     * Who holds a cash registration's money: the code's holder for an entry made at the
+     * gate, or the admin who took it at the table. Null for every other row.
+     */
+    public static function holder(FormResponse $response): ?string
+    {
+        if ($response->payment_method !== FormResponse::METHOD_CASH) {
+            return null;
+        }
+
+        return $response->staffCode?->holder_name ?? $response->markedPaidBy?->name;
     }
 
     /** JSON can hold arrays (checkbox groups) and booleans; a table cell needs a string. */

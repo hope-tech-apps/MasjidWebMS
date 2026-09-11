@@ -4,6 +4,8 @@
 use App\Http\Controllers\Api\V1\AnnouncementsController;
 use App\Http\Controllers\Api\V1\AppointmentRequestsController;
 use App\Http\Controllers\Api\V1\ContactUsController;
+use App\Http\Controllers\Api\V1\FormResponsePaymentsController;
+use App\Http\Controllers\Api\V1\FormStaffSessionsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
 use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
@@ -49,6 +51,27 @@ Route::prefix('v1')->group(function () {
     // carry a named limiter too.
     Route::post('/forms/{form_id}/responses', [FormSubmissionsController::class, 'store'])
         ->middleware('throttle:form-submit');
+
+    // The gate's staff entry (DECISIONS.md 2026-09-11): a phone presents its staff
+    // code ONCE and gets a short-lived signed token for its cash entries
+    // (App\Support\FormStaffCodes). An unauthenticated write — it claims the code
+    // for the phone — so it is throttled by name like the submit above; wrong
+    // codes also meet the failure limiter inside.
+    Route::post('/forms/{form_id}/staff-session', [FormStaffSessionsController::class, 'store'])
+        ->middleware('throttle:form-staff-session');
+
+    // A card registration after its submit (DECISIONS.md 2026-09-11): the page Stripe
+    // returns the payer to reads the payment state, and "Return to payment" reopens the
+    // page. The uuid is a bearer handle (FormResponsePaymentsController), so each route
+    // has its own named limiter keyed by it. The reopen is an unauthenticated money
+    // path; neither route can mark anything paid — only the Stripe webhook does.
+    Route::get('/form-responses/{uuid}', [FormResponsePaymentsController::class, 'show'])
+        ->whereUuid('uuid')
+        ->middleware('throttle:form-status');
+
+    Route::post('/form-responses/{uuid}/checkout', [FormResponsePaymentsController::class, 'checkout'])
+        ->whereUuid('uuid')
+        ->middleware('throttle:form-checkout');
 
     // Public appointment requests (Community vertical, T-021) — the free
     // clinic's intake. An unauthenticated DB write like the form submissions

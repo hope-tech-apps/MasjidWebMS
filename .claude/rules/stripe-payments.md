@@ -4,6 +4,8 @@ paths:
   - "app/Services/Receipts/**"
   - "app/Http/Controllers/StripeWebhookController.php"
   - "app/Http/Controllers/Mobile/DonationsController.php"
+  - "app/Http/Controllers/Api/V1/FormSubmissionsController.php"
+  - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
 ---
 # Stripe payments (CRM donations — Connect Standard + direct charges)
 
@@ -111,6 +113,108 @@ pending-before-redirect with an idempotency key, webhook-only advancement.
   otherwise. `invoice.payment_failed` and `subscription_schedule.completed` are
   new arms whose non-registration case is the `null` that `default` gave them
   before. `DonationFlowTest` must keep passing untouched.
+
+## Forms take one payment — the fourth sibling (DECISIONS.md 2026-09-11)
+
+After donations, registrations and meal orders: a form whose settings turn card
+payment on (`settings.payment.online`) opens ONE hosted Checkout per response.
+`App\Services\Stripe\FormResponseCheckoutService` is a clone of
+`MealOrderCheckoutService` as it stood at 42f07d6, not a refactor of it. Every rule
+above holds (Connect Standard + direct charge on `stripe_account`, hosted only,
+positive-only `application_fee_amount`, integer minor units, the idempotency key
+persisted before the call, webhook-only advancement). On top of them:
+
+- **`metadata.form_response_uuid`** is the routing key, on the session AND on
+  `payment_intent_data.metadata`, beside `masjid_id` and `form_id`. Inbound, the
+  masjid comes from `event.account` and the uuid is looked up within it
+  (`FormResponse::findByUuidForMasjid`). `FormResponse::markPaid()` is true on the
+  unpaid→paid transition only, and that is when the receipt and the coordinator
+  email go. **A form row is never emailed while it is unpaid.**
+- **Charged from the row's snapshot** (`amount_due_minor`, `fee_covered_minor`,
+  `total_minor`), written at submit by `App\Support\FormPayment`, the only
+  float-to-cents conversion. Never recomputed at call time, and the lines are
+  asserted to sum to `total_minor` before the call. A paying form whose total comes
+  to 0 is a 422 at submit: **never** the free path, never a $0 session.
+- **Everything that could stop the page opening is asked BEFORE the row is
+  written**: `canAcceptDonations()`, Stripe's charge bounds, and the return address.
+- **Return URLs** are built only from an Origin that exactly matches
+  `config('forms.payment_return_origins')`, plus a relative, regex-checked
+  `return_path` (`App\Support\FormPaymentReturn`). The list fails closed when unset.
+  It is NOT `cors.allowed_origins` (which defaults to `['*']`), there is no `APP_URL`
+  fallback, and a client-supplied absolute URL is never passed to Stripe.
+- **Pages live 30 minutes** (`expires_at`, plus a minute of slack for Stripe's own
+  floor), not the 24-hour default: the festival also takes cash at the gate, and an
+  open page is a second payment waiting to happen.
+- **Card only** (`payment_method_types: ['card']`; Apple Pay and Google Pay come with
+  it). A bank debit completes the page days before its money moves, and a registration
+  that is complete but unpaid can be neither paid again nor settled by hand at the door.
+- **Every page is opened under the response row's lock**, the first one included,
+  so a double-tap that races past the replay guard is handed the first page.
+  `reopen()` hands back an open page, refuses a complete one ("confirming"), and
+  replaces an expired one on a NEW idempotency key. The "confirming" refusal
+  (`FormCheckoutRefused::paidOnStripe()`) is the one 422 whose data says
+  `confirming: true` and `can_pay: false`, on the submit's replay and "Return to
+  payment" alike (`FormCheckoutRefused::answer()`): the payer has paid, so the page
+  waits for the webhook and never offers to pay again. `closeOpenSession()` is the
+  admin take-cash action's first step: expire the page, and after a refused close
+  ask Stripe again ('complete' means the payer won the race). A refusal is answered
+  with the row as the lock found it (`onLockedRow()` copies it back), never the copy
+  read before the lock: cash taken, or a cancel, committed while the request waited
+  must not come back as "unpaid, can pay".
+- **A cancelled registration is never payable.** `preflight()` refuses it under the
+  row lock, so "Return to payment", a replayed submit and a racing first page all stop
+  there. The status read and the submit answer say `cancelled: true` (the status read
+  with `can_pay: false`) and never carry the group link, whatever the payment state: a
+  refunded card payer is cancelled and still reads as paid. Cancelling one closes its open page
+  (`FormResponsesController::update()`, the 42f07d6 `closePageOfCancelled` rule). The
+  cancellation stands whatever Stripe says; 'complete' tells the admin to refund.
+  Cancelling one the card had ALREADY paid for (the webhook first, on a door list
+  loaded before it) is a warning too, logged by ids: cancelling refunds nothing, so
+  whichever of the two lands first, the admin is told to refund. That warning comes
+  back on every "cancelled" said of a card-paid row, not only the first, and every such
+  answer carries `card_page` (`closed`, `paid_on_stripe`, `unconfirmed`, `none`,
+  `unchecked`): the admin screen words its answer from that, never from memory.
+- **`customer_email`** is prefilled only when `FILTER_VALIDATE_EMAIL` passes and the
+  domain has a dot. A Stripe `InvalidRequestException` is retried ONCE without it,
+  on a new key. Stripe's error messages quote the address, so they are never logged.
+- Refusals are `FormCheckoutRefused` (a `RuntimeException`), so the public
+  controllers show those messages and never a database error's.
+- **The status read and "Return to payment" are limited per registration** (30 and 20
+  an hour), never per connection: every phone at the venue shares one address. A uuid
+  naming no registration with a money leg at the header's masjid
+  (`FormResponse::isPaymentHandle()`) meets a per-connection flood guard INSTEAD, so
+  junk from a shared address never stops a real payer or spends its allowance. Every
+  429 passes the throttle's `Retry-After` through and says the wait in words
+  (`App\Support\TryAgainIn`), the staff-code lockout included.
+- **Inbound is `App\Services\Stripe\FormResponsePaymentService`**, a clone of
+  `MealOrderPaymentService`. `StripeWebhookController` asks its question third, on
+  `checkout.session.completed` and `payment_intent.succeeded` only: order, then
+  registration, then form response, then the unchanged donation default. A form
+  event never books a Donation, and every other event keeps its route
+  (`FormPaymentWebhookTest`; `DonationFlowTest` untouched).
+  - **Paid means the session's `payment_status` is `paid`.** This is stricter than
+    the siblings' `… || status === 'complete'`: every `checkout.session.completed`
+    carries `status: complete`, including a delayed-method payment whose money has
+    not moved. That completion records only the session id, and its
+    `payment_intent.succeeded` settles the row when the money lands.
+  - **Refusals are logged at warning, never thrown** (a 500 makes Stripe retry an
+    event that can never succeed): no account, an unknown account, or a uuid outside
+    that account's masjid. Nothing is recorded.
+  - **A card payment never flips a row that was not waiting for one** (cash at the
+    gate, paid by staff or elsewhere, no money leg). Its payment intent id is
+    recorded so the organisation can find the charge and refund it. A **second**
+    payment intent on a card-paid row is logged as a double charge and never
+    recorded over the first.
+  - Money landing on a triage-`cancelled` row is recorded as paid and logged. An
+    offboarded organisation's payment is recorded, and nobody is emailed on its
+    behalf.
+  - **The emails say how the registration was paid** (`FormNotifier::paymentLine()`:
+    "Paid $X by card", "Paid in cash", "Paid (recorded by staff)"). The receipt
+    carries the WhatsApp group link as a real `<a>` only once the row is settled
+    (`FormResponse::isSettled()`). A paid receipt drops the form's payment note,
+    which under the Wix fallback is the pay-here link. Both emails name the tier the
+    row was priced at (`feeRule($response->submitted_at)`, the instant `lineItems()`
+    prices the Stripe line at), not the tier in force when the payment is recorded.
 
 ## Tenancy note
 

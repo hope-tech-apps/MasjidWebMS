@@ -422,3 +422,7 @@ turn "who took the money" from memory into a query, without opening a public
 discount path. A leaked code can only register people against its holder's
 cash total; reconciliation exposes that and revocation stops it.
 
+**Refinements made during the build (2026-09-11).**
+- **Code expiry is explicit, never inferred.** A paying form carries its event day (`settings.payment.eventDate`). A code's default expiry is midnight after that day on the organisation's clock. With no event date, a code cannot be issued without an explicit expiry. A guess taken from `closes_at` or "today" could have killed every code at 00:00 on festival morning.
+- **Form checkout is card only** (`payment_method_types: ['card']`). With card only, a completed Checkout Session means the money is settled. A delayed bank debit would have left a "complete" session whose money might never arrive.
+

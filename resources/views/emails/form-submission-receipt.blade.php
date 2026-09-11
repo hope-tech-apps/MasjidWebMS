@@ -37,13 +37,32 @@
                                 @endif
                                 @if ($amountLine)
                                     <tr>
-                                        <td style="padding:12px 16px; color:#7b8794;">Total due</td>
+                                        <td style="padding:12px 16px; color:#7b8794;">{{ $amountLabel }}</td>
                                         <td style="padding:12px 16px; text-align:right; font-weight:700; font-size:18px;">
                                             {{ $amountLine }}@if ($tierLabel)<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $tierLabel }} rate</span>@endif
                                         </td>
                                     </tr>
                                 @endif
+                                @if ($paymentLine)
+                                    <tr style="background:#fafbfc;">
+                                        <td style="padding:12px 16px; color:#7b8794;">Payment</td>
+                                        <td style="padding:12px 16px; text-align:right; font-weight:600; color:#2f9e57;">{{ $paymentLine }}</td>
+                                    </tr>
+                                @endif
                             </table>
+
+                            @if ($groupLink)
+                                {{-- $groupLink, never $whatsappUrl: only the former is checked (FormSubmissionReceipt::groupLink()). Escaped into the attribute; noreferrer, so the click carries nothing from this email. --}}
+                                <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+                                    <tr>
+                                        <td style="background:#2f9e57; border-radius:8px;">
+                                            <a href="{{ $groupLink }}" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:12px 22px; color:#ffffff; font-size:15px; font-weight:600; text-decoration:none;">
+                                                {{ $groupLabel }}
+                                            </a>
+                                        </td>
+                                    </tr>
+                                </table>
+                            @endif
 
                             @if (count($people) > 0)
                                 <div style="margin:24px 0 8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:#7b8794;">
