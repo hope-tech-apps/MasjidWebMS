@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\MealMenus\CreatePaymentLinkRequest;
+use App\Http\Requests\Admin\MealMenus\MarkMealOrderPaidRequest;
 use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
@@ -20,14 +21,23 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Admin: the order board for one Jummah-lunch menu — the kitchen's live list,
- * plus the two things staff do to an order: mark it paid (for a pay-at-pickup
- * order settled in person) and move its fulfilment status (ready / picked up).
+ * plus the two things staff do to an order: mark it paid (money taken by hand:
+ * cash, Zelle, the masjid's terminal, another Stripe route) and move its
+ * fulfilment status (ready / picked up).
  *
- * Tenant-scoped by the bound tenant. An online order's PAID state is owned by
- * the Stripe webhook, never set here — `markPaid` is for pay-at-pickup orders.
+ * Tenant-scoped by the bound tenant. A payment on the order's own Stripe page is
+ * recorded by the webhook, never here; `markPaid` records money that came some
+ * other way, and closes that page first so the two cannot both be taken.
  */
 class MealOrdersController extends Controller
 {
+    /**
+     * Mark paid on an order the webhook has already settled from its own card page:
+     * the refusal closePageBeforePaidByHand gives while Stripe's news is on its way,
+     * told the same once it has landed.
+     */
+    private const PAID_ON_ITS_PAGE = 'This order was already paid by card online, so nothing was recorded. If you also took money for it by hand, give that back.';
+
     public function __construct(private MealOrderCheckoutService $checkout)
     {
     }
@@ -134,7 +144,8 @@ class MealOrdersController extends Controller
      *     online ordering closes. Only a DRAFT menu (not yet opened) refuses;
      *   - an order never starts paid: it is charged through Stripe like any
      *     public order. The payment page comes back as checkout_url, to open on
-     *     this device or send to the customer, and Stripe marks it paid. The
+     *     this device or send to the customer, and Stripe marks it paid (or staff
+     *     do, with Mark paid, when the money comes another way). The
      *     optional extra and covering the card fee are offered on exactly the
      *     public page's rule (LunchOrderExtras);
      *   - no SMS opt-in, ever: consent to texts must come from the customer.
@@ -283,7 +294,8 @@ class MealOrdersController extends Controller
      * unpaid order: open it on this device, or send it to the customer. An
      * open page is reused, so nobody holds two ways to pay; an expired one is
      * replaced. A pay-at-pickup order becomes an online one (on the locked row,
-     * in the service), so it can no longer be marked paid by hand as well.
+     * in the service); Mark paid closes the page it gets before recording money
+     * taken by hand, so the two can never both be taken.
      * Paid and cancelled orders are refused, as is a lunch with online payment
      * switched off. Stripe marks the order paid when the customer pays
      * (StripeWebhookController).
@@ -441,52 +453,88 @@ class MealOrdersController extends Controller
     }
 
     /**
-     * Mark a PAY-AT-PICKUP order paid, in person. Refuses an online order — its
-     * paid state is the webhook's to set, and letting staff flip it here would
-     * fake a settlement Stripe never confirmed.
+     * Mark an unpaid order paid by hand, saying how the money came (`paid_via`,
+     * MarkMealOrderPaidRequest): any unpaid order that is not cancelled, pickup
+     * or online, for anyone who runs the board (DECISIONS.md 2026-09-11).
+     *
+     * All on the locked row, which every payment page being made takes too, the
+     * first one included (MealOrderCheckoutService::checkout, paymentLink). The
+     * order's own Stripe page is dealt with first (closePageBeforePaidByHand): an
+     * open page is closed and forgotten, so the customer cannot pay it as well; a
+     * page paid by card, a bank payment still clearing, a page Stripe would not
+     * close and a Stripe that did not answer are each refused, and a refusal
+     * records nothing.
+     *
+     * An order already paid on its own page (the webhook got there first, while
+     * this board was up to 15 seconds behind) is refused as well, so what staff are
+     * told never depends on how fast Stripe delivers. An order already marked paid
+     * by hand is a 200 that changes nothing: who and how are written by the first
+     * press only (MealOrder::markPaidByHand), and `recorded: false` says so, with
+     * `data` showing what was recorded first. The board words its answer from
+     * that, never from the method it sent.
+     *
+     * `payment_method` stays the channel the order came through; `paid_via` says
+     * how the money came.
      */
-    public function markPaid(Request $request, $masjid_id, $menu_id, $order_id)
+    public function markPaid(MarkMealOrderPaidRequest $request, $masjid_id, $menu_id, $order_id)
     {
         MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
+        $via = (string) $request->validated('paid_via');
 
         try {
-            // On the locked row: a payment page being made that same second turns
-            // the order online first, and then it is refused here, so cash and a
-            // card payment can never both be taken. Who took the money is recorded
-            // by the first press only, so a second press (or a colleague's) never
-            // rewrites it.
-            $order = DB::transaction(function () use ($request, $menu_id, $order_id) {
+            [$order, $recorded] = DB::transaction(function () use ($request, $menu_id, $order_id, $via) {
                 $order = MealOrder::where('meal_menu_id', $menu_id)->lockForUpdate()->findOrFail($order_id);
 
-                if ($order->payment_method === MealOrder::METHOD_ONLINE) {
-                    return null;
+                if ($order->payment_status === MealOrder::PAYMENT_PAID) {
+                    if ($order->paidOnItsOwnPage()) {
+                        throw new \RuntimeException(self::PAID_ON_ITS_PAGE);
+                    }
+
+                    return [$order, false];
                 }
 
-                if ($order->payment_status !== MealOrder::PAYMENT_PAID) {
-                    $order->marked_paid_by_user_id = $request->user()?->id;
+                if ($order->payment_status !== MealOrder::PAYMENT_UNPAID) {
+                    throw new \RuntimeException('This order was refunded, so it cannot be marked paid.');
                 }
-                $order->markPaid();
 
-                return $order;
+                // Nobody collects for a meal that is not being made: restore it
+                // first, the rule the Payment link button follows.
+                if ($order->status === MealOrder::STATUS_CANCELLED) {
+                    throw new \RuntimeException('This order was cancelled. Restore it before marking it paid.');
+                }
+
+                $this->checkout->closePageBeforePaidByHand($order);
+
+                return [$order, $order->markPaidByHand($via, $request->user()?->id)];
             });
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => Errors::publicMessage($e),
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Before RuntimeException, which it extends: never show SQL to staff.
+            return $this->failed($e);
+        } catch (\Stripe\Exception\ExceptionInterface $e) {
+            // Before RuntimeException too: some of the SDK's own errors extend it,
+            // and their words are not for staff.
+            report($e);
 
-        if ($order === null) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => 'An online order is marked paid by Stripe, not by hand.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            return $this->refuse('Stripe did not answer, so this order\'s card payment link could not be closed and nothing was recorded. Try again in a moment.');
+        } catch (\RuntimeException $e) {
+            return $this->refuse($e->getMessage());
+        } catch (\Exception $e) {
+            return $this->failed($e);
         }
 
         return response()->json([
             'status' => 'success',
+            'recorded' => $recorded,
             'data' => $order->load(['items', 'markedPaidBy:id,name']),
         ], Response::HTTP_OK);
+    }
+
+    private function failed(\Throwable $e)
+    {
+        return response()->json([
+            'status' => 'failed',
+            'data' => Errors::publicMessage($e),
+        ], Response::HTTP_INTERNAL_SERVER_ERROR);
     }
 
 }

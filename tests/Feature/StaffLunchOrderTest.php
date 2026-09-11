@@ -184,9 +184,10 @@ class StaffLunchOrderTest extends TestCase
         return $this->call('PUT', "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/status", ['status' => $status], [], [], ['HTTP_ACCEPT' => 'application/json']);
     }
 
-    private function markPaidFor(MealOrder $order, string $prefix = '/api/admin')
+    /** Form-encoded, saying how the money came, as the board's Mark paid dialog posts it. */
+    private function markPaidFor(MealOrder $order, string $paidVia = MealOrder::PAID_VIA_CASH, string $prefix = '/api/admin')
     {
-        return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json']);
+        return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", ['paid_via' => $paidVia], ['Accept' => 'application/json']);
     }
 
     private function onePlate(): array
@@ -224,8 +225,16 @@ class StaffLunchOrderTest extends TestCase
         $this->assertSame(0, (int) $order->fee_covered_minor);
     }
 
+    /**
+     * Replaces a_lunch_volunteer_cannot_mark_their_own_order_paid, which encoded
+     * the rule that an online order is marked paid by Stripe only (8fb78cd).
+     * DECISIONS.md 2026-09-11 narrowed it. What still holds: nobody entering an
+     * order can declare it paid. What changed: a volunteer who then takes the
+     * money another way marks it paid by hand, saying how, and the order's card
+     * page is closed first so it cannot be paid twice.
+     */
     #[Test]
-    public function a_lunch_volunteer_cannot_mark_their_own_order_paid(): void
+    public function a_lunch_volunteer_can_mark_a_card_order_paid_by_hand_which_closes_its_page(): void
     {
         $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
         Sanctum::actingAs($volunteer);
@@ -240,13 +249,19 @@ class StaffLunchOrderTest extends TestCase
         $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
         $this->assertSame((int) $volunteer->id, $order->entered_by_user_id);
 
-        // Nor by hand afterwards: an online order is marked paid by Stripe only.
-        $this->post("/api/lunch/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])
-            ->assertStatus(422);
-        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
+        // Paid by hand afterwards, saying how: the open card page is closed first.
+        $this->markPaidFor($order, MealOrder::PAID_VIA_ZELLE, '/api/lunch')->assertOk();
+        $order->refresh();
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->payment_status);
+        $this->assertSame(MealOrder::PAID_VIA_ZELLE, $order->paid_via);
+        $this->assertSame((int) $volunteer->id, $order->marked_paid_by_user_id);
+        $this->assertSame(MealOrder::METHOD_ONLINE, $order->payment_method);
+        $this->assertSame(['cs_test_1'], self::$expired);
+        $this->assertNull($order->stripe_checkout_session_id);
 
-        // The volunteer can hand the customer the payment page again.
-        $this->linkFor($order, '/api/lunch')->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
+        // And the customer cannot be handed a payment page for it again.
+        $this->linkFor($order, '/api/lunch')->assertStatus(422);
+        $this->assertSame(1, self::$pagesMade);
     }
 
     #[Test]
@@ -684,13 +699,15 @@ class StaffLunchOrderTest extends TestCase
 
         $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
         Sanctum::actingAs($volunteer);
-        $this->post("/api/lunch/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])->assertOk();
+        $this->markPaidFor($order, MealOrder::PAID_VIA_CASH, '/api/lunch')->assertOk();
         $this->assertSame((int) $volunteer->id, $order->fresh()->marked_paid_by_user_id);
+        $this->assertSame(MealOrder::PAID_VIA_CASH, $order->fresh()->paid_via);
 
-        // A second press, by someone else, never rewrites who took the money.
+        // A second press, by someone else, never rewrites who took the money or how.
         Sanctum::actingAs($this->admin);
-        $this->post("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])->assertOk();
+        $this->markPaidFor($order, MealOrder::PAID_VIA_ZELLE)->assertOk();
         $this->assertSame((int) $volunteer->id, $order->fresh()->marked_paid_by_user_id);
+        $this->assertSame(MealOrder::PAID_VIA_CASH, $order->fresh()->paid_via);
 
         // Still named after their login is removed (a soft delete): that is when
         // the office asks who took the cash.
@@ -904,7 +921,7 @@ class StaffLunchOrderTest extends TestCase
     }
 
     #[Test]
-    public function a_pickup_order_given_a_page_is_charged_the_online_fee_and_can_no_longer_be_marked_paid(): void
+    public function a_pickup_order_given_a_page_is_charged_the_online_fee_and_marking_it_paid_closes_that_page(): void
     {
         config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
         Sanctum::actingAs($this->admin);
@@ -921,10 +938,17 @@ class StaffLunchOrderTest extends TestCase
         $this->assertSame(MealOrder::METHOD_ONLINE, $order->payment_method);
         $this->assertSame(['Chicken Biryani Plate', 'Card processing fee'], array_map(fn ($l) => $l['price_data']['product_data']['name'], self::$lastParams['line_items']));
 
-        // Online now: cash and a card payment cannot both be taken.
-        $this->markPaidFor($order)->assertStatus(422);
-        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
-        $this->assertNull($order->fresh()->marked_paid_by_user_id);
+        // Online now, with a card page: marking it paid by hand closes that page
+        // first, so cash and a card payment cannot both be taken. (Until
+        // DECISIONS.md 2026-09-11 it could not be marked paid at all.)
+        $this->markPaidFor($order, MealOrder::PAID_VIA_CASH)->assertOk();
+        $order->refresh();
+        $this->assertSame(['cs_test_2'], self::$expired);
+        $this->assertNull($order->stripe_checkout_session_id);
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->payment_status);
+        $this->assertSame(MealOrder::PAID_VIA_CASH, $order->paid_via);
+        $this->assertSame((int) $this->admin->id, $order->marked_paid_by_user_id);
+        $this->assertSame(MealOrder::METHOD_ONLINE, $order->payment_method);
     }
 
     #[Test]

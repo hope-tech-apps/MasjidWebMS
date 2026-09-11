@@ -6,6 +6,21 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 
 /**
+ * How the money came when an order is marked paid by hand, in the order the
+ * board offers them: a mirror of MealOrder::PAID_VIA_LABELS. Kept here, not
+ * read from the server, so the dialog still works on a server a deploy has not
+ * reached yet. A mismatch is loud either way: the server refuses a value it
+ * does not know, in words the board shows, and a stored value missing from
+ * this list is shown as it is.
+ */
+export const PAID_VIA_OPTIONS: { value: string; label: string }[] = [
+    { value: "cash", label: "Cash" },
+    { value: "zelle", label: "Zelle" },
+    { value: "terminal", label: "Masjid Terminal" },
+    { value: "stripe", label: "Stripe" },
+];
+
+/**
  * Admin Jummah-lunch store — CRUD over
  * /api/admin/masjids/{masjid_id}/jummah-lunch/... .
  *
@@ -210,10 +225,27 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not create the payment page.");
     }
 
-    async function markOrderPaid(menuId: number | string, orderId: number | string): Promise<any> {
+    /**
+     * Mark an unpaid order paid by hand, saying how the money came (`paid_via`,
+     * one of PAID_VIA_OPTIONS). Form-encoded. The server closes the order's own
+     * card payment page first, and refuses, in words to show as they are, when
+     * that page was paid or is clearing on Stripe.
+     *
+     * `recorded` is false when the order had already been marked paid by hand (a
+     * colleague, or a board that was behind): nothing changed, and `order` says how
+     * and by whom it was first recorded. A server that predates the flag is read
+     * the same way whenever the method it holds is not the one sent.
+     */
+    async function markOrderPaid(menuId: number | string, orderId: number | string, paidVia: string): Promise<{ order: any; recorded: boolean }> {
         ensureMasjid();
-        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/mark-paid`, new FormData());
-        if (res.data?.status === "success") return res.data.data;
+        const body = new FormData();
+        body.append("paid_via", paidVia);
+        const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/mark-paid`, body);
+        if (res.data?.status === "success") {
+            const order = res.data.data;
+            const recorded = typeof res.data.recorded === "boolean" ? res.data.recorded : order?.paid_via === paidVia;
+            return { order, recorded };
+        }
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Failed to mark paid.");
     }
 

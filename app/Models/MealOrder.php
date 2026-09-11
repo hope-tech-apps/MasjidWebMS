@@ -27,9 +27,10 @@ use Illuminate\Support\Str;
  * subtotal + donation + fee_covered.
  *
  * Server-computed columns (totals, the two status columns, the Stripe ids,
- * `order_number`, the timestamps) are DELIBERATELY not fillable — they move only
- * through the methods below or the checkout/payment services, never a request
- * body. `$fillable` is the small set a customer actually supplies.
+ * `order_number`, the timestamps, and who marked it paid by hand and how) are
+ * DELIBERATELY not fillable — they move only through the methods below or the
+ * checkout/payment services, never a request body. `$fillable` is the small set
+ * a customer actually supplies.
  */
 class MealOrder extends Model
 {
@@ -64,6 +65,34 @@ class MealOrder extends Model
     public const PAYMENT_UNPAID = 'unpaid';
     public const PAYMENT_PAID = 'paid';
     public const PAYMENT_REFUNDED = 'refunded';
+
+    /**
+     * How the money came when staff mark an order paid by hand (`paid_via`),
+     * chosen on the board from exactly these. `stripe` is money taken through
+     * some OTHER Stripe route (the organisation's own link or dashboard), a
+     * label staff record like the others. A payment on the order's own
+     * Checkout page is recorded by the webhook alone and leaves `paid_via`
+     * null (DECISIONS.md 2026-09-11).
+     */
+    public const PAID_VIA_CASH = 'cash';
+    public const PAID_VIA_ZELLE = 'zelle';
+    public const PAID_VIA_TERMINAL = 'terminal';
+    public const PAID_VIA_STRIPE = 'stripe';
+
+    public const PAID_VIA = [
+        self::PAID_VIA_CASH,
+        self::PAID_VIA_ZELLE,
+        self::PAID_VIA_TERMINAL,
+        self::PAID_VIA_STRIPE,
+    ];
+
+    /** The words the board shows for each, in the order it offers them. */
+    public const PAID_VIA_LABELS = [
+        self::PAID_VIA_CASH => 'Cash',
+        self::PAID_VIA_ZELLE => 'Zelle',
+        self::PAID_VIA_TERMINAL => 'Masjid Terminal',
+        self::PAID_VIA_STRIPE => 'Stripe',
+    ];
 
     /**
      * Ceiling on the optional extra, in minor units ($1,000).
@@ -110,6 +139,7 @@ class MealOrder extends Model
             'picked_up_at' => 'datetime',
             'entered_by_user_id' => 'integer',
             'marked_paid_by_user_id' => 'integer',
+            'paid_via' => 'string',
         ];
     }
 
@@ -142,7 +172,7 @@ class MealOrder extends Model
         return $this->belongsTo(User::class, 'entered_by_user_id')->withTrashed();
     }
 
-    /** The staff login that marked a pay-at-pickup order paid (null for Stripe-paid orders). */
+    /** The staff login that marked the order paid by hand (null for an order Stripe marked paid). */
     public function markedPaidBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'marked_paid_by_user_id')->withTrashed();
@@ -207,6 +237,43 @@ class MealOrder extends Model
         }
 
         $this->save();
+    }
+
+    /**
+     * Money taken by staff (MealOrdersController::markPaid): how it came and who
+     * recorded it, then paid. The first press only: on an order already paid
+     * nothing is written, so a second press, or a colleague's, never rewrites
+     * how the money came or who took it. False when it was already paid.
+     */
+    public function markPaidByHand(string $via, ?int $userId): bool
+    {
+        if (! in_array($via, self::PAID_VIA, true)) {
+            throw new \InvalidArgumentException("Unknown way of paying: {$via}");
+        }
+
+        if ($this->payment_status === self::PAYMENT_PAID) {
+            return false;
+        }
+
+        $this->paid_via = $via;
+        $this->marked_paid_by_user_id = $userId;
+        $this->markPaid();
+
+        return true;
+    }
+
+    /**
+     * Paid on its own Checkout page, as the webhook records it: paid, on an online
+     * order, with no way of paying and nobody recorded. Mark paid refuses it
+     * (MealOrdersController::markPaid). A pickup order marked paid before the
+     * board asked how, or before it said who, was paid by hand, not this.
+     */
+    public function paidOnItsOwnPage(): bool
+    {
+        return $this->payment_status === self::PAYMENT_PAID
+            && $this->payment_method === self::METHOD_ONLINE
+            && $this->paid_via === null
+            && $this->marked_paid_by_user_id === null;
     }
 
     public function markPickedUp(): void

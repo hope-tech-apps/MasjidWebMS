@@ -3,6 +3,7 @@ paths:
   - "app/Services/Stripe/**"
   - "app/Services/Receipts/**"
   - "app/Http/Controllers/StripeWebhookController.php"
+  - "app/Http/Controllers/AdminDashboard/MealOrdersController.php"
   - "app/Http/Controllers/Mobile/DonationsController.php"
   - "app/Http/Controllers/Api/V1/FormSubmissionsController.php"
   - "app/Http/Controllers/Api/V1/FormResponsePaymentsController.php"
@@ -238,6 +239,48 @@ persisted before the call, webhook-only advancement). On top of them:
     which under the Wix fallback is the pay-here link. Both emails name the tier the
     row was priced at (`feeRule($response->submitted_at)`, the instant `lineItems()`
     prices the Stripe line at), not the tier in force when the payment is recorded.
+
+## Lunch orders marked paid by hand (DECISIONS.md 2026-09-11)
+
+The Jummah-lunch board's Mark paid (`MealOrdersController::markPaid`) is a
+staff-asserted settlement, a carve-out from "payment state moves only on verified
+webhooks", like the forms' take-cash. Until 2026-09-11 it was pay-at-pickup only
+and refused every online order. It now works on any unpaid order that is not
+cancelled, for admins and lunch volunteers, on these terms:
+
+- **It always says how** (`paid_via`: `cash | zelle | terminal | stripe`,
+  `MealOrder::PAID_VIA`). `stripe` is money taken through some other Stripe route:
+  a label staff record. A payment on the order's own Checkout page is still
+  recorded by the webhook alone and leaves `paid_via` NULL. Who and how are
+  written by the first press only (`MealOrder::markPaidByHand`): a press on an
+  order already marked paid by hand is a 200 with `recorded: false`, and `data`
+  names what was recorded first, which is what the board reports, never the
+  method it sent. A missing or unknown method is a 422 whose `data` is one sentence
+  (`MarkMealOrderPaidRequest`), so a board on an old bundle can be told to reload.
+- **The order's own page is closed first, under the row lock**
+  (`MealOrderCheckoutService::closePageBeforePaidByHand`, through the same
+  retrieve/expire seams). Open: expired and forgotten. `complete` and `paid`:
+  refused, the webhook records it, and a warning is logged by ids (if the order
+  still shows unpaid minutes later, the Connect webhook is not arriving).
+  `complete` and `unpaid`: refused, a bank debit is clearing. A refused close is
+  asked about again (the `closeSession()` rule). Stripe not answering, or no
+  account on record: refused. An order the webhook has already settled from its
+  own page (`MealOrder::paidOnItsOwnPage()`) is refused too, so the answer never
+  depends on how fast Stripe delivers. A refusal records nothing.
+  `payment_method` is never changed: it is the channel, and `paid_via` is how the
+  money came.
+- **Every page is made on the locked row, the first one included.** `checkout()`
+  reads the order again under `lockForUpdate` and asks every refusal there (the
+  forms' `onLockedRow()` rule), as `paymentLink()` always did. A Mark paid either
+  waits and closes the page, or makes the order unpayable before a page exists. A
+  page recorded while `checkout()` waited is handed back, never doubled.
+- **A card payment on a hand-paid order is a double payment**
+  (`MealOrderPaymentService::paidTwice()`). Its payment intent id is recorded;
+  `paid_via`, `marked_paid_by_user_id` and `paid_at` are never rewritten; and a
+  warning is logged by ids, once per payment intent, so the organisation refunds
+  one. The board flags the row too (`paid_via` and `stripe_payment_intent_id`
+  both set, a pair nothing else leaves), since the log reaches only the operator.
+  The app never refunds it.
 
 ## Tenancy note
 

@@ -426,3 +426,80 @@ cash total; reconciliation exposes that and revocation stops it.
 - **Code expiry is explicit, never inferred.** A paying form carries its event day (`settings.payment.eventDate`). A code's default expiry is midnight after that day on the organisation's clock. With no event date, a code cannot be issued without an explicit expiry. A guess taken from `closes_at` or "today" could have killed every code at 00:00 on festival morning.
 - **Form checkout is card only** (`payment_method_types: ['card']`). With card only, a completed Checkout Session means the money is settled. A delayed bank debit would have left a "complete" session whose money might never arrive.
 
+## 2026-09-11 — Lunch orders can be marked paid by hand with how they were paid (narrows the 2026-09-10 rule that an online order is marked paid only by Stripe)
+
+**Decision (owner, 2026-09-11).** "When someone gets marked as paid we should
+have the option to note how they paid: Zelle, Cash, Masjid Terminal, Stripe." It
+came with a question about order #018, a card order taken on the board whose
+Stripe page was still open, which nobody could mark paid.
+
+1. **Mark paid always says how.** On the Jummah-lunch board it requires
+   `paid_via`: `cash | zelle | terminal | stripe`, shown as Cash, Zelle, Masjid
+   Terminal, Stripe (`MealOrder::PAID_VIA`, a nullable `meal_orders.paid_via`).
+   It is written beside `marked_paid_by_user_id` by the first press only, so a
+   second press is a 200 that rewrites neither. `stripe` means money taken
+   through some other Stripe route, such as the masjid's own link or dashboard.
+   It is a label staff record, like the others. A payment on the order's own
+   Checkout page is still recorded by the webhook alone, leaves `paid_via` NULL,
+   and reads as paid online by card. Rows marked paid before today are not
+   backfilled.
+2. **Any unpaid order that is not cancelled can be marked paid, pickup or
+   online, by anyone who runs the board** (admins and lunch volunteers). This
+   narrows the 2026-09-10 staff-order rule (8fb78cd, and `MealOrdersController::
+   markPaid` as it stood) that an online order is marked paid only by Stripe.
+   `payment_method` stays the channel the order came through; `paid_via` says
+   how the money came.
+3. **The order's own card page is closed first**, under the row lock that
+   Payment link and cancelling take
+   (`MealOrderCheckoutService::closePageBeforePaidByHand`):
+   - an open page is expired and forgotten;
+   - a page complete and paid is refused ("already paid by card online");
+   - a page complete and unpaid is refused as a bank payment still clearing;
+   - a close Stripe refuses is asked about again, and is refused on either
+     answer or when the page is still open;
+   - if Stripe does not answer, nothing is recorded.
+4. **A card payment landing on an order already marked paid by hand is a
+   double payment.** `MealOrderPaymentService` records its payment intent id
+   only, never rewrites how, who or when, and logs a warning, by ids, so the
+   organisation can refund one of the two. The board says so beside the order
+   too ("Also paid by card online: refund one in Stripe"), because the log
+   reaches only the platform operator.
+5. **A press that finds the order already paid says what was recorded, never
+   what was chosen** (review, same day). An order already marked paid by hand
+   answers 200 with `recorded: false`, and its `data` names the method and the
+   person recorded first. An online order the webhook already settled from its
+   own page (`MealOrder::paidOnItsOwnPage()`) is refused with a 422, as point 3
+   refuses it in the seconds before the webhook lands, so what staff are told
+   never depends on how fast Stripe delivers.
+6. **Every card page is made on the locked row, the first one included**
+   (`MealOrderCheckoutService::checkout`). The first page used to be made after
+   the order's own write had committed, so a Mark paid in between found no page
+   to close and a live page then landed on a paid order.
+
+**Alternatives.**
+- **Keep online orders webhook-only.** Rejected: #018 was paid another way and
+  the board had no honest way to say so. The order would have stayed unpaid on
+  every total.
+- **A free-text note.** Rejected: fixed choices can be counted by method, and
+  free text cannot.
+- **Default the method to cash.** Rejected: a default is a guess written into a
+  money record. A board still on the old bundle sends no method and is told,
+  in the refusal it shows, to reload.
+- **Mark paid without closing the card page.** Rejected: the customer could
+  still pay by card afterwards. Closing first under the lock is the forms'
+  take-cash pattern (`FormResponsesController::settleByHand`).
+- **Refund a double payment automatically.** Rejected: the organisation is the
+  merchant of record, and a refund is its own action in its Stripe dashboard
+  (`.claude/rules/stripe-payments.md`).
+- **Refuse every press on an order already paid**, as the forms' take-cash does.
+  Rejected: two volunteers recording the same cash is ordinary, and the second
+  is told what was recorded rather than refused.
+- **Keep the 200 for an order paid on its own page.** Rejected: the refusal in
+  point 3 would then depend on whether the webhook had landed a second earlier.
+
+**Rationale.** Lunch money arrives in several ways besides the order's own
+page, and until today the board could mark only pickup orders paid, without
+saying how. Asking at the moment of Mark paid records it while the person who
+took the money is standing there. Closing the card page first keeps one order
+to one payment, and the webhook warning is the backstop for a payment that
+slips past.

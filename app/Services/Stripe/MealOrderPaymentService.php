@@ -21,6 +21,10 @@ use Illuminate\Support\Facades\Log;
  * Both success events resolve the same order and both call `markPaid()`, which
  * is idempotent, so a duplicate or out-of-order delivery (session vs
  * payment_intent) converges to one paid order with one `paid_at`.
+ *
+ * An order staff already marked paid by hand (`paid_via` set) is never settled
+ * again by a card payment: that is a double payment, recorded by its payment
+ * intent id and logged so the organisation can refund one (paidTwice()).
  */
 class MealOrderPaymentService
 {
@@ -62,6 +66,10 @@ class MealOrderPaymentService
             return;
         }
 
+        if ($this->paidTwice($order, $paymentIntentId, $sessionId)) {
+            return;
+        }
+
         if ($sessionId && $order->stripe_checkout_session_id === null) {
             $order->stripe_checkout_session_id = $sessionId;
         }
@@ -82,8 +90,14 @@ class MealOrderPaymentService
             return;
         }
 
+        $paymentIntentId = $this->stringOrNull($pi['id'] ?? null);
+
+        if ($this->paidTwice($order, $paymentIntentId, null)) {
+            return;
+        }
+
         $this->warnIfCancelled($order);
-        $order->markPaid($this->stringOrNull($pi['id'] ?? null));
+        $order->markPaid($paymentIntentId);
     }
 
     /**
@@ -130,6 +144,53 @@ class MealOrderPaymentService
             'checkout_session_id' => $sessionId,
             'page_forgotten' => $pageForgotten,
         ]);
+    }
+
+    /**
+     * A card payment for an order staff had already marked paid by hand
+     * (`paid_via` is set): the customer paid twice, and the organisation, the
+     * merchant of record, should refund one of the two. Mark paid closes the
+     * order's own page first and refuses when Stripe says it was paid, so this is
+     * the backstop, not the plan.
+     *
+     * Only the payment intent id is recorded, so the charge can be found in
+     * Stripe; how the order was paid, who recorded it and when are never
+     * rewritten, and a second payment intent is never recorded over the first.
+     * Decided on the locked row (the lock Mark paid takes), and said once per
+     * payment intent, since both of its success events land here: at warning,
+     * the level production runs at, by ids only.
+     *
+     * @return bool true when the order was paid by hand, so this event settles nothing
+     */
+    private function paidTwice(MealOrder $order, ?string $paymentIntentId, ?string $sessionId): bool
+    {
+        return DB::transaction(function () use ($order, $paymentIntentId, $sessionId): bool {
+            $locked = MealOrder::withoutMasjidScope()->lockForUpdate()->find($order->id);
+
+            if (! $locked || $locked->paid_via === null) {
+                return false;
+            }
+
+            $alreadyTold = $paymentIntentId !== null && $locked->stripe_payment_intent_id === $paymentIntentId;
+
+            if ($paymentIntentId !== null && $locked->stripe_payment_intent_id === null) {
+                $locked->stripe_payment_intent_id = $paymentIntentId;
+                $locked->save();
+            }
+
+            if (! $alreadyTold) {
+                Log::warning('A meal order marked paid by hand was also paid by card on Stripe, so it was paid twice. The organisation should refund one of the two in its Stripe dashboard.', [
+                    'order_uuid' => $locked->uuid,
+                    'masjid_id' => (int) $locked->masjid_id,
+                    'paid_via' => $locked->paid_via,
+                    'marked_paid_by_user_id' => $locked->marked_paid_by_user_id,
+                    'payment_intent_id' => $paymentIntentId,
+                    'checkout_session_id' => $sessionId,
+                ]);
+            }
+
+            return true;
+        });
     }
 
     /**

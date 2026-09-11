@@ -17,8 +17,10 @@ use Tests\TestCase;
  *
  * Same two-path isolation as the offering suite: targeting B's masjid in the
  * route is a 403 (ResolveMasjidTenant), B's id under A's own route is a 404
- * (the BelongsToMasjid scope makes findOrFail miss). On top, this pins the one
- * money-safety rule of the board: an ONLINE order cannot be marked paid by hand.
+ * (the BelongsToMasjid scope makes findOrFail miss). On top, it pins that Mark
+ * paid always says how the money came, pickup or online. DECISIONS.md 2026-09-11
+ * replaced the rule this used to pin, that an ONLINE order cannot be marked paid
+ * by hand; MealOrderMarkPaidTest covers the card page it now closes first.
  */
 class MealMenuAdminTest extends TestCase
 {
@@ -103,21 +105,30 @@ class MealMenuAdminTest extends TestCase
     }
 
     #[Test]
-    public function a_pickup_order_can_be_marked_paid_but_an_online_one_cannot(): void
+    public function pickup_and_online_orders_are_marked_paid_only_by_saying_how(): void
     {
         $menu = MealMenu::factory()->forMasjid($this->masjidA)->open()->create();
         $pickup = MealOrder::factory()->create(['masjid_id' => $this->masjidA->id, 'meal_menu_id' => $menu->id]);
+        // Online, with no card page on record: there is nothing to close first.
         $online = MealOrder::factory()->online()->create(['masjid_id' => $this->masjidA->id, 'meal_menu_id' => $menu->id]);
 
         Sanctum::actingAs($this->adminA);
 
         $this->postJson($this->base() . "/menus/{$menu->id}/orders/{$pickup->id}/mark-paid")
+            ->assertStatus(422);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $pickup->refresh()->payment_status);
+
+        $this->postJson($this->base() . "/menus/{$menu->id}/orders/{$pickup->id}/mark-paid", ['paid_via' => MealOrder::PAID_VIA_CASH])
             ->assertOk();
         $this->assertSame(MealOrder::PAYMENT_PAID, $pickup->refresh()->payment_status);
+        $this->assertSame(MealOrder::PAID_VIA_CASH, $pickup->paid_via);
 
-        $this->postJson($this->base() . "/menus/{$menu->id}/orders/{$online->id}/mark-paid")
-            ->assertStatus(422);
-        $this->assertSame(MealOrder::PAYMENT_UNPAID, $online->refresh()->payment_status);
+        $this->postJson($this->base() . "/menus/{$menu->id}/orders/{$online->id}/mark-paid", ['paid_via' => MealOrder::PAID_VIA_TERMINAL])
+            ->assertOk();
+        $online->refresh();
+        $this->assertSame(MealOrder::PAYMENT_PAID, $online->payment_status);
+        $this->assertSame(MealOrder::PAID_VIA_TERMINAL, $online->paid_via);
+        $this->assertSame(MealOrder::METHOD_ONLINE, $online->payment_method);
     }
 
     #[Test]

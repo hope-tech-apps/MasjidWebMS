@@ -160,10 +160,23 @@
                                         <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
                                         <span v-if="Number(o.fee_covered_minor) > 0" class="badge bg-secondary-subtle text-secondary-emphasis ms-1" :title="'Customer covered ' + money(o.fee_covered_minor) + ' of card fees'">+fee</span>
                                     </td>
-                                    <td>
-                                        <span class="badge" :class="o.payment_status === 'paid' ? 'bg-success' : 'bg-warning text-dark'">{{ o.payment_status }}</span>
-                                        <div class="text-muted small">{{ o.payment_method === 'online' ? 'online' : 'at pickup' }}</div>
-                                        <div v-if="o.payment_status === 'paid' && o.marked_paid_by?.name" class="text-muted small">marked paid by {{ o.marked_paid_by.name }}</div>
+                                    <!-- Paid: how the money came (paidLabel). Unpaid: the channel it was ordered through.
+                                         Focusable from script only: Mark paid moves focus here once its button is gone. -->
+                                    <td :id="`jl-pay-${o.id}`" tabindex="-1">
+                                        <template v-if="o.payment_status === 'paid'">
+                                            <span class="badge bg-success">{{ paidLabel(o) }}</span>
+                                            <div v-if="!o.paid_via && o.payment_method !== 'online'" class="text-muted small">at pickup</div>
+                                            <div v-if="o.marked_paid_by?.name" class="text-muted small">marked paid by {{ o.marked_paid_by.name }}</div>
+                                            <!-- Where the organisation looks: otherwise a double payment is only in the server log. -->
+                                            <div v-if="paidTwice(o)" class="small text-danger fw-semibold mt-1">
+                                                Also paid by card online: refund one in Stripe
+                                                <span class="d-block fw-normal text-break">({{ o.stripe_payment_intent_id }})</span>
+                                            </div>
+                                        </template>
+                                        <template v-else>
+                                            <span class="badge bg-warning text-dark">{{ o.payment_status }}</span>
+                                            <div class="text-muted small">{{ o.payment_method === 'online' ? 'online' : 'at pickup' }}</div>
+                                        </template>
                                     </td>
                                     <td>
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
@@ -177,10 +190,11 @@
                                         <!-- Cancelling closes the order's payment page; when Stripe could not be reached, this tries again. -->
                                         <button v-if="o.status === 'cancelled' && o.payment_status === 'unpaid' && o.stripe_checkout_session_id"
                                             class="btn btn-sm btn-outline-danger me-1" @click="setOrderStatus(o, 'cancelled', true)">Close payment page</button>
-                                        <!-- Not on a cancelled order: nobody collects for a meal that isn't being made.
-                                             Restore it first — the same rule the Payment link button already follows. -->
-                                        <button v-if="o.payment_method === 'pickup' && o.payment_status === 'unpaid' && o.status !== 'cancelled'"
-                                            class="btn btn-sm btn-success" @click="markPaid(o)">Mark paid</button>
+                                        <!-- Any unpaid order, pickup or card: the server closes a card order's payment
+                                             page first. Not on a cancelled order: nobody collects for a meal that isn't
+                                             being made. Restore it first — the same rule the Payment link button follows. -->
+                                        <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled'"
+                                            class="btn btn-sm btn-success" @click="openMarkPaid(o, $event)">Mark paid</button>
                                     </td>
                                 </tr>
                             </tbody>
@@ -451,6 +465,35 @@
             </div>
         </div>
 
+        <!-- Mark paid: how the money came. Nothing is chosen for them, so a hurried press
+             can't record the wrong way. It reads the order live (paidOrder), so a refresh
+             while it is open reaches it. -->
+        <div v-if="paidModal.show" class="jl-modal">
+            <div ref="paidDialog" class="jl-dialog card" role="dialog" aria-modal="true" aria-labelledby="jlp-title"
+                :aria-describedby="paidLinkNote ? 'jlp-link-note' : undefined" tabindex="-1">
+                <div class="card-header"><h5 id="jlp-title" class="mb-0">Mark order #{{ paidOrder?.order_number }} paid · {{ paidOrder?.customer_name }}</h5></div>
+                <div class="card-body">
+                    <fieldset>
+                        <legend class="form-label fs-6 mb-2">How did they pay?</legend>
+                        <div v-for="m in PAID_VIA_OPTIONS" :key="m.value" class="form-check">
+                            <input :id="`jlp-${m.value}`" v-model="paidModal.via" class="form-check-input" type="radio" name="jlp-via" :value="m.value" />
+                            <label class="form-check-label" :for="`jlp-${m.value}`">{{ m.label }}</label>
+                        </div>
+                    </fieldset>
+                    <!-- Worded to be true whatever the page's state: the board can't tell an open link from an expired one. -->
+                    <p v-if="paidLinkNote" id="jlp-link-note" class="alert alert-warning py-2 small mt-2 mb-0">
+                        If this order's card payment link is still open, marking it paid closes it, so it can't also be paid online.
+                    </p>
+                    <div v-if="paidStale && !paidError" class="alert alert-info py-2 small mt-2 mb-0" role="status">{{ paidStale }}</div>
+                    <div v-if="paidError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ paidError }}</div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" @click="closeMarkPaid">Cancel</button>
+                    <button class="btn btn-success" :disabled="!paidModal.via || paidSaving || !!paidStale" @click="confirmMarkPaid">{{ paidSaving ? 'Saving…' : 'Mark paid' }}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Item modal -->
         <div v-if="itemModal.show" class="jl-modal">
             <div class="jl-dialog card">
@@ -474,9 +517,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeMount, onBeforeUnmount, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, reactive, ref, watch } from "vue";
 import Swal from "sweetalert2";
-import { useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
+import { PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
 import { useMasjidStore } from "@/stores/masjidStore";
 
 const store = useJummahLunchStore();
@@ -619,7 +662,7 @@ function stopPolling() {
 }
 function onVisible() { if (!document.hidden && currentMenu.value) pollOrders(); }
 document.addEventListener("visibilitychange", onVisible);
-onBeforeUnmount(() => { stopPolling(); document.removeEventListener("visibilitychange", onVisible); });
+onBeforeUnmount(() => { stopPolling(); document.removeEventListener("visibilitychange", onVisible); document.removeEventListener("keydown", onPaidKeydown); });
 const services = computed(() => store.services);
 // A LunchStaff reaches the same board through their own realm. Two controls are
 // hidden from them because the server will not serve them either: deleting a
@@ -1030,16 +1073,123 @@ async function removeItem(it: any) {
     try { await store.deleteItem(currentMenu.value.id, it.id); await store.fetchMenu(currentMenu.value.id); toast("Item removed"); } catch (e) { toastError(e); }
 }
 
-async function markPaid(o: any) {
-    if (!currentMenu.value) return;
+// ---------------------------------------------------------- mark paid
+// Staff say how the money came; nothing is preselected. The server closes a card
+// order's own payment page first and refuses in its own words when that page was
+// paid, is clearing, or Stripe didn't answer (serverReason).
+const paidModal = reactive<{ show: boolean; orderId: number | null; order: any; via: string }>({ show: false, orderId: null, order: null, via: "" });
+const paidSaving = ref(false);
+const paidError = ref("");
+const paidDialog = ref<HTMLElement | null>(null);
+let paidOpener: HTMLElement | null = null;
+
+// The order as the board holds it NOW, found by id in the live list, so each refresh
+// reaches the open dialog: a payment link made on another device, or the order paid or
+// cancelled meanwhile. The copy from when it opened stands in only if the order is gone.
+const paidOrder = computed<any>(() => orders.value.find((o: any) => o.id === paidModal.orderId) ?? paidModal.order);
+const paidLinkNote = computed(() => paidOrder.value?.payment_status === "unpaid" && !!paidOrder.value?.stripe_checkout_session_id);
+const paidStale = computed(() => {
+    const o = paidOrder.value;
+    if (!o) return "";
+    if (o.payment_status === "paid") return `Order #${o.order_number} is already paid (${howPaid(o)}). There is nothing to record.`;
+    if (o.status === "cancelled") return "This order was cancelled while this was open. Restore it before marking it paid.";
+    return "";
+});
+
+function paidViaLabel(via: string): string {
+    return PAID_VIA_OPTIONS.find((m) => m.value === via)?.label ?? via;
+}
+// What staff chose when they marked it paid; with none, an online order was paid
+// by card on its own Stripe page (the webhook), and a pickup order was marked
+// paid before the board asked how.
+function paidLabel(o: any): string {
+    if (o.paid_via) return `Paid · ${paidViaLabel(o.paid_via)}`;
+    return o.payment_method === "online" ? "Paid · Card (online)" : "Paid";
+}
+// The same in a sentence, with who recorded it: "Zelle, marked by Aisha".
+function howPaid(o: any): string {
+    const how = o?.paid_via ? paidViaLabel(o.paid_via) : o?.payment_method === "online" ? "card online" : "at pickup";
+    return o?.marked_paid_by?.name ? `${how}, marked by ${o.marked_paid_by.name}` : how;
+}
+// Marked paid by hand AND charged on its own card page: only a double payment leaves
+// both (MealOrderPaymentService::paidTwice records the charge beside what staff chose).
+function paidTwice(o: any): boolean {
+    return o.payment_status === "paid" && !!o.paid_via && !!o.stripe_payment_intent_id;
+}
+function openMarkPaid(o: any, e?: Event) {
+    paidOpener = (e?.currentTarget as HTMLElement | null) ?? null;
+    Object.assign(paidModal, { show: true, orderId: o.id, order: o, via: "" });
+    paidError.value = "";
+    // Into the dialog, so a keyboard or screen-reader user starts at its title.
+    nextTick(() => paidDialog.value?.focus());
+}
+function closeMarkPaid() {
+    if (paidSaving.value) return;
+    paidModal.show = false;
+    // Back to the button that opened it.
+    paidOpener?.focus();
+    paidOpener = null;
+}
+// Escape closes it wherever focus is, as Cancel does. Tab and Shift+Tab stay inside:
+// aria-modal tells a screen reader the board behind is inert, so focus must never
+// reach a status select or another order's Mark paid under the overlay.
+function onPaidKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") { closeMarkPaid(); return; }
+    const box = paidDialog.value;
+    if (e.key !== "Tab" || !box) return;
+    // The radios are one tab stop (the chosen one, else the first), then the enabled buttons.
+    const radios = Array.from(box.querySelectorAll<HTMLInputElement>('input[type="radio"]:not(:disabled)'));
+    const buttons = Array.from(box.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    const first: HTMLElement | undefined = radios.find((r) => r.checked) ?? radios[0] ?? buttons[0];
+    const last: HTMLElement | undefined = buttons[buttons.length - 1] ?? first;
+    if (!first || !last) return;
+    const at = document.activeElement as HTMLElement | null;
+    const inside = !!at && box.contains(at);
+    const wrap = e.shiftKey
+        ? !inside || at === box || radios.includes(at as HTMLInputElement)
+        : !inside || at === last;
+    if (!wrap) return;
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+}
+watch(() => paidModal.show, (open) => {
+    if (open) document.addEventListener("keydown", onPaidKeydown);
+    else document.removeEventListener("keydown", onPaidKeydown);
+});
+async function confirmMarkPaid() {
+    const o = paidOrder.value;
+    const via = paidModal.via;
+    if (!currentMenu.value || !o || !via) return;
+    paidSaving.value = true;
+    paidError.value = "";
+    let saved: { order: any; recorded: boolean } | null = null;
     try {
-        await store.markOrderPaid(currentMenu.value.id, o.id);
-        toast("Marked paid");
+        saved = await store.markOrderPaid(currentMenu.value.id, o.id, via);
+        paidModal.show = false;
+        paidOpener = null;
     } catch (e: any) {
-        Swal.fire({ icon: "warning", title: "Not marked paid", text: serverReason(e, "Could not mark it paid.") });
+        paidError.value = serverReason(e, "Could not mark it paid.");
+    } finally {
+        paidSaving.value = false;
     }
-    // Either way, show the order's real state: a refused button may be stale.
+    // Either way, show the order's real state: a refused press may mean the board was stale.
     await refreshOrders();
+    if (!saved) return;
+    // Its Mark paid button is gone now, so focus goes to the row's payment cell, which
+    // says how it was paid, instead of dropping to the page.
+    await nextTick();
+    document.getElementById(`jl-pay-${o.id}`)?.focus();
+    if (saved.recorded) {
+        toast(`Order #${o.order_number} marked paid · ${paidViaLabel(saved.order?.paid_via || via)}`);
+        return;
+    }
+    // Already marked paid by hand, by a colleague or on a board that was behind: the
+    // server kept what was recorded first, so say that, never the method chosen here.
+    Swal.fire({
+        icon: "warning",
+        title: "Already paid",
+        text: `Order #${o.order_number} was already paid (${howPaid(saved.order)}), so nothing was changed. If you took money for it as well, it has been paid twice.`,
+    });
 }
 // `again`: "Close payment page" sends a cancel once more, after a close that failed.
 async function setOrderStatus(o: any, status: string, again = false) {
@@ -1086,6 +1236,8 @@ onBeforeMount(() => {
    bottom of the window with Save out of reach and nothing scrolled. */
 .jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); padding: 4vh 12px; z-index: 1080; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .jl-dialog { width: 100%; max-width: 460px; margin: 0 auto 4vh; }
+/* Focus is put on the Mark paid dialog itself so its title is read first; the box is not a control. */
+.jl-dialog:focus { outline: none; }
 .jlo-extra { max-width: 180px; }
 .stat { background: #f6f8fa; border-radius: 10px; padding: 12px; text-align: center; }
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
