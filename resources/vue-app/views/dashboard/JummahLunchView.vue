@@ -548,8 +548,12 @@ async function openPayLink(o: any) {
 // The server's own reason (already paid, cancelled, went online on another
 // device), never axios's "Request failed with status code 422".
 function serverReason(e: any, fallback: string): string {
-    const reason = e?.response?.data?.data;
-    return typeof reason === "string" ? reason : (e?.message || fallback);
+    // The app's own refusals carry the reason in `data`; Laravel's abort() and
+    // middleware refusals (e.g. a capability that is switched off) in `message`.
+    const body = e?.response?.data;
+    if (typeof body?.data === "string" && body.data) return body.data;
+    if (typeof body?.message === "string" && body.message) return body.message;
+    return e?.message || fallback;
 }
 // A refresh failure is only that: the action it follows already happened.
 async function refreshOrders() {

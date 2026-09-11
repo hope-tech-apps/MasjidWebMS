@@ -45,12 +45,13 @@ final class OrganisationAccess
 
         $types = $users->pluck('type', 'id');
 
-        // Masjid::query(), so SoftDeletes applies: an archived organisation grants
-        // nothing (TenantResolver skips it) and must not be listed as access.
-        $owned = Masjid::query()->whereIn('user_id', $ids)->get();
+        // Archived organisations are included and flagged: they grant nothing today
+        // (TenantResolver skips them), but a membership there still blocks an
+        // access change (TeamController::update), so the list must show them.
+        $owned = Masjid::withoutGlobalScopes()->whereIn('user_id', $ids)->get();
         $memberships = MasjidUser::whereIn('user_id', $ids)->get(['masjid_id', 'user_id']);
 
-        $masjids = Masjid::query()
+        $masjids = Masjid::withoutGlobalScopes()
             ->whereIn('id', $memberships->pluck('masjid_id')->merge($owned->pluck('id'))->unique()->all())
             ->get()
             ->keyBy('id');
@@ -69,6 +70,7 @@ final class OrganisationAccess
                 'name' => $masjid->name,
                 'access' => self::ACCESS_FOR_TYPE[$types[$userId] ?? ''] ?? null,
                 'is_owner' => false,
+                'archived' => $masjid->trashed(),
             ];
             $row['is_owner'] = $row['is_owner'] || $isOwner;
 

@@ -109,6 +109,11 @@ class DemoSchoolSeederTest extends TestCase
         $this->assertTrue((bool) $masjid->crm_enabled, 'the CRM gate must be open or no group screen loads');
         $this->assertTrue($masjid->fresh()->hasCapability('web_pages'), 'the demo script opens the page builder as the principal');
 
+        // A deliberate "off" survives a re-run: the seeder only fills the gap.
+        $masjid->forceFill(['capability_overrides' => ['web_pages' => false]])->save();
+        $this->artisan('demo:seed-school')->assertSuccessful();
+        $this->assertFalse($masjid->fresh()->hasCapability('web_pages'), 're-seeding must not overwrite a deliberate choice');
+
         // The school FEATURE BUNDLE — proof this went through provisioning and
         // not a hand-written masjids row: a school never gets the worship
         // modules, and provisioning writes a pivot row for every catalog key.

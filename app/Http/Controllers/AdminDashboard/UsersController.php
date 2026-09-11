@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Models\MasjidUser;
 use App\Http\Requests\Admin\Users\InviteUserRequest;
 use App\Models\Masjid;
 use App\Services\Auth\AccountAccessService;
@@ -129,11 +130,14 @@ class UsersController extends Controller
             if ($archivedUser) {
                 $archivedUser->restore();
                 // A lunch-only login or a teacher is never re-typed from this form
-                // (see update()). Archiving leaves its memberships in place, so
-                // turning it into an administrator here would silently make it a
-                // full administrator of those organisations. Its access is changed
-                // on the organisation's Team & Access screen instead.
-                if (in_array($archivedUser->type, OrganisationAccess::SCOPED_TYPES, true)) {
+                // while it still has a membership (see update()): archiving leaves
+                // memberships in place, so turning it into an administrator here
+                // would silently make it a full administrator of those
+                // organisations. Its access is changed on that organisation's Team
+                // & Access screen. With no membership left there is nothing to
+                // escalate into, so the form's type applies as usual.
+                if (in_array($archivedUser->type, OrganisationAccess::SCOPED_TYPES, true)
+                    && MasjidUser::where('user_id', $archivedUser->id)->exists()) {
                     unset($data['type']);
                     $keptScope = true;
                 }

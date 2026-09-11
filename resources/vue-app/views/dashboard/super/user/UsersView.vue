@@ -34,7 +34,7 @@
                                         </td>
                                         <td class="border-0 align-middle">
                                             <template v-if="user.organisations?.length">
-                                                <div v-for="org in user.organisations" :key="org.masjid_id">{{ org.name }}</div>
+                                                <div v-for="org in user.organisations" :key="org.masjid_id">{{ org.name }}<span v-if="org.archived" class="text-muted small ms-1">(archived)</span></div>
                                             </template>
                                             <span v-else class="text-muted">None</span>
                                         </td>

@@ -131,10 +131,12 @@ class DemoSchoolSeeder
 
             // Step 6 of docs/demo-school.md opens the page builder as the principal.
             // Schools don't get Website pages by default (config/capabilities.php),
-            // so switch it on for the demo tenant, fresh or restored alike.
-            $masjid->forceFill([
-                'capability_overrides' => array_merge($masjid->capability_overrides ?? [], ['web_pages' => true]),
-            ])->save();
+            // so switch it on for the demo tenant — only when nobody has decided
+            // either way, so a deliberate "off" survives a re-run.
+            $overrides = $masjid->capability_overrides ?? [];
+            if (! array_key_exists('web_pages', $overrides)) {
+                $masjid->forceFill(['capability_overrides' => $overrides + ['web_pages' => true]])->save();
+            }
 
             // Bind the tenant for everything that follows. From here on the
             // BelongsToMasjid global scope filters every read and its creating

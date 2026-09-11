@@ -36,10 +36,10 @@
                 <div v-for="org in user.organisations ?? []" :key="org.masjid_id" class="access-card">
                     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                         <div>
-                            <div class="fw-semibold">{{ org.name }}</div>
+                            <div class="fw-semibold">{{ org.name }}<span v-if="org.archived" class="badge text-bg-secondary ms-2">Archived</span></div>
                             <span class="badge mt-1" :class="accessBadge(org)">{{ accessLabel(org) }}</span>
                         </div>
-                        <button type="button" class="btn btn-sm btn-outline-success" @click="openTeam(org.masjid_id)">
+                        <button v-if="!org.archived" type="button" class="btn btn-sm btn-outline-success" @click="openTeam(org.masjid_id)">
                             Open Team &amp; Access
                         </button>
                     </div>

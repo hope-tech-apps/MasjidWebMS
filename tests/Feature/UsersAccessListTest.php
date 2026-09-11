@@ -64,7 +64,7 @@ class UsersAccessListTest extends TestCase
 
         $lunch = $users->firstWhere('id', $this->lunch->id);
         $this->assertNotNull($lunch, 'lunch-only logins must appear on the Users list');
-        $this->assertSame([['masjid_id' => $this->masjid->id, 'name' => $this->masjid->name, 'access' => 'jummah_lunch', 'is_owner' => false]], $lunch['organisations']);
+        $this->assertSame([['masjid_id' => $this->masjid->id, 'name' => $this->masjid->name, 'access' => 'jummah_lunch', 'is_owner' => false, 'archived' => false]], $lunch['organisations']);
 
         $owner = $users->firstWhere('id', $this->owner->id);
         $this->assertTrue($owner['organisations'][0]['is_owner']);
@@ -139,5 +139,25 @@ class UsersAccessListTest extends TestCase
         $user = User::findOrFail($this->lunch->id);
         $this->assertSame(User::TYPE_LUNCH_STAFF, $user->type);
         $this->assertTrue(MasjidUser::where('user_id', $user->id)->where('role', 'lunch-staff')->exists());
+    }
+
+    #[Test]
+    public function an_archived_lunch_login_with_no_membership_takes_the_forms_type(): void
+    {
+        Sanctum::actingAs($this->super);
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        // No membership left, so there is nothing a new type could escalate into.
+        MasjidUser::where('user_id', $this->lunch->id)->delete();
+        $this->lunch->delete();
+
+        $this->post('/api/admin/users', [
+            'name' => 'Fresh Admin', 'email' => $this->lunch->email, 'phone' => '+15550007778',
+            'type' => 'MasjidAdmin',
+            'avatar' => \Illuminate\Http\UploadedFile::fake()->image('avatar.png', 20, 20),
+            'password' => 'Restore#2026x', 'password_confirmation' => 'Restore#2026x',
+        ], ['Accept' => 'application/json'])->assertSuccessful();
+
+        $this->assertSame('MasjidAdmin', User::findOrFail($this->lunch->id)->type);
     }
 }

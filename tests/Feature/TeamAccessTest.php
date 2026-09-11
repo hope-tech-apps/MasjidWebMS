@@ -290,23 +290,33 @@ class TeamAccessTest extends TestCase
     }
 
     #[Test]
-    public function an_archived_organisation_neither_lists_as_access_nor_blocks_a_change(): void
+    public function an_archived_organisation_still_blocks_an_access_change_and_is_listed_as_archived(): void
     {
         $super = User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550009991'])->fresh();
-        $member = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
 
-        // The member also owns an organisation that has since been archived.
+        // A volunteer who is lunch-only here AND at an organisation since archived.
+        $volunteer = $this->staff($this->masjid, User::TYPE_LUNCH_STAFF, 'lunch-staff');
         $archived = $this->org('masjid', false);
-        $archived->forceFill(['name' => 'Archived Org ' . uniqid(), 'user_id' => $member->id])->save();
+        MasjidUser::create(['masjid_id' => $archived->id, 'user_id' => $volunteer->id, 'role' => 'lunch-staff', 'is_default' => false]);
         $archived->delete();
+
+        // Its owner, too, is someone who is an administrator here.
+        $owner = $this->staff($this->masjid, 'MasjidAdmin', 'masjid-admin');
+        $ownedArchived = $this->org('masjid', false);
+        $ownedArchived->forceFill(['user_id' => $owner->id])->save();
+        $ownedArchived->delete();
 
         Sanctum::actingAs($super);
 
-        // Not listed: an archived organisation grants nothing.
-        $this->getJson('/api/admin/users')->assertOk()->assertDontSee($archived->name);
+        // Re-typing either would take effect at the archived organisation the day
+        // it is restored: a lunch volunteer becoming its full administrator, or
+        // its owner locked out. So both are refused, as before.
+        $this->changeAccess($this->masjid, $volunteer, 'admin')->assertStatus(409);
+        $this->changeAccess($this->masjid, $owner, 'jummah_lunch')->assertStatus(409);
+        $this->assertSame(User::TYPE_LUNCH_STAFF, $volunteer->fresh()->type);
+        $this->assertSame('MasjidAdmin', $owner->fresh()->type);
 
-        // Not a reason to refuse: the only live organisation is this one.
-        $this->changeAccess($this->masjid, $member, 'jummah_lunch')->assertOk();
-        $this->assertSame(User::TYPE_LUNCH_STAFF, $member->fresh()->type);
+        // The list shows why: the archived organisation is there, flagged.
+        $this->assertStringContainsString('"archived":true', $this->getJson('/api/admin/users')->assertOk()->getContent());
     }
 }

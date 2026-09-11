@@ -181,12 +181,13 @@ class TeamController extends Controller
             return $this->refuse('Teachers are managed on the Teachers screen, with their classes.', Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // Live organisations only: an archived one grants nothing, so it must not
-        // block a change here. (destroy() stays conservative on purpose — it keeps
-        // a login that still belongs anywhere, archived included.)
-        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)
-                ->whereIn('masjid_id', Masjid::query()->select('id'))->exists()
-            || Masjid::query()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
+        // ARCHIVED organisations count too, exactly as in destroy(). users.type is
+        // global and TenantResolver binds any live membership whatever its role:
+        // re-typing a login here while it still belongs to an archived
+        // organisation would make it a full administrator there (or lock out its
+        // owner) the day that organisation is restored.
+        $elsewhere = MasjidUser::where('user_id', $user->id)->where('masjid_id', '!=', $masjid->id)->exists()
+            || Masjid::withoutGlobalScopes()->where('user_id', $user->id)->where('id', '!=', $masjid->id)->exists();
 
         if ($elsewhere) {
             return $this->refuse('This login also belongs to another organisation, and its access applies to both. Change it with Manara.', Response::HTTP_CONFLICT);

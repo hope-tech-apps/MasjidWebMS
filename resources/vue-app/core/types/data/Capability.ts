@@ -46,6 +46,8 @@ export type UserOrganisation = {
     name: string;
     access: TeamAccess | null;
     is_owner: boolean;
+    /** Archived (soft-deleted): it grants nothing now, but still blocks an access change. */
+    archived?: boolean;
     /** What that organisation has — only on the single-user payload. */
     capabilities?: CapabilityKey[];
 };

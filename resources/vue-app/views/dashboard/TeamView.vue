@@ -8,7 +8,7 @@
             <div class="container w-100">
 
                 <!-- Layer 1: what this organisation has. Administrators get all of it. -->
-                <section class="team-has mb-4" aria-labelledby="team-has-title">
+                <section v-if="masjidStore.masjid?.id" class="team-has mb-4" aria-labelledby="team-has-title">
                     <h2 id="team-has-title" class="fs-6 fw-semibold mb-1">What {{ orgName }} has</h2>
                     <p class="small text-muted mb-3">
                         Administrators can use everything that is switched on.
@@ -34,7 +34,7 @@
 
                 <div v-else-if="loadError" class="alert alert-danger" role="alert">
                     <i class="bi bi-exclamation-triangle me-2" aria-hidden="true"></i>{{ loadError }}
-                    <button class="btn btn-sm btn-outline-danger ms-3" @click="load">Retry</button>
+                    <button v-if="masjidStore.masjid?.id" class="btn btn-sm btn-outline-danger ms-3" @click="load">Retry</button>
                 </div>
 
                 <!-- Layer 2: who can sign in, and what each of them can do. -->
@@ -230,6 +230,9 @@ watch(() => masjidStore.masjid?.id, (id) => {
         load();
         return;
     }
+    // Drop whatever organisation was loaded before, so its chips and add options
+    // cannot show here. There is nothing to retry until one is opened.
+    teamStore.team = null;
     loading.value = false;
     loadError.value = "No organisation is open. Open Team & Access from an organisation's page.";
 }, { immediate: true });
