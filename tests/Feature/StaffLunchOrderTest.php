@@ -9,6 +9,7 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\User;
 use App\Services\Stripe\MealOrderCheckoutService;
+use App\Services\Stripe\MealOrderPaymentService;
 use App\Support\StripeFees;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
@@ -34,6 +35,8 @@ class StaffLunchOrderTest extends TestCase
     /** Stripe, faked: pages made so far, what a lookup reports, and an outage. */
     public static int $pagesMade = 0;
     public static string $pageStatus = 'open';
+    /** The page's payment_status as Stripe reports it; null for a stub that predates the field. */
+    public static ?string $pagePaymentStatus = null;
     public static bool $stripeDown = false;
     /** The parameters of the last Checkout Session asked for — what Stripe would charge. */
     public static array $lastParams = [];
@@ -88,6 +91,7 @@ class StaffLunchOrderTest extends TestCase
     {
         self::$pagesMade = 0;
         self::$pageStatus = 'open';
+        self::$pagePaymentStatus = null;
         self::$stripeDown = false;
         self::$lastParams = [];
         self::$keys = [];
@@ -131,7 +135,11 @@ class StaffLunchOrderTest extends TestCase
                 {
                     $status = StaffLunchOrderTest::$pageStatus;
 
-                    return ['status' => $status, 'url' => $status === 'open' ? 'https://stripe.test/pay/' . substr($sessionId, 8) : null];
+                    return [
+                        'status' => $status,
+                        'payment_status' => StaffLunchOrderTest::$pagePaymentStatus,
+                        'url' => $status === 'open' ? 'https://stripe.test/pay/' . substr($sessionId, 8) : null,
+                    ];
                 }
             };
         });
@@ -579,6 +587,43 @@ class StaffLunchOrderTest extends TestCase
             ->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
         $this->assertSame([], self::$expired);
         $this->assertSame(1, self::$pagesMade);
+    }
+
+    /**
+     * A bank debit completes the page with `payment_status: unpaid`. While it
+     * clears, staff are told so (not that it was paid) and no second page is
+     * made; if it fails, that page is spent and a new link can be sent.
+     */
+    #[Test]
+    public function a_bank_debit_is_neither_paid_nor_payable_twice_and_a_failed_one_can_be_sent_again(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $this->linkFor($order)->assertOk();
+
+        $account = (string) $this->masjid->stripe_account_id;
+        $session = [
+            'id' => 'cs_test_1', 'object' => 'checkout.session',
+            'status' => 'complete', 'payment_status' => 'unpaid',
+            'metadata' => ['order_uuid' => $order->uuid],
+        ];
+        $payments = app(MealOrderPaymentService::class);
+
+        self::$pageStatus = 'complete';
+        self::$pagePaymentStatus = 'unpaid';
+        $payments->handleCheckoutCompleted($session, $account);
+
+        $clearing = $this->linkFor($order)->assertStatus(422);
+        $this->assertStringContainsString('still clearing', (string) json_encode($clearing->json()));
+        $this->assertSame(1, self::$pagesMade);
+
+        $payments->handleAsyncPaymentFailed($session, $account);
+        $this->assertNull($order->fresh()->stripe_checkout_session_id);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
+
+        $this->linkFor($order)->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/2');
+        $this->assertSame(2, self::$pagesMade);
     }
 
     #[Test]

@@ -104,8 +104,9 @@ class RegistrationPaymentService
      * A completed Checkout Session.
      *
      * "Completed" only means MONEY MOVED when the session is paid; an async
-     * payment method can complete a session while the charge is still pending,
-     * so an unpaid completion records the session handle and advances nothing.
+     * payment method (a bank debit) can complete a session while the charge is
+     * still pending, so an unpaid completion confirms nothing and books nothing:
+     * it holds the seat while the money clears (holdWhilePaymentClears).
      *
      * A SUBSCRIPTION-mode session books no ledger row here (T-006e): the money
      * for a subscription arrives per invoice, keyed per invoice. This event
@@ -120,15 +121,26 @@ class RegistrationPaymentService
             return;
         }
 
-        $paid = ($session['payment_status'] ?? null) === 'paid'
-            || ($session['status'] ?? null) === 'complete';
+        // `payment_status`, never `status`: every completed session is
+        // `complete`, including a bank debit whose money has not moved yet.
+        $paid = ($session['payment_status'] ?? null) === 'paid';
 
         $sessionId = $this->stringOrNull($session['id'] ?? null);
 
         if (! $paid) {
-            if ($sessionId && $registration->stripe_checkout_session_id === null) {
-                $registration->stripe_checkout_session_id = $sessionId;
-                $registration->save();
+            $held = $this->holdWhilePaymentClears($registration, $session, ($session['status'] ?? null) === 'complete');
+
+            // Bounding an installment plan is not settlement, and it cannot wait
+            // for the money: Stripe's billing clock started when this page
+            // completed, and a schedule attached days later counts its N from a
+            // later period (a daily plan clearing for four days would bill four
+            // extra times). Idempotent, self-guarding (no subscription, or not an
+            // installment plan, makes no call) and non-fatal, like every attach.
+            if ($held) {
+                $this->checkout->ensureInstallmentSchedule(
+                    $registration,
+                    $this->stringOrNull($session['subscription'] ?? null)
+                );
             }
 
             return;
@@ -216,6 +228,129 @@ class RegistrationPaymentService
         }
 
         $this->registrations->releaseSeat($registration);
+    }
+
+    /**
+     * A delayed payment (a bank debit) failed after its page completed. Nothing was
+     * booked on that completion, so the ledger has nothing to undo; the held seat
+     * goes back through the one seat-release seam, exactly as an expired page's
+     * does, and only for the registration's CURRENT page, so a superseded page's
+     * failure never cancels a seat somebody is still paying for.
+     *
+     * A subscription plan's failed first debit also has a Stripe subscription
+     * behind it. Once the seat is released that subscription is cancelled too,
+     * the same pair an admin cancel runs (RegistrationsController::cancel): left
+     * alone it would debit the family again next period for a seat already given
+     * back, and nothing else here would stop it.
+     */
+    public function handleAsyncPaymentFailed(array $session, ?string $account): void
+    {
+        $registration = $this->resolve($session, $account);
+
+        if (! $registration) {
+            return;
+        }
+
+        $sessionId = $this->stringOrNull($session['id'] ?? null);
+        $subscriptionId = $this->stringOrNull($session['subscription'] ?? null);
+        $current = $registration->stripe_checkout_session_id;
+        $superseded = $sessionId !== null && $current !== null && $current !== $sessionId;
+
+        Log::warning('A delayed payment for a registration failed; nothing was booked.', [
+            'registration_uuid' => $registration->uuid,
+            'masjid_id' => (int) $registration->masjid_id,
+            'checkout_session_id' => $sessionId,
+            'seat_release_attempted' => ! $superseded,
+        ]);
+
+        if ($superseded) {
+            return;
+        }
+
+        $wasHeld = $registration->status === Registration::STATUS_PENDING;
+
+        // Linked first (merge-only), so the cancel below also reaches a
+        // subscription whose unpaid completion never arrived.
+        if ($subscriptionId !== null) {
+            DB::transaction(function () use ($registration, $subscriptionId): void {
+                $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
+
+                if ($locked && $locked->stripe_subscription_id === null) {
+                    $locked->stripe_subscription_id = $subscriptionId;
+                    $locked->save();
+                }
+            });
+        }
+
+        $released = $this->registrations->releaseSeat($registration);
+
+        // Outside every transaction, because it talks to Stripe. No call at all
+        // without a subscription id; a Stripe failure is logged, never thrown.
+        if ($wasHeld && $released->status === Registration::STATUS_CANCELLED) {
+            $this->checkout->cancelSubscription($released);
+        }
+    }
+
+    /**
+     * An unpaid completion: a delayed payment method (a bank debit) finished the
+     * page, and its money takes days to move. Nothing is confirmed and nothing is
+     * booked; the seat is HELD while it clears:
+     *
+     *  - the completed page becomes the registration's current page, even when a
+     *    newer one was minted meanwhile. The page money is moving through is the
+     *    live one and the open page is the abandoned one, so the newer page's
+     *    expiry is ignored as superseded instead of cancelling this seat;
+     *  - the hold's clock stops. A completed page can no longer expire, so a live
+     *    `checkout_expires_at` would only let the reaper cancel the seat of
+     *    somebody whose payment is on its way. Pending, awaiting, a page and no
+     *    deadline is Registration::paymentIsClearing(), which checkout refuses,
+     *    so no second page can be opened over a payment in flight;
+     *  - a subscription's id is linked. Stripe created the subscription when the
+     *    page completed, and without its id neither an admin cancel nor the
+     *    failure handler above could stop it.
+     *
+     * The payment settles through checkout.session.async_payment_succeeded,
+     * payment_intent.succeeded or (subscriptions) invoice.payment_succeeded;
+     * checkout.session.async_payment_failed gives the seat back.
+     *
+     * @return bool  whether the seat is held for this page
+     */
+    private function holdWhilePaymentClears(Registration $registration, array $session, bool $completed): bool
+    {
+        $sessionId = $this->stringOrNull($session['id'] ?? null);
+        $subscriptionId = $this->stringOrNull($session['subscription'] ?? null);
+
+        return DB::transaction(function () use ($registration, $sessionId, $subscriptionId, $completed): bool {
+            $locked = Registration::query()->whereKey($registration->id)->lockForUpdate()->first();
+
+            if (! $locked) {
+                return false;
+            }
+
+            // Merge-only, like every identifier this class records.
+            if ($sessionId !== null && $locked->stripe_checkout_session_id === null) {
+                $locked->stripe_checkout_session_id = $sessionId;
+            }
+
+            if ($subscriptionId !== null && $locked->stripe_subscription_id === null) {
+                $locked->stripe_subscription_id = $subscriptionId;
+            }
+
+            $held = $completed
+                && $sessionId !== null
+                && $locked->status === Registration::STATUS_PENDING
+                && $locked->payment_status === Registration::PAYMENT_AWAITING;
+
+            if ($held) {
+                $locked->stripe_checkout_session_id = $sessionId;
+                $locked->checkout_expires_at = null;
+            }
+
+            $locked->save();
+            $registration->refresh();
+
+            return $held;
+        });
     }
 
     // --------------------------------------------- T-006e: subscription money

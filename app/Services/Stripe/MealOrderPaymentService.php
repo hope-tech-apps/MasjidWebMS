@@ -4,6 +4,7 @@ namespace App\Services\Stripe;
 
 use App\Models\Masjid;
 use App\Models\MealOrder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -46,8 +47,11 @@ class MealOrderPaymentService
         $sessionId = $this->stringOrNull($session['id'] ?? null);
         $paymentIntentId = $this->stringOrNull($session['payment_intent'] ?? null);
 
-        $paid = ($session['payment_status'] ?? null) === 'paid'
-            || ($session['status'] ?? null) === 'complete';
+        // `payment_status`, never `status`: every completed session is
+        // `complete`, including a bank debit whose money has not moved yet. That
+        // one is settled later by checkout.session.async_payment_succeeded (this
+        // same method, the session now `paid`) or by payment_intent.succeeded.
+        $paid = ($session['payment_status'] ?? null) === 'paid';
 
         if (! $paid) {
             if ($sessionId && $order->stripe_checkout_session_id === null) {
@@ -80,6 +84,52 @@ class MealOrderPaymentService
 
         $this->warnIfCancelled($order);
         $order->markPaid($this->stringOrNull($pi['id'] ?? null));
+    }
+
+    /**
+     * A delayed payment (a bank debit) for this order's page failed after the page
+     * completed. Nothing was marked paid on that completion, so nothing is undone:
+     * the order stays unpaid, and the failure is said out loud for whoever
+     * reconciles the board.
+     *
+     * That page is spent. It is `complete`, so it can never be paid again, and
+     * while the order still points at it staff cannot send a new one
+     * (MealOrderCheckoutService::paymentLink() refuses a completed page). It is
+     * forgotten under the order row lock that the payment link, cancel and Mark
+     * paid take, and only while it is still the order's page and nothing paid.
+     */
+    public function handleAsyncPaymentFailed(array $session, ?string $account): void
+    {
+        $order = $this->resolve($session, $account);
+
+        if (! $order) {
+            return;
+        }
+
+        $sessionId = $this->stringOrNull($session['id'] ?? null);
+
+        $pageForgotten = DB::transaction(function () use ($order, $sessionId): bool {
+            $locked = MealOrder::withoutMasjidScope()->lockForUpdate()->find($order->id);
+
+            if (! $locked
+                || $sessionId === null
+                || $locked->stripe_checkout_session_id !== $sessionId
+                || $locked->payment_status === MealOrder::PAYMENT_PAID) {
+                return false;
+            }
+
+            $locked->stripe_checkout_session_id = null;
+            $locked->save();
+
+            return true;
+        });
+
+        Log::warning('A delayed payment for a meal order failed; the order stays unpaid.', [
+            'order_uuid' => $order->uuid,
+            'masjid_id' => (int) $order->masjid_id,
+            'checkout_session_id' => $sessionId,
+            'page_forgotten' => $pageForgotten,
+        ]);
     }
 
     /**

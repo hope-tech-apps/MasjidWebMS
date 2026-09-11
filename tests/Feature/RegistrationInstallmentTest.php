@@ -434,6 +434,100 @@ class RegistrationInstallmentTest extends TestCase
         $this->assertSame(Registration::STATUS_CONFIRMED, $live->status);
     }
 
+    // ------------------------------- a bank debit: the first invoice clears
+
+    /**
+     * A bank debit completes the page with `payment_status: unpaid`, and Stripe
+     * has already created the subscription. Recording its id is not settlement
+     * (nothing confirmed, nothing booked), but it is what lets anything stop
+     * that subscription while the debit clears.
+     */
+    #[Test]
+    public function an_admin_cancel_while_the_first_bank_debit_clears_stops_the_subscription(): void
+    {
+        $registration = $this->subscriptionPending();
+
+        $this->postWebhook($this->sessionCompletedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+
+        $registration->refresh();
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame(Registration::PAYMENT_AWAITING, $registration->payment_status);
+        $this->assertDatabaseCount('registration_payments', 0);
+        $this->assertSame('sub_reg_1', $registration->stripe_subscription_id);
+
+        // The two halves the admin controller runs, in its order.
+        $stripeTold = app(RegistrationCheckoutService::class)->cancelSubscription($registration->fresh());
+        app(RegistrationService::class)->cancel($registration->fresh());
+
+        $this->assertTrue($stripeTold);
+        $this->assertSame([['subscription' => 'sub_reg_1', 'account' => 'acct_A']], $this->cancellations);
+        $this->assertSame(Registration::STATUS_CANCELLED, $registration->fresh()->status);
+    }
+
+    #[Test]
+    public function a_failed_first_bank_debit_gives_the_seat_back_and_stops_the_subscription(): void
+    {
+        $registration = $this->subscriptionPending();
+        $held = $this->offeringOf($registration)->registration_count;
+
+        $this->postWebhook($this->sessionCompletedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->invoiceFailedEvent($registration))->assertOk();
+        $this->postWebhook($this->sessionCompletedEvent($registration, [
+            'type' => 'checkout.session.async_payment_failed',
+            'payment_status' => 'unpaid',
+        ]))->assertOk();
+
+        $registration->refresh();
+        $this->assertSame(Registration::STATUS_CANCELLED, $registration->status);
+        $this->assertSame($held - 1, $this->offeringOf($registration)->registration_count);
+        // The seat is gone, so the subscription that would bill for it next
+        // period is stopped with it: the same pair an admin cancel runs.
+        $this->assertSame([['subscription' => 'sub_reg_1', 'account' => 'acct_A']], $this->cancellations);
+    }
+
+    #[Test]
+    public function the_failure_alone_names_the_subscription_to_stop(): void
+    {
+        // The unpaid completion was never delivered; the failure carries the
+        // subscription itself.
+        $registration = $this->subscriptionPending();
+
+        $this->postWebhook($this->sessionCompletedEvent($registration, [
+            'type' => 'checkout.session.async_payment_failed',
+            'payment_status' => 'unpaid',
+        ]))->assertOk();
+
+        $this->assertSame(Registration::STATUS_CANCELLED, $registration->fresh()->status);
+        $this->assertSame([['subscription' => 'sub_reg_1', 'account' => 'acct_A']], $this->cancellations);
+    }
+
+    /**
+     * Stripe's billing clock starts when the page completes, not when the debit
+     * clears; a schedule attached only when the money lands counts its N from a
+     * later period, so a daily plan would bill more than N times.
+     */
+    #[Test]
+    public function an_installment_plan_is_bounded_when_its_bank_debit_page_completes(): void
+    {
+        $registration = $this->subscriptionPending();
+
+        $this->postWebhook($this->sessionCompletedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+
+        $this->assertCount(1, $this->schedules);
+        $this->assertSame('sub_reg_1', $this->schedules[0]['subscription']);
+        $this->assertSame(9, $this->schedules[0]['iterations']);
+        $this->assertSame('sub_sched_1', $registration->fresh()->stripe_subscription_schedule_id);
+        // Bounding the billing is not settlement.
+        $this->assertSame(Registration::STATUS_PENDING, $registration->fresh()->status);
+
+        // The money lands: the ordinary settlement, and no second schedule.
+        $this->postWebhook($this->sessionCompletedEvent($registration, ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+        $this->postWebhook($this->invoicePaidEvent($registration, ['id' => 'in_1']))->assertOk();
+
+        $this->assertCount(1, $this->schedules);
+        $this->assertConverged($registration, 1);
+    }
+
     // -------------------------------------------------------- cancellation
 
     #[Test]
@@ -693,13 +787,13 @@ class RegistrationInstallmentTest extends TestCase
     {
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
-            'type' => 'checkout.session.completed',
+            'type' => $o['type'] ?? 'checkout.session.completed',
             'account' => $o['account'] ?? 'acct_A',
             'data' => ['object' => [
                 'id' => $o['id'] ?? 'cs_sub_1',
                 'object' => 'checkout.session',
                 'mode' => 'subscription',
-                'payment_status' => 'paid',
+                'payment_status' => $o['payment_status'] ?? 'paid',
                 'status' => 'complete',
                 'subscription' => $o['subscription'] ?? 'sub_reg_1',
                 'client_reference_id' => $registration->uuid,

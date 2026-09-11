@@ -396,6 +396,49 @@ class RegistrationReaperTest extends TestCase
             ->where('status', Registration::STATUS_CANCELLED)->count());
     }
 
+    // ------------------------------------ a hold placed mid-sweep is honoured
+
+    /**
+     * The sweep SELECTs a chunk, then releases each row in its own transaction.
+     * A retried unpaid completion (a bank debit) that commits its hold in
+     * between must still keep the seat: the precondition is re-checked under
+     * the row lock, not trusted from the SELECT.
+     */
+    #[Test]
+    public function a_bank_debit_hold_committed_after_the_sweep_selected_the_row_keeps_its_seat(): void
+    {
+        $offering = $this->makeOffering();
+        $registration = $this->expire($this->paidPending($offering));
+        $held = $offering->fresh()->registration_count;
+
+        // Delivered the moment the sweep reads the row: after its SELECT,
+        // before its release.
+        $delivered = false;
+        Registration::retrieved(function (Registration $row) use (&$delivered, $registration): void {
+            if ($delivered || $row->id !== $registration->id) {
+                return;
+            }
+
+            $delivered = true;
+            app(RegistrationPaymentService::class)->handleCheckoutCompleted([
+                'id' => 'cs_' . $registration->uuid,
+                'object' => 'checkout.session',
+                'status' => 'complete',
+                'payment_status' => 'unpaid',
+                'metadata' => ['registration_uuid' => $registration->uuid],
+            ], 'acct_A');
+        });
+
+        Artisan::call('registrations:reap-expired');
+
+        $this->assertTrue($delivered);
+        $registration->refresh();
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame(Registration::PAYMENT_AWAITING, $registration->payment_status);
+        $this->assertNull($registration->checkout_expires_at);
+        $this->assertSame($held, $offering->fresh()->registration_count);
+    }
+
     // ----------------------------------------------------------- fixtures
 
     private function makeMasjid(array $overrides = []): Masjid

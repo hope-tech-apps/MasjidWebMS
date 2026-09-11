@@ -45,6 +45,27 @@ holds funds and who bears liability.
   issuance is idempotent per donation (unique `donation_id` + in-transaction
   check). `checkout.session.completed` and `payment_intent.succeeded` may both
   fire — they must converge to one succeeded donation + one receipt.
+- **Paid means `payment_status: paid`, never `status: complete`.** Every
+  `checkout.session.completed` carries `status: complete`, including a delayed
+  payment method (a US bank debit) whose money has not moved; that one arrives
+  with `payment_status: unpaid` and only records the session handle. Its money
+  settles through `checkout.session.async_payment_succeeded` (routed to the same
+  handlers, the session now `paid`) or `payment_intent.succeeded`, idempotently.
+  `checkout.session.async_payment_failed` books nothing and is logged at warning.
+  A registration's unpaid completion HOLDS the seat (`holdWhilePaymentClears`):
+  the completed page becomes the current one, `checkout_expires_at` is nulled so
+  the reaper cannot cancel a seat that is being paid for (the reaper re-checks
+  its filter under the row lock), a subscription's id is linked and an
+  installment schedule attached (linking and bounding are not settlement), and
+  checkout refuses a second page while it clears (`Registration::paymentIsClearing()`).
+  A failed debit gives the seat back through `releaseSeat()` and cancels a
+  subscription behind it, the pair an admin cancel runs; a meal order forgets its
+  spent page so staff can send a new link. If the failure event never arrives, a
+  clearing seat has no deadline and only an admin releases it. No checkout here
+  pins card-only, so any
+  organisation that enables bank debits in its Stripe dashboard reaches this path;
+  the production Connect endpoint must subscribe both async events (LOG.md
+  2026-09-11).
 - Persist a `pending` donation row BEFORE the redirect; write with an
   idempotency key so a retried Checkout Session create can't double-charge.
 

@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Registration;
 use App\Services\Registrations\RegistrationService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -36,6 +37,10 @@ use Illuminate\Support\Facades\Log;
  *    excludes.
  *  - reaper first — the late `checkout.session.expired` re-enters releaseSeat,
  *    finds a non-pending seat, and returns without touching the counter.
+ *  - in between — a payment path that commits after the SELECT is caught by
+ *    re-applying the sweep's filter to the LOCKED row before releasing it. A
+ *    bank debit's hold nulls the deadline while the money stays `awaiting`,
+ *    which the pending-only seam alone would not refuse.
  * Either way `registration_count` moves exactly once. The filter is belt, the
  * seam's pending-only guard is braces, and the row lock inside the seam is what
  * makes the two safe to race.
@@ -122,7 +127,7 @@ class ReapExpiredCheckouts extends Command
         // memory, and so rows dropping OUT of the filter underneath the cursor
         // (releaseSeat cancels them) cannot make it skip — chunkById pages on
         // `id > last`, never on offset.
-        $query->chunkById(200, function ($due) use (&$swept, &$released, &$settled, $dryRun) {
+        $query->chunkById(200, function ($due) use (&$swept, &$released, &$settled, $dryRun, $deadline) {
             foreach ($due as $registration) {
                 $swept++;
 
@@ -135,7 +140,22 @@ class ReapExpiredCheckouts extends Command
                     continue;
                 }
 
-                $result = $this->registrations->releaseSeat($registration);
+                // The SELECT is not the precondition; the row lock is. Only a row
+                // still due once locked is released, and the seam still owns
+                // every write (see "in between" in the class docblock).
+                $result = DB::transaction(function () use ($registration, $deadline): Registration {
+                    $stillDue = Registration::withoutMasjidScope()
+                        ->whereKey($registration->id)
+                        ->checkoutExpiredBefore($deadline)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($stillDue) {
+                        return $this->registrations->releaseSeat($stillDue);
+                    }
+
+                    return Registration::withoutMasjidScope()->find($registration->id) ?? $registration;
+                });
 
                 // Counted from the OUTCOME, not from who caused it: a webhook
                 // that settled or cancelled this row between the query and the

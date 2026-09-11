@@ -374,6 +374,17 @@ class RegistrationCheckoutService
             throw RegistrationException::notCheckoutable($registration->status);
         }
 
+        // A BANK DEBIT THAT IS CLEARING IS BEING PAID. Its completed page holds
+        // the seat with no deadline (RegistrationPaymentService::
+        // holdWhilePaymentClears) while the money moves, so a second page can
+        // only do harm: paid as well, it charges the family twice (the second
+        // charge merges into the one-time ledger row and is never recorded);
+        // left to lapse, its expiry releases the seat the first payment is for.
+        // Refused here, so the quote's `can_pay_now` says no as well.
+        if ($registration->paymentIsClearing()) {
+            throw RegistrationException::paymentStillClearing();
+        }
+
         // Never a $0 session: the free-path carve-out owns that case and has
         // already confirmed the seat synchronously.
         if ((int) $registration->adjusted_total_minor <= 0) {

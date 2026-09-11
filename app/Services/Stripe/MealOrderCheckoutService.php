@@ -38,6 +38,8 @@ class MealOrderCheckoutService
 {
     private const PAID_ON_STRIPE = 'This order has been paid on Stripe. The board will show it as paid in a moment.';
 
+    private const CLEARING_ON_STRIPE = 'A bank payment for this order is still clearing. The board will show it as paid when it lands; if it fails, you can send a new link.';
+
     public function __construct(private StripeClient $stripe)
     {
     }
@@ -226,7 +228,11 @@ class MealOrderCheckoutService
                 );
 
                 if ($session['status'] === 'complete') {
-                    throw new RuntimeException(self::PAID_ON_STRIPE);
+                    // A bank debit completes its page `unpaid`: the money is on
+                    // its way, not here, and a second page could take it twice.
+                    throw new RuntimeException(($session['payment_status'] ?? null) === 'unpaid'
+                        ? self::CLEARING_ON_STRIPE
+                        : self::PAID_ON_STRIPE);
                 }
 
                 if ($session['status'] === 'open' && $session['url'] && ! $reprice) {
@@ -375,13 +381,17 @@ class MealOrderCheckoutService
         $this->stripe->checkout->sessions->expire($sessionId, [], ['stripe_account' => $connectedAccountId]);
     }
 
-    /** @return array{status: string, url: ?string} Stripe's 'open' | 'complete' | 'expired'. */
+    /** @return array{status: string, payment_status: ?string, url: ?string} Stripe's 'open' | 'complete' | 'expired'; a bank debit's page is 'complete' and 'unpaid' while it clears. */
     protected function retrieveCheckoutSession(string $sessionId, string $connectedAccountId): array
     {
         $session = $this->stripe->checkout->sessions->retrieve($sessionId, [], [
             'stripe_account' => $connectedAccountId,
         ]);
 
-        return ['status' => (string) $session->status, 'url' => $session->url];
+        return [
+            'status' => (string) $session->status,
+            'payment_status' => is_string($session->payment_status ?? null) ? $session->payment_status : null,
+            'url' => $session->url,
+        ];
     }
 }
