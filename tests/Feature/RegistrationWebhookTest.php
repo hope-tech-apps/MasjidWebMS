@@ -13,9 +13,12 @@ use App\Models\Offering;
 use App\Models\Registration;
 use App\Models\RegistrationPayment;
 use App\Services\Registrations\RegistrationService;
+use App\Services\Stripe\RegistrationCheckoutService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
+use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -58,6 +61,9 @@ class RegistrationWebhookTest extends TestCase
     private Masjid $otherMasjid;
 
     private Group $group;
+
+    /** @var array<int,string> idempotency keys of the Checkout Sessions the stub opened */
+    private array $sessionsOpened = [];
 
     protected function setUp(): void
     {
@@ -559,6 +565,175 @@ class RegistrationWebhookTest extends TestCase
 
     // ============================= helpers =============================
 
+    // --------------------------------------- a bank debit: complete is not paid
+
+    #[Test]
+    public function a_bank_debit_still_clearing_holds_the_seat_and_books_no_money(): void
+    {
+        $offering = $this->makeOffering();
+        $registration = $this->paidPending($offering);
+        // A realistic hold, so the reaper WOULD sweep this seat if nothing stopped it.
+        $registration->forceFill(['checkout_expires_at' => now()->addMinutes(30)])->save();
+        $held = $offering->fresh()->registration_count;
+
+        $this->postWebhook($this->completedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+
+        $registration->refresh();
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame(Registration::PAYMENT_AWAITING, $registration->payment_status);
+        $this->assertSame(0, RegistrationPayment::withoutMasjidScope()->where('registration_id', $registration->id)->count());
+        // A completed page can no longer expire, so the hold's clock stops...
+        $this->assertNull($registration->checkout_expires_at);
+
+        // ...and the reaper, long past the old deadline, leaves the seat alone.
+        $this->travel(3)->hours();
+        Artisan::call('registrations:reap-expired');
+        $this->assertSame(Registration::STATUS_PENDING, $registration->fresh()->status);
+        $this->assertSame($held, $offering->fresh()->registration_count);
+
+        // When the money lands: the same settlement as a card payment.
+        $this->postWebhook($this->completedEvent($registration, ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+        $this->postWebhook($this->succeededEvent($registration))->assertOk();
+        $this->assertConverged($registration);
+    }
+
+    #[Test]
+    public function a_payment_intent_settles_a_clearing_bank_debit_exactly_once(): void
+    {
+        $registration = $this->paidPending();
+
+        $this->postWebhook($this->completedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->succeededEvent($registration))->assertOk();
+        // The session's own paid notice arriving afterwards changes nothing.
+        $this->postWebhook($this->completedEvent($registration, ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+
+        $this->assertConverged($registration);
+    }
+
+    #[Test]
+    public function a_failed_bank_debit_gives_the_held_seat_back_and_says_so(): void
+    {
+        $offering = $this->makeOffering();
+        $registration = $this->paidPending($offering);
+        $held = $offering->fresh()->registration_count;
+        Log::spy();
+
+        $this->postWebhook($this->completedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->completedEvent($registration, ['type' => 'checkout.session.async_payment_failed', 'payment_status' => 'unpaid']))->assertOk();
+
+        $this->assertSame(Registration::STATUS_CANCELLED, $registration->fresh()->status);
+        $this->assertSame($held - 1, $offering->fresh()->registration_count);
+        $this->assertSame(0, RegistrationPayment::withoutMasjidScope()->where('registration_id', $registration->id)->count());
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message) => str_contains($message, 'registration failed'))
+            ->once();
+    }
+
+    #[Test]
+    public function a_failed_bank_debit_on_a_superseded_page_leaves_the_live_hold_alone(): void
+    {
+        $offering = $this->makeOffering();
+        $registration = $this->paidPending($offering);
+        // The registrant re-minted their checkout; cs_reg_2 is the live page.
+        $registration->forceFill(['stripe_checkout_session_id' => 'cs_reg_2'])->save();
+        $held = $offering->fresh()->registration_count;
+
+        $this->postWebhook($this->completedEvent($registration, ['id' => 'cs_reg_1', 'type' => 'checkout.session.async_payment_failed', 'payment_status' => 'unpaid']))->assertOk();
+
+        $this->assertSame(Registration::STATUS_PENDING, $registration->fresh()->status);
+        $this->assertSame($held, $offering->fresh()->registration_count);
+    }
+
+    /**
+     * While a completed page's bank debit clears, the family still owes the
+     * money (it has not landed) but must not be offered a second way to pay it:
+     * a second page either takes the money twice or, once it lapses, cancels the
+     * seat the first one is paying for.
+     */
+    #[Test]
+    public function while_a_bank_debit_clears_no_second_payment_page_can_be_opened(): void
+    {
+        $this->masjid->forceFill(['crm_enabled' => true])->save();
+        $registration = $this->paidPending();
+        $this->stubSecondSession();
+
+        // Control: a live hold's payment link offers "Pay now".
+        $this->quoteFor($registration)->assertOk()->assertJsonPath('data.can_pay_now', true);
+
+        $this->postWebhook($this->completedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+        $before = $registration->fresh();
+
+        $this->quoteFor($registration)
+            ->assertOk()
+            ->assertJsonPath('data.requires_payment', true)
+            ->assertJsonPath('data.can_pay_now', false);
+
+        $this->checkoutAgain($registration)->assertStatus(422);
+
+        $after = $registration->fresh();
+        $this->assertSame('cs_reg_1', $after->stripe_checkout_session_id);
+        $this->assertNull($after->checkout_expires_at);
+        $this->assertSame($before->idempotency_key, $after->idempotency_key);
+        $this->assertSame([], $this->sessionsOpened);
+    }
+
+    #[Test]
+    public function a_second_page_can_never_cost_the_family_the_seat_their_debit_is_paying_for(): void
+    {
+        $this->masjid->forceFill(['crm_enabled' => true])->save();
+        $offering = $this->makeOffering();
+        $registration = $this->paidPending($offering);
+        $held = $offering->fresh()->registration_count;
+        $this->stubSecondSession();
+
+        $this->postWebhook($this->completedEvent($registration, ['payment_status' => 'unpaid']))->assertOk();
+
+        // She presses "Pay now" again and closes the tab; that page lapses, and
+        // the reaper runs long after.
+        $this->checkoutAgain($registration);
+        $this->postWebhook($this->expiredEvent($registration, ['id' => 'cs_reg_2']))->assertOk();
+        $this->travel(2)->hours();
+        Artisan::call('registrations:reap-expired');
+
+        $this->assertSame(Registration::STATUS_PENDING, $registration->fresh()->status);
+        $this->assertSame($held, $offering->fresh()->registration_count);
+
+        // The debit lands on the seat it was paying for.
+        $this->postWebhook($this->completedEvent($registration, ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+        $this->postWebhook($this->succeededEvent($registration))->assertOk();
+        $this->assertConverged($registration);
+    }
+
+    #[Test]
+    public function a_bank_debit_finished_on_an_older_page_holds_the_seat_over_the_newer_one(): void
+    {
+        $offering = $this->makeOffering();
+        $registration = $this->paidPending($offering);
+        // The family re-minted: cs_reg_2 is the current page with a live hold,
+        // while cs_reg_1 is still open in the tab they started in.
+        $registration->forceFill([
+            'stripe_checkout_session_id' => 'cs_reg_2',
+            'checkout_expires_at' => now()->addMinutes(30),
+        ])->save();
+        $held = $offering->fresh()->registration_count;
+
+        // They finish the older tab by bank debit; then the newer page lapses.
+        $this->postWebhook($this->completedEvent($registration, ['id' => 'cs_reg_1', 'payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->expiredEvent($registration, ['id' => 'cs_reg_2']))->assertOk();
+
+        // The page the money is moving through holds the seat, not the abandoned one.
+        $registration->refresh();
+        $this->assertSame(Registration::STATUS_PENDING, $registration->status);
+        $this->assertSame($held, $offering->fresh()->registration_count);
+        $this->assertSame('cs_reg_1', $registration->stripe_checkout_session_id);
+        $this->assertNull($registration->checkout_expires_at);
+
+        // When the debit lands, it lands on a live seat.
+        $this->postWebhook($this->completedEvent($registration, ['id' => 'cs_reg_1', 'type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+        $this->postWebhook($this->succeededEvent($registration))->assertOk();
+        $this->assertConverged($registration);
+    }
+
     /** One confirmed seat, one payment row carrying BOTH payloads' ids, one roster. */
     private function assertConverged(Registration $registration): void
     {
@@ -588,6 +763,46 @@ class RegistrationWebhookTest extends TestCase
         // cannot duplicate the group membership.
         $this->assertSame(1, GroupMembership::withoutMasjidScope()->where('group_id', $this->group->id)->count());
         $this->assertSame('cs_reg_1', $registration->stripe_checkout_session_id);
+    }
+
+    /**
+     * Stub the only outbound seam a re-mint would reach, so a checkout that the
+     * code under test lets through opens `cs_reg_2` here instead of calling Stripe.
+     */
+    private function stubSecondSession(): void
+    {
+        $service = Mockery::mock(RegistrationCheckoutService::class)->makePartial();
+        $service->shouldAllowMockingProtectedMethods();
+        $service->shouldReceive('createCheckoutSession')
+            ->andReturnUsing(function (array $params, string $account, string $key) {
+                $this->sessionsOpened[] = $key;
+
+                return ['id' => 'cs_reg_2', 'url' => 'https://stripe.test/pay/2', 'payment_intent' => null];
+            });
+
+        $this->app->instance(RegistrationCheckoutService::class, $service);
+    }
+
+    /** The public quote for an existing registration: what its payment link renders. */
+    private function quoteFor(Registration $registration): TestResponse
+    {
+        $offering = Offering::withoutMasjidScope()->findOrFail($registration->offering_id);
+
+        return $this->postJson(
+            "/api/v1/offerings/{$offering->slug}/quote",
+            ['registration_uuid' => $registration->uuid],
+            ['masjid-id' => (string) $registration->masjid_id]
+        );
+    }
+
+    /** The public "Pay now" door. */
+    private function checkoutAgain(Registration $registration): TestResponse
+    {
+        return $this->postJson(
+            "/api/v1/registrations/{$registration->uuid}/checkout",
+            [],
+            ['masjid-id' => (string) $registration->masjid_id]
+        );
     }
 
     private function makeMasjid(array $overrides = []): Masjid
@@ -662,7 +877,7 @@ class RegistrationWebhookTest extends TestCase
     {
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
-            'type' => 'checkout.session.completed',
+            'type' => $o['type'] ?? 'checkout.session.completed',
             // Direct charges live on the ORG's connected account, so the event
             // carries it — and that is what decides tenancy.
             'account' => $o['account'] ?? 'acct_A',

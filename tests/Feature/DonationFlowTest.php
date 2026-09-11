@@ -10,6 +10,7 @@ use App\Models\StripeWebhookEvent;
 use App\Models\User;
 use App\Services\Stripe\DonationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
@@ -370,6 +371,59 @@ class DonationFlowTest extends TestCase
 
     // ============================= helpers =============================
 
+    // ---------------------------------------- a bank debit: complete is not paid
+
+    #[Test]
+    public function a_bank_debit_still_clearing_leaves_the_donation_pending_with_no_receipt(): void
+    {
+        $donation = $this->makePendingDonation($this->masjidA, $this->fundA, 10000, 10000);
+        $session = ['id' => 'cs_bank_1', 'payment_intent' => 'pi_bank_1'];
+
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['payment_status' => 'unpaid']))->assertOk();
+        $donation->refresh();
+        $this->assertSame('pending', $donation->status);
+        $this->assertSame('cs_bank_1', $donation->stripe_checkout_session_id);
+        $this->assertSame(0, DonationReceipt::withoutMasjidScope()->where('donation_id', $donation->id)->count());
+
+        // Days later the money lands; then the payment intent's own notice.
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+        $this->assertSame('succeeded', $donation->fresh()->status);
+        $this->postWebhook($this->paymentIntentSucceededEvent($donation, ['id' => 'pi_bank_1']))->assertOk();
+
+        $this->assertSame(1, DonationReceipt::withoutMasjidScope()->where('donation_id', $donation->id)->count());
+    }
+
+    #[Test]
+    public function a_payment_intent_settles_a_clearing_bank_debit_with_one_receipt(): void
+    {
+        $donation = $this->makePendingDonation($this->masjidA, $this->fundA, 10000, 10000);
+        $session = ['id' => 'cs_bank_2', 'payment_intent' => 'pi_bank_2'];
+
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->paymentIntentSucceededEvent($donation, ['id' => 'pi_bank_2']))->assertOk();
+        $this->assertSame('succeeded', $donation->fresh()->status);
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+
+        $this->assertSame(1, DonationReceipt::withoutMasjidScope()->where('donation_id', $donation->id)->count());
+    }
+
+    #[Test]
+    public function a_failed_bank_debit_leaves_the_donation_pending_and_says_so(): void
+    {
+        $donation = $this->makePendingDonation($this->masjidA, $this->fundA, 10000, 10000);
+        $session = ['id' => 'cs_bank_3', 'payment_intent' => 'pi_bank_3'];
+        Log::spy();
+
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['payment_status' => 'unpaid']))->assertOk();
+        $this->postWebhook($this->checkoutCompletedEvent($donation, $session + ['type' => 'checkout.session.async_payment_failed', 'payment_status' => 'unpaid']))->assertOk();
+
+        $this->assertSame('pending', $donation->fresh()->status);
+        $this->assertSame(0, DonationReceipt::withoutMasjidScope()->where('donation_id', $donation->id)->count());
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message) => str_contains($message, 'delayed donation payment failed'))
+            ->once();
+    }
+
     private function makeMasjid(array $overrides = []): Masjid
     {
         return Masjid::create(array_merge([
@@ -467,12 +521,12 @@ class DonationFlowTest extends TestCase
     {
         return [
             'id' => $o['event_id'] ?? 'evt_' . uniqid(),
-            'type' => 'checkout.session.completed',
+            'type' => $o['type'] ?? 'checkout.session.completed',
             'data' => [
                 'object' => [
                     'id' => $o['id'] ?? 'cs_' . uniqid(),
                     'object' => 'checkout.session',
-                    'payment_status' => 'paid',
+                    'payment_status' => $o['payment_status'] ?? 'paid',
                     'status' => 'complete',
                     'payment_intent' => $o['payment_intent'] ?? ('pi_' . uniqid()),
                     'client_reference_id' => $donation->uuid,

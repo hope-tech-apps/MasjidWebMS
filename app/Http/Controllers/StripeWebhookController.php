@@ -212,6 +212,29 @@ class StripeWebhookController extends Controller
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
                 default => $this->handleCheckoutCompleted($object),
             },
+            // A delayed payment method (a bank debit) completes the page with
+            // payment_status `unpaid`; when its money moves, Stripe sends this with
+            // the same session, now `paid`. Same handlers, same idempotent settlement.
+            // Form checkout is card only, so a form response should never get here;
+            // if one does, its own handler settles it rather than the donation path.
+            'checkout.session.async_payment_succeeded' => match (true) {
+                $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
+                $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
+                $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
+                default => $this->handleCheckoutCompleted($object),
+            },
+            // ...and this when it never does. Nothing was booked on the unpaid
+            // completion, so each handler says so at warning; a registration also
+            // gives its held seat back.
+            'checkout.session.async_payment_failed' => match (true) {
+                $isOrder => $this->mealOrderPayments->handleAsyncPaymentFailed($object, $account),
+                $isRegistration => $this->registrationPayments->handleAsyncPaymentFailed($object, $account),
+                $isFormResponse => Log::warning('A delayed payment for a form registration failed; nothing was recorded.', [
+                    'checkout_session_id' => $object['id'] ?? null,
+                    'account' => $account,
+                ]),
+                default => $this->handleAsyncPaymentFailed($object, $account),
+            },
             'payment_intent.succeeded' => match (true) {
                 $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
                 $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
@@ -273,9 +296,11 @@ class StripeWebhookController extends Controller
             'payment_intent_id' => $session['payment_intent'] ?? null,
         ];
 
-        // A completed Checkout Session only means "money moved" when it is paid.
-        $paid = ($session['payment_status'] ?? null) === 'paid'
-            || ($session['status'] ?? null) === 'complete';
+        // A completed Checkout Session only means "money moved" when it is paid:
+        // `payment_status`, never `status`, which is `complete` for a bank debit
+        // whose money has not moved. That one stays pending here and is settled by
+        // checkout.session.async_payment_succeeded or payment_intent.succeeded.
+        $paid = ($session['payment_status'] ?? null) === 'paid';
 
         if ($paid) {
             $this->donations->markSucceeded($donation, $ids);
@@ -305,6 +330,28 @@ class StripeWebhookController extends Controller
         }
 
         $this->donorContacts->linkSubscriptionContact($subscription->refresh(), $session);
+    }
+
+    /**
+     * A delayed donation payment (a bank debit) failed after its page completed.
+     * The donation was never marked succeeded, so no receipt exists to void: it
+     * stays pending, and the failure is logged for the organisation's records.
+     */
+    private function handleAsyncPaymentFailed(array $session, ?string $account): void
+    {
+        $donation = ($session['mode'] ?? null) === 'subscription' ? null : $this->findDonation([
+            'uuid' => $session['metadata']['donation_uuid'] ?? ($session['client_reference_id'] ?? null),
+            'stripe_checkout_session_id' => $session['id'] ?? null,
+            'stripe_payment_intent_id' => $session['payment_intent'] ?? null,
+        ]);
+
+        Log::warning('A delayed donation payment failed; nothing was marked succeeded and no receipt was issued.', [
+            'donation_id' => $donation?->id,
+            'masjid_id' => $donation ? (int) $donation->masjid_id : null,
+            'checkout_session_id' => $session['id'] ?? null,
+            'mode' => $session['mode'] ?? null,
+            'account' => $account,
+        ]);
     }
 
     /**

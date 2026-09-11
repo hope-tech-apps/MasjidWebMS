@@ -203,4 +203,23 @@ class Registration extends Model
     {
         return $this->status === self::STATUS_PENDING;
     }
+
+    /**
+     * A delayed payment (a bank debit) completed this registration's current
+     * Checkout page and its money is still moving: the seat is held with no
+     * deadline, and nothing is owed a second time.
+     *
+     * Only RegistrationPaymentService::holdWhilePaymentClears() produces this
+     * shape. register(), promoteFromWaitlist() and checkout() always give a
+     * pending, awaiting seat a deadline, and every settlement moves the money
+     * state on. One definition, so the checkout door and anything that explains
+     * the state agree.
+     */
+    public function paymentIsClearing(): bool
+    {
+        return $this->status === self::STATUS_PENDING
+            && $this->payment_status === self::PAYMENT_AWAITING
+            && $this->stripe_checkout_session_id !== null
+            && $this->checkout_expires_at === null;
+    }
 }

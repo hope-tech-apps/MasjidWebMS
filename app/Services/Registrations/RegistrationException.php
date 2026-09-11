@@ -113,6 +113,17 @@ class RegistrationException extends RuntimeException
     }
 
     /**
+     * A bank debit on this registration's completed page is still clearing. Its
+     * place is held until the money lands or the debit fails, and a second
+     * payment page would either charge the family twice or, once it lapsed,
+     * release the place the first payment is for.
+     */
+    public static function paymentStillClearing(): self
+    {
+        return new self('Your bank payment for this registration is still clearing, and your place is held while it does. There is nothing more to pay now.');
+    }
+
+    /**
      * The $0 branch of the ratified design: a free plan, or aid that waived the
      * total, has NO Stripe leg — it confirms in-request. Minting a zero-amount
      * Checkout Session is never the answer.

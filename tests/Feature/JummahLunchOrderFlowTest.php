@@ -10,6 +10,8 @@ use App\Services\Stripe\MealOrderCheckoutService;
 use App\Services\Stripe\MealOrderPaymentService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
 use Tests\TestCase;
@@ -243,6 +245,103 @@ class JummahLunchOrderFlowTest extends TestCase
         $this->assertFalse(MealOrderPaymentService::isOrderEvent(['metadata' => ['donation_uuid' => 'z']]));
         $this->assertFalse(MealOrderPaymentService::isOrderEvent(['metadata' => ['form_response_uuid' => 'w']]));
         $this->assertFalse(MealOrderPaymentService::isOrderEvent([]));
+    }
+
+    // ------------------------------------------ a bank debit: complete is not paid
+
+    #[Test]
+    public function a_bank_debit_still_clearing_is_not_paid_until_its_money_lands(): void
+    {
+        $order = MealOrder::factory()->online()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id]);
+
+        // The page completes, but a bank debit's money has not moved.
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.completed', 'unpaid'))->assertOk();
+        $order->refresh();
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->payment_status);
+        $this->assertNull($order->paid_at);
+        $this->assertSame('cs_bank_1', $order->stripe_checkout_session_id);
+
+        // Days later it lands.
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.async_payment_succeeded', 'paid'))->assertOk();
+        $order->refresh();
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->payment_status);
+        $paidAt = $order->paid_at;
+        $this->assertNotNull($paidAt);
+
+        // The payment intent's own notice after it changes nothing.
+        $this->signedWebhook($this->bankDebitIntentEvent($order))->assertOk();
+        $this->assertTrue($paidAt->equalTo($order->fresh()->paid_at));
+    }
+
+    #[Test]
+    public function a_payment_intent_alone_settles_a_clearing_bank_debit_once(): void
+    {
+        $order = MealOrder::factory()->online()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id]);
+
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.completed', 'unpaid'))->assertOk();
+        $this->signedWebhook($this->bankDebitIntentEvent($order))->assertOk();
+        $order->refresh();
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->payment_status);
+        $paidAt = $order->paid_at;
+
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.async_payment_succeeded', 'paid'))->assertOk();
+        $this->assertTrue($paidAt->equalTo($order->fresh()->paid_at));
+    }
+
+    #[Test]
+    public function a_failed_bank_debit_leaves_the_order_unpaid_and_says_so(): void
+    {
+        $order = MealOrder::factory()->online()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id]);
+        Log::spy();
+
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.completed', 'unpaid'))->assertOk();
+        $this->signedWebhook($this->bankDebitEvent($order, 'checkout.session.async_payment_failed', 'unpaid'))->assertOk();
+
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message) => str_contains($message, 'meal order failed'))
+            ->once();
+    }
+
+    private function bankDebitEvent(MealOrder $order, string $type, string $paymentStatus): array
+    {
+        return [
+            'id' => 'evt_' . uniqid(),
+            'type' => $type,
+            'account' => $this->masjid->stripe_account_id,
+            'data' => ['object' => [
+                'id' => 'cs_bank_1',
+                'object' => 'checkout.session',
+                'status' => 'complete',
+                'payment_status' => $paymentStatus,
+                'payment_intent' => 'pi_bank_1',
+                'metadata' => ['order_uuid' => $order->uuid, 'masjid_id' => (string) $this->masjid->id],
+            ]],
+        ];
+    }
+
+    private function bankDebitIntentEvent(MealOrder $order): array
+    {
+        return [
+            'id' => 'evt_' . uniqid(),
+            'type' => 'payment_intent.succeeded',
+            'account' => $this->masjid->stripe_account_id,
+            'data' => ['object' => ['id' => 'pi_bank_1', 'object' => 'payment_intent', 'metadata' => ['order_uuid' => $order->uuid]]],
+        ];
+    }
+
+    /** Through the real endpoint and its real signature check, so the dispatch is exercised too. */
+    private function signedWebhook(array $event): TestResponse
+    {
+        config(['services.stripe.webhook_secret' => 'whsec_lunch_bank_debit']);
+        $payload = json_encode($event);
+        $timestamp = time();
+        $signature = hash_hmac('sha256', $timestamp . '.' . $payload, 'whsec_lunch_bank_debit');
+
+        return $this->call('POST', '/api/stripe/webhook', [], [], [], [
+            'HTTP_STRIPE_SIGNATURE' => "t={$timestamp},v1={$signature}",
+            'CONTENT_TYPE' => 'application/json',
+        ], $payload);
     }
 
     // ------------------------------------------------------------------ helpers

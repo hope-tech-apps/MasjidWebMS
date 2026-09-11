@@ -134,6 +134,9 @@ quote/register/checkout endpoints) fixed these — T-006d..f build on them:
   ignored unless the expiring session id IS the registration's current
   `stripe_checkout_session_id` — otherwise an abandoned first session would
   cancel a seat the registrant is actively paying for through the re-minted one.
+  The converse holds for a bank debit: its unpaid completion makes the page it
+  completed the current one, because that is the page money is moving through
+  (stripe-payments.md, "Paid means `payment_status: paid`").
 - **The checkout window is clamped to Stripe's [30 min, 24 h] expiry bounds** and
   the clamped value is written back to `checkout_expires_at`, so the deadline we
   sweep against and the one Stripe expires against are the same instant.
@@ -293,6 +296,10 @@ fixed these:
   orders: webhook-first leaves a row the filter no longer matches, reaper-first
   leaves a non-pending seat the pending-only seam refuses. One decrement either
   way.
+- **The sweep's filter is re-applied to the LOCKED row before a release.** A
+  payment path can commit between the SELECT and the release; a bank debit's
+  hold nulls `checkout_expires_at` while money stays `awaiting`, which the
+  pending-only seam alone would not refuse (`RegistrationReaperTest`).
 - **Not scheduled by default**, exactly like `groups:purge-feed` — cadence is an
   operator decision, so it belongs in routes/console.php when a policy is agreed.
 - **The concurrency invariant is tested in two arms** (`RegistrationConcurrencyTest`):
