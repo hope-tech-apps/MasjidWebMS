@@ -62,6 +62,7 @@ class MealOrderPaymentService
             $order->stripe_checkout_session_id = $sessionId;
         }
 
+        $this->warnIfCancelled($order);
         $order->markPaid($paymentIntentId);
     }
 
@@ -77,7 +78,23 @@ class MealOrderPaymentService
             return;
         }
 
+        $this->warnIfCancelled($order);
         $order->markPaid($this->stringOrNull($pi['id'] ?? null));
+    }
+
+    /**
+     * Money for an order staff had cancelled, paid in the moment before its page
+     * was closed. It is recorded (the organisation owns the refund) and said out
+     * loud, because the board leaves cancelled orders out of the kitchen count.
+     */
+    private function warnIfCancelled(MealOrder $order): void
+    {
+        if ($order->status === MealOrder::STATUS_CANCELLED && $order->payment_status !== MealOrder::PAYMENT_PAID) {
+            Log::warning('A cancelled meal order was paid on Stripe; the organisation should refund it or restore the order.', [
+                'order_uuid' => $order->uuid,
+                'masjid_id' => (int) $order->masjid_id,
+            ]);
+        }
     }
 
     /**

@@ -282,10 +282,11 @@ class MealOrdersController extends Controller
      * POST .../orders/{order_id}/payment-link — a Stripe payment page for an
      * unpaid order: open it on this device, or send it to the customer. An
      * open page is reused, so nobody holds two ways to pay; an expired one is
-     * replaced. A pay-at-pickup order becomes an online one, so it can no
-     * longer be marked paid by hand as well. Paid and cancelled orders are
-     * refused, as is a lunch with online payment switched off. Stripe marks
-     * the order paid when the customer pays (StripeWebhookController).
+     * replaced. A pay-at-pickup order becomes an online one (on the locked row,
+     * in the service), so it can no longer be marked paid by hand as well.
+     * Paid and cancelled orders are refused, as is a lunch with online payment
+     * switched off. Stripe marks the order paid when the customer pays
+     * (StripeWebhookController).
      */
     public function paymentLink(CreatePaymentLinkRequest $request, $masjid_id, $menu_id, $order_id)
     {
@@ -297,28 +298,27 @@ class MealOrdersController extends Controller
         }
 
         if ($order->status === MealOrder::STATUS_CANCELLED) {
-            return $this->refuse('This order was cancelled. Set it back to pending first.');
+            return $this->refuse('This order was cancelled. Set it back to confirmed first.');
         }
 
         if (! $menu->allow_online_payment) {
             return $this->refuse('Online payment is switched off for this lunch.');
         }
 
-        // The extra and the card fee staff chose for this page, priced by the
-        // shared rule. Absent, the open page (if any) is reused as it is.
-        $amounts = null;
+        // What staff chose in the dialog, each left out when they were not asked.
+        // The service prices them on the locked row; with neither, an open page
+        // is reused as it is.
+        $choices = null;
         if ($request->has('donation_minor') || $request->has('cover_fees')) {
-            $amounts = LunchOrderExtras::compute(
-                $menu,
-                (int) $order->subtotal_minor,
-                (int) ($request->validated('donation_minor') ?? 0),
-                $request->boolean('cover_fees'),
-                true,
-            );
+            $donation = $request->validated('donation_minor');
+            $choices = [
+                'donation_minor' => $donation === null ? null : (int) $donation,
+                'cover_fees' => $request->has('cover_fees') ? $request->boolean('cover_fees') : null,
+            ];
         }
 
         try {
-            $result = $this->checkout->paymentLink($order, $amounts);
+            $result = $this->checkout->paymentLink($order, $choices);
         } catch (\Illuminate\Database\QueryException $e) {
             // Before RuntimeException, which it extends: never show SQL to staff.
             report($e);
@@ -330,11 +330,6 @@ class MealOrdersController extends Controller
             report($e);
 
             return $this->refuse('Stripe did not answer. Try again in a moment.');
-        }
-
-        if ($order->payment_method !== MealOrder::METHOD_ONLINE) {
-            $order->payment_method = MealOrder::METHOD_ONLINE;
-            $order->save();
         }
 
         return response()->json([
@@ -366,42 +361,38 @@ class MealOrdersController extends Controller
 
     /**
      * Move an order's fulfilment status. `picked_up` stamps picked_up_at through
-     * the model helper; the others are a plain transition.
+     * the model helper; the others are a plain transition. On the LOCKED row: a
+     * cancel waits for a payment page being made that same second and then
+     * closes that page, never one read before it existed; a page asked for after
+     * the cancel is refused under the same lock (MealOrderCheckoutService).
      */
     public function updateStatus(UpdateMealOrderStatusRequest $request, $masjid_id, $menu_id, $order_id)
     {
-        $order = MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
+        MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
+        $status = (string) $request->validated('status');
 
         try {
-            $status = (string) $request->validated('status');
+            [$order, $message, $warning] = DB::transaction(function () use ($menu_id, $order_id, $status) {
+                $order = MealOrder::where('meal_menu_id', $menu_id)->lockForUpdate()->findOrFail($order_id);
 
-            if ($status === MealOrder::STATUS_PICKED_UP) {
-                $order->markPickedUp();
-            } else {
-                $order->status = $status;
-                $order->save();
-            }
-
-            // A cancelled order must not stay payable: close its open Stripe page.
-            // The cancellation stands either way; staff are told what happened.
-            $message = null;
-            if ($status === MealOrder::STATUS_CANCELLED && $order->payment_status !== MealOrder::PAYMENT_PAID && $order->stripe_checkout_session_id) {
-                try {
-                    $closed = $this->checkout->expireOpenSession($order);
-                    if ($closed === 'expired') {
-                        $message = 'Cancelled, and its payment page is closed.';
-                    } elseif ($closed === 'complete') {
-                        $message = 'This order had already been paid on Stripe, so it will show as paid. Refund it in Stripe if it should not stand.';
-                    }
-                } catch (\RuntimeException|\Stripe\Exception\ExceptionInterface $e) {
-                    report($e);
-                    $message = 'Cancelled, but its payment page could not be closed, so the link still works. Try cancelling again, or close it in Stripe.';
+                if ($status === MealOrder::STATUS_PICKED_UP) {
+                    $order->markPickedUp();
+                } else {
+                    $order->status = $status;
+                    $order->save();
                 }
-            }
+
+                [$message, $warning] = $status === MealOrder::STATUS_CANCELLED
+                    ? $this->closePageOfCancelled($order)
+                    : [null, false];
+
+                return [$order, $message, $warning];
+            });
 
             return response()->json([
                 'status' => 'success',
                 'message' => $message,
+                'warning' => $warning,
                 'data' => $order->load('items'),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
@@ -413,38 +404,89 @@ class MealOrdersController extends Controller
     }
 
     /**
+     * A cancelled order must not stay payable: close its open Stripe page. The
+     * cancellation stands whatever Stripe says, and staff are told what
+     * happened; `true` marks an answer they must act on. Cancelling again (the
+     * board's "Close payment page") retries a close that failed.
+     *
+     * @return array{0: ?string, 1: bool}
+     */
+    private function closePageOfCancelled(MealOrder $order): array
+    {
+        if ($order->payment_status === MealOrder::PAYMENT_PAID || ! $order->stripe_checkout_session_id) {
+            return [null, false];
+        }
+
+        try {
+            $closed = $this->checkout->expireOpenSession($order);
+        } catch (\RuntimeException|\Stripe\Exception\ExceptionInterface $e) {
+            report($e);
+
+            return ['Cancelled, but its payment page could not be closed, so the link still works. Press "Close payment page" on the order to try again.', true];
+        }
+
+        if ($closed === 'complete') {
+            return ['This order had already been paid on Stripe, so it will show as paid. Refund it in Stripe if it should not stand.', true];
+        }
+
+        if ($closed === 'expired') {
+            // No live page is left: forget it, so the board stops offering to close one.
+            $order->stripe_checkout_session_id = null;
+            $order->save();
+
+            return ['Cancelled, and its payment page is closed.', false];
+        }
+
+        return [null, false];
+    }
+
+    /**
      * Mark a PAY-AT-PICKUP order paid, in person. Refuses an online order — its
      * paid state is the webhook's to set, and letting staff flip it here would
      * fake a settlement Stripe never confirmed.
      */
     public function markPaid(Request $request, $masjid_id, $menu_id, $order_id)
     {
-        $order = MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
-
-        if ($order->payment_method === MealOrder::METHOD_ONLINE) {
-            return response()->json([
-                'status' => 'failed',
-                'data' => 'An online order is marked paid by Stripe, not by hand.',
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
-        }
+        MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
 
         try {
-            // Who took the money: recorded the first time only, so a second press
-            // (or a colleague's) never rewrites it.
-            if ($order->payment_status !== MealOrder::PAYMENT_PAID) {
-                $order->marked_paid_by_user_id = $request->user()?->id;
-            }
-            $order->markPaid();
+            // On the locked row: a payment page being made that same second turns
+            // the order online first, and then it is refused here, so cash and a
+            // card payment can never both be taken. Who took the money is recorded
+            // by the first press only, so a second press (or a colleague's) never
+            // rewrites it.
+            $order = DB::transaction(function () use ($request, $menu_id, $order_id) {
+                $order = MealOrder::where('meal_menu_id', $menu_id)->lockForUpdate()->findOrFail($order_id);
 
-            return response()->json([
-                'status' => 'success',
-                'data' => $order->load(['items', 'markedPaidBy:id,name']),
-            ], Response::HTTP_OK);
+                if ($order->payment_method === MealOrder::METHOD_ONLINE) {
+                    return null;
+                }
+
+                if ($order->payment_status !== MealOrder::PAYMENT_PAID) {
+                    $order->marked_paid_by_user_id = $request->user()?->id;
+                }
+                $order->markPaid();
+
+                return $order;
+            });
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+
+        if ($order === null) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'An online order is marked paid by Stripe, not by hand.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $order->load(['items', 'markedPaidBy:id,name']),
+        ], Response::HTTP_OK);
     }
+
 }

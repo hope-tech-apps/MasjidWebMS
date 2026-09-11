@@ -148,12 +148,15 @@
                                     </td>
                                     <td>
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
-                                            <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s">{{ s }}</option>
+                                            <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s" :disabled="s === 'pending'">{{ s }}</option>
                                         </select>
                                     </td>
                                     <td class="text-end text-nowrap">
                                         <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled' && currentMenu?.allow_online_payment"
                                             class="btn btn-sm btn-outline-primary me-1" @click="openPayLink(o)">Payment link</button>
+                                        <!-- Cancelling closes the order's payment page; when Stripe could not be reached, this tries again. -->
+                                        <button v-if="o.status === 'cancelled' && o.payment_status === 'unpaid' && o.stripe_checkout_session_id"
+                                            class="btn btn-sm btn-outline-danger me-1" @click="setOrderStatus(o, 'cancelled', true)">Close payment page</button>
                                         <button v-if="o.payment_method === 'pickup' && o.payment_status === 'unpaid'"
                                             class="btn btn-sm btn-success" @click="markPaid(o)">Mark paid</button>
                                     </td>
@@ -389,12 +392,15 @@
                             <input id="jll-extra" v-model="linkModal.extraInput" type="number" min="0" :max="maxExtraMinor / 100" step="0.01" inputmode="decimal" class="form-control" placeholder="Other amount" aria-label="Extra on top, in dollars" />
                         </div>
                     </div>
-                    <div v-if="linkFeeOffer > 0" class="form-check mb-2">
+                    <p v-if="!allowExtra && linkStoredExtra > 0" class="small mb-2">Extra on top: {{ money(linkStoredExtra) }} <span class="text-muted">(chosen with the order; this lunch no longer offers a change)</span></p>
+                    <div v-if="feeChoice && linkFeeOffer > 0" class="form-check mb-2">
                         <input id="jll-fee" v-model="linkModal.coverFees" class="form-check-input" type="checkbox" />
                         <label class="form-check-label" for="jll-fee">Add {{ money(linkFeeOffer) }} to cover the card processing fee, so the masjid receives the full amount</label>
                     </div>
+                    <p v-else-if="!feeChoice && linkFee > 0" class="small mb-2">Card fee covered: {{ money(linkFee) }} <span class="text-muted">(chosen with the order)</span></p>
                     <div class="d-flex justify-content-between fw-semibold mt-2"><span>Total</span><span>{{ money(linkTotal) }}</span></div>
-                    <div class="text-muted small mt-2">If the amount changes, a payment link already sent for this order stops working and a new one is made.</div>
+                    <div v-if="linkUnchanged" class="text-muted small mt-2">Same amount as the order, so an open payment page for it is reused.</div>
+                    <div v-else class="text-muted small mt-2">Was {{ money(Number(linkModal.order?.total_minor || 0)) }}. A payment link already sent for this order stops working, and a new one is made.</div>
                     <div v-if="linkError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ linkError }}</div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
@@ -410,6 +416,7 @@
                 <div class="card-header"><h5 class="mb-0">Payment for order #{{ payModal.orderNumber }}</h5></div>
                 <div class="card-body">
                     <p class="mb-2">{{ money(payModal.total) }} for {{ payModal.name }}. Stripe marks the order paid as soon as they pay. The link works for 24 hours; after that, press "Payment link" on the order for a new one.</p>
+                    <div v-if="payModal.note" class="alert alert-warning py-2 small mb-2" role="status">{{ payModal.note }}</div>
                     <div class="input-group input-group-sm mb-2">
                         <input class="form-control" :value="payModal.url" readonly aria-label="Payment link" @focus="($event.target as HTMLInputElement).select()" />
                         <button class="btn btn-outline-secondary" type="button" @click="copyPayLink">{{ payModal.copied ? 'Copied' : 'Copy link' }}</button>
@@ -576,39 +583,51 @@ function bump(it: any, delta: number) {
     const next = Math.max(0, (orderModal.qty[it.id] || 0) + delta);
     orderModal.qty[it.id] = it.max_quantity ? Math.min(next, Number(it.max_quantity)) : next;
 }
-const payModal = reactive({ show: false, url: "", orderNumber: "", name: "", total: 0, copied: false });
+const payModal = reactive({ show: false, url: "", orderNumber: "", name: "", total: 0, copied: false, note: "" });
 function showPayLink(order: any, url: string) {
     Object.assign(payModal, {
-        show: true, url, copied: false,
+        show: true, url, copied: false, note: "",
         orderNumber: order?.order_number ?? "", name: order?.customer_name ?? "", total: Number(order?.total_minor || 0),
     });
 }
 // "Payment link" offers the optional extra and the card fee first, pre-filled from
-// the order, priced by the same rule as the Add-order form (the server recomputes).
+// the order, priced by the same rule as the Add-order form (the server recomputes,
+// on the order's locked row). Only a choice staff CHANGED is sent: one left out
+// keeps what the order carries, so re-sending a link can never quietly drop an
+// extra or fee the customer agreed to, or close the page they already hold.
 const linkModal = reactive<{ show: boolean; order: any; extraInput: string | number; coverFees: boolean }>({ show: false, order: null, extraInput: "", coverFees: false });
 const linkSaving = ref(false);
 const linkError = ref("");
 const linkSubtotal = computed<number>(() => Number(linkModal.order?.subtotal_minor || 0));
+const linkStoredExtra = computed<number>(() => Number(linkModal.order?.donation_minor || 0));
+const linkStoredFee = computed<number>(() => Number(linkModal.order?.fee_covered_minor || 0));
+const feeChoice = computed<boolean>(() => currentMenu.value?.allow_fee_coverage !== false);
 const linkExtra = computed<number>(() => {
-    if (!allowExtra.value || linkSubtotal.value <= 0) return 0;
+    // An extra this lunch no longer offers stays as the customer chose it.
+    if (!allowExtra.value) return linkStoredExtra.value;
+    if (linkSubtotal.value <= 0) return 0;
     const parsed = Number.parseFloat(String(linkModal.extraInput ?? ""));
     if (!Number.isFinite(parsed) || parsed <= 0) return 0;
     return Math.min(Math.round(parsed * 100), maxExtraMinor.value);
 });
+const linkCover = computed<boolean>(() => (feeChoice.value ? linkModal.coverFees : linkStoredFee.value > 0));
 const linkFeeOffer = computed<number>(() => {
-    if (currentMenu.value?.allow_fee_coverage === false || linkSubtotal.value <= 0) return 0;
+    if (linkSubtotal.value <= 0) return 0;
     const intended = linkSubtotal.value + linkExtra.value;
     const pct = Number(currentMenu.value?.stripe_fee_percentage ?? 0.029);
     const fixed = Number(currentMenu.value?.stripe_fee_fixed_minor ?? 30);
     return Math.max(0, Math.round((intended + fixed) / (1 - pct)) - intended);
 });
-const linkTotal = computed<number>(() => linkSubtotal.value + linkExtra.value + (linkModal.coverFees ? linkFeeOffer.value : 0));
+const linkUnchanged = computed<boolean>(() => linkExtra.value === linkStoredExtra.value && linkCover.value === (linkStoredFee.value > 0));
+// Unchanged is the order's own amounts to the cent: exactly what the server keeps.
+const linkFee = computed<number>(() => (linkUnchanged.value ? linkStoredFee.value : linkCover.value ? linkFeeOffer.value : 0));
+const linkTotal = computed<number>(() => linkSubtotal.value + linkExtra.value + linkFee.value);
 function setLinkExtra(minor: number) {
     linkModal.extraInput = minor > 0 ? (minor / 100).toFixed(2) : "";
 }
 function openPayLink(o: any) {
     if (!currentMenu.value) return;
-    const offersChoices = allowExtra.value || currentMenu.value?.allow_fee_coverage !== false;
+    const offersChoices = allowExtra.value || feeChoice.value;
     if (!offersChoices) { makePayLink(o); return; }
     Object.assign(linkModal, {
         show: true, order: o, coverFees: Number(o.fee_covered_minor) > 0,
@@ -617,25 +636,34 @@ function openPayLink(o: any) {
     linkError.value = "";
 }
 async function createPayLink() {
-    if (!linkModal.order) return;
+    const o = linkModal.order;
+    if (!o) return;
     linkSaving.value = true;
     linkError.value = "";
-    const ok = await makePayLink(linkModal.order, { donation_minor: linkExtra.value, cover_fees: linkModal.coverFees && linkFeeOffer.value > 0 }, linkTotal.value);
+    const extras: { donation_minor?: number; cover_fees?: boolean } = {};
+    if (allowExtra.value && linkExtra.value !== linkStoredExtra.value) extras.donation_minor = linkExtra.value;
+    if (feeChoice.value && linkCover.value !== linkStoredFee.value > 0) extras.cover_fees = linkCover.value;
+    const ok = await makePayLink(o, Object.keys(extras).length ? extras : undefined, linkTotal.value);
     linkSaving.value = false;
     if (ok) linkModal.show = false;
 }
-async function makePayLink(o: any, extras?: { donation_minor: number; cover_fees: boolean }, total?: number): Promise<boolean> {
+async function makePayLink(o: any, extras?: { donation_minor?: number; cover_fees?: boolean }, expected?: number): Promise<boolean> {
     if (!currentMenu.value) return false;
-    let url: string;
+    let made: { url: string; order: any };
     try {
-        url = await store.paymentLink(currentMenu.value.id, o.id, extras);
+        made = await store.paymentLink(currentMenu.value.id, o.id, extras);
     } catch (e: any) {
         const reason = serverReason(e, "Could not create the payment page.");
         if (linkModal.show) linkError.value = reason;
         else Swal.fire({ icon: "warning", title: "No payment page", text: reason });
         return false;
     }
-    showPayLink(total != null ? { ...o, total_minor: total } : o, url);
+    // What the page charges is the server's figure, never the dialog's estimate.
+    const charged = made.order ?? o;
+    showPayLink(charged, made.url);
+    if (expected != null && Number(charged.total_minor) !== expected) {
+        payModal.note = `This lunch's extra or fee settings changed after the board loaded, so this page charges ${money(Number(charged.total_minor))}, not the ${money(expected)} shown.`;
+    }
     await refreshOrders();
     return true;
 }
@@ -864,13 +892,14 @@ async function markPaid(o: any) {
     // Either way, show the order's real state: a refused button may be stale.
     await refreshOrders();
 }
-async function setOrderStatus(o: any, status: string) {
-    if (!currentMenu.value || status === o.status) return;
+// `again`: "Close payment page" sends a cancel once more, after a close that failed.
+async function setOrderStatus(o: any, status: string, again = false) {
+    if (!currentMenu.value || (status === o.status && !again)) return;
     try {
         const res = await store.updateOrderStatus(currentMenu.value.id, o.id, status);
         await refreshOrders();
-        // e.g. "Cancelled, and its payment page is closed." or a still-live-link warning.
-        if (res?.message) Swal.fire({ icon: "info", text: res.message });
+        // e.g. "Cancelled, and its payment page is closed.", or one staff must act on.
+        if (res?.message) Swal.fire({ icon: res.warning ? "warning" : "success", text: res.message });
     } catch (e) { toastError(e); }
 }
 

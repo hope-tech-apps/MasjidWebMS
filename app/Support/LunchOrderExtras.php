@@ -40,4 +40,42 @@ final class LunchOrderExtras
 
         return ['donation_minor' => $donation, 'fee_covered_minor' => $fee];
     }
+
+    /**
+     * The same two amounts for an order that already exists, when staff make it
+     * a new payment page. A choice staff were not asked about keeps what the
+     * order carries — one left out of the request, or an option the menu has
+     * stopped offering since the order was placed — because the customer agreed
+     * to it, and dropping it would close the page they hold for a cheaper one.
+     * Unchanged choices come back as the stored amounts to the cent, so they are
+     * never a new price. Online by definition: this is always for a Stripe page.
+     *
+     * @return array{donation_minor: int, fee_covered_minor: int}
+     */
+    public static function forExistingOrder(
+        MealMenu $menu,
+        MealOrder $order,
+        ?int $requestedDonationMinor,
+        ?bool $coverFees
+    ): array {
+        $storedDonation = (int) $order->donation_minor;
+        $storedFee = (int) $order->fee_covered_minor;
+
+        $donation = ($menu->allow_donation && $requestedDonationMinor !== null)
+            ? max(0, min($requestedDonationMinor, MealOrder::MAX_DONATION_MINOR))
+            : $storedDonation;
+
+        $cover = ($menu->allow_fee_coverage && $coverFees !== null)
+            ? $coverFees
+            : $storedFee > 0;
+
+        if ($donation === $storedDonation && $cover === ($storedFee > 0)) {
+            return ['donation_minor' => $storedDonation, 'fee_covered_minor' => $storedFee];
+        }
+
+        return [
+            'donation_minor' => $donation,
+            'fee_covered_minor' => $cover ? StripeFees::coverage((int) $order->subtotal_minor + $donation) : 0,
+        ];
+    }
 }

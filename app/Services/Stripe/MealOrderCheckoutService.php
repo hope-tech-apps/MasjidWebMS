@@ -3,7 +3,9 @@
 namespace App\Services\Stripe;
 
 use App\Models\Masjid;
+use App\Models\MealMenu;
 use App\Models\MealOrder;
+use App\Support\LunchOrderExtras;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -34,6 +36,8 @@ use Stripe\StripeClient;
  */
 class MealOrderCheckoutService
 {
+    private const PAID_ON_STRIPE = 'This order has been paid on Stripe. The board will show it as paid in a moment.';
+
     public function __construct(private StripeClient $stripe)
     {
     }
@@ -167,34 +171,53 @@ class MealOrderCheckoutService
     }
 
     /**
-     * Every reason this order may NOT be charged, stated once. Writes nothing.
-     *
-     * @throws RuntimeException
-     */
-    /**
      * The payment page for an unpaid order, for staff to open or send on. An
      * open page is handed back as it is, so a customer never holds two live
      * ways to pay the same order; an expired page is replaced (with a new
      * idempotency key, or Stripe would replay the old one); a completed page
      * is left to the webhook to record.
      *
+     * `$choices` is what staff picked in the dialog: the extra, and whether the
+     * card fee is covered, each null when staff were not asked. They are priced
+     * HERE, on the locked row (LunchOrderExtras::forExistingOrder), so a choice
+     * left out keeps what the order carries now, not when the request was read.
+     *
+     * @param  array{donation_minor: ?int, cover_fees: ?bool}|null  $choices
      * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
      */
-    public function paymentLink(MealOrder $order, ?array $amounts = null): array
+    public function paymentLink(MealOrder $order, ?array $choices = null): array
     {
         // Serialised on the order row: when two people press "Payment link" at
         // once, the second waits here, then finds the first one's open session
-        // and gets that same page — never a second payable one.
-        return DB::transaction(function () use ($order, $amounts) {
+        // and gets that same page — never a second payable one. Cancelling and
+        // Mark paid take the same lock (MealOrdersController).
+        return DB::transaction(function () use ($order, $choices) {
             $order = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $masjid = $this->preflight($order);
 
-            // Staff chose an extra and/or the card fee. A different amount means a
-            // different page: the open one is closed FIRST, so the customer can
-            // never pay the old amount as well as the new one.
+            // Checked under the lock, not only by the controller: a cancel that
+            // committed while this request waited must stop a new page being made.
+            if ($order->status === MealOrder::STATUS_CANCELLED) {
+                throw new RuntimeException('This order was cancelled. Set it back to confirmed first.');
+            }
+
+            $amounts = $choices === null ? null : LunchOrderExtras::forExistingOrder(
+                MealMenu::withoutMasjidScope()->findOrFail($order->meal_menu_id),
+                $order,
+                $choices['donation_minor'] ?? null,
+                $choices['cover_fees'] ?? null,
+            );
+
+            // A different amount means a different page: the open one is closed
+            // FIRST, so the customer can never pay the old amount as well as the new.
             $reprice = $amounts !== null
                 && ((int) $order->donation_minor !== (int) $amounts['donation_minor']
                     || (int) $order->fee_covered_minor !== (int) $amounts['fee_covered_minor']);
+
+            // A page is paid online, so a pay-at-pickup order becomes an online one
+            // now, on the locked row. Mark paid re-checks under the same lock, so
+            // cash and a card payment can never both be taken for one order.
+            $order->payment_method = MealOrder::METHOD_ONLINE;
 
             if ($order->stripe_checkout_session_id) {
                 $session = $this->retrieveCheckoutSession(
@@ -203,10 +226,12 @@ class MealOrderCheckoutService
                 );
 
                 if ($session['status'] === 'complete') {
-                    throw new RuntimeException('This order has been paid on Stripe. The board will show it as paid in a moment.');
+                    throw new RuntimeException(self::PAID_ON_STRIPE);
                 }
 
                 if ($session['status'] === 'open' && $session['url'] && ! $reprice) {
+                    $order->save();
+
                     return [
                         'order' => $order,
                         'checkout_url' => (string) $session['url'],
@@ -214,8 +239,9 @@ class MealOrderCheckoutService
                     ];
                 }
 
-                if ($session['status'] === 'open') {
-                    $this->closeSession($order, (string) $masjid->stripe_account_id);
+                if ($session['status'] === 'open'
+                    && $this->closeSession($order, (string) $masjid->stripe_account_id) === 'complete') {
+                    throw new RuntimeException(self::PAID_ON_STRIPE);
                 }
 
                 $order->stripe_checkout_session_id = null;
@@ -242,9 +268,12 @@ class MealOrderCheckoutService
 
     /**
      * Close an unpaid order's open payment page, so a cancelled order does not
-     * stay payable. Returns Stripe's status for the page: 'expired' once closed,
-     * 'complete' when the customer paid first (the webhook records it), or null
-     * when there is no page to close.
+     * stay payable. Returns Stripe's status for the page: 'expired' once closed
+     * (or already), 'complete' when the customer paid first — even a moment
+     * before the close landed — which the webhook records; null when there is
+     * no page to close.
+     *
+     * @throws RuntimeException when the page could not be closed and may still be payable
      */
     public function expireOpenSession(MealOrder $order): ?string
     {
@@ -262,22 +291,40 @@ class MealOrderCheckoutService
             return $session['status'];
         }
 
-        $this->closeSession($order, $account);
-
-        return 'expired';
+        return $this->closeSession($order, $account);
     }
 
-    private function closeSession(MealOrder $order, string $account): void
+    /**
+     * Close an open page: 'expired' once closed, or 'complete' when Stripe
+     * refused because the customer had just paid. The two are told apart by
+     * asking Stripe again, because "refund it" and "the link still works" are
+     * different instructions for staff.
+     *
+     * @throws RuntimeException when the page is still open after the refusal
+     */
+    private function closeSession(MealOrder $order, string $account): string
     {
+        $sessionId = (string) $order->stripe_checkout_session_id;
+
         try {
-            $this->expireCheckoutSession((string) $order->stripe_checkout_session_id, $account);
+            $this->expireCheckoutSession($sessionId, $account);
+
+            return 'expired';
         } catch (\Stripe\Exception\InvalidRequestException $e) {
-            // Stripe refuses to close a page that is no longer open: most likely
-            // it was paid a moment ago, and the webhook will record it.
-            throw new RuntimeException('That payment page could not be closed; it may have just been paid. Refresh the board.');
+            $now = $this->retrieveCheckoutSession($sessionId, $account)['status'] ?? null;
+            if ($now === 'complete' || $now === 'expired') {
+                return $now;
+            }
+
+            throw new RuntimeException('That payment page could not be closed. Refresh the board and try again.');
         }
     }
 
+    /**
+     * Every reason this order may NOT be charged, stated once. Writes nothing.
+     *
+     * @throws RuntimeException
+     */
     private function preflight(MealOrder $order): Masjid
     {
         if ($order->payment_status === MealOrder::PAYMENT_PAID) {

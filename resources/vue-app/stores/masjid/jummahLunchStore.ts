@@ -198,15 +198,15 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * extra in cents and a yes/no for the card fee) a different amount closes the
      * open page and makes a new one; the same amount reuses it.
      */
-    async function paymentLink(menuId: number | string, orderId: number | string, extras?: { donation_minor: number; cover_fees: boolean }): Promise<string> {
+    // Only the choices staff changed: one left out keeps what the order carries.
+    // Returns the server's own order, so the total shown is what Stripe charges.
+    async function paymentLink(menuId: number | string, orderId: number | string, extras?: { donation_minor?: number; cover_fees?: boolean }): Promise<{ url: string; order: any }> {
         ensureMasjid();
         const body = new FormData();
-        if (extras) {
-            body.append("donation_minor", String(Math.max(0, Math.round(extras.donation_minor || 0))));
-            body.append("cover_fees", extras.cover_fees ? "1" : "0");
-        }
+        if (extras?.donation_minor != null) body.append("donation_minor", String(Math.max(0, Math.round(extras.donation_minor))));
+        if (extras?.cover_fees != null) body.append("cover_fees", extras.cover_fees ? "1" : "0");
         const res: AxiosResponse = await ApiService.post(`${base()}/menus/${menuId}/orders/${orderId}/payment-link`, body);
-        if (res.data?.status === "success" && res.data?.data?.checkout_url) return res.data.data.checkout_url;
+        if (res.data?.status === "success" && res.data?.data?.checkout_url) return { url: res.data.data.checkout_url, order: res.data.data.order ?? null };
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not create the payment page.");
     }
 

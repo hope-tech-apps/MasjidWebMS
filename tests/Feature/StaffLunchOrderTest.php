@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\StripeFees;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
@@ -40,6 +41,12 @@ class StaffLunchOrderTest extends TestCase
     public static array $keys = [];
     /** Payment pages closed (expired), in order. */
     public static array $expired = [];
+    /**
+     * How Stripe answers a close: null closes it; 'paid' refuses because the
+     * customer paid a moment before (the page is complete); 'still-open'
+     * refuses with the page still live; 'network' never answers.
+     */
+    public static ?string $expireRefusal = null;
 
     private Masjid $masjid;
     private User $admin;
@@ -85,6 +92,7 @@ class StaffLunchOrderTest extends TestCase
         self::$lastParams = [];
         self::$keys = [];
         self::$expired = [];
+        self::$expireRefusal = null;
 
         $this->app->bind(MealOrderCheckoutService::class, function ($app) {
             return new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
@@ -105,6 +113,16 @@ class StaffLunchOrderTest extends TestCase
 
                 protected function expireCheckoutSession(string $sessionId, string $connectedAccountId): void
                 {
+                    switch (StaffLunchOrderTest::$expireRefusal) {
+                        case 'paid':
+                            StaffLunchOrderTest::$pageStatus = 'complete';
+                            throw \Stripe\Exception\InvalidRequestException::factory('This Checkout Session is not in an expirable state.');
+                        case 'still-open':
+                            throw \Stripe\Exception\InvalidRequestException::factory('Refused.');
+                        case 'network':
+                            throw \Stripe\Exception\ApiConnectionException::factory('Could not connect to Stripe.');
+                    }
+
                     StaffLunchOrderTest::$expired[] = $sessionId;
                     StaffLunchOrderTest::$pageStatus = 'expired';
                 }
@@ -151,6 +169,16 @@ class StaffLunchOrderTest extends TestCase
     private function linkFor(MealOrder $order, string $prefix = '/api/admin', array $fields = [])
     {
         return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/payment-link", $fields, ['Accept' => 'application/json']);
+    }
+
+    private function statusFor(MealOrder $order, string $status)
+    {
+        return $this->call('PUT', "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/status", ['status' => $status], [], [], ['HTTP_ACCEPT' => 'application/json']);
+    }
+
+    private function markPaidFor(MealOrder $order, string $prefix = '/api/admin')
+    {
+        return $this->post("{$prefix}/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json']);
     }
 
     private function onePlate(): array
@@ -573,10 +601,12 @@ class StaffLunchOrderTest extends TestCase
         $this->order('/api/admin', $this->onePlate())->assertCreated();
         $order = MealOrder::withoutMasjidScope()->firstOrFail();
 
-        $this->call('PUT', "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/status", ['status' => 'cancelled'], [], [], ['HTTP_ACCEPT' => 'application/json'])
-            ->assertOk()->assertJsonPath('message', 'Cancelled, and its payment page is closed.');
+        $this->statusFor($order, 'cancelled')
+            ->assertOk()->assertJsonPath('message', 'Cancelled, and its payment page is closed.')->assertJsonPath('warning', false);
         $this->assertSame(['cs_test_1'], self::$expired);
         $this->assertSame(MealOrder::STATUS_CANCELLED, $order->fresh()->status);
+        // No live page is left, so the board stops offering to close one.
+        $this->assertNull($order->fresh()->stripe_checkout_session_id);
     }
 
     #[Test]
@@ -597,6 +627,9 @@ class StaffLunchOrderTest extends TestCase
         $this->post("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/mark-paid", [], ['Accept' => 'application/json'])->assertOk();
         $this->assertSame((int) $volunteer->id, $order->fresh()->marked_paid_by_user_id);
 
+        // Still named after their login is removed (a soft delete): that is when
+        // the office asks who took the cash.
+        $volunteer->delete();
         $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
             ->assertOk()->assertJsonPath('data.orders.0.marked_paid_by.name', $volunteer->name);
     }
@@ -666,5 +699,186 @@ class StaffLunchOrderTest extends TestCase
         $this->order('/api/admin', $this->onePlate())->assertForbidden();
 
         $this->assertSame(0, MealOrder::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_cancel_that_lands_first_stops_a_new_page_even_past_the_controller_check(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        self::$pageStatus = 'expired';
+
+        // The request read the order before a colleague's cancel committed.
+        $readBeforeTheCancel = $order->fresh();
+        $order->forceFill(['status' => MealOrder::STATUS_CANCELLED])->save();
+
+        try {
+            app(MealOrderCheckoutService::class)->paymentLink($readBeforeTheCancel);
+            $this->fail('A cancelled order must not get a new payment page.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('cancelled', $e->getMessage());
+        }
+
+        $this->assertSame(1, self::$pagesMade);
+        $this->assertSame('cs_test_1', $order->fresh()->stripe_checkout_session_id);
+    }
+
+    #[Test]
+    public function when_the_customer_pays_as_the_page_is_closed_nothing_is_repriced_and_staff_are_told_it_is_paid(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();   // page 1, open
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $key = $order->idempotency_key;
+        self::$expireRefusal = 'paid';
+
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '500'])
+            ->assertStatus(422)
+            ->assertJsonPath('data', 'This order has been paid on Stripe. The board will show it as paid in a moment.');
+        $order->refresh();
+        $this->assertSame(1, self::$pagesMade);
+        $this->assertSame(0, $order->donation_minor);
+        $this->assertSame(800, $order->total_minor);
+        $this->assertSame('cs_test_1', $order->stripe_checkout_session_id);
+        $this->assertSame($key, $order->idempotency_key);
+
+        // Cancelling in that same moment says so, instead of "the link still works".
+        self::$pageStatus = 'open';
+        $this->statusFor($order, 'cancelled')->assertOk()
+            ->assertJsonPath('warning', true)
+            ->assertJsonPath('message', 'This order had already been paid on Stripe, so it will show as paid. Refund it in Stripe if it should not stand.');
+        $this->assertSame(MealOrder::STATUS_CANCELLED, $order->fresh()->status);
+        $this->assertSame('cs_test_1', $order->fresh()->stripe_checkout_session_id);
+    }
+
+    #[Test]
+    public function a_page_stripe_would_not_close_stays_as_it_was_and_the_board_can_close_it_later(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        self::$expireRefusal = 'still-open';
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '500'])->assertStatus(422);
+        $this->assertSame(1, self::$pagesMade);
+        $this->assertSame(0, $order->fresh()->donation_minor);
+
+        self::$expireRefusal = 'network';
+        $this->statusFor($order, 'cancelled')->assertOk()
+            ->assertJsonPath('warning', true)
+            ->assertJsonPath('message', 'Cancelled, but its payment page could not be closed, so the link still works. Press "Close payment page" on the order to try again.');
+        $this->assertSame(MealOrder::STATUS_CANCELLED, $order->fresh()->status);
+        $this->assertSame('cs_test_1', $order->fresh()->stripe_checkout_session_id);
+
+        // "Close payment page" sends the cancel again; this time Stripe answers.
+        self::$expireRefusal = null;
+        $this->statusFor($order, 'cancelled')->assertOk()
+            ->assertJsonPath('warning', false)
+            ->assertJsonPath('message', 'Cancelled, and its payment page is closed.');
+        $this->assertSame(['cs_test_1'], self::$expired);
+        $this->assertNull($order->fresh()->stripe_checkout_session_id);
+    }
+
+    #[Test]
+    public function cancelling_a_pickup_order_with_no_page_says_nothing_about_one(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $order->forceFill(['payment_method' => MealOrder::METHOD_PICKUP, 'stripe_checkout_session_id' => null, 'idempotency_key' => null])->save();
+
+        $this->statusFor($order, 'cancelled')->assertOk()
+            ->assertJsonPath('message', null)
+            ->assertJsonPath('warning', false);
+        $this->assertSame([], self::$expired);
+    }
+
+    #[Test]
+    public function an_extra_or_fee_the_lunch_stopped_offering_stays_on_the_order_and_its_page(): void
+    {
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate() + ['donation_minor' => '500', 'cover_fees' => '1'])->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $this->assertSame(1370, $order->total_minor);   // $8 + $5 + 70c fee on $13
+
+        $this->menu->forceFill(['allow_donation' => false, 'allow_fee_coverage' => false])->save();
+
+        // What a board loaded before the switch would send, and a crafted body.
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '0', 'cover_fees' => '0'])
+            ->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
+        $this->linkFor($order, '/api/admin', ['donation_minor' => '9000'])
+            ->assertOk()->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/1');
+
+        $this->assertSame([], self::$expired);
+        $this->assertSame(1, self::$pagesMade);
+        $order->refresh();
+        $this->assertSame(500, $order->donation_minor);
+        $this->assertSame(70, $order->fee_covered_minor);
+        $this->assertSame(1370, $order->total_minor);
+    }
+
+    #[Test]
+    public function a_choice_left_out_keeps_what_the_order_carries(): void
+    {
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate() + ['donation_minor' => '500'])->assertCreated();   // $13, no fee
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+
+        // Only the fee was changed: the $5 stays, and the fee covers food and extra.
+        $this->linkFor($order, '/api/admin', ['cover_fees' => '1'])
+            ->assertOk()
+            ->assertJsonPath('data.checkout_url', 'https://stripe.test/pay/2')
+            ->assertJsonPath('data.order.total_minor', 1370);
+        $order->refresh();
+        $this->assertSame(500, $order->donation_minor);
+        $this->assertSame(70, $order->fee_covered_minor);
+        $this->assertSame(['cs_test_1'], self::$expired);
+    }
+
+    #[Test]
+    public function a_pickup_order_given_a_page_is_charged_the_online_fee_and_can_no_longer_be_marked_paid(): void
+    {
+        config(['services.stripe.fee_percentage' => 0.029, 'services.stripe.fee_fixed' => 30]);
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        // As the public page leaves a pay-at-pickup order: no page, and no fee.
+        $order->forceFill(['payment_method' => MealOrder::METHOD_PICKUP, 'stripe_checkout_session_id' => null, 'idempotency_key' => null])->save();
+
+        $this->linkFor($order, '/api/admin', ['cover_fees' => '1'])
+            ->assertOk()->assertJsonPath('data.order.total_minor', 855);
+        $order->refresh();
+        $this->assertSame(55, $order->fee_covered_minor);
+        $this->assertSame(855, $order->total_minor);
+        $this->assertSame(MealOrder::METHOD_ONLINE, $order->payment_method);
+        $this->assertSame(['Chicken Biryani Plate', 'Card processing fee'], array_map(fn ($l) => $l['price_data']['product_data']['name'], self::$lastParams['line_items']));
+
+        // Online now: cash and a card payment cannot both be taken.
+        $this->markPaidFor($order)->assertStatus(422);
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
+        $this->assertNull($order->fresh()->marked_paid_by_user_id);
+    }
+
+    #[Test]
+    public function money_for_a_cancelled_order_is_recorded_and_said_out_loud(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->order('/api/admin', $this->onePlate())->assertCreated();
+        $order = MealOrder::withoutMasjidScope()->firstOrFail();
+        $order->forceFill(['status' => MealOrder::STATUS_CANCELLED])->save();
+
+        Log::spy();
+        app(\App\Services\Stripe\MealOrderPaymentService::class)->handlePaymentIntentSucceeded(
+            ['id' => 'pi_test_1', 'metadata' => ['order_uuid' => $order->uuid]],
+            $this->masjid->stripe_account_id
+        );
+
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->fresh()->payment_status);
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message) => str_contains($message, 'cancelled meal order was paid'))
+            ->once();
     }
 }
