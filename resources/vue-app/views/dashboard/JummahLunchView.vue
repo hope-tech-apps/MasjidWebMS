@@ -24,7 +24,7 @@
                             </div>
                             <div class="text-muted small mb-2">{{ formatDate(m.service_date) }}</div>
                             <div class="small mb-3">
-                                {{ m.items_count ?? 0 }} item(s) · {{ m.orders_count ?? 0 }} order(s)
+                                {{ m.items_count ?? 0 }} item(s) · {{ m.live_orders_count ?? m.orders_count ?? 0 }} order(s)
                             </div>
                             <div class="d-flex gap-2">
                                 <button class="btn btn-sm btn-primary" @click="manageMenu(m.id)">Manage</button>
@@ -57,9 +57,13 @@
                     <code>/jummah-lunch/{{ masjidId }}</code>.
                 </p>
 
-                <ul class="nav nav-tabs mb-3">
-                    <li class="nav-item"><a class="nav-link" :class="{ active: tab === 'items' }" href="#" @click.prevent="tab = 'items'">Menu items</a></li>
-                    <li class="nav-item"><a class="nav-link" :class="{ active: tab === 'orders' }" href="#" @click.prevent="switchToOrders">Orders <span v-if="summary" class="badge bg-secondary">{{ summary.orders }}</span></a></li>
+                <!-- Cancelled orders get a tab of their own, so the kitchen's list is only what it
+                     has to make. Nothing is deleted: a mistaken cancel is one Restore away. -->
+                <ul class="nav nav-tabs mb-3 align-items-end">
+                    <li class="nav-item"><a class="nav-link" :class="{ active: tab === 'items' }" href="#" @click.prevent="showTab('items')">Menu Items</a></li>
+                    <li class="nav-item"><a class="nav-link" :class="{ active: tab === 'received' }" href="#" @click.prevent="showTab('received')">Received <span v-if="ordersLoaded" class="badge bg-success">{{ receivedOrders.length }}</span></a></li>
+                    <li class="nav-item"><a class="nav-link" :class="{ active: tab === 'cancelled' }" href="#" @click.prevent="showTab('cancelled')">Cancelled <span v-if="ordersLoaded && cancelledOrders.length" class="badge bg-secondary">{{ cancelledOrders.length }}</span></a></li>
+                    <li class="nav-item ms-auto small text-muted pb-2" aria-live="polite">{{ syncLabel }}</li>
                 </ul>
 
                 <!-- Items tab -->
@@ -71,13 +75,20 @@
                         No items yet. Add the first plate.
                     </div>
                     <table v-else class="table align-middle">
-                        <thead><tr><th>Item</th><th>Price</th><th>Available</th><th></th></tr></thead>
+                        <thead><tr><th>Item</th><th>Ordered</th><th>Price</th><th>Available</th><th></th></tr></thead>
                         <tbody>
                             <tr v-for="it in currentMenu.items" :key="it.id">
                                 <td>
-                                    <div class="fw-semibold">{{ it.name }}</div>
-                                    <div class="text-muted small" v-if="it.description">{{ it.description }}</div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="jl-swatch" :style="swatchStyle(it.id)" aria-hidden="true"></span>
+                                        <div>
+                                            <div class="fw-semibold">{{ it.name }}</div>
+                                            <div class="text-muted small" v-if="it.description">{{ it.description }}</div>
+                                        </div>
+                                    </div>
                                 </td>
+                                <!-- Live orders only: a cancelled order is not cooked, so it never counts here. -->
+                                <td><span class="jl-chip" :style="chipStyle(it.id)" :title="'On orders still to make'">{{ orderedCount(it.id) }}</span></td>
                                 <td>{{ money(it.price_minor) }}</td>
                                 <td><span class="badge" :class="it.is_available ? 'bg-success' : 'bg-secondary'">{{ it.is_available ? 'Yes' : 'No' }}</span></td>
                                 <td class="text-end">
@@ -89,18 +100,19 @@
                     </table>
                 </div>
 
-                <!-- Orders tab -->
+                <!-- Received and Cancelled: one table, two lists. -->
                 <div v-else>
+                    <template v-if="tab === 'received'">
                     <!-- Staff order entry: the table after Jummah, a phone call, someone without the link. -->
                     <div class="d-flex justify-content-end mb-2">
                         <button class="btn btn-sm btn-success" :disabled="!orderableItems.length" @click="openAddOrder">+ Add order</button>
                     </div>
                     <!-- Two tiles per row on a phone (volunteers use the board at the table), one row from tablet width. -->
                     <div v-if="summary" class="row g-2 mb-2">
-                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.orders }}</div><div class="stat-l">Orders</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ receivedOrders.length }}</div><div class="stat-l">Orders</div></div></div>
                         <!-- Only when the server sent the number: an older server must not show a confident 0. -->
                         <div class="col-6 col-md" v-if="summary.items_ordered != null"><div class="stat"><div class="stat-n">{{ summary.items_ordered }}</div><div class="stat-l">Items ordered</div></div></div>
-                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
+                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ receivedPaid }}</div><div class="stat-l">Paid</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
                         <!-- Only worth a tile once someone has added something. Collected counts PAID orders only, so the
@@ -110,22 +122,26 @@
                     </div>
                     <!-- What the kitchen makes: each item's count on live orders. Only "44 ×" is
                          kept together, so a long dish name wraps instead of widening the page. -->
-                    <ul v-if="summary?.items_by_item?.length" class="list-inline small text-muted mb-1">
+                    <ul v-if="summary?.items_by_item?.length" class="list-inline small mb-1">
                         <li class="list-inline-item visually-hidden">Items to prepare:</li>
-                        <li v-for="it in summary.items_by_item" :key="`${it.meal_menu_item_id ?? 'deleted'}:${it.item_name}`" class="list-inline-item me-3">
-                            <span class="text-nowrap"><strong class="text-body">{{ it.quantity }}</strong> ×</span> {{ it.item_name }}
+                        <li v-for="it in summary.items_by_item" :key="`${it.meal_menu_item_id ?? 'deleted'}:${it.item_name}`" class="list-inline-item me-2 mb-1">
+                            <span class="jl-chip" :style="chipStyle(it.meal_menu_item_id)"><span class="text-nowrap"><strong>{{ it.quantity }}</strong> ×</span> {{ it.item_name }}</span>
                         </li>
                     </ul>
                     <p v-if="Number(summary?.cancelled_orders) > 0" class="small text-muted mb-3">
                         Item counts leave out {{ summary.cancelled_orders }} cancelled {{ Number(summary.cancelled_orders) === 1 ? 'order' : 'orders' }}.
                     </p>
                     <div v-else-if="summary?.items_by_item?.length" class="mb-3"></div>
-                    <div v-if="orders.length === 0" class="text-muted text-center py-4">No orders yet.</div>
+                    </template>
+                    <p v-else class="small text-muted mb-3">
+                        Cancelled orders aren't cooked and don't count toward any of the numbers. Restore puts one back on the Received list.
+                    </p>
+                    <div v-if="visibleOrders.length === 0" class="text-muted text-center py-4">{{ emptyOrdersText }}</div>
                     <div v-else class="table-responsive">
                         <table class="table align-middle">
                             <thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th></th></tr></thead>
                             <tbody>
-                                <tr v-for="o in orders" :key="o.id">
+                                <tr v-for="o in visibleOrders" :key="o.id" :class="{ 'jl-new': isNew(o.id), 'jl-cancelled-row': o.status === 'cancelled' }">
                                     <td class="fw-bold">{{ o.order_number }}</td>
                                     <td>
                                         <div>
@@ -135,7 +151,10 @@
                                         </div>
                                         <div class="text-muted small">{{ o.customer_phone }}</div>
                                     </td>
-                                    <td class="small">{{ itemsLabel(o) }}</td>
+                                    <!-- Each line in its dish's colour, so an order reads at a glance. -->
+                                    <td class="small">
+                                        <span v-for="(i, idx) in o.items || []" :key="idx" class="jl-chip me-1 mb-1" :style="chipStyle(i.meal_menu_item_id)">{{ i.quantity }}× {{ i.item_name }}</span>
+                                    </td>
                                     <td>
                                         {{ money(o.total_minor) }}
                                         <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
@@ -154,10 +173,13 @@
                                     <td class="text-end text-nowrap">
                                         <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled' && currentMenu?.allow_online_payment"
                                             class="btn btn-sm btn-outline-primary me-1" @click="openPayLink(o)">Payment link</button>
+                                        <button v-if="o.status === 'cancelled'" class="btn btn-sm btn-outline-success me-1" @click="setOrderStatus(o, 'confirmed')">Restore</button>
                                         <!-- Cancelling closes the order's payment page; when Stripe could not be reached, this tries again. -->
                                         <button v-if="o.status === 'cancelled' && o.payment_status === 'unpaid' && o.stripe_checkout_session_id"
                                             class="btn btn-sm btn-outline-danger me-1" @click="setOrderStatus(o, 'cancelled', true)">Close payment page</button>
-                                        <button v-if="o.payment_method === 'pickup' && o.payment_status === 'unpaid'"
+                                        <!-- Not on a cancelled order: nobody collects for a meal that isn't being made.
+                                             Restore it first — the same rule the Payment link button already follows. -->
+                                        <button v-if="o.payment_method === 'pickup' && o.payment_status === 'unpaid' && o.status !== 'cancelled'"
                                             class="btn btn-sm btn-success" @click="markPaid(o)">Mark paid</button>
                                     </td>
                                 </tr>
@@ -452,7 +474,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeMount, reactive, ref } from "vue";
+import { computed, onBeforeMount, onBeforeUnmount, reactive, ref } from "vue";
 import Swal from "sweetalert2";
 import { useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
 import { useMasjidStore } from "@/stores/masjidStore";
@@ -464,7 +486,7 @@ const loading = ref(false);
 const savingMenu = ref(false);
 const savingItem = ref(false);
 const uploadingFlyer = ref(false);
-const tab = ref<"items" | "orders">("items");
+const tab = ref<"items" | "received" | "cancelled">("items");
 
 const masjidId = computed(() => masjidStore.masjid?.id);
 const menus = computed(() => store.menus);
@@ -477,6 +499,127 @@ const menuTimezoneLabel = computed(() => {
 const currentMenu = computed(() => store.currentMenu);
 const orders = computed(() => store.orders);
 const summary = computed(() => store.orderSummary);
+
+// Cancelled orders are kept (a mistaken cancel is one Restore away) but are never
+// on the kitchen's list or counted as orders to make.
+const receivedOrders = computed(() => orders.value.filter((o: any) => o.status !== "cancelled"));
+const cancelledOrders = computed(() => orders.value.filter((o: any) => o.status === "cancelled"));
+const receivedPaid = computed(() => receivedOrders.value.filter((o: any) => o.payment_status === "paid").length);
+const visibleOrders = computed(() => (tab.value === "cancelled" ? cancelledOrders.value : receivedOrders.value));
+const emptyOrdersText = computed(() => {
+    if (tab.value === "cancelled") return "No cancelled orders.";
+    return cancelledOrders.value.length ? "No orders to make — the rest are in Cancelled." : "No orders yet.";
+});
+
+// ---------------------------------------------------------- one colour per dish
+// A dish keeps one colour everywhere on the board — its row under Menu Items, its
+// kitchen count, and every order line that includes it — so an order can be read
+// at a glance. Colours follow the menu's own order (sort_order, then id) and are
+// looked up by the dish's ID, never its name, so a dish renamed after orders came
+// in keeps its colour. A line whose dish was deleted has no ID left and is grey.
+// Past eight dishes the palette repeats.
+const DISH_COLOURS = [
+    { fg: "#0F766E", bg: "#CCFBF1" }, // teal
+    { fg: "#B45309", bg: "#FEF3C7" }, // amber
+    { fg: "#6D28D9", bg: "#EDE9FE" }, // violet
+    { fg: "#BE123C", bg: "#FFE4E6" }, // rose
+    { fg: "#0369A1", bg: "#E0F2FE" }, // sky
+    { fg: "#4D7C0F", bg: "#ECFCCB" }, // lime
+    { fg: "#C2410C", bg: "#FFEDD5" }, // orange
+    { fg: "#A21CAF", bg: "#FAE8FF" }, // fuchsia
+];
+const NO_DISH = { fg: "#475569", bg: "#F1F5F9" };
+const dishIndex = computed(() => {
+    const m = new Map<number, number>();
+    (currentMenu.value?.items || []).forEach((it: any, i: number) => m.set(Number(it.id), i));
+    return m;
+});
+function dishColour(id: any) {
+    const i = id == null ? undefined : dishIndex.value.get(Number(id));
+    return i === undefined ? NO_DISH : DISH_COLOURS[i % DISH_COLOURS.length];
+}
+function chipStyle(id: any) {
+    const c = dishColour(id);
+    return { color: c.fg, backgroundColor: c.bg, borderColor: c.fg };
+}
+function swatchStyle(id: any) {
+    return { backgroundColor: dishColour(id).fg };
+}
+
+// ---------------------------------------------------------- orders, kept live
+// A menu's orders load the moment it is opened (the tab counts and each dish's
+// "Ordered" number need them), then every POLL_MS while it stays open and the
+// browser tab is visible — so an order placed on the public page shows up with
+// nobody clicking. A hidden tab doesn't poll; it catches up when it's looked at.
+const POLL_MS = 15000;
+const ordersFor = ref<number | null>(null);
+const ordersLoaded = computed(() => !!currentMenu.value && ordersFor.value === currentMenu.value.id);
+const lastSync = ref<Date | null>(null);
+const syncFailed = ref(false);
+const newIds = ref<Set<number>>(new Set());
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let polling = false;
+
+const syncLabel = computed(() => {
+    if (!currentMenu.value) return "";
+    if (syncFailed.value) return "Can't refresh — retrying";
+    return lastSync.value
+        ? `Updated ${lastSync.value.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}`
+        : "";
+});
+
+function orderedCount(id: number): string | number {
+    if (!ordersLoaded.value) return "—";
+    return summary.value?.items_by_item?.find((r: any) => Number(r.meal_menu_item_id) === Number(id))?.quantity ?? 0;
+}
+function isNew(id: number) { return newIds.value.has(id); }
+
+function markSynced(menuId: number) {
+    ordersFor.value = menuId;
+    lastSync.value = new Date();
+    syncFailed.value = false;
+}
+
+// `announce`: only a poll says "New order". Orders staff enter themselves, and the
+// first load of a menu, are not news.
+async function pollOrders(announce = true) {
+    const menu = currentMenu.value;
+    if (!menu || polling) return;
+    polling = true;
+    const before = ordersFor.value === menu.id ? new Set(orders.value.map((o: any) => o.id)) : null;
+    try {
+        await store.fetchOrders(menu.id);
+        if (currentMenu.value?.id !== menu.id) return; // switched menus mid-request
+        markSynced(menu.id);
+        if (before && announce) {
+            const fresh = orders.value.filter((o: any) => !before.has(o.id) && o.status !== "cancelled");
+            if (fresh.length) {
+                newIds.value = new Set([...newIds.value, ...fresh.map((o: any) => o.id)]);
+                toast(fresh.length === 1 ? `New order #${fresh[0].order_number} — ${fresh[0].customer_name}` : `${fresh.length} new orders`);
+                setTimeout(() => {
+                    const left = new Set(newIds.value);
+                    fresh.forEach((o: any) => left.delete(o.id));
+                    newIds.value = left;
+                }, 8000);
+            }
+        }
+    } catch {
+        // Quiet: a missed poll is retried in POLL_MS, and the label says so.
+        syncFailed.value = true;
+    } finally {
+        polling = false;
+    }
+}
+function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(() => { if (!document.hidden) pollOrders(); }, POLL_MS);
+}
+function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+function onVisible() { if (!document.hidden && currentMenu.value) pollOrders(); }
+document.addEventListener("visibilitychange", onVisible);
+onBeforeUnmount(() => { stopPolling(); document.removeEventListener("visibilitychange", onVisible); });
 const services = computed(() => store.services);
 // A LunchStaff reaches the same board through their own realm. Two controls are
 // hidden from them because the server will not serve them either: deleting a
@@ -680,7 +823,8 @@ function serverReason(e: any, fallback: string): string {
 // A refresh failure is only that: the action it follows already happened.
 async function refreshOrders() {
     if (!currentMenu.value) return;
-    try { await store.fetchOrders(currentMenu.value.id); }
+    const id = currentMenu.value.id;
+    try { await store.fetchOrders(id); markSynced(id); }
     catch { toastError({ message: "Couldn't refresh the orders. Reload the page to see the latest." }); }
 }
 async function copyPayLink() {
@@ -759,9 +903,6 @@ function statusClass(s: string): string {
 function statusBtn(s: string): string {
     return s === "open" ? "btn-success" : s === "closed" ? "btn-secondary" : "btn-warning";
 }
-function itemsLabel(o: any): string {
-    return (o.items || []).map((i: any) => `${i.quantity}× ${i.item_name}`).join(", ");
-}
 
 async function load() {
     loading.value = true;
@@ -836,16 +977,24 @@ async function removeMenu(m: any) {
 
 async function manageMenu(id: number) {
     tab.value = "items";
-    try { await store.fetchMenu(id); } catch (e) { toastError(e); }
+    ordersFor.value = null;
+    lastSync.value = null;
+    newIds.value = new Set();
+    try { await store.fetchMenu(id); } catch (e) { toastError(e); return; }
+    await pollOrders(false);
+    startPolling();
 }
-function closeMenu() { store.currentMenu = null as any; }
+function closeMenu() { stopPolling(); ordersFor.value = null; store.currentMenu = null as any; }
 async function setStatus(s: string) {
     if (!currentMenu.value) return;
     try { await store.updateMenu(currentMenu.value.id, { status: s }); await store.fetchMenu(currentMenu.value.id); await load(); } catch (e) { toastError(e); }
 }
-async function switchToOrders() {
-    tab.value = "orders";
-    if (currentMenu.value) { try { await store.fetchOrders(currentMenu.value.id); } catch (e) { toastError(e); } }
+// Switching tabs never waits on the network — the orders are already loaded and
+// kept fresh — but opening a list still pulls once, so a board that sat idle
+// shows the latest the moment someone looks.
+async function showTab(t: "items" | "received" | "cancelled") {
+    tab.value = t;
+    if (t !== "items") await pollOrders();
 }
 
 function openAddItem() { itemModal.isEdit = false; itemModal.id = null; itemModal.form = emptyItemForm(); itemModal.show = true; }
@@ -896,10 +1045,14 @@ async function markPaid(o: any) {
 async function setOrderStatus(o: any, status: string, again = false) {
     if (!currentMenu.value || (status === o.status && !again)) return;
     try {
+        const wasCancelled = o.status === "cancelled";
         const res = await store.updateOrderStatus(currentMenu.value.id, o.id, status);
         await refreshOrders();
         // e.g. "Cancelled, and its payment page is closed.", or one staff must act on.
         if (res?.message) Swal.fire({ icon: res.warning ? "warning" : "success", text: res.message });
+        // The row leaves the list it was on, so say where it went.
+        else if (status === "cancelled" && !again) toast(`Order #${o.order_number} moved to Cancelled`);
+        else if (wasCancelled && status !== "cancelled") toast(`Order #${o.order_number} restored`);
     } catch (e) { toastError(e); }
 }
 
@@ -916,7 +1069,13 @@ async function confirmDelete(text: string): Promise<boolean> {
     return r.isConfirmed;
 }
 
-onBeforeMount(load);
+// The open menu is kept in the store, so leaving for another screen and coming back
+// reopens it. Its orders and the poll come back with it, or the board would sit
+// there with no counts and never refresh.
+onBeforeMount(() => {
+    load();
+    if (currentMenu.value) { pollOrders(false); startPolling(); }
+});
 </script>
 
 <style scoped>
@@ -932,6 +1091,15 @@ onBeforeMount(load);
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
 .stat-l { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: .03em; }
 .nav-tabs .nav-link { cursor: pointer; }
+
+/* One colour per dish (see DISH_COLOURS). Text on a tint of the same hue, with a
+   border, so the colour is never the only cue: the dish name is always inside. */
+.jl-chip { display: inline-block; padding: 1px 8px; border: 1px solid; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.6; }
+.jl-swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.jl-cancelled-row .jl-chip { opacity: .55; text-decoration: line-through; }
+.jl-new > td { animation: jl-arrived 8s ease-out; }
+@keyframes jl-arrived { from { background-color: #fff3bf; } to { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .jl-new > td { animation: none; background-color: #fff8db; } }
 
 .jlo-qty { min-width: 1.75rem; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
 </style>
