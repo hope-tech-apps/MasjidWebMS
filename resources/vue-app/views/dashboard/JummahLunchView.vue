@@ -920,9 +920,6 @@ onBeforeMount(load);
 </script>
 
 <style scoped>
-/* A dialog taller than the window must still reach its Save button: the
-   dialog is capped to the viewport with its header and footer pinned, and the
-   body scrolls. The overlay scrolls too, as a fallback on very short screens. */
 /* The OVERLAY scrolls, never the dialog: a tall dialog (Edit menu) runs on below the
    fold and the whole of it scrolls, Save included, which is Bootstrap's own modal
    pattern. A pinned footer over a scrolling body needs the body to shrink inside a
