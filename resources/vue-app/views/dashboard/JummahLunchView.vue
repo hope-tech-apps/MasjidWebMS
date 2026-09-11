@@ -98,19 +98,26 @@
                     <!-- Two tiles per row on a phone (volunteers use the board at the table), one row from tablet width. -->
                     <div v-if="summary" class="row g-2 mb-2">
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.orders }}</div><div class="stat-l">Orders</div></div></div>
-                        <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.items_ordered ?? 0 }}</div><div class="stat-l">Items ordered</div></div></div>
+                        <!-- Only when the server sent the number: an older server must not show a confident 0. -->
+                        <div class="col-6 col-md" v-if="summary.items_ordered != null"><div class="stat"><div class="stat-n">{{ summary.items_ordered }}</div><div class="stat-l">Items ordered</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
                         <!-- Only worth a tile once someone has actually added something. -->
                         <div class="col-6 col-md" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div></div></div>
                     </div>
-                    <!-- What the kitchen makes: each item's count on live orders (cancelled excluded). -->
-                    <p v-if="summary?.items_by_item?.length" class="small text-muted mb-3" aria-label="Items ordered by item">
-                        <template v-for="(it, i) in summary.items_by_item" :key="it.meal_menu_item_id">
-                            <span v-if="i" aria-hidden="true"> · </span><span class="text-nowrap"><strong class="text-body">{{ it.quantity }}</strong> × {{ it.item_name }}</span>
-                        </template>
+                    <!-- What the kitchen makes: each item's count on live orders. Only "44 ×" is
+                         kept together, so a long dish name wraps instead of widening the page. -->
+                    <ul v-if="summary?.items_by_item?.length" class="list-inline small text-muted mb-1">
+                        <li class="list-inline-item visually-hidden">Items to prepare:</li>
+                        <li v-for="it in summary.items_by_item" :key="`${it.meal_menu_item_id ?? 'deleted'}:${it.item_name}`" class="list-inline-item me-3">
+                            <span class="text-nowrap"><strong class="text-body">{{ it.quantity }}</strong> ×</span> {{ it.item_name }}
+                        </li>
+                    </ul>
+                    <p v-if="Number(summary?.cancelled_orders) > 0" class="small text-muted mb-3">
+                        Item counts leave out {{ summary.cancelled_orders }} cancelled {{ Number(summary.cancelled_orders) === 1 ? 'order' : 'orders' }}.
                     </p>
+                    <div v-else-if="summary?.items_by_item?.length" class="mb-3"></div>
                     <div v-if="orders.length === 0" class="text-muted text-center py-4">No orders yet.</div>
                     <div v-else class="table-responsive">
                         <table class="table align-middle">

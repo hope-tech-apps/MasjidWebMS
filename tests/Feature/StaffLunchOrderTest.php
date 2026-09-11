@@ -473,9 +473,39 @@ class StaffLunchOrderTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.summary.orders', 3)
             ->assertJsonPath('data.summary.items_ordered', 4)
+            ->assertJsonPath('data.summary.cancelled_orders', 1)
             ->assertJsonPath('data.summary.items_by_item', [
                 ['meal_menu_item_id' => $this->biryani->id, 'item_name' => 'Chicken Biryani Plate', 'quantity' => 3],
                 ['meal_menu_item_id' => $this->water->id, 'item_name' => 'Water', 'quantity' => 1],
+            ]);
+    }
+
+    #[Test]
+    public function a_renamed_dish_counts_under_its_current_name_and_deleted_dishes_stay_apart(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $samosa = MealMenuItem::factory()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id, 'name' => 'Samosa', 'price_minor' => 200]);
+        $dates = MealMenuItem::factory()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id, 'name' => 'Dates', 'price_minor' => 100]);
+
+        $this->order('/api/admin', ['customer_name' => 'A', 'items' => [
+            ['item_id' => $this->biryani->id, 'quantity' => 4],
+            ['item_id' => $samosa->id, 'quantity' => 3],
+            ['item_id' => $dates->id, 'quantity' => 2],
+        ]])->assertCreated();
+
+        // Renamed after the order: counted under the name the kitchen sees now.
+        $this->biryani->forceFill(['name' => 'Beef Biryani Plate'])->save();
+        // Two dishes removed from the menu: their lines lose the menu item id.
+        $samosa->fresh()->delete();
+        $dates->fresh()->delete();
+
+        $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
+            ->assertOk()
+            ->assertJsonPath('data.summary.items_ordered', 9)
+            ->assertJsonPath('data.summary.items_by_item', [
+                ['meal_menu_item_id' => $this->biryani->id, 'item_name' => 'Beef Biryani Plate', 'quantity' => 4],
+                ['meal_menu_item_id' => null, 'item_name' => 'Samosa', 'quantity' => 3],
+                ['meal_menu_item_id' => null, 'item_name' => 'Dates', 'quantity' => 2],
             ]);
     }
 

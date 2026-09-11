@@ -54,8 +54,12 @@ class MealOrdersController extends Controller
 
         // What the kitchen has to make: items on every live order (cancelled
         // ones excluded, the same rule as `expected_total_minor`), in total and
-        // per menu item. Grouped by the menu item, so a dish renamed after some
-        // orders came in is still counted once.
+        // per menu item.
+        //   - Grouped by the menu item, so a dish renamed after orders came in
+        //     is counted once, under its CURRENT name.
+        //   - A dish deleted from the menu leaves its lines with a null
+        //     meal_menu_item_id; those are split by the name recorded on the
+        //     order, so two deleted dishes never merge under one of their names.
         $live = (clone $all)->whereIn('status', [
             MealOrder::STATUS_PENDING,
             MealOrder::STATUS_CONFIRMED,
@@ -63,13 +67,14 @@ class MealOrdersController extends Controller
             MealOrder::STATUS_PICKED_UP,
         ]);
         $itemsByItem = MealOrderItem::query()
-            ->whereIn('meal_order_id', (clone $live)->select('id'))
-            ->selectRaw('meal_menu_item_id, MAX(item_name) as item_name, SUM(quantity) as quantity')
-            ->groupBy('meal_menu_item_id')
+            ->leftJoin('meal_menu_items as mmi', 'mmi.id', '=', 'meal_order_items.meal_menu_item_id')
+            ->whereIn('meal_order_items.meal_order_id', (clone $live)->select('id'))
+            ->selectRaw('meal_order_items.meal_menu_item_id, COALESCE(MAX(mmi.name), MAX(meal_order_items.item_name)) as item_name, SUM(meal_order_items.quantity) as quantity')
+            ->groupByRaw('meal_order_items.meal_menu_item_id, CASE WHEN meal_order_items.meal_menu_item_id IS NULL THEN meal_order_items.item_name END')
             ->orderByDesc('quantity')
             ->get()
             ->map(fn ($row) => [
-                'meal_menu_item_id' => (int) $row->meal_menu_item_id,
+                'meal_menu_item_id' => $row->meal_menu_item_id === null ? null : (int) $row->meal_menu_item_id,
                 'item_name' => (string) $row->item_name,
                 'quantity' => (int) $row->quantity,
             ])
@@ -81,6 +86,9 @@ class MealOrdersController extends Controller
             'unpaid_orders' => (clone $all)->where('payment_status', MealOrder::PAYMENT_UNPAID)->count(),
             'picked_up' => (clone $all)->where('status', MealOrder::STATUS_PICKED_UP)->count(),
             'items_ordered' => (int) $itemsByItem->sum('quantity'),
+            // Shown beside the item count, so the Orders tile (which includes
+            // cancelled orders) and Items ordered (which doesn't) reconcile.
+            'cancelled_orders' => (clone $all)->where('status', MealOrder::STATUS_CANCELLED)->count(),
             'items_by_item' => $itemsByItem,
             'revenue_paid_minor' => (int) (clone $paid)->sum('total_minor'),
             // The optional extra, kept separate from food revenue in both
