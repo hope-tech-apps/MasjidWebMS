@@ -923,9 +923,13 @@ onBeforeMount(load);
 /* A dialog taller than the window must still reach its Save button: the
    dialog is capped to the viewport with its header and footer pinned, and the
    body scrolls. The overlay scrolls too, as a fallback on very short screens. */
-.jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 12px; z-index: 1080; overflow-y: auto; }
-.jl-dialog { width: 100%; max-width: 460px; max-height: 92vh; max-height: calc(100dvh - 8vh); display: flex; flex-direction: column; }
-.jl-dialog > .card-body { overflow-y: auto; min-height: 0; }
+/* The OVERLAY scrolls, never the dialog: a tall dialog (Edit menu) runs on below the
+   fold and the whole of it scrolls, Save included, which is Bootstrap's own modal
+   pattern. A pinned footer over a scrolling body needs the body to shrink inside a
+   max-height flex column, and Safari does not shrink it: there the dialog ran off the
+   bottom of the window with Save out of reach and nothing scrolled. */
+.jl-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); padding: 4vh 12px; z-index: 1080; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.jl-dialog { width: 100%; max-width: 460px; margin: 0 auto 4vh; }
 .jlo-extra { max-width: 180px; }
 .stat { background: #f6f8fa; border-radius: 10px; padding: 12px; text-align: center; }
 .stat-n { font-size: 20px; font-weight: 700; color: #0c3d2b; }
