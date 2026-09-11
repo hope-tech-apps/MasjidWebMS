@@ -103,8 +103,10 @@
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ summary.paid_orders }}</div><div class="stat-l">Paid</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.revenue_paid_minor) }}</div><div class="stat-l">Collected</div></div></div>
                         <div class="col-6 col-md"><div class="stat"><div class="stat-n">{{ money(summary.expected_total_minor) }}</div><div class="stat-l">Expected</div></div></div>
-                        <!-- Only worth a tile once someone has actually added something. -->
-                        <div class="col-6 col-md" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div></div></div>
+                        <!-- Only worth a tile once someone has added something. Collected counts PAID orders only, so the
+                             total added on live orders sits beside it: a pay-at-pickup extra, or an unfinished
+                             Stripe payment, is not money in yet. -->
+                        <div class="col-6 col-md" v-if="Number(summary.donations_expected_minor) > 0"><div class="stat"><div class="stat-n">{{ money(summary.donations_paid_minor) }}</div><div class="stat-l">Extra collected</div><div class="small text-muted">of {{ money(summary.donations_expected_minor) }} added</div></div></div>
                     </div>
                     <!-- What the kitchen makes: each item's count on live orders. Only "44 ×" is
                          kept together, so a long dish name wraps instead of widening the page. -->
