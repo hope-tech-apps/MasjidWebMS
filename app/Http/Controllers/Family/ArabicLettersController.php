@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Family;
 
 use App\Models\GroupMembership;
-use App\Support\Arabic\ArabicTracker;
+use App\Support\Letters\CurriculumRegistry;
+use App\Support\Letters\LetterTracker;
+use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -16,11 +18,18 @@ use Symfony\Component\HttpFoundation\Response;
  * Authorised by the WARD EDGE and not by consent, like the participant thread
  * about the same child: consent gates BROADCASTS, and a child's own academic
  * record is not a broadcast (.claude/rules/groups.md).
+ *
+ * `?alphabet=` picks the Arabic or the English track and changes nothing else —
+ * same gate, same route, same shape of answer. It adds no non-GET route, so the
+ * counted write list in `tests/Feature/FamilyPortalTest.php` is untouched: the
+ * family realm stays read-mostly, and a second alphabet did not make it less so.
  */
 class ArabicLettersController extends FamilyController
 {
-    public function forMember($masjid_id, $group_id, $membership_id)
+    public function forMember(Request $request, $masjid_id, $group_id, $membership_id)
     {
+        $tracker = new LetterTracker(CurriculumRegistry::fromInput($request->query('alphabet')));
+
         $group = $this->group($group_id);
         $membership = $group->memberships()->participants()->with('contact')->findOrFail($membership_id);
 
@@ -30,7 +39,7 @@ class ArabicLettersController extends FamilyController
 
         return response()->json([
             'status' => 'success',
-            'data' => ArabicTracker::forStudent($group, $membership),
+            'data' => $tracker->forStudent($group, $membership),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
     }

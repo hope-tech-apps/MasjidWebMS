@@ -8,6 +8,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\Masjid;
+use App\Services\Translation\Translator;
 use App\Support\GroupAudience;
 use App\Support\TenantContext;
 use Symfony\Component\HttpFoundation\Response;
@@ -200,6 +201,14 @@ abstract class FamilyController extends Controller
      * that said "Classroom" to a masjid would be the same bug
      * (.claude/rules/verticals.md).
      *
+     * `translation_available` rides in the same envelope for the same kind of
+     * reason: the portal must not OFFER a translate button on a deployment
+     * whose ANTHROPIC_API_KEY is unset or whose operator has switched
+     * translation off, because the only thing that button could do there is
+     * spend a tap and answer 503. It is a configuration fact about this
+     * deployment, not about this parent, and it is false-by-omission on the
+     * client — a screen that never reads it simply shows no button.
+     *
      * @return array<string,mixed>
      */
     protected function meta(array $extra = []): array
@@ -209,6 +218,7 @@ abstract class FamilyController extends Controller
 
         return [
             'group_label' => $masjid?->term('groups') ?? 'Groups',
+            'translation_available' => app(Translator::class)->isConfigured(),
         ] + $extra;
     }
 

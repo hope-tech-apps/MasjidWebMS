@@ -2,6 +2,8 @@
 
 namespace App\Support\Arabic;
 
+use App\Support\Letters\LetterCurriculum;
+
 /**
  * The Arabic qāʿidah: the twenty-eight letters, the vowel marks, and which of
  * them a class at a given stage is working on.
@@ -32,10 +34,22 @@ namespace App\Support\Arabic;
  * this class. If each decided for itself, a child could be shown a tanwīn drill
  * their progress bar did not count, and the bar would sit below 100% forever
  * with nothing visibly left to do.
+ *
+ * ## One of two alphabets, since the school asked for A-Z as well
+ *
+ * This class answers `App\Support\Letters\LetterCurriculum` so `LetterTracker`
+ * can serve the Arabic and the English track through the same code. Nothing
+ * about the qāʿidah changed to make that fit: the contract was drawn around the
+ * questions this class already answered, and the methods below that implement it
+ * are the same statics every existing caller uses. The interface is static for
+ * exactly that reason — see its docblock.
  */
-class ArabicCurriculum
+class ArabicCurriculum implements LetterCurriculum
 {
     public const ZWJ = "\u{200D}";
+
+    /** The value stored in `arabic_letter_progress.alphabet` for this track. */
+    public const ALPHABET = 'arabic';
 
     // ---------------------------------------------------------------- stages
 
@@ -138,7 +152,42 @@ class ArabicCurriculum
         'ya'   => ['kasra', 'ي', 'Madd Ya',   'bii'],
     ];
 
+    // -------------------------------------------------------------- identity
+
+    public static function alphabetId(): string
+    {
+        return self::ALPHABET;
+    }
+
+    public static function label(): string
+    {
+        return 'Arabic';
+    }
+
+    public static function direction(): string
+    {
+        return 'rtl';
+    }
+
     // ----------------------------------------------------------------- rules
+
+    /**
+     * The stage ladder as payloads, so a client renders it without hardcoding
+     * either the names or their order.
+     *
+     * @return array<int,array{id:string,label:string,summary:string}>
+     */
+    public static function stages(): array
+    {
+        return array_map(
+            static fn (string $stage): array => [
+                'id' => $stage,
+                'label' => self::STAGE_LABELS[$stage],
+                'summary' => self::STAGE_SUMMARIES[$stage],
+            ],
+            self::STAGES
+        );
+    }
 
     public static function isStage(?string $stage): bool
     {
@@ -230,6 +279,34 @@ class ArabicCurriculum
     }
 
     // ------------------------------------------------------------ rendering
+
+    /** @return array<int,string> the 28 ids, in hijāʾī order */
+    public static function letters(): array
+    {
+        return array_keys(self::LETTERS);
+    }
+
+    /**
+     * One letter as the tracker's grid renders it — the constant above unpacked
+     * into named keys, so a caller never indexes `LETTERS[$id][3]` and has to
+     * remember what 3 was.
+     */
+    public static function letter(string $id): ?array
+    {
+        if (! isset(self::LETTERS[$id])) {
+            return null;
+        }
+
+        [$glyph, $arabicName, $translit, $joins] = self::LETTERS[$id];
+
+        return [
+            'id' => $id,
+            'glyph' => $glyph,
+            'arabic_name' => $arabicName,
+            'transliteration' => $translit,
+            'connects_forward' => $joins,
+        ];
+    }
 
     public static function connectsForward(string $letter): bool
     {

@@ -122,6 +122,16 @@ return [
         'group_post_attachments' => 'Private-disk classroom photos of children. All five file columns are NOT NULL.',
         'group_resources' => 'Private-disk staff/parent handouts; per config/groups.php this tree is not covered by any backup target either. All five file columns are NOT NULL.',
 
+        // The parent portal's translation cache. Every row is the ARABIC of
+        // something a teacher wrote about a child — the same sentences
+        // `group_posts.body` and `group_messages.body` are scrubbed to
+        // `free_text` below — so leaving it would put the scrubbed content back
+        // on the staging box in another language. Dropped rather than nulled
+        // because `translated_text` is NOT NULL and nothing references the
+        // table: a cache with no rows is a cache, and the first tap on staging
+        // refills it from staging's own data.
+        'content_translations' => 'Cached translations of classroom text naming children; nothing FKs it and the cache simply refills.',
+
         // Live authentication material.
         'contact_login_codes' => 'SHA-256 of a live portal OTP plus requested_ip. Short-lived by design; one-way FK to contacts.',
         'app_signup_codes' => 'Same shape and additionally stores the raw email the code was mailed to.',

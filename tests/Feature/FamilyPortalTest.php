@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\ArabicLetterProgress;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
 use App\Models\Contact;
@@ -14,8 +15,10 @@ use App\Models\HifzEntry;
 use App\Models\Masjid;
 use App\Models\ReportCard;
 use App\Models\ReportCardMark;
+use App\Support\Arabic\ArabicCurriculum;
 use App\Support\GroupAudience;
 use App\Support\GroupPostAttachments;
+use App\Support\Letters\CurriculumRegistry;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -662,10 +665,88 @@ class FamilyPortalTest extends TestCase
     }
 
     #[Test]
+    public function a_parent_watches_their_own_childs_english_letters(): void
+    {
+        // THE PARENT-FACING HALF OF THE ENGLISH TRACK, which had no coverage at
+        // all: every other `?alphabet=` case in the suite drives the ADMIN
+        // routes, and the family endpoint's own `CurriculumRegistry::fromInput()`
+        // line was never executed by a test. Drop that line, or reorder
+        // `forMember`'s arguments so the injected Request stops resolving, and
+        // parents silently read the qāʿidah on a screen the teacher marked A–Z
+        // — with a green suite, because the feature EXISTS for the parent screen
+        // and the parent screen was the untested one.
+        $this->group->forceFill(['arabic_stage' => 'short_vowels'])->save();
+
+        // One drill actually marked, so this pins the alphabet FILTER and not
+        // only the curriculum choice: an unfiltered read would count Arabic rows
+        // into the English total and vice versa.
+        ArabicLetterProgress::create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'group_membership_id' => $this->childAMembership->id,
+            'alphabet' => CurriculumRegistry::ALPHABET_ENGLISH,
+            'drill_id' => 'a',
+            'status' => ArabicCurriculum::STATUS_MASTERED,
+            'mastered_at' => now(),
+        ]);
+
+        $response = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters?alphabet=english"))
+            ->assertOk();
+
+        $response->assertJsonCount(26, 'data.letters');
+        $response->assertJsonPath('data.alphabet', 'english');
+        // The direction rides in the payload so the parent's client never has to
+        // infer it from the alphabet's name — the Arabic track answers `rtl`
+        // through the same field.
+        $response->assertJsonPath('data.direction', 'ltr');
+
+        // One drill per letter here, against four per letter on the qāʿidah.
+        $this->assertSame(26, $response->json('data.totals.total'));
+        $this->assertSame(1, $response->json('data.totals.mastered'));
+
+        // And the same child's Arabic track is untouched by it.
+        $arabic = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"))
+            ->assertOk();
+
+        $arabic->assertJsonPath('data.alphabet', 'arabic');
+        $arabic->assertJsonPath('data.direction', 'rtl');
+        $this->assertSame(28 * 4, $arabic->json('data.totals.total'));
+        $this->assertSame(0, $arabic->json('data.totals.mastered'));
+    }
+
+    #[Test]
+    public function a_parent_asking_for_an_alphabet_the_tracker_does_not_know_is_refused(): void
+    {
+        // `arabic_letter_progress.alphabet` is a plain varchar, and the two
+        // realms must refuse a typo identically: the admin route is already
+        // pinned for this, and a family read that quietly fell back to Arabic
+        // would answer `?alphabet=englsih` with the qāʿidah and look to a parent
+        // like their child's English work had been deleted.
+        $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters?alphabet=englsih"))
+            ->assertStatus(422);
+    }
+
+    #[Test]
     public function a_parent_cannot_watch_another_familys_child(): void
     {
         $this->as($this->parentA)
             ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/letters"))
+            ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_second_alphabet_is_not_a_second_way_around_the_ward_edge(): void
+    {
+        // Invariant 6, restated for the new parameter. `?alphabet=` changes
+        // which curriculum is read and NOTHING about who may read it — but the
+        // tracker is now constructed on the FIRST line of `forMember`, before
+        // the group is resolved and before the ward check runs, so the gate is
+        // worth re-asserting on the path that reaches it last.
+        $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/letters?alphabet=english"))
             ->assertForbidden();
     }
 
@@ -1432,7 +1513,7 @@ class FamilyPortalTest extends TestCase
     }
 
     #[Test]
-    public function the_family_realm_writes_exactly_nine_things(): void
+    public function the_family_realm_writes_exactly_ten_things(): void
     {
         // This used to assert the realm accepted NO write verb at all, because
         // T-015f (parents replying) was deliberately unbuilt. T-015f now exists,
@@ -1456,6 +1537,23 @@ class FamilyPortalTest extends TestCase
         // request that can be expressed. There is deliberately no admin twin —
         // an office may enable or revoke a family's ACCESS, but may never set,
         // read or reset their password.
+        //
+        // The tenth (2026-09-12) is "Translate to Arabic", and it is admitted
+        // here deliberately rather than argued around. It is a POST for a
+        // mechanical reason and not a semantic one: it is a READ-THROUGH CACHE,
+        // and the only thing it writes is a `content_translations` row keyed on a
+        // hash. It cannot be a GET because the text a parent wants translated is
+        // a screen's worth of a class story — thousands of characters, several
+        // paragraphs at a time — and that does not fit in a query string.
+        //
+        // What makes it safe to add to a realm whose whole discipline is counting
+        // its writes: it names no record and no child. It takes the TEXT the
+        // parent is already looking at, which some other endpoint in this list
+        // already decided they were entitled to read, so there is no audience to
+        // widen and no id that could be aimed at another family. What it does
+        // spend is MONEY, which is why it carries a second throttle
+        // (`family-translate`, 20/min) on top of the realm's own. See
+        // App\Http\Controllers\Family\TranslationsController.
         //
         // T-015h (self-service consent withdrawal) is still absent — a parent
         // cannot change a roster, and cannot withdraw consent without the office.
@@ -1485,6 +1583,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            'POST /api/family/masjids/{masjid_id}/translations',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
             'PUT /api/family/masjids/{masjid_id}/password',

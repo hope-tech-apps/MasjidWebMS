@@ -68,6 +68,21 @@ Schedule::command('prayers:daily-resync')->dailyAt('07:00');
 // have two processes force-deleting the same rows.
 Schedule::command('groups:purge-feed')->dailyAt('03:10')->withoutOverlapping();
 
+// The parent portal's translation cache. Same policy as the sweep above, over a
+// derived copy of the same content: every row is the Arabic of something a
+// teacher wrote about a child, so it is bounded for the reason the post it came
+// from is bounded. Deleting the post without deleting its translation would
+// leave that text in a side table nobody thinks of as holding children's data —
+// which is how a retention policy comes to be true of the main tables and false
+// of the system. See App\Console\Commands\PurgeContentTranslations.
+//
+// 03:15 UTC: five minutes after the group sweep, so the two never share a minute
+// and this one runs against a feed the earlier sweep has already trimmed. Unlike
+// that one it deletes nothing anybody can miss — a purged row is a cache miss,
+// and the English is still in the record — so a late or skipped run costs a
+// re-translation, not a record.
+Schedule::command('translations:purge')->dailyAt('03:15')->withoutOverlapping();
+
 // Seats held by pending registrations whose Stripe Checkout window expired
 // without payment — the backstop for a `checkout.session.expired` that never
 // arrived. Nothing is eligible until the grace margin has passed, so a tighter
