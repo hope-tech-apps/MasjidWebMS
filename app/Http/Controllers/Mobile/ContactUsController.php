@@ -7,7 +7,9 @@ use App\Http\Requests\Mobile\ContactUs\StoreMobileContactMessageRequest;
 use App\Models\ContactUsAccount;
 use App\Models\ContactUsMessage;
 use App\Models\ContactUsReason;
+use App\Models\Masjid;
 use App\Models\MobileAppUser;
+use App\Support\ContactUsNotifier;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -80,6 +82,22 @@ class ContactUsController extends Controller
                 'contact_us_reason_id' => $reason->id,
                 'message' => $request->input('message'),
             ]);
+
+            // BOTH doors notify, or the mobile app's messages go unannounced
+            // while the website's do not — a difference nobody in the office
+            // would ever guess at, and the reason
+            // ContactUsNotificationTest::staff_are_emailed_when_a_message_arrives_through_the_mobile_app
+            // exists alongside its website twin (the FormDoorEquivalenceTest
+            // precedent). Everything else about this call is the V1
+            // controller's; read the comment there for why it is a clone and
+            // why the failure of this line cannot reach the caller.
+            ContactUsNotifier::received(
+                (clone $message)
+                    ->setRelation('contacter', $contactUsAccount)
+                    ->setRelation('reason', $reason),
+                Masjid::find($masjidId),
+                ContactUsNotifier::SOURCE_MOBILE_APP
+            );
 
             return response()->json([
                 'status' => 'success',

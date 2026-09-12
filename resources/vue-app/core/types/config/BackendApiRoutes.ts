@@ -62,6 +62,16 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/appointment-requests` |
     `/api/admin/masjids/${string}/appointment-requests?${string}` |
     `/api/admin/masjids/${string}/appointment-requests/${string}` |
+    // Contact-us inbox — the listing, one message, and the two writes hung off
+    // it (reply, answered). One pattern per endpoint SHAPE, as above: the
+    // trailing `${string}` swallows the nested `/{id}/reply` and
+    // `/{id}/answered` segments, and `?${string}` carries ?page= and ?search=.
+    // These shapes matched NO existing pattern before T-042d — the store has
+    // been asserting past the union since the inbox was built, and the build is
+    // `vite build` with no type-check, so nothing said so.
+    `/api/admin/masjids/${string}/contact-requests` |
+    `/api/admin/masjids/${string}/contact-requests?${string}` |
+    `/api/admin/masjids/${string}/contact-requests/${string}` |
     // Offerings + the two things nested under one: its IMMUTABLE fee plans and
     // its registrations. One pattern per endpoint SHAPE, as above — the trailing
     // `${string}` swallows the nested `/{id}/adjustments`, `/{id}/promote` and
@@ -109,6 +119,7 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/forms/${string}/responses/roster?${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/cash-totals?${string}` |
+    `/api/admin/masjids/${string}/forms/${string}/insights?${string}` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}/collect` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}/take-cash` |
     `/api/admin/masjids/${string}/forms/${string}/responses/${string}/mark-paid-external` |

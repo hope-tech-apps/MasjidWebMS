@@ -133,9 +133,75 @@ class AppServiceProvider extends ServiceProvider
      *  - "family"  — 60 requests per minute per authenticated CONTACT (T-015c)
      *  - "mobile"  — 60 requests per minute per IP (generous, but bounded)
      *  - "device"  — 10 device registrations per hour per IP (anti-abuse)
+     *  - "unsubscribe" — 30 per minute per LINK (plus a coarse per-IP flood
+     *                    backstop) on the public unsubscribe landing (T-042c)
      */
     private function configureRateLimiters(): void
     {
+        /*
+         * The public unsubscribe landing (routes/web.php, T-042c).
+         *
+         * Deliberately generous, and the reasoning is the same one that puts the
+         * inbound SMS webhook OUTSIDE throttle entirely: a rate-limited opt-out is
+         * an unhonoured opt-out, and under CAN-SPAM every subsequent message after
+         * a request to stop is the organisation's exposure, not a support ticket.
+         *
+         * ## Keyed on the LINK, not on the caller
+         *
+         * This route answers two callers that look nothing alike. The GET landing
+         * is opened by the person, from their own device. The POST is RFC 8058
+         * one-click, and it is issued by the MAILBOX PROVIDER's infrastructure:
+         * when somebody presses Unsubscribe in Gmail, Google POSTs this URL from
+         * Google's egress pool and the subscriber's IP never appears.
+         *
+         * Keying on `$request->ip()` therefore pooled every one-click unsubscribe
+         * on the platform, for every tenant, onto a handful of provider addresses.
+         * Past the limit the route answers 429, Gmail records the one-click as
+         * FAILED and does not retry, no `email_suppressions` row is written, and
+         * the person keeps receiving the newsletter with nothing anywhere
+         * recording that they asked to stop — the exact silent, unhonoured opt-out
+         * this limiter exists to avoid, caused by the limiter.
+         *
+         * So the primary key is the token in the path: one link, one person's
+         * opt-out, 30 attempts a minute. That bounds the only abuse this endpoint
+         * actually has — a scanner or a bot replaying ONE link — while leaving a
+         * provider's shared egress unthrottled, and it cannot make one
+         * congregant's unsubscribe fail because a different congregant's mailbox
+         * provider was busy.
+         *
+         * The second limit is a volumetric backstop, an order of magnitude above
+         * the old ceiling, so a single source hammering thousands of DISTINCT
+         * (and necessarily invalid) tokens still meets a wall. 600/minute is far
+         * above anything a real mailbox provider sends on behalf of a deploy this
+         * size, which is the property that matters: it must never be the thing
+         * that refuses a genuine one-click POST.
+         *
+         * The refusal is plain text rather than the JSON every other limiter here
+         * returns: the caller is a mail client or a browser, and a JSON envelope
+         * would render as a wall of braces to a congregant.
+         */
+        RateLimiter::for('unsubscribe', function (Request $request) {
+            $refusal = function () {
+                return response(
+                    "Too many requests just now. Please wait a minute and open the unsubscribe link again — "
+                    . "your request has not been lost.\n",
+                    429,
+                    ['Content-Type' => 'text/plain; charset=UTF-8'],
+                );
+            };
+
+            // Every route in the group carries {token}; the IP fallback is for a
+            // caller that somehow reaches the limiter without one, so a missing
+            // parameter can never mean "unlimited".
+            $token = $request->route('token');
+            $link = is_string($token) && $token !== '' ? $token : (string) $request->ip();
+
+            return [
+                Limit::perMinute(30)->by('unsubscribe-link:' . $link)->response($refusal),
+                Limit::perMinute(600)->by('unsubscribe-ip:' . $request->ip())->response($refusal),
+            ];
+        });
+
         RateLimiter::for('login', function (Request $request) {
             $key = strtolower((string) $request->input('email')) . '|' . $request->ip();
             return Limit::perMinute(5)->by($key)->response(function () {

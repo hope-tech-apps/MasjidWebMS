@@ -8,6 +8,8 @@ import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import {
     FORM_CARD_PAGES,
     FormCashTotals,
+    FormInsights,
+    FormInsightsMeta,
     FormOption,
     FormResponseActionResult,
     FormResponseDetail,
@@ -48,6 +50,14 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
      */
     const rosterPaginated = ref<PaginatedData<any>>();
     const rosterMeta = ref<FormRosterMeta>();
+
+    /**
+     * Manara Insights: aggregates over the same filtered set, in their own slice so
+     * switching views does not blank the list or the roster. Never paginated — the whole
+     * summary is one payload.
+     */
+    const insights = ref<FormInsights | null>(null);
+    const insightsMeta = ref<FormInsightsMeta | null>(null);
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -202,6 +212,61 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         throw new Error('Unexpected cash totals response.');
     }
 
+    /**
+     * Manara Insights for one form, over the list's own filters (FormInsights).
+     *
+     * The sort is stripped for the same reason fetchCashTotals() strips it: a roster sort
+     * key is not on the submission endpoints' allowlist and comes back a 422. Everything
+     * else goes through buildResponsesQuery() untouched, so the summary asks about the
+     * same set the table is showing.
+     *
+     * CAVEAT the screen must respect: at HEAD the server applies only q / status / from /
+     * to here, and silently ignores the door's `payment`, `collected` and `staff_code_id`
+     * — which the list, the roster, the CSV and the cash totals all honour. They are still
+     * sent (so this starts working the day FormInsightsController routes through
+     * FormResponsesController::query()), but until then the view REFUSES to render the
+     * summary while a door filter is on, rather than quietly disagreeing with the table
+     * above it. `meta.filtered` has the same gap and is trustworthy only in that state.
+     *
+     * On failure the previous summary is cleared before the error is rethrown: a stale
+     * summary sitting under a fresh filter row is a wrong answer, not a slow one.
+     */
+    async function fetchInsights(formId: number | string, filters: FormResponseFilters): Promise<void> {
+        const id = masjidId();
+        if (!id) return;
+
+        const params = new URLSearchParams(buildResponsesQuery(filters));
+        params.delete('sort');
+        params.delete('direction');
+
+        await ApiService.get(`/api/admin/masjids/${id}/forms/${formId}/insights?${params.toString()}`)
+            .then((res: AxiosResponse) => {
+                if (res.data?.status === 'success' && res.data?.data) {
+                    insights.value = res.data.data;
+                    insightsMeta.value = res.data.meta ?? null;
+                    return;
+                }
+
+                // A 200 THAT IS NOT A SUMMARY IS A FAILURE, and it has to be raised as
+                // one. FormInsightsController answers its own catch with
+                // `{status:'error'}` and a 500, but a proxy, a maintenance page or an
+                // expired session redirected to HTML all arrive here as a 2xx whose body
+                // is not this shape. Falling through silently left the previous summary
+                // in place (wrong, under a fresh filter row) or the slice empty with no
+                // error worded — which the panel could only render as a blank region.
+                // fetchCashTotals() in this file already refuses the same way. The wording
+                // is the admin's, not a developer's, because serverMessage() prints a bare
+                // Error's own message straight into the panel.
+                throw new Error('The summary did not come back in a readable form. Try again.');
+            })
+            .catch((e: Error) => {
+                insights.value = null;
+                insightsMeta.value = null;
+                console.error('Fetch form insights error: ', e);
+                throw e;
+            });
+    }
+
     /** Fetch one response — the only endpoint that returns the full submission. */
     async function fetchResponse(
         formId: number | string,
@@ -334,6 +399,9 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         rosterPaginated,
         rosterMeta,
         fetchRoster,
+        insights,
+        insightsMeta,
+        fetchInsights,
         formOptions,
         responsesPaginated,
         responsesMeta,

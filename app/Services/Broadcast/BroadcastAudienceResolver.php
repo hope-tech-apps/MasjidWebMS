@@ -39,21 +39,63 @@ use Illuminate\Support\Collection;
  */
 class BroadcastAudienceResolver
 {
-    public function __construct(private readonly SmsConsentService $consent)
-    {
+    public function __construct(
+        private readonly SmsConsentService $consent,
+        private readonly EmailSuppressionService $emailSuppression,
+    ) {
     }
 
     /**
-     * Email recipients for this broadcast.
+     * Email recipients for this broadcast, as a plain collection.
+     *
+     * Kept as the narrow answer to "who gets this?" for callers that only need
+     * the people. The accounting lives on `emailAudience()`, which this
+     * delegates to, so there is exactly one place the opt-out is honoured.
+     *
+     * @return Collection<int, Contact>
+     */
+    public function emailRecipients(Broadcast $broadcast): Collection
+    {
+        return $this->emailAudience($broadcast)->recipients;
+    }
+
+    /**
+     * Email recipients for this broadcast, plus who was left out and why.
      *
      * Placeholder contacts are excluded: they are stubs the donation importer
      * mints for an unmatched card, not people who agreed to hear from anyone.
      * Contacts without an email are excluded rather than counted — a target
      * count must mean "inboxes addressed".
      *
-     * @return Collection<int, Contact>
+     * ## THE UNSUBSCRIBE IS HONOURED HERE, AND ONLY HERE (T-042c)
+     *
+     * This method is the single place `email_suppressions` is consulted in the
+     * entire application, and that is the design rather than an accident of
+     * where it was convenient to put it.
+     *
+     * Honouring it at RESOLUTION means a suppressed person is never counted,
+     * never previewed and never delivered to: every number the composer reports
+     * and every address the channel touches comes out of this one query, so
+     * there is no later stage at which a filtered-out person could reappear in a
+     * count. A post-send filter would have produced the opposite — a confirmation
+     * saying 412 while 394 were sent.
+     *
+     * And it means TRANSACTIONAL MAIL IS UNAFFECTED STRUCTURALLY. Because the
+     * check lives here, on the broadcast audience, and not in a Mailable, a
+     * `MessageSending` listener or any global mail hook, a person who
+     * unsubscribed from announcements still receives their donation receipt,
+     * their annual statement, their registration confirmation, the reply to a
+     * message they sent, and their family sign-in code. Moving this check
+     * anywhere "more central" would silently swallow all of those; it is the
+     * single most damaging change that could be made to this feature.
+     *
+     * The suppression lookup is deliberately NOT guarded. A database failure
+     * here throws, the EMAIL channel is recorded `failed` with the error, and
+     * .claude/rules/broadcasts.md guarantees no other channel is rolled back.
+     * The two silent alternatives are both worse: failing open emails people who
+     * unsubscribed, failing closed stops every announcement with no explanation.
      */
-    public function emailRecipients(Broadcast $broadcast): Collection
+    public function emailAudience(Broadcast $broadcast): EmailAudience
     {
         $query = Contact::query()
             ->whereNotNull('email')
@@ -70,7 +112,7 @@ class BroadcastAudienceResolver
             // An empty explicit set addresses nobody. Returning every contact
             // here would be the single most damaging default in this file.
             if ($ids === []) {
-                return collect();
+                return new EmailAudience(collect());
             }
 
             $query->whereIn('id', $ids);
@@ -83,13 +125,33 @@ class BroadcastAudienceResolver
             $serviceId = (int) $broadcast->audience_service_id;
 
             if ($serviceId <= 0) {
-                return collect(); // no service addresses nobody, never everyone
+                // no service addresses nobody, never everyone
+                return new EmailAudience(collect());
             }
 
             $this->narrowContactsToServiceInterest($query, (int) $broadcast->masjid_id, $serviceId);
         }
 
-        return $query->orderBy('id')->get();
+        $candidates = $query->orderBy('id')->get();
+
+        // One query for the whole audience rather than one per recipient. The
+        // suppression list is keyed on the ADDRESS and outlives the contact row,
+        // so a person re-imported after unsubscribing is still excluded.
+        $suppressed = $this->emailSuppression->suppressedAmong(
+            (int) $broadcast->masjid_id,
+            $candidates->pluck('email')->all(),
+        );
+
+        $recipients = $candidates->reject(fn (Contact $contact) => in_array(
+            EmailSuppressionService::normalize($contact->email),
+            $suppressed,
+            true,
+        ))->values();
+
+        return new EmailAudience(
+            recipients: $recipients,
+            suppressed: $candidates->count() - $recipients->count(),
+        );
     }
 
     /**

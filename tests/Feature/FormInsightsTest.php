@@ -324,4 +324,46 @@ class FormInsightsTest extends TestCase
 
         $this->assertNotEquals(200, $response->status());
     }
+
+    // ------------------------------------------------- what the summary panel may claim
+
+    /**
+     * A KNOWN GAP, pinned so the screen built on it stays honest.
+     *
+     * FormInsightsController applies q / status / from / to only. The door's filters
+     * (`payment`, `collected`, `staff_code_id`) are validated by the same FormRequest and
+     * honoured by the list, the roster, the CSV and the cash totals through
+     * FormResponsesController::query() — but not here. So with "Collected" set, the table
+     * shows one registration and the summary describes all four, while the controller's
+     * docblock promises it "always describes exactly the set the admin is looking at".
+     * `meta.filtered` has the same blind spot and reports false.
+     *
+     * Because of that the Summary panel in FormResponsesView.vue REFUSES to render while
+     * any door filter is on, and says why, rather than printing a head count that
+     * disagrees with the table above it (doorFiltersApplied there).
+     *
+     * WHEN THIS IS FIXED — route insights through FormResponsesController::query() and
+     * widen the hasAny() list — this test and that guard come out together: replace the
+     * assertions below with assertSame($listTotal, $summaryTotal) and assertTrue on
+     * meta.filtered, and delete doorFiltersApplied and the alert it drives.
+     */
+    #[Test]
+    public function the_doors_filters_do_not_reach_the_summary_which_is_why_the_panel_hides_under_them(): void
+    {
+        // One of the four registrations has been handed its bracelet. collected_at is not
+        // fillable (the door stamps it), so it is set through the query builder.
+        $served = FormResponse::where('form_id', $this->form->id)->orderBy('id')->firstOrFail();
+        FormResponse::whereKey($served->id)->update(['collected_at' => now()]);
+
+        $this->actingAsAdmin();
+
+        $base = "/api/admin/masjids/{$this->masjid->id}/forms/{$this->form->id}";
+
+        $listTotal = $this->getJson($base . '/responses?collected=yes')->json('data.total');
+        $summary = $this->getJson($base . '/insights?collected=yes');
+
+        $this->assertSame(1, $listTotal, 'The list honours the door filter.');
+        $this->assertSame(4, $summary->json('data.totals.responses'), 'The summary still counts every registration.');
+        $this->assertFalse($summary->json('meta.filtered'), 'And it does not even report itself as filtered.');
+    }
 }

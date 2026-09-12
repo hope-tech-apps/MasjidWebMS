@@ -73,6 +73,26 @@ return Application::configure(basePath: dirname(__DIR__))
         // Security headers on every response (web + api).
         $middleware->append(SecurityHeaders::class);
 
+        // The unsubscribe landing (T-042c) is the one web path that accepts a
+        // POST with no session and no token, and it has to be: a person who
+        // cannot sign in must still be able to leave, and RFC 8058 one-click
+        // unsubscribe — which Gmail and Yahoo have required of bulk senders
+        // since February 2024 — is a POST sent by the MAILBOX PROVIDER, which
+        // carries no cookie of ours and can carry no CSRF token.
+        //
+        // The URL's encrypted token replaces the token: it is authenticated
+        // ciphertext under APP_KEY binding the organisation, the broadcast and
+        // the address, so a forged or edited request cannot decrypt and never
+        // reaches the write. See App\Services\Broadcast\EmailSuppressionService.
+        //
+        // Scoped to this one prefix. It is not a general exemption, and the
+        // damage a forged request could do in the worst case is to unsubscribe
+        // an address the forger already knew — the safe direction; resuming mail
+        // needs a second, purpose-scoped token minted only on the landing page.
+        $middleware->validateCsrfTokens(except: [
+            'unsubscribe/*',
+        ]);
+
         $middleware->alias([
             'super' => SuperAdminMiddleware::class,
             'admin' => UserAdminMiddleware::class,

@@ -43,8 +43,30 @@
                     </tr>
 
                     <tr>
+                        {{--
+                            The unsubscribe footer (T-042c).
+
+                            The old footer was a statement — "you are receiving this
+                            because…" — with no mechanism attached, which is not an
+                            opt-out under CAN-SPAM and does not satisfy the Gmail/Yahoo
+                            bulk-sender rules either.
+
+                            The last sentence is not decoration. Without it a donor
+                            unsubscribes from announcements, never receives their tax
+                            receipt, and reports it as a bug — so the email says, at the
+                            moment of the decision, exactly what this does and does not
+                            stop. $unsubscribeUrl is nullable so an older caller renders
+                            the original footer rather than an empty link.
+                        --}}
                         <td style="padding:0 32px 28px; font-size:13px; line-height:1.5; color:#7b8794;">
                             You are receiving this because you are on {{ $orgName }}'s contact list.
+
+                            @if (! empty($unsubscribeUrl))
+                                <br>
+                                <a href="{{ $unsubscribeUrl }}" style="color:#2f9e57; text-decoration:underline;">Unsubscribe from {{ $orgName }}'s emails</a>
+                                <br>
+                                <span style="color:#9aa5b1;">This does not affect receipts, registration confirmations, or replies to messages you send.</span>
+                            @endif
                         </td>
                     </tr>
                 </table>

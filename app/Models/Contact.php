@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Auth\Authenticatable as AuthenticatableTrait;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
+use App\Services\Broadcast\EmailSuppressionService;
 use App\Services\Sms\PhoneNumber;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -222,7 +223,36 @@ class Contact extends Model implements AuthenticatableContract
             'sms_opt_in' => 'boolean',
             'sms_consent_at' => 'datetime',
             'sms_opted_out_at' => 'datetime',
+            // A DISPLAY MIRROR of email_suppressions (T-042c). Deliberately NOT
+            // in $fillable: it is written in exactly two places — by
+            // App\Services\Broadcast\EmailSuppressionService when the OPT-OUT
+            // changes, and by this model's own hooks when the ADDRESS changes —
+            // so no importer or admin payload can set it and imply an opt-out
+            // that does not exist.
+            'email_opted_out_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Does the directory believe this person has unsubscribed from this
+     * organisation's broadcast emails?
+     *
+     * For DISPLAY only — a badge on the contact screen, so staff stop wondering
+     * why somebody hears nothing. **Nothing may call this to decide whether to
+     * send.** The authority is `email_suppressions`, consulted once in
+     * App\Services\Broadcast\BroadcastAudienceResolver::emailAudience(), and it
+     * is keyed on the ADDRESS with no foreign key here precisely because this
+     * row is mortal: the merge path force-deletes it, the donation importer
+     * mints and destroys placeholders, and a CSV re-import recreates people.
+     * A column on a row like that can be wrong; the suppression row cannot.
+     *
+     * It is nonetheless kept true rather than left to drift — `syncEmailOptOutMirror`
+     * below re-reads the durable list on every write that moves this row's
+     * address — because a badge staff can see is a badge staff will believe.
+     */
+    public function hasEmailOptOut(): bool
+    {
+        return $this->email_opted_out_at !== null;
     }
 
     /**
@@ -346,6 +376,103 @@ class Contact extends Model implements AuthenticatableContract
             $contact->sms_consent_source = null;
             $contact->sms_consent_evidence = null;
         });
+        /*
+         * The email opt-out MIRROR follows the address, on every path that
+         * changes one (T-042c).
+         *
+         * `email_opted_out_at` is a display copy of a row in
+         * `email_suppressions`, which is keyed on the ADDRESS. Without this
+         * hook the copy is only ever recomputed for the address being
+         * suppressed or released, so it goes wrong in both directions the
+         * moment somebody edits an email:
+         *
+         *  (a) a person unsubscribes at bob@x.com and an admin later corrects
+         *      the address to robert@x.com. The badge still reads
+         *      "unsubscribed" while broadcasts now go out to that person —
+         *      staff read a badge that is the opposite of the truth;
+         *  (b) an admin edits a contact onto an address that is ALREADY
+         *      suppressed (an older row, a re-import, a merge survivor). No
+         *      badge appears, yet `emailAudience()` silently drops them from
+         *      every send — which is precisely the "why does this person hear
+         *      nothing" question the column was added to answer.
+         *
+         * A display mirror that can silently disagree with the table that
+         * decides is a defect waiting to be trusted, and the contact screen now
+         * DOES trust it (ContactsView.vue renders the badge). So it is kept
+         * true here, in the model, rather than in one controller: importers,
+         * the merge path, seeders and console commands all save contacts too,
+         * and a rule enforced in the model is the only one none of them can
+         * skip.
+         *
+         * Two hooks rather than one, because Eloquent reports the two writes
+         * differently. `created` covers the insert — a contact re-imported at
+         * an address that already unsubscribed is precisely the case the
+         * suppression table exists for, and on an INSERT no `changes` are synced
+         * so `wasChanged()` would be false there. `updated` covers the edit, and
+         * asks `wasChanged('email')` so the recompute costs one extra indexed
+         * SELECT only on the writes that actually move an address. Neither is
+         * `saving`: BelongsToMasjid stamps masjid_id from the `creating` hook,
+         * which runs after `saving`, and this lookup is per-tenant.
+         *
+         * The authority is untouched: nothing here decides whether to send, and
+         * clearing this column by hand still changes nothing about who is
+         * emailed. Pinned by
+         * `the_mirror_follows_the_address_when_a_contacts_email_is_edited`.
+         */
+        static::created(function (Contact $contact) {
+            self::syncEmailOptOutMirror($contact, onInsert: true);
+        });
+
+        static::updated(function (Contact $contact) {
+            if ($contact->wasChanged('email')) {
+                self::syncEmailOptOutMirror($contact, onInsert: false);
+            }
+        });
+    }
+
+    /**
+     * Copy the durable email opt-out for THIS row's current address onto the
+     * display column, or clear it when the address is mailable.
+     *
+     * Written with a keyed query rather than `save()` for two reasons: it fires
+     * no model events, so it cannot re-enter the hooks that call it; and inside
+     * `created` the model's originals have not been synced yet, so a `save()`
+     * there would rewrite every column instead of this one. The tenant scope is
+     * lifted because the row's own key is the filter and this runs from unbound
+     * code (the public unsubscribe landing) as well as bound.
+     *
+     * Note what is NOT done: the write is not skipped when the value in hand
+     * already looks right. On an UPDATE the loaded attribute can be STALE —
+     * EmailSuppressionService mirrors through its own freshly-fetched instances
+     * of this same row, so an in-memory null routinely hides a date in the
+     * database, which is precisely the case this hook exists for. On an INSERT
+     * there is no such doubt: the column is not fillable, so it is null by
+     * construction and a mailable address means there is nothing to write —
+     * which keeps a bulk import to one extra SELECT per row rather than an
+     * extra UPDATE as well.
+     *
+     * The date written is the date the opt-out BEGAN, so the badge and the
+     * evidence can never quote different days.
+     */
+    private static function syncEmailOptOutMirror(Contact $contact, bool $onInsert): void
+    {
+        $at = app(EmailSuppressionService::class)
+            ->suppressedAt((int) $contact->masjid_id, $contact->email);
+
+        if ($onInsert && $at === null) {
+            return;
+        }
+
+        // `withTrashed()` as well as the tenant bypass: the row's own key is the
+        // filter, and a soft-deleted contact silently matching nothing would
+        // leave a stale copy behind for whoever restores it.
+        static::withoutMasjidScope()
+            ->withTrashed()
+            ->whereKey($contact->getKey())
+            ->update(['email_opted_out_at' => $at]);
+
+        $contact->forceFill(['email_opted_out_at' => $at])
+            ->syncOriginalAttribute('email_opted_out_at');
     }
 
     // ----------------------------------------------------- family login (T-015c)
