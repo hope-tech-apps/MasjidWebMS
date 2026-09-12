@@ -206,6 +206,16 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         section_letters: "Letters",
         alphabet_arabic: "Arabic letters",
         alphabet_english: "English letters",
+        // The qāʿidah's five stages. The server sends the English label with the
+        // payload; these exist so an Arabic page does not print "The Letters"
+        // under a heading that already reads الحروف العربية. Keyed by the stage
+        // id, and `stageLabel()` falls back to whatever the server sent when a
+        // stage arrives that this table has never heard of.
+        stage_letters: "The Letters",
+        stage_short_vowels: "Short Vowels",
+        stage_sukun_shadda: "Sukun & Shadda",
+        stage_tanween: "Tanween",
+        stage_madd: "Long Vowels",
         section_quran: "Qur'an",
         count_of: "of",
         letter_not_started: "not started",
@@ -359,6 +369,11 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         section_letters: "الحروف",
         alphabet_arabic: "الحروف العربية",
         alphabet_english: "الحروف الإنجليزية",
+        stage_letters: "الحروف",
+        stage_short_vowels: "الحركات",
+        stage_sukun_shadda: "السكون والشدّة",
+        stage_tanween: "التنوين",
+        stage_madd: "المدود",
         section_quran: "القرآن",
         count_of: "من",
         letter_not_started: "لم يبدأ",

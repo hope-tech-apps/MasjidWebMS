@@ -346,7 +346,7 @@
                                      track has a single stage whose label would
                                      only repeat the heading above it. -->
                                 <div v-if="track.alphabet === 'arabic' && track.stage?.label"
-                                     class="text-muted small" dir="auto">{{ track.stage.label }}</div>
+                                     class="text-muted small" dir="auto">{{ stageLabel(track) }}</div>
                                 <!-- `.progress` is a flex box, so the bar fills from
                                      the right of its own accord once the page is
                                      RTL. No width maths to flip. -->
@@ -682,6 +682,22 @@ const trackHasWork = (track: any): boolean =>
 const LETTER_ALPHABETS = ['arabic', 'english'] as const;
 
 /** One track's bar. Per-alphabet by construction — a track only ever knows its own totals. */
+/**
+ * The stage caption under the Arabic track.
+ *
+ * The payload's label is English because the curriculum is defined once, on the
+ * server, in one language. An Arabic page printing "The Letters" under الحروف
+ * العربية is the seam showing, so the five stage ids have their own entries in
+ * familyI18n; anything else falls back to what the server sent, which is still
+ * true even when it is not translated.
+ */
+const stageLabel = (track: any): string => {
+    const key = `stage_${track?.stage?.id ?? ''}`;
+    const translated = t(key);
+
+    return translated === key ? (track?.stage?.label ?? '') : translated;
+};
+
 const trackPercent = (track: any) => {
     const totals = track?.totals;
     return totals && totals.total ? Math.round((totals.mastered / totals.total) * 100) : 0;
