@@ -28,42 +28,67 @@ not staging data until `staging:scrub` has run over it and said so.
 | Time | 10–20 minutes, most of it the dump and the load |
 | Blast radius on prod | one `SELECT`-only dump. No writes, no locks that block writers. |
 
-**The `mysql-client` package may not be installed on the production droplet.**
-The app connects through PHP's `pdo_mysql`, which does not need the CLI, so a
-freshly provisioned box often has neither `mysqldump` nor `mysql`. Install it
-before you start — it adds no service and opens no port:
+**Do not dump with the client that is on the production droplet.** Prod's
+`mysqldump` is **MariaDB 10.11's** (the box carries the MariaDB flavour of
+`/etc/mysql`), and against the MySQL 8.4 managed cluster it writes explicit
+values for GENERATED columns (`masjid_user.default_key`,
+`masjids.active_owner_user_id`, `masjids.active_stripe_account_id`). MySQL 8
+refuses those on load — `ERROR 3105 … generated column 'default_key' … is not
+allowed` — so the whole import dies mid-file. It also rejects the MySQL-only
+flags below. Found the hard way on 2026-09-10.
 
-```sh
-ssh -i ~/.ssh/do_mcp root@<prod-ip>
-apt-get update && apt-get install -y mysql-client
-```
+**The staging box cannot reach the managed cluster, by design.** The cluster's
+firewall admits only the production droplet, and it must stay that way —
+staging holding a path to production data would defeat the point. So the dump is
+taken FROM STAGING (its `mysqldump` is MySQL 8.0's, which skips generated
+columns) inside a **transient firewall rule that is removed in the same
+command**, with a trap so a failure cannot leave it open.
 
 ---
 
-## 1. Dump production (read-only)
+## 1. Dump production (read-only, from staging, through a transient rule)
 
-Run this **on the production droplet**, which already holds the managed
-cluster's credentials in its `.env`. Do not copy those credentials anywhere else.
+Run this **on the Mac** (it needs `doctl`, authenticated — the same token the
+DigitalOcean MCP uses is in `~/.claude.json` under
+`mcpServers.digitalocean.env.DO_API_TOKEN`; pass it as
+`DIGITALOCEAN_ACCESS_TOKEN` without echoing it). The production credentials are
+read on the staging box from the prod `.env` that `provision.sh` backed up to
+`/root/env-backups/`; they are never copied anywhere else.
 
 ```sh
-ssh -i ~/.ssh/do_mcp root@<prod-ip>
-cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+export DIGITALOCEAN_ACCESS_TOKEN="$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude.json')))['mcpServers']['digitalocean']['env']['DO_API_TOKEN'])")"
+DBID=9c980810-97a1-4a84-ab30-17ec333e59c3     # db-mysql-nyc1-51565
+STAGING_DROPLET=599239838
+cleanup() {
+  for u in $(doctl databases firewalls list "$DBID" | awk -v d="$STAGING_DROPLET" 'NR>1 && $3=="droplet" && $4==d {print $1}'); do
+    doctl databases firewalls remove "$DBID" --uuid "$u"
+  done
+  doctl databases firewalls list "$DBID"      # staging must NOT appear
+}
+trap cleanup EXIT
+doctl databases firewalls append "$DBID" --rule droplet:$STAGING_DROPLET
 
-# Read the connection out of the app's own .env rather than retyping it.
-export $(grep -E '^DB_(HOST|PORT|DATABASE|USERNAME|PASSWORD)=' .env | xargs)
-
-mysqldump \
+ssh -i ~/.ssh/do_mcp root@157.230.212.38 'bash -s' <<'EOF'
+BK=$(ls -t /root/env-backups/env.* | head -1)
+val() { grep -E "^$1=" "$BK" | head -1 | cut -d= -f2- | tr -d '"'; }
+MYSQL_PWD="$(val DB_PASSWORD)" mysqldump \
+  --host="$(val DB_HOST)" --port="$(val DB_PORT)" --user="$(val DB_USERNAME)" \
+  --ssl-mode=REQUIRED \
   --single-transaction \
   --no-tablespaces \
   --set-gtid-purged=OFF \
+  --triggers --column-statistics=0 \
   --default-character-set=utf8mb4 \
-  --host="$DB_HOST" --port="$DB_PORT" \
-  --user="$DB_USERNAME" --password="$DB_PASSWORD" \
-  "$DB_DATABASE" \
-  | gzip > /root/prod-$(date +%F).sql.gz
-
-ls -lh /root/prod-*.sql.gz
+  "$(val DB_DATABASE)" > /root/staging-provision/prod-dump.sql
+chmod 600 /root/staging-provision/prod-dump.sql
+ls -lh /root/staging-provision/prod-dump.sql
+EOF
 ```
+
+`doctl databases firewalls list` takes no `--format` flag (doctl 1.163); parse
+its plain table as above. The dump is ~10 MB and takes seconds. The firewall
+rule is the only thing here that touches production configuration, and the trap
+removes it whether or not the dump succeeds — verify the final list anyway.
 
 Why each flag, because dropping one of them is how this goes wrong:
 
@@ -74,6 +99,9 @@ Why each flag, because dropping one of them is how this goes wrong:
 - **`--no-tablespaces`** stops `mysqldump` needing the `PROCESS` privilege,
   which DigitalOcean's managed users do not have. Without it the dump aborts on
   the first table with `Access denied … PROCESS privilege(s)`.
+- **`--column-statistics=0`** — MySQL 8's client otherwise queries
+  `information_schema.COLUMN_STATISTICS`, which the managed user cannot read.
+- **`--ssl-mode=REQUIRED`** — the managed cluster refuses plaintext.
 - **`--set-gtid-purged=OFF`** stops the dump embedding a `SET @@GLOBAL.GTID_PURGED`
   statement. The managed cluster uses GTIDs; staging's standalone MySQL does not,
   and the import fails outright on that line.
@@ -99,6 +127,22 @@ that file is a full copy of every congregant's personal data.
 ---
 
 ## 3. Load it into `masjids_staging`
+
+**Strip `DEFINER` first.** The dump's triggers carry
+``DEFINER=`masjids_app`@`%` `` — the managed cluster's user, which does not
+exist on staging. MySQL would create the trigger anyway and then fail every
+INSERT that fires it with `ERROR 1449 … definer does not exist`. Remove the
+clause so the trigger is owned by whoever loads it:
+
+```sh
+sed -i -E 's/DEFINER=`[^`]+`@`[^`]+` ?//g' /root/staging-provision/prod-dump.sql
+grep -c 'DEFINER=' /root/staging-provision/prod-dump.sql     # must print 0
+```
+
+Staging's MySQL runs with `skip-log-bin` (set by `provision.sh`); with the
+binary log on, the same trigger statements fail earlier with `ERROR 1419`
+because the app user has no SUPER privilege.
+
 
 On the **staging** droplet:
 

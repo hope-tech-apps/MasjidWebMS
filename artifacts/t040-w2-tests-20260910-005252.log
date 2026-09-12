@@ -1379,3 +1379,1726 @@ No about_us / mission_vision / donation sections found. Nothing to backfill.
   ✓ a second seasons registration does not downgrade a confirmed edge    0.19s  
   ✓ a pending enrolment is still a roster line its teacher can work fro… 0.14s  
   ✓ a first shot address reassignment says whose address it took         0.17s  
+
+   PASS  Tests\Feature\GuardianEdgeProvenanceTest
+  ✓ an anonymous registration cannot make a stranger the guardian of an… 0.18s  
+  ✓ the payer field is the same writer one field away and grants no mor… 0.14s  
+  ✓ an anonymous post cannot read a staff member into a class they are…  0.14s  
+  ✓ the paid path mints only a claim when the webhook confirms it        0.11s  
+  ✓ a returning family still registers and still gets its guardian edge  0.12s  
+  ✓ two children on one household address stay two people                0.12s  
+  ✓ a payer who lists themselves as the registrant is not duplicated     0.12s  
+  ✓ an anonymous self registration does not destroy a parents credentia… 0.12s  
+  ✓ adding a parent to an adult halaqa through the admin door keeps the… 0.13s  
+  ✓ making a parent the teacher of a class keeps their sign in           0.11s  
+  ✓ a parent who is also on a roster can be given a sign in in the firs… 0.13s  
+  ✓ a dual role credential reads the ward and not the holder             0.19s  
+  ✓ the revoked row a deletion writes is still readable afterwards       0.12s  
+  ✓ a deleted member can be found and restored                           0.16s  
+  ✓ restoring is gated and tenant scoped                                 0.11s  
+
+   PASS  Tests\Feature\GuardianOnlyLoginTest
+  ✓ a student cannot be given a family login                             0.07s  
+  ✓ a contact on no roster at all cannot be given a family login         0.08s  
+  ✓ a guardian can be given a family login                               0.06s  
+  ✓ a student who is also a siblings guardian may hold a login scoped t… 0.04s  
+  ✓ a group leader who is also a guardian may hold a login scoped to th… 0.04s  
+  ✓ a guardian whose only ward has been deleted cannot be given a famil… 0.05s  
+  ✓ a guardian role naming no ward is not a guardian edge                0.06s  
+  ✓ a guardian edge in another organisation does not count               0.04s  
+
+   PASS  Tests\Feature\GuardianStandingLifecycleTest
+  ✓ a student who is also a siblings guardian is accepted through the r… 0.11s  
+  ✓ merging a guardian into their duplicate row carries the roster edge  0.15s  
+  ✓ merging a duplicate child keeps the records hanging off their roste… 0.11s  
+  ✓ an edge the survivor already holds is dropped rather than duplicate… 0.11s  
+  ✓ enrolling a portal holder as a participant leaves their sign in alo… 0.14s  
+  ✓ removing a guardian edge leaves the credential standing and says so  0.13s  
+  ✓ reassigning a deleted holders address puts the release half on the…  0.16s  
+  ✓ the panel refuses before the operator types an address               0.11s  
+  ✓ an ordinary guardian reads as eligible                               0.11s  
+
+   PASS  Tests\Feature\HifzTenantIsolationTest
+  ✓ the scope hides another organizations hifz entries                   0.09s  
+  ✓ the creating hook stamps the bound tenant on an entry                0.05s  
+  ✓ without masjid scope sees every organizations entries                0.06s  
+  ✓ an entry defaults its recited at to now                              0.06s  
+  ✓ an unreadable stored kind never counts as new memorization           0.09s  
+  ✓ an unreadable stored quality makes the smallest claim                0.10s  
+  ✓ an entry knows its span and refuses a corrupt one                    0.06s  
+  ✓ only sabak advances the students position                            0.06s  
+  ✓ the current position is the latest sabak not the furthest            0.06s  
+  ✓ juz completion is coverage so memorizing backwards reports the trut… 0.06s  
+  ✓ overlapping lessons are counted once                                 0.06s  
+  ✓ striking a mis recorded sabak moves the student back                 0.09s  
+  ✓ revision coverage is bounded by the window while memorization is no… 0.06s  
+  ✓ a student with no entries has no position rather than a zero         0.06s  
+  ✓ mistake counters stay separate                                       0.06s  
+  ✓ striking an entry removes it from ordinary queries                   0.06s  
+  ✓ removing a student from the roster takes their hifz record           0.06s  
+  ✓ force deleting a group takes its hifz entries                        0.09s  
+  ✓ soft deleting a group keeps its hifz entries                         0.06s  
+  ✓ the purge sweep never touches hifz entries                           0.16s  
+  ✓ an entry has no retention column to forget to set                    0.12s  
+  ✓ an entry records which account heard it and survives that account    0.08s  
+
+   PASS  Tests\Feature\HifzTrackingTest
+  ✓ the module rejects unauthenticated requests                          0.16s  
+  ✓ a teacher records a recitation                                       0.12s  
+  ✓ a recitation range may cross surahs                                  0.14s  
+  ✓ an ayah that does not exist is refused                               0.12s  
+  ✓ a range typed in backwards is refused                                0.12s  
+  ✓ a recitation needs a recognized kind and quality                     0.15s  
+  ✓ a recitation cannot be dated in the future                           0.12s  
+  ✓ a recitation must name a participant of this halaqa                  0.13s  
+  ✓ an admin not in the halaqa can record but not read it back           0.17s  
+  ✓ a leader reads every entry in the halaqa                             0.15s  
+  ✓ a student reads only their own record                                0.16s  
+  ✓ a guardian reads their own wards record without any consent on file  0.14s  
+  ✓ another guardian is refused a different childs record                0.14s  
+  ✓ another guardians entries are absent from the listing query          0.16s  
+  ✓ an admin with no standing in the halaqa is refused the listing       0.14s  
+  ✓ the kind filter narrows a listing to one part of the cycle           0.15s  
+  ✓ the date range filter narrows a listing by when it was recited       0.19s  
+  ✓ the progress report places the student from their sabak alone        0.14s  
+  ✓ the progress report counts completed juz by coverage                 0.16s  
+  ✓ a guardians progress report ignores every other child                0.14s  
+  ✓ striking a mis recorded entry removes it and moves the position bac… 0.16s  
+  ✓ striking an entry is idempotent                                      0.15s  
+  ✓ another organizations halaqa is a miss and its route is a refusal    0.12s  
+  ✓ another organizations entry cannot be struck                         0.13s  
+
+   PASS  Tests\Feature\HouseholdIdentityTest
+  ✓ a returning family attaches to the same records season after season  0.30s  
+  ✓ the no email shape is the same person too                            0.46s  
+  ✓ two siblings stay two people                                         0.37s  
+  ✓ the childs records do not split across seasons                       0.36s  
+  ✓ a stranger cannot reach another familys child by naming them         0.40s  
+  ✓ the household is read from confirmed and pending edges alike         0.64s  
+  ✓ matching a household child never upgrades the claim                  0.33s  
+  ✓ a household child who later gets their own address keeps it          0.11s  
+  ✓ the payer is still matched on their own address                      0.19s  
+  ✓ an adult registering themselves is still one person                  0.26s  
+  ✓ a teachers address still resolves to exactly one contact             0.25s  
+
+   PASS  Tests\Feature\ImpactMetricsTenantIsolationTest
+  ✓ an unbound caller still gets exactly one organizations numbers       0.84s  
+  ✓ a bound caller gets the same numbers as an unbound one               0.36s  
+  ✓ no metric of one organization ever includes another                  0.31s  
+  ✓ reporting on one organization while another is bound is refused      0.32s  
+  ✓ a soft deleted person leaves the people counts                       0.31s  
+  ✓ the endpoint rejects unauthenticated requests                        0.27s  
+  ✓ an admin aiming at another organizations report is forbidden         0.24s  
+  ✓ the endpoint returns only the admins own numbers                     0.29s  
+
+   PASS  Tests\Feature\ImpactMetricsTest
+  ✓ every metric carries a key label value unit period and provenance    0.09s  
+  ✓ machine keys are unique                                              0.08s  
+  ✓ meta states what the report was computed under                       0.10s  
+  ✓ the period bounds the flow metrics                                   0.08s  
+  ✓ the to bound is inclusive of the day the admin typed                 0.08s  
+  ✓ a stock metric reports an as of date rather than the period          0.07s  
+  ✓ a current state metric says it describes today                       0.06s  
+  ✓ as of is clamped to today when the period has not ended              0.07s  
+  ✓ no period at all means all time and says so                          0.07s  
+  ✓ money is integer minor units and formatted only at the edge          0.07s  
+  ✓ a count carries no currency                                          0.07s  
+  ✓ the donation figures come from the giving dashboards own rules       0.07s  
+  ✓ money metrics are omitted and named when the caller lacks view dona… 0.10s  
+  ✓ a community org sees the intake and credential figures even at zero  0.08s  
+  ✓ a masjid is not shown clinic figures it has no data for              0.07s  
+  ✓ a masjid with real intake data is shown it anyway                    0.08s  
+  ✓ labels use the tenants own vocabulary                                0.10s  
+  ✓ an unrecognized org type degrades to masjid                          0.07s  
+  ✓ form submissions and the people they represent are separate figures  0.08s  
+  ✓ the impact stats section stays author supplied and untouched         0.08s  
+  ✓ the endpoint returns the report with its meta                        0.12s  
+  ✓ an inverted range is a 422                                           0.10s  
+  ✓ an admin without view donations gets the report without the money    0.13s  
+
+   PASS  Tests\Feature\ImportFormCommandTest
+  ✓ the real camp 2026 definition imports                                0.13s  
+  ✓ the camp form keeps the shape the renderer depends on                0.07s  
+  ✓ the camp form requires a guardian when an attendee is a minor        0.06s  
+  ✓ importing twice updates rather than duplicating                      0.07s  
+  ✓ re importing leaves existing responses intact                        0.09s  
+  ✓ dry run writes nothing                                               0.06s  
+  ✓ an unknown masjid is refused                                         0.06s  
+  ✓ a missing file is refused                                            0.04s  
+  ✓ a schema the builder would reject is refused                         0.07s  
+  ✓ a fee tier with an unpadded cutoff is refused                        0.06s  
+  ✓ a fee tier with an unreadable cutoff is refused                      0.06s  
+  ✓ a fee tier with no amount is refused                                 0.06s  
+  ✓ a negative fee is refused                                            0.06s  
+  ✓ a malformed notification address is refused                          0.09s  
+  ✓ a padded cutoff still imports                                        0.06s  
+  ✓ every shipped form definition satisfies the builders settings rules  0.07s  
+  ✓ an identity map pointing at a missing question is refused            0.07s  
+
+   PASS  Tests\Feature\ImportSchoolRosterTest
+  ✓ a dry run writes nothing                                             0.14s  
+  ✓ execute creates the child the guardian and the edge                  0.07s  
+  ✓ a class that does not exist is refused and never created             0.05s  
+  ✓ one unreadable row stops the whole import                            0.06s  
+  ✓ the import cannot grant consent                                      0.09s  
+  ✓ running the same file twice creates one roster                       0.08s  
+  ✓ two guardians for one child are two rows and one child               0.08s  
+  ✓ a batch can be rolled back                                           0.07s  
+  ✓ a round tripped formula guard is stripped on the way back in         0.07s  
+
+   PASS  Tests\Feature\IqamaResolutionFixtureTest
+  ✓ the fixture declares the shape this test expects                     0.09s  
+  ✓ fixed time ranges resolve for every fixture case                     0.06s  
+  ✓ range boundaries are inclusive on both ends                          0.05s  
+  ✓ a date outside every range resolves to null not the first range      0.05s  
+  ✓ prayers without ranges always resolve to null                        0.04s  
+
+   PASS  Tests\Feature\JummahLunchOrderFlowTest
+  ✓ the public menu lists the open menu and its available items          0.11s  
+  ✓ the menu is null when nothing is open                                0.06s  
+  ✓ a pickup order is priced on the server not the client                0.07s  
+  ✓ the honeypot silently drops a bot                                    0.09s  
+  ✓ a closed menu refuses orders                                         0.09s  
+  ✓ an unavailable item refuses the order                                0.10s  
+  ✓ an online order returns a checkout url and stays unpaid              0.16s  
+  ✓ the webhook marks an online order paid idempotently                  0.14s  
+  ✓ a wrong connected account never settles the order                    0.09s  
+  ✓ is order event distinguishes orders from registrations and donation… 0.07s  
+  ✓ the menu payload says whether to ask for an email                    0.07s  
+  ✓ an email is stored when the masjid asks for one                      0.06s  
+  ✓ an email is dropped when the masjid turned the field off             0.06s  
+
+   PASS  Tests\Feature\ListenerRegistrationTest
+  ✓ no listener is registered twice for the same event                   0.07s  
+  ✓ the one allowlisted duplicate is actually duplicated                 0.05s  
+  ✓ the allowlisted duplicate is genuinely idempotent                    0.07s  
+  ✓ the deleted pusher realtime path has not come back                   0.05s  
+
+   PASS  Tests\Feature\LunchSmsNotificationTest
+  ✓ ticking the box records consent and the subscription                 0.11s  
+  ✓ not ticking the box records nothing at all                           0.10s  
+  ✓ ordering three weeks running makes one contact and one subscription  0.15s  
+  ✓ a number that texted stop cannot be reopted in by a web form         0.11s  
+  ✓ a menu with the offer off ignores a crafted opt in                   0.11s  
+  ✓ an unusable phone number never costs the customer their order        0.11s  
+  ✓ the menu payload carries the offer and the exact disclosure          0.11s  
+  ✓ the offer is withheld when no service has been chosen                0.10s  
+  ✓ opening a menu announces it once to the service audience             0.11s  
+  ✓ the composed text states the link the org and stop exactly once      0.15s  
+  ✓ the text states the cutoff in the masjids own timezone               0.13s  
+  ✓ closing and reopening never sends a second text                      0.16s  
+  ✓ a menu with no service chosen stays silent                           0.13s  
+  ✓ a draft menu announces nothing                                       0.13s  
+  ✓ another masjids service cannot be targeted                           0.09s  
+  ✓ the consent timestamp is server time not client supplied             0.11s  
+  ✓ the evidence column can actually hold the disclosure                 0.09s  
+  ✓ an existing contact is reused rather than duplicated                 0.14s  
+
+   PASS  Tests\Feature\LunchStaffRealmTest
+  ✓ lunch staff can run the board for their own masjid                   0.15s  
+  ✓ lunch staff can do the work the kitchen actually needs               0.15s  
+  ✓ the realm can re identify its own principal                          0.10s  
+  ✓ an admin cannot re identify through the lunch realm                  0.11s  
+  ✓ lunch staff are refused by every admin endpoint                      0.14s  
+  ✓ lunch staff cannot reach the jummah lunch a d m i n routes either    0.10s  
+  ✓ lunch staff cannot create more lunch staff                           0.10s  
+  ✓ lunch staff cannot reach the teacher realm                           0.11s  
+  ✓ lunch staff cannot delete a menu                                     0.15s  
+  ✓ lunch staff see only their own masjids lunch                         0.12s  
+  ✓ a lunch login with no membership fails closed                        0.09s  
+  ✓ an admin is still refused by the lunch realm                         0.20s  
+  ✓ the lunch realm refuses an unauthenticated caller                    0.15s  
+  ✓ a masjid admin creates a lunch login and it is scoped                0.35s  
+  ✓ the request body cannot ask for a different type                     0.30s  
+  ✓ a masjid admin cannot provision at another masjid                    0.25s  
+  ✓ the endpoint will not edit or delete an admin by id                  0.21s  
+  ✓ another masjids lunch login is a 404 not a 403                       0.27s  
+  ✓ removing access kills the live session immediately                   0.23s  
+  ✓ the permission count invariant is untouched                          0.18s  
+
+   PASS  Tests\Feature\MasjidDirectoryListingBackfillTest
+  ✓ the backfill lists organisations in real use and leaves an empty te… 0.24s  
+  ✓ any single sign of real use is enough to stay listed                 0.05s  
+  ✓ a backfilled organisation is listed as of its creation               0.06s  
+  ✓ an archived organisation in real use is backfilled so restore still… 0.10s  
+  ✓ the backfill never moves a listing that already exists               0.10s  
+
+   PASS  Tests\Feature\MasjidDirectoryListingTest
+  ✓ the directory shows listed organisations and hides unlisted ones     0.15s  
+  ✓ a newly provisioned organisation is not published                    0.17s  
+  ✓ a super admin can publish and unpublish an organisation              0.16s  
+  ✓ publishing an already published organisation keeps its original tim… 0.10s  
+  ✓ a masjid admin cannot publish an organisation                        0.11s  
+  ✓ an unlisted organisation is still readable by id                     0.08s  
+
+   PASS  Tests\Feature\MasjidMembershipPivotTest
+  ✓ the backfill reproduces todays ownership and invents no access       0.08s  
+  ✓ the backfilled role is the bridged masjid admin role                 0.05s  
+  ✓ the migration rolls back cleanly and forward again                   0.06s  
+  ✓ the database refuses a second default membership for one user        0.04s  
+  ✓ a user may hold many non default memberships                         0.04s  
+  ✓ the default membership can be moved to another masjid                0.05s  
+  ✓ the database refuses two memberships for the same pair               0.04s  
+  ✓ memberships are readable from both sides                             0.04s  
+  ✓ the generated default key column is never serialized                 0.05s  
+  ✓ memberships cascade on hard delete and survive a soft delete         0.05s  
+  ✓ tenant resolution still binds the owned masjid and ignores membersh… 0.05s  
+  ✓ a membership in another masjid still 403s that masjids routes        0.05s  
+  ✓ a super admin is still unbound without a route masjid                0.04s  
+  ✓ the ownership has one is unchanged by the pivot                      0.04s  
+
+   PASS  Tests\Feature\MasjidOwnershipUniquenessTest
+  ✓ the database refuses a second live masjid for the same owner         0.07s  
+  ✓ a trashed masjid does not pin its former owner                       0.04s  
+  ✓ any number of masjids may have no owner                              0.04s  
+  ✓ updating a masjid onto an owner who already owns another is rejecte… 0.07s  
+  ✓ re saving a masjid with its own current owner still succeeds         0.06s  
+  ✓ a masjid may take over an owner whose only other masjid is trashed   0.07s  
+  ✓ the reconcile command reports a clean database as clean              0.05s  
+  ✓ the reconcile command resolves duplicates into a state the index ac… 0.07s  
+
+   PASS  Tests\Feature\MasjidStripeAccountUniquenessTest
+  ✓ two live organisations on one real account are refused politely      0.07s  
+  ✓ two live organisations that have not onboarded do not block the mig… 0.07s  
+  ✓ any number of organisations may have no account at all               0.05s  
+  ✓ the preflight refuses exactly what the index refuses                 0.05s  
+  ✓ the database still refuses a second live organisation on one accoun… 0.05s  
+  ✓ a trashed organisation does not pin its account                      0.05s  
+  ✓ two un onboarded organisations can be created side by side           0.05s  
+
+   PASS  Tests\Feature\MealMenuAdminTest
+  ✓ it rejects unauthenticated requests                                  0.11s  
+  ✓ an admin creates a menu adds an item and opens it                    0.12s  
+  ✓ the order board returns orders and a summary                         0.12s  
+  ✓ a pickup order can be marked paid but an online one cannot           0.15s  
+  ✓ an order can be moved to picked up                                   0.11s  
+  ✓ another organizations menu is a 404                                  0.11s  
+
+   PASS  Tests\Feature\MealMenuOrderingWindowTimezoneTest
+  ✓ a naive datetime is read as the masjids wall clock                   0.14s  
+  ✓ it honours daylight saving rather than a fixed offset                0.10s  
+  ✓ a datetime carrying its own offset is not reinterpreted              0.10s  
+  ✓ the edit form reads back exactly what it submitted                   0.14s  
+  ✓ the index carries the local window for every row                     0.09s  
+  ✓ an update that omits the window leaves it alone                      0.08s  
+  ✓ clearing the field clears the window                                 0.09s  
+  ✓ ordering closes on the masjids clock not the servers                 0.08s  
+  ✓ a masjid without a timezone falls back to the app clock              0.08s  
+
+   PASS  Tests\Feature\MealOrderExtraDonationTest
+  ✓ the menu payload advertises the offer and its ceiling                0.07s  
+  ✓ a menu can turn the offer off                                        0.08s  
+  ✓ an extra is added to the total and kept apart from the food          0.06s  
+  ✓ an ordinary order is completely unchanged                            0.06s  
+  ✓ a menu that does not offer the extra refuses a crafted one           0.06s  
+  ✓ an amount over the ceiling is rejected                               0.05s  
+  ✓ a negative amount is rejected                                        0.07s  
+  ✓ a fractional amount is rejected because minor units are the contrac… 0.06s  
+  ✓ the ceiling itself is allowed                                        0.06s  
+  ✓ stripe gets the extra as its own line that still sums to the total   0.06s  
+  ✓ an order without an extra sends stripe no donation line              0.07s  
+  ✓ the order board reports the extra separately from food revenue       0.11s  
+
+   PASS  Tests\Feature\MealOrderFeeCoverageTest
+  ✓ covering the fee leaves the masjid with exactly the food price       0.08s  
+  ✓ the gross up holds across a range of baskets                         0.05s  
+  ✓ the fee covers the optional extra too                                0.06s  
+  ✓ declining leaves the order exactly as before                         0.09s  
+  ✓ saying nothing at all never surcharges                               0.07s  
+  ✓ a pay at pickup order is never surcharged                            0.07s  
+  ✓ a menu with the offer off refuses a crafted request                  0.07s  
+  ✓ the menu payload carries the offer and the published rate            0.06s  
+  ✓ stripe gets the surcharge as its own named line                      0.08s  
+  ✓ the donations module still computes identical figures                0.03s  
+  ✓ the checkbox answers survive being sent as strings                   0.05s  
+  ✓ an order posted form encoded like the browser goes through           0.04s  
+  ✓ genuine nonsense in a flag is still rejected                         0.05s  
+  ✓ an explicit rate override is still honoured                          0.07s  
+
+   PASS  Tests\Feature\MealOrderTenantIsolationTest
+  ✓ a bound tenant sees only its own menus                               0.07s  
+  ✓ create stamps the bound tenant over client input                     0.05s  
+  ✓ orders and items are scoped to their masjid                          0.06s  
+  ✓ without masjid scope sees every tenant                               0.05s  
+  ✓ find by uuid for masjid refuses a foreign uuid                       0.08s  
+
+   PASS  Tests\Feature\MediaVerifyTest
+  ✓ a media row whose file is gone is a finding                          0.07s  
+  ✓ dangling rows are grouped by model and collection                    0.08s  
+  ✓ a partly broken collection reads quieter than a wholly lost one      0.07s  
+  ✓ a file with no media row is reported and never graded                0.09s  
+  ✓ a directory that belongs to a media row is not an orphan             0.07s  
+  ✓ a path that is not shaped like media is never called an orphan       0.06s  
+  ✓ a listed organisation with no logo is a finding                      0.07s  
+  ✓ a listed organisation whose logo file is gone is a finding           0.06s  
+  ✓ an unlisted organisation without a logo is not a finding             0.09s  
+  ✓ a wholly empty media table is a louder condition than a broken row   0.06s  
+  ✓ an empty table on a platform that expects nothing stays quiet        0.06s  
+  ✓ a clean estate exits zero and logs at info                           0.06s  
+  ✓ the row budget bounds the scan and refuses to call the rest clean    0.07s  
+  ✓ a truncated scan never reports the row check as pass                 0.09s  
+  ✓ a complete scan of a healthy estate still passes                     0.07s  
+  ✓ a finding outranks a truncated budget                                0.06s  
+  ✓ a row naming a disk that does not resolve is a finding not a degrad… 0.05s  
+  ✓ a disk that resolves and then fails a read is a degradation not a f… 0.08s  
+  ✓ a check never says pass about rows it did not read                   0.04s  
+  ✓ a logo on a disk that cannot be read is unverifiable not present     0.05s  
+  ✓ it repairs nothing and deletes nothing                               0.06s  
+  ✓ the human report reads at a glance and disclaims the delete          0.06s  
+  ✓ a run with no media table renders and says it is not evidence        0.05s  
+  ✓ a run with no baseline records one and does not pretend it compared  0.05s  
+  ✓ a collection that stops existing between runs is a finding           0.06s  
+  ✓ one category of content disappearing is a finding while the rest is… 0.07s  
+  ✓ ordinary deletion is not a finding and the baseline follows it down  0.08s  
+  ✓ a held baseline repeats the finding until it is fixed or accepted    0.12s  
+  ✓ the estate recovering clears a held drop without anyone accepting i… 0.10s  
+  ✓ a drain too slow to trip a single run still trips the high water ma… 0.14s  
+  ✓ a wiped table is still reported as one event and not as six          0.08s  
+  ✓ with no local baseline the newest backup manifest seeds the platfor… 0.06s  
+  ✓ a missing or unreadable backup destination costs the run nothing     0.08s  
+  ✓ a broken public storage link is a finding even when every row and f… 0.06s  
+  ✓ a link pointing somewhere other than the disk is a finding           0.06s  
+  ✓ the link is skipped where it serves nothing rather than guessed at   0.06s  
+  ✓ the logo relation does not match another models media row            0.06s  
+  ✓ a feature with no icon is a finding                                  0.08s  
+  ✓ a feature whose icon resolves does not fire                          0.06s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\MigrationsBootTest
+  ✓ the full migration stack runs on sqlite                              1.58s  
+  ✓ the core tables exist after migrating                                1.97s  
+  ✓ every raw sql migration is driver guarded                            0.17s  
+  ✓ the suite runs on sqlite                                             0.10s  
+
+   PASS  Tests\Feature\MobileMediaBoundaryTest
+  ✓ the features endpoint never returns a null icon even with no media   0.16s  
+  ✓ the features endpoint uses the real icon when it is present          0.14s  
+  ✓ the announcements endpoint never returns a null image url            0.13s  
+  ✓ features ensure icons restores a missing icon                        0.19s  
+
+   PASS  Tests\Feature\MobilePrayersEndpointTest
+  ✓ it returns prayer times instead of a server error                    0.14s  
+  ✓ it stores the prayer payload in the shape the apps already read      0.16s  
+  ✓ the masjid timezone does not shift the stored times                  0.22s  
+  ✓ jumaa settings are attached to fridays only                          0.24s  
+  ✓ a second request for the same range does not duplicate rows          0.33s  
+  ✓ an existing cached row is refreshed rather than left stale           0.15s  
+  ✓ days outside the requested range are left alone                      0.13s  
+  ✓ an inverted date range is still rejected                             0.08s  
+  ✓ the endpoint no longer depends on an external process                0.06s  
+
+   PASS  Tests\Feature\OfferingAdminTest
+  ✓ index rejects unauthenticated requests                               0.14s  
+  ✓ index returns only this organizations offerings                      0.14s  
+  ✓ index filters by kind search and activity                            0.17s  
+  ✓ options lists only this organizations offerings                      0.13s  
+  ✓ an offerings public description round trips through the admin api    0.14s  
+  ✓ options is not a window onto the roster                              0.15s  
+  ✓ options reports the derived open state and the active plan count     0.13s  
+  ✓ options refuses another organizations route                          0.15s  
+  ✓ options rejects unauthenticated requests                             0.11s  
+  ✓ the offering label follows the tenants vertical                      0.13s  
+  ✓ store creates an offering and derives the slug from the name         0.15s  
+  ✓ store ignores a client supplied masjid id                            0.13s  
+  ✓ store refuses an intake form from another organization               0.12s  
+  ✓ store refuses a roster group from another organization               0.14s  
+  ✓ store requires an intake form                                        0.12s  
+  ✓ store rejects a slug already used in this organization               0.12s  
+  ✓ store allows a slug another organization already uses                0.14s  
+  ✓ store rejects an unknown kind                                        0.11s  
+  ✓ show returns the offering with its seat position                     0.11s  
+  ✓ show cannot read another organizations offering via own route        0.11s  
+  ✓ admin cannot target another masjid in the route                      0.11s  
+  ✓ update changes the offering without regenerating its slug            0.11s  
+  ✓ update cannot rewrite the guarded seat counter                       0.14s  
+  ✓ update cannot touch another organizations offering                   0.15s  
+  ✓ destroy soft deletes an offering nobody is registered for            0.09s  
+  ✓ destroy is refused while a paid registration would be stranded       0.18s  
+  ✓ destroy is refused while someone is waitlisted                       0.11s  
+  ✓ destroy allows an offering whose registrations are all cancelled     0.12s  
+  ✓ destroy cannot delete another organizations offering                 0.13s  
+  ✓ a one time plan can be created                                       0.12s  
+  ✓ an installment plan must say how many payments it is                 0.13s  
+  ✓ a free plan may not carry an amount and a paid one may not be zero   0.14s  
+  ✓ a one time plan may not carry a billing interval                     0.11s  
+  ✓ a plan cannot be created under another organizations offering        0.11s  
+  ✓ a fee plan can never be edited                                       0.14s  
+  ✓ deleting a fee plan deactivates it rather than removing the row      0.10s  
+  ✓ the plan list can be narrowed to active plans                        0.11s  
+  ✓ another organizations plan is a 404 even under our own offering      0.12s  
+
+   PASS  Tests\Feature\OfferingIntakeFormDeleteGuardTest
+  ✓ deleting an offerings intake form is refused                         0.14s  
+  ✓ a form no offering uses still deletes                                0.08s  
+  ✓ a soft deleted offering does not block its forms deletion            0.11s  
+  ✓ another tenants offering neither blocks nor leaks                    0.08s  
+  ✓ switching the form off is the non destructive path and leaves regis… 0.10s  
+  ✓ a program broken before the guard existed reads as broken everywher… 0.14s  
+
+   PASS  Tests\Feature\OfferingIntakeFormTenancyTest
+  ✓ a registration can never be validated against another organisations… 0.07s  
+  ✓ no form response is ever written with one organisations id and anot… 0.05s  
+  ✓ the offerings own form still registers normally                      0.05s  
+
+   PASS  Tests\Feature\OfferingRegistrationStateTest
+  ✓ an offering with no active fee plan is not open                      0.09s  
+  ✓ the state and the write path now agree where they used to contradic… 0.14s  
+  ✓ a free offering still needs a free plan                              0.09s  
+  ✓ a deactivated plan does not keep an offering open                    0.09s  
+  ✓ a plan with an unrecognised money kind does not keep an offering op… 0.09s  
+  ✓ no fee plan outranks full                                            0.09s  
+  ✓ a closed window outranks a missing fee plan                          0.08s  
+  ✓ a deleted intake form reports its own reason                         0.07s  
+  ✓ full is still waitlist and not closed                                0.07s  
+  ✓ the admin list stops saying open for an offering nobody can registe… 0.14s  
+  ✓ the admin detail and the section picker carry the same verdict       0.11s  
+  ✓ every registration verdict comes from one function                   0.08s  
+  ✓ the reason vocabulary is closed and covers every write path refusal  0.11s  
+  ✓ an organisation that cannot collect still runs its free tier         0.10s  
+
+   PASS  Tests\Feature\OfferingSectionTypeTest
+  ✓ the offering type is registered in the enum                          0.08s  
+  ✓ the offering type is not flagged as external data                    0.09s  
+  ✓ the section type validation rule accepts offering and still rejects… 0.09s  
+  ✓ offering default content has the documented shape                    0.08s  
+  ✓ the type is offered to every tenant by the section types payload     0.09s  
+  ✓ the type maps to no image fields in either upload map                0.10s  
+  ✓ every section type is wired into the spa union the editor map and a… 0.07s  
+  ✓ an offering section round trips through the page builder             0.13s  
+  ✓ the default content is storable as authored with nothing selected    0.11s  
+  ✓ a published section inlines the offerings public payload             0.14s  
+  ✓ the inlined payload is the same one the public endpoint serves       0.11s  
+  ✓ a section can never inline another tenants offering                  0.12s  
+  ✓ every way the reference can be dead inlines null                     0.16s  
+  ✓ a published section pointing at a closed offering says closed        0.11s  
+  ✓ the published section leaks no registrant and no seat counter        0.10s  
+  ✓ the binder leaves every other section type alone                     0.10s  
+  ✓ the palette gained exactly one type                                  0.10s  
+  ✓ the form type is untouched by the new one                            0.09s  
+
+   PASS  Tests\Feature\OfferingTenantIsolationTest
+  ✓ offering queries are scoped to the bound tenant                      0.08s  
+  ✓ a bound tenant cannot read another organizations offering            0.05s  
+  ✓ offering create stamps the bound tenant over client input            0.08s  
+  ✓ an unbound context sees every organizations offerings                0.05s  
+  ✓ without masjid scope bypasses the filter                             0.05s  
+  ✓ the same slug is allowed in two organizations                        0.05s  
+  ✓ fee plan queries are scoped to the bound tenant                      0.05s  
+  ✓ a bound tenant cannot read another organizations fee plan            0.04s  
+  ✓ fee plan create stamps the bound tenant over client input            0.06s  
+
+   PASS  Tests\Feature\OfflineDonationReceiptTest
+  ✓ recording an offline gift issues no receipt                          0.10s  
+  ✓ issuing for an offline gift takes the next serial in the shared seq… 0.11s  
+  ✓ an offline serial is independent per masjid                          0.10s  
+  ✓ issuing twice returns the same receipt and burns one serial          0.09s  
+  ✓ the pdf names the payment method and reference of an offline gift    0.79s  
+  ✓ a cash gift shows the method with no reference                       0.48s  
+  ✓ the online receipt document is unchanged                             0.49s  
+  ✓ the receipt snapshots provenance and does not follow a later edit    0.43s  
+  ✓ a stripe donation cannot be receipted by hand                        0.09s  
+  ✓ an offline gift to a non receiptable fund is refused                 0.11s  
+  ✓ another masjids donation under your own route is a 404               0.09s  
+  ✓ naming another masjid in the route is a 403                          0.09s  
+  ✓ issuing requires the manage donations permission                     0.13s  
+  ✓ issuing requires authentication                                      0.06s  
+  ✓ the annual statement total is the same before and after issuance     0.07s  
+
+   PASS  Tests\Feature\OfflineGiftDonorTest
+  ✓ a donor who is not in the directory yet is created rather than drop… 0.07s  
+  ✓ a name that already exists is reused and never duplicated            0.07s  
+  ✓ an ambiguous name is refused rather than attributed by coin flip     0.08s  
+  ✓ a picked contact wins over a typed name                              0.07s  
+  ✓ a gift with no donor at all is still a general gift                  0.09s  
+  ✓ the donor can be attached to a gift that was recorded without one    0.12s  
+  ✓ an edit can put a gift back to general                               0.09s  
+  ✓ the amount fund and date can be corrected                            0.10s  
+  ✓ a stripe gift cannot be edited here                                  0.13s  
+  ✓ a receipted gift freezes the facts the receipt states                0.14s  
+  ✓ editing a receipted gift to the values it already has is not a refu… 0.09s  
+  ✓ an explicit zakat declaration survives a fund change                 0.10s  
+  ✓ editing requires permission to manage donations                      0.14s  
+
+   PASS  Tests\Feature\OnboardingVerticalPickerTest
+  ✓ the options endpoint offers every vertical with its bundle and term… 0.12s  
+  ✓ the school bundle the picker advertises contains no worship modules  0.07s  
+  ✓ the wizards default vertical is the one the request falls back to    0.10s  
+  ✓ the wizard payload for a school creates a school with the school bu… 0.13s  
+  ✓ the wizard payload for a masjid still enables the whole catalog      0.09s  
+  ✓ the wizard does not retype the vertical configuration                0.07s  
+
+   PASS  Tests\Feature\OrgHierarchyTest
+  ✓ a child knows its parent and a parent lists its children             0.05s  
+  ✓ parent id is not mass assignable                                     0.04s  
+  ✓ an organisation cannot be its own parent                             0.03s  
+  ✓ a cycle is refused                                                   0.04s  
+  ✓ a deeper cycle is refused too                                        0.06s  
+  ✓ deleting a parent orphans its children and never deletes them        0.04s  
+  ✓ the switcher returns home first then its published children          0.04s  
+  ✓ an organisation with no children still returns itself                0.05s  
+
+   PASS  Tests\Feature\OrgTypeTest
+  ✓ an existing tenant defaults to masjid                                0.04s  
+  ✓ each vertical reports itself                                         0.05s  
+  ✓ an unknown org type degrades to masjid rather than granting another… 0.04s  
+  ✓ worship features belong to the masjid bundle only                    0.04s  
+  ✓ org generic features are shared by every vertical                    0.04s  
+  ✓ every configured feature key exists in the seeded feature list       0.03s  
+  ✓ terminology differs per vertical and never returns empty             0.04s  
+  ✓ every vertical has a complete config block                           0.04s  
+  ✓ the scope filters by vertical                                        0.07s  
+
+   PASS  Tests\Feature\PolarPrayerIqamaTest
+  ✓ a prayer that does not occur yields a null iqama                     0.08s  
+  ✓ the prayers that do occur still get a real iqama                     0.07s  
+  ✓ the five keys are still present and in order                         0.05s  
+  ✓ which prayers are fabricated used to depend on the calculation meth… 0.10s  
+  ✓ regenerating the row no longer moves the iqama times                 0.08s  
+  ✓ a temperate masjid writes exactly what it always did                 0.06s  
+  ✓ the push backstop still skips an unresolved prayer                   0.06s  
+
+   PASS  Tests\Feature\PortalHostTest
+  ✓ a mapped hostname tells the page which school it is                  0.06s  
+  ✓ the injected value is always a bare integer                          0.07s  
+  ✓ an unmapped hostname claims to be no one                             0.05s  
+  ✓ the hostname match ignores case                                      0.05s  
+  ✓ the root of a mapped hostname is the portal                          0.05s  
+  ✓ the root of an ordinary hostname still serves the app                0.05s  
+  ✓ malformed env entries are discarded not guessed at                   0.07s  
+
+   PASS  Tests\Feature\PrayerCalculationCorruptRowTest
+  ✓ the admin read answers 200 for a row that used to 500 it             0.07s  
+  ✓ only the unusable column degrades                                    0.05s  
+  ✓ a healthy row is reported verbatim with its identity intact          0.05s  
+  ✓ a masjid with no row at all still reports null                       0.08s  
+  ✓ the admin can now reach the form and repair the row                  0.08s  
+  ✓ the v1 settings document survives a corrupt row                      0.06s  
+  ✓ the v1 settings document still reports a healthy row verbatim        0.05s  
+  ✓ the v1 settings document still reports null when there is no row     0.07s  
+  ✓ the effective settings are what the mobile sync endpoint already re… 0.05s  
+
+   PASS  Tests\Feature\PrayerCalculationSettingsWiringTest
+  ✓ a masjid with no calculation settings row reproduces the historical… 0.06s  
+  ✓ a masjid with an explicit all defaults row reproduces the same hist… 0.05s  
+  ✓ reading the settings does not add a query per day                    0.08s  
+  ✓ every calculation method reproduces the adhan javascript golden vec… 0.18s  
+  ✓ a non default method genuinely moves the times away from the defaul… 0.05s  
+  ✓ unrecognised stored values fall back to the historical default inst… 0.07s  
+  ✓ a single unusable column does not discard the other two              0.04s  
+  ✓ hanafi moves asr later and leaves every other prayer alone           0.05s  
+  ✓ the high latitude rule moves fajr later and isha earlier at reykjav… 0.06s  
+  ✓ changing the method drops and rebuilds the cached rows with the new… 0.10s  
+  ✓ the invalidation is scoped to the masjid whose settings changed      0.14s  
+  ✓ saving the same values again does not churn the cached rows          0.09s  
+  ✓ first ever save of the existing defaults does not churn the cached…  0.07s  
+  ✓ a first save that actually departs from the defaults does invalidat… 0.12s  
+  ✓ the mobile settings cache is still flushed so apps resync            0.11s  
+  ✓ the served settings default to the same triple the generator falls…  0.07s  
+  ✓ a failed rebuild leaves the previous rows intact rather than wiping… 0.07s  
+  ✓ a successful change rewrites the window and prunes only beyond the…  0.24s  
+  ✓ the rebuild reaches back to yesterday which the notification comman… 0.13s  
+  ✓ a corrupt stored value does not break the mobile sync endpoint       0.05s  
+
+   PASS  Tests\Feature\PropertyTenantIsolationTest
+  ✓ property queries are scoped to the bound tenant                      0.09s  
+  ✓ a bound tenant cannot read another organizations property            0.09s  
+  ✓ property create stamps the bound tenant over client input            0.08s  
+  ✓ an unbound context sees every organizations properties               0.07s  
+  ✓ without masjid scope bypasses the property filter                    0.09s  
+  ✓ rent payment queries are scoped to the bound tenant                  0.08s  
+  ✓ a bound tenant cannot read another organizations rent payment        0.10s  
+  ✓ rent payment create stamps the bound tenant over client input        0.07s  
+  ✓ without masjid scope bypasses the rent payment filter                0.06s  
+  ✓ a properties rent history never includes another tenants money       0.06s  
+  ✓ index rejects unauthenticated requests                               0.11s  
+  ✓ index lists only the admins own properties and only their rent       0.15s  
+  ✓ show returns the admins own property                                 0.13s  
+  ✓ show cannot read another masjids property via own route              0.12s  
+  ✓ admin cannot target another masjid in the route                      0.22s  
+  ✓ store ignores a client supplied masjid id                            0.16s  
+  ✓ update cannot touch another masjids property                         0.08s  
+  ✓ destroy cannot archive another masjids property                      0.07s  
+  ✓ destroy archives the admins own property and keeps its rent history  0.09s  
+  ✓ store rent records money against the admins own property             0.08s  
+  ✓ store rent accepts a negative vacancy adjustment                     0.09s  
+  ✓ store rent validates before it writes                                0.09s  
+  ✓ store rent cannot book money against another masjids property        0.08s  
+  ✓ store rent in another masjids route is a 403                         0.07s  
+  ✓ destroy rent removes the admins own payment                          0.09s  
+  ✓ destroy rent cannot delete another masjids payment                   0.07s  
+  ✓ destroy rent cannot delete another masjids payment under its own pr… 0.09s  
+  ✓ a super admin is confined to the masjid the route names              0.14s  
+  ✓ the properties surface is behind the per masjid crm gate             0.09s  
+  ✓ destroy rent refuses a payment that belongs to a different property  0.09s  
+
+   PASS  Tests\Feature\ProvisionOrgTypeTest
+  ✓ provisioning without an org type still creates a masjid with the wo… 0.15s  
+  ✓ provisioning a school records the vertical and seeds no worship mod… 0.10s  
+  ✓ provisioning a community organization seeds the org generic bundle   0.12s  
+  ✓ an unknown org type is rejected in the legacy failure envelope       0.10s  
+  ✓ an explicit feature selection still wins over the vertical default   0.11s  
+  ✓ an explicit empty selection enables nothing even for a masjid        0.13s  
+  ✓ the admin masjid payload carries the vertical and its terminology    0.11s  
+  ✓ an untouched masjid reports masjid terminology in the admin payload  0.08s  
+  ✓ a provisioned organisation has its crm switched on                   0.14s  
+  ✓ provisioning can still deliberately leave the crm off                0.09s  
+  ✓ an admin can be created and invited in the same step                 0.08s  
+  ✓ provisioning without an admin still works and sends nothing          0.11s  
+  ✓ an admin address already in use is refused                           0.09s  
+
+   PASS  Tests\Feature\PublicApiTenantScopingTest
+  ✓ announcements are confined to the masjid in the header               0.10s  
+  ✓ services are confined to the masjid in the header                    0.06s  
+  ✓ pages are confined to the masjid in the header                       0.06s  
+  ✓ a missing masjid header is refused rather than answered with every…  0.06s  
+  ✓ a falsy masjid header is refused rather than treated as absent       0.06s  
+  ✓ every public collection endpoint refuses a tenant less request       0.08s  
+  ✓ a tenant less gallery request is a client error not a server fault   0.06s  
+  ✓ an unknown masjid yields nothing rather than everything              0.04s  
+
+   PASS  Tests\Feature\PublicMasjidDirectoryTest
+  ✓ the directory never publishes a credential or a money identifier     0.04s  
+  ✓ the single organisation endpoint applies the same rule               0.04s  
+  ✓ what the shipped apps decode is still published                      0.07s  
+  ✓ every masjids column is deliberately classified                      0.04s  
+  ✓ nothing credential shaped reaches an anonymous caller                0.04s  
+
+   PASS  Tests\Feature\PublicOfferingReadTest
+  ✓ masjid a cannot fetch masjid bs offering                             0.05s  
+  ✓ two tenants may hold the same slug and each gets only their own      0.08s  
+  ✓ a request with no masjid header is refused rather than answered      0.06s  
+  ✓ a missing a deleted and a switched off offering are all the same 40… 0.07s  
+  ✓ a closed window says closed and never presents as open               0.04s  
+  ✓ an offering whose window has not opened says so distinctly           0.05s  
+  ✓ an open offering inside its window says open                         0.08s  
+  ✓ a full offering reports waitlist not closed                          0.05s  
+  ✓ a closed window beats a free seat and a full seat alike              0.05s  
+  ✓ unlimited capacity reports remaining as null not zero                0.06s  
+  ✓ an offering whose intake form is gone reports closed                 0.06s  
+  ✓ fee plans are integer minor units with an explicit currency          0.09s  
+  ✓ every plans total is the servers own list total never a multiplicat… 0.07s  
+  ✓ deactivated fee plans are never offered                              0.06s  
+  ✓ a plan with an unrecognised money kind is withheld rather than gues… 0.06s  
+  ✓ reading the offering writes nothing at all                           0.07s  
+  ✓ the payload carries no registrant no roster count and no seat count… 0.10s  
+  ✓ the payload carries no internal ids beyond the fee plan id needed t… 0.05s  
+  ✓ operational settings never reach the public payload                  0.05s  
+  ✓ the renderable copy and the intake questions are present             0.06s  
+  ✓ an unrecognised offering kind degrades to event rather than reachin… 0.06s  
+
+   PASS  Tests\Feature\PublicQuoteContractTest
+  ✓ a closed window is not quoted                                        0.11s  
+  ✓ an offering whose intake form was deleted is not quoted              0.07s  
+  ✓ an inactive offering is not quoted either                            0.05s  
+  ✓ a full offering is still quoted because the waitlist accepts it      0.06s  
+  ✓ an open offering is quoted exactly as before                         0.05s  
+  ✓ the page and the quote never disagree                                0.16s  
+  ✓ an organisation that cannot collect never gets as far as a held sea… 0.08s  
+  ✓ a plan whose billing shape cannot be charged is the same 404         0.12s  
+  ✓ an installment plan of one payment is still purchasable              0.08s  
+  ✓ a plan of an unrecognised kind is the same 404 as a plan that does…  0.11s  
+  ✓ the internal money invariant never reaches an anonymous caller       0.07s  
+  ✓ a deactivated plan and a foreign plan are the same 404               0.08s  
+
+   PASS  Tests\Feature\PublicRegistrationCrmGateTest
+  ✓ the public surface stops selling for an organisation whose crm is o… 0.13s  
+  ✓ turning the crm on is what makes the offering sellable               0.13s  
+  ✓ the refusal is the same 404 a missing offering gets                  0.08s  
+  ✓ a page section stops rendering the offering too                      0.10s  
+  ✓ the roster is the member directory which is why the admin gate stay… 0.22s  
+  ✓ the rest of the public site is untouched by the crm flag             0.31s  
+  ✓ a headerless request is still a 400 and not a 404                    0.27s  
+
+   PASS  Tests\Feature\PublicTenantLifecycleTest
+  ✓ a soft deleted organisation can no longer be read quoted or registe… 0.26s  
+  ✓ the refusal is the same 404 a missing offering gets                  0.24s  
+  ✓ a priced registration cannot open a checkout session for a deleted…  0.22s  
+  ✓ the money layer is the last guard not the first                      0.19s  
+  ✓ a deleted organisations form stops accepting public submissions      0.17s  
+  ✓ a deleted organisation stops publishing its public content           0.21s  
+  ✓ being unlisted is not being deleted                                  0.25s  
+  ✓ every public v1 route refuses a deleted organisation                 0.39s  
+
+   PASS  Tests\Feature\QueueTenantContextTest
+  ✓ the tenant context is a scoped binding not a singleton               0.05s  
+  ✓ a queued job does not inherit the previous jobs tenant binding       0.06s  
+  ✓ the real worker loop starts every job with an unbound tenant         0.07s  
+  ✓ a sync job neither loses nor clears the dispatchers tenant           0.04s  
+
+   PASS  Tests\Feature\RegistrationAdminTest
+  ✓ the roster rejects unauthenticated requests                          0.10s  
+  ✓ another organizations offering has no reachable roster               0.13s  
+  ✓ an admin cannot target another masjid in the route                   0.10s  
+  ✓ another organizations registration is a 404 under our own offering   0.15s  
+  ✓ the roster lists this offerings registrations and filters by status  0.13s  
+  ✓ the roster can be searched by the payer                              0.09s  
+  ✓ the registrant view lists people rather than signups                 0.14s  
+  ✓ showing a registration returns its adjustments and payments          0.12s  
+  ✓ granting aid reduces the snapshot and records who granted it         0.14s  
+  ✓ a full waiver confirms the seat with no stripe leg                   0.12s  
+  ✓ aid is refused once a stripe leg exists                              0.11s  
+  ✓ aid is refused on a settled registration                             0.13s  
+  ✓ an adjustment can never be a surcharge                               0.12s  
+  ✓ aid beyond the total floors at zero                                  0.12s  
+  ✓ promotion moves a waitlisted registration into a held seat           0.10s  
+  ✓ promoting a free registration confirms it outright                   0.11s  
+  ✓ promotion can never oversell a full offering                         0.10s  
+  ✓ only a waitlisted registration can be promoted                       0.13s  
+  ✓ cancelling a confirmed registration releases its seat                0.11s  
+  ✓ cancelling a pending registration releases its seat and the money l… 0.11s  
+  ✓ cancelling a waitlisted registration returns no seat                 0.14s  
+  ✓ cancelling is idempotent                                             0.11s  
+  ✓ cancelling also cancels the stripe subscription when one exists      0.13s  
+  ✓ cancelling without a subscription never calls stripe                 0.15s  
+  ✓ a stripe failure does not block the local cancel                     0.12s  
+
+   PASS  Tests\Feature\RegistrationBillingModelTest
+  ✓ the constant sets match the ratified design                          0.08s  
+  ✓ the two cancel spellings stay distinct on purpose                    0.05s  
+  ✓ an unrecognized offering kind degrades to event                      0.08s  
+  ✓ a fee plan is free only by explicit kind                             0.05s  
+  ✓ a new registration defaults to pending none and mints a uuid         0.06s  
+  ✓ money columns round trip as integers                                 0.06s  
+  ✓ registration count cannot be mass assigned                           0.05s  
+  ✓ the same person cannot be a registrant twice on one registration     0.11s  
+  ✓ every factory produces a persistable row                             0.06s  
+  ✓ the free state is the synchronous no stripe path                     0.05s  
+  ✓ the paid state holds both machines in their terminal good states     0.04s  
+  ✓ capacity states bound the counter by the capacity                    0.05s  
+  ✓ fee plan states carry their billing shape                            0.06s  
+  ✓ a settled payment nets amount minus stripe fee                       0.09s  
+
+   PASS  Tests\Feature\RegistrationCheckoutTest
+  ✓ quote prices from the plan server side and writes nothing            0.08s  
+  ✓ quote reports an existing registrations adjusted snapshot            0.08s  
+  ✓ quote never applies a client supplied code                           0.06s  
+  ✓ quote refuses another tenants offering                               0.05s  
+  ✓ register holds a seat and returns a hosted checkout url              0.10s  
+  ✓ register on a free plan confirms with no stripe leg at all           0.06s  
+  ✓ register validates intake answers against the stored schema          0.06s  
+  ✓ register refuses another tenants offering                            0.05s  
+  ✓ the session is a direct charge on the orgs connected account         0.07s  
+  ✓ no application fee is sent when the platform takes nothing           0.08s  
+  ✓ a positive application fee is sent when the platform takes a cut     0.08s  
+  ✓ the first session uses the intake key and a remint rotates it        0.07s  
+  ✓ the session expiry is aligned to the seat hold                       0.06s  
+  ✓ checkout refuses a registration with nothing left to pay             0.07s  
+  ✓ raising the price for next season does not break this seasons check… 0.10s  
+  ✓ a deactivated plan is still refused to a n e w registration          0.06s  
+  ✓ checkout refuses when the intake form has been deleted under the se… 0.07s  
+  ✓ checkout is still allowed while the offering is merely full          0.07s  
+  ✓ a lapsed hold is refused in words a family can read                  0.05s  
+  ✓ an installment plan opens a subscription session priced per install… 0.06s  
+  ✓ a recurring plan opens an open ended subscription at the interval p… 0.06s  
+  ✓ a subscription sends no application fee percent when the platform t… 0.07s  
+  ✓ a subscription sends a positive application fee percent              0.06s  
+  ✓ aid reduces every installment and rounding favours the payer         0.07s  
+  ✓ a subscription plan with no billing interval refuses loudly          0.08s  
+  ✓ a created subscription session alone confirms and pays nothing       0.07s  
+  ✓ checkout refuses another tenants registration                        0.06s  
+  ✓ checkout refuses an org that has not finished connect onboarding     0.06s  
+  ✓ a created session alone never confirms or pays anything              0.07s  
+
+   WARN  Tests\Feature\RegistrationConcurrencyTest
+  - n parallel last seat attempts yield exactly one seat and never exce… 0.11s  
+  ✓ the capacity re check and the increment happen inside one locked tr… 0.06s  
+  ✓ the seat release locks the registration and the offering and decrem… 0.05s  
+
+   PASS  Tests\Feature\RegistrationInstallmentTest
+  ✓ session then invoice confirms the seat and books one installment     0.09s  
+  ✓ invoice before session converges to the same single confirmed regis… 0.10s  
+  ✓ replaying any event id changes nothing                               0.09s  
+  ✓ a redelivered invoice with a new event id still books only one row   0.09s  
+  ✓ n successful invoices produce exactly n payment rows and then paid   0.10s  
+  ✓ the ledger records fee and net only from an expanded balance transa… 0.08s  
+  ✓ an open ended recurring plan stays active and never reaches paid     0.13s  
+  ✓ a failed invoice moves the money to past due and never the seat      0.09s  
+  ✓ a successful retry lifts past due back to active on the same row     0.10s  
+  ✓ a stale failure never downgrades a settled row                       0.09s  
+  ✓ the reaper refuses to touch a past due registration                  0.10s  
+  ✓ a never paid hold is not made immortal by a failed invoice           0.10s  
+  ✓ the installment schedule is attached once and bounds the plan to n…  0.09s  
+  ✓ an invoice arriving first attaches the schedule without the session  0.08s  
+  ✓ a completed schedule closes the commitment as paid                   0.08s  
+  ✓ a deleted subscription ends a finished plan as paid and a live one…  0.13s  
+  ✓ cancelling stops future billing and leaves settled payments intact   0.12s  
+  ✓ a late invoice on a cancelled seat is recorded but resurrects nothi… 0.09s  
+  ✓ another orgs connected account can never advance this registration   0.07s  
+  ✓ a registration invoice never books a donation                        0.08s  
+  ✓ an invoice carrying the uuid in the newer parent shape still routes  0.07s  
+  ✓ an unsigned subscription payload changes nothing                     0.08s  
+
+   PASS  Tests\Feature\RegistrationMoneyContractTest
+  ✓ register checkout and quote publish the same amount due              0.18s  
+  ✓ a free registration owes nothing at every door                       0.07s  
+  ✓ a waitlisted registration is told it owes nothing                    0.07s  
+  ✓ the checkout door names the amount stripe is asked for               0.11s  
+  ✓ no door offers a payment link beside a zero                          0.19s  
+  ✓ a subscription in arrears owes every interval it has missed          0.13s  
+  ✓ recovering one invoice leaves the rest of the arrears standing       0.12s  
+  ✓ past due owes an interval even with no ledger row to key             0.06s  
+  ✓ a failed instalment is counted once and not twice                    0.11s  
+
+   PASS  Tests\Feature\RegistrationMoneySurfaceTest
+  ✓ a payment is recorded and the seat confirmed when the roster group…  0.07s  
+  ✓ stripe retries of that event ack and book exactly one payment        0.08s  
+  ✓ the free path still registers when the roster group has been delete… 0.08s  
+  ✓ a cross tenant roster group is never written into                    0.11s  
+  ✓ a live roster group still materialises exactly once                  0.07s  
+  ✓ deleting a group is refused while it is a live offerings roster      0.07s  
+  ✓ deleting a group no offering uses is still allowed                   0.11s  
+  ✓ detaching the offering first lets the group be deleted               0.13s  
+  ✓ a soft deleted offering does not hold its roster group hostage       0.10s  
+  ✓ another organisations offering never blocks this ones group delete   0.10s  
+  ✓ the quote prices an in flight registration whose plan has been deac… 0.10s  
+  ✓ the quote accepts a registration uuid with no fee plan id            0.11s  
+  ✓ the quote reports the registrations own plan not the one named       0.06s  
+  ✓ the quote answers an in flight registration after the window closes  0.06s  
+  ✓ the quote of a settled registration asks for nothing more            0.06s  
+  ✓ the quote of an awaiting registration still expects payment          0.09s  
+  ✓ the quote promises a payment exactly when the checkout would open o… 0.25s  
+  ✓ a live hold under a deleted intake form is not offered a payment     0.12s  
+  ✓ a live hold under an org that can no longer collect is not offered…  0.10s  
+  ✓ a running subscription still expects payment though checkout refuse… 0.16s  
+  ✓ a part paid installment plan owes the balance and not the commitmen… 0.16s  
+  ✓ a recurring subscription owes one interval until that interval sett… 0.14s  
+  ✓ a past due subscription owes the interval it failed to collect       0.13s  
+  ✓ an aided recurring subscription owes the discounted interval         0.07s  
+  ✓ a recurring list price quotes one interval                           0.06s  
+  ✓ an aided installment plan owes exactly the sum of its remaining cha… 0.15s  
+  ✓ the anonymous quote publishes no payment history                     0.10s  
+  ✓ the quote is reachable with no credential but the uuid               0.05s  
+  ✓ nothing is owed on a registration that owes nothing                  0.07s  
+  ✓ the aid floored installment is never asked for five cents            0.07s  
+  ✓ a stale payment link is told about the registration not the fee pla… 0.08s  
+  ✓ a deactivated plan is still refused to new intake                    0.08s  
+  ✓ the quote still requires a plan when no registration is named        0.05s  
+  ✓ the quote ignores a foreign registration uuid                        0.08s  
+  ✓ checkout still works after the registration deadline passes          0.06s  
+  ✓ checkout still works when opens at is moved forward                  0.07s  
+  ✓ checkout still refuses a deactivated offering                        0.10s  
+  ✓ checkout still refuses when the intake form is gone                  0.07s  
+  ✓ checkout still refuses an expired hold                               0.06s  
+  ✓ new intake is still refused after the deadline                       0.06s  
+  ✓ aid leaving under one minor unit per installment takes the free pat… 0.07s  
+  ✓ aid leaving a chargeable installment still expects payment           0.09s  
+  ✓ a one time registration with a penny left still expects payment      0.06s  
+  ✓ promoting a waitlisted registration under one unit per installment…  0.05s  
+  ✓ a paid plan that charges nothing is not purchasable                  0.09s  
+  ✓ a free plan with a stale amount is still sellable and publishes no…  0.06s  
+  ✓ ordinary plans stay purchasable                                      0.08s  
+  ✓ a window that is merely shut still publishes the price               0.06s  
+  ✓ a plan level refusal never publishes a price                         0.04s  
+  ✓ not asked and cannot collect are different verdicts                  0.05s  
+  ✓ the admin verdict matches the public one when the org cannot collec… 0.09s  
+
+   PASS  Tests\Feature\RegistrationReaperTest
+  ✓ the reaper releases exactly one seat per expired registration        0.17s  
+  ✓ a second run is a no op                                              0.08s  
+  ✓ a registration inside the grace margin is not reaped                 0.07s  
+  ✓ the grace margin comes from config and the option overrides it       0.11s  
+  ✓ the documented default grace is the one the command uses             0.05s  
+  ✓ a paid and confirmed registration is never reaped                    0.08s  
+  ✓ a paid seat whose window was left behind is still never reaped       0.07s  
+  ✓ waitlisted free and past due registrations are never reaped          0.10s  
+  ✓ webhook first then the reaper decrements exactly once                0.10s  
+  ✓ the reaper first then the webhook decrements exactly once            0.08s  
+  ✓ a payment landing after the reaper records money without resurrecti… 0.07s  
+  ✓ a dry run reports the counts and mutates nothing                     0.09s  
+  ✓ a masjid narrowed sweep never touches another tenants registration   0.09s  
+  ✓ an unnarrowed sweep crosses organizations and credits each its own…  0.12s  
+
+   PASS  Tests\Feature\RegistrationServiceTest
+  ✓ a free registration confirms synchronously with roster form respons… 0.10s  
+  ✓ a free self registration defaults the payer as sole registrant with… 0.07s  
+  ✓ a free registration without a group confirms and writes no membersh… 0.06s  
+  ✓ a paid registration reserves at pending with the checkout window op… 0.08s  
+  ✓ an installment plan snapshots the full commitment                    0.05s  
+  ✓ the last seat goes to exactly one registration and the next is wait… 0.07s  
+  ✓ a free registration on a full offering waitlists and writes no rost… 0.05s  
+  ✓ a closed or inactive offering refuses intake                         0.04s  
+  ✓ a deactivated fee plan is not purchasable                            0.05s  
+  ✓ adjustments reduce the snapshot floor at zero and a full waiver bra… 0.06s  
+  ✓ an adjustment can never be negative                                  0.05s  
+  ✓ an unknown adjustment kind is refused                                0.04s  
+  ✓ adjustments are strictly pre checkout                                0.04s  
+  ✓ the snapshot is immune to later fee plan edits                       0.05s  
+  ✓ an intake validation failure writes nothing at all                   0.05s  
+  ✓ a mid transaction failure rolls the whole intake back                0.09s  
+  ✓ an unresolvable or foreign roster group registers without a roster   0.07s  
+  ✓ a registration cannot reference another tenants fee plan             0.04s  
+  ✓ a registration cannot reference another tenants contacts             0.05s  
+  ✓ a bound tenant must be the offerings tenant                          0.05s  
+  ✓ every row the service writes is stamped with the offerings tenant    0.06s  
+
+   PASS  Tests\Feature\RegistrationTenantIsolationTest
+  ✓ registration queries are scoped to the bound tenant                  0.09s  
+  ✓ a bound tenant cannot read another organizations registration        0.05s  
+  ✓ registration create stamps the bound tenant over client input        0.06s  
+  ✓ an unbound context sees every organizations registrations            0.07s  
+  ✓ uuid lookup resolves within the named masjid                         0.06s  
+  ✓ uuid lookup misses across tenants even while unbound                 0.06s  
+  ✓ a bound tenant cannot resolve a foreign uuid at all                  0.04s  
+  ✓ registrant queries are scoped to the bound tenant                    0.04s  
+  ✓ a bound tenant cannot read another organizations registrant          0.04s  
+  ✓ registrant create stamps the bound tenant over client input          0.04s  
+  ✓ adjustment queries are scoped to the bound tenant                    0.04s  
+  ✓ a bound tenant cannot read another organizations adjustment          0.06s  
+  ✓ adjustment create stamps the bound tenant over client input          0.05s  
+  ✓ payment queries are scoped to the bound tenant                       0.05s  
+  ✓ a bound tenant cannot read another organizations payment             0.05s  
+  ✓ payment create stamps the bound tenant over client input             0.04s  
+  ✓ without masjid scope bypasses the filter for reporting               0.05s  
+
+   PASS  Tests\Feature\RegistrationWebhookTest
+  ✓ checkout completed confirms the seat and books one payment           0.10s  
+  ✓ payment intent succeeded alone confirms and records the balance tra… 0.06s  
+  ✓ an unpaid completion records the session but advances nothing        0.06s  
+  ✓ completed then succeeded converge to one confirmation and one payme… 0.06s  
+  ✓ succeeded then completed converge to one confirmation and one payme… 0.06s  
+  ✓ replaying the same event id changes nothing                          0.08s  
+  ✓ an unsigned completed event is rejected and confirms nothing         0.06s  
+  ✓ an event signed with the connect secret is accepted                  0.07s  
+  ✓ the webhook fails closed when no secret is configured                0.07s  
+  ✓ another tenants connected account cannot advance a registration      0.06s  
+  ✓ an event from an unknown connected account is ignored                0.08s  
+  ✓ expiry releases exactly one seat and a second delivery is a no op    0.06s  
+  ✓ a superseded session expiry does not release a live seat             0.07s  
+  ✓ expiry never releases a seat that has been paid for                  0.09s  
+  ✓ a donation event still books a donation and no registration payment  0.07s  
+  ✓ a registration event never creates a donation                        0.10s  
+  ✓ a payment for an offboarded organisation is recorded rather than dr… 0.13s  
+  ✓ the reaper can no longer cancel a seat that was paid for after offb… 0.10s  
+  ✓ a dropped event says what it dropped                                 0.10s  
+  ✓ a live organisation is preferred over a trashed one on the same acc… 0.09s  
+
+   PASS  Tests\Feature\ReportCardPdfTest
+  ✓ a published card renders as a pdf                                    0.26s  
+  ✓ an arabic name renders rather than throwing                          0.30s  
+  ✓ an arabic teacher comment renders                                    0.28s  
+  ✓ the filename leads with the child                                    0.06s  
+  ✓ a filename is never empty                                            0.08s  
+  ✓ a card with no register prints no attendance claim                   0.05s  
+  ✓ a real register prints and says late is included                     0.05s  
+  ✓ the key is printed on the document                                   0.05s  
+  ✓ an unassessed criterion prints as not assessed and never as a zero   0.05s  
+  ✓ per criterion notes are printed                                      0.05s  
+  ✓ the teacher comment keeps its paragraphs                             0.07s  
+  ✓ a comment cannot inject markup                                       0.03s  
+
+   PASS  Tests\Feature\ReportCardTest
+  ✓ a card is built from the schools own criteria with nothing marked    0.10s  
+  ✓ a pre k child is not marked on grammar or mathematics                0.16s  
+  ✓ opening a card twice never duplicates or resets it                   0.14s  
+  ✓ null is a real mark meaning not assessed                             0.19s  
+  ✓ a mark that is not a performance level is refused                    0.13s  
+  ✓ a save cannot reach another childs card                              0.21s  
+  ✓ learning behaviours are reported beside the subjects never inside t… 0.12s  
+  ✓ a teacher can clear the comment they wrote                           0.19s  
+  ✓ a save that does not mention the comment leaves it alone             0.15s  
+  ✓ publishing freezes the attendance figures                            0.19s  
+  ✓ a published card refuses to be edited until it is taken back         0.18s  
+  ✓ taking a card back clears the frozen figures                         0.14s  
+  ✓ the class list shows progress without creating anything              0.18s  
+  ✓ a progress report and a report card are separate documents           0.15s  
+  ✓ the key travels with the card                                        0.14s  
+  ✓ a bound tenant cannot read another organizations report card         0.13s  
+
+   PASS  Tests\Feature\RetentionScheduleTest
+  ✓ the group retention sweep is actually scheduled                      0.12s  
+  ✓ the expired checkout reaper is actually scheduled                    0.06s  
+  ✓ both sweeps refuse to stack up on a slow run                         0.07s  
+  ✓ the tasks that were already scheduled still are                      0.10s  
+  ✓ a second sweep in the same window deletes nothing and still succeed… 0.07s  
+  ✓ a sweep with nothing to do is a success not a failure                0.06s  
+  ✓ a narrowed sweep run twice still never reaches the other organizati… 0.08s  
+  ✓ the sweep logs its counts because cron throws stdout away            0.10s  
+  ✓ a dry run says so in the log rather than looking like a real sweep   0.07s  
+  ✓ the reaper logs its counts too                                       0.05s  
+
+   PASS  Tests\Feature\RolePermissionBridgeTest
+  ✓ seeder creates the expected roles and permissions                    0.09s  
+  ✓ super admin has all permissions and member has none                  0.10s  
+  ✓ masjid admin has the full crm permission set                         0.07s  
+  ✓ saving a user bridges its type to the matching role                  0.09s  
+  ✓ changing a users type resyncs its role                               0.08s  
+  ✓ bridged masjid admin can reach a permission gated crm endpoint       0.13s  
+  ✓ admin without the permission is forbidden on a crm endpoint          0.09s  
+
+   PASS  Tests\Feature\RosterAddResponseTest
+  ✓ confirming a claim through the add verb names the same named rival   0.14s  
+  ✓ an uncontested add says nothing extra                                0.13s  
+  ✓ confirming a lone claim through the add verb carries no rival sente… 0.11s  
+  ✓ neither add response serves a contacts credential columns            0.12s  
+  ✓ the add response still carries what the screen renders               0.13s  
+
+   PASS  Tests\Feature\RosterClaimIdentityTest
+  ✓ the roster payload names what separates two claims over one child    0.19s  
+  ✓ the one click that confirmed a stranger now leaves both claims stan… 0.26s  
+  ✓ a contested claim is confirmed only when it is named as an individu… 0.20s  
+  ✓ confirming one id at a time does not walk around the refusal         0.29s  
+  ✓ two guardians of one child under different names are still one clic… 0.17s  
+  ✓ a claim that matches a confirmed guardian by name is contested too   0.26s  
+  ✓ a claim re pointed at another child after the draw is skipped and r… 0.18s  
+  ✓ evidence degraded by a merge is neither hidden nor swept over        0.20s  
+  ✓ a claim with no signup on record says so rather than showing nothin… 0.14s  
+  ✓ naming a row without saying what it showed is refused                0.13s  
+  ✓ a fingerprint cannot be replayed from one row onto another           0.19s  
+  ✓ a registration arriving while the dialog is open is still left alon… 0.14s  
+  ✓ two hundred signups are still one request and one press              0.55s  
+  ✓ a stale screen re submitting a settled list is still an honest no o… 0.15s  
+  ✓ confirming still reaches only this group and this tenant             0.15s  
+  ✓ typing the entry in by hand confirms it and says it has a twin       0.19s  
+  ✓ an uncontested entry typed in by hand is not warned about            0.17s  
+  ✓ the roster screen still draws the identity this endpoint serves      0.09s  
+
+   PASS  Tests\Feature\RosterConfirmationIntegrityTest
+  ✓ the bulk click as the spa actually sent it confirms nothing off the… 0.27s  
+  ✓ the rows the operator was shown are confirmed by naming them         0.14s  
+  ✓ an empty confirm body is refused rather than meaning everything      0.12s  
+  ✓ naming rows that are no longer pending is reported and not refused   0.17s  
+  ✓ confirming still reaches only this group and this tenant             0.13s  
+  ✓ a merge does not carry a confirmation onto a stranger authored row   0.16s  
+  ✓ the same holds when the operator merges the other way                0.15s  
+  ✓ a merge does not carry a teachers confirmed leader row either        0.11s  
+  ✓ a merge never destroys the roster edge it declines to vouch for      0.14s  
+  ✓ removing an enrolment says which confirmed guardian edges go with i… 0.12s  
+  ✓ removing a row with no guardian edges reports an honest zero         0.14s  
+  ✓ consent cannot be recorded against a claim nobody has stood behind   0.14s  
+  ✓ withdrawing consent is never refused                                 0.11s  
+  ✓ a null provenance is pending in sql exactly as it is in php          0.13s  
+  ✓ a freshly created membership reads its own provenance                0.10s  
+
+   PASS  Tests\Feature\RosterEditKeepsAcademicRecordsTest
+  ✓ a child with school records cannot be removed from the roster        0.14s  
+  ✓ a child with no records can still be removed                         0.14s  
+
+   PASS  Tests\Feature\RosterMergeAbsentIdentityTest
+  ✓ a merge between two address less adults does not carry a confirmed…  0.18s  
+  ✓ the real parent is still reachable in one click after the merge re…  0.19s  
+  ✓ two adults on one real address still keep their confirmation         0.14s  
+  ✓ a teacher with no address on file is not locked out of her own clas… 0.10s  
+
+   PASS  Tests\Feature\RosterMergeIdentityTest
+  ✓ a merge that changes who a pending claim names retires the id the o… 0.18s  
+  ✓ a merge between two records on the same address keeps the confirmat… 0.15s  
+  ✓ re opening an edge withdraws the consent recorded on it              0.15s  
+  ✓ unconfirming cannot leave behind a row the consent endpoint refuses… 0.14s  
+  ✓ a merge that destroys a confirmed guardian edge says so and says wh… 0.23s  
+  ✓ the other direction costs nothing and says nothing alarming          0.12s  
+  ✓ a teachers leader row survives a merge onto a record carrying her o… 0.12s  
+  ✓ a participant row that lands on a different address is re opened in… 0.11s  
+
+   PASS  Tests\Feature\SchoolRecordsExportTest
+  ✓ the contacts file holds the school roster and not the congregation   0.10s  
+  ✓ a guardian named against a child is included                         0.08s  
+  ✓ the export carries no credentials and no sms consent                 0.10s  
+  ✓ a teacher cannot export the school                                   0.12s  
+  ✓ an anonymous caller cannot export the school                         0.08s  
+  ✓ every file opens with a utf8 bom                                     0.12s  
+  ✓ a note that looks like a formula is neutralised                      0.14s  
+  ✓ a negative number is not turned into text                            0.09s  
+  ✓ a query carrying an order by is refused rather than silently short   0.07s  
+  ✓ the manifest names every dataset and says what is missing            0.13s  
+  ✓ an unknown dataset is refused                                        0.10s  
+
+   PASS  Tests\Feature\SchoolRecordsTenantIsolationTest
+  ✓ the scope hides another schools lesson plans                         0.06s  
+  ✓ the scope hides another schools class assignments                    0.06s  
+  ✓ the scope hides another schools assignment scores                    0.08s  
+  ✓ the scope hides another schools group resources                      0.06s  
+  ✓ the scope hides another schools curriculum weeks                     0.06s  
+  ✓ create stamps the bound tenant over a client supplied masjid id      0.06s  
+  ✓ scores of a withdrawn assignment are excluded when read through the… 0.06s  
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+=== Phase 1 backfill: section content -> dedicated models ===
+No about_us / mission_vision / donation sections found. Nothing to backfill.
+
+   PASS  Tests\Feature\SchoolSectionTypesTest
+  ✓ the three school types are registered in the enum                    0.80s  
+  ✓ school types are author supplied not external data                   0.59s  
+  ✓ the section type validation rule accepts the new types and still re… 0.55s  
+  ✓ the new types are offered by the admin section types payload         0.66s  
+  ✓ staff directory default content has the documented shape             0.68s  
+  ✓ programs default content has the documented shape                    0.69s  
+  ✓ admissions tuition default content has the documented shape          0.92s  
+  ✓ a staff directory survives the round trip with every member field    0.78s  
+  ✓ a programs section survives the round trip including the nested hig… 0.70s  
+  ✓ an admissions tuition section survives the round trip with all four… 0.67s  
+  ✓ the admissions apply button resolves an internal page id to a url    0.64s  
+  ✓ the content binder leaves school sections alone                      0.79s  
+  ✓ per item images are wired into both upload maps at one array level   0.83s  
+  ✓ every pre existing section type still exists with the same value     0.67s  
+  ✓ pre existing default content is unchanged                            0.73s  
+  ✓ an existing section type still serializes exactly as before          0.80s  
+  ✓ pre existing external data flags are unchanged                       0.83s  
+
+   PASS  Tests\Feature\SecondAdministratorLoginTest
+  ✓ an administrator who owns nothing can still sign in                  0.10s  
+  ✓ and is still recognised on every page load                           0.12s  
+  ✓ the owner admins path is unchanged                                   0.09s  
+  ✓ an administrator of nothing at all is still refused                  0.09s  
+
+   PASS  Tests\Feature\SecondAdministratorTest
+  ✓ a second administrator can run the office without taking ownership   0.11s  
+  ✓ the new administrator is emailed a link and never given a password   0.08s  
+  ✓ removing a second administrator ends their access but not the owner… 0.11s  
+  ✓ the owner cannot be removed through this door                        0.07s  
+  ✓ a teacher cannot add an administrator                                0.07s  
+  ✓ an administrator of one school cannot be added to another            0.07s  
+  ✓ the list shows who runs the office and marks the owner               0.10s  
+
+   PASS  Tests\Feature\SectionTypeRendererTruthTest
+  ✓ the offering type is currently the only one without a renderer       0.07s  
+  ✓ every type without a renderer says so in its own description         0.06s  
+  ✓ the offering description no longer promises a rendering              0.10s  
+  ✓ the admin section types payload carries the flag and the sentence    0.08s  
+  ✓ the spa prints the servers sentence rather than keeping a copy       0.06s  
+
+   PASS  Tests\Feature\ServiceAudiencePushRoutingTest
+  ✓ a service audience reaches only the phones of members who asked      0.08s  
+  ✓ everyone still means every device including guests                   0.04s  
+  ✓ withdrawing an interest is honoured at send time                     0.04s  
+  ✓ a signed out device stops receiving interest routed push             0.05s  
+
+   PASS  Tests\Feature\SignageBoardTest
+  ✓ a masjid with live announcements and no broadcasts does not show an… 0.06s  
+  ✓ an expired announcement stays off the board                          0.06s  
+  ✓ an announcement with no image still reaches the board                0.04s  
+  ✓ a broadcast sent to signage still wins over the announcements        0.04s  
+  ✓ a broadcast sent only to push never reaches the board                0.06s  
+  ✓ the board never shows another masjids announcements                  0.06s  
+
+   PASS  Tests\Feature\Sms\MasjidSmsSenderAdminTest
+  ✓ the endpoint rejects unauthenticated requests                        0.09s  
+  ✓ a masjid admin cannot set their own organizations sender             0.06s  
+  ✓ a masjid admin naming another masjid is refused by the tenant layer  0.07s  
+  ✓ update creates the sender for the masjid named by the route          0.06s  
+  ✓ a client supplied masjid id in the body is inert                     0.08s  
+  ✓ each masjid keeps its own sender row                                 0.07s  
+  ✓ a second update edits the same row rather than adding one            0.08s  
+  ✓ approving stamps the date and leaving approved clears it             0.06s  
+  ✓ re saving an approved sender keeps the original approval date        0.07s  
+  ✓ an approved sender with nothing to send from is refused              0.08s  
+  ✓ a number that cannot be normalised is refused                        0.05s  
+  ✓ a human typed number is stored normalised                            0.06s  
+  ✓ an unknown registration status is refused                            0.05s  
+  ✓ show states the refusal for an organization with no sender           0.06s  
+  ✓ show reads only the routed masjids sender                            0.06s  
+  ✓ a pending registration cannot send                                   0.05s  
+
+   PASS  Tests\Feature\Sms\SmsChannelTest
+  ✓ it texts only the contacts who actually consented                    0.14s  
+  ✓ a consent flag without provenance is not consent                     0.08s  
+  ✓ nobody consenting is a skip and not a failure                        0.05s  
+  ✓ a number that cannot be normalised is never guessed at               0.07s  
+  ✓ a suppressed number is never texted even with a full consent record  0.09s  
+  ✓ a released suppression stops blocking                                0.11s  
+  ✓ a tenant with no registered sender cannot send                       0.08s  
+  ✓ a pending registration cannot send either                            0.08s  
+  ✓ an approved sender with no number cannot send                        0.08s  
+  ✓ one tenant can never borrow another tenants sender                   0.11s  
+  ✓ an unconfigured provider fails clearly instead of reporting sent     0.08s  
+  ✓ every message carries the sender identity and the opt out line       0.07s  
+  ✓ a long message loses the admins words and never the opt out line     0.08s  
+  ✓ a messaging service is preferred over a bare number                  0.08s  
+  ✓ a failing sms channel never rolls back a successful one              0.11s  
+  ✓ re dispatching never texts anybody twice                             0.10s  
+  ✓ selecting sms without the crm is refused up front                    0.06s  
+  ✓ the composer accepts sms as an ordinary channel                      0.09s  
+
+   PASS  Tests\Feature\Sms\SmsConsentTest
+  ✓ recording consent stores when how and on what evidence               0.08s  
+  ✓ consent cannot be recorded without saying how it was obtained        0.07s  
+  ✓ an admin cannot claim the subscriber texted start                    0.10s  
+  ✓ consent cannot be recorded for a contact with no usable number       0.06s  
+  ✓ another tenants contact is a 404 not a 403                           0.09s  
+  ✓ withdrawing consent writes the durable suppression list              0.10s  
+  ✓ the suppression outlives the contact being force deleted             0.09s  
+  ✓ a re imported contact with the same number still cannot be consente… 0.08s  
+  ✓ only the subscriber can undo their own opt out                       0.07s  
+  ✓ merging carries the opt out onto the survivor when the number match… 0.09s  
+  ✓ merging does not transplant consent onto a different number          0.07s  
+  ✓ merging moves consent with its original provenance when the number…  0.07s  
+  ✓ a merge can never produce a messageable record for a suppressed num… 0.10s  
+
+   PASS  Tests\Feature\Sms\SmsProviderTest
+  ✓ an unconfigured deployment gets the refusing adapter                 0.04s  
+  ✓ the refusing adapter throws rather than reporting a phantom send     0.03s  
+  ✓ a twilio driver without credentials degrades to the refusing adapte… 0.03s  
+  ✓ credentials alone are enough to select twilio                        0.03s  
+  ✓ the pinned none driver beats present credentials                     0.05s  
+  ✓ it posts the message to the accounts messages endpoint               0.05s  
+  ✓ it prefers the messaging service when the tenant has one             0.03s  
+  ✓ a provider rejection throws without quoting the number               0.03s  
+  ✓ an unconfigured twilio adapter refuses before making a request       0.04s  
+  ✓ it normalises the shapes a human actually types                      0.05s  
+  ✓ it refuses rather than guessing when the country is ambiguous        0.06s  
+  ✓ differently punctuated numbers collapse to the same suppression key  0.03s  
+
+   PASS  Tests\Feature\Sms\SmsTenantIsolationTest
+  ✓ the global scope hides another tenants suppressions                  0.06s  
+  ✓ a bound tenant can neither find nor clear another organisations sup… 0.09s  
+  ✓ an opt out from one organisation does not silence another            0.09s  
+  ✓ the creating hook stamps the bound tenant over client input          0.09s  
+  ✓ the global scope hides another tenants sender identity               0.06s  
+  ✓ the documented bypass still crosses tenants for system code          0.04s  
+
+   PASS  Tests\Feature\Sms\SmsWebhookTest
+  ✓ it rejects everything when no signing secret is configured           0.04s  
+  ✓ it rejects an unsigned request                                       0.04s  
+  ✓ it rejects a tampered payload                                        0.06s  
+  ✓ it rejects a signature made with the wrong secret                    0.04s  
+  ✓ a stop keyword suppresses the number and opts the contact out        0.04s  
+  ✓ every carrier stop keyword is honoured                               0.05s  
+  ✓ the keyword is matched on the whole message not as a substring       0.04s  
+  ✓ a repeated stop updates the one row rather than duplicating it       0.07s  
+  ✓ a stop is recorded even when no contact carries that number          0.05s  
+  ✓ a start keyword releases the suppression and records fresh consent   0.04s  
+  ✓ help changes no state                                                0.04s  
+  ✓ an ordinary inbound message is never treated as consent              0.03s  
+  ✓ a message to a number we no longer own is acked and ignored          0.04s  
+  ✓ it answers an empty twiml document and composes no reply             0.07s  
+  ✓ the signature is verified against the requests own url when no over… 0.05s  
+
+   PASS  Tests\Feature\Splash\AdminSplashAnnouncementsControllerTest
+  ✓ index rejects unauthenticated requests                               0.06s  
+  ✓ index rejects non admin users                                        0.04s  
+  ✓ index returns paginated list filtered by masjid                      0.07s  
+  ✓ store creates row and returns 201                                    0.06s  
+  ✓ store uploads image to splash announcements collection               0.06s  
+  ✓ store calls onesignal sync with post when no iam id yet              0.06s  
+  ✓ store persists returned iam id on the row                            0.09s  
+  ✓ store flushes mobile splash cache                                    0.05s  
+  ✓ store rejects svg mime with 422                                      0.04s  
+  ✓ store rejects javascript cta url with 422                            0.06s  
+  ✓ store accepts https cta url                                          0.09s  
+  ✓ store requires cta url when cta label present                        0.06s  
+  ✓ store rejects ends at before starts at                               0.06s  
+  ✓ update applies validated input                                       0.06s  
+  ✓ update resyncs to onesignal with put when iam id exists              0.07s  
+  ✓ destroy hard deletes the row                                         0.08s  
+  ✓ destroy calls onesignal remove when row has iam id                   0.04s  
+  ✓ move to trash soft deletes and disables iam                          0.04s  
+
+   PASS  Tests\Feature\Splash\MobileSplashAnnouncementsControllerTest
+  ✓ returns 204 when no splash is active                                 0.05s  
+  ✓ returns 204 when only inactive splashes exist                        0.05s  
+  ✓ returns 200 with active splash payload                               0.05s  
+  ✓ returns highest priority splash when multiple active                 0.04s  
+  ✓ breaks priority ties by latest created at                            0.04s  
+  ✓ caches result under mobile cache splash key                          0.04s  
+
+   PASS  Tests\Feature\Splash\OnesignalInAppMessageServiceTest
+  ✓ sync posts to create endpoint when no iam id yet                     0.06s  
+  ✓ sync puts to update endpoint when iam id is present                  0.04s  
+  ✓ sync returns id from response body for caller to persist             0.03s  
+  ✓ sync fails soft on 5xx response                                      0.04s  
+  ✓ sync fails soft when credentials missing                             0.03s  
+  ✓ sync sends masjid id tag filter in payload                           0.06s  
+  ✓ sync omits cta action when label or url missing                      0.04s  
+  ✓ remove calls delete when iam id present and configured               0.03s  
+  ✓ remove is a noop when iam id is missing                              0.04s  
+
+   PASS  Tests\Feature\Splash\SplashAnnouncementModelTest
+  ✓ active scope returns rows currently in window                        0.05s  
+  ✓ active scope excludes inactive rows                                  0.07s  
+  ✓ active scope excludes future rows                                    0.04s  
+  ✓ active scope excludes past rows                                      0.05s  
+  ✓ active scope treats boundary now as in window                        0.05s  
+
+   PASS  Tests\Feature\StaffAuthGuardPinTest
+  ✓ the sanctum guard is pinned to the users provider                    0.06s  
+  ✓ the permission guard stays web even after should use rewrites the d… 0.11s  
+  ✓ a non user tokenable does not authenticate on an admin route         0.06s  
+  ✓ the guard resolves a non user tokenable to null                      0.05s  
+  ✓ without the pin the same token is admitted by the guard              0.08s  
+  ✓ without the pin only the admin middleware stands between a foreign…  0.12s  
+  ✓ user admin middleware rejects a non user principal claiming an admi… 0.08s  
+  ✓ user admin middleware still admits both staff admin types            0.10s  
+  ✓ user admin middleware still rejects a plain member and a guest       0.10s  
+  ✓ super admin middleware rejects a non user principal claiming super…  0.09s  
+  ✓ super admin middleware still admits a super admin and rejects a mas… 0.13s  
+  ✓ a real login token authenticates a super admin on an admin route     0.11s  
+  ✓ a real login token lets a masjid admin read its own masjids crm      0.13s  
+  ✓ a real masjid admin token is 403 on another masjid                   0.12s  
+  ✓ a real masjid admin token is 401 on a super only route               0.09s  
+  ✓ a plain member cannot log in to the admin api                        0.10s  
+  ✓ login mints a staff scoped token instead of a wildcard               0.09s  
+  ✓ the seeded permission set is unchanged by the guard pin              0.14s  
+
+   PASS  Tests\Feature\StagingSafetyTest
+  ✓ generated urls stay http when force https is off                     0.08s  
+  ✓ generated urls become https when force https is on                   0.06s  
+  ✓ force https is keyed off config not the environment name             0.07s  
+  ✓ the force https default is on for production and off for staging     0.31s  
+  ✓ responses carry noindex when the environment is staging              0.22s  
+  ✓ responses carry no robots header in production                       0.29s  
+  ✓ robots txt disallows everything on staging                           0.21s  
+  ✓ robots txt is not answered by the application in production          0.17s  
+  ✓ robots txt is not swallowed by the spa catch all                     0.16s  
+  ✓ environment helper labels non production and stays silent in produc… 0.26s  
+  ✓ environment helper treats a missing env as production                0.11s  
+  ✓ the spa shell advertises the environment to the browser              0.10s  
+
+   PASS  Tests\Feature\StagingScrubCoverageTest
+  ✓ every pii shaped column is dropped nulled anonymised or reviewed     0.57s  
+  ✓ the reviewed keep list does not outlive its reason                   0.24s  
+  ✓ every configured table and column still exists                       0.42s  
+  ✓ generated columns are never written                                  0.09s  
+
+   PASS  Tests\Feature\StagingScrubTest
+  ✓ it refuses on production                                             0.38s  
+  ✓ it refuses when the booted and configured environments disagree      0.39s  
+  ✓ it refuses when the database name does not contain staging           0.47s  
+  ✓ it refuses when the host is the managed production cluster           0.24s  
+  ✓ it refuses without the explicit destroy flag                         0.15s  
+  ✓ a dry run prints the plan and writes nothing                         0.32s  
+  ✓ it scrubs every tenant even with a tenant bound                      0.38s  
+  ✓ no original email or phone survives                                  0.35s  
+  ✓ unique indexes survive because every fake is row unique              0.32s  
+  ✓ soft deleted rows are scrubbed too                                   0.33s  
+  ✓ encrypted columns are nulled never rewritten                         0.36s  
+  ✓ drop rows tables are emptied                                         0.31s  
+  ✓ the kept estate is untouched                                         0.31s  
+  ✓ form response data keeps its keys and loses its answers              0.33s  
+  ✓ free text about people is replaced                                   0.36s  
+  ✓ outbound capability is forced off                                    0.27s  
+  ✓ only the whatsapp social rows are treated as phone numbers           0.31s  
+  ✓ running it twice changes nothing                                     0.51s  
+  ✓ the verification pass fails loudly when an address survives          0.35s  
+  ✓ the fake phone never truncates and so never collides                 0.35s  
+  ✓ the date shift strategy compiles for both drivers                    0.13s  
+
+   PASS  Tests\Feature\SuperAdminExportScopeTest
+  ✓ a superadmins export contains only the masjid named in the url       0.15s  
+  ✓ a superadmins ledger is scoped the same way as the export            0.09s  
+  ✓ a superadmins stats header is scoped the same way too                0.08s  
+  ✓ every masjid scoped admin route spells the param masjid id           0.08s  
+  ✓ switching the url switches the masjid rather than widening it        0.10s  
+
+   PASS  Tests\Feature\TeacherAttendanceTest
+  ✓ an untaken day is not a room full of absences                        0.13s  
+  ✓ the roster says which grade each child is in                         0.16s  
+  ✓ a teacher takes the register and it reads back                       0.14s  
+  ✓ saving twice corrects the mark instead of duplicating it             0.15s  
+  ✓ a register cannot name a child from another class                    0.12s  
+  ✓ a teacher cannot reach the register of a class they do not lead      0.12s  
+  ✓ a register cannot be taken for a day that has not happened           0.12s  
+  ✓ an unknown mark is refused                                           0.10s  
+  ✓ one childs history counts late as present                            0.11s  
+  ✓ the year total is counted over every day not over the page           0.15s  
+  ✓ the register never carries a guardians contact details               0.12s  
+
+   PASS  Tests\Feature\TeacherLessonsGradebookResourcesTest
+  ✓ a plan is saved and read back and saving twice corrects it           0.18s  
+  ✓ a plan may be for a future day but not a mistyped year               0.12s  
+  ✓ a plan carries the schools whole template                            0.15s  
+  ✓ saving without a section clears it rather than keeping stale prose   0.12s  
+  ✓ an unknown teaching method is refused                                0.11s  
+  ✓ a plan can be removed because its body cannot be blanked             0.16s  
+  ✓ work is set marked and read back with unmarked children left blank   0.16s  
+  ✓ a mark above the maximum is refused                                  0.16s  
+  ✓ a gradebook cannot name a child from another class                   0.10s  
+  ✓ lowering the maximum below a mark already entered is refused         0.17s  
+  ✓ withdrawn work stops counting but its marks survive                  0.16s  
+  ✓ excused work is excluded from both halves of the average             0.21s  
+  ✓ the term average is aggregated over every mark not over the page     0.26s  
+  ✓ a levels average is a mean level and never a percentage              0.25s  
+  ✓ points work and levels work are summarised separately                0.20s  
+  ✓ missing levels work is shown but left out of the mean                0.16s  
+  ✓ a levels assignment only accepts the four whole levels               0.16s  
+  ✓ every gradebook payload carries the key to the levels                0.14s  
+  ✓ a file is uploaded listed and downloaded and defaults to staff only  0.16s  
+  ✓ deleting a resource takes the bytes with it                          0.15s  
+  ✓ a family sees only what the class shared and a staff file is a 404   0.22s  
+  ✓ a parent opens a conversation and the teacher is notified            0.16s  
+  ✓ a parent cannot open a conversation about another familys child      0.28s  
+  ✓ a parent cannot open a class wide thread even by asking              0.14s  
+
+   PASS  Tests\Feature\TeacherProvisioningTest
+  ✓ an admin creates a teacher assigns a class and an invite goes out    0.15s  
+  ✓ a class outside the school is refused                                0.15s  
+  ✓ editing a teacher syncs their class assignments                      0.12s  
+  ✓ removing a teacher strips access and retires an orphaned login       0.11s  
+  ✓ an admin cannot touch a teacher from another school                  0.16s  
+  ✓ an invite can be re sent                                             0.11s  
+
+   PASS  Tests\Feature\TeacherRealmTest
+  ✓ the teacher realm exposes exactly these writes                       0.10s  
+  ✓ a non teacher staff login cannot enter the teacher realm             0.14s  
+  ✓ a teacher sees only the classes they lead                            0.10s  
+  ✓ a teacher is refused a class in their school they do not lead        0.15s  
+  ✓ a teacher can mark a letter in a class they lead                     0.11s  
+  ✓ the teacher roster carries names only never guardian pii             0.11s  
+  ✓ a teacher cannot address another school in the url                   0.14s  
+
+   PASS  Tests\Feature\TenancyCanaryTest
+  ✓ it fails when the fail open scope is reintroduced                    0.15s  
+  ✓ it names the falsy header that exposed the leak                      0.10s  
+  ✓ it fails when a body names an organisation the request did not ask…  0.10s  
+  ✓ it fails when an unresolved tenant escapes as a server error         0.13s  
+  ✓ it fails when every organisation is served one organisations rows    0.10s  
+  ✓ it fails when only some of another organisations rows leak in        0.13s  
+  ✓ the cross tenant comparison says what it cannot see                  0.09s  
+  ✓ it fails when two organisations are served each others rows          0.13s  
+  ✓ row ownership never accuses an endpoint of serving its own organisa… 0.35s  
+  ✓ the row ownership floor separates rows it cannot place from nothing… 0.26s  
+  ✓ an endpoint with no rows to place leaves a healthy run clean         0.23s  
+  ✓ a run that can trace no row at all says so                           0.20s  
+  ✓ an endpoint pinned to a dormant organisation is named and not caugh… 0.24s  
+  ✓ a leaking bucket does not pass on its attributed siblings credit     0.13s  
+  ✓ a global lookup list beside a scoped one is not a leak               0.10s  
+  ✓ declaring one lookup bucket leaves its siblings watched              0.16s  
+  ✓ two sibling lists of the same table still page when they agree       0.10s  
+  ✓ a leak in one of two inherited lists is a named ticket not a page    0.13s  
+  ✓ a route the catalogue refused is named rather than forgotten         0.57s  
+  ✓ a dormant pair of organisations cannot certify the platform          0.35s  
+  ✓ one blind endpoint does not take a healthy run off clean             0.34s  
+  ✓ the comparison floor is a strict majority                            0.35s  
+  ✓ an endpoint only one organisation can answer is not compared         0.09s  
+  ✓ the ungraded mobile surface does not decide the comparison floor     0.32s  
+  ✓ the canary compares the organisations that hold content              0.10s  
+  ✓ a single organisation platform is not reported as blind              0.17s  
+  ✓ a green run reports how much of itself it could not see              0.22s  
+  ✓ an origin that redirects every probe is not a clean run              0.19s  
+  ✓ an origin that 404s every probe is not a clean run                   0.19s  
+  ✓ a dead transport leaves no check reporting pass                      0.08s  
+  ✓ a check with nothing to look at reports skipped not pass             0.20s  
+  ✓ one unreachable endpoint is not the same alarm as a dead origin      0.39s  
+  ✓ a partial run names the endpoint it could not see                    0.39s  
+  ✓ losing the majority of the graded surface is incomplete not partial  0.28s  
+  ✓ a strict majority of the graded surface is partial                   0.27s  
+  ✓ the rotating mobile surface is not graded                            0.41s  
+  ✓ a leak outranks a partial run                                        0.22s  
+  ✓ a partial run logs quieter than a blocked one                        0.24s  
+  ✓ a partial run names which axis degraded it                           0.41s  
+  ✓ a clean run reports no reason to be degraded                         0.18s  
+  ✓ a truncation that costs the whole run is still incomplete            0.30s  
+  ✓ it passes against the fixed public api                               0.18s  
+  ✓ the mobile surface shows no cross tenant finding                     0.22s  
+  ✓ a clean report is not an empty one                                   0.18s  
+  ✓ a full run writes nothing                                            0.40s  
+  ✓ it never probes an endpoint that writes                              0.28s  
+  ✓ it does not spend a scarce named limiter                             0.38s  
+  ✓ a truncated run reports incomplete rather than clean                 0.10s  
+  ✓ a truncated run still reports a leak it did reach                    0.11s  
+  ✓ it paces itself rather than bursting                                 1.13s  
+  ✓ it deletes nothing while taking its own inventory                    0.25s  
+  ✓ it refuses to invoke a method a trait mixed in                       0.06s  
+  ✓ it refuses every method any trait contributes                        0.06s  
+  ✓ a relation the model really declares still resolves                  0.09s  
+  ✓ the coverage inventory still reports and names nothing destructive   0.07s  
+
+   PASS  Tests\Feature\TenantIsolationTest
+  ✓ bound tenant all returns only its own contacts                       0.13s  
+  ✓ bound tenant count only counts its own contacts                      0.07s  
+  ✓ bound tenant find returns own row                                    0.10s  
+  ✓ bound tenant find returns null for another masjids row               0.07s  
+  ✓ bound tenant cannot update another masjids row                       0.07s  
+  ✓ bound tenant cannot delete another masjids row                       0.07s  
+  ✓ create stamps bound tenant when payload omits masjid id              0.07s  
+  ✓ create ignores client supplied masjid id and uses bound tenant       0.07s  
+  ✓ unbound context sees all masjids contacts                            0.09s  
+  ✓ without masjid scope bypasses filter even when bound                 0.07s  
+  ✓ contact registers the masjid tenant global scope                     0.06s  
+  ✓ middleware binds the masjid admins own masjid                        0.07s  
+  ✓ middleware leaves super admin unbound                                0.06s  
+
+   PASS  Tests\Feature\TenantResolverTest
+  ✓ a single membership admin binds to their masjid exactly as before    0.09s  
+  ✓ a single membership admin binds on a route naming their own masjid   0.04s  
+  ✓ an admin with no membership row still binds from ownership           0.05s  
+  ✓ a foreign route masjid is refused with the identical message         0.05s  
+  ✓ a super admin is unbound without a route masjid and bound with one   0.05s  
+  ✓ a super admin holding a membership is still bound from the route     0.08s  
+  ✓ a masjid id in the body or a header is ignored                       0.06s  
+  ✓ the binding carries the verified membership that admitted it         0.06s  
+  ✓ a route derived super admin binding carries no membership            0.05s  
+  ✓ an admin with no membership and no masjid is refused not defaulted   0.06s  
+  ✓ a membership for a soft deleted masjid does not bind                 0.05s  
+  ✓ a route masjid the user holds no membership for is refused           0.07s  
+  ✓ several memberships and no route masjid never default bind           0.05s  
+  ✓ several memberships leave the account routes unbound rather than re… 0.05s  
+  ✓ a principal that is not an admin is refused                          0.05s  
+  ✓ an unauthenticated request is untouched                              0.04s  
+  ✓ binding a membership with no masjid is refused outright              0.06s  
+  ✓ the multi membership path is off in the shipped configuration        0.08s  
+  ✓ with the gate shut a second membership grants nothing                0.05s  
+  ✓ with the gate open the same second membership binds                  0.05s  
+  ✓ the gate is read in exactly one place                                0.04s  
+
+   PASS  Tests\Feature\TenantScopingCoverageTest
+  ✓ the tenant scope is wired on every model that claims it              0.14s  
+  ✓ every tenant scoped model has a cross tenant isolation test          3.39s  
+  ✓ declined models are still genuinely declined                         0.07s  
+  ✓ no model carrying masjid id escapes the trait undocumented           0.11s  
+  ✓ the legacy roster does not outlive the models on it                  0.08s  
+  ✓ docblocks do not claim a test that does not exist                    0.10s  
+  ✓ the known absent test list does not outlive its reason               0.11s  
+
+   PASS  Tests\Feature\Theme\ThemeSettingsTest
+  ✓ migration creates theme settings table                               0.23s  
+  ✓ v1 settings returns theme with seeded values                         0.20s  
+  ✓ v1 settings returns null theme when absent                           0.13s  
+  ✓ mobile show returns theme with seeded values                         0.06s  
+  ✓ mobile show returns null theme when absent                           0.09s  
+  ✓ web and mobile theme shapes are identical                            0.08s  
+  ✓ admin update persists and flushes mobile cache                       0.09s  
+  ✓ admin update rejects unauthenticated requests                        0.05s  
+  ✓ admin update rejects invalid hex                                     0.07s  
+
+   PASS  Tests\Feature\TieredFeeTest
+  ✓ early bird applies before the cutoff                                 0.10s  
+  ✓ august 14 is still early bird                                        0.05s  
+  ✓ the price steps up the day after the cutoff                          0.05s  
+  ✓ standard holds until the day before camp                             0.05s  
+  ✓ day of registration is the open ended final price                    0.05s  
+  ✓ the price multiplies by the number of attendees                      0.07s  
+  ✓ the tier in force is reported for the page to display                0.04s  
+  ✓ an unpadded cutoff still expires on the day it names                 0.04s  
+  ✓ an unpadded cutoff does not outlive the whole schedule               0.04s  
+  ✓ an unreadable cutoff does not hold a tier open                       0.03s  
+  ✓ every blank spelling of a cutoff means the open ended final price    0.04s  
+  ✓ a blank cutoff on the last tier is the ordinary open ended price     0.07s  
+  ✓ a blank cutoff on the first tier reads the same way whichever blank… 0.05s  
+  ✓ an unreadable cutoff still steps up while a blank does not           0.05s  
+  ✓ an untiered form still uses its flat amount                          0.04s  
+
+   PASS  Tests\Feature\TieredFeeTimezoneTest
+  ✓ the cutoff rolls over at the masjids midnight not the servers        0.06s  
+  ✓ a masjid ahead of utc steps up before the server does                0.07s  
+  ✓ a masjid with a blank timezone falls back to the app timezone        0.03s  
+  ✓ a form with no masjid falls back to the app timezone                 0.04s  
+  ✓ the rollover follows the standard time offset before the spring cha… 0.06s  
+  ✓ the rollover follows the daylight offset in summer                   0.05s  
+  ✓ the rollover follows the offset back after the autumn change         0.05s  
+
+   PASS  Tests\Feature\TvConfigEndpointTest
+  ✓ the endpoint the tv app calls now answers instead of 404ing          0.09s  
+  ✓ it returns exactly the keys the swift decoder declares               0.04s  
+  ✓ every non optional field carries the json type the decoder requires  0.05s  
+  ✓ the documented defaults are what it serves                           0.05s  
+  ✓ header title stays null so the client falls back to the masjid name  0.04s  
+  ✓ the prayer panel follows the tenant vertical                         0.07s  
+  ✓ an unrecognised org type is treated as a masjid                      0.04s  
+  ✓ the donate url is resolved from the masjids own donation link        0.03s  
+  ✓ a tenant with no donation link gets no qr instead of an empty one    0.04s  
+  ✓ a blank donation link counts as no link                              0.04s  
+  ✓ one tenants config never carries anothers donation link              0.07s  
+  ✓ it caches under its own per masjid key                               0.04s  
+  ✓ an unknown masjid is a 404 not a default board                       0.04s  
+  ✓ it is rate limited like every other public mobile read               0.03s  
+  ✓ the signage endpoint is untouched                                    0.05s  
+
+   PASS  Tests\Feature\TwoFactorTest
+  ✓ enroll returns a secret and qr without enabling 2fa                  0.16s  
+  ✓ confirm with a valid code enables 2fa                                0.04s  
+  ✓ confirm with a bad code is rejected and leaves 2fa disabled          0.06s  
+  ✓ disable with a valid code turns 2fa off                              0.06s  
+  ✓ disable with a bad code is rejected                                  0.08s  
+  ✓ login without 2fa is unchanged                                       0.05s  
+  ✓ enrolled user login without a code is challenged and gets no token   0.06s  
+  ✓ enrolled user login with a wrong code is denied                      0.05s  
+  ✓ enrolled user login with the correct code succeeds                   0.07s  
+  ✓ the token issued after a 2fa login authenticates on an admin route   0.11s  
+
+   PASS  Tests\Feature\UnconfirmedConsentTest
+  ✓ an unconfirmed claim carrying a consent record reads as granting no… 0.12s  
+  ✓ a confirmed edge with real consent is untouched by the gate          0.12s  
+  ✓ the query scope and the method refuse the same rows                  0.13s  
+  ✓ the read gate alone still lets one confirm click re arm stale conse… 0.16s  
+  ✓ the backfill erases the record so the same confirm click opens noth… 0.17s  
+  ✓ the backfill leaves every confirmed edges consent alone              0.09s  
+  ✓ a null provenance is unreachable today which is what makes the back… 0.09s  
+  ✓ the backfill reaches a participant row that should never have carri… 0.09s  
+  ✓ a stale consent record does not open the photographs                 0.19s  
+
+   PASS  Tests\Feature\ZakatCalculatorTest
+  ✓ it takes two and a half percent of assets minus liabilities          0.07s  
+  ✓ a fractional cent rounds up rather than leaving a shortfall          0.06s  
+  ✓ debts larger than assets produce no zakat rather than a negative     0.09s  
+  ✓ every bucket is reported including the ones left blank               0.06s  
+  ✓ an unknown metal price reports an unknown threshold not a zero bill  0.06s  
+  ✓ a supplied price yields a threshold and a verdict                    0.06s  
+  ✓ wealth under the threshold owes nothing                              0.05s  
+  ✓ the basis defaults to silver and the caller may choose gold          0.07s  
+  ✓ a configured price is used and labelled as such                      0.05s  
+  ✓ every disputed position is named in the payload                      0.05s  
+  ✓ the stated basis assumption names the alternative the caller did no… 0.05s  
+  ✓ nothing is persisted                                                 0.04s  
+  ✓ the nisab reference is available without declaring any wealth        0.04s  
+  ✓ an unusable basis is rejected rather than silently defaulted         0.07s  
+  ✓ decimal money is rejected because minor units are the contract       0.06s  
+  ✓ the tenant header is required and an unknown tenant is a 404         0.05s  
+
+   PASS  Tests\Feature\ZakatDesignationTest
+  ✓ zakat given to a general fund is recorded as zakat                   0.09s  
+  ✓ a gift to the zakat fund that the donor says is not zakat is not za… 0.11s  
+  ✓ an undeclared gift defaults to the funds type                        0.08s  
+  ✓ an undeclared gift to an ordinary fund is not zakat                  0.08s  
+  ✓ the designation is on the settled row without the browser redirect   0.10s  
+  ✓ a non zakat gift sends no zakat metadata to stripe                   0.10s  
+  ✓ a zakat gift carries the designation in the payment intent metadata  0.09s  
+  ✓ a recurring commitment designates once and every invoice inherits i… 0.08s  
+  ✓ an admin can mark a cash gift as zakat                               0.10s  
+  ✓ the stats summary reports zakat as a subset and changes no existing… 0.13s  
+  ✓ the per fund breakdown separates the bucket from the designation     0.10s  
+  ✓ the export carries the designation and the ledger can filter on it   0.10s  
+
+  Tests:    1 skipped, 2538 passed (19964 assertions)
+  Duration: 471.00s
+

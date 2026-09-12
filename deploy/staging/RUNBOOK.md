@@ -15,6 +15,15 @@ Standing rules: `.claude/rules/environments.md`.
 
 ---
 
+> **Status 2026-09-10 — staging is LIVE.** Steps 0–3 and 5–6 were executed
+> (droplet 599239838 · 157.230.212.38; DNS; data refreshed and scrubbed; SPA
+> shipped and verified; ribbon/noindex confirmed through Cloudflare). What
+> remains is **step 4 (Stripe test keys + test webhook)**, owner-only, and the
+> optional **step 7** (destroy the stale droplet 480119186). Every fix the first
+> real run forced is already folded into `provision.sh`, `env.staging.example`
+> and `DATA-REFRESH.md`; the sequence in `LOG.md` (2026-09-10) records what
+> broke and why.
+
 ## Step 0 — What is blocked on you
 
 Two things cannot be done for you. Everything else is already written and tested.

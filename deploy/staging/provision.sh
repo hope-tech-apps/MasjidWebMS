@@ -35,6 +35,11 @@
 # stray re-run cannot wipe a loaded staging database's credentials.
 #
 set -euo pipefail
+# Resolve where THIS script lives before anything below changes directory:
+# BASH_SOURCE is relative when invoked as ./provision.sh, and a later `cd` to
+# the app dir would make it point at the wrong tree.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 
 APP_DIR="${APP_DIR:-/var/www/html/Masjids_App_Management_System/MasjidsManagementSystem}"
 WEB_USER="${WEB_USER:-www-data}"
@@ -200,13 +205,37 @@ fi
 systemctl enable --now mysql >/dev/null 2>&1 || systemctl enable --now mysql.service
 systemctl is-active --quiet mysql || die "mysql did not start — check journalctl -u mysql."
 
-# Ubuntu ships bind-address = 127.0.0.1 by default. Assert it rather than assume:
-# a server listening on 0.0.0.0 with a generated password is a public database.
-if ss -ltn 2>/dev/null | grep -qE '(0\.0\.0\.0|\*):3306'; then
-    die "mysql is listening on all interfaces. Set bind-address=127.0.0.1 in
-     /etc/mysql/mysql.conf.d/mysqld.cnf and restart before continuing."
+# Ubuntu ships bind-address = 127.0.0.1 in mysql.conf.d/mysqld.cnf, but the
+# first real run (2026-09-10) found mysqld on *:3306 and *:33060 anyway: the
+# prod snapshot carries the MariaDB flavour of /etc/mysql/my.cnf, which includes
+# conf.d/ and mariadb.conf.d/ and NEVER mysql.conf.d/, so that file is not read.
+# /etc/mysql/conf.d/ is included by both flavours, so the override goes there.
+# Then assert from the socket table rather than any config file. A server
+# listening on 0.0.0.0 with a generated password is a public database.
+mysql_open() { ss -ltn 2>/dev/null | grep -qE '(0\.0\.0\.0|\*|\[::\]):(3306|33060)\b'; }
+if mysql_open; then
+    cat > /etc/mysql/conf.d/zz-staging-loopback.cnf <<'CNF'
+# Written by deploy/staging/provision.sh. Lives in conf.d/ because this box's
+# my.cnf is the MariaDB flavour and does not include mysql.conf.d/; the zz-
+# prefix makes it load last so it wins over anything else in conf.d/.
+[mysqld]
+bind-address = 127.0.0.1
+mysqlx-bind-address = 127.0.0.1
+skip-name-resolve
+# No binary log: nothing replicates from staging, and with it on, loading a dump
+# that carries triggers fails with ERROR 1419 (no SUPER privilege) for the
+# non-root app user. Found on the first data refresh, 2026-09-10.
+skip-log-bin
+CNF
+    systemctl restart mysql
+    sleep 2
 fi
-ok "mysql listening on loopback only"
+if mysql_open; then
+    die "mysql is still listening on a non-loopback address after pinning
+     bind-address in /etc/mysql/conf.d/zz-staging-loopback.cnf.
+     Inspect: ss -tlnp | grep -E ':3306|:33060'  and  mysqld --print-defaults"
+fi
+ok "mysql listening on loopback only (3306 and 33060)"
 
 # Reuse an existing password when re-running against a database that already has
 # data in it; generate one otherwise. Alphanumeric only, so it needs no quoting
@@ -254,7 +283,17 @@ cp -p .env "$ENV_BACKUP"
 chmod 600 "$ENV_BACKUP"
 ok "old .env backed up to ${ENV_BACKUP} (0600)"
 
-EXAMPLE="${APP_DIR}/deploy/staging/env.staging.example"
+# Prefer the copy sitting next to this script. On the first real run the clone's
+# checkout predated deploy/staging/ entirely (it is a snapshot of whatever prod
+# ran), and the app tree cannot be advanced yet: bin/deploy would run
+# `migrate --force` against the PRODUCTION database the inherited .env still
+# points at. The example therefore travels with the script; the app-dir path is
+# only a fallback for a checkout that already carries it.
+if [ -f "${SCRIPT_DIR}/env.staging.example" ]; then
+    EXAMPLE="${SCRIPT_DIR}/env.staging.example"
+else
+    EXAMPLE="${APP_DIR}/deploy/staging/env.staging.example"
+fi
 [ -f "$EXAMPLE" ] || die "missing ${EXAMPLE} — is this checkout complete?"
 
 WORK="$(mktemp)"
@@ -405,6 +444,38 @@ for bak in .env.bak* .env.backup* .env.pre-* .env.production; do
     info "removing ${bak} ($(stat -c %s "$bak" 2>/dev/null || echo '?') bytes) — it is a copy of PRODUCTION's secrets"
     shred -u "$bak" 2>/dev/null || rm -f "$bak"
 done
+# Production also keeps its own backups OUTSIDE the app dir, under
+# /root/env-backups/ (dotfiles: .env.backup-*, .env.bak.*, .env.pre-*). The clone
+# inherits every one of them, and the first real run left five copies of
+# prod's live keys there because this loop only looked in the app dir. Keep
+# only what THIS run wrote (env.<timestamp>, no leading dot).
+if [ -d /root/env-backups ]; then
+    for bak in /root/env-backups/.env*; do
+        [ -e "$bak" ] || continue
+        FOUND_BAK=1
+        info "removing ${bak} — an inherited copy of PRODUCTION's secrets"
+        shred -u "$bak" 2>/dev/null || rm -f "$bak"
+    done
+fi
+# And the ad-hoc copies operators made over the months outside any convention:
+# /root/env-backup-<ts>, /root/db-backups/env-before-*, raw production database
+# dumps under /root/db-backups, /root/backups and /var/backups/masjid_db (real
+# PII, including minors'), and a JSON export of a school's data. The first real
+# run found all of these AFTER the loops above had reported clean.
+for bak in /root/env-backup-* /root/db-backups/env-* /root/db-backups/*.sql /root/db-backups/*.sql.gz /root/db-backups/*.gz /root/backups/*.sql /root/backups/*.sql.gz /root/backups/*.gz /var/backups/masjid_db/* /root/alrazi-backup-*.json; do
+    [ -e "$bak" ] || continue
+    FOUND_BAK=1
+    info "removing ${bak} — inherited production secrets or data"
+    shred -u "$bak" 2>/dev/null || rm -f "$bak"
+done
+# Last line of defence: anything under /root, /home or /var/backups that still
+# carries a live-looking value for a key the deny-list blanks. Report loudly;
+# do not guess at deleting arbitrary files.
+LEFT=$(grep -rlE "^(RESEND_KEY|ANTHROPIC_API_KEY|ONESIGNAL_REST_API_KEY|STRIPE_SECRET|GITHUB_DISPATCH_TOKEN)=.{20,}" /root /home /var/backups 2>/dev/null | grep -v '/vendor/' || true)
+if [ -n "$LEFT" ]; then
+    warn "files still holding live-looking secret values — inspect and shred by hand:"
+    printf '        %s\n' $LEFT
+fi
 if [ "$FOUND_BAK" -eq 1 ]; then
     ok "inherited .env backups removed"
 else
@@ -623,8 +694,10 @@ say "Scheduler cron"
 # (www-data) then could not write. The stale droplet still runs it as root —
 # do not copy that.
 CRON_LINE="* * * * * cd ${APP_DIR} && sudo -u ${WEB_USER} HOME=/tmp php artisan schedule:run >> /dev/null 2>&1"
-if crontab -l 2>/dev/null | grep -q "schedule:run"; then
-    if crontab -l 2>/dev/null | grep "schedule:run" | grep -q "sudo -u ${WEB_USER}"; then
+# Only ACTIVE lines count: the first real run found the inherited line commented
+# out ("# PAUSED …") and this check happily reported it as running.
+if crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q "schedule:run"; then
+    if crontab -l 2>/dev/null | grep -v '^[[:space:]]*#' | grep "schedule:run" | grep -q "sudo -u ${WEB_USER}"; then
         ok "root cron already runs schedule:run as ${WEB_USER}"
     else
         warn "root cron runs schedule:run but NOT as ${WEB_USER} — rewriting it"
@@ -643,7 +716,17 @@ ok "${FPM_SERVICE} restarted"
 
 systemctl restart "$QUEUE_SERVICE"
 sleep 2
-systemctl is-active --quiet "$QUEUE_SERVICE" || die "${QUEUE_SERVICE} did not come back."
+# Before the data refresh the staging database is EMPTY: `queue:work database`
+# exits at once because there is no `jobs` table, and systemd reports the unit
+# failed. That is expected here, not a fault — DATA-REFRESH.md loads the schema
+# and starts the worker. Die only if the unit is failing for some other reason.
+if ! systemctl is-active --quiet "$QUEUE_SERVICE"; then
+    if MYSQL_PWD="$DB_PASS" mysql --user="$DB_USER" --host=127.0.0.1 -NBe "SELECT 1 FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='jobs'" 2>/dev/null | grep -q 1; then
+        die "${QUEUE_SERVICE} did not come back (schema present) — journalctl -u ${QUEUE_SERVICE} -n 20"
+    fi
+    systemctl enable "$QUEUE_SERVICE" >/dev/null 2>&1 || true
+    warn "${QUEUE_SERVICE} is not running because the staging database is still empty — expected. DATA-REFRESH.md starts it after the load."
+fi
 ok "${QUEUE_SERVICE} restarted"
 
 # ===========================================================================
@@ -655,7 +738,11 @@ if [ -z "$PUBLIC_IP" ]; then
     PUBLIC_IP="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
 fi
 if [ -n "$PUBLIC_IP" ]; then
-    printf '%s\n' "$PUBLIC_IP" > "${APP_DIR}/deploy/staging/host"
+    printf '%s\n' "$PUBLIC_IP" > "${SCRIPT_DIR}/host"
+    # The app checkout may predate deploy/staging/ (it is a snapshot of prod);
+    # only write there if the directory exists. scripts/ship.sh reads the copy
+    # in the repo on the Mac, which the operator fills in from this output.
+    [ -d "${APP_DIR}/deploy/staging" ] && printf '%s\n' "$PUBLIC_IP" > "${APP_DIR}/deploy/staging/host"
     ok "public IP ${PUBLIC_IP} written to deploy/staging/host"
 else
     warn "could not determine the public IP — set STAGING_IP by hand on the Mac"

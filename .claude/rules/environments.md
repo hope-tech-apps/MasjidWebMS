@@ -196,6 +196,20 @@ the default location. The staging vhost uses
 The `X-Robots-Tag: noindex` header does not depend on this and works
 regardless.
 
+## The scrub's policy is data, and a test enforces it
+
+`config/staging_scrub.php` is the reviewed map; `App\Console\Commands\
+StagingScrub` is only mechanism. Never hand-write a `DELETE` on staging — edit
+the config so `StagingScrubCoverageTest` can check it. The scrub uses raw
+`DB::table()` deliberately: the tenant global scope would clean one masjid and
+silently leave every other organisation's data, and `SoftDeletes` would skip
+trashed people. Encrypted columns are NULLed, never rewritten — plaintext there
+makes every later read throw `DecryptException`. MySQL's generated columns
+(`masjids.active_owner_user_id`, `active_stripe_account_id`,
+`masjid_user.default_key`) are listed under `never_write` and validated on the
+plan. The command's exit code is not the acceptance criterion; the verification
+block is. Full procedure: `deploy/staging/DATA-REFRESH.md`.
+
 ## Cross-references
 
 - **`deploy/staging/DATA-REFRESH.md`** — the export → import → migrate →

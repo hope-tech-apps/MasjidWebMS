@@ -52,6 +52,32 @@ Shipping code is **not** here: `scripts/ship.sh staging <ref>` at the repo root.
 
 ## Pitfalls
 
+Learned on the first real bring-up, 2026-09-10 (each is now handled in the scripts):
+
+- **A fresh clone of prod IS prod's worker.** It boots with prod's `.env`, so
+  `masjid-queue` and cron run against the managed database within seconds of
+  creation. Stop them before anything else; `provision.sh` cannot run first
+  because ssh is not up yet.
+- **The box's `/etc/mysql/my.cnf` is the MariaDB flavour** and never includes
+  `mysql.conf.d/`, so `mysqld.cnf`'s `bind-address` is silently ignored and a
+  fresh `mysql-server` listens on `*:3306`. Overrides go in `/etc/mysql/conf.d/`.
+- **Prod's `mysqldump` is MariaDB 10.11's.** Against the MySQL 8.4 cluster it
+  writes values for GENERATED columns and the load dies (`ERROR 3105`). Dump from
+  staging with MySQL 8's client behind a transient firewall rule
+  (`DATA-REFRESH.md`), strip `DEFINER=`, and keep `skip-log-bin` (else `1419`).
+- **The managed cluster's firewall blocks this box** — keep it that way; the
+  refresh opens a rule and removes it in the same command.
+- **`BROADCAST_CONNECTION=` blank is not "unset"** — Laravel treats it as a
+  driver name and `package:discover` fails; use `null`.
+- **Prod squirrels secrets and dumps in more places than the app dir:**
+  `/root/env-backups/.env*`, `/root/env-backup-<ts>`, `/root/db-backups/`,
+  `/root/backups/*.sql.gz`, `/var/backups/masjid_db/`, a school-data JSON in
+  `/root`. All inherited by the clone; all purged now; the script reports any
+  live-looking value it still finds.
+- **`doctl databases firewalls list` has no `--format`** (1.163); parse the
+  plain table.
+
+
 - **The clone boots believing it is production.** Same `.env`, same nginx
   `server_name`s, same certbot renewals — and a **queue worker plus root cron
   pointed at the production database**. That is exactly the 2026-09-10 incident

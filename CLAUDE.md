@@ -26,8 +26,10 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
 
 ## Status
 
-- **T-040 Staging environment — tooling + code COMPLETE, box BLOCKED on owner
-  (2026-09-10).** Design in `DECISIONS.md` 2026-09-10; convention in
+- **T-040 Staging environment — LIVE (2026-09-10).** Droplet 599239838
+  `masjid-staging` 157.230.212.38, hosts `masjid-staging.`/`manara-staging.`/
+  `portal-staging.hopetechapps.com`, local MySQL, scrubbed prod data, ribbon +
+  noindex verified; only Stripe TEST keys remain owner-only. Design in `DECISIONS.md` 2026-09-10; convention in
   `.claude/rules/environments.md`; owner runbook `deploy/staging/RUNBOOK.md`.
   Code (W1, uncommitted): HTTPS forcing is `config('app.force_https')`
   (`FORCE_HTTPS`, defaults to `APP_ENV === 'production'`) instead of an
@@ -35,13 +37,19 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   `isConfigured()`, one warning, shaped `not_sent` result; `App\Support\
   Environment` (fails safe to production) drives `X-Robots-Tag: noindex` +
   a disallow-all `/robots.txt` + `window.__APP_ENV__` + an amber STAGING
-  ribbon on every SPA screen. Data (W2): `php artisan staging:scrub`, driven
-  by `config/staging_scrub.php`, triple-guarded, with a coverage test that
-  fails when a new PII-shaped column is not classified. Tooling (W3):
+  ribbon on every SPA screen. Data (W2): `php artisan staging:scrub`, policy in
+  `config/staging_scrub.php` (77 tables / 111 column writes / 41
+  reviewed-keep), four guards — APP_ENV checked twice (booted *and*
+  `config('app.env')`, so a stale `config:cache` refuses), DB name contains
+  `staging`, `DB_HOST` not `ondigitalocean.com`, explicit
+  `--i-understand-this-destroys-personal-data`; verification sweeps
+  `contacts`/`users` for any `@` not ending `.invalid`;
+  `StagingScrubCoverageTest` fails when a migration adds an unclassified
+  PII-shaped column. Tooling (W3):
   `bin/deploy --ref` on non-prod only (prod path unchanged), `scripts/ship.sh
-  <env> [ref]`, `deploy/staging/{provision.sh,cloudflare-dns.sh,...}`. Prod
-  snapshot **244822223** taken. Blocked on: a DO token/console click to create
-  the droplet from it, and Stripe TEST keys. Stale droplet 480119186's queue +
+  <env> [ref]`, `deploy/staging/{provision.sh,cloudflare-dns.sh,...}`. Deploy with
+  `scripts/ship.sh staging <ref>`; refresh data per
+  `deploy/staging/DATA-REFRESH.md`. Stale droplet 480119186's queue +
   cron were found LIVE against prod and disabled the same day.
 - **Manara verticals — `org_type` foundation DONE** (T-001). `masjids.org_type`
   (`masjid`|`school`|`community`, default `masjid`, indexed) + `config/verticals.php`
