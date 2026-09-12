@@ -43,7 +43,7 @@ class GroupsController extends Controller
             ->withCount([
                 // Roster size an admin actually recognizes: guardians are
                 // attached to a member, not participants in their own right.
-                'memberships as participants_count' => fn ($q) => $q->participants(),
+                'memberships as participants_count' => fn ($q) => $q->participants()->current(),
             ])
             ->when($search, function ($query, $search) {
                 $query->where(function ($q) use ($search) {

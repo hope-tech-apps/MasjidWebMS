@@ -40,6 +40,13 @@ class GroupNotificationRecipientResolver
     {
         $contacts = $group->memberships()
             ->consented()
+            // AND STILL IN THE CLASS. Every HTTP surface refuses a departed
+            // family, but this one sends mail to their own address, where no
+            // member of staff would ever see it happening — so a class story or
+            // a handout would go on arriving for a family the school has
+            // formally recorded as gone. Consent says they agreed to hear about
+            // the class; the leaving date says which class they are in.
+            ->current()
             ->with('contact')
             ->get()
             ->map(fn (GroupMembership $m) => $m->contact)

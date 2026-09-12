@@ -328,6 +328,14 @@ class GroupAudience
         }
 
         foreach ($this->membershipsFor($principal, $group) as $membership) {
+            // A row that has left the class receives no class-wide disclosure —
+            // neither the feed nor an image — from the day it left. Record reads
+            // do NOT come through here: they resolve through
+            // mayReceiveRecordAbout(), which reads standing, never this.
+            if ($membership->hasLeft()) {
+                continue;
+            }
+
             if (in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true)) {
                 return true;
             }
@@ -859,9 +867,23 @@ class GroupAudience
             if (in_array($membership->role, GroupMembership::PARTICIPANT_ROLES, true)) {
                 // A participant IS the person: they hold the feed disclosure
                 // outright, and participant threads about themselves.
-                $feed = true;
+                //
+                // UNLESS THEY HAVE LEFT. A leaving date ends the CLASS-WIDE half
+                // — the class story, a group-scoped thread, a handout, and the
+                // emails about them — on the day the child left, because those
+                // are a running disclosure about a class this family is no
+                // longer part of. Their contact id still goes into the lists
+                // below, so their OWN records (a report card written in October,
+                // the thread about them) keep resolving: leaving a class is not
+                // losing what the school recorded while they were in it.
+                $feed = $feed || ! $membership->hasLeft();
                 $participantContactIds[] = (int) $membership->contact_id;
-                $leader = $leader || $membership->role === GroupMembership::ROLE_LEADER;
+                // A leader who has left stops leading: the role is what grants
+                // unconstrained reads of the whole class's records, and an adult
+                // who is no longer in the group has no claim on them. Their own
+                // contact id stays in the list above, so anything recorded about
+                // them personally is still theirs.
+                $leader = $leader || ($membership->role === GroupMembership::ROLE_LEADER && ! $membership->hasLeft());
 
                 continue;
             }
@@ -869,8 +891,12 @@ class GroupAudience
             if ($membership->isGuardian() && $membership->guardian_of_contact_id !== null) {
                 $wardContactIds[] = (int) $membership->guardian_of_contact_id;
                 // The feed remains consent-gated for guardians — only the
-                // participant-thread channel about their own ward is not.
-                $feed = $feed || $membership->consentCovers(self::DISCLOSURE_FEED);
+                // participant-thread channel about their own ward is not — and a
+                // guardian edge that left with its child grants no class-wide
+                // disclosure whatever consent still stands on it. The ward id
+                // above is deliberately kept, so this parent can still open
+                // their own child's records.
+                $feed = $feed || (! $membership->hasLeft() && $membership->consentCovers(self::DISCLOSURE_FEED));
             }
         }
 

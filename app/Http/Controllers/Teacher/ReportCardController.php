@@ -48,11 +48,6 @@ class ReportCardController extends TeacherController
         $group = Group::findOrFail($group_id);
         [$type, $year, $term] = $this->period($request);
 
-        $students = $group->memberships()
-            ->participants()
-            ->with('contact')
-            ->get();
-
         $cards = ReportCard::query()
             ->where('group_id', $group->id)
             ->where('school_year', $year)
@@ -65,6 +60,21 @@ class ReportCardController extends TeacherController
             ->get()
             ->keyBy('group_membership_id');
 
+        // A CHILD WHO LEFT DROPS OFF THIS LIST LIKE EVERY OTHER — with one
+        // exception, and it is the reason this screen is different from the
+        // register. If a card for THIS period was already started for them, the
+        // school still owes that document to the family, and this is the only
+        // place it can be finished, published or printed. So they stay visible
+        // here while they are gone from the register, the gradebook and the
+        // class counts, and the payload carries the date so the row can say why.
+        $started = $cards->keys()->all();
+
+        $students = $group->memberships()
+            ->participants()
+            ->where(fn ($q) => $q->whereNull('left_on')->orWhereIn('id', $started))
+            ->with('contact')
+            ->get();
+
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -73,6 +83,9 @@ class ReportCardController extends TeacherController
                     $card = $cards->get($m->id);
 
                     return $this->student($m) + [
+                        // Roster data, not family data: a teacher finishing a
+                        // leaving report needs to know it IS one.
+                        'left_on' => $m->left_on?->toDateString(),
                         'report_card_id' => $card?->id,
                         'started' => $card !== null,
                         'published' => (bool) $card?->isPublished(),

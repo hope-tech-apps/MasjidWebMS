@@ -134,7 +134,7 @@ class GroupThreadsController extends Controller
 
         if ($request->input('scope') === GroupThread::SCOPE_PARTICIPANT) {
             $about = $group->memberships()
-                ->participants()
+                ->participants()->current()
                 ->find($request->integer('about_membership_id'));
 
             if ($about === null) {

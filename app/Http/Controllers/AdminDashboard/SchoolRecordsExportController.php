@@ -261,7 +261,7 @@ class SchoolRecordsExportController extends Controller
     private function writeEnrollments($out): void
     {
         Csv::row($out, ['Membership id', 'Class id', 'Contact id', 'Student name', 'Role',
-            'Grade', 'Joined on', 'Consent granted at', 'Consent scope']);
+            'Grade', 'Joined on', 'Left on', 'Consent granted at', 'Consent scope']);
 
         Csv::each(
             GroupMembership::whereIn('group_id', $this->schoolGroupIds())
@@ -270,7 +270,7 @@ class SchoolRecordsExportController extends Controller
             fn (GroupMembership $m) => Csv::row($out, [
                 Csv::num($m->id), Csv::num($m->group_id), Csv::num($m->contact_id),
                 Csv::text($this->nameOf($m->contact)), Csv::text($m->role),
-                Csv::text($m->grade_label), Csv::num($m->joined_at),
+                Csv::text($m->grade_label), Csv::num($m->joined_at), Csv::num($m->left_on),
                 Csv::num($m->consent_granted_at), Csv::text($m->consent_scope),
             ])
         );
@@ -280,7 +280,7 @@ class SchoolRecordsExportController extends Controller
     private function writeGuardians($out): void
     {
         Csv::row($out, ['Membership id', 'Class id', 'Guardian contact id', 'Guardian name',
-            'Ward contact id', 'Joined on', 'Consent granted at', 'Consent scope']);
+            'Ward contact id', 'Joined on', 'Left on', 'Consent granted at', 'Consent scope']);
 
         Csv::each(
             GroupMembership::whereIn('group_id', $this->schoolGroupIds())
@@ -289,7 +289,8 @@ class SchoolRecordsExportController extends Controller
             fn (GroupMembership $m) => Csv::row($out, [
                 Csv::num($m->id), Csv::num($m->group_id), Csv::num($m->contact_id),
                 Csv::text($this->nameOf($m->contact)), Csv::num($m->guardian_of_contact_id),
-                Csv::num($m->joined_at), Csv::num($m->consent_granted_at), Csv::text($m->consent_scope),
+                Csv::num($m->joined_at), Csv::num($m->left_on),
+                Csv::num($m->consent_granted_at), Csv::text($m->consent_scope),
             ])
         );
     }

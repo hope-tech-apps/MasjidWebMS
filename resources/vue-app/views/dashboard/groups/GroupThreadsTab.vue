@@ -239,7 +239,10 @@ const messages = computed<GroupMessage[]>(() => (threadsStore.messagesPaginated?
 
 /** A thread is opened ABOUT a participant; a guardian edge names a relationship, not a person. */
 const participants = computed<GroupMembership[]>(
-    () => props.memberships.filter((m) => m.role !== 'guardian')
+    // …and one who is still in the class: this list is a picker, and offering a
+    // child who has left invites a record to be written against a class they are
+    // no longer in — which the server now refuses anyway.
+    () => props.memberships.filter((m) => m.role !== 'guardian' && !m.left_on)
 );
 
 const maxMessageLength = computed<number>(() => threadsStore.threadsMeta?.max_message_length || 5000);

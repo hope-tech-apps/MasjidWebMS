@@ -1174,6 +1174,18 @@
                                     <span v-if="r.grade_label" class="badge bg-primary-subtle text-primary-emphasis fw-normal">
                                         {{ r.grade_label }}
                                     </span>
+                                    <!--
+                                        A child who has left is off every other
+                                        screen in this class. They are still here
+                                        because a card was already started for
+                                        this period and the school owes the
+                                        family that document — so the row says so
+                                        rather than leaving a teacher to wonder
+                                        why a name they stopped marking is back.
+                                    -->
+                                    <span v-if="r.left_on" class="badge bg-secondary-subtle text-secondary-emphasis fw-normal">
+                                        Left {{ leftDay(r.left_on) }}
+                                    </span>
                                 </div>
                             </div>
                             <span class="badge" :class="rowStatus(r).cls">{{ rowStatus(r).text }}</span>
@@ -3000,6 +3012,18 @@ const discardAndClose = () => {
     // opened — and saved into — Quarter 3.
     teacherComment.value = '';
     teacherCommentBaseline.value = '';
+};
+
+/**
+ * A leaving date is a calendar DAY, not an instant: 'YYYY-MM-DD' through
+ * `new Date()` is UTC midnight, which renders as the day BEFORE for every reader
+ * west of UTC. Read the stored day literally instead.
+ */
+const leftDay = (iso: string | null): string => {
+    if (!iso) return '';
+    const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return iso;
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
 /** Never "0 of 0": `criteria` counts the learning behaviours too, so the fraction is honest. */

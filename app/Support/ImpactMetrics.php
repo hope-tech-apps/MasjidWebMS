@@ -708,6 +708,10 @@ class ImpactMetrics
                 ->whereNull('contacts.deleted_at')
                 ->where('groups.is_active', true)
                 ->whereIn('group_memberships.role', GroupMembership::PARTICIPANT_ROLES)
+                // Children who have left are not this organisation's current
+                // participants — by hand for the same reason as the two
+                // soft-delete filters above: a raw join sees no Eloquent scope.
+                ->whereNull('group_memberships.left_on')
                 ->distinct()
                 ->count('group_memberships.contact_id'),
         ];

@@ -80,7 +80,7 @@ abstract class TeacherController extends Controller
     protected function classPayload(Group $group): array
     {
         $students = $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
             ->get();
 
