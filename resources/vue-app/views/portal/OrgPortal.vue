@@ -34,9 +34,17 @@
                                 <i class="bi bi-people-fill" style="color:var(--org-primary);"></i>
                             </div>
                             <h2 class="h6 fw-semibold mb-1" style="color: var(--org-text);">Parents</h2>
+                            <!--
+                                WHAT THE PARENT PORTAL ACTUALLY HAS. This card used to
+                                promise "marks, attendance and report cards": there is no
+                                marks screen and no attendance screen in the family realm
+                                at all — attendance appears only as the frozen figures on a
+                                published report card. A door that promises a register sends
+                                parents hunting for one and the office answers the phone.
+                            -->
                             <p class="small mb-4" style="color: var(--org-muted);">
-                                See your child's class, marks, attendance and report cards, and
-                                message their teacher.
+                                See your child's class story, their Qur'an and Arabic progress
+                                and their report cards, and message their teacher.
                             </p>
                             <a class="btn btn-brand w-100 mt-auto" :href="parentHref">Parent sign in</a>
                         </div>
