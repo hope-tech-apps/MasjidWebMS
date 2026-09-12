@@ -250,7 +250,27 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         marks_section_levels: "Performance levels",
         // The count of pieces of work behind a points total, so "86.5 of 100"
         // is not read as a percentage of the term. `count_of` carries the "of".
-        marks_pieces: "across {x} pieces of work",
+        marks_pieces_one: "across {x} piece of work",
+        marks_pieces_two: "across {x} pieces of work",
+        marks_pieces_few: "across {x} pieces of work",
+        marks_pieces_many: "across {x} pieces of work",
+        // The four performance levels and what they mean. They are a platform
+        // constant (App\\Support\\PerformanceLevel), so the payload carries them
+        // in English whatever language the portal is set to — the same seam the
+        // qāʿidah's stage labels have. Keyed by the level number; a level this
+        // table has never heard of falls back to the server's own words.
+        level_4: "Exceeds Expectations",
+        level_3: "Meets Expectations",
+        level_2: "Approaching Expectations",
+        level_1: "Needs Support",
+        level_short_4: "Exceeds",
+        level_short_3: "Meets",
+        level_short_2: "Approaching",
+        level_short_1: "Needs Support",
+        level_desc_4: "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence.",
+        level_desc_3: "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding.",
+        level_desc_2: "Partial understanding; needs support or reminders; inconsistent performance.",
+        level_desc_1: "Limited understanding; requires significant guidance; skills not yet developed.",
         // The NUMBER always; `mean_label` is printed beside it and never in
         // place of it (App\Support\PerformanceLevel::labelForMean).
         marks_levels_mean: "Average level {x}",
@@ -429,7 +449,22 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         marks_error: "تعذّر تحميل بعض الدرجات الآن.",
         marks_section_points: "الأعمال المُقيَّمة بالنقاط",
         marks_section_levels: "مستويات الأداء",
-        marks_pieces: "في {x} من الأعمال",
+        marks_pieces_one: "في عمل واحد",
+        marks_pieces_two: "في عملين",
+        marks_pieces_few: "في {x} أعمال",
+        marks_pieces_many: "في {x} عملًا",
+        level_4: "يفوق التوقعات",
+        level_3: "يحقق التوقعات",
+        level_2: "يقترب من التوقعات",
+        level_1: "يحتاج إلى دعم",
+        level_short_4: "يفوق",
+        level_short_3: "يحقق",
+        level_short_2: "يقترب",
+        level_short_1: "يحتاج دعمًا",
+        level_desc_4: "يُظهر إتقانًا ثابتًا، ويطبّق المهارات باستقلالية، بدقة وعمق وثقة.",
+        level_desc_3: "يُظهر إتقانًا للمستوى الدراسي، ويُنجز المهام بأقل قدر من المساعدة، وفهمه راسخ.",
+        level_desc_2: "فهم جزئي، ويحتاج إلى مساعدة أو تذكير، وأداؤه غير مستقر.",
+        level_desc_1: "فهم محدود، ويحتاج إلى توجيه كبير، والمهارات لم تتكوّن بعد.",
         marks_levels_mean: "متوسط المستوى {x}",
         mark_missing: "لم يُسلَّم",
         mark_excused: "معفى منه",

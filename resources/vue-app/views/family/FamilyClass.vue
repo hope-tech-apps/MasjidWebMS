@@ -456,8 +456,8 @@
                         </summary>
                         <dl class="row small mt-2 mb-0">
                             <template v-for="l in levelKey" :key="l.level">
-                                <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ l.label }}</dt>
-                                <dd class="col-sm-8 text-muted" dir="auto">{{ l.description }}</dd>
+                                <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ levelPhrase('level', l.level, l.label) }}</dt>
+                                <dd class="col-sm-8 text-muted" dir="auto">{{ levelPhrase('level_desc', l.level, l.description) }}</dd>
                             </template>
                         </dl>
                     </details>
@@ -632,7 +632,7 @@
                                             {{ marksFor(child).summary.points_possible }}
                                         </span>
                                         <span class="text-muted">
-                                            &middot; {{ t('marks_pieces', String(marksFor(child).summary.points_counted)) }}
+                                            &middot; {{ tCount('marks_pieces', marksFor(child).summary.points_counted) }}
                                         </span>
                                     </p>
                                 </template>
@@ -665,7 +665,7 @@
                                         </span>
                                         <span v-if="marksFor(child).summary.levels.mean_label"
                                               class="text-muted" dir="auto">
-                                            &middot; {{ marksFor(child).summary.levels.mean_label }}
+                                            &middot; {{ levelPhrase('level_short', Math.round(Number(marksFor(child).summary.levels.mean)), marksFor(child).summary.levels.mean_label) }}
                                         </span>
                                     </p>
                                     <!-- Every level, present even at zero, so
@@ -675,7 +675,7 @@
                                     <ul class="list-unstyled small mb-3">
                                         <li v-for="row in marksFor(child).summary.levels.distribution" :key="row.level"
                                             class="d-flex justify-content-between">
-                                            <span dir="auto">{{ row.level }} &mdash; {{ row.short_label }}</span>
+                                            <span dir="auto">{{ row.level }} &mdash; {{ levelPhrase('level_short', row.level, row.short_label) }}</span>
                                             <span class="text-muted">{{ row.count }}</span>
                                         </li>
                                         <!-- Counted and shown, and deliberately
@@ -706,8 +706,8 @@
                                     </summary>
                                     <dl class="row small mt-2 mb-0">
                                         <template v-for="l in levelKey" :key="l.level">
-                                            <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ l.label }}</dt>
-                                            <dd class="col-sm-8 text-muted" dir="auto">{{ l.description }}</dd>
+                                            <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ levelPhrase('level', l.level, l.label) }}</dt>
+                                            <dd class="col-sm-8 text-muted" dir="auto">{{ levelPhrase('level_desc', l.level, l.description) }}</dd>
                                         </template>
                                     </dl>
                                 </details>
@@ -1161,6 +1161,22 @@ const reportCards = ref<Record<number, any[]>>({});
 const reportsLoaded = ref(false);
 const reportsLoading = ref(false);
 const reportsError = ref<FamilyMessage | null>(null);
+/**
+ * A performance level in the portal's language.
+ *
+ * The four levels are a platform constant on the server (App\Support\PerformanceLevel),
+ * so the payload carries them in English whatever the portal is set to — the same
+ * seam the qāʿidah's stage labels have. The string table answers when it knows the
+ * level; anything else falls through to the server's own words, which are still
+ * true when they are not translated.
+ */
+const levelPhrase = (base: string, level: number | string | null, fallback?: string | null): string => {
+    const key = `${base}_${level ?? ''}`;
+    const translated = t(key);
+
+    return translated === key ? (fallback ?? '') : translated;
+};
+
 const levelKey = ref<any[]>([]);
 const openCard = ref<any>(null);
 const openCardFor = ref<any>(null);
@@ -1256,9 +1272,14 @@ const downloadCard = async () => {
 const levelText = (m: any): string => {
     if (m?.level === null || m?.level === undefined) return t('not_assessed');
 
-    // The short label is the school's own wording for the level and is printed
-    // as it arrives, in either language.
-    const short = levelKey.value.find((l: any) => l.level === m.level)?.short_label;
+    // The short label in the portal's language, falling back to the school's own
+    // wording as it arrives. Before this went through levelPhrase, an Arabic
+    // portal printed "3 · Meets" beside a heading it had just translated.
+    const short = levelPhrase(
+        'level_short',
+        m.level,
+        levelKey.value.find((l: any) => l.level === m.level)?.short_label
+    );
 
     return `${m.level} · ${short ?? m.level_label ?? ''}`.trim();
 };
@@ -1372,8 +1393,15 @@ const markText = (s: any): string => {
     if (s?.points_earned === null || s?.points_earned === undefined) return t('not_assessed');
 
     if (s.assignment?.scale === 'levels') {
-        const short = levelKey.value.find((l: any) => l.level === s.points_earned)?.short_label;
-        return `${s.points_earned} · ${short ?? ''}`.trim().replace(/ ·$/, '');
+        // Through levelPhrase, so a mark reads "3 · يحقق" on a page that has
+        // already translated the heading, the average and the key above it.
+        const short = levelPhrase(
+            'level_short',
+            s.points_earned,
+            levelKey.value.find((l: any) => l.level === s.points_earned)?.short_label
+        );
+
+        return `${s.points_earned} · ${short}`.trim().replace(/ ·$/, '');
     }
 
     return `${s.points_earned} ${t('count_of')} ${s.assignment?.points_possible ?? ''}`.trim();
