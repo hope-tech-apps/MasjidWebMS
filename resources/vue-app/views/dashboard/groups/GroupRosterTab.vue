@@ -260,6 +260,23 @@
                                     Notes only
                                 </span>
                                 <span v-else class="badge bg-secondary-subtle text-secondary">Not given</span>
+                                <!--
+                                    WHEN it was given. A consent is a dated act, and an
+                                    office checking this row against the paper form in
+                                    front of them is comparing dates — a badge on its own
+                                    cannot be checked against anything.
+                                -->
+                                <div v-if="membership.consent_scope && membership.consent_granted_at" class="small text-muted">
+                                    {{ formatConsentDay(membership.consent_granted_at) }}
+                                </div>
+                                <!--
+                                    An unconfirmed claim may not hold consent, and the
+                                    server refuses one (422). So the cell says what to do
+                                    instead of offering a control that fails.
+                                -->
+                                <div v-else-if="isPending(membership)" class="small text-muted">
+                                    Confirm this entry first
+                                </div>
                             </td>
                             <td class="text-end">
                                 <button
@@ -273,6 +290,24 @@
                                     @click="confirmOne(membership)"
                                 >
                                     <i class="bi" :class="isContested(membership) ? 'bi-question-diamond' : 'bi-patch-check'"></i>
+                                </button>
+                                <!--
+                                    RECORDING CONSENT BELONGS ON THIS ROW, which already
+                                    names whose parent this is and which signup asserted
+                                    it. The endpoint has existed as long as the columns;
+                                    nothing in this app ever called it, so an office could
+                                    read "Not given" here and had no way to set it.
+                                -->
+                                <button
+                                    v-if="!isPending(membership)"
+                                    class="btn btn-sm me-1"
+                                    :class="membership.consent_scope ? 'btn-outline-secondary' : 'btn-outline-primary'"
+                                    :title="membership.consent_scope
+                                        ? 'Change or withdraw what this guardian consented to'
+                                        : 'Record what this guardian consented to'"
+                                    @click="openConsent(membership)"
+                                >
+                                    <i class="bi bi-file-earmark-check"></i>
                                 </button>
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmRemove(membership)" title="Remove">
                                     <i class="bi bi-person-dash"></i>
@@ -365,6 +400,88 @@
         </Teleport>
     </div>
 
+        <!-- What a guardian consented to -->
+        <Teleport to="body">
+            <div v-if="consentFor" class="modal fade show d-block" tabindex="-1"
+                 style="background:rgba(0,0,0,.5)" @click.self="consentFor = null">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"><i class="bi bi-file-earmark-check me-2"></i> Consent</h5>
+                            <button type="button" class="btn-close" @click="consentFor = null"></button>
+                        </div>
+                        <form @submit.prevent="saveConsent">
+                            <div class="modal-body">
+                                <p class="mb-3">
+                                    <span class="fw-semibold">{{ fullName(consentFor.contact) }}</span>
+                                    &mdash; guardian of {{ fullName(consentFor.guardian_of) }}.
+                                </p>
+                                <!--
+                                    THE OFFICE IS RECORDING SOMETHING A PARENT DID, not
+                                    switching a feature on for them. So each scope is
+                                    described by what it OPENS — that is what the parent
+                                    agreed to, and what this row will be read as later.
+                                    Nothing is pre-selected on a row that has no record:
+                                    a default is exactly what consent may not be.
+                                -->
+                                <div class="form-check mb-2">
+                                    <input class="form-check-input" type="radio" id="consent-feed" value="feed" v-model="consentForm.scope">
+                                    <label class="form-check-label" for="consent-feed">
+                                        <span class="fw-semibold">Notes only</span>
+                                        <span class="d-block small text-muted">
+                                            The class story, class-wide messages and handouts — written updates about the class.
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="radio" id="consent-media" value="media" v-model="consentForm.scope">
+                                    <label class="form-check-label" for="consent-media">
+                                        <span class="fw-semibold">Photos &amp; notes</span>
+                                        <span class="d-block small text-muted">
+                                            Everything above, and photographs of their own child in the class story.
+                                        </span>
+                                    </label>
+                                </div>
+                                <div class="mb-1">
+                                    <label class="form-label" for="consent-date">Date on the signed form</label>
+                                    <input id="consent-date" type="date" class="form-control" :max="today" v-model="consentForm.granted_at">
+                                    <div class="form-text">
+                                        The date the parent signed, not the date you are typing it. Defaults to today.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="modal-footer justify-content-between">
+                                <!--
+                                    Withdrawal sits in the same dialog because it corrects
+                                    the same fact, and it is the one direction this screen
+                                    must never make hard to find.
+                                -->
+                                <button
+                                    v-if="consentFor.consent_scope"
+                                    type="button"
+                                    class="btn btn-outline-danger"
+                                    :disabled="savingConsent"
+                                    @click="withdrawConsent"
+                                >
+                                    Withdraw
+                                </button>
+                                <span v-else></span>
+                                <span>
+                                    <button type="button" class="btn btn-secondary me-2" @click="consentFor = null" :disabled="savingConsent">
+                                        Cancel
+                                    </button>
+                                    <button type="submit" class="btn btn-success" :disabled="savingConsent || !consentForm.scope">
+                                        <span v-if="savingConsent" class="spinner-border spinner-border-sm me-1"></span>
+                                        Save
+                                    </button>
+                                </span>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
         <!-- Choosing a student's avatar -->
         <Teleport to="body">
             <div v-if="avatarFor" class="modal fade show d-block" tabindex="-1"
@@ -398,7 +515,7 @@ import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { BackendApiRoute } from '@/core/types/config/BackendApiRoutes';
 import { Contact } from '@/core/types/data/masjid-related/Contact';
-import { GroupContact, GroupMembership, GroupMembershipPayload, GroupRole } from '@/core/types/data/masjid-related/Group';
+import { ConsentScope, GroupContact, GroupMembership, GroupMembershipPayload, GroupRole } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { apiErrorText } from '@/core/services/ApiErrors';
@@ -500,6 +617,147 @@ const onAvatarSaved = (contact: any) => {
         avatarFor.value.contact.avatar_color = contact.avatar_color ?? null;
     }
     avatarFor.value = null;
+};
+
+/**
+ * ---------------------------------------------------------------------------
+ * CONSENT — THE COLUMN THIS SCREEN COULD READ AND NOT WRITE
+ * ---------------------------------------------------------------------------
+ *
+ * `group_memberships.consent_granted_at` / `consent_scope` are what
+ * App\Support\GroupAudience checks at the point of every class-wide disclosure.
+ * With no record a parent sees no class story, no class-wide message and no
+ * handout, and the notification emails about them are never sent either — the
+ * parent portal tells them so in as many words ("your consent for class updates
+ * is not on file. The school office can record it for you.").
+ *
+ * THE OFFICE HAD NO WAY TO RECORD IT. The endpoints have existed as long as the
+ * columns (PUT and DELETE .../members/{membership_id}/consent, both behind
+ * `manage contacts`), and nothing in this app ever called them: this table drew
+ * the badge and stopped, so the only route left was a database prompt. Found at
+ * Al-Razi School, where seven guardian edges carried no record and two teachers'
+ * welcome messages consequently reached one parent each.
+ *
+ * Recording here asserts something a PARENT did, which is why this control is per
+ * row and never bulk, why no scope is pre-selected on a row that has none, and
+ * why the date is the date on their form rather than the moment of typing.
+ */
+const consentFor = ref<GroupMembership | null>(null);
+const consentForm = ref<{ scope: ConsentScope | null; granted_at: string }>({ scope: null, granted_at: '' });
+const savingConsent = ref(false);
+/** Today where the OFFICE is. A consent cannot have been given tomorrow. */
+const today = ref('');
+
+/**
+ * A CONSENT DATE IS A CALENDAR DAY, NOT AN INSTANT — and the two must not be
+ * confused, because the office checks this row against a paper form.
+ *
+ * The API stores it as midnight and serialises it as UTC ('2026-09-05T00:00:00Z').
+ * Passing that through `new Date()` and rendering it in the reader's timezone
+ * draws the day BEFORE for everyone west of UTC: measured, a consent recorded
+ * for the 5th displayed as "Sep 4, 2026", and re-opening the dialog would have
+ * silently re-dated it a day earlier on the next save. So a STORED day is read
+ * literally off the string, and only TODAY is computed from the local clock.
+ */
+const storedDay = (iso: string): string => iso.slice(0, 10);
+
+const todayLocal = (): string => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const formatConsentDay = (iso: string | null): string => {
+    if (!iso) return '—';
+    const [y, m, d] = storedDay(iso).split('-').map(Number);
+    if (!y || !m || !d) return formatDate(iso);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const openConsent = (membership: GroupMembership) => {
+    today.value = todayLocal();
+    consentFor.value = membership;
+    consentForm.value = {
+        // Pre-filled with what already stands, so widening "notes" to "photos" is
+        // one click — and re-saving never silently re-dates a standing consent.
+        scope: membership.consent_scope ?? null,
+        granted_at: membership.consent_granted_at ? storedDay(membership.consent_granted_at) : today.value,
+    };
+};
+
+const consentUrl = (membership: GroupMembership): BackendApiRoute =>
+    `/api/admin/masjids/${masjidId.value}/groups/${props.groupId}/members/${membership.id}/consent` as BackendApiRoute;
+
+/**
+ * Write the SERVER's own row back onto the one the office is looking at, rather
+ * than what we hoped we sent: the badge and the date then cannot drift from the
+ * record, and re-fetching the whole roster would lose their place on the page.
+ */
+const applyConsent = (membership: GroupMembership, data: any) => {
+    membership.consent_scope = data?.consent_scope ?? null;
+    membership.consent_granted_at = data?.consent_granted_at ?? null;
+};
+
+const saveConsent = async () => {
+    const membership = consentFor.value;
+    if (!membership || !consentForm.value.scope) return;
+
+    savingConsent.value = true;
+    try {
+        const res: AxiosResponse = await ApiService.put(consentUrl(membership), {
+            scope: consentForm.value.scope,
+            // The chosen DAY, sent as a day. The server stores midnight of it and
+            // refuses anything in the future, which is what the input's `max`
+            // already prevents the office from picking.
+            granted_at: consentForm.value.granted_at,
+        });
+        applyConsent(membership, res.data?.data);
+        consentFor.value = null;
+        Swal.fire({ icon: 'success', title: 'Consent recorded', timer: 1600, showConfirmButton: false });
+    } catch (error) {
+        // The server's own sentence is worth showing verbatim: it refuses an
+        // unconfirmed claim and names the fix (confirm the entry first).
+        Swal.fire({
+            icon: 'error',
+            title: 'Could not record the consent',
+            text: apiErrorText(error, 'That consent could not be recorded.'),
+        });
+    } finally {
+        savingConsent.value = false;
+    }
+};
+
+const withdrawConsent = async () => {
+    const membership = consentFor.value;
+    if (!membership) return;
+
+    const result = await Swal.fire({
+        title: 'Withdraw this consent?',
+        text: `${fullName(membership.contact)} will stop seeing the class story, class-wide messages and handouts about `
+            + `${fullName(membership.guardian_of)} — the same position as never having consented.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Yes, withdraw'
+    });
+
+    if (!result.isConfirmed) return;
+
+    savingConsent.value = true;
+    try {
+        const res: AxiosResponse = await ApiService.delete(consentUrl(membership));
+        applyConsent(membership, res.data?.data);
+        consentFor.value = null;
+        Swal.fire({ icon: 'success', title: 'Consent withdrawn', timer: 1600, showConfirmButton: false });
+    } catch (error) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Could not withdraw the consent',
+            text: apiErrorText(error, 'That consent could not be withdrawn.'),
+        });
+    } finally {
+        savingConsent.value = false;
+    }
 };
 
 
@@ -968,9 +1226,11 @@ const confirmRemove = async (membership: GroupMembership) => {
     }
 };
 
-// Lock body scroll while the modal is open
-watch(showAddModal, (open) => {
-    document.body.style.overflow = open ? 'hidden' : '';
+// Lock body scroll while either dialog is open. One watcher for both: two of them
+// writing the same style property would have the first to close clear the lock
+// while the other was still up.
+watch([showAddModal, consentFor], ([adding, consenting]) => {
+    document.body.style.overflow = (adding || consenting) ? 'hidden' : '';
 });
 </script>
 
