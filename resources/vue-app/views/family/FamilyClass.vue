@@ -472,6 +472,7 @@
                             :first-name="avatarFor.contact?.first_name"
                             :last-name="avatarFor.contact?.last_name"
                             :family-endpoint="`${base}/members/${avatarFor.membership_id}/avatar`"
+                            :http="FamilyApiService"
                             @saved="onAvatarSaved" />
                     </div>
                 </div>

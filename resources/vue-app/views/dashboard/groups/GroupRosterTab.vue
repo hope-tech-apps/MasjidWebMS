@@ -519,7 +519,8 @@
                                     <label class="form-check-label" for="consent-media">
                                         <span class="fw-semibold">Photos &amp; notes</span>
                                         <span class="d-block small text-muted">
-                                            Everything above, and photographs of their own child in the class story.
+                                            Everything above, and the photographs in class posts — which
+                                            usually include other children alongside their own.
                                         </span>
                                     </label>
                                 </div>

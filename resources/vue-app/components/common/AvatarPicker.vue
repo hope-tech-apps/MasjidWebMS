@@ -80,9 +80,25 @@ const props = defineProps<{
     avatar?: { character?: string; tone?: string; color?: string; url?: string } | null;
     firstName?: string | null;
     lastName?: string | null;
+    /**
+     * THE CLIENT TO SPEAK THROUGH, and it is not optional detail.
+     *
+     * `ApiService` carries the STAFF token, and a teacher's token lives in the
+     * same store, so admin and teacher pickers work through the default. A
+     * PARENT is not staff: the family realm mints its own token and
+     * `FamilyApiService` is the only client that sends it. Rendered in the
+     * family realm with the default, every request here goes out with a
+     * credential the parent does not have — the catalogue 401s, the modal shows
+     * "The avatar list could not be loaded", and saving could never work either.
+     * Hand this the realm's own client wherever that realm is not staff.
+     */
+    http?: { get: (url: any) => Promise<any>; put: (url: any, body: any) => Promise<any> };
 }>();
 
 const emit = defineEmits<{ (e: 'saved', avatar: any): void }>();
+
+/** Staff unless the caller says otherwise — see the `http` prop. */
+const http = computed(() => props.http ?? ApiService);
 
 const catalogue = ref<any>(null);
 const loading = ref(true);
@@ -117,7 +133,7 @@ onMounted(async () => {
             : props.familyEndpoint
                 ? `/api/family/masjids/${props.masjidId}/avatars`
                 : `/api/admin/masjids/${props.masjidId}/avatars`;
-        const res = await ApiService.get(url as any);
+        const res = await http.value.get(url as any);
         catalogue.value = res.data?.data ?? null;
     } catch {
         error.value = 'The avatar list could not be loaded.';
@@ -132,7 +148,7 @@ const send = async (body: Record<string, string | null>) => {
     try {
         const url = props.familyEndpoint
             ?? `/api/admin/masjids/${props.masjidId}/contacts/${props.contactId}/avatar`;
-        const res = await ApiService.put(url as any, body);
+        const res = await http.value.put(url as any, body);
         emit('saved', res.data?.data ?? null);
     } catch (e: any) {
         error.value = e?.response?.data?.message
