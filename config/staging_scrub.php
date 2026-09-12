@@ -102,6 +102,7 @@ return [
 
         // Mobile Contact-Us inbox.
         'contact_us_messages' => 'Free-text inbound messages from app users.',
+        'contact_us_replies' => 'What the office wrote BACK to a member of the public, plus the name of the staff member who wrote it. Dropped with the messages it answers — a reply with no message is a fragment of a conversation about a real person, and cascading from contact_us_messages would leave replies to messages this scrub already removed.',
         'contact_us_accounts' => 'Name/email/phone per mobile app user; mobile_app_user_id is UNIQUE (1:1).',
 
         // The most sensitive table in the schema. Two of its columns are
@@ -141,6 +142,7 @@ return [
 
         // Send logs and provider ledgers.
         'notifications' => 'The push send-log (title, message, onesignal_message_id). Dropped so a staging admin cannot re-fire a real OneSignal message id and so the in-app inbox starts empty.',
+        'email_suppressions' => 'SAFE ON STAGING ONLY, and for the same reason as sms_suppressions below: every row is the email address of somebody who asked an organisation to stop writing to them, and in production the record deliberately outlives the contact. It is expendable here solely because staging cannot send email — MAIL_MAILER=log. If staging ever gains a real mailer, MOVE THIS TABLE TO KEEP: replaying a production broadcast against a wiped opt-out list is precisely the mistake the table exists to prevent.',
         'sms_suppressions' => 'SAFE ON STAGING ONLY. In production the opt-out deliberately outlives the contact row (.claude/rules/broadcasts.md) and must never be truncated. It is expendable here solely because staging cannot send SMS: no A2P sender, SMS_DRIVER=none, masjid_sms_senders forced to `unregistered` below. If staging ever gains a real provider, MOVE THIS TABLE TO KEEP.',
         'stripe_webhook_events' => 'An idempotency ledger only (stripe_event_id UNIQUE, type, processed_at) — it has no payload column. Dropping is desirable: staging wants its test webhooks processed, not swallowed as duplicates.',
         'provisioning_jobs' => 'callback_token is a live shared secret; github_repo and artifact_url point at real build infrastructure.',
@@ -210,6 +212,11 @@ return [
             'notes',            // free-text staff notes about a congregant
             'password',         // bcrypt of a parent's portal password; NULL = no password set
             'password_set_at',  // must be nulled with `password` or the portal claims one exists
+            // The display mirror of email_suppressions, which this scrub drops
+            // above. Left standing it would say "unsubscribed 3 September" on a
+            // staging box whose suppression table is empty — the badge and the
+            // send disagreeing, which is the one way this mirror can mislead.
+            'email_opted_out_at',
         ],
 
         'contact_cards' => [

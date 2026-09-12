@@ -233,6 +233,15 @@ class ContactUsReplyTest extends TestCase
 
         // The relay comes back. The SAME key is re-used, because the reply was
         // never delivered — a key is rotated only after a successful send.
+        //
+        // `Mail::fake()` builds its MailFake AROUND the manager the facade is
+        // currently holding — which here is the throwing Mockery double — and
+        // the first thing it does is ask that manager for its default driver.
+        // The double has no expectation for it, so the fake cannot even be
+        // constructed. One expectation is enough: from the swap onwards every
+        // send goes to the fake, not the double.
+        Mail::shouldReceive('getDefaultDriver')->andReturn('array');
+
         Mail::fake();
 
         $this->postJson($this->url() . '/' . $this->messageA->id . '/reply', [
