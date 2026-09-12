@@ -21,6 +21,12 @@ use Tests\TestCase;
  * because every other field is `sometimes`, that one bad method used to reject an
  * edit of a COMPLETELY unrelated field — a fund correction — with an error the
  * form did not surface. Measured on a real Burlington gift. These pin the fix.
+ *
+ * They also pin the contract the form's blank method rests on, which is the same
+ * question from the other end: an OMITTED method leaves the recorded one alone,
+ * and a gift being recorded for the first time must state one. Between them,
+ * nothing on this path can write a payment method nobody chose — the value a tax
+ * receipt later snapshots and can no longer be corrected.
  */
 class DonationEditLegacyMethodTest extends TestCase
 {
@@ -106,6 +112,52 @@ class DonationEditLegacyMethodTest extends TestCase
         $this->assertSame($this->school->id, (int) $donation->fund_id);
         // A valid choice is honoured, never overwritten by the heal.
         $this->assertSame('check', $donation->payment_method);
+    }
+
+    #[Test]
+    public function an_edit_that_states_no_method_leaves_the_recorded_one_alone(): void
+    {
+        // The third way the form can behave, and the one it now uses: it neither
+        // resubmits a value it cannot display nor invents one, it OMITS the key —
+        // and `sometimes` then means "leave it alone".
+        //
+        // This is what lets the picker sit blank on a gift whose method was never
+        // captured. Without it the form is stuck between two bad options: block a
+        // note-only correction behind a required field, or make the treasurer
+        // assert how money they never saw arrived — an assertion that a receipt
+        // issued later would freeze onto the donor's tax document.
+        $donation = $this->legacyGift();
+
+        $this->putJson($this->url($donation), [
+            'fund_id' => $this->school->id,
+            'note' => 'Reconciled against the March deposit.',
+        ])->assertOk();
+
+        $donation->refresh();
+        $this->assertSame($this->school->id, (int) $donation->fund_id, 'the fund change went through');
+        $this->assertSame('Reconciled against the March deposit.', $donation->note);
+        // Untouched: not healed to 'other', and above all not invented as 'cash'.
+        $this->assertSame('unknown', $donation->payment_method);
+    }
+
+    #[Test]
+    public function recording_a_gift_still_demands_a_stated_method(): void
+    {
+        // The other side of the same contract. Omission means "leave alone" only
+        // because there IS something to leave alone; on a new gift there is
+        // nothing, so the method has to be stated. The form used to hide this by
+        // opening the picker on "cash" with no placeholder, which is how a cheque
+        // came to be booked — and receipted — as cash.
+        $this->postJson("/api/admin/masjids/{$this->masjid->id}/donations", [
+            'fund_id' => $this->general->id,
+            'amount' => 5000.00,
+            'donated_at' => '2026-03-01',
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonStructure(['data' => ['payment_method']]);
+
+        $this->assertSame(0, Donation::withoutGlobalScopes()->count());
     }
 
     // ------------------------------------------------------------- helpers

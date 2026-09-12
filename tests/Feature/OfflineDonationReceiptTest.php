@@ -177,6 +177,45 @@ class OfflineDonationReceiptTest extends TestCase
         $this->assertSame(500000, Donation::withoutMasjidScope()->find($id)->receipt_eligible_amount);
     }
 
+    // ==================== what the ledger row offers ====================
+
+    #[Test]
+    public function the_ledger_index_carries_the_receipt_the_two_affordances_fork_on(): void
+    {
+        // The ledger row chooses between "Download receipt" and the green "Issue
+        // tax receipt" on ONE fact: whether `receipt` came back on the index
+        // payload. Nothing pinned that it does. Trim `'receipt'` from the index
+        // eager-load for a page-load win and the whole suite stays green while
+        // every already-receipted gift offers the Issue button again — the
+        // treasurer confirms a dialog warning that a serial will be burned, the
+        // server idempotently returns the receipt that already existed, and the
+        // screen reports a number consumed that never was.
+        Sanctum::actingAs($this->adminA);
+
+        $unreceipted = $this->recordOfflineGift(['amount' => 40.00, 'payment_method' => 'cash']);
+        $receipted = $this->recordOfflineGift(['amount' => 60.00, 'payment_method' => 'cash']);
+
+        $this->postJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$receipted}/receipt")
+            ->assertStatus(201);
+
+        $rows = collect(
+            $this->getJson("/api/admin/masjids/{$this->masjidA->id}/donations")
+                ->assertOk()
+                ->json('data.data')
+        )->keyBy('id');
+
+        // The gift that HAS a document: the serial is on the row, which is what
+        // the download button and its title read — the modal is never opened.
+        $this->assertSame(1, $rows[$receipted]['receipt']['serial_number']);
+
+        // The gift that has none: the key is PRESENT and null. Asserted as a key
+        // rather than only as a falsy value, because a payload that dropped the
+        // relation entirely looks identical to "no receipt" from the client's
+        // side — and would put the irreversible button back on every gift.
+        $this->assertArrayHasKey('receipt', $rows[$unreceipted]);
+        $this->assertNull($rows[$unreceipted]['receipt']);
+    }
+
     // ========================= the document ============================
 
     #[Test]
@@ -278,6 +317,32 @@ class OfflineDonationReceiptTest extends TestCase
     }
 
     #[Test]
+    public function a_gift_that_has_not_succeeded_is_refused_and_told_which_rule_refused_it(): void
+    {
+        // ReceiptService declines "not succeeded" and "non-receiptable fund" the
+        // same way — by returning null — so the sentence the admin reads is the
+        // controller's choice, and it has to be the right one. This gift's fund
+        // DOES issue receipts, so being told otherwise would send a treasurer off
+        // to edit a fund setting that was never the problem.
+        $pending = Donation::factory()->create([
+            'masjid_id' => $this->masjidA->id,
+            'fund_id' => $this->fundA->id,
+            'source' => 'offline',
+            'payment_method' => 'cash',
+            'status' => 'pending',
+        ]);
+
+        Sanctum::actingAs($this->adminA);
+
+        $this->postJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$pending->id}/receipt")
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Only a succeeded donation can be receipted.');
+
+        // Nothing was minted, so no serial is missing from the sequence.
+        $this->assertSame(0, DonationReceipt::withoutMasjidScope()->count());
+    }
+
+    #[Test]
     public function an_offline_gift_to_a_non_receiptable_fund_is_refused(): void
     {
         $relief = Fund::create([
@@ -361,6 +426,38 @@ class OfflineDonationReceiptTest extends TestCase
             ->assertStatus(403);
 
         $this->assertSame(0, DonationReceipt::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_view_only_admin_can_re_hand_a_donor_their_copy_but_cannot_take_a_serial(): void
+    {
+        // The other half of the permission split. Issuing is `manage donations`
+        // because it consumes a serial and produces a tax document; re-printing
+        // one that already exists is a READ of a stored row, and the volunteer
+        // who answers the phone when a donor loses their receipt should not need
+        // the permission that can burn a number to answer it.
+        Sanctum::actingAs($this->adminA);
+
+        $id = $this->recordOfflineGift(['amount' => 100.00, 'payment_method' => 'cash']);
+        $this->postJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$id}/receipt")->assertStatus(201);
+
+        // Strip the bridged role and grant only the ledger's read permission.
+        // syncRoles/givePermissionTo touch pivots only, so the observer does not
+        // re-bridge the role from users.type.
+        $this->adminA->syncRoles([]);
+        $this->adminA->givePermissionTo('view donations');
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        Sanctum::actingAs($this->adminA);
+
+        $pdf = $this->get("/api/admin/masjids/{$this->masjidA->id}/donations/{$id}/receipt/pdf")->assertOk();
+        $this->assertStringStartsWith('%PDF-', $pdf->content());
+
+        // ...and issuing is still refused, with the receipt that exists untouched.
+        $this->postJson("/api/admin/masjids/{$this->masjidA->id}/donations/{$id}/receipt")
+            ->assertStatus(403);
+
+        $this->assertSame(1, DonationReceipt::withoutMasjidScope()->count());
     }
 
     #[Test]

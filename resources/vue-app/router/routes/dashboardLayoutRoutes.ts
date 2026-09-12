@@ -179,6 +179,30 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/GroupDetailView.vue")
             },
             {
+                // Bulk roster import. A SCREEN of its own rather than a modal on
+                // the groups list: an office reads sixty rows here and has to be
+                // able to scroll them, keep the tab open while it checks a
+                // spelling against the roster, and come back to the batch tag
+                // afterwards. A dialog that closes takes the undo handle with it.
+                //
+                // NOT nested under `groups/` — `groups/:groupId` is directly
+                // above, and a sibling static segment there is one router-ranking
+                // change away from resolving as a group id.
+                //
+                // `requiresCrm`, like the roster screens it writes into: the
+                // server gates it on `permission:manage contacts`, and a school
+                // without the CRM has no contacts for a roster to point at.
+                path: 'roster-import',
+                name: 'masjid.rosterImport',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Import Roster',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/RosterImportView.vue")
+            },
+            {
                 // The ADMIN provisioning screen for teacher logins and the
                 // classes they lead. No `requiresCrm`/`requiresOrgTypes` on
                 // purpose: teachers are used by schools today and could be by

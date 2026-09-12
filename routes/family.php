@@ -4,6 +4,7 @@ use App\Http\Controllers\Family\ArabicLettersController;
 use App\Http\Controllers\Family\BehaviorAwardsController;
 use App\Http\Controllers\Family\FamilyAuthController;
 use App\Http\Controllers\Family\FamilyPasswordController;
+use App\Http\Controllers\Family\GradesController;
 use App\Http\Controllers\Family\GroupPostsController;
 use App\Http\Controllers\Family\GroupsController;
 use App\Http\Controllers\Family\GroupThreadsController;
@@ -277,6 +278,22 @@ Route::prefix('family')
                 // added to the counted write list, and it goes through the same
                 // two gates — a draft is a 404 here exactly as it is above.
                 Route::get('/report-cards/{report_card_id}/pdf', [FamilyReportCardsController::class, 'pdf']);
+
+                // The child's MARKS — the read the platform was already
+                // promising. Saving a mark mails this child's guardians a
+                // GRADE_POSTED nudge whose only link is the family sign-in page
+                // (Teacher\GradebookController::announceMarks), and until this
+                // route existed that link led to a portal with nowhere to read
+                // the thing the mail was about.
+                //
+                // A GET, so the realm's counted write list above is untouched:
+                // there is no acknowledgement, no "mark as seen" and no reply.
+                // The ward edge is the same one awards, ḥifẓ and letters use —
+                // FamilyController::subject(), i.e. GroupAudience — and there is
+                // deliberately no group-wide variant, for the reason this block
+                // already states: a class-wide view of marks is the ranking
+                // these modules exist to refuse.
+                Route::get('/grades', [GradesController::class, 'forMember']);
 
                 Route::get('/awards', [BehaviorAwardsController::class, 'forMember']);
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);

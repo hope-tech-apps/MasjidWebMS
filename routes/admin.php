@@ -27,6 +27,7 @@ use App\Http\Controllers\AdminDashboard\FlyerTemplatesController;
 use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\RegistrationsController;
+use App\Http\Controllers\AdminDashboard\RosterImportController;
 use App\Http\Controllers\AdminDashboard\EventsController;
 use App\Http\Controllers\AdminDashboard\FeePlansController;
 use App\Http\Controllers\AdminDashboard\FundsController;
@@ -776,6 +777,45 @@ Route::prefix('admin')->group(function () {
                 // somebody. This one genuinely excludes teachers and members,
                 // who hold zero CRM permissions by design.
                 Route::get('{masjid_id}/records/export', [SchoolRecordsExportController::class, 'export'])
+                    ->middleware('permission:manage contacts');
+
+                // THE SAME RECORDS COMING IN — the office's own roster import.
+                //
+                // `schools:import-roster` has done this correctly since R7 and
+                // needs a shell on the production host, so the school that owns
+                // the roster could not run it. These routes are that
+                // command's two safe verbs with a door on them; every rule about
+                // what a valid roster is stays in
+                // App\Services\Schools\RosterImportService, shared by both
+                // callers so they cannot drift.
+                //
+                // `manage contacts` on both. This is the bulk creation of
+                // children's records, so it takes the roster's own gate, the one
+                // teachers and members genuinely fail.
+                //
+                // TWO ROUTES, NOT THREE: there is no undo endpoint, deliberately.
+                // A `DELETE .../{batch}` was drafted and removed — it reached the
+                // `group_memberships` rows that carry a child's attendance, marks
+                // and report cards, which migration
+                // 2026_09_09_040000 and GroupMembershipsController::destroy()
+                // exist to protect, and it reached them with none of that
+                // controller's guard. The batch tag never expires and sits
+                // copyable on screen, so the office could fire it in October
+                // against a term of register marks. The preview is this feature's
+                // safety mechanism; a bulk reversal of children's records is a
+                // bigger hazard than the mistake it reverses. A batch that has
+                // touched nothing can still be undone by an engineer:
+                // `schools:import-roster x --masjid=<id> --rollback=<tag>`, which
+                // refuses in full the moment any row holds academic history.
+                //
+                // PREVIEW IS A SEPARATE ROUTE FROM COMMIT, not a `?dry_run=1` on
+                // one. A flag that defaults to writing is one typo away from a
+                // silent import, and a flag that defaults to not writing makes
+                // the write the exceptional case in a URL somebody will curl.
+                // Two verbs, one of which cannot write at all.
+                Route::post('{masjid_id}/records/roster-import/preview', [RosterImportController::class, 'preview'])
+                    ->middleware('permission:manage contacts');
+                Route::post('{masjid_id}/records/roster-import', [RosterImportController::class, 'commit'])
                     ->middleware('permission:manage contacts');
 
                 // Group rosters. A membership links an existing Contact to a

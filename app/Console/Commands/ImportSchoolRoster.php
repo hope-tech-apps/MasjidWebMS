@@ -2,15 +2,11 @@
 
 namespace App\Console\Commands;
 
-use App\Models\Contact;
-use App\Models\Group;
-use App\Models\GroupMembership;
 use App\Models\Masjid;
 use App\Models\User;
+use App\Services\Schools\RosterImportService;
 use App\Support\TenantContext;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 /**
  * Import a school's roster from a CSV: children, guardians, and the edges between.
@@ -18,6 +14,21 @@ use Illuminate\Support\Str;
  * Closes R7. Before this, enrolling sixty children meant sixty manual contact
  * creations plus a roster row and a guardian edge for each — or a public form
  * whose rows land self-asserted and need confirming one at a time.
+ *
+ * ---------------------------------------------------------------------------
+ * THE RULES LIVE IN THE SERVICE NOW; THIS IS THE CONSOLE FACE OF THEM
+ * ---------------------------------------------------------------------------
+ *
+ * Everything below about what a roster CSV is, what it refuses and what it may
+ * not do is implemented once in `App\Services\Schools\RosterImportService` and
+ * shared with the office's upload screen
+ * (`App\Http\Controllers\AdminDashboard\RosterImportController`). This command
+ * reads options, prints, and exits with a status; it decides nothing about the
+ * file. Two implementations of "a valid roster" would drift, and the drift
+ * would appear as children's records the CLI would never have written.
+ *
+ * This command's SIGNATURE, OUTPUT and EXIT CODES are unchanged by that move —
+ * they are somebody's runbook.
  *
  * ---------------------------------------------------------------------------
  * SAFE BY CONSTRUCTION, the same way crm:import-ledger is
@@ -79,13 +90,7 @@ class ImportSchoolRoster extends Command
 
     protected $description = 'Import a school roster CSV — children, guardians and edges (reversible).';
 
-    /** Matching is on a normalised email; a child usually has none. */
-    private const HEADERS = [
-        'class', 'student_first_name', 'student_last_name', 'grade',
-        'guardian_first_name', 'guardian_last_name', 'guardian_email', 'guardian_phone',
-    ];
-
-    public function handle(): int
+    public function handle(RosterImportService $importer): int
     {
         $masjidId = (int) $this->option('masjid');
 
@@ -107,10 +112,15 @@ class ImportSchoolRoster extends Command
         // therefore no ResolveMasjidTenant, so every BelongsToMasjid query here
         // would otherwise run unscoped — which for a write means creating rows
         // in no tenant, and for a read means matching another school's contacts.
+        //
+        // This line stays in the COMMAND and is deliberately absent from the
+        // service: over HTTP the context is already bound by the middleware, and
+        // a service that re-bound it would let a caller write into a masjid the
+        // middleware never authorised. See .claude/rules/tenant-scoping.md.
         app(TenantContext::class)->set($masjid->id);
 
         if ($tag = $this->option('rollback')) {
-            return $this->rollback((string) $tag);
+            return $this->rollback($importer, (string) $tag);
         }
 
         $path = (string) $this->argument('csv');
@@ -121,16 +131,25 @@ class ImportSchoolRoster extends Command
             return self::FAILURE;
         }
 
-        $rows = $this->read($path);
+        ['rows' => $rows, 'problems' => $problems] = $importer->read($path);
 
         if ($rows === null) {
+            // The first problem is the refusal; anything after it is the
+            // elaboration ("Expected: class,student_first_name,…"), which was
+            // never shouted in red and should not start being.
+            $this->error(array_shift($problems));
+
+            foreach ($problems as $problem) {
+                $this->line($problem);
+            }
+
             return self::FAILURE;
         }
 
         $batch = (string) ($this->option('batch') ?: 'roster-' . now()->format('Ymd-His'));
         $execute = (bool) $this->option('execute');
 
-        $plan = $this->plan($rows);
+        $plan = $importer->plan($rows);
 
         $this->render($plan, $batch, $execute);
 
@@ -149,7 +168,7 @@ class ImportSchoolRoster extends Command
             return self::FAILURE;
         }
 
-        $this->apply($plan, $batch);
+        $importer->apply($plan, $batch, $this->actor());
 
         $this->newLine();
         $this->info("Imported. Batch tag: {$batch}");
@@ -158,132 +177,31 @@ class ImportSchoolRoster extends Command
         return self::SUCCESS;
     }
 
-    // --------------------------------------------------------------- reading
-
-    /** @return array<int, array<string, string>>|null */
-    private function read(string $path): ?array
-    {
-        $fh = fopen($path, 'r');
-        $header = fgetcsv($fh, 0, ',', '"', '');
-
-        if ($header === false) {
-            $this->error('The file is empty.');
-            fclose($fh);
-
-            return null;
-        }
-
-        // A file exported from a spreadsheet often carries a UTF-8 BOM on the
-        // first header, which would make 'class' unmatchable and every row
-        // refused for a reason nobody could see.
-        $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string) $header[0]);
-        $header = array_map(fn ($h) => Str::snake(trim(strtolower((string) $h))), $header);
-
-        $missing = array_diff(self::HEADERS, $header);
-
-        if ($missing !== []) {
-            $this->error('Missing column(s): ' . implode(', ', $missing));
-            $this->line('Expected: ' . implode(',', self::HEADERS));
-            fclose($fh);
-
-            return null;
-        }
-
-        $rows = [];
-
-        while (($line = fgetcsv($fh, 0, ',', '"', '')) !== false) {
-            if (count(array_filter($line, fn ($c) => trim((string) $c) !== '')) === 0) {
-                continue;   // a blank line at the end of a spreadsheet export
-            }
-
-            $row = [];
-
-            foreach ($header as $i => $name) {
-                // Strip a leading apostrophe: our own export writes one in front
-                // of anything formula-shaped, so a file that made the round trip
-                // must not import a name as "'=Ali".
-                $row[$name] = ltrim(trim((string) ($line[$i] ?? '')), "'");
-            }
-
-            $rows[] = $row;
-        }
-
-        fclose($fh);
-
-        return $rows;
-    }
-
-    // ---------------------------------------------------------------- planning
-
     /**
-     * Work out what WOULD happen, touching nothing.
+     * WHO CONFIRMED THESE ROWS. A console command has no signed-in user, so
+     * --actor lets whoever runs the import name the staff member on whose
+     * authority the file was supplied. Left null it is still `provenance =
+     * confirmed` — the office did supply the roster — but the audit trail then
+     * names only the batch tag, which is weaker evidence. Prefer to pass it.
      *
-     * The plan is what the dry run prints and what --execute then applies, so
-     * the preview cannot drift from the write: they are the same computation.
-     *
-     * @param  array<int, array<string, string>>  $rows
-     * @return array{students: array, guardians: array, edges: array, refused: array}
+     * The upload screen has no equivalent problem: it stamps `Auth::user()`,
+     * which is a fact rather than a claim.
      */
-    private function plan(array $rows): array
+    private function actor(): ?User
     {
-        $classes = Group::whereIn('kind', [Group::KIND_CLASS, Group::KIND_HALAQA])->get();
+        $id = (int) $this->option('actor');
 
-        $students = [];
-        $guardians = [];
-        $edges = [];
-        $refused = [];
-
-        foreach ($rows as $n => $row) {
-            $line = $n + 2;   // +1 for the header, +1 for 1-based
-            $className = trim($row['class']);
-            $first = trim($row['student_first_name']);
-            $last = trim($row['student_last_name']);
-
-            if ($className === '' || $first === '') {
-                $refused[] = [$line, 'needs at least a class and a student first name'];
-
-                continue;
-            }
-
-            $class = $classes->first(fn (Group $g) => Str::lower($g->name) === Str::lower($className));
-
-            if (! $class) {
-                // Never created: a typo must not found a second Grade 2 and
-                // split a roster silently across both.
-                $refused[] = [$line, "no class named \"{$className}\" — create it first"];
-
-                continue;
-            }
-
-            $sKey = Str::lower($class->id . '|' . $first . '|' . $last);
-            $students[$sKey] ??= [
-                'class' => $class, 'first' => $first, 'last' => $last,
-                'grade' => trim($row['grade']) ?: null, 'lines' => [],
-            ];
-            $students[$sKey]['lines'][] = $line;
-
-            $gEmail = Str::lower(trim($row['guardian_email']));
-            $gFirst = trim($row['guardian_first_name']);
-
-            if ($gFirst === '' && $gEmail === '') {
-                continue;   // a child with no guardian on file yet is legitimate
-            }
-
-            if ($gEmail === '') {
-                $refused[] = [$line, 'a guardian needs an email — it is how the family signs in later'];
-
-                continue;
-            }
-
-            $guardians[$gEmail] ??= [
-                'first' => $gFirst, 'last' => trim($row['guardian_last_name']),
-                'email' => $gEmail, 'phone' => trim($row['guardian_phone']) ?: null,
-            ];
-
-            $edges[] = ['student' => $sKey, 'guardian' => $gEmail, 'class' => $class, 'line' => $line];
+        if ($id <= 0) {
+            return null;
         }
 
-        return compact('students', 'guardians', 'edges', 'refused');
+        $actor = User::find($id);
+
+        if (! $actor) {
+            $this->warn("No user {$id}; recording these rows with no named confirmer.");
+        }
+
+        return $actor;
     }
 
     private function render(array $plan, string $batch, bool $execute): void
@@ -292,15 +210,11 @@ class ImportSchoolRoster extends Command
         $this->info($execute ? "Applying roster import (batch {$batch})" : 'Roster import — DRY RUN');
         $this->newLine();
 
-        $existingStudents = 0;
-
-        foreach ($plan['students'] as $s) {
-            if ($this->findStudent($s)) {
-                $existingStudents++;
-            }
-        }
-
-        $existingGuardians = Contact::whereIn('email', array_keys($plan['guardians']))->count();
+        // Counted off the plan's own per-row flags rather than asked of the
+        // database a second time: the screen shows those flags, so a table that
+        // re-derived the numbers could disagree with the preview an office read.
+        $existingStudents = count(array_filter($plan['students'], fn ($s) => $s['existing']));
+        $existingGuardians = count(array_filter($plan['guardians'], fn ($g) => $g['existing']));
 
         $this->table(['', 'In the file', 'Already on record', 'Would be created'], [
             ['Students', count($plan['students']), $existingStudents, count($plan['students']) - $existingStudents],
@@ -321,122 +235,46 @@ class ImportSchoolRoster extends Command
         $this->line('Consent is NOT set by this import — no column, by design. Record it per family.');
     }
 
-    // --------------------------------------------------------------- applying
-
-    private function apply(array $plan, string $batch): void
+    /**
+     * THE ONLY UNDO THERE IS, and it is deliberately behind a shell.
+     *
+     * The upload screen has no undo button: the preview is its safety mechanism,
+     * and a one-click reversal of a bulk write over children's rows is a bigger
+     * hazard than the mistake it reverses. Reaching this needs the batch tag and
+     * a production shell, which is the right amount of friction for it.
+     *
+     * A batch whose rows are holding academic history is refused IN FULL rather
+     * than partly undone — see RosterImportService::rollback().
+     */
+    private function rollback(RosterImportService $importer, string $batch): int
     {
-        // WHO CONFIRMED THESE ROWS. A console command has no signed-in user, so
-        // --actor lets whoever runs the import name the staff member on whose
-        // authority the file was supplied. Left null it is still `provenance =
-        // confirmed` — the office did supply the roster — but the audit trail
-        // then names only the batch tag, which is weaker evidence. Prefer to
-        // pass it.
-        $actor = ($id = (int) $this->option('actor')) > 0 ? User::find($id) : null;
+        $result = $importer->rollback($batch);
 
-        if ($id > 0 && ! $actor) {
-            $this->warn("No user {$id}; recording these rows with no named confirmer.");
+        if ($result['refused'] !== []) {
+            $this->error("Refusing to undo batch {$batch} — nothing has been removed:");
+
+            foreach ($result['refused'] as $why) {
+                $this->line("  {$why}");
+            }
+
+            return self::FAILURE;
         }
 
-        DB::transaction(function () use ($plan, $batch, $actor) {
-            $studentContacts = [];
-
-            foreach ($plan['students'] as $key => $s) {
-                $contact = $this->findStudent($s) ?? Contact::create([
-                    'first_name' => $s['first'],
-                    'last_name' => $s['last'] ?: null,
-                    'import_batch' => $batch,
-                ]);
-
-                $studentContacts[$key] = $contact;
-
-                $membership = GroupMembership::firstOrNew([
-                    'group_id' => $s['class']->id,
-                    'contact_id' => $contact->id,
-                    'role' => GroupMembership::ROLE_MEMBER,
-                    'guardian_of_contact_id' => null,
-                ]);
-
-                $membership->fill([
-                    'masjid_id' => $s['class']->masjid_id,
-                    'grade_label' => $s['grade'],
-                ])->confirmedByStaff($actor)->save();
-            }
-
-            $guardianContacts = [];
-
-            foreach ($plan['guardians'] as $email => $g) {
-                $guardianContacts[$email] = Contact::where('email', $email)->first() ?? Contact::create([
-                    'first_name' => $g['first'],
-                    'last_name' => $g['last'] ?: null,
-                    'email' => $g['email'],
-                    'phone' => $g['phone'],
-                    'import_batch' => $batch,
-                ]);
-            }
-
-            foreach ($plan['edges'] as $e) {
-                $student = $studentContacts[$e['student']] ?? null;
-                $guardian = $guardianContacts[$e['guardian']] ?? null;
-
-                if (! $student || ! $guardian) {
-                    continue;
-                }
-
-                $edge = GroupMembership::firstOrNew([
-                    'group_id' => $e['class']->id,
-                    'contact_id' => $guardian->id,
-                    'role' => GroupMembership::ROLE_GUARDIAN,
-                    'guardian_of_contact_id' => $student->id,
-                ]);
-
-                // consent_granted_at and consent_scope are deliberately untouched:
-                // a spreadsheet cannot perform a parent's act.
-                $edge->fill(['masjid_id' => $e['class']->masjid_id])
-                    ->confirmedByStaff($actor)
-                    ->save();
-            }
-        });
-    }
-
-    /** An existing child: same class, same name. */
-    private function findStudent(array $s): ?Contact
-    {
-        $ids = GroupMembership::where('group_id', $s['class']->id)
-            ->whereIn('role', GroupMembership::PARTICIPANT_ROLES)
-            ->pluck('contact_id');
-
-        return Contact::whereKey($ids)
-            ->whereRaw('LOWER(first_name) = ?', [Str::lower($s['first'])])
-            ->whereRaw('LOWER(COALESCE(last_name, "")) = ?', [Str::lower($s['last'])])
-            ->first();
-    }
-
-    // --------------------------------------------------------------- rollback
-
-    private function rollback(string $batch): int
-    {
-        $contacts = Contact::where('import_batch', $batch)->get();
-
-        if ($contacts->isEmpty()) {
+        if ($result['contacts_removed'] === 0) {
             $this->warn("Nothing carries the batch tag {$batch}.");
 
             return self::SUCCESS;
         }
 
-        // Memberships go first and explicitly. A contact delete would take them
-        // anyway, but doing it here means the count reported is the count that
-        // happened rather than a cascade nobody watched.
-        $removed = 0;
-
-        DB::transaction(function () use ($contacts, &$removed) {
-            foreach ($contacts as $c) {
-                $removed += GroupMembership::where('contact_id', $c->id)->delete();
-                GroupMembership::where('guardian_of_contact_id', $c->id)->delete();
-                $c->delete();
-            }
-        });
-
-        $this->info("Rolled back {$contacts->count()} contact(s) and {$removed} roster row(s) from batch {$batch}.");
+        // "Withdrawn and archived", not "deleted": Contact is SoftDeletes, so
+        // every name, email and phone number in this batch is still in
+        // `contacts` with `deleted_at` set. Saying "removed" here would be the
+        // wrong answer to give about children's PII, and the wrong answer to
+        // give anyone who ran this to satisfy a deletion request.
+        $this->info("Withdrew {$result['contacts_removed']} contact(s) and removed "
+            . "{$result['roster_rows_removed']} roster row(s) from batch {$batch}.");
+        $this->line('The contact rows are ARCHIVED (soft-deleted), not erased. Erasing a person is a '
+            . 'separate, deliberate act.');
 
         return self::SUCCESS;
     }

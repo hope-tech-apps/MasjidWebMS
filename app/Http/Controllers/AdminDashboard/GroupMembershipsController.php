@@ -9,6 +9,7 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\User;
+use App\Support\AcademicRecordsHeld;
 use App\Support\RosterClaimIdentity;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -601,14 +602,14 @@ class GroupMembershipsController extends Controller
         // any caller. That makes the check below an explanation rather than the
         // protection: the database refuses regardless, and a bare constraint
         // violation is not something an office can act on.
-        $held = $this->academicRecordCounts($membership);
+        $held = AcademicRecordsHeld::counts($membership);
 
-        if (array_sum($held) > 0) {
+        if (AcademicRecordsHeld::any($held)) {
             return response()->json([
                 'status' => 'failed',
                 'data' => ['membership' => [
                     'This child has school records in this class ('
-                    . $this->describeHeld($held)
+                    . AcademicRecordsHeld::describe($held)
                     . '), so they cannot be removed from the roster — removing the row would '
                     . 'delete those records. Leave them on the roster to keep the history.',
                 ]],
@@ -777,42 +778,5 @@ class GroupMembershipsController extends Controller
         $principal = $request->user();
 
         return $principal instanceof User ? $principal : null;
-    }
-
-    /**
-     * What this membership is holding, per table.
-     *
-     * Counted rather than existence-checked so the refusal can say "42 register
-     * marks and 2 report cards" — an office deciding what to do needs to know
-     * whether it is a stray row or a term's work.
-     *
-     * @return array<string, int>
-     */
-    private function academicRecordCounts(GroupMembership $membership): array
-    {
-        $id = $membership->id;
-
-        return [
-            'register marks' => \App\Models\AttendanceRecord::where('group_membership_id', $id)->count(),
-            'marks' => \App\Models\AssignmentScore::where('group_membership_id', $id)->count(),
-            'report cards' => \App\Models\ReportCard::where('group_membership_id', $id)->count(),
-            'ḥifẓ entries' => \App\Models\HifzEntry::where('group_membership_id', $id)->count(),
-            'behaviour points' => \App\Models\BehaviorAward::where('group_membership_id', $id)->count(),
-            'letter progress' => \App\Models\ArabicLetterProgress::where('group_membership_id', $id)->count(),
-        ];
-    }
-
-    /** "42 register marks, 2 report cards" — only what is actually there. */
-    private function describeHeld(array $held): string
-    {
-        $parts = [];
-
-        foreach ($held as $label => $n) {
-            if ($n > 0) {
-                $parts[] = $n . ' ' . $label;
-            }
-        }
-
-        return implode(', ', $parts);
     }
 }

@@ -261,6 +261,38 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCrm: true
     },
     {
+        // BULK ROSTER IMPORT — the entry point, without which the screen does
+        // not exist for the people it was built for.
+        //
+        // `schools:import-roster` has been correct since R7 and needs a shell on
+        // the production host, so the office that owns the roster could not run
+        // its own import. Giving it a Vue route and no way to reach it leaves
+        // that premise exactly where it was: a route nothing links to is
+        // reachable only by typing the URL. Every other top-level dashboard
+        // screen arrives through this file, so this one does too.
+        //
+        // Directly under Groups because that is the screen it writes into, and
+        // because an administrator looking for "how do I get the class lists in"
+        // looks at the classes. Same gates as Groups: `manage contacts` server
+        // side, `requiresCrm` here — a tenant with no CRM has no contacts for a
+        // roster to point at. Not gated to the school vertical: a masjid imports
+        // a halaqa the same way.
+        //
+        // Plain "Import Roster" with no `title_term`: "roster" is the word for
+        // the list of people in a group in every vertical, and there is no
+        // terminology key for it.
+        title: "Import Roster",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 15V3" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8.5 6.5L12 3L15.5 6.5" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3 14V17C3 19.2091 4.79086 21 7 21H17C19.2091 21 21 19.2091 21 17V14" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/roster-import',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         // The admin screen that provisions teacher logins and assigns them the
         // classes they lead. Sits next to Groups/Classrooms because a teacher
         // leads one. Plain "Teachers" (no `title_term`): there is no teachers

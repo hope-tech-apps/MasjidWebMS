@@ -1557,6 +1557,15 @@ class FamilyPortalTest extends TestCase
         //
         // T-015h (self-service consent withdrawal) is still absent — a parent
         // cannot change a roster, and cannot withdraw consent without the office.
+        //
+        // T-041j (2026-09-12, the parent-side gradebook) added a route to this
+        // realm and deliberately added NOTHING to this list. It is a GET, and it
+        // was designed as one: the obvious feature to hang off a marks screen is
+        // an acknowledgement — "mark as seen", a thumbs-up, a reply — and every
+        // one of those is a write about a child that a parent does not need in
+        // order to read what their teacher wrote. If a later slice wants one, the
+        // eleventh entry belongs here and in the docblock at routes/family.php,
+        // in the same commit, argued the way the ten above are.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {

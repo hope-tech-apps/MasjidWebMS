@@ -237,6 +237,28 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reports_partial_error: "Some reports could not be loaded just now.",
         report_open_failed: "That report could not be opened.",
         report_download_failed: "That report could not be downloaded just now.",
+        // ------------------------------------------------ marks (the gradebook)
+        // "Marks", and deliberately not "Grades". In this school's own portal a
+        // GRADE is a year level — `grade_label` is printed as a badge on the
+        // report card, on the tab next to this one — so "Grades" would be two
+        // different things on one screen for the parent least able to tell them
+        // apart. "Marks" is also what the teachers here call them.
+        tab_grades: "Marks",
+        marks_empty: "No marks yet. When your teacher enters one you will see it here.",
+        marks_error: "Some marks could not be loaded just now.",
+        marks_section_points: "Points work",
+        marks_section_levels: "Performance levels",
+        // The count of pieces of work behind a points total, so "86.5 of 100"
+        // is not read as a percentage of the term. `count_of` carries the "of".
+        marks_pieces: "across {x} pieces of work",
+        // The NUMBER always; `mean_label` is printed beside it and never in
+        // place of it (App\Support\PerformanceLevel::labelForMean).
+        marks_levels_mean: "Average level {x}",
+        // A status is a sentence, never a number. An unhanded-in piece of work
+        // is not a zero on screen even though it is a zero in the average.
+        mark_missing: "Not handed in",
+        mark_excused: "Excused",
+        marks_truncated: "Showing the most recent {x}.",
     },
     ar: {
         // ------------------------------------------------------------ shared
@@ -398,6 +420,20 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reports_partial_error: "تعذّر تحميل بعض التقارير الآن.",
         report_open_failed: "تعذّر فتح هذا التقرير.",
         report_download_failed: "تعذّر تنزيل هذا التقرير الآن.",
+        // ------------------------------------------------------------ الدرجات
+        // "الدرجات" for the marks themselves; the report card's year level is
+        // "الصف" elsewhere, so the two do not collide in Arabic the way "Marks"
+        // and "Grades" would in English.
+        tab_grades: "الدرجات",
+        marks_empty: "لا توجد درجات بعد. وعندما يسجّل المعلّم درجةً، ستظهر هنا.",
+        marks_error: "تعذّر تحميل بعض الدرجات الآن.",
+        marks_section_points: "الأعمال المُقيَّمة بالنقاط",
+        marks_section_levels: "مستويات الأداء",
+        marks_pieces: "في {x} من الأعمال",
+        marks_levels_mean: "متوسط المستوى {x}",
+        mark_missing: "لم يُسلَّم",
+        mark_excused: "معفى منه",
+        marks_truncated: "تُعرض أحدث {x} من الدرجات.",
     },
 };
 
