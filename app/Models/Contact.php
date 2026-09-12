@@ -52,6 +52,11 @@ use Laravel\Sanctum\NewAccessToken;
  * flag set by a careless import with no timestamp and no source reads as NO
  * consent rather than as permission.
  *
+ * They are also tied to the NUMBER on this row and die with it: changing `phone`
+ * to a different destination clears all four (see `booted()`), because a
+ * consent record that outlived the number it was given for would assert that
+ * somebody agreed to be texted somewhere they never did.
+ *
  * The OPT-OUT here (`sms_opted_out_at`) is only a mirror. The authority is
  * `sms_suppressions`, keyed on the number rather than on this row, because this
  * row can be merged away, force-deleted or re-imported and an opt-out must
@@ -260,6 +265,43 @@ class Contact extends Model implements AuthenticatableContract
      * suppression. `sms_suppressions` has no foreign key to `contacts` and is
      * keyed on the number, precisely so that force-deleting the row cannot
      * un-say a STOP.
+     *
+     * ## …and CHANGING THE NUMBER retracts the consent claim
+     *
+     * `SmsConsentService`'s fourth rule is that consent belongs to a NUMBER, not
+     * to a name. It was enforced in exactly one place — `reconcileOnMerge()`,
+     * which refuses to transplant consent onto a survivor carrying a different
+     * number — and not at all on the path people actually use, which is editing
+     * the phone field on a member's record. `UpdateContactRequest` accepts
+     * `phone`, `ContactsController::update` mass-assigns it, and the four
+     * consent columns sat there untouched: the record then asserted that this
+     * person agreed to be texted at a number they had never given, and
+     * `BroadcastAudienceResolver` — which gates on `hasSmsConsent()` and never
+     * compares it to the number now on the row — texted it.
+     *
+     * The hook lives HERE rather than in the controller because "the number
+     * changed" is a fact about the row, not about one screen. The edit endpoint
+     * is merely the most common writer; a roster import, a scrub, a data fix in
+     * tinker and whatever the next slice adds all change the same column, and a
+     * guard on one controller would have covered exactly one of them.
+     *
+     * Three details that are load-bearing:
+     *
+     *  - The comparison is on the RESOLVED number (`PhoneNumber::e164`), not on
+     *    the raw string. Re-typing "(613) 555-0111" as "+16135550111" is a
+     *    formatting change, reaches the same handset, and must NOT throw away a
+     *    real consent record. Only a change of destination counts.
+     *  - Only the four CONSENT columns are cleared. `sms_opted_out_at` is left
+     *    exactly as it is: it is the restrictive state, and this class never
+     *    relaxes a restriction as a side effect of an edit — the same rule the
+     *    merge reconciliation follows. The way out of an opt-out is unchanged
+     *    and is the subscriber's alone (texting START, which `release()` acts
+     *    on, keyed on the number).
+     *  - It does not consult `sms_suppressions` for the NEW number. That list is
+     *    the authority and is already read on both paths that matter — `grant()`
+     *    refuses a suppressed number, and the audience resolver excludes one at
+     *    send time — so mirroring it here would buy a slightly more accurate
+     *    badge at the price of a query on every contact edit.
      */
     protected static function booted(): void
     {
@@ -269,6 +311,40 @@ class Contact extends Model implements AuthenticatableContract
             }
 
             $contact->credentials()->get()->each->delete();
+        });
+
+        static::updating(function (Contact $contact) {
+            if (! $contact->isDirty('phone')) {
+                return;
+            }
+
+            if (PhoneNumber::e164($contact->getOriginal('phone')) === PhoneNumber::e164($contact->phone)) {
+                return;
+            }
+
+            // Anything short of the full four-part rule is still a CLAIM (a bare
+            // flag from a careless import, a source with no date), and a claim
+            // about the old number is just as false about the new one — so the
+            // test is "does this row assert anything at all", not
+            // `hasSmsConsent()`. A row that asserts nothing is left completely
+            // alone rather than having `sms_opt_in` flipped from NULL to false
+            // by every phone edit in the directory.
+            $claimsConsent = $contact->sms_opt_in
+                || $contact->sms_consent_at !== null
+                || filled($contact->sms_consent_source)
+                || filled($contact->sms_consent_evidence);
+
+            if (! $claimsConsent) {
+                return;
+            }
+
+            // Assigned inside `updating`, which Eloquent fires BEFORE it reads
+            // the dirty set for the UPDATE statement, so these travel in the
+            // same query as the phone change rather than needing a second save.
+            $contact->sms_opt_in = false;
+            $contact->sms_consent_at = null;
+            $contact->sms_consent_source = null;
+            $contact->sms_consent_evidence = null;
         });
     }
 

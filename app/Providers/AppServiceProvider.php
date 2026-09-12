@@ -290,8 +290,19 @@ class AppServiceProvider extends ServiceProvider
         // 'form-submit': an unauthenticated DB write, a legitimate person submits
         // once. Keyed by IP AND target organization so flooding one clinic's
         // intake cannot lock a visitor out of another tenant's.
+        //
+        // The tenant half of the key is the header cast THE SAME WAY the
+        // controller casts it (AppointmentRequestsController::store does
+        // `(int) $request->header('masjid-id')`), and that identity is the whole
+        // control. Keyed on the raw string, `7`, `07`, `007`, `+7` and `7x` are
+        // one tenant to the controller — every one of them passes
+        // `Masjid::whereKey(7)->exists()` and writes a row into masjid 7's
+        // triage queue — but five different buckets to the limiter, so a single
+        // IP had an unbounded supply of fresh allowances against one clinic and
+        // the cap was decorative. Any future change to how the controller
+        // resolves the tenant has to be mirrored here or the same hole reopens.
         RateLimiter::for('appointment-request', function (Request $request) {
-            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+            $key = $request->ip() . '|' . (int) $request->header('masjid-id');
 
             return Limit::perHour(8)->by($key)->response(function () {
                 return response()->json([

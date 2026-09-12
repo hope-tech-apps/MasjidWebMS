@@ -15,6 +15,12 @@ use Tests\TestCase;
  * `/api/v1/*` carries no middleware at all in this app, so everything
  * protecting this route lives in the controller and its named throttle.
  * Mirrors FormSubmissionTest, whose idiom this endpoint copies.
+ *
+ * The success payload deliberately returns NO identifier (`data.id` is null on
+ * both the real and the honeypot branch), so every assertion below reads the
+ * stored row back by query. See AppointmentRequestsController::store and
+ * AppointmentRequestPublicAbuseSurfaceTest for why the primary key may not
+ * leave this endpoint.
  */
 class AppointmentRequestSubmissionTest extends TestCase
 {
@@ -84,9 +90,18 @@ class AppointmentRequestSubmissionTest extends TestCase
         $response = $this->submit($this->payload(), $this->masjidA->id);
 
         $response->assertOk()->assertJsonPath('status', 'success');
-        $this->assertNotNull($response->json('data.id'));
 
-        $stored = AppointmentRequest::find($response->json('data.id'));
+        // The response carries no identifier — `data.id` is null on the real
+        // branch exactly as it is on the honeypot branch below, because
+        // `appointment_requests.id` is a global auto-increment and handing it to
+        // an anonymous submitter publishes a running count of every tenant's
+        // intake volume. The row is therefore found by query here, and the
+        // guarantee that USED to be spelled `assertNotNull($response->json(...))`
+        // — "the write really happened" — is now the sole() below plus the
+        // column-by-column assertions after it, which say strictly more.
+        $this->assertNull($response->json('data.id'));
+
+        $stored = AppointmentRequest::sole();
         $this->assertSame($this->masjidA->id, $stored->masjid_id);
         $this->assertSame('Amal Yusuf', $stored->applicant_name);
         // Encrypted columns round-trip through the cast.
@@ -107,21 +122,18 @@ class AppointmentRequestSubmissionTest extends TestCase
         );
 
         $response->assertOk();
-        $this->assertSame(
-            $this->masjidA->id,
-            AppointmentRequest::find($response->json('data.id'))->masjid_id
-        );
+        $this->assertSame($this->masjidA->id, AppointmentRequest::sole()->masjid_id);
     }
 
     #[Test]
     public function a_client_supplied_status_and_source_are_ignored(): void
     {
-        $response = $this->submit(
+        $this->submit(
             $this->payload(['status' => AppointmentRequest::STATUS_SCHEDULED, 'source' => 'staff']),
             $this->masjidA->id
-        );
+        )->assertOk();
 
-        $stored = AppointmentRequest::find($response->json('data.id'));
+        $stored = AppointmentRequest::sole();
         $this->assertSame(AppointmentRequest::STATUS_NEW, $stored->status);
         $this->assertSame(AppointmentRequest::SOURCE_WEB, $stored->source);
     }

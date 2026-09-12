@@ -28,10 +28,43 @@ use App\Support\Errors;
  *    catches the rest.
  *  - Validation failures return the legacy {status:'failed'} 422 field bag
  *    via SubmitAppointmentRequestRequest (a BaseFormRequest).
+ *  - The success payload carries NO identifier: `data.id` is null on both the
+ *    real and the honeypot branch. The primary key is a global auto-increment,
+ *    so returning it would let any anonymous caller meter platform-wide intake
+ *    volume by sampling it. See the comment on the return below.
  *
  * NO PHI IN LOGS — the payload (name, DOB, reason) must never reach Log::* on
  * any path here. The catch below reports through Errors::publicMessage, which
  * logs exception metadata only, never request input.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS PATH SENDS NO MAIL, AND THAT IS A DECISION — NOT AN OVERSIGHT (T-043h)
+ * ---------------------------------------------------------------------------
+ *
+ * The obvious next ticket on any intake form is "email the applicant a
+ * confirmation". Do not add one here. On an endpoint that is unauthenticated
+ * and accepts an arbitrary `email`, a confirmation is an open mail relay
+ * wearing the organisation's face: the caller chooses the RECIPIENT (anyone at
+ * all, including someone who never contacted the clinic), the caller chooses
+ * the CONTENT, because `applicant_name` and `reason` are free text a
+ * confirmation would quote back, and the message goes out signed by and
+ * charged against the organisation's own sending domain — the same domain they
+ * need in order to reach real patients.
+ *
+ * The `appointment-request` throttle is not the control for that. Eight rows an
+ * hour per ip|masjid-id is a sensible cap on a triage queue; it is not a
+ * sensible cap on outbound mail to strangers, and treating it as one makes a
+ * limiter that exists to protect the queue into the only thing standing between
+ * the clinic's domain and a blocklist.
+ *
+ * What the visitor gets instead is the sentence the success message already
+ * carries: the office will call. If a confirmation is ever genuinely wanted, it
+ * belongs on the ADMIN side, sent to a request a human has opened and looked
+ * at — a completely different trust position, where the recipient is a row
+ * somebody chose rather than a string somebody posted.
+ *
+ * AppointmentRequestPublicAbuseSurfaceTest fakes the mailer and the notifier and
+ * fails if anything is ever sent, queued or notified from this path.
  */
 class AppointmentRequestsController extends Controller
 {
@@ -64,7 +97,7 @@ class AppointmentRequestsController extends Controller
 
             // Only the validated fields, listed explicitly — a client-supplied
             // masjid_id / status / source in the body never reaches create().
-            $created = AppointmentRequest::create([
+            AppointmentRequest::create([
                 'masjid_id' => $masjidId,
                 'applicant_name' => $request->input('applicant_name'),
                 'phone' => $request->input('phone'),
@@ -80,10 +113,28 @@ class AppointmentRequestsController extends Controller
                 'user_agent' => substr((string) $request->userAgent(), 0, 1000),
             ]);
 
-            // Only the id goes back — the submitter typed the rest and the
-            // response must not become a second copy of the PII in transit.
+            // Nothing identifying goes back, and `id` is null ON PURPOSE — the
+            // same payload the honeypot branch returns.
+            //
+            // `appointment_requests.id` is a GLOBAL auto-increment. Handing it
+            // to an anonymous submitter turns the intake form into a live meter
+            // of platform-wide intake volume: two junk submissions a day apart
+            // subtract to the exact number of appointment requests every tenant
+            // created in between, and on a single-clinic deployment that IS
+            // that clinic's daily patient volume, sampleable indefinitely by
+            // anyone who can POST the form. Nothing can consume the value —
+            // there is no public read endpoint for an appointment request — and
+            // the honeypot branch above has always returned null here, so any
+            // client that leaned on it was already broken by the first bot.
+            //
+            // The key stays present so the response SHAPE does not change and
+            // the two branches stay byte-identical (a submitter must not be able
+            // to tell a honeypot trip from a real save).
+            //
+            // If the intake page ever genuinely needs a handle, it must be an
+            // opaque per-row value (a uuid column), never the sequence.
             return response()->api(200, 'Thank you — your request has been received.', [
-                'id' => $created->id,
+                'id' => null,
             ]);
         } catch (\Exception $e) {
             return response()->api(500, Errors::publicMessage($e), null);

@@ -195,6 +195,25 @@
                                     <div class="col-md-6">
                                         <label class="form-label">Phone</label>
                                         <input type="text" class="form-control" v-model.trim="form.phone">
+                                        <!--
+                                            Said BEFORE the save, because the save
+                                            does it: the server clears this
+                                            member's four consent columns when the
+                                            number changes to a different
+                                            destination, since consent was given
+                                            for a number and the new one has given
+                                            none. Re-punctuating the same number
+                                            is not a change and costs nothing —
+                                            which is why this is worded as "a
+                                            different number", not "editing this
+                                            field".
+                                        -->
+                                        <div v-if="editingConsentAtRisk" class="form-text text-warning-emphasis">
+                                            <i class="bi bi-exclamation-triangle me-1"></i>
+                                            Saving a different number here clears this member's recorded
+                                            text-message consent — consent belongs to a number, and the new one
+                                            has not given any. It would have to be recorded again.
+                                        </div>
                                     </div>
                                     <div class="col-12">
                                         <label class="form-label">Notes</label>
@@ -270,6 +289,139 @@
                                 <div class="col-12">
                                     <h6 class="text-muted mb-2">Notes</h6>
                                     <p class="mb-0 small" style="white-space: pre-wrap;">{{ selectedContact.notes || '—' }}</p>
+                                </div>
+                            </div>
+
+                            <!--
+                                Text-message consent (T-009).
+
+                                This panel is a LEGAL RECORD of something that
+                                happened offline, which is why it looks nothing
+                                like a preference. There is no toggle, no
+                                checkbox and no bulk action anywhere in this
+                                screen: recording consent is a typed, deliberate
+                                act that names how it was obtained, and
+                                withdrawal is a different verb rather than the
+                                same switch flipped back — because it is not the
+                                inverse. Withdrawing writes the durable
+                                suppression list, and a suppressed number cannot
+                                be re-granted by staff at all.
+
+                                A PHONE NUMBER IS NOT CONSENT. Every empty state
+                                here says so out loud, and nothing in the form
+                                defaults to a value that would assert consent
+                                nobody gave.
+
+                                Hidden for placeholder card stubs, exactly as
+                                the sign-in block below: they name no person, and
+                                the server refuses them anyway.
+                            -->
+                            <div class="row mb-3" v-if="!(selectedContact as any).is_placeholder">
+                                <div class="col-12">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="text-muted mb-0">Text messages</h6>
+                                        <span class="badge" :class="smsConsentBadgeClass">
+                                            {{ smsConsentLabel }}
+                                        </span>
+                                    </div>
+
+                                    <!--
+                                        The recorded act, and the fact that it is
+                                        NOT editable from here. Saying so on the
+                                        panel matters as much as the disabled
+                                        button: this is the only screen in the
+                                        application that writes these columns, so
+                                        an operator's mental model of "I'll just
+                                        re-record it with the right source" has
+                                        nowhere else to come from.
+                                    -->
+                                    <p v-if="smsConsent === 'consented'" class="mb-2 small">
+                                        Consented {{ formatDate(selectedContact.sms_consent_at ?? '') }} —
+                                        {{ smsConsentSourceLabel }}.
+                                        Evidence: {{ selectedContact.sms_consent_evidence || 'none recorded' }}.
+                                        This record cannot be replaced or re-dated here — it is what proves
+                                        consent came before the messages already sent.
+                                    </p>
+
+                                    <!--
+                                        An opt-out is a THIRD state, never
+                                        "off". It says somebody asked to stop,
+                                        which is a different fact from never
+                                        having been asked, and the sentence names
+                                        the only person who can undo it.
+                                    -->
+                                    <p v-else-if="smsConsent === 'opted_out'" class="mb-2 small">
+                                        Opted out {{ formatDate(selectedContact.sms_opted_out_at ?? '') }}. This
+                                        number is on this organization's permanent do-not-text list. Only the
+                                        subscriber can undo it, by texting START to your registered number.
+                                    </p>
+
+                                    <p v-else class="mb-2 small text-muted">
+                                        No consent to text this member has been recorded, so they are not
+                                        included in text broadcasts. A phone number is not consent.
+                                    </p>
+
+                                    <!--
+                                        The SERVER's refusal, shown verbatim when
+                                        there is one. It is the sentence the
+                                        write answered with — not a friendlier
+                                        paraphrase, and not a guess made before
+                                        the request went out.
+                                    -->
+                                    <div v-if="smsConsentError" class="alert alert-warning py-2 small">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>
+                                        {{ smsConsentError }}
+                                    </div>
+
+                                    <!--
+                                        The SERVER's own sentence when a recorded
+                                        opt-out did NOT reach the durable
+                                        do-not-text list, quoted rather than
+                                        paraphrased. It stays on the panel instead
+                                        of only flashing past in a toast, because
+                                        it names something the operator has to go
+                                        and fix (the number), not something that
+                                        merely happened.
+                                    -->
+                                    <div v-if="smsOptOutNotDurable" class="alert alert-danger py-2 small">
+                                        <i class="bi bi-exclamation-octagon me-1"></i>
+                                        {{ smsOptOutNotDurable }}
+                                    </div>
+
+                                    <div class="btn-group btn-group-sm mb-2">
+                                        <!--
+                                            Disabled for a member who has ALREADY
+                                            consented, not only for one who opted
+                                            out. Pressing it again cannot add
+                                            permission that already exists; all it
+                                            could ever do is replace the date, the
+                                            source and the evidence that prove the
+                                            first act — and the server refuses it
+                                            for that reason (SmsConsentService
+                                            ::grant). The button is off here so the
+                                            refusal is not a surprise typed into a
+                                            form, and the tooltip says the same
+                                            thing the 422 would.
+                                        -->
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-success"
+                                            @click="openSmsConsentModal"
+                                            :disabled="smsConsentSaving || smsConsent !== 'none'"
+                                            :title="smsConsentGrantBlockedReason"
+                                        >
+                                            <i class="bi bi-chat-left-text me-1"></i> Record consent
+                                        </button>
+                                        <button
+                                            v-if="smsConsent !== 'opted_out'"
+                                            type="button"
+                                            class="btn btn-outline-danger"
+                                            @click="confirmRecordSmsOptOut"
+                                            :disabled="smsConsentSaving"
+                                        >
+                                            <i class="bi bi-slash-circle me-1"></i> Record opt-out
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -536,6 +688,110 @@
             </div>
         </Teleport>
 
+        <!--
+            Record text-message consent.
+
+            Its own modal, and a form rather than a switch, because the thing
+            being recorded is an assertion about an event that happened in the
+            world: this person, on this date, agreed — and here is where that can
+            be shown. The two required halves are HOW and WHAT PROOF.
+
+            What is deliberately NOT on this form:
+
+              - A consent DATE. The server stamps its own clock
+                (SmsConsentService::grant). A date the office can type is a date
+                the office can backdate, and the date is half of what makes the
+                record evidence.
+              - A pre-selected source. The select opens on a disabled prompt and
+                the submit stays disabled until somebody chooses, so no consent
+                can be recorded by opening this modal and pressing the green
+                button.
+              - "They texted START". That source is filtered out of the options
+                (ADMIN_SELECTABLE_SMS_CONSENT_SOURCES) because only an inbound
+                message can witness it. A staff member must never be able to
+                claim a person sent a text they did not send.
+        -->
+        <Teleport to="body">
+            <div v-if="showSmsConsentModal && selectedContact" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);" @click.self="closeSmsConsentModal">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">
+                                <i class="bi bi-chat-left-text me-2"></i>
+                                Record text-message consent
+                            </h5>
+                            <button type="button" class="btn-close" @click="closeSmsConsentModal"></button>
+                        </div>
+                        <form @submit.prevent="submitSmsConsent">
+                            <div class="modal-body">
+                                <p class="text-muted small">
+                                    This records that
+                                    <strong>{{ selectedContact.first_name }} {{ selectedContact.last_name }}</strong>
+                                    agreed to receive text messages at
+                                    <span class="font-monospace">{{ selectedContact.phone || 'no number on file' }}</span>.
+                                    The date is stamped by the system, not typed here.
+                                </p>
+
+                                <label class="form-label" for="sms-consent-source">
+                                    How was consent obtained? <span class="text-danger">*</span>
+                                </label>
+                                <select
+                                    id="sms-consent-source"
+                                    class="form-select"
+                                    v-model="smsConsentForm.source"
+                                    required
+                                >
+                                    <!--
+                                        Disabled, valueless and selected: the
+                                        form opens on a question, never on an
+                                        answer somebody else's click supplied.
+                                    -->
+                                    <option value="" disabled>Choose how consent was obtained…</option>
+                                    <option
+                                        v-for="source in ADMIN_SELECTABLE_SMS_CONSENT_SOURCES"
+                                        :key="source"
+                                        :value="source"
+                                    >
+                                        {{ SMS_CONSENT_SOURCE_LABELS[source] }}
+                                    </option>
+                                </select>
+
+                                <label class="form-label mt-3" for="sms-consent-evidence">Evidence</label>
+                                <input
+                                    id="sms-consent-evidence"
+                                    type="text"
+                                    class="form-control"
+                                    v-model.trim="smsConsentForm.evidence"
+                                    maxlength="255"
+                                    placeholder="web form response #4182 / signed 2026-03-04 registration packet"
+                                >
+                                <div class="form-text">
+                                    A phone number is not consent. Record only consent this organization can prove.
+                                </div>
+
+                                <div v-if="smsConsentModalError" class="alert alert-danger mt-3 mb-0 py-2 small">
+                                    {{ smsConsentModalError }}
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" @click="closeSmsConsentModal" :disabled="smsConsentSaving">
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    class="btn btn-success"
+                                    :disabled="smsConsentSaving || !smsConsentForm.source"
+                                >
+                                    <span v-if="smsConsentSaving" class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                    Record consent
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
         <!-- Attach placeholder card to a member -->
         <Teleport to="body">
             <div v-if="showMergeModal && selectedContact" class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);" @click.self="showMergeModal = false">
@@ -720,7 +976,17 @@
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
-import { Contact, ContactPayload, FamilyLoginEvent, FamilyLoginStatus } from '@/core/types/data/masjid-related/Contact';
+import {
+    ADMIN_SELECTABLE_SMS_CONSENT_SOURCES,
+    Contact,
+    ContactPayload,
+    FamilyLoginEvent,
+    FamilyLoginStatus,
+    SMS_CONSENT_SOURCE_LABELS,
+    SmsConsentSource,
+    SmsConsentState,
+    smsConsentState,
+} from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
@@ -796,9 +1062,22 @@ const pageChange = async (data: PageChangeData) => {
     await loadData(data.toPage, searchQuery.value);
 };
 
+/**
+ * The member being edited, kept beside `editingId` for ONE reason: the form has
+ * to be able to say what saving a new phone number costs, and that depends on
+ * whether this member has a consent record to lose. `editingId` is an id and
+ * cannot answer it.
+ */
+const editingContact = ref<Contact | null>(null);
+
+/** Does the member being edited have a consent record that a number change would clear? */
+const editingConsentAtRisk = computed<boolean>(() =>
+    isEditForm.value && smsConsentState(editingContact.value) === 'consented');
+
 const openCreateModal = () => {
     isEditForm.value = false;
     editingId.value = null;
+    editingContact.value = null;
     form.value = emptyForm();
     showFormModal.value = true;
 };
@@ -806,6 +1085,7 @@ const openCreateModal = () => {
 const openEditModal = (contact: Contact) => {
     isEditForm.value = true;
     editingId.value = contact.id;
+    editingContact.value = contact;
     form.value = {
         first_name: contact.first_name ?? '',
         last_name: contact.last_name ?? '',
@@ -824,6 +1104,12 @@ const closeFormModal = () => {
 const viewContact = async (contact: Contact) => {
     selectedContact.value = contact;   // show immediately with row data
     showViewModal.value = true;
+    // A refusal belongs to the member it was raised on. Carrying "this number
+    // has opted out" onto the next record opened would be a false statement
+    // about a different person. The same is true of the warning that a
+    // withdrawal did not reach the durable list.
+    smsConsentError.value = '';
+    smsOptOutNotDurable.value = '';
     try {
         const full = await contactsStore.fetchContact(contact.id);   // hydrate cards + giving history
         if (full) selectedContact.value = full;
@@ -1010,6 +1296,262 @@ const confirmRevokeFamilyLogin = async () => {
         });
     } finally {
         familyLoginSaving.value = false;
+    }
+};
+
+// --- Text-message consent (T-009) ---
+//
+// SMS has been selectable as a broadcast channel for a while and could never
+// work, because nothing in this application recorded an organisation's sender
+// number or a person's written consent. This is the second half of that: the
+// only place in the admin SPA where `contacts.sms_*` is written.
+//
+// Two verbs, POST and DELETE, mirroring ContactSmsConsentController — never one
+// toggle. Granting and withdrawing are not inverses: withdrawal additionally
+// writes the durable `sms_suppressions` row, which survives this contact being
+// merged away, re-imported, or deleted and re-added, and a suppressed number
+// can never be granted again by staff. Modelling them as one switch is exactly
+// the misunderstanding that produces an unhonoured opt-out.
+//
+// There is deliberately no bulk action and no consent column in the directory
+// table. "Opt everyone in" is one click away from a TCPA claim.
+
+const showSmsConsentModal = ref(false);
+const smsConsentSaving = ref(false);
+/** The server's refusal, shown on the panel. Cleared on every fresh attempt. */
+const smsConsentError = ref('');
+/** The same, shown inside the modal while it is open. */
+const smsConsentModalError = ref('');
+
+/**
+ * A verbatim copy of SmsConsentService::grant()'s refusal for a suppressed
+ * number, used ONLY as the tooltip on the disabled button — the server has not
+ * been asked yet at that point, so there is no live sentence to show.
+ *
+ * The server refuses regardless of this string; disabling the button only
+ * spares the operator a dead click, and the wording is duplicated rather than
+ * paraphrased so the tooltip and the 422 name the same remedy: only the
+ * subscriber can undo their own STOP.
+ */
+const SMS_SUPPRESSED_REFUSAL =
+    'This number has opted out of text messages and cannot be opted back in by staff. '
+    + 'Only the subscriber can undo it, by texting START to the number they received messages from.';
+
+/**
+ * The other refusal `grant()` makes, for the same reason and in the same shape:
+ * a consent record that already stands is not re-recorded, because a second
+ * grant adds no permission and can only overwrite the date, source and evidence
+ * that make the first one evidence. Shown as the tooltip on the disabled
+ * button; the server refuses regardless, and says it in more words.
+ */
+const SMS_ALREADY_CONSENTED_REFUSAL =
+    'Consent for this member is already on record. It cannot be re-recorded, because that would '
+    + 'replace the date, source and evidence that prove it. To record consent for a DIFFERENT '
+    + 'number, save the new number on the member first.';
+
+/**
+ * The server's remedy sentence when a recorded opt-out did NOT become durable,
+ * or '' when it did.
+ *
+ * It is read from `meta.durable` / `meta.message` on the DELETE response rather
+ * than guessed at here: whether `PhoneNumber::e164()` can resolve a number is a
+ * server rule, and a second copy of it in TypeScript is a copy that disagrees.
+ *
+ * It is cleared when a different member is opened, exactly as `smsConsentError`
+ * is — it is a fact about one withdrawal, not about the screen. It therefore
+ * also disappears on a reload: the contact payload carries no "is this number on
+ * the suppression list" field, and inventing one per row would put a query
+ * behind every line of the directory. The sentence is shown to the person who
+ * caused it, while they are still looking at the record they can fix.
+ */
+const smsOptOutNotDurable = ref('');
+
+const smsConsentForm = ref<{ source: SmsConsentSource | ''; evidence: string }>({
+    source: '',
+    evidence: '',
+});
+
+/** Three states, from the four-part rule. See Contact.ts `smsConsentState`. */
+const smsConsent = computed<SmsConsentState>(() => smsConsentState(selectedContact.value));
+
+const smsConsentLabel = computed<string>(() => {
+    switch (smsConsent.value) {
+        case 'consented': return 'Consented';
+        case 'opted_out': return 'Opted out';
+        default: return 'No consent';
+    }
+});
+
+const smsConsentBadgeClass = computed<string>(() => {
+    switch (smsConsent.value) {
+        case 'consented': return 'bg-success-subtle text-success';
+        case 'opted_out': return 'bg-danger-subtle text-danger';
+        default: return 'bg-secondary-subtle text-secondary';
+    }
+});
+
+/**
+ * The recorded provenance in words. An unrecognised source is printed AS
+ * STORED rather than as "Unknown": this column is evidence, and a screen that
+ * silently renames a value it does not have a label for is a screen that
+ * misreports what the record says.
+ */
+const smsConsentSourceLabel = computed<string>(() => {
+    const source = selectedContact.value?.sms_consent_source;
+    if (!source) return 'source not recorded';
+    return SMS_CONSENT_SOURCE_LABELS[source] ?? source;
+});
+
+/**
+ * Why the grant button is off, or '' when it is live.
+ *
+ * Two different refusals, never collapsed into one greyed-out button with no
+ * explanation: "they asked us to stop" and "we already have their consent" are
+ * opposite facts about a person, and the operator's next action differs.
+ */
+const smsConsentGrantBlockedReason = computed<string>(() => {
+    if (smsConsent.value === 'opted_out') return SMS_SUPPRESSED_REFUSAL;
+    if (smsConsent.value === 'consented') return SMS_ALREADY_CONSENTED_REFUSAL;
+    return '';
+});
+
+const openSmsConsentModal = () => {
+    // Reset every time. A source or an evidence string left over from the last
+    // member is a claim about THIS member that nobody made.
+    smsConsentForm.value = { source: '', evidence: '' };
+    smsConsentModalError.value = '';
+    smsConsentError.value = '';
+    showSmsConsentModal.value = true;
+};
+
+const closeSmsConsentModal = () => {
+    showSmsConsentModal.value = false;
+};
+
+/**
+ * Merge the contact the write returned into the open record.
+ *
+ * The server answers with the saved contact, so the panel re-reads the columns
+ * it just wrote rather than assuming the write did what was asked — the
+ * timestamp in particular is the server's clock and nothing here could guess it.
+ */
+const applySavedContact = (saved: Contact | undefined) => {
+    if (!saved || !selectedContact.value) return;
+    selectedContact.value = { ...selectedContact.value, ...saved };
+};
+
+const submitSmsConsent = async () => {
+    const masjidId = masjidStore.masjid?.id;
+    if (!selectedContact.value || !masjidId || !smsConsentForm.value.source) return;
+
+    smsConsentSaving.value = true;
+    smsConsentModalError.value = '';
+    smsConsentError.value = '';
+
+    // A plain object -> JSON. No `consented_at` and no `opt_in` are sent, and
+    // there is no field on this form that could carry one: the server stamps the
+    // date and the verb IS the value.
+    const body: { source: SmsConsentSource; evidence?: string } = {
+        source: smsConsentForm.value.source,
+    };
+    if (smsConsentForm.value.evidence) body.evidence = smsConsentForm.value.evidence;
+
+    try {
+        const res = await ApiService.post(
+            `/api/admin/masjids/${masjidId}/contacts/${selectedContact.value.id}/sms-consent`,
+            body
+        );
+        applySavedContact(res.data?.data as Contact);
+        showSmsConsentModal.value = false;
+        Swal.fire({
+            icon: 'success',
+            title: 'Consent recorded',
+            text: 'This member can now be included in text broadcasts.',
+            timer: 2500,
+            showConfirmButton: false
+        });
+    } catch (error: any) {
+        // 422 is a REFUSAL with a sentence written for the person reading it —
+        // no usable number, or a number that has opted out. The controller sends
+        // it as `message` for a service refusal and as `data` for a validation
+        // failure, so both shapes are read.
+        const data = error?.response?.data;
+        smsConsentModalError.value = data?.message
+            || (data?.data && typeof data.data === 'object' ? Object.values(data.data).flat().join(' ') : '')
+            || 'Could not record consent. Please try again.';
+    } finally {
+        smsConsentSaving.value = false;
+    }
+};
+
+/**
+ * Withdrawal, and it is as few clicks as granting — one button and one
+ * confirmation, with no source and no evidence to type. Asking somebody to stop
+ * texting them must never be the harder path.
+ *
+ * The confirmation says what it costs, because it is not undoable from this
+ * screen by anyone.
+ */
+const confirmRecordSmsOptOut = async () => {
+    const masjidId = masjidStore.masjid?.id;
+    if (!selectedContact.value || !masjidId) return;
+
+    const result = await Swal.fire({
+        title: 'Record an opt-out?',
+        // "provided their number can be read" rather than a flat promise: the
+        // durable list is keyed on a resolvable E.164 number, and this dialog
+        // cannot know whether theirs is one without re-implementing the server's
+        // rule. The result says which half happened; this says which half is
+        // conditional, before the click rather than after it.
+        text: 'This records that they asked to stop and — provided their number can be read as a '
+            + 'real number — adds it to the organization\'s permanent do-not-text list. Only the '
+            + 'subscriber can undo it, by texting START to your registered number. Continue?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Yes, record the opt-out'
+    });
+
+    if (!result.isConfirmed) return;
+
+    smsConsentSaving.value = true;
+    smsConsentError.value = '';
+    smsOptOutNotDurable.value = '';
+    try {
+        const res = await ApiService.delete(
+            `/api/admin/masjids/${masjidId}/contacts/${selectedContact.value.id}/sms-consent`
+        );
+        applySavedContact(res.data?.data as Contact);
+
+        // TWO halves, and the server says which of them happened. The
+        // withdrawal is always recorded on the member; the PERMANENT
+        // do-not-text list is keyed on a resolvable E.164 number, so a number
+        // that cannot be read ("613-555-0142 ext 4", a local number with no area
+        // code) gets the first half only. This screen used to announce the
+        // second half unconditionally — a promise of permanence over a
+        // withdrawal that a merge, a re-import or a delete-and-re-add would
+        // erase.
+        const durable = res.data?.meta?.durable !== false;
+        smsOptOutNotDurable.value = durable ? '' : (res.data?.meta?.message ?? '');
+
+        Swal.fire({
+            icon: durable ? 'success' : 'warning',
+            title: durable ? 'Opt-out recorded' : 'Opt-out recorded, but not permanently',
+            text: durable
+                ? 'This number will not receive text messages from this organization again.'
+                : (smsOptOutNotDurable.value
+                    || 'Recorded on this member only — their phone number could not be added to the '
+                    + 'permanent do-not-text list. Save a full number including area code, then record '
+                    + 'the opt-out again.'),
+            timer: durable ? 2500 : undefined,
+            showConfirmButton: !durable,
+        });
+    } catch (error: any) {
+        smsConsentError.value = error?.response?.data?.message
+            ?? 'Could not record the opt-out. Please try again.';
+    } finally {
+        smsConsentSaving.value = false;
     }
 };
 

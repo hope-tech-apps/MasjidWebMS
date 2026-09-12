@@ -15,6 +15,125 @@ export type Contact = {
      * `deleted_at: null` are the same fact, and the UI tests truthiness.
      */
     deleted_at?: string | null;
+
+    /**
+     * TEXT-MESSAGE CONSENT (T-009). Five columns, not one boolean, and the
+     * server serialises all five (`Contact::$hidden` is `['password']` only).
+     *
+     * The flag alone is not consent and is never read alone — see
+     * `smsConsentState` below for the rule and for why it is written once.
+     * `sms_consent_source` and `sms_consent_evidence` are the provenance: the
+     * constant makes consent queryable, the free text makes it provable.
+     *
+     * Optional keys, because the directory listing and the show endpoint both
+     * answer with the model's own `toArray()` and an older cached payload may
+     * predate the columns — a panel that read `undefined` as "consented" would
+     * be the worst possible failure of this screen, so the state helper treats
+     * anything short of the full four-part rule as no consent.
+     *
+     * THEY ARE TIED TO `phone` AND DIE WITH IT. Saving a different number on a
+     * contact clears all four server-side (`Contact::booted()`), because consent
+     * was given for a number and the new one has given none. Any screen that
+     * edits `phone` and then keeps rendering a cached copy of this row is
+     * showing a consent record the server has already retracted — re-read the
+     * contact after an edit rather than patching the fields you sent.
+     */
+    sms_opt_in?: boolean | null;
+    /** Server time, stamped by SmsConsentService::grant. Never client-set. */
+    sms_consent_at?: string | null;
+    sms_consent_source?: SmsConsentSource | null;
+    sms_consent_evidence?: string | null;
+    /**
+     * Set by a recorded withdrawal or an inbound STOP. It overrides everything
+     * above, and the durable `sms_suppressions` row it is written beside
+     * outlives this record entirely — a merge, a re-import, a delete-and-re-add.
+     */
+    sms_opted_out_at?: string | null;
+};
+
+/**
+ * How consent was obtained. Mirrors `Contact::SMS_CONSENT_SOURCES` — a PHP
+ * constant list, never a DB enum.
+ */
+export type SmsConsentSource =
+    | 'web_form'
+    | 'paper_form'
+    | 'in_person'
+    | 'phone_call'
+    | 'sms_reply_start'
+    | 'imported_with_proof';
+
+/**
+ * What an ADMIN may claim, mirroring
+ * `StoreSmsConsentRequest::adminSelectableSources()`.
+ *
+ * `sms_reply_start` is absent, and its absence is the point: it means the
+ * subscriber texted START from their own handset, which is a fact only the
+ * inbound webhook can witness. Offering it in a dropdown would let a staff
+ * member assert that a person sent a message they never sent — so the list is
+ * built by SUBTRACTION from the full set here exactly as the server builds it,
+ * rather than being retyped as five literals that a sixth source would silently
+ * escape. The server rejects it with a 422 regardless; this keeps the screen
+ * from ever asking.
+ */
+export const SMS_CONSENT_SOURCES: SmsConsentSource[] = [
+    'web_form',
+    'paper_form',
+    'in_person',
+    'phone_call',
+    'sms_reply_start',
+    'imported_with_proof',
+];
+
+/** Webhook-only sources — never selectable by a person. */
+export const WEBHOOK_ONLY_SMS_CONSENT_SOURCES: SmsConsentSource[] = ['sms_reply_start'];
+
+export const ADMIN_SELECTABLE_SMS_CONSENT_SOURCES: SmsConsentSource[] =
+    SMS_CONSENT_SOURCES.filter(source => !WEBHOOK_ONLY_SMS_CONSENT_SOURCES.includes(source));
+
+/**
+ * The words a staff member reads, phrased as an answer to "how was consent
+ * obtained?" rather than as a category name. `imported_with_proof` is spelled
+ * out because "imported" on its own is what a spreadsheet full of numbers looks
+ * like, and a spreadsheet is not consent.
+ */
+export const SMS_CONSENT_SOURCE_LABELS: Record<SmsConsentSource, string> = {
+    web_form: 'Web form they submitted',
+    paper_form: 'Paper form they signed',
+    in_person: 'In person, asked and agreed',
+    phone_call: 'On a phone call',
+    sms_reply_start: 'They texted START (recorded automatically)',
+    imported_with_proof: 'Imported from another system, with the proof retained',
+};
+
+/** The three states of a member's text-message consent. */
+export type SmsConsentState = 'consented' | 'opted_out' | 'none';
+
+/**
+ * THE ONE PLACE this rule is written in TypeScript.
+ *
+ * It mirrors `App\Models\Contact::hasSmsConsent()` — opt-in AND a timestamp AND
+ * a source AND no opt-out — plus the opt-out as its own state, because "never
+ * asked" and "asked us to stop" are different facts about a person and
+ * collapsing them into one "off" is how an opt-out gets quietly re-granted.
+ *
+ * It lives here, beside the type, rather than in the component, so there is a
+ * single copy to correct if the legal definition gains a clause. It is still a
+ * SECOND copy of a rule the server owns, and the better fix is for the contact
+ * payload to carry the server's own answer (the way `FamilyLoginStatus.state`
+ * does); until it does, this function is what a screen may read and the server
+ * remains the thing that decides — `SmsConsentService::grant()` refuses a
+ * suppressed number no matter what this returns.
+ */
+export const smsConsentState = (contact: Contact | null | undefined): SmsConsentState => {
+    if (!contact) return 'none';
+    if (contact.sms_opted_out_at) return 'opted_out';
+
+    return contact.sms_opt_in === true
+        && !!contact.sms_consent_at
+        && !!contact.sms_consent_source
+        ? 'consented'
+        : 'none';
 };
 
 // Shape submitted by the create/edit form (server stamps masjid_id + timestamps).

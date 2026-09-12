@@ -231,6 +231,15 @@ Route::prefix('admin')->group(function () {
                 Route::get('/{event_id}', 'show');
                 Route::put('/{event_id}', 'update');
                 Route::delete('/{event_id}', 'destroy');
+                // "Duplicate this event" (T-042a): copy one event's wording onto
+                // a list of dates a human typed. Deliberately INSIDE this group
+                // and with no extra middleware, so it inherits exactly the
+                // posture the other event writes have — auth:sanctum + admin +
+                // tenant, no `permission:` — because it creates the same rows
+                // `store` does and nothing more. Registered after the
+                // `/{event_id}` wildcards is safe: `duplicate` is a second
+                // segment, so it cannot be swallowed by a one-segment pattern.
+                Route::post('/{event_id}/duplicate', 'duplicate');
             }));
 
             // Masjid services
