@@ -17,6 +17,11 @@ use Tests\TestCase;
 /**
  * The letter tracker over HTTP: a teacher marking, a class moving stage, and a
  * parent watching without being able to mark.
+ *
+ * The tab carries two alphabets — the Arabic qāʿidah and the English A–Z the
+ * school asked for — through the same four routes, so the guarantees at the
+ * bottom of this file are all about the two tracks staying separate: separate
+ * syllabus, separate cells, separate percentage.
  */
 class ArabicLetterTrackerTest extends TestCase
 {
@@ -215,5 +220,121 @@ class ArabicLetterTrackerTest extends TestCase
         $this->putJson($this->url("/members/{$this->student->id}/letters"), [
             'drill_id' => 'not_a_letter.fatha', 'status' => C::STATUS_MASTERED,
         ])->assertStatus(422);
+    }
+
+    // ------------------------------------------------------ the English track
+
+    #[Test]
+    public function the_english_track_lists_twenty_six_letters_with_both_cases(): void
+    {
+        $response = $this->getJson($this->url("/members/{$this->student->id}/letters?alphabet=english"))
+            ->assertOk();
+
+        $response->assertJsonCount(26, 'data.letters');
+        $response->assertJsonPath('data.alphabet', 'english');
+        // The direction rides in the payload so a client never infers it.
+        $response->assertJsonPath('data.direction', 'ltr');
+
+        // The class sits at short vowels, which is a qāʿidah stage and means
+        // nothing here: English has ONE stage and every letter is in it.
+        $response->assertJsonPath('data.stage.id', 'letters');
+        $this->assertSame(26, $response->json('data.totals.total'));
+
+        $a = collect($response->json('data.letters'))->firstWhere('id', 'a');
+        $this->assertSame([
+            ['id' => 'upper', 'text' => 'A'],
+            ['id' => 'lower', 'text' => 'a'],
+        ], $a['positions']);
+
+        // One drill per letter, and the phonics cue a teacher reads off the card.
+        $this->assertSame(['a'], array_column($a['drills'], 'id'));
+        $this->assertSame('a as in apple', $a['drills'][0]['sound']);
+        $this->assertNull($a['drills'][0]['arabic_name']);
+    }
+
+    #[Test]
+    public function an_alphabet_the_tracker_does_not_know_is_refused(): void
+    {
+        // A plain varchar column: a typo must not mint a third track whose rows
+        // no screen will ever show again.
+        $this->getJson($this->url("/members/{$this->student->id}/letters?alphabet=englsih"))
+            ->assertStatus(422);
+    }
+
+    #[Test]
+    public function english_mastery_never_moves_the_arabic_totals_or_the_arabic_percentage(): void
+    {
+        // THE REGRESSION THIS TEST EXISTS FOR: the class overview counts
+        // mastered rows for the class in one grouped query. Before English
+        // existed that query needed no alphabet filter. Unfiltered, 26 English
+        // ticks land in the Arabic count — and the min($count, $total) clamp
+        // hides the overflow by pinning the bar at 100%, so a parent reads a
+        // finished qāʿidah that is one drill in.
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'ba.fatha', 'status' => C::STATUS_MASTERED,
+        ])->assertOk();
+
+        $before = $this->getJson($this->url('/letters'))->assertOk()->json('data.students.0');
+        $this->assertSame(1, $before['mastered']);
+
+        foreach (range('a', 'z') as $letter) {
+            $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+                'drill_id' => $letter, 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+            ])->assertOk();
+        }
+
+        $arabic = $this->getJson($this->url("/members/{$this->student->id}/letters"))->assertOk();
+        $this->assertSame(28 * 4, $arabic->json('data.totals.total'));
+        $this->assertSame(1, $arabic->json('data.totals.mastered'));
+
+        $after = $this->getJson($this->url('/letters'))->assertOk()->json('data.students.0');
+        $this->assertSame($before['mastered'], $after['mastered']);
+        $this->assertSame($before['completion'], $after['completion']);
+
+        // And the English side is genuinely full, so the numbers above are not
+        // simply a mark that never landed.
+        $english = $this->getJson($this->url('/letters?alphabet=english'))->assertOk();
+        $this->assertSame(26, $english->json('data.total'));
+        $this->assertSame(26, $english->json('data.students.0.mastered'));
+        $this->assertEquals(1.0, $english->json('data.students.0.completion'));
+    }
+
+    #[Test]
+    public function a_drill_belongs_to_one_alphabet_and_is_refused_on_the_other(): void
+    {
+        // `ba` is a qāʿidah drill and nothing at all on the English track.
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'ba', 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+        ])->assertStatus(422);
+
+        // And the reverse — `a` is not a letter of the Arabic alphabet.
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'a', 'status' => C::STATUS_MASTERED, 'alphabet' => 'arabic',
+        ])->assertStatus(422);
+
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function an_unknown_english_drill_is_refused(): void
+    {
+        $this->putJson($this->url("/members/{$this->student->id}/letters"), [
+            'drill_id' => 'aa', 'status' => C::STATUS_MASTERED, 'alphabet' => 'english',
+        ])->assertStatus(422);
+
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function the_class_stage_cannot_be_set_from_the_english_track(): void
+    {
+        // groups.arabic_stage is the qāʿidah's ladder. English has one stage, so
+        // there is nothing to set — and writing here from an English screen
+        // would move the class's ARABIC denominator without saying so.
+        $this->putJson($this->url('/letters/stage'), [
+            'stage' => C::STAGE_LETTERS, 'alphabet' => 'english',
+        ])->assertStatus(422);
+
+        $this->assertSame(C::STAGE_SHORT_VOWELS, $this->class->fresh()->arabic_stage);
     }
 }

@@ -8,6 +8,7 @@ use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\Masjid;
 use App\Support\Arabic\ArabicCurriculum;
+use App\Support\Letters\CurriculumRegistry;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -29,8 +30,9 @@ use Tests\TestCase;
  *   - `mastered_at` is a LEDGER, stamped once. A child who slips back to
  *     learning and masters a drill again has not mastered it twice, and the
  *     date a parent reads must not move because a teacher re-marked the card;
- *   - one row per (student, drill), enforced by the database, so a double-tap
- *     cannot mint a second cell;
+ *   - one row per (student, ALPHABET, drill), enforced by the database, so a
+ *     double-tap cannot mint a second cell and the Arabic and English tracks
+ *     cannot overwrite each other's;
  *   - progress FOLLOWS THE STUDENT: it cannot outlive the membership row its
  *     whole audience is derived from.
  */
@@ -157,6 +159,62 @@ class ArabicLetterProgressTenantIsolationTest extends TestCase
         // Enforced by the database, not by hoping the client never double-taps.
         $this->expectException(\Illuminate\Database\QueryException::class);
         ArabicLetterProgress::create($attributes);
+    }
+
+    #[Test]
+    public function one_student_may_hold_the_same_drill_id_on_both_alphabets(): void
+    {
+        $student = $this->makeStudent($this->masjidA, $this->classA);
+        $this->tenant->set($this->masjidA->id);
+
+        // The two curricula that ship today name no drill alike — Arabic's ids
+        // are `ba`, `ba.fatha`; English's are `a`..`z`. The KEY is what
+        // guarantees they never can, so a curriculum that later teaches a drill
+        // the other side already names needs no data migration and mints no
+        // silent duplicate. The database has no opinion on which ids are real;
+        // that is the curriculum's job, checked at the mark endpoint.
+        foreach ([CurriculumRegistry::ALPHABET_ARABIC, CurriculumRegistry::ALPHABET_ENGLISH] as $alphabet) {
+            ArabicLetterProgress::create([
+                'group_id' => $this->classA->id,
+                'group_membership_id' => $student->id,
+                'alphabet' => $alphabet,
+                'drill_id' => 'ba',
+                'status' => ArabicCurriculum::STATUS_LEARNING,
+            ]);
+        }
+
+        $this->assertSame(2, ArabicLetterProgress::count());
+
+        // Two tracks, still one cell each: a duplicate WITHIN an alphabet is
+        // refused exactly as it was before the column existed.
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        ArabicLetterProgress::create([
+            'group_id' => $this->classA->id,
+            'group_membership_id' => $student->id,
+            'alphabet' => CurriculumRegistry::ALPHABET_ENGLISH,
+            'drill_id' => 'ba',
+            'status' => ArabicCurriculum::STATUS_MASTERED,
+        ]);
+    }
+
+    #[Test]
+    public function a_row_written_without_an_alphabet_lands_on_the_arabic_track(): void
+    {
+        // Every row that existed before the English track is Arabic, and the
+        // column default plus the model default say so without a backfill —
+        // which is what makes seeders, importers and the older tests in this
+        // file correct as written.
+        $student = $this->makeStudent($this->masjidA, $this->classA);
+        $this->tenant->set($this->masjidA->id);
+
+        $row = ArabicLetterProgress::create([
+            'group_id' => $this->classA->id,
+            'group_membership_id' => $student->id,
+            'drill_id' => 'ba',
+            'status' => ArabicCurriculum::STATUS_LEARNING,
+        ]);
+
+        $this->assertSame(CurriculumRegistry::ALPHABET_ARABIC, $row->fresh()->alphabet);
     }
 
     #[Test]

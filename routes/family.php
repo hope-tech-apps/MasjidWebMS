@@ -12,6 +12,7 @@ use App\Http\Controllers\Family\MeController;
 use App\Http\Controllers\Family\ReportCardsController as FamilyReportCardsController;
 use App\Http\Controllers\Family\ResourcesController;
 use App\Http\Controllers\Family\StudentSessionController;
+use App\Http\Controllers\Family\TranslationsController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -79,12 +80,15 @@ use Illuminate\Support\Facades\Route;
 | student login and somebody has to choose it with them. A parent may also now
 | set and remove their OWN password (2026-09-08) — the only writes in this realm
 | that touch a credential, and the only ones whose subject cannot be named by the
-| request at all. Everything else is a GET. Withdrawing their own consent is
-| still T-015h — absent rather than half-built.
+| request at all. The tenth (2026-09-12) is "Translate to Arabic", and it is the
+| odd one out: it writes nothing about a family at all, only a cache row keyed on
+| a hash, and it is a POST solely because the text a parent wants translated does
+| not fit in a query string. Everything else is a GET. Withdrawing their own
+| consent is still T-015h — absent rather than half-built.
 |
-| `FamilyPortalTest::the_family_realm_writes_exactly_nine_things` enumerates
-| every one of them and fails on a tenth. Adding a route here without updating
-| that list is a failing build, on purpose.
+| `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
+| every one of them and fails on an eleventh. Adding a route here without
+| updating that list is a failing build, on purpose.
 */
 
 // --------------------------------------------------------------- signing in
@@ -174,6 +178,23 @@ Route::prefix('family')
 
             // The forty drawings a family can choose from.
             Route::get('/avatars', [GroupsController::class, 'avatarCatalogue']);
+
+            // "Translate to Arabic", over whatever is on the parent's screen.
+            //
+            // The TENTH write in this realm, and the only one that writes nothing
+            // about a family: it takes TEXT rather than record ids, so it has no
+            // audience gate to get wrong and cannot be aimed at another family's
+            // child — see the controller, which argues that trade at length. It
+            // is a POST because the text is far too long for a query string, not
+            // because it mutates anything a parent can see; the only row it
+            // writes is a cache entry keyed on a hash.
+            //
+            // TWO throttles apply, and the second is not redundant. This is the
+            // one endpoint in the realm that SPENDS MONEY per call, so 60/min of
+            // ordinary family allowance is far too generous for it;
+            // `family-translate` narrows that to 20/min on the same contact key.
+            Route::post('/translations', [TranslationsController::class, 'store'])
+                ->middleware('throttle:family-translate');
 
             // The entry point: which groups this parent stands in, and which
             // children they hold in each. Every route below is addressed with

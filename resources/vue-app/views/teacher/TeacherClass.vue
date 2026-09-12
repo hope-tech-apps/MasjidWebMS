@@ -158,14 +158,31 @@
 
             <!-- ==================================================== LETTERS -->
             <section v-else-if="activeTab === 'letters'">
-                <!-- The class's Arabic stage. -->
+                <!-- WHICH ALPHABET. Two tracks, never one grid: each has its own
+                     drills, its own denominator and its own reading direction,
+                     and merging them would draw an alphabet no class teaches. -->
+                <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Alphabet">
+                    <button v-for="a in ALPHABETS" :key="a.id" type="button"
+                            class="btn" :class="lettersAlphabet === a.id ? 'btn-success' : 'btn-outline-success'"
+                            :disabled="trackerLoading" :aria-pressed="lettersAlphabet === a.id"
+                            @click="switchAlphabet(a.id)">
+                        {{ a.label }}
+                    </button>
+                </div>
+
+                <!-- The class's stage, on the track that has one. -->
                 <div class="card border-0 bg-light mb-3">
                     <div class="card-body d-flex flex-wrap gap-3 align-items-center justify-content-between">
                         <div>
-                            <div class="fw-semibold">{{ currentStageLabel || 'Arabic stage' }}</div>
+                            <div class="fw-semibold">{{ currentStageLabel || alphabetHeading }}</div>
                             <div v-if="tracker?.stage?.summary" class="text-muted small">{{ tracker.stage.summary }}</div>
                         </div>
-                        <div v-if="stageOptions.length" class="d-flex align-items-center gap-2">
+                        <!-- Hidden on a single-stage track. English is one stage
+                             by design, and the endpoint refuses to be told
+                             otherwise: the ladder belongs to the qāʿidah, and
+                             setting it from an English screen would move the
+                             class's ARABIC denominator. -->
+                        <div v-if="stageOptions.length > 1" class="d-flex align-items-center gap-2">
                             <label class="small text-muted mb-0">This class is on</label>
                             <select class="form-select form-select-sm" style="width:auto"
                                     :value="currentStageId" :disabled="savingStage"
@@ -210,8 +227,12 @@
                             </div>
                         </div>
 
-                        <!-- RTL: the alphabet begins at the top RIGHT and runs leftward. -->
-                        <div class="d-flex flex-wrap gap-2 mb-3" dir="rtl">
+                        <!-- The alphabet's OWN direction, off the payload: Arabic
+                             begins at the top right and runs leftward, English
+                             does the opposite, and either laid out the other way
+                             reads as a jumble rather than as the alphabet a
+                             child is learning. -->
+                        <div class="d-flex flex-wrap gap-2 mb-3" :dir="lettersDir">
                             <button v-for="l in tracker.letters" :key="l.id" type="button"
                                     class="letter-tile" :class="`letter-tile--${l.status}`"
                                     @click="openLetter = openLetter === l.id ? null : l.id">
@@ -223,19 +244,21 @@
                         <div v-if="letter" class="card border-0 shadow-sm">
                             <div class="card-body">
                                 <div class="d-flex justify-content-between align-items-baseline mb-2">
-                                    <h6 class="mb-0">{{ letter.arabic_name }} — {{ letter.transliteration }}</h6>
+                                    <h6 class="mb-0">{{ letterHeading }}</h6>
                                     <button class="btn-close" @click="openLetter = null"></button>
                                 </div>
 
-                                <!-- A word BEGINS at the right, so initial form sits on the right. -->
-                                <div v-if="letter.positions?.length" class="d-flex gap-2 mb-3" dir="rtl">
+                                <!-- An Arabic word BEGINS at the right, so the
+                                     initial form sits on the right; an English
+                                     one does not. Same payload, same question. -->
+                                <div v-if="letter.positions?.length" class="d-flex gap-2 mb-3" :dir="lettersDir">
                                     <div v-for="p in letter.positions" :key="p.id" class="shape-box">
                                         <div class="shape-box__glyph">{{ p.text }}</div>
                                         <div class="shape-box__label">{{ positionLabel(p.id) }}</div>
                                     </div>
                                 </div>
 
-                                <div class="list-group" dir="rtl">
+                                <div class="list-group" :dir="lettersDir">
                                     <button v-for="d in letter.drills" :key="d.id" type="button"
                                             class="list-group-item list-group-item-action d-flex align-items-center gap-3"
                                             :class="`drill--${d.status}`" :disabled="marking === d.id"
@@ -2236,13 +2259,67 @@ const stageNote = ref('');
 
 const letter = computed(() => tracker.value?.letters?.find((l: any) => l.id === openLetter.value) ?? null);
 
+/**
+ * The tracks this tab can show, and which one it is showing.
+ *
+ * NOT remembered across page loads: a teacher opening a class expects the
+ * qāʿidah, which is also what the endpoints answer when no `?alphabet=` is
+ * sent, so the screen and the API agree about what "no choice made" means. The
+ * ids are the server's allowlist (`CurriculumRegistry::ALPHABETS`) — anything
+ * else is a 422 rather than a quiet fallback to Arabic.
+ */
+const ALPHABETS = [
+    { id: 'arabic', label: 'Arabic' },
+    { id: 'english', label: 'English' },
+] as const;
+const lettersAlphabet = ref<string>('arabic');
+
+/** Which way this alphabet is laid out, as the payload declares it — never a constant. */
+const lettersDir = computed(() => tracker.value?.direction ?? (lettersAlphabet.value === 'english' ? 'ltr' : 'rtl'));
+
+/** What to call the track before any tracker has been loaded to name its stage. */
+const alphabetHeading = computed(() => (lettersAlphabet.value === 'english' ? 'English letters' : 'Arabic stage'));
+
+/**
+ * The open letter's heading.
+ *
+ * `arabic_name — transliteration` was safe while there was one alphabet. An
+ * English letter carries neither, so the same template printed a leading em
+ * dash in front of a blank; the dash now appears only when there are two things
+ * to separate.
+ */
+const letterHeading = computed(() => {
+    const l = letter.value;
+    if (!l) return '';
+
+    return [l.arabic_name, l.transliteration ?? l.glyph].filter(Boolean).join(' — ');
+});
+
 // Stage options come from whatever the letters payload exposes (the family/admin
 // overview carries `stages`); the mutation itself uses the frozen PUT.
-const stageOptions = computed<any[]>(() => tracker.value?.stages ?? group.value?.arabic_stages ?? []);
-const currentStageId = computed(() => tracker.value?.stage?.id ?? group.value?.arabic_stage ?? '');
-const currentStageLabel = computed(() => tracker.value?.stage?.label ?? group.value?.arabic_stage ?? '');
+//
+// The fallback matters more than it looks: `group.arabic_stages` is the
+// QĀʿIDAH's ladder read off the class, and it is there whichever track is on
+// screen. Offered on the English track it would draw a five-rung selector for
+// an alphabet with one stage, and every rung of it would write Arabic's stage.
+const stageOptions = computed<any[]>(() => (
+    lettersAlphabet.value === 'english'
+        ? []
+        : (tracker.value?.stages ?? group.value?.arabic_stages ?? [])
+));
+// Same trap in the label: before a child is opened there is no tracker, and the
+// group's own `arabic_stage` would caption the English track with a rung of the
+// qāʿidah ("Vowels"). It is only an answer for the track it belongs to.
+const stageFallback = computed(() => (lettersAlphabet.value === 'english' ? '' : group.value?.arabic_stage ?? ''));
+const currentStageId = computed(() => tracker.value?.stage?.id ?? stageFallback.value);
+const currentStageLabel = computed(() => tracker.value?.stage?.label ?? stageFallback.value);
 
-const POSITIONS: Record<string, string> = { isolated: 'Alone', initial: 'Beginning', medial: 'Middle', final: 'End' };
+// Arabic's four contextual forms and English's two cases, in one map: the shape
+// row is the same markup either way.
+const POSITIONS: Record<string, string> = {
+    isolated: 'Alone', initial: 'Beginning', medial: 'Middle', final: 'End',
+    upper: 'Capital', lower: 'Small',
+};
 const positionLabel = (id: string) => POSITIONS[id] ?? id;
 const STATUS: Record<string, string> = { not_started: 'Not started', learning: 'Learning', mastered: 'Mastered' };
 const statusLabel = (s: string) => STATUS[s] ?? s;
@@ -2254,16 +2331,39 @@ const NEXT: Record<string, string> = { not_started: 'learning', learning: 'maste
 const openLetters = async (s: any) => {
     selected.value = s;
     openLetter.value = null;
+    letterError.value = '';
     tracker.value = null;
     trackerLoading.value = true;
     try {
-        const res = await TeacherApiService.get(`${base.value}/members/${s.membership_id}/letters`);
+        const res = await TeacherApiService.get(
+            `${base.value}/members/${s.membership_id}/letters?alphabet=${lettersAlphabet.value}`
+        );
         tracker.value = res.data?.data ?? null;
     } catch {
         tracker.value = null;
     } finally {
         trackerLoading.value = false;
     }
+};
+
+/**
+ * Change track: re-read, never merge.
+ *
+ * The two tracks share nothing a client could recombine — different letters,
+ * different drills, a different denominator, a different direction — so an open
+ * child is re-fetched rather than re-filtered, exactly as a stage change
+ * re-fetches them.
+ */
+const switchAlphabet = async (next: string) => {
+    if (next === lettersAlphabet.value) return;
+
+    lettersAlphabet.value = next;
+    openLetter.value = null;
+    letterError.value = '';
+    stageNote.value = '';
+    tracker.value = null;
+
+    if (selected.value) await openLetters(selected.value);
 };
 
 const advance = async (drill: any) => {
@@ -2273,7 +2373,10 @@ const advance = async (drill: any) => {
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters`,
-            { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning' }
+            // The alphabet travels with the mark: a drill id alone cannot be
+            // placed, since `ba` is a drill on one track and nothing at all on
+            // the other, and the server judges it against the named one.
+            { drill_id: drill.id, status: NEXT[drill.status] ?? 'learning', alphabet: lettersAlphabet.value }
         );
         // Marking returns the whole tracker, so totals and tile colour move together.
         tracker.value = res.data?.data ?? tracker.value;

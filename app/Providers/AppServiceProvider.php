@@ -48,6 +48,24 @@ class AppServiceProvider extends ServiceProvider
                 'stripe_version' => '2024-06-20',
             ]);
         });
+
+        // The parent portal's "Translate to Arabic" button. Bound to the
+        // interface rather than type-hinted concretely in the controller for one
+        // reason: the guarantees this feature makes are all statements about how
+        // many times the provider was called — a second identical request must
+        // cost nothing, two organisations must not share a cache row, a provider
+        // failure must be a clean 503 and never a half-translated payload — and a
+        // suite that could not swap this binding would have to reach the network
+        // to assert any of them. tests/Feature/FamilyTranslationTest.php binds a
+        // counting fake here. See App\Services\Translation\Translator.
+        //
+        // bind(), not singleton(): the implementation is stateless and cheap, and
+        // a singleton would carry one request's container-resolved config into
+        // the next job on a long-lived `queue:work` process for no benefit.
+        $this->app->bind(
+            \App\Services\Translation\Translator::class,
+            \App\Services\Translation\AnthropicTranslator::class,
+        );
     }
 
     public function boot(): void
@@ -474,6 +492,47 @@ class AppServiceProvider extends ServiceProvider
                         'status' => 'error',
                         'message' => 'You have started several conversations already. '
                             . 'Please continue one of them, or try again later.',
+                    ], 429);
+                });
+        });
+
+        /*
+         * "Translate to Arabic" in the parent portal (routes/family.php).
+         *
+         * THE ONLY ENDPOINT IN THIS APPLICATION WHERE AN AUTHENTICATED PARENT
+         * SPENDS MONEY. Everything else a family can reach reads rows we already
+         * hold; a translation that misses the cache is a paid call to Anthropic,
+         * so the realm's 60/min is far too generous a ceiling for it and this
+         * limiter narrows the same contact to twenty. The route carries BOTH.
+         *
+         * Twenty a minute is deliberately not stingy — a parent working down a
+         * class story, tapping translate on each paragraph, must never be told
+         * to slow down — but it bounds a stolen token, or a client stuck in a
+         * retry loop, to something a school's bill survives.
+         *
+         * Keyed on the CONTACT for the reason the `family` limiter is: a whole
+         * household on one phone is one parent, and a school run sharing the
+         * mosque's wifi is not one attacker. The IP fallback covers the refusal
+         * paths, where there is no principal to key on. The number is a literal
+         * rather than a config key on purpose — config/translation.php holds the
+         * per-request ceilings, which is what an operator reaches for in an
+         * incident; a second dial that also caps spend would make "why is this
+         * still expensive?" a two-file question.
+         */
+        RateLimiter::for('family-translate', function (Request $request) {
+            $principal = $request->user();
+
+            $key = $principal instanceof \App\Models\Contact
+                ? 'contact:' . $principal->getKey()
+                : 'ip:' . $request->ip();
+
+            return Limit::perMinute(20)
+                ->by('family-translate:' . $key)
+                ->response(function () {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'You have asked for a lot of translations at once. '
+                            . 'Please wait a minute and try again.',
                     ], 429);
                 });
         });

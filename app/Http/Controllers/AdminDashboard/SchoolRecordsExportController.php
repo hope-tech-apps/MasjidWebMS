@@ -224,7 +224,7 @@ class SchoolRecordsExportController extends Controller
             'hifz' => [HifzEntry::whereIn('group_id', $gids)->count(), 'Quran memorisation positions'],
             'behaviour' => [BehaviorAward::whereIn('group_id', $gids)->count(), 'Behaviour points'],
             'behaviour_skills' => [BehaviorSkill::count(), 'The behaviour vocabulary'],
-            'arabic_progress' => [ArabicLetterProgress::whereIn('group_id', $gids)->count(), 'Arabic letter drills'],
+            'arabic_progress' => [ArabicLetterProgress::whereIn('group_id', $gids)->count(), 'Letter drills, Arabic and English (see the Alphabet column)'],
             'lesson_plans' => [LessonPlan::whereIn('group_id', $gids)->count(), 'Lesson plans'],
         ];
     }
@@ -459,11 +459,31 @@ class SchoolRecordsExportController extends Controller
         );
     }
 
-    /** @param resource $out */
+    /**
+     * The section still keys on `arabic_progress`, but the table has held two
+     * alphabets since 2026-09-12, so the file carries an 'Alphabet' column.
+     * Without it the file merges the qāʿidah and the English A–Z under one
+     * header and a receiving school reads `a` and `alif` as one syllabus —
+     * silently, because a CSV cannot complain. The section KEY is unchanged: it
+     * is the dataset name a departing school's tooling asks for, and renaming it
+     * would break that for a cosmetic gain.
+     *
+     * 'Alphabet' IS APPENDED, NOT INSERTED, for the same reason. A consumer that
+     * reads this file positionally — the ones that do are exactly the ones a
+     * stable dataset name is for — takes row[4] as the drill id, row[5] as the
+     * status and row[6] as the mastery date. Slotting the new column in beside
+     * 'Drill id' shifts all three one place right, so every drill id becomes the
+     * literal string 'arabic', every status becomes a drill id and every date
+     * becomes a status, with no parse error and no empty cell to notice. Appended
+     * at the end, the existing positions are exactly what they were and the new
+     * field is additive: an old reader ignores it, a new one asks for it by name.
+     *
+     * @param  resource  $out
+     */
     private function writeArabicProgress($out): void
     {
         Csv::row($out, ['Row id', 'Class id', 'Membership id', 'Student name',
-            'Drill id', 'Status', 'Mastered at']);
+            'Drill id', 'Status', 'Mastered at', 'Alphabet']);
 
         Csv::each(
             ArabicLetterProgress::whereIn('group_id', $this->schoolGroupIds())
@@ -471,7 +491,8 @@ class SchoolRecordsExportController extends Controller
             fn (ArabicLetterProgress $r) => Csv::row($out, [
                 Csv::num($r->id), Csv::num($r->group_id), Csv::num($r->group_membership_id),
                 Csv::text($this->nameOf($r->membership?->contact)),
-                Csv::text($r->drill_id), Csv::text($r->status), Csv::num($r->mastered_at),
+                Csv::text($r->drill_id), Csv::text($r->status),
+                Csv::num($r->mastered_at), Csv::text($r->alphabet),
             ])
         );
     }

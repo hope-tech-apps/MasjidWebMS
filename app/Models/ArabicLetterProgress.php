@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
 use App\Support\Arabic\ArabicCurriculum;
+use App\Support\Letters\CurriculumRegistry;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -18,6 +19,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * No soft deletes: a drill is never destroyed, only moved between statuses. The
  * row IS the tracker cell.
+ *
+ * The table holds BOTH alphabets — the Arabic qāʿidah and the English A–Z the
+ * school asked for on the same tab — separated by `alphabet` and by the unique
+ * key over (student, alphabet, drill). Every read must filter on it; a count
+ * that forgets to lets one track's mastery inflate the other's percentage. The
+ * class name and the table name still say `arabic` for the reasons the
+ * 2026_09_12 migration gives.
  */
 class ArabicLetterProgress extends Model
 {
@@ -30,9 +38,20 @@ class ArabicLetterProgress extends Model
         'group_id',
         'group_membership_id',
         'marked_by_user_id',
+        'alphabet',
         'drill_id',
         'status',
         'mastered_at',
+    ];
+
+    /**
+     * Arabic unless a caller says otherwise, matching the column default — so a
+     * row created by a seeder, an importer or a test that predates the second
+     * alphabet lands on the track it was always on, and reads back that way
+     * before it has been refreshed from the database.
+     */
+    protected $attributes = [
+        'alphabet' => CurriculumRegistry::ALPHABET_ARABIC,
     ];
 
     protected function casts(): array
