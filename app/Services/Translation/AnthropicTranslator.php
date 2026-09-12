@@ -406,8 +406,14 @@ class AnthropicTranslator implements Translator
 
         $payload = [];
 
+        // The input key is `source`, not `text`, and that is not cosmetic: when
+        // it was `text` the model mirrored it and answered {"i":0,"text":"<the
+        // Arabic>"} — correct work, rejected by the decoder, so EVERY request
+        // paid for a wasted batch call and then one call per string. Naming the
+        // two sides differently means a mirrored key is still recognisable as a
+        // mirror rather than colliding with the key we asked for.
         foreach ($texts as $i => $text) {
-            $payload[] = ['i' => $i, 'text' => $text];
+            $payload[] = ['i' => $i, 'source' => $text];
         }
 
         $reply = $this->meteredCall(
@@ -483,7 +489,34 @@ class AnthropicTranslator implements Translator
         $out = [];
 
         foreach ($decoded as $row) {
-            if (! is_array($row) || ! array_key_exists('i', $row) || ! array_key_exists('translation', $row)) {
+            if (! is_array($row) || ! array_key_exists('i', $row)) {
+                return null;
+            }
+
+            // MIRRORED KEYS ARE ACCEPTED, ECHOED SOURCES ARE NOT.
+            //
+            // The contract asks for "translation". Models answer the shape they
+            // were handed at least as often as the shape they were told, so a
+            // reply keyed "text" (the key this payload used to send) is taken
+            // too — but only after the check below proves the value is not the
+            // source coming back unchanged. Rejecting a correct answer over a
+            // key name costs a wasted call plus one per string, every time.
+            if (! array_key_exists('translation', $row)) {
+                // `source` is in this list on purpose, even though it is the key
+                // WE send: renaming the input key only stops a mirror from
+                // colliding with the key we asked for, it does not stop the
+                // mirroring itself. Taking it is safe because the check below
+                // refuses any value that is the source unchanged — which is
+                // exactly what a useless mirror would contain.
+                foreach (['text', 'source', 'value', 'target'] as $mirrored) {
+                    if (array_key_exists($mirrored, $row) && is_string($row[$mirrored])) {
+                        $row['translation'] = $row[$mirrored];
+                        break;
+                    }
+                }
+            }
+
+            if (! array_key_exists('translation', $row)) {
                 return null;
             }
 
@@ -499,6 +532,13 @@ class AnthropicTranslator implements Translator
             $translation = trim((string) $row['translation']);
 
             if ($translation === '') {
+                return null;
+            }
+
+            // A model that echoes our own key back would have its own source
+            // accepted as the translation, which is the one wrong answer this
+            // whole path must never give.
+            if ($translation === trim((string) $texts[$i])) {
                 return null;
             }
 
@@ -648,11 +688,11 @@ class AnthropicTranslator implements Translator
 
         if ($batch) {
             $shape = <<<'TXT'
-            The user message is a JSON array of objects, each with an integer "i" and a "text".
-            Reply with ONLY a JSON array of objects, each with the same integer "i" and a
-            "translation" holding the translation of that item's text. Return one object for
-            every item you were given, and nothing else — no prose, no explanation, no code
-            fences.
+            The user message is a JSON array of objects, each with an integer "i" and a
+            "source". Reply with ONLY a JSON array of objects, each with the same integer "i"
+            and a "translation" — that exact key, not "source" and not "text" — holding the
+            translation of that item's source. Return one object for every item you were
+            given, and nothing else — no prose, no explanation, no code fences.
             TXT;
         } else {
             $shape = <<<'TXT'

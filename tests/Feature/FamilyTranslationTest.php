@@ -285,7 +285,7 @@ class FamilyTranslationTest extends TestCase
         // batch of two, would mean the cached paragraph was re-bought.
         $this->assertSame(2, $this->translator->calls);
         $this->assertCount(1, $this->translator->batches[1]);
-        $this->assertSame($notice, $this->translator->batches[1][0]['text']);
+        $this->assertSame($notice, $this->translator->batches[1][0]['source']);
     }
 
     #[Test]
@@ -443,6 +443,76 @@ class FamilyTranslationTest extends TestCase
     // returns nothing at all is the ordinary weather of this feature, and until
     // the fake could imitate it the batch-rejection branches, the whole per-item
     // fallback and the fence stripping were dead code under a green suite.
+
+    /**
+     * The defect this pins cost real money on the day translation was switched
+     * on: the live model answered {"i":0,"text":"<the Arabic>"} — mirroring the
+     * key the payload used — and the decoder threw a perfectly good batch away,
+     * so every single request paid for a wasted batch call and then one call
+     * per string on top.
+     */
+    #[Test]
+    public function a_batch_reply_that_mirrors_our_own_key_is_still_one_call(): void
+    {
+        $this->translator->batchReply = function (string $honest): string {
+            $rows = json_decode($honest, true);
+
+            foreach ($rows as $i => $row) {
+                // "source" — the key the payload itself uses — is the mirror
+                // most likely to come back now that the input is keyed that
+                // way, and it is the one the identity check has to clear.
+                $rows[$i] = ['i' => $row['i'], 'source' => $row['translation']];
+            }
+
+            return (string) json_encode($rows, JSON_UNESCAPED_UNICODE);
+        };
+
+        $this->as($this->parent)
+            ->postJson($this->url($this->masjid), $this->payload([
+                ['key' => 'post-1-title', 'text' => 'Trip to the museum'],
+                ['key' => 'post-1-body', 'text' => 'We leave at nine on Friday.'],
+            ]))
+            ->assertOk()
+            ->assertJsonPath('data.translations.post-1-title', '[ar] Trip to the museum')
+            ->assertJsonPath('data.translations.post-1-body', '[ar] We leave at nine on Friday.');
+
+        $this->assertSame(1, $this->translator->calls);
+        $this->assertSame(0, $this->translator->itemCalls);
+    }
+
+    /**
+     * The other half of the same tolerance: taking a mirrored key must never
+     * mean taking the SOURCE back as its own translation. That is the one wrong
+     * answer this path can give — English cached and served as the Arabic, with
+     * a parent told it was translated.
+     */
+    #[Test]
+    public function a_batch_reply_that_echoes_the_source_is_not_taken_as_a_translation(): void
+    {
+        $this->translator->batchReply = function (string $honest, array $sent): string {
+            $rows = [];
+
+            foreach ($sent as $item) {
+                $rows[] = ['i' => $item['i'], 'text' => $item['source']];
+            }
+
+            return (string) json_encode($rows, JSON_UNESCAPED_UNICODE);
+        };
+
+        $response = $this->as($this->parent)
+            ->postJson($this->url($this->masjid), $this->payload([
+                ['key' => 'post-2-title', 'text' => 'Trip to the museum'],
+            ]))
+            ->assertOk();
+
+        // The batch was refused, so the per-item path ran and its answer is what
+        // the parent gets — never the English that came back keyed "text".
+        $response->assertJsonPath('data.translations.post-2-title', '[ar] Trip to the museum');
+        $this->assertSame(1, $this->translator->batchCalls);
+        $this->assertSame(1, $this->translator->itemCalls);
+
+        $this->assertDatabaseMissing('content_translations', ['translated_text' => 'Trip to the museum']);
+    }
 
     #[Test]
     public function a_fenced_batch_reply_is_still_one_call_and_still_every_key(): void
@@ -1019,14 +1089,14 @@ final class CountingTranslator extends AnthropicTranslator
 
     /**
      * Every batch payload the service actually sent, decoded — the JSON array of
-     * `{i, text}` as it went out.
+     * `{i, source}` as it went out.
      *
      * Row counts cannot see deduplication: `remember()` writes with
      * updateOrCreate keyed on (hash, language), so a request that sent the same
      * paragraph thirty times and paid for it thirty times still leaves ONE row.
      * What went out on the wire is the only place that guarantee is visible.
      *
-     * @var array<int,array<int,array{i:int,text:string}>>
+     * @var array<int,array<int,array{i:int,source:string}>>
      */
     public array $batches = [];
 
@@ -1042,7 +1112,7 @@ final class CountingTranslator extends AnthropicTranslator
     /**
      * Answer a batch with this instead of the honest reply.
      *
-     * @var (Closure(string $honestReply, array<int,array{i:int,text:string}> $sent): string)|null
+     * @var (Closure(string $honestReply, array<int,array{i:int,source:string}> $sent): string)|null
      */
     public ?Closure $batchReply = null;
 
@@ -1082,7 +1152,9 @@ final class CountingTranslator extends AnthropicTranslator
         // than on position, and a fake that always replied in order would let
         // that regress unnoticed.
         foreach (array_reverse($payload) as $item) {
-            $out[] = ['i' => $item['i'], 'translation' => '[ar] ' . $item['text']];
+            // `source` is the key the service sends; `text` is tolerated so a
+            // hand-built payload in a future test still answers sensibly.
+            $out[] = ['i' => $item['i'], 'translation' => '[ar] ' . ($item['source'] ?? $item['text'])];
         }
 
         $honest = (string) json_encode($out, JSON_UNESCAPED_UNICODE);
