@@ -150,6 +150,13 @@ export type GroupMembership = {
     guardian_of_contact_id: number | null;
     joined_at: string | null;
     /**
+     * The day they left the class, or null while they are still in it. The
+     * roster payload is deliberately UNFILTERED — the Roster tab has to show who
+     * left so the office can see it and undo it — so every other list built from
+     * this same payload has to exclude them itself.
+     */
+    left_on: string | null;
+    /**
      * Consent lives on the guardian edge, and its ABSENCE means no consent. It is
      * never meaningful on a participant row — a member IS the person, and nobody
      * consents on their behalf.

@@ -243,7 +243,7 @@ class BehaviorAwardsController extends Controller
         $group = Group::findOrFail($group_id);
 
         $membership = $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->find($request->integer('membership_id'));
 
         if ($membership === null) {

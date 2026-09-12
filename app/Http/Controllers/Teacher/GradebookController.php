@@ -45,7 +45,7 @@ class GradebookController extends TeacherController
     {
         $group = Group::findOrFail($group_id);
 
-        $roster = $group->memberships()->participants()->count();
+        $roster = $group->memberships()->participants()->current()->count();
 
         $assignments = $group->assignments()
             ->withCount('scores')
@@ -96,7 +96,7 @@ class GradebookController extends TeacherController
         $assignment = $group->assignments()->findOrFail($assignment_id);
 
         $students = $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->with('contact:id,first_name,last_name,' . Contact::AVATAR_COLUMNS)
             ->get();
 
@@ -193,15 +193,23 @@ class GradebookController extends TeacherController
         $group = Group::findOrFail($group_id);
         $assignment = $group->assignments()->findOrFail($assignment_id);
 
-        $allowed = $group->memberships()->participants()->pluck('id');
+        $allowed = $group->memberships()->participants()->current()->pluck('id');
         $rows = collect($request->validated('scores'));
 
         $unknown = $rows->pluck('membership_id')->map(fn ($id) => (int) $id)->diff($allowed);
 
         if ($unknown->isNotEmpty()) {
+            // Same distinction the register makes: a departed child is a stale
+            // page, not a typo.
+            $left = $group->memberships()->participants()->withdrawn()->pluck('id');
+
             return response()->json([
                 'status' => 'failed',
-                'data' => ['scores' => ['That gradebook names someone who is not a student in this class.']],
+                'data' => ['scores' => [
+                    $unknown->intersect($left)->isNotEmpty()
+                        ? 'That gradebook names a child who has left the class — reload it and save the rest.'
+                        : 'That gradebook names someone who is not a student in this class.',
+                ]],
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

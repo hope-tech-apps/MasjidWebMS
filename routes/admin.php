@@ -36,6 +36,7 @@ use App\Http\Controllers\AdminDashboard\GroupMembershipsController;
 use App\Http\Controllers\AdminDashboard\SchoolRecordsExportController;
 use App\Http\Controllers\AdminDashboard\GroupPostsController;
 use App\Http\Controllers\AdminDashboard\GroupsController;
+use App\Http\Controllers\AdminDashboard\GroupWithdrawalController;
 use App\Http\Controllers\AdminDashboard\TeachersController;
 use App\Http\Controllers\AdminDashboard\GroupThreadsController;
 use App\Http\Controllers\AdminDashboard\HifzEntriesController;
@@ -826,6 +827,22 @@ Route::prefix('admin')->group(function () {
                     ->controller(GroupConsentController::class)
                     ->group(function () {
                         Route::get('/', 'show')->middleware('permission:view contacts');
+                        Route::put('/', 'update')->middleware('permission:manage contacts');
+                        Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+                    });
+
+                // A student LEAVING the class — the state between "on the roster"
+                // and "deleted", and the only one of the three that a school with
+                // a departing family can actually use. `destroy` below refuses
+                // once a child holds academic history (it would take the history
+                // with it); this records a leaving date instead, so the row and
+                // every record on it survive while the class stops counting the
+                // child as present. Roster administration, so it takes the same
+                // `manage contacts` the roster and consent do. There is no GET:
+                // the date rides on the roster row `index()` already serves.
+                Route::prefix('{masjid_id}/groups/{group_id}/members/{membership_id}/withdrawal')
+                    ->controller(GroupWithdrawalController::class)
+                    ->group(function () {
                         Route::put('/', 'update')->middleware('permission:manage contacts');
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
                     });

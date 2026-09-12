@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Carbon\CarbonInterface;
 
 /**
  * GroupMembership — one person's place in one group.
@@ -162,6 +163,7 @@ class GroupMembership extends Model
     {
         return [
             'joined_at' => 'date',
+            'left_on' => 'date',
             'consent_granted_at' => 'datetime',
             'confirmed_at' => 'datetime',
         ];
@@ -229,6 +231,43 @@ class GroupMembership extends Model
                 ->get()
                 ->each
                 ->delete();
+        });
+
+        // A CHILD LEAVING TAKES THEIR GUARDIANS' STANDING WITH THEM, for the same
+        // reason the cascade above exists: a guardian edge that outlives the
+        // child's place in the class is a standing grant of access to a minor's
+        // class — the class story, the class-wide thread, the handout — for a
+        // family that left. The edge itself is KEPT (it is the relationship, and
+        // the record of who confirmed it and when consent was given), it simply
+        // leaves the class on the same day the child did.
+        //
+        // Here rather than in the controller so it holds for every caller — a
+        // console command, a future importer, a rollover — exactly as the
+        // deletion cascade does. It runs in both directions: a child who comes
+        // back brings their guardians back with them.
+        //
+        // The early return for guardian rows is also what stops this recursing:
+        // updating an edge fires `updated` again, and a guardian row has no
+        // dependants of its own.
+        static::updated(function (self $membership): void {
+            if (! $membership->wasChanged('left_on')) {
+                return;
+            }
+
+            if (! in_array($membership->role, self::PARTICIPANT_ROLES, true)) {
+                return;
+            }
+
+            static::query()
+                ->where('group_id', $membership->group_id)
+                ->where('guardian_of_contact_id', $membership->contact_id)
+                ->get()
+                ->each(function (self $edge) use ($membership): void {
+                    $edge->forceFill([
+                        'left_on' => $membership->left_on,
+                        'left_recorded_by_user_id' => $membership->left_recorded_by_user_id,
+                    ])->save();
+                });
         });
     }
 
@@ -309,6 +348,52 @@ class GroupMembership extends Model
             'provenance' => self::PROVENANCE_CONFIRMED,
             'confirmed_at' => now(),
             'confirmed_by_user_id' => $actor?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /** Has this row left the class? */
+    public function hasLeft(): bool
+    {
+        return $this->left_on !== null;
+    }
+
+    /**
+     * Record that this person left the class, on a date the office states.
+     *
+     * Not fillable, and stamped rather than assigned, for the same reason
+     * `confirmedByStaff` is: this is not roster data the office types, it is a
+     * decision with a date and an author that later reads depend on. `$actor` is
+     * nullable because a console or seeder path has no `users` row to name.
+     *
+     * The date defaults to today and is stored as a DATE: a school's question is
+     * which day, never which second.
+     */
+    public function markLeftByStaff(?User $actor, CarbonInterface|string|null $on = null): static
+    {
+        $this->forceFill([
+            'left_on' => $on ?? now()->toDateString(),
+            'left_recorded_by_user_id' => $actor?->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Put them back on the roster — a family that changed their mind, or a date
+     * entered against the wrong child.
+     *
+     * Both columns go back to null, which is the same state as never having
+     * left, because that is what reversal means here and because "absent means
+     * still enrolled" only works if the absent state stays reachable. The same
+     * argument the consent columns make when they are withdrawn.
+     */
+    public function returnToRoster(): static
+    {
+        $this->forceFill([
+            'left_on' => null,
+            'left_recorded_by_user_id' => null,
         ]);
 
         return $this;
@@ -526,6 +611,27 @@ class GroupMembership extends Model
     public function scopeParticipants($query)
     {
         return $query->whereIn('role', self::PARTICIPANT_ROLES);
+    }
+
+    /**
+     * Rows still ON the roster — the answer to "who is in this class", which is
+     * what every register, gradebook, points, ḥifẓ and letters read wants.
+     *
+     * Deliberately a SEPARATE scope from `participants()` rather than folded
+     * into it: the record surfaces must keep resolving a departed child's own
+     * history (a report card written in October is still that child's), so
+     * "which rows are people in this class" and "which of them are still here"
+     * are two different questions and a caller has to say which it is asking.
+     */
+    public function scopeCurrent($query)
+    {
+        return $query->whereNull('left_on');
+    }
+
+    /** The departed — for a roster that wants to show them under their own heading. */
+    public function scopeWithdrawn($query)
+    {
+        return $query->whereNotNull('left_on');
     }
 
     /**

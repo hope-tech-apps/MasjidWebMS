@@ -44,7 +44,7 @@ class AttendanceController extends TeacherController
         $date = $this->sessionDate($request->query('date'));
 
         $students = $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
             ->get();
 
@@ -90,15 +90,25 @@ class AttendanceController extends TeacherController
         $date = Carbon::createFromFormat('Y-m-d', $request->validated('session_date'))->startOfDay();
 
         // The classroom's own students, as the ONLY ids this request may name.
-        $allowed = $group->memberships()->participants()->pluck('id');
+        $allowed = $group->memberships()->participants()->current()->pluck('id');
 
         $marks = collect($request->validated('marks'));
         $unknown = $marks->pluck('membership_id')->map(fn ($id) => (int) $id)->diff($allowed);
 
         if ($unknown->isNotEmpty()) {
+            // A CHILD WHO LEFT IS A DIFFERENT MISTAKE from a stranger's id, and
+            // the teacher should hear which: their register was drawn before the
+            // roster changed, and the fix is to reload it rather than to hunt
+            // for a name they did type correctly.
+            $left = $group->memberships()->participants()->withdrawn()->pluck('id');
+
             return response()->json([
                 'status' => 'failed',
-                'data' => ['marks' => ['That register names someone who is not a student in this class.']],
+                'data' => ['marks' => [
+                    $unknown->intersect($left)->isNotEmpty()
+                        ? 'That register names a child who has left the class — reload it and mark the rest.'
+                        : 'That register names someone who is not a student in this class.',
+                ]],
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

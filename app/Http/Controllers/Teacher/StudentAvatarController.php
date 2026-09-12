@@ -68,7 +68,7 @@ class StudentAvatarController extends TeacherController
         $group = Group::findOrFail($group_id);
 
         return $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->with('contact')
             ->findOrFail($membership_id);
     }

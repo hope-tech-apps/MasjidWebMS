@@ -272,7 +272,10 @@ const entryForm = ref<HifzEntryPayload>(emptyEntryForm());
 // Computed
 /** A recitation is heard from a PARTICIPANT; a guardian edge names a relationship. */
 const participants = computed<GroupMembership[]>(
-    () => props.memberships.filter((m) => m.role !== 'guardian')
+    // …and one who is still in the class: this list is a picker, and offering a
+    // child who has left invites a record to be written against a class they are
+    // no longer in — which the server now refuses anyway.
+    () => props.memberships.filter((m) => m.role !== 'guardian' && !m.left_on)
 );
 
 const entries = computed<HifzEntry[]>(() => (hifzStore.entriesPaginated?.data as HifzEntry[]) || []);

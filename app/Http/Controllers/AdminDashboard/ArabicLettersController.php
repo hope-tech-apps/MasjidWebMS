@@ -48,7 +48,7 @@ class ArabicLettersController extends Controller
         $group = Group::findOrFail($group_id);
 
         $students = $group->memberships()
-            ->participants()
+            ->participants()->current()
             ->with('contact')
             ->get();
 
@@ -87,7 +87,7 @@ class ArabicLettersController extends Controller
         $curriculum = $tracker->curriculum();
 
         $group = Group::findOrFail($group_id);
-        $membership = $group->memberships()->participants()->findOrFail($membership_id);
+        $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
 
         $drillId = (string) $request->validated('drill_id');
         $stage = $tracker->stageFor($group);
@@ -152,7 +152,7 @@ class ArabicLettersController extends Controller
         $group->arabic_stage = (string) $request->validated('stage');
         $group->save();
 
-        $students = $group->memberships()->participants()->with('contact')->get();
+        $students = $group->memberships()->participants()->current()->with('contact')->get();
 
         return response()->json([
             'status' => 'success',

@@ -97,7 +97,8 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="membership in participants" :key="membership.id">
+                        <tr v-for="membership in participants" :key="membership.id"
+                            :class="{ 'opacity-75': membership.left_on }">
                             <td class="fw-semibold">
                                 <!-- The student's own face, so a roster reads as
                                      thirty children rather than thirty rows. -->
@@ -114,6 +115,16 @@
                                 {{ fullName(membership.contact) }}
                                 <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
                                     Unconfirmed
+                                </span>
+                                <!--
+                                    THE ROW IS STILL HERE BECAUSE THE RECORDS ARE.
+                                    A child who left keeps their place on this
+                                    list — and only this list — so the office can
+                                    see who left, when, and undo it. Every other
+                                    screen in the school stopped counting them.
+                                -->
+                                <span v-if="membership.left_on" class="badge bg-secondary-subtle text-secondary ms-1">
+                                    Left {{ formatStoredDay(membership.left_on) }}
                                 </span>
                                 <!--
                                     WHICH Fatima Ahmed. A name is not an identity
@@ -159,6 +170,23 @@
                                     @click="confirmOne(membership)"
                                 >
                                     <i class="bi bi-patch-check"></i>
+                                </button>
+                                <button
+                                    v-if="!membership.left_on"
+                                    class="btn btn-sm btn-outline-secondary me-1"
+                                    title="Record that this student has left the class"
+                                    @click="openWithdraw(membership)"
+                                >
+                                    <i class="bi bi-box-arrow-right"></i>
+                                </button>
+                                <button
+                                    v-else
+                                    class="btn btn-sm btn-outline-success me-1"
+                                    :disabled="savingWithdrawal"
+                                    title="Put this student back on the roster"
+                                    @click="undoWithdrawal(membership)"
+                                >
+                                    <i class="bi bi-arrow-counterclockwise"></i>
                                 </button>
                                 <button class="btn btn-sm btn-outline-danger" @click="confirmRemove(membership)" title="Remove">
                                     <i class="bi bi-person-dash"></i>
@@ -209,6 +237,11 @@
                                 -->
                                 <span v-if="isPending(membership)" class="badge bg-warning-subtle text-warning ms-1">
                                     Unconfirmed claim
+                                </span>
+                                <!-- A guardian leaves the class with their child;
+                                     this is why their class-wide access stopped. -->
+                                <span v-if="membership.left_on" class="badge bg-secondary-subtle text-secondary ms-1">
+                                    Left {{ formatStoredDay(membership.left_on) }}
                                 </span>
                                 <!--
                                     THE BYTE THAT SEPARATES TWO CLAIMS OVER ONE
@@ -267,7 +300,7 @@
                                     cannot be checked against anything.
                                 -->
                                 <div v-if="membership.consent_scope && membership.consent_granted_at" class="small text-muted">
-                                    {{ formatConsentDay(membership.consent_granted_at) }}
+                                    {{ formatStoredDay(membership.consent_granted_at) }}
                                 </div>
                                 <!--
                                     An unconfirmed claim may not hold consent, and the
@@ -399,6 +432,54 @@
             </div>
         </Teleport>
     </div>
+
+        <!-- A student leaving the class -->
+        <Teleport to="body">
+            <div v-if="withdrawFor" class="modal fade show d-block" tabindex="-1"
+                 style="background:rgba(0,0,0,.5)" @click.self="withdrawFor = null">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"><i class="bi bi-box-arrow-right me-2"></i> Left the class</h5>
+                            <button type="button" class="btn-close" @click="withdrawFor = null"></button>
+                        </div>
+                        <form @submit.prevent="saveWithdrawal">
+                            <div class="modal-body">
+                                <p class="mb-3">
+                                    <span class="fw-semibold">{{ fullName(withdrawFor.contact) }}</span>
+                                    has left this class.
+                                </p>
+                                <div class="mb-3">
+                                    <label class="form-label" for="left-on">Last day in the class</label>
+                                    <input id="left-on" type="date" class="form-control" :max="today" v-model="withdrawForm.left_on">
+                                    <div class="form-text">Defaults to today. Never in the future.</div>
+                                </div>
+                                <!--
+                                    Said plainly, because the office is choosing
+                                    between this and Remove, and the difference
+                                    between them is the whole point.
+                                -->
+                                <ul class="small text-muted mb-0 ps-3">
+                                    <li>Everything on their record stays: the register, marks, report cards, ḥifẓ and points.</li>
+                                    <li>They come off the register, the gradebook and every class list from that day.</li>
+                                    <li>Their guardians leave the class too, so the class story and its emails stop for them.</li>
+                                    <li>Their family can still open their own child's records, and you can undo this at any time.</li>
+                                </ul>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" @click="withdrawFor = null" :disabled="savingWithdrawal">
+                                    Cancel
+                                </button>
+                                <button type="submit" class="btn btn-success" :disabled="savingWithdrawal || !withdrawForm.left_on">
+                                    <span v-if="savingWithdrawal" class="spinner-border spinner-border-sm me-1"></span>
+                                    Save
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
 
         <!-- What a guardian consented to -->
         <Teleport to="body">
@@ -642,6 +723,91 @@ const onAvatarSaved = (contact: any) => {
  * row and never bulk, why no scope is pre-selected on a row that has none, and
  * why the date is the date on their form rather than the moment of typing.
  */
+/**
+ * ---------------------------------------------------------------------------
+ * LEAVING — the third state, and the only one a departing family could use
+ * ---------------------------------------------------------------------------
+ *
+ * Removing a roster row is for a row that should not exist, and it is refused
+ * outright once the child holds any academic history, because that row is what
+ * every register mark, score, report card, ḥifẓ entry, award and letter-progress
+ * row hangs off. A child who LEAVES has that history by definition — so the row
+ * stays, carrying a date, and the class stops counting them from it.
+ *
+ * Recording it RELOADS the roster rather than patching the row: the server also
+ * marks every guardian edge pointing at this child, and those rows are on this
+ * same screen.
+ */
+const withdrawFor = ref<GroupMembership | null>(null);
+const withdrawForm = ref<{ left_on: string }>({ left_on: '' });
+const savingWithdrawal = ref(false);
+
+const withdrawalUrl = (membership: GroupMembership): BackendApiRoute =>
+    `/api/admin/masjids/${masjidId.value}/groups/${props.groupId}/members/${membership.id}/withdrawal` as BackendApiRoute;
+
+const openWithdraw = (membership: GroupMembership) => {
+    today.value = todayLocal();
+    withdrawFor.value = membership;
+    withdrawForm.value = { left_on: membership.left_on ? storedDay(membership.left_on) : today.value };
+};
+
+const saveWithdrawal = async () => {
+    const membership = withdrawFor.value;
+    if (!membership || !withdrawForm.value.left_on) return;
+
+    savingWithdrawal.value = true;
+    try {
+        const res: AxiosResponse = await ApiService.put(withdrawalUrl(membership), {
+            left_on: withdrawForm.value.left_on,
+        });
+        withdrawFor.value = null;
+        emit('changed');
+        Swal.fire({
+            icon: 'success',
+            title: 'Recorded',
+            text: res.data?.message ?? undefined,
+            timer: 2400,
+            showConfirmButton: false,
+        });
+    } catch (error) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Could not record that they left',
+            text: apiErrorText(error, 'That change could not be saved.'),
+        });
+    } finally {
+        savingWithdrawal.value = false;
+    }
+};
+
+const undoWithdrawal = async (membership: GroupMembership) => {
+    const result = await Swal.fire({
+        title: 'Put them back on the roster?',
+        text: `${fullName(membership.contact)} will be back on the register and every class list, and their guardians `
+            + 'will be back in the class with them.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, put them back',
+    });
+
+    if (!result.isConfirmed) return;
+
+    savingWithdrawal.value = true;
+    try {
+        await ApiService.delete(withdrawalUrl(membership));
+        emit('changed');
+        Swal.fire({ icon: 'success', title: 'Back on the roster', timer: 1600, showConfirmButton: false });
+    } catch (error) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Could not undo that',
+            text: apiErrorText(error, 'That change could not be undone.'),
+        });
+    } finally {
+        savingWithdrawal.value = false;
+    }
+};
+
 const consentFor = ref<GroupMembership | null>(null);
 const consentForm = ref<{ scope: ConsentScope | null; granted_at: string }>({ scope: null, granted_at: '' });
 const savingConsent = ref(false);
@@ -666,7 +832,7 @@ const todayLocal = (): string => {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-const formatConsentDay = (iso: string | null): string => {
+const formatStoredDay = (iso: string | null): string => {
     if (!iso) return '—';
     const [y, m, d] = storedDay(iso).split('-').map(Number);
     if (!y || !m || !d) return formatDate(iso);
@@ -1229,8 +1395,8 @@ const confirmRemove = async (membership: GroupMembership) => {
 // Lock body scroll while either dialog is open. One watcher for both: two of them
 // writing the same style property would have the first to close clear the lock
 // while the other was still up.
-watch([showAddModal, consentFor], ([adding, consenting]) => {
-    document.body.style.overflow = (adding || consenting) ? 'hidden' : '';
+watch([showAddModal, consentFor, withdrawFor], ([adding, consenting, leaving]) => {
+    document.body.style.overflow = (adding || consenting || leaving) ? 'hidden' : '';
 });
 </script>
 

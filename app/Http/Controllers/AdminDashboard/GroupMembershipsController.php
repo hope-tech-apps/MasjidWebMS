@@ -221,7 +221,7 @@ class GroupMembershipsController extends Controller
             // guardian until the enrolment is confirmed would make the office
             // confirm in an order nothing on the screen asks for.
             $wardIsInGroup = $group->memberships()
-                ->participants()
+                ->participants()->current()
                 ->where('contact_id', $ward->id)
                 ->exists();
 
