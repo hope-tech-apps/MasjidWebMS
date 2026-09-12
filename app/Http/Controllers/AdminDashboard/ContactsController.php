@@ -137,7 +137,10 @@ class ContactsController extends Controller
      *
      * The OPT-OUT needs no transplanting at all: it lives in `sms_suppressions`,
      * keyed on the number with no foreign key to `contacts`, precisely so that
-     * this force-delete cannot un-say a STOP.
+     * this force-delete cannot un-say a STOP. The EMAIL opt-out (T-042c) is the
+     * same story one channel over — `email_suppressions`, keyed on the address,
+     * no foreign key — so the only thing reconciled for it is the survivor's
+     * display mirror.
      *
      * ## The parent PORTAL is settled before the force-delete too (T-015d)
      *
@@ -224,6 +227,16 @@ class ContactsController extends Controller
             // Before anything is destroyed: the survivor takes the more
             // restrictive SMS consent state (T-009).
             app(\App\Services\Sms\SmsConsentService::class)->reconcileOnMerge($source, $target);
+
+            // …and the survivor is re-checked against the EMAIL opt-out list
+            // (T-042c). Nothing transplants here and nothing needs to: unlike
+            // SMS there is no email consent record, and the opt-out itself lives
+            // in `email_suppressions`, keyed on the address with no foreign key
+            // to either row, so this force-delete cannot un-say an unsubscribe.
+            // What this call fixes is the DISPLAY mirror, so a merged survivor
+            // whose address is suppressed does not read as mailable.
+            app(\App\Services\Broadcast\EmailSuppressionService::class)
+                ->reconcileOnMerge($source, $target);
 
             // …and the absorbed contact's parent-portal access is ended on the
             // record, with its history carried onto the survivor. Before the

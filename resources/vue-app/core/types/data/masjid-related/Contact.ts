@@ -15,6 +15,32 @@ export type Contact = {
      * `deleted_at: null` are the same fact, and the UI tests truthiness.
      */
     deleted_at?: string | null;
+    /**
+     * When this person unsubscribed from THIS organisation's broadcast emails,
+     * or null if they have not.
+     *
+     * A DISPLAY MIRROR, and nothing else. The authority is the server's
+     * `email_suppressions` table, keyed on the ADDRESS rather than on this row
+     * — see App\Models\Contact::hasEmailOptOut(), which spells out why: this
+     * row is mortal (a merge force-deletes it, the donation importer mints and
+     * destroys placeholders, a CSV re-import recreates people) and an opt-out
+     * has to outlive all three. So nothing in the SPA may branch a SEND on this
+     * field; it exists so an admin asking "why did my broadcast never reach
+     * Amina?" reads the answer on her record instead of guessing.
+     *
+     * Optional for the same reason `deleted_at` is: the member directory
+     * (`ContactsController::index/show`) serialises the model wholesale, so the
+     * key is always there on the screens that show it, while a Contact embedded
+     * in some other payload may be a narrower projection. An absent key and a
+     * `null` say the same thing — no opt-out this payload knows of — and the UI
+     * tests truthiness rather than presence.
+     *
+     * ONE LINE MOVES THIS. If the badge's source changes from this mirror to a
+     * read of the suppression table itself, the only edit is the binding in
+     * ContactsView.vue's detail modal (marked there); this field then either
+     * carries the new value or is deleted with it.
+     */
+    email_opted_out_at?: string | null;
 };
 
 // Shape submitted by the create/edit form (server stamps masjid_id + timestamps).

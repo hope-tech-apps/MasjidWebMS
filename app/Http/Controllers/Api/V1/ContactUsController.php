@@ -9,6 +9,7 @@ use App\Models\ContactUsMessage;
 use App\Models\ContactUsReason;
 use App\Models\Masjid;
 use App\Models\MobileAppUser;
+use App\Support\ContactUsNotifier;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 /**
@@ -97,6 +98,28 @@ class ContactUsController extends Controller
                 'contact_us_reason_id' => $reason->id,
                 'message' => $request->input('message'),
             ]);
+
+            // Tell the office. AFTER the row is committed, and it cannot change
+            // what happens next: ContactUsNotifier swallows everything and
+            // degrades to a log line, so a mail outage never costs this person
+            // their message (.claude/rules/environments.md — an unconfigured
+            // integration no-ops, it does not throw). The organisation is the
+            // one THIS controller resolved from the checked `masjid-id` header,
+            // so nothing the anonymous caller sent decides where the mail goes.
+            // See App\Support\ContactUsNotifier and PLAN T-042d.
+            //
+            // A CLONE carries the relations, not $message itself: the success
+            // payload below is a public, unauthenticated response, and attaching
+            // contacter/reason to the returned model would echo the sender's
+            // name, email and phone straight back out of an endpoint that
+            // currently returns none of it.
+            ContactUsNotifier::received(
+                (clone $message)
+                    ->setRelation('contacter', $contactUsAccount)
+                    ->setRelation('reason', $reason),
+                Masjid::find($masjidId),
+                ContactUsNotifier::SOURCE_WEBSITE
+            );
 
             return response()->api(200, __('api.message_sent_successfully'), $message);
         } catch (HttpResponseException $e) {

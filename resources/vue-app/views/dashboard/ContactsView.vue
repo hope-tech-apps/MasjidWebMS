@@ -242,6 +242,46 @@
                                         <a v-if="selectedContact.email" :href="`mailto:${selectedContact.email}`">{{ selectedContact.email }}</a>
                                         <span v-else class="text-muted">Not provided</span>
                                     </p>
+                                    <!--
+                                        THE OPT-OUT IS SAID ON THE RECORD, beside
+                                        the address it is about.
+
+                                        Without this the screen shows an ordinary
+                                        member with a perfectly good email address
+                                        and no hint that every broadcast is
+                                        deliberately skipping them, so the office
+                                        keeps asking why Amina hears nothing — and
+                                        the likeliest next move is to re-type the
+                                        address, or re-import the person, on the
+                                        theory that the data is broken. It is not.
+                                        They asked to stop.
+
+                                        Shown, never actioned. There is no "resubscribe"
+                                        button here on purpose: consent is the
+                                        subscriber's to give back, through the link in
+                                        their own mail, and a staff-side undo button is
+                                        how an organisation ends up mailing somebody who
+                                        asked it not to.
+
+                                        SOURCE — one line, marked so it can move.
+                                        `email_opted_out_at` is a DISPLAY MIRROR of the
+                                        server's `email_suppressions` row, force-filled
+                                        by EmailSuppressionService and carried on the
+                                        contact payload (the directory serialises the
+                                        model wholesale, and the column is not hidden).
+                                        If that mirror is dropped in favour of reading
+                                        the suppression table directly, the binding below
+                                        is the ONLY thing that changes — swap
+                                        `emailOptedOutAt` in this file's script for
+                                        whatever reader replaces it and this markup
+                                        stands. Nothing else in the SPA reads the field.
+                                    -->
+                                    <p v-if="emailOptedOutAt" class="mb-0 mt-1">
+                                        <span class="badge bg-secondary-subtle text-secondary">
+                                            <i class="bi bi-envelope-slash me-1" aria-hidden="true"></i>
+                                            Emails: unsubscribed {{ formatDate(emailOptedOutAt) }}
+                                        </span>
+                                    </p>
                                 </div>
                             </div>
                             <div class="row mb-3">
@@ -751,6 +791,30 @@ const form = ref<ContactPayload>(emptyForm());
 const membersTerm = computed<string>(() => masjidStore.term('members'));
 
 const contacts = computed<Contact[]>(() => (contactsStore.contactsPaginated?.data as Contact[]) || []);
+
+/**
+ * When the open member unsubscribed from this organisation's broadcast emails,
+ * or null. THE ONE PLACE the badge's source is named — see the comment beside
+ * the badge in the detail modal.
+ *
+ * Read off the contact payload, because that is where the server already puts
+ * it: `EmailSuppressionService` force-fills `contacts.email_opted_out_at` as a
+ * display mirror of the durable `email_suppressions` row, and
+ * `ContactsController::show()` serialises the model wholesale (the column is
+ * not in `$hidden` and not behind a narrowed select), so the value arrives with
+ * the record the modal is already showing — no second request on every open.
+ *
+ * If the mirror column is retired and the badge has to consult the suppression
+ * table instead, this function is the ONLY edit: return the date from whatever
+ * reader replaces it. The template binds `emailOptedOutAt`, not the field.
+ *
+ * DISPLAY ONLY. Whether a broadcast actually goes out is decided server-side in
+ * BroadcastAudienceResolver against `email_suppressions`; nothing here may be
+ * used to answer that question, because this row can be merged away and this
+ * copy can therefore be stale in both directions.
+ */
+const emailOptedOutAt = computed<string | null>(
+    () => selectedContact.value?.email_opted_out_at ?? null);
 
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
     if (!contactsStore.contactsPaginated) return undefined;

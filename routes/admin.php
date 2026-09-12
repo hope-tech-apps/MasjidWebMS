@@ -521,6 +521,13 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::get('/{message_id}', 'show');
                 Route::post('/{message_id}/reply', 'reply');
+                // The manual answered/unanswered toggle (T-042d), for the reply
+                // staff gave over the phone. Deliberately alongside the existing
+                // verbs and NOT behind a new `permission:` — adding one to a
+                // pre-existing surface risks locking admins out
+                // (.claude/rules/auth-permissions.md), and Permission::count()
+                // stays 8.
+                Route::patch('/{message_id}/answered', 'markAnswered');
                 Route::delete('/{message_id}', 'destroy');
             });
 

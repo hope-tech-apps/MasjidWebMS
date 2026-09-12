@@ -293,6 +293,127 @@ export type FormCashTotals = {
     other_paid: { online: FormOtherPaidFigures; external: FormOtherPaidFigures };
 };
 
+// ============================================================================
+// Manara Insights — GET …/forms/{form}/insights (App\Support\FormInsights).
+//
+// Every number below is computed on the server. The screen renders these values and
+// nothing else: a percentage for a bar's width is presentation, but a COUNT is never
+// re-derived in the browser (no summing by_status to get a total, no counting
+// breakdown options to get `answered`). Two answers to "how many people chose X" on
+// one screen is worse than none.
+//
+// WHAT IS DELIBERATELY ABSENT: there is no response id anywhere in this payload and
+// there never may be. FormInsights reads choice and number answers only — text,
+// textarea, email, tel, date and file fields are never looked at — and it suppresses
+// any breakdown with fewer than three contributors. That is what keeps a camp's
+// allergies, medications and children's names out of an analytics panel. The Vue side
+// must render only these aggregates: no "see who answered this" drill-down.
+// ============================================================================
+
+/**
+ * MONEY WARNING: amount_due_total / amount_due_outstanding are DOLLARS — FormInsights
+ * sums the legacy decimal `amount_due` column, not the `*_minor` cents fields the cash
+ * totals panel counts. Format them with the dollar formatter, never formatMinorAmount.
+ *
+ * They also answer a different question from the cash panel: this is what registrations
+ * say they OWE, not what has been received. `amount_due_outstanding` is the amount owed
+ * by responses whose status is `new` or `waitlisted` — a status proxy, so a confirmed
+ * but unpaid registration is NOT in it. Label it as "not yet confirmed", never "unpaid".
+ */
+export type FormInsightTotals = {
+    responses: number;
+    /** People, not submissions: one parent registering four is 1 response and 4 entries. */
+    entries: number;
+    /** 0 when there are no responses — the server does not divide by zero, and nor may the screen. */
+    average_entries_per_response: number;
+    amount_due_total: number;
+    amount_due_outstanding: number;
+};
+
+/** One row per FormResponse::STATUSES, zeros included, so the shape never depends on the data. */
+export type FormInsightStatusRow = {
+    status: FormResponseStatus;
+    responses: number;
+    entries: number;
+};
+
+/** Submissions per day. `date` is 'YYYY-MM-DD', or the literal 'unknown' for a response with no submitted_at. */
+export type FormInsightTimelinePoint = {
+    date: string;
+    responses: number;
+    entries: number;
+};
+
+export type FormInsightOption = { value: string; label: string; count: number };
+export type FormInsightBucket = { label: string; count: number };
+
+type FormInsightBreakdownBase = {
+    field: string;
+    label: string;
+    /** The section's title, or its id when it has no title; null on a section with neither. */
+    section: string | null;
+    /**
+     * How many responses answered this question. Never below 3 (MIN_GROUP_FOR_BREAKDOWN):
+     * a smaller group is suppressed outright rather than reported, so this is safe to
+     * divide by — but for a "choose any" question a person may pick several options, so
+     * the option counts can add up to MORE than `answered`.
+     */
+    answered: number;
+};
+
+export type FormInsightChoiceBreakdown = FormInsightBreakdownBase & {
+    type: 'select' | 'radio' | 'checkbox' | 'checkboxGroup';
+    options: FormInsightOption[];
+};
+
+export type FormInsightNumberBreakdown = FormInsightBreakdownBase & {
+    type: 'number';
+    min: number;
+    max: number;
+    average: number;
+    /** Fixed age-shaped bands. A number is never listed on its own: an age can identify a child. */
+    buckets: FormInsightBucket[];
+};
+
+/** Discriminated on `type`: a choice question has options, a number question has buckets. */
+export type FormInsightBreakdown = FormInsightChoiceBreakdown | FormInsightNumberBreakdown;
+
+/**
+ * Null on a form with no capacity set.
+ *
+ * `responses` and `remaining` count the WHOLE form (forms.response_count), so they do not
+ * move with the filters the rest of the payload follows — say so on screen, or a filtered
+ * view reads as a capacity bug. `percent_full` is null when the capacity is zero.
+ */
+export type FormInsightCapacity = {
+    capacity: number;
+    responses: number;
+    entries: number;
+    remaining: number;
+    percent_full: number | null;
+};
+
+/** GET …/forms/{form}/insights → data (App\Support\FormInsights::build()). */
+export type FormInsights = {
+    totals: FormInsightTotals;
+    by_status: FormInsightStatusRow[];
+    timeline: FormInsightTimelinePoint[];
+    /** Empty on a form of free-text questions, and on one nobody has answered three times. */
+    breakdowns: FormInsightBreakdown[];
+    capacity: FormInsightCapacity | null;
+    /**
+     * Authored copy from the server — the masjid's promise about what is and is not read.
+     * Print it verbatim; do not paraphrase it into something the server did not say.
+     */
+    privacy_note: string;
+};
+
+export type FormInsightsMeta = {
+    form: { id: number; name: string };
+    /** Whether any filter narrowed these numbers. See fetchInsights() for what it does NOT cover. */
+    filtered: boolean;
+};
+
 /**
  * One staff code, as the codes panel shows it (FormStaffCodesController::serialize()).
  * Never the code, its digest, or the whole id of the phone it is bound to.

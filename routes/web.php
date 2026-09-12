@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ConnectOnboardingLandingController;
+use App\Http\Controllers\UnsubscribeController;
 use App\Support\Environment;
 use Illuminate\Support\Facades\Route;
 
@@ -51,6 +52,44 @@ Route::middleware('throttle:20,1')->group(function () {
     Route::get('/connect/{masjid_id}/refresh', [ConnectOnboardingLandingController::class, 'expired'])
         ->whereNumber('masjid_id')
         ->name('connect.refresh');
+});
+
+/*
+ * Public unsubscribe landing for broadcast email (T-042c).
+ *
+ * No auth, no session, no tenant binding: a person who cannot sign in must still
+ * be able to leave, and a mailbox provider's one-click POST carries neither a
+ * session nor a CSRF token. The encrypted token in the URL is the whole
+ * credential — see App\Http\Controllers\UnsubscribeController and
+ * App\Services\Broadcast\EmailSuppressionService for the format, and
+ * bootstrap/app.php for the matching CSRF exemption.
+ *
+ * GET renders a confirmation and changes nothing; POST acts. Mail scanners and
+ * SafeLinks follow links in email, so a GET that suppressed would unsubscribe
+ * people who never clicked.
+ *
+ * `throttle:unsubscribe` is deliberately generous and is keyed on the TOKEN
+ * rather than on the caller's IP (see AppServiceProvider): the one-click POST is
+ * sent by the mailbox provider's infrastructure, not by the person's device, so
+ * an IP key would pool every tenant's unsubscribes onto Google's egress and
+ * refuse real opt-outs. The link is not guessable, and a rate-limited opt-out is
+ * an unhonoured opt-out. The limit exists to bound a bot replaying one link, not
+ * to police congregants.
+ *
+ * Declared BEFORE the SPA catch-all below, which would otherwise swallow them.
+ */
+Route::middleware('throttle:unsubscribe')->group(function () {
+    Route::get('/unsubscribe/{masjid_id}/{token}', [UnsubscribeController::class, 'show'])
+        ->whereNumber('masjid_id')
+        ->name('unsubscribe.show');
+
+    Route::post('/unsubscribe/{masjid_id}/{token}', [UnsubscribeController::class, 'store'])
+        ->whereNumber('masjid_id')
+        ->name('unsubscribe.store');
+
+    Route::post('/unsubscribe/{masjid_id}/{token}/resubscribe', [UnsubscribeController::class, 'resubscribe'])
+        ->whereNumber('masjid_id')
+        ->name('unsubscribe.resubscribe');
 });
 
 /*

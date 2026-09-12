@@ -196,6 +196,21 @@
                         >
                             Everyone attending
                         </button>
+                        <!--
+                            Manara Insights. Hidden without the entitlement, but that gate is
+                            cosmetic: masjidStore.masjid is null on the first paint of a hard
+                            refresh, and the server's 403 is the real boundary.
+                        -->
+                        <button
+                            v-if="assistantEnabled"
+                            type="button"
+                            class="btn"
+                            :class="viewMode === 'summary' ? 'btn-primary' : 'btn-outline-primary'"
+                            :aria-pressed="viewMode === 'summary'"
+                            @click="switchView('summary')"
+                        >
+                            Summary
+                        </button>
                     </div>
 
                     <!-- Roster head count: the numbers an organiser reads first -->
@@ -367,8 +382,9 @@
                         </div>
                     </div>
 
-                    <!-- Empty State -->
-                    <div v-else-if="responses.length === 0" class="text-center py-5 text-muted">
+                    <!-- Empty State. Not in Summary: the summary answers "how many" itself,
+                         and `responses` there is whatever the list last read. -->
+                    <div v-else-if="viewMode !== 'summary' && responses.length === 0" class="text-center py-5 text-muted">
                         <i class="bi bi-inbox fs-1 d-block mb-3"></i>
                         <p class="mb-0">{{ filtersApplied ? 'No responses match these filters' : 'No responses yet' }}</p>
                     </div>
@@ -607,6 +623,352 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+
+                    <!--
+                        Summary (Manara Insights). Every figure here is printed exactly as the
+                        server computed it. Percentages set a bar's width and are labelled as
+                        percentages; no COUNT is re-derived in the browser, because two answers
+                        to "how many people chose this" on one screen is worse than none.
+                    -->
+                    <div v-if="viewMode === 'summary' && !loading">
+                        <!--
+                            The server applies only the search, status and date filters here,
+                            so with a door filter on it would describe a different set from the
+                            table. Refuse rather than disagree.
+                        -->
+                        <div v-if="doorFiltersApplied" class="alert alert-warning" role="status">
+                            <p class="mb-2">
+                                <i class="bi bi-funnel me-1" aria-hidden="true"></i>
+                                <strong>The summary is not shown while the door's filters are on.</strong>
+                            </p>
+                            <p class="mb-2 small">
+                                The payment, collected and staff-code filters narrow the table but not the
+                                summary, so the two would print different head counts for the same screen.
+                                The search, status and date filters do apply.
+                            </p>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" @click="clearDoorFilters">
+                                Clear the door's filters
+                            </button>
+                        </div>
+
+                        <div
+                            v-else-if="insightsError"
+                            class="alert mb-0"
+                            :class="insightsRefused ? 'alert-info' : 'alert-danger'"
+                            :role="insightsRefused ? 'status' : 'alert'"
+                        >
+                            <i
+                                class="bi me-1"
+                                :class="insightsRefused ? 'bi-info-circle' : 'bi-exclamation-triangle'"
+                                aria-hidden="true"
+                            ></i>{{ insightsError }}
+                        </div>
+
+                        <template v-else-if="insights">
+                            <!-- Head count: the numbers an organiser reads first -->
+                            <div class="alert alert-light border d-flex flex-wrap gap-4 align-items-center mb-3">
+                                <span>
+                                    <strong>{{ insights.totals.responses }}</strong>
+                                    {{ insights.totals.responses === 1 ? 'registration' : 'registrations' }}
+                                </span>
+                                <span>
+                                    <strong>{{ insights.totals.entries }}</strong>
+                                    {{ insights.totals.entries === 1 ? 'person' : 'people' }}
+                                </span>
+                                <span v-if="insights.totals.responses > 1" class="text-muted small">
+                                    {{ insights.totals.average_entries_per_response }} people per registration on average
+                                </span>
+                                <span class="text-muted small ms-auto">
+                                    <template v-if="insightsMeta?.filtered">Counting the registrations matching the filters above.</template>
+                                    <template v-else>Counting every registration on this form.</template>
+                                </span>
+                            </div>
+
+                            <!-- Money. Owed, not received: "Cash by staff member" is the other question. -->
+                            <div v-if="summaryChargesFees" class="row g-3 mb-3">
+                                <div class="col-md-6">
+                                    <div class="card h-100">
+                                        <div class="card-body">
+                                            <div class="fs-4 fw-semibold">{{ dollars(insights.totals.amount_due_total) }}</div>
+                                            <div class="small text-muted">Fees these registrations were charged</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card h-100">
+                                        <div class="card-body">
+                                            <div class="fs-4 fw-semibold">{{ dollars(insights.totals.amount_due_outstanding) }}</div>
+                                            <div class="small text-muted">
+                                                Owed by registrations not yet confirmed (new or waitlisted)
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <p class="small text-muted mb-0">
+                                        Both figures are what was charged, not what has been received — a confirmed
+                                        registration that has not paid is not in the second one.<template v-if="paymentEnabled">
+                                        For money actually taken, read “Cash by staff member” on the Registrations
+                                        view.</template>
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Capacity. Counts the WHOLE form, so it does not move with the filters. -->
+                            <div v-if="insights.capacity" class="card mb-3">
+                                <div class="card-body">
+                                    <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                                        <span class="fw-semibold">Places</span>
+                                        <span class="small text-muted">
+                                            {{ insights.capacity.responses }} of {{ insights.capacity.capacity }} taken
+                                        </span>
+                                    </div>
+                                    <div v-if="insights.capacity.percent_full !== null" class="progress" style="height: 12px;">
+                                        <div
+                                            class="progress-bar"
+                                            :class="insights.capacity.remaining === 0 ? 'bg-danger' : 'bg-success'"
+                                            role="progressbar"
+                                            :style="{ width: `${insights.capacity.percent_full}%` }"
+                                            :aria-valuenow="insights.capacity.percent_full"
+                                            aria-valuemin="0"
+                                            aria-valuemax="100"
+                                            :aria-label="`${insights.capacity.percent_full}% of places taken`"
+                                        ></div>
+                                    </div>
+                                    <p class="small text-muted mb-0 mt-2">
+                                        <template v-if="insights.capacity.capacity === 0">
+                                            This form is set to zero places, so it is not taking registrations.
+                                        </template>
+                                        <template v-else-if="insights.capacity.remaining === 0">
+                                            Full: no places left.
+                                        </template>
+                                        <template v-else>
+                                            {{ insights.capacity.remaining }}
+                                            {{ insights.capacity.remaining === 1 ? 'place' : 'places' }} left.
+                                        </template>
+                                        Places count the whole form, not the filtered set above.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div v-if="insights.totals.responses === 0" class="text-center py-5 text-muted">
+                                <i class="bi bi-bar-chart fs-1 d-block mb-3" aria-hidden="true"></i>
+                                <p class="mb-0">
+                                    {{ insightsMeta?.filtered ? 'No registrations match these filters' : 'No registrations yet' }}
+                                </p>
+                                <p class="small mb-0">There is nothing to summarise until somebody submits the form.</p>
+                            </div>
+
+                            <template v-else>
+                                <div class="row g-3 mb-3">
+                                    <!-- By status: for a camp, registrations and people differ -->
+                                    <div class="col-lg-5">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-white fw-semibold">By status</div>
+                                            <div class="card-body">
+                                                <table class="table table-sm align-middle mb-0">
+                                                    <caption class="visually-hidden">Registrations and people by status</caption>
+                                                    <thead>
+                                                        <tr>
+                                                            <th scope="col">Status</th>
+                                                            <th scope="col" class="text-end">Registrations</th>
+                                                            <th scope="col" class="text-end">People</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr v-for="row in insights.by_status" :key="row.status">
+                                                            <td>
+                                                                <span class="badge text-capitalize" :class="statusClass(row.status)">{{ row.status }}</span>
+                                                            </td>
+                                                            <td class="text-end" :class="{ 'text-muted': row.responses === 0 }">{{ row.responses }}</td>
+                                                            <td class="text-end" :class="{ 'text-muted': row.entries === 0 }">{{ row.entries }}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Timeline: "has registration stalled", not precision -->
+                                    <div class="col-lg-7">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-white fw-semibold">Registrations per day</div>
+                                            <div class="card-body">
+                                                <div class="insight-timeline" role="list">
+                                                    <div
+                                                        v-for="point in insights.timeline"
+                                                        :key="point.date"
+                                                        class="insight-timeline-day"
+                                                        role="listitem"
+                                                        :aria-label="`${timelineDate(point.date)}: ${point.responses} ${point.responses === 1 ? 'registration' : 'registrations'}, ${point.entries} ${point.entries === 1 ? 'person' : 'people'}`"
+                                                    >
+                                                        <span class="insight-timeline-count" aria-hidden="true">{{ point.responses }}</span>
+                                                        <span
+                                                            class="insight-timeline-bar"
+                                                            aria-hidden="true"
+                                                            :style="{ height: barHeight(point.responses) }"
+                                                        ></span>
+                                                        <span class="insight-timeline-date" aria-hidden="true">{{ timelineDate(point.date) }}</span>
+                                                    </div>
+                                                </div>
+                                                <p v-if="insights.timeline.length === 1" class="small text-muted mb-0 mt-2">
+                                                    Everything so far arrived on one day.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- One card per summarised question -->
+                                <div v-if="insights.breakdowns.length" class="row g-3">
+                                    <div v-for="breakdown in insights.breakdowns" :key="`${breakdown.section}-${breakdown.field}`" class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-header bg-white">
+                                                <div class="fw-semibold">{{ breakdown.label }}</div>
+                                                <div v-if="breakdown.section" class="small text-muted">{{ breakdown.section }}</div>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="small text-muted">
+                                                    {{ breakdown.answered }} answered
+                                                    <template v-if="breakdown.type === 'checkboxGroup'">
+                                                        · people could pick more than one, so the shares can add up to more than 100%
+                                                    </template>
+                                                </p>
+
+                                                <template v-if="breakdown.type === 'number'">
+                                                    <p class="mb-3">
+                                                        <span class="me-3">lowest <strong>{{ breakdown.min }}</strong></span>
+                                                        <span class="me-3">average <strong>{{ breakdown.average }}</strong></span>
+                                                        <span>highest <strong>{{ breakdown.max }}</strong></span>
+                                                    </p>
+                                                    <div v-for="bucket in breakdown.buckets" :key="bucket.label" class="mb-2">
+                                                        <div class="d-flex justify-content-between small">
+                                                            <span>{{ bucket.label }}</span>
+                                                            <span class="text-muted">{{ bucket.count }} ({{ share(bucket.count, breakdown.answered) }}%)</span>
+                                                        </div>
+                                                        <div class="progress" style="height: 8px;">
+                                                            <div
+                                                                class="progress-bar"
+                                                                role="progressbar"
+                                                                :style="{ width: `${barWidth(bucket.count, breakdown.answered)}%` }"
+                                                                :aria-valuenow="barWidth(bucket.count, breakdown.answered)"
+                                                                aria-valuemin="0"
+                                                                aria-valuemax="100"
+                                                                :aria-label="`${bucket.label}: ${bucket.count} of ${breakdown.answered}`"
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+
+                                                <template v-else>
+                                                    <p v-if="!breakdown.options.length" class="small text-muted mb-0">
+                                                        This question has no options on record to count against.
+                                                    </p>
+                                                    <!--
+                                                        Everybody left it blank. Said, rather than
+                                                        drawn as a stack of empty bars under a count
+                                                        that seems to disagree with them: the figure
+                                                        above counts everyone the question was PUT
+                                                        to, which for an optional dropdown is not
+                                                        the same as everyone who picked something.
+                                                    -->
+                                                    <p v-else-if="nobodyChoseAnOption(breakdown.options)" class="small text-muted mb-2">
+                                                        Nobody chose an option here. The number above counts everyone this
+                                                        question was put to, not everyone who answered it.
+                                                    </p>
+                                                    <!-- Keyed by position too: a field's options are authored copy and
+                                                         two of them can share a blank value. -->
+                                                    <div v-for="(option, oi) in breakdown.options" :key="`${option.value}-${oi}`" class="mb-2">
+                                                        <div class="d-flex justify-content-between small">
+                                                            <span>{{ option.label }}</span>
+                                                            <span class="text-muted">{{ option.count }} ({{ share(option.count, breakdown.answered) }}%)</span>
+                                                        </div>
+                                                        <div class="progress" style="height: 8px;">
+                                                            <div
+                                                                class="progress-bar"
+                                                                role="progressbar"
+                                                                :style="{ width: `${barWidth(option.count, breakdown.answered)}%` }"
+                                                                :aria-valuenow="barWidth(option.count, breakdown.answered)"
+                                                                aria-valuemin="0"
+                                                                aria-valuemax="100"
+                                                                :aria-label="`${option.label}: ${option.count} of ${breakdown.answered}`"
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Why a question may be missing from the cards above -->
+                                <p class="small text-muted mt-3 mb-0">
+                                    <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+                                    <template v-if="insights.breakdowns.length">
+                                        A question is only summarised once at least three people have answered it, so
+                                        nobody can be identified from a total. Written answers are never summarised.
+                                    </template>
+                                    <template v-else>
+                                        No answers are summarised for this form yet. Only multiple-choice and number
+                                        questions are ever summarised — written answers such as names, allergies and
+                                        medical notes are never read — and a question appears here only once at least
+                                        three people have answered it, so nobody can be identified from a total.
+                                    </template>
+                                </p>
+                            </template>
+
+                            <!-- The server's own words about what it reads. Printed verbatim. -->
+                            <p class="small text-muted mt-3 mb-0">{{ insights.privacy_note }}</p>
+                        </template>
+
+                        <!--
+                            THE TERMINAL STATE. Every branch above states a positive fact —
+                            a refusal, a failure, a payload — and without this one the panel
+                            renders NOTHING whenever the summary is null and no error was
+                            ever set. An admin who has just pressed Summary then reads a
+                            blank white area, and a blank reads as broken data rather than
+                            as a state; it is the same failure the merge picker was already
+                            taught ("a blank is the thing the operator reads straight past").
+
+                            Three ways to get here, and they do not deserve one sentence:
+
+                            1. The date range is back to front. loadData() returns at its
+                               `dateRangeInvalid` guard BEFORE it reaches loadInsights(), so
+                               no request is made, no error is worded, and nothing is stale
+                               — it simply never ran. The fix is in the filter row above,
+                               so this points there rather than offering a button that
+                               would hit the same guard. Switching forms while the range is
+                               invalid lands here too: the watcher clears the error and
+                               reloads, the reload refuses, and the form-id check on
+                               `insights` nulls the previous form's summary — correctly,
+                               since printing it under a different form's name is worse.
+
+                            2. This masjid is not bound yet (fetchInsights returns early
+                               with no id), so nothing was asked and nothing failed.
+
+                            3. Anything else that left the slice empty without throwing.
+
+                            2 and 3 are recoverable by simply asking again, so they get the
+                            button instead of an apology.
+                        -->
+                        <div v-else class="alert alert-secondary mb-0" role="status">
+                            <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+                            <template v-if="dateRangeInvalid">
+                                The summary was not loaded, because the “to” date is earlier than the
+                                “from” date. Correct the dates above and it will load.
+                            </template>
+                            <template v-else>
+                                The summary has not been loaded yet.
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-secondary ms-2"
+                                    @click="loadData(1)"
+                                >
+                                    Load the summary
+                                </button>
+                            </template>
+                        </div>
                     </div>
                 </template>
             </div>
@@ -941,6 +1303,9 @@ import {
     FormCashHolder,
     FormCashTotals,
     FormCollectedFilter,
+    FormInsightOption,
+    FormInsights,
+    FormInsightsMeta,
     FormOption,
     FormPaymentFilter,
     FormResponseActionResult,
@@ -960,6 +1325,7 @@ import {
     formatMinorAmount
 } from '@/core/types/data/masjid-related/Form';
 import { useFormResponsesStore } from '@/stores/masjid/formResponsesStore';
+import { useMasjidStore } from '@/stores/masjidStore';
 import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
@@ -967,6 +1333,7 @@ import Swal from 'sweetalert2';
 
 // Store
 const formResponsesStore = useFormResponsesStore();
+const masjidStore = useMasjidStore();
 
 // The table's fixed columns. These are the denormalised identity/summary columns on the
 // row itself — the schema's own questions are NOT columns here, because list rows carry
@@ -1071,13 +1438,24 @@ const cashTotals = ref<FormCashTotals | null>(null);
 const cashError = ref('');
 
 /**
+ * Manara Insights. A 403 is not a fault — it means the masjid has not bought the tier —
+ * so it is worded and shown in blue; anything else is a real failure and stays red.
+ */
+const insightsError = ref('');
+const insightsRefused = ref(false);
+const ASSISTANT_REFUSED = 'Summaries are part of Manara Assistant. Ask your Manara contact to switch it on.';
+
+/**
  * Which question the screen is answering.
  *  'submissions' — who filled in the form (one row per submission)
  *  'attendees'   — who is actually coming (one row per PERSON)
- * For a camp those are different numbers: one parent registering four people is one
- * submission and four attendees, and a coordinator needs the second one to run check-in.
+ *  'summary'     — what the answers add up to (Manara Insights; no rows at all)
+ * For a camp the first two are different numbers: one parent registering four people is
+ * one submission and four attendees, and a coordinator needs the second one to run
+ * check-in. The third shares this screen rather than living on its own route because its
+ * whole claim is that it describes the set the filter row above is showing.
  */
-const viewMode = ref<'submissions' | 'attendees'>('submissions');
+const viewMode = ref<'submissions' | 'attendees' | 'summary'>('submissions');
 
 // Computed
 const formOptions = computed<FormOption[]>(() => formResponsesStore.formOptions);
@@ -1118,7 +1496,51 @@ const rosterSummary = computed<FormRosterSummary | undefined>(() => rosterMeta.v
 /** Roster columns are sortable too — the server orders the flattened rows. */
 const rosterSortable = computed<string[]>(() => rosterMeta.value?.sortable ?? []);
 
+// --- Manara Insights ---
+const insightsMeta = computed<FormInsightsMeta | null>(() => formResponsesStore.insightsMeta);
+
+/**
+ * Only ever the summary of the form on screen. The payload names the form it describes,
+ * so a summary left over from the previous pick can never be printed under the new one's
+ * name — the same reason formMeta() checks the form id.
+ */
+const insights = computed<FormInsights | null>(() =>
+    insightsMeta.value?.form?.id === selectedFormId.value ? formResponsesStore.insights : null);
+
+/**
+ * The Assistant entitlement, which is the tier Insights are sold in. Cosmetic on purpose:
+ * masjidStore.masjid is null on the first paint of a hard refresh, so this hides the
+ * button a moment longer than it needs to, and the server's 403 is the real boundary.
+ */
+const assistantEnabled = computed(() => !!masjidStore.masjid?.assistant_enabled);
+
+/**
+ * The door's own filters. The insights endpoint accepts them and then ignores them
+ * (FormInsightsController applies q / status / from / to only), so while one is on, the
+ * summary would describe a different set of registrations from the table the admin was
+ * just looking at. The panel refuses to render rather than quietly disagreeing; when the
+ * server routes insights through FormResponsesController::query() this guard, and the
+ * refusal it shows, both come out.
+ */
+const doorFiltersApplied = computed(() =>
+    !!paymentFilter.value || !!collectedFilter.value || staffCodeFilter.value !== '');
+
+/**
+ * Whether the summary shows money at all. Read from the figures rather than from
+ * paymentEnabled: a fee form that never switched card payment on (the camp) still records
+ * amount_due and still shows an Amount due column in the table, and after a form switch
+ * made from this view the list's payment meta describes the previous form, so gating on it
+ * would blank the money on a form that plainly charges.
+ */
+const summaryChargesFees = computed(() =>
+    (insights.value?.totals.amount_due_total ?? 0) > 0 ||
+    (insights.value?.totals.amount_due_outstanding ?? 0) > 0);
+
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
+    // The summary is one payload, never paginated. PageDataContainer hides the pager
+    // entirely when this is undefined, which is what a page-less view wants.
+    if (viewMode.value === 'summary') return undefined;
+
     const source = viewMode.value === 'attendees'
         ? formResponsesStore.rosterPaginated
         : formResponsesStore.responsesPaginated;
@@ -1255,6 +1677,8 @@ watch(selectedFormId, async () => {
         doorMode.value = false;
     });
     cashTotals.value = null;
+    insightsError.value = '';
+    insightsRefused.value = false;
 
     await reloadAll();
 });
@@ -1304,7 +1728,9 @@ const loadData = async (page: number = 1) => {
 
     loading.value = true;
     try {
-        if (viewMode.value === 'attendees') {
+        if (viewMode.value === 'summary') {
+            await loadInsights();
+        } else if (viewMode.value === 'attendees') {
             await formResponsesStore.fetchRoster(selectedFormId.value, filters.value, page);
         } else {
             await formResponsesStore.fetchResponses(selectedFormId.value, filters.value, page);
@@ -1316,6 +1742,37 @@ const loadData = async (page: number = 1) => {
     }
 };
 
+/**
+ * The summary, over the same filters. It shares loadData()'s debounce rather than adding
+ * a second one: this is an unpaginated read of every matching response, so one request
+ * per keystroke on a festival form is the heaviest thing on the screen.
+ *
+ * Errors are worded here instead of thrown, so a masjid without the Assistant tier reads
+ * an explanation rather than a red failure dialog.
+ */
+const loadInsights = async () => {
+    if (!selectedFormId.value) return;
+
+    // Nothing is fetched while a door filter is on: the endpoint would answer about a set
+    // the admin is not looking at, and the panel refuses to show that.
+    if (doorFiltersApplied.value) {
+        insightsError.value = '';
+        return;
+    }
+
+    insightsError.value = '';
+    insightsRefused.value = false;
+
+    try {
+        await formResponsesStore.fetchInsights(selectedFormId.value, filters.value);
+    } catch (error: any) {
+        insightsRefused.value = error?.response?.status === 403;
+        insightsError.value = insightsRefused.value
+            ? ASSISTANT_REFUSED
+            : serverMessage(error, 'Could not put the summary together.');
+    }
+};
+
 /** The list from page 1, and the cash totals when they are open: both follow the filters. */
 const reloadAll = async () => {
     await loadData(1);
@@ -1323,11 +1780,11 @@ const reloadAll = async () => {
 };
 
 /**
- * Flip between the two questions. The filters and the sort are deliberately shared, but
- * the sort key is reset because the two views sort by different things — an attendee
- * column means nothing to the submission list, and vice versa.
+ * Flip between the questions. The filters are deliberately shared, but the sort key is
+ * reset because the views sort by different things — an attendee column means nothing to
+ * the submission list, and vice versa, and the summary sorts nothing at all.
  */
-const switchView = async (mode: 'submissions' | 'attendees') => {
+const switchView = async (mode: 'submissions' | 'attendees' | 'summary') => {
     if (viewMode.value === mode) return;
 
     viewMode.value = mode;
@@ -1335,6 +1792,22 @@ const switchView = async (mode: 'submissions' | 'attendees') => {
     direction.value = 'desc';
 
     await loadData(1);
+};
+
+/**
+ * Clear only the door's three filters, from the summary's refusal. Everything else the
+ * admin set (the search, the status, the dates) is left alone: those the summary honours,
+ * and clearing them would answer a question they did not ask.
+ */
+const clearDoorFilters = async () => {
+    await quietly(() => {
+        paymentFilter.value = '';
+        collectedFilter.value = '';
+        staffCodeFilter.value = '';
+        doorMode.value = false;
+    });
+
+    await reloadAll();
 };
 
 const pageChange = async (data: PageChangeData) => {
@@ -2071,6 +2544,77 @@ const formatAmount = (amount: string | null): string => {
 const money = (minor: number | null | undefined, currency: string | null | undefined): string =>
     formatMinorAmount(minor, currency || 'usd');
 
+// --- Summary formatting ------------------------------------------------------
+// Everything printed in the summary panel is the server's own figure. What follows turns
+// those figures into a width or a label; none of it re-counts anything.
+
+/**
+ * The insights totals are DOLLARS — FormInsights sums the decimal `amount_due` column,
+ * not the `*_minor` cents fields — so they go through the dollar formatter, never
+ * formatMinorAmount. That also means they can differ from the cash panel on a form whose
+ * rows carry both column generations; the panel says which question each one answers.
+ */
+const dollars = (amount: number | null | undefined): string =>
+    amount === null || amount === undefined ? '—' : formatAmount(String(amount));
+
+/**
+ * One count as a percentage of the people who answered that question. `answered` is never
+ * below three on a breakdown the server sent (a smaller group is suppressed outright), but
+ * the zero guard stays: a division by zero would print NaN% on a real screen.
+ */
+const share = (count: number, answered: number): number =>
+    answered > 0 ? Math.round((count / answered) * 100) : 0;
+
+/**
+ * The bar's width. Capped at 100 because a "choose any" question lets one person pick
+ * several options, so its counts can add up to more than the number who answered.
+ */
+const barWidth = (count: number, answered: number): number => Math.min(100, share(count, answered));
+
+/**
+ * A choice question that everybody left blank — every option counted zero.
+ *
+ * The server counts `answered` as the number of submissions that CARRIED the question,
+ * blank value included (FormInsights::choiceBreakdown takes `count($values)`), so an
+ * optional dropdown nobody filled in comes back as "12 answered" above twelve empty
+ * bars. That is a card which looks like a bug in the figures rather than the plain fact
+ * that nobody chose anything, and it is precisely the "question nobody answered" case.
+ *
+ * This is not a re-derived COUNT — it prints no number and contradicts none. It reads the
+ * server's own zeros and says what they mean.
+ */
+const nobodyChoseAnOption = (options: FormInsightOption[]): boolean =>
+    options.length > 0 && options.every(option => option.count === 0);
+
+/**
+ * The busiest day in the timeline, purely to scale the bars against each other. It is a
+ * drawing constant, never shown as a figure — the counts printed are the server's.
+ */
+const timelinePeak = computed<number>(() => {
+    const points = insights.value?.timeline ?? [];
+    return points.reduce((peak, point) => Math.max(peak, point.responses), 0);
+});
+
+/** A single day, or a day nobody registered on, must still draw something visible. */
+const barHeight = (responses: number): string => {
+    const peak = timelinePeak.value;
+    if (peak <= 0) return '2px';
+
+    return `${Math.max(2, Math.round((responses / peak) * 100))}%`;
+};
+
+/** A timeline day. 'unknown' is the server's word for a response with no submitted_at. */
+const timelineDate = (date: string): string => {
+    if (date === 'unknown') return 'Not recorded';
+
+    // 'YYYY-MM-DD' parsed as-is would be read as UTC midnight and print the day before in
+    // the Americas, so the parts are handed to the Date constructor directly.
+    const [year, month, day] = date.split('-').map(Number);
+    if (!year || !month || !day) return date;
+
+    return new Date(year, month - 1, day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
 /** Render one submitted answer: booleans as Yes/No, multi-selects joined, blanks dashed. */
 const displayValue = (value: any): string => {
     if (value === null || value === undefined || value === '') return '—';
@@ -2143,6 +2687,54 @@ watch(showDetailModal, (open) => {
    column that is actually applied. */
 .sort-header .sort-icon.inactive {
     opacity: 0.35;
+}
+
+/* The summary's registrations-per-day bars. Bootstrap has no chart, and a chart library
+   would be a new dependency for one row of rectangles, so this is flexbox: the bars are
+   sized as a percentage of a fixed-height track, and the whole row scrolls sideways
+   rather than squeezing a festival's sixty days into the card's width. */
+.insight-timeline {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.35rem;
+    height: 140px;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+}
+
+/* Grid rather than a column flexbox so the middle row is a definite height: the bar's
+   percentage height then scales against the track alone, and the count above it and the
+   date below it keep their space instead of being pushed out by a tall bar. */
+.insight-timeline-day {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    justify-items: center;
+    height: 100%;
+    min-width: 2.4rem;
+    flex: 1 0 auto;
+}
+
+.insight-timeline-count {
+    font-size: 0.7rem;
+    color: #5c636a;
+    line-height: 1;
+    margin-bottom: 0.15rem;
+}
+
+.insight-timeline-bar {
+    display: block;
+    align-self: end;
+    width: 100%;
+    max-width: 1.6rem;
+    background-color: #667eea;
+    border-radius: 2px 2px 0 0;
+}
+
+.insight-timeline-date {
+    font-size: 0.65rem;
+    color: #5c636a;
+    white-space: nowrap;
+    margin-top: 0.25rem;
 }
 
 /* A cancelled registration at the door reads as set aside, not as one to serve. */
