@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AttendanceRecord;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
@@ -20,7 +21,8 @@ use Tests\TestCase;
  *  2. All or nothing — a file with a bad row writes none of it.
  *  3. Idempotent — the same file twice creates one roster, not two.
  *  4. A CSV cannot grant consent, and cannot invent a class.
- *  5. Reversible — a wrong file is undone by its batch tag.
+ *  5. Reversible — a wrong file is undone by its batch tag, and ONLY while
+ *     undoing it would destroy nothing a teacher recorded.
  */
 class ImportSchoolRosterTest extends TestCase
 {
@@ -202,6 +204,53 @@ class ImportSchoolRosterTest extends TestCase
 
         $this->assertSame(0, Contact::count(), 'the batch is gone');
         $this->assertSame(0, GroupMembership::count(), 'and so are its roster rows');
+    }
+
+    /**
+     * AN UNDO STOPS AT A CHILD'S ACADEMIC RECORDS, IN FULL AND BY NAME.
+     *
+     * Six tables hang off `group_memberships.id`. Migration
+     * 2026_09_09_040000 made those foreign keys RESTRICT so no verb can cascade
+     * them away — but it RETURNS EARLY ON SQLITE, which is the engine this suite
+     * runs on, so here the original `cascadeOnDelete` is still in force and the
+     * database will happily destroy a term of register marks. That is exactly
+     * why the guard is in PHP and why this test exists: on this engine an
+     * unguarded rollback silently erases the attendance below, and on production
+     * MySQL it dies on a 1451 that names nobody.
+     *
+     * ALL OR NOTHING, like the import itself: the batch also owns a guardian who
+     * holds no records at all, and she must still be here afterwards. A
+     * half-undone roster is the same hazard as a half-imported one.
+     */
+    #[Test]
+    public function a_batch_holding_a_childs_attendance_is_refused_in_full_and_names_the_child(): void
+    {
+        $this->write("Grade 2,Aalaa,Salim,2nd,Musa,Salim,musa@example.test,555\n");
+        $this->importCsv(['--execute' => true, '--batch' => 'try-2']);
+
+        $child = Contact::where('first_name', 'Aalaa')->firstOrFail();
+        $enrolment = GroupMembership::where('contact_id', $child->id)
+            ->where('role', GroupMembership::ROLE_MEMBER)->firstOrFail();
+
+        // One register mark. That is all it takes: the row is now history.
+        AttendanceRecord::create([
+            'masjid_id' => $this->school->id,
+            'group_id' => $this->class->id,
+            'group_membership_id' => $enrolment->id,
+            'session_date' => '2026-09-10',
+            'status' => AttendanceRecord::STATUS_PRESENT,
+        ]);
+
+        $exit = $this->artisan('schools:import-roster', [
+            'csv' => $this->csv, '--masjid' => $this->school->id, '--rollback' => 'try-2',
+        ])->run();
+
+        $this->assertSame(1, $exit, 'a refused undo is a failure exit, not a quiet success');
+
+        $this->assertSame(1, AttendanceRecord::count(), 'the register mark survives');
+        $this->assertSame(2, Contact::count(),
+            'nothing is removed on a refusal — not the child, and not the guardian who holds no records');
+        $this->assertSame(2, GroupMembership::count());
     }
 
     /**

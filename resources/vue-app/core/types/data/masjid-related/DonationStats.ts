@@ -1,4 +1,5 @@
 import { DonationStatus } from "@/core/types/data/masjid-related/Donation";
+import { FundType } from "@/core/types/data/masjid-related/Fund";
 
 // Read-only giving numbers. Mirrors App\Support\DonationMetrics, which is the
 // single implementation of the money rules behind both the stats endpoints and
@@ -27,6 +28,15 @@ export type DonationBucket = {
     gift_count: number;
     average_gift_cents: number;
     anonymous_gift_count: number;
+    /** A SUBSET of gross_cents/gift_count over the SAME scan — never a separate
+     *  population, so the restricted figure can never describe a different window
+     *  than the total beside it. What "zakat" counts is stated by the server in
+     *  DonationStatsMeta['zakat'].definition; print that, never a local paraphrase. */
+    zakat_gross_cents: number;
+    /** The same gifts after processor fees, with the COALESCE(net, charged)
+     *  fallback net_cents uses — an offline gift falls back to what was given. */
+    zakat_net_cents: number;
+    zakat_gift_count: number;
 };
 
 export type DonationSummary = Record<DonationBucketKey, DonationBucket>;
@@ -34,9 +44,16 @@ export type DonationSummary = Record<DonationBucketKey, DonationBucket>;
 export type FundBreakdownRow = {
     fund_id: number;
     fund_name: string;
+    /** The bucket the ORG set up. Reported beside zakat_gross_cents on purpose:
+     *  the two answer different questions, and a zakat-typed fund whose zakat
+     *  money is short of its gross is the reconciliation, not an error. */
+    fund_type: FundType;
     is_active: boolean;
     gross_cents: number;
     net_cents: number;
+    /** How much of this fund's gross the GIVERS restricted as zakat. */
+    zakat_gross_cents: number;
+    zakat_gift_count: number;
     gift_count: number;
     donor_count: number;
     /** Calendar date (yyyy-mm-dd), not a timestamp — half these gifts only ever
@@ -55,6 +72,21 @@ export type DonationStatsMeta = {
         source: DonationSource | null;
         status: DonationStatus | null;
     };
+    /**
+     * The zakat figures' provenance, shipped WITH the numbers rather than left in
+     * a docblock (.claude/rules/impact-metrics.md, applied to zakat in
+     * .claude/rules/zakat.md). `definition` is the server's own sentence and is
+     * the only text the dashboard may show for what a zakat figure counts — a
+     * hand-written paraphrase on screen is how the platform ends up telling a
+     * donor something the server does not mean.
+     */
+    zakat: {
+        /** The column the figures are read from: `donations.is_zakat`. */
+        source: string;
+        definition: string;
+        /** Per-field notes, keyed by the DonationBucket field they describe. */
+        keys: Record<string, string>;
+    };
 };
 
 /**
@@ -72,6 +104,23 @@ export type DonationLedgerFilters = {
     source: DonationSource | '';
     status: DonationStatus | '';
     search: string;
+    /**
+     * The gift's own designation, three-valued: `''` no zakat filter at all,
+     * `true` zakat only, `false` the gifts carrying no zakat restriction.
+     *
+     * `false` is a real filter and not the absence of one — a treasurer
+     * reconciling the unrestricted pot asks for it by name — which is why this
+     * cannot be a plain boolean. The server draws the same distinction (see
+     * DonationsController::filteredQuery, which cannot use `when()` here for
+     * exactly this reason), so the builder sends `0` for it rather than omitting
+     * the key.
+     *
+     * Optional so a screen that offers no zakat control (the per-fund ledger) can
+     * keep saying nothing about it; absent reads exactly like `''`. It is NOT
+     * optional in the sense of "safe to drop when you do have a value" — a
+     * dropped `false` returns the entire ledger, and the CSV with it.
+     */
+    zakat?: boolean | '';
 };
 
 /**

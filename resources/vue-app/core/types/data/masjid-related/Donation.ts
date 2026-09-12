@@ -7,6 +7,21 @@ import { Fund } from "@/core/types/data/masjid-related/Fund";
 // (see formatCents) before display — never treat these as dollars directly.
 export type DonationStatus = 'pending' | 'succeeded' | 'failed' | 'refunded';
 
+/**
+ * Which of the two things produced a gift's zakat designation. Mirrors
+ * App\Support\ZakatDesignation::SOURCES.
+ *
+ *  - `donor`        the giver ticked the box at checkout — the strongest answer.
+ *  - `fund_default` nobody said, and the gift went to a fund the org typed as
+ *                   its zakat fund, so the fund's type stood in for an answer.
+ *  - `admin`        a staff member recorded the designation on the giver's behalf
+ *                   while entering a cash or cheque gift.
+ *
+ * Non-null ONLY when the gift is zakat: there is nothing to attribute about a
+ * gift carrying no restriction.
+ */
+export type ZakatSource = 'donor' | 'fund_default' | 'admin';
+
 export type DonationReceipt = {
     id: number;
     masjid_id: number;
@@ -34,6 +49,19 @@ export type Donation = {
     charged_amount: number;
     currency: string;
     donor_covers_fees: boolean;
+    /**
+     * The restriction the GIVER placed on THIS gift — an accounting fact about
+     * the money, not a label on the bucket it landed in.
+     *
+     * Read it; never re-derive it. `fund.type === 'zakat'` describes the org's
+     * bucket and answers a different question: zakat is routinely given to a
+     * general fund (most small masjids run one), and sadaqah toward a relief
+     * appeal routinely lands in a zakat-typed one. Deriving the badge, the
+     * filter or any figure from the fund would mis-state the restricted pot in
+     * both directions — the whole reason .claude/rules/zakat.md exists.
+     */
+    is_zakat: boolean;
+    zakat_source: ZakatSource | null;
     status: DonationStatus;
     stripe_payment_intent_id: string | null;
     stripe_checkout_session_id: string | null;

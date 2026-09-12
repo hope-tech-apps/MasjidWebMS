@@ -111,6 +111,24 @@
                                         <dt>Average gift</dt>
                                         <dd class="tabular">{{ money(bucket.data.average_gift_cents) }}</dd>
                                     </div>
+                                    <!--
+                                        A subset of the gross above it, over the same scan — the
+                                        restricted money the org owes its recipients, sitting beside
+                                        the total it is part of rather than on a page of its own.
+                                        The tooltip is the SERVER's definition verbatim: a zakat
+                                        figure whose reader has to guess whether it means "gifts to
+                                        the zakat fund" is worth nothing (.claude/rules/zakat.md).
+                                    -->
+                                    <div>
+                                        <dt>
+                                            Zakat
+                                            <i v-if="zakatDefinition" class="bi bi-info-circle" :title="zakatDefinition"></i>
+                                        </dt>
+                                        <dd class="tabular">
+                                            {{ money(bucket.data.zakat_gross_cents) }}
+                                            <span class="metric-aside">· {{ giftCount(bucket.data.zakat_gift_count) }}</span>
+                                        </dd>
+                                    </div>
                                 </dl>
                                 <!-- Explains the gap between donors and gifts before it reads as a bug. -->
                                 <p v-if="bucket.data.anonymous_gift_count" class="metric-foot mb-0">
@@ -136,6 +154,7 @@
                                     <th>Fund</th>
                                     <th class="text-end">Gross</th>
                                     <th class="text-end">Net</th>
+                                    <th class="text-end">Of which zakat</th>
                                     <th class="text-end">Gifts</th>
                                     <th class="text-end">Donors</th>
                                     <th>Last gift</th>
@@ -146,10 +165,25 @@
                                 <tr v-for="row in byFund" :key="row.fund_id">
                                     <td>
                                         <strong>{{ row.fund_name }}</strong>
+                                        <!--
+                                            The BUCKET the org set up, which is a different fact
+                                            from the money in the zakat column: it is what the fund
+                                            defaults undeclared gifts to, not what givers restricted.
+                                            Labelled as a fund so the two are never read as one.
+                                        -->
+                                        <span
+                                            v-if="row.fund_type === 'zakat'"
+                                            class="badge bg-info-subtle text-info ms-2"
+                                            title="The org set this fund up as its zakat bucket. The zakat column is what givers actually designated."
+                                        >Zakat fund</span>
                                         <span v-if="!row.is_active" class="badge bg-light text-muted ms-2">Inactive</span>
                                     </td>
                                     <td class="text-end tabular fw-semibold">{{ money(row.gross_cents) }}</td>
                                     <td class="text-end tabular">{{ money(row.net_cents) }}</td>
+                                    <td class="text-end tabular">
+                                        {{ money(row.zakat_gross_cents) }}
+                                        <span v-if="row.zakat_gift_count" class="text-muted small">· {{ row.zakat_gift_count }}</span>
+                                    </td>
                                     <td class="text-end tabular">{{ row.gift_count }}</td>
                                     <td class="text-end tabular">{{ row.donor_count }}</td>
                                     <td>{{ formatDay(row.last_gift_at) }}</td>
@@ -165,16 +199,20 @@
                                 </tr>
                             </tbody>
                         </table>
+                        <p class="small text-muted mb-0">
+                            A zakat-typed fund whose zakat total is lower than its gross is not an error — the
+                            designation is the giver's, not the bucket's.
+                        </p>
                     </div>
 
                     <!-- 3 — Filters ------------------------------------------------------ -->
                     <h6 class="text-muted text-uppercase small mb-2">Filters</h6>
                     <div class="row g-3 mb-3">
-                        <div class="col-md-6 col-lg-3">
+                        <div class="col-md-6 col-lg-2">
                             <label class="form-label small text-muted mb-1" for="giving-from">Gifts from</label>
                             <input id="giving-from" type="date" class="form-control" v-model="fromDate" :max="toDate || undefined">
                         </div>
-                        <div class="col-md-6 col-lg-3">
+                        <div class="col-md-6 col-lg-2">
                             <label class="form-label small text-muted mb-1" for="giving-to">Gifts to</label>
                             <input id="giving-to" type="date" class="form-control" v-model="toDate" :min="fromDate || undefined">
                         </div>
@@ -198,6 +236,20 @@
                             <select class="form-select" v-model="statusFilter">
                                 <option value="">Received only</option>
                                 <option v-for="s in statuses" :key="s" :value="s" class="text-capitalize">{{ s }}</option>
+                            </select>
+                        </div>
+                        <!--
+                            Three-valued, because "excluding zakat" is a question a treasurer
+                            reconciling the unrestricted pot actually asks — not the absence of a
+                            filter. The values are bound as real booleans so the query builder can
+                            tell false from unset.
+                        -->
+                        <div class="col-md-4 col-lg-2">
+                            <label class="form-label small text-muted mb-1">Zakat</label>
+                            <select class="form-select" v-model="zakatFilter">
+                                <option :value="''">All gifts</option>
+                                <option :value="true">Zakat only</option>
+                                <option :value="false">Excluding zakat</option>
                             </select>
                         </div>
                     </div>
@@ -257,6 +309,7 @@
                                     <th class="text-end">Amount</th>
                                     <th class="text-end">Net</th>
                                     <th>Status</th>
+                                    <th class="text-end">Receipt</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -266,7 +319,12 @@
                                         <span v-if="donation.contact" class="fw-semibold">{{ donorName(donation) }}</span>
                                         <span v-else class="text-muted">— (general)</span>
                                     </td>
-                                    <td>{{ donation.fund?.name ?? '—' }}</td>
+                                    <td>
+                                        {{ donation.fund?.name ?? '—' }}
+                                        <!-- The gift's own designation, off the row. Never the fund's
+                                             type: the two disagree in both directions by design. -->
+                                        <span v-if="donation.is_zakat" class="badge bg-info-subtle text-info ms-2">Zakat</span>
+                                    </td>
                                     <td class="text-capitalize">{{ methodLabel(donation) }}</td>
                                     <td class="text-end tabular fw-semibold">
                                         {{ formatCents(donation.charged_amount, donation.currency) }}
@@ -278,6 +336,25 @@
                                         <span class="badge text-capitalize" :class="statusClass(donation.status)">
                                             {{ donation.status }}
                                         </span>
+                                    </td>
+                                    <!--
+                                        Re-download only. ISSUING a receipt burns a serial and
+                                        freezes four fields, so it stays on the ledger screen where
+                                        the gift's full detail and that warning live — this feed is
+                                        for the treasurer who needs to re-hand a donor their copy.
+                                    -->
+                                    <td class="text-end">
+                                        <button
+                                            v-if="donation.receipt"
+                                            class="btn btn-sm btn-outline-secondary"
+                                            :disabled="isReceiptBusy(donation.id)"
+                                            :title="`Download receipt #${donation.receipt.serial_number}`"
+                                            @click="downloadReceipt(donation)"
+                                        >
+                                            <span v-if="isReceiptBusy(donation.id)" class="spinner-border spinner-border-sm"></span>
+                                            <i v-else class="bi bi-file-earmark-pdf"></i>
+                                        </button>
+                                        <span v-else class="text-muted">—</span>
                                     </td>
                                 </tr>
                             </tbody>
@@ -325,6 +402,19 @@ const toDate = ref('');
 const fundFilter = ref<number | ''>('');
 const sourceFilter = ref<DonationSource | ''>('');
 const statusFilter = ref<DonationStatus | ''>('');
+/** '' = every gift, true = zakat only, false = the gifts carrying no zakat
+ *  restriction. Three-valued because false is a request, not an absence. */
+const zakatFilter = ref<boolean | ''>('');
+/**
+ * The gifts whose receipt PDF is downloading, so each row spins on its own and
+ * the rest stay live. A SET, not a single id: with one shared id, the first
+ * download to finish cleared the flag for whichever row was started after it,
+ * and that row's spinner vanished while its file was still on the way.
+ */
+const receiptBusy = ref<Set<number>>(new Set());
+
+/** Whether THIS gift's PDF is in flight (never merely "some gift's is"). */
+const isReceiptBusy = (donationId: number): boolean => receiptBusy.value.has(donationId);
 
 const statuses: DonationStatus[] = ['pending', 'succeeded', 'failed', 'refunded'];
 
@@ -338,6 +428,18 @@ const BUCKET_LABELS: Record<DonationBucketKey, string> = {
 const summary = computed(() => statsStore.summary);
 const byFund = computed(() => statsStore.byFund);
 const statsMeta = computed(() => statsStore.statsMeta);
+
+/**
+ * What a zakat figure on this page counts, in the SERVER's own words.
+ *
+ * Never restated here. The definition travels with the number precisely so that
+ * a reader is not left assuming it means "gifts to the zakat fund" — which is
+ * the one thing it does not mean — and a paraphrase in this file is how the
+ * screen and the payload start telling donors different things
+ * (.claude/rules/zakat.md, .claude/rules/impact-metrics.md). Empty until the
+ * first stats response lands, and the tooltip simply does not render.
+ */
+const zakatDefinition = computed<string>(() => statsMeta.value?.zakat?.definition ?? '');
 const donations = computed<Donation[]>(() => (donationsStore.donationsPaginated?.data as Donation[]) || []);
 
 /** The three header cards in reading order, skipped entirely until the numbers land. */
@@ -355,33 +457,49 @@ const buckets = computed(() => {
 const dateRangeInvalid = computed(() => !!fromDate.value && !!toDate.value && toDate.value < fromDate.value);
 
 const filtersApplied = computed(() =>
-    !!fromDate.value || !!toDate.value || fundFilter.value !== '' || !!sourceFilter.value || !!statusFilter.value
+    !!fromDate.value || !!toDate.value || fundFilter.value !== '' || !!sourceFilter.value
+    || !!statusFilter.value || zakatFilter.value !== ''
 );
 
-/** Everything the header actually responds to — the fund is not one of them. */
+/** Everything the header actually responds to — the fund and the zakat filter
+ *  are not among them (see feedOnlyFilterNames). */
 const statsFiltersApplied = computed(() =>
     !!fromDate.value || !!toDate.value || !!sourceFilter.value || !!statusFilter.value
 );
 
 /**
+ * The filters that reach the feed and the CSV but NOT the three header cards.
+ *
+ * The stats endpoints take neither of them: the header covers every fund, and it
+ * reports zakat as a subset line on each card rather than by filtering. So each
+ * one, chosen on its own, is a combination where the cards and the feed beneath
+ * them describe different gifts — which has to be said, or a treasurer reads
+ * "Zakat only" above a set of totals that counts everything.
+ */
+const feedOnlyFilterNames = computed<string[]>(() => {
+    const names: string[] = [];
+    if (fundFilter.value !== '') names.push('the fund filter');
+    if (zakatFilter.value !== '') names.push('the zakat filter');
+    return names;
+});
+
+/**
  * What the three header cards are scoped to, said out loud whenever it is not
  * simply "everything".
- *
- * The fund is deliberately missing from statsFiltersApplied — the header covers
- * every fund — which makes a fund chosen ON ITS OWN the one combination where
- * the cards and the feed under them describe different gifts. That is also the
- * likeliest single filter, so it gets its own sentence rather than falling
- * through to no disclosure at all.
  */
 const headerScopeNote = computed<string>(() => {
+    const names = feedOnlyFilterNames.value;
+    const listed = names.join(' and ');
+    const narrow = names.length === 1 ? 'narrows' : 'narrow';
+
     if (!statsFiltersApplied.value) {
-        return fundFilter.value !== ''
-            ? 'These totals cover every fund — the fund filter narrows only the feed and the export.'
+        return names.length
+            ? `These totals cover every gift — ${listed} ${narrow} only the feed and the export.`
             : '';
     }
 
-    return fundFilter.value !== ''
-        ? 'Narrowed by the filters below — except the fund, which narrows only the feed and the export.'
+    return names.length
+        ? `Narrowed by the filters below — except ${listed}, which ${narrow} only the feed and the export.`
         : 'Narrowed by the filters below.';
 });
 
@@ -432,7 +550,8 @@ const ledgerFilters = computed<DonationLedgerFilters>(() => ({
     source: sourceFilter.value,
     status: statusFilter.value,
     // No donor search on this screen — the ledger page owns that job.
-    search: ''
+    search: '',
+    zakat: zakatFilter.value
 }));
 
 const statsFilters = computed<DonationStatsFilters>(() => ({
@@ -478,7 +597,7 @@ onBeforeMount(async () => {
 // Re-fetch on any filter change. Debounced because the two date inputs are
 // usually changed together, and a half-typed range would 422 on its own.
 let filterTimer: ReturnType<typeof setTimeout> | null = null;
-watch([fromDate, toDate, fundFilter, sourceFilter, statusFilter], () => {
+watch([fromDate, toDate, fundFilter, sourceFilter, statusFilter, zakatFilter], () => {
     if (filterTimer) clearTimeout(filterTimer);
     filterTimer = setTimeout(() => loadAll(1), 300);
 });
@@ -527,6 +646,7 @@ const clearFilters = () => {
     fundFilter.value = '';
     sourceFilter.value = '';
     statusFilter.value = '';
+    zakatFilter.value = '';
 };
 
 const exportCsv = async () => {
@@ -539,6 +659,22 @@ const exportCsv = async () => {
         Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not export the donations.' });
     } finally {
         exporting.value = false;
+    }
+};
+
+/**
+ * Re-hand a donor the copy of a receipt they lost. Downloads only — nothing here
+ * issues one, because taking a serial is irreversible and belongs on the ledger
+ * screen with the gift's full detail and the warning that goes with it.
+ */
+const downloadReceipt = async (donation: Donation) => {
+    receiptBusy.value.add(donation.id);
+    try {
+        await donationsStore.downloadReceiptPdf(donation);
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not download the receipt.' });
+    } finally {
+        receiptBusy.value.delete(donation.id);
     }
 };
 
@@ -560,6 +696,9 @@ const formatCents = (cents: number, currency: string = 'usd'): string => {
 
 /** Header and breakdown figures: one masjid books in one currency, named in meta. */
 const money = (cents: number): string => formatCents(cents, statsMeta.value?.currency ?? 'usd');
+
+/** "1 gift" / "2 gifts" — a count printed beside money should not read as a typo. */
+const giftCount = (count: number): string => `${count} ${count === 1 ? 'gift' : 'gifts'}`;
 
 const DATE_PARTS: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' };
 
@@ -676,6 +815,14 @@ const statusClass = (status: DonationStatus): string => {
     font-size: 1rem;
     font-weight: 600;
     margin-bottom: 0;
+}
+
+/* The gift count trailing a money figure inside one fact — present, but never
+   competing with the amount it qualifies. */
+.metric-facts .metric-aside {
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: #6c757d;
 }
 
 .metric-foot {

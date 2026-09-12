@@ -391,10 +391,20 @@ class DonationsController extends Controller
             $attributes['note'] = $request->input('note');
         }
 
-        // Zakat is a statement about what the GIVER restricted, so an explicit
-        // one is never overwritten by a fund change. Re-resolve only when the
+        // Zakat is a statement about what the GIVER restricted, so a recorded
+        // one is not overwritten by a fund change. Re-resolve only when the
         // admin says so, or when the stored answer was itself only the old
         // fund's default and that fund is being changed out from under it.
+        //
+        // KNOWN LIMIT, and it is a schema one, not an oversight here. An explicit
+        // "not zakat" stores `zakat_source = null` — the invariant that a source
+        // is non-null ONLY on a zakat gift (.claude/rules/zakat.md, and the
+        // add_zakat_designation_to_donations migration) — so it is indistinguishable
+        // from "nobody was ever asked". Both therefore read as inferred below, and
+        // moving such a gift into a zakat-typed fund re-derives it AS zakat. Telling
+        // the two apart needs a third stored fact (a `zakat_declared` boolean beside
+        // the two columns); until that exists, do not read this branch as honouring
+        // a refusal. DonationsView::openEdit carries the same caveat.
         $inferred = in_array($donation->zakat_source, [null, ZakatDesignation::SOURCE_FUND_DEFAULT], true);
 
         if ($request->has('zakat')) {

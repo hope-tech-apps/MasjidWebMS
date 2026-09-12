@@ -43,6 +43,10 @@ export type MasjidDashboardRoute =
     // screen is CALLED comes from the terminology pack, never the URL.
     '/masjid/groups' |
     `/masjid/groups/${number}` |
+    // Bulk roster import — its own screen rather than a modal on the groups
+    // list, and NOT nested under /groups/ so it can never be ranked against
+    // `groups/:groupId`.
+    '/masjid/roster-import' |
     // The admin screen that provisions teacher logins and assigns the classes
     // they lead. Neutral path like /groups; the label is authored, not from the
     // terminology pack.

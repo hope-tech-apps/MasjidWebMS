@@ -345,6 +345,40 @@ class ZakatDesignationTest extends TestCase
     }
 
     #[Test]
+    public function both_stats_endpoints_ship_the_definition_the_dashboard_shows_as_its_tooltip(): void
+    {
+        // The giving dashboard prints `meta.zakat.definition` VERBATIM as the
+        // tooltip beside every zakat figure, and is forbidden a local paraphrase
+        // — a zakat total whose reader has to guess whether it means "gifts to
+        // the zakat fund" is worth nothing (.claude/rules/impact-metrics.md).
+        //
+        // BOTH endpoints are pinned because the dashboard's one `statsMeta` is
+        // written by whichever of the two answers last. If by-fund's meta lost
+        // the block, the tooltip would vanish on a page whose figures still
+        // rendered — the number shown to donors, stripped of what it counts.
+        $admin = $this->makeAdminFor($this->masjid);
+        Sanctum::actingAs($admin);
+
+        $this->makeSucceededGift(10000, true);
+
+        foreach (['summary', 'by-fund'] as $endpoint) {
+            $meta = $this->getJson("/api/admin/masjids/{$this->masjid->id}/donations/stats/{$endpoint}")
+                ->assertOk()
+                ->json('meta.zakat');
+
+            $this->assertIsArray($meta, "the {$endpoint} payload carries no zakat meta");
+            // The column the figures are read from, named in the payload: the
+            // whole claim is that they are NOT read from funds.type.
+            $this->assertSame('donations.is_zakat', $meta['source']);
+            // The server's own sentence, not an approximation of it.
+            $this->assertSame(ZakatDesignation::definition(), $meta['definition']);
+            // And each figure's own note, keyed by the field it describes.
+            $this->assertArrayHasKey('zakat_gross_cents', $meta['keys']);
+            $this->assertArrayHasKey('zakat_gift_count', $meta['keys']);
+        }
+    }
+
+    #[Test]
     public function the_export_carries_the_designation_and_the_ledger_can_filter_on_it(): void
     {
         $admin = $this->makeAdminFor($this->masjid);
@@ -373,7 +407,79 @@ class ZakatDesignationTest extends TestCase
             ->assertOk()->assertJsonPath('data.total', 2);
     }
 
+    #[Test]
+    public function the_ledger_row_reports_the_designation_and_its_source(): void
+    {
+        // The badge on the ledger and the provenance in its tooltip are read off
+        // the ROW — `is_zakat` and `zakat_source` on the index payload — and from
+        // nowhere else, because deriving either from `fund.type` mislabels the
+        // money in both directions (.claude/rules/zakat.md). Nothing pinned that
+        // those two fields are actually in the index payload: an API Resource, a
+        // `$hidden`, or a trimmed select would turn every zakat badge on the
+        // ledger off and understate the restricted pot on screen, with the rest
+        // of this suite still green.
+        $admin = $this->makeAdminFor($this->masjid);
+        Sanctum::actingAs($admin);
+
+        $zakatGift = $this->makeSucceededGift(10000, true);
+        $plainGift = $this->makeSucceededGift(30000, false);
+
+        $rows = collect(
+            $this->getJson("/api/admin/masjids/{$this->masjid->id}/donations")
+                ->assertOk()
+                ->json('data.data')
+        )->keyBy('id');
+
+        // The designated gift: badge on, and whose word it rests on.
+        $this->assertTrue($rows[$zakatGift->id]['is_zakat']);
+        $this->assertSame(ZakatDesignation::SOURCE_ADMIN, $rows[$zakatGift->id]['zakat_source']);
+
+        // The undesignated one: both keys PRESENT and answering "no restriction".
+        // Asserted as keys, not just as falsy values — a payload that dropped them
+        // would read as "not zakat" for every gift on the page.
+        $this->assertArrayHasKey('is_zakat', $rows[$plainGift->id]);
+        $this->assertArrayHasKey('zakat_source', $rows[$plainGift->id]);
+        $this->assertFalse($rows[$plainGift->id]['is_zakat']);
+        $this->assertNull($rows[$plainGift->id]['zakat_source']);
+    }
+
+    #[Test]
+    public function the_zakat_filter_returns_the_gifts_it_names_and_not_merely_the_right_count(): void
+    {
+        // The counts are pinned above; this pins WHICH gifts come back. A filter
+        // that inverted its predicate would keep both totals at 1 and hand the
+        // treasurer reconciling the unrestricted pot the restricted one instead,
+        // and the CSV underneath it too.
+        $admin = $this->makeAdminFor($this->masjid);
+        Sanctum::actingAs($admin);
+
+        $zakatGift = $this->makeSucceededGift(10000, true);
+        $plainGift = $this->makeSucceededGift(30000, false);
+
+        $this->assertSame([$zakatGift->id], $this->ledgerIds('zakat=1'));
+        $this->assertSame([$plainGift->id], $this->ledgerIds('zakat=0'));
+
+        // Unset is not false: an omitted key (and a cleared input, which sends an
+        // empty one) means no filter at all.
+        $bothGifts = collect([$zakatGift->id, $plainGift->id])->sort()->values()->all();
+        $this->assertSame($bothGifts, $this->ledgerIds(''));
+        $this->assertSame($bothGifts, $this->ledgerIds('zakat='));
+    }
+
     // ================================ helpers ================================
+
+    /** The ids the ledger returns under one query string, sorted so the
+     *  assertion is about the SET of gifts and not the page's ordering. */
+    private function ledgerIds(string $query): array
+    {
+        $ids = collect(
+            $this->getJson("/api/admin/masjids/{$this->masjid->id}/donations?{$query}")
+                ->assertOk()
+                ->json('data.data')
+        )->pluck('id')->sort()->values()->all();
+
+        return $ids;
+    }
 
     private function checkoutUrl(): string
     {

@@ -237,6 +237,48 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reports_partial_error: "Some reports could not be loaded just now.",
         report_open_failed: "That report could not be opened.",
         report_download_failed: "That report could not be downloaded just now.",
+        // ------------------------------------------------ marks (the gradebook)
+        // "Marks", and deliberately not "Grades". In this school's own portal a
+        // GRADE is a year level — `grade_label` is printed as a badge on the
+        // report card, on the tab next to this one — so "Grades" would be two
+        // different things on one screen for the parent least able to tell them
+        // apart. "Marks" is also what the teachers here call them.
+        tab_grades: "Marks",
+        marks_empty: "No marks yet. When your teacher enters one you will see it here.",
+        marks_error: "Some marks could not be loaded just now.",
+        marks_section_points: "Points work",
+        marks_section_levels: "Performance levels",
+        // The count of pieces of work behind a points total, so "86.5 of 100"
+        // is not read as a percentage of the term. `count_of` carries the "of".
+        marks_pieces_one: "across {x} piece of work",
+        marks_pieces_two: "across {x} pieces of work",
+        marks_pieces_few: "across {x} pieces of work",
+        marks_pieces_many: "across {x} pieces of work",
+        // The four performance levels and what they mean. They are a platform
+        // constant (App\\Support\\PerformanceLevel), so the payload carries them
+        // in English whatever language the portal is set to — the same seam the
+        // qāʿidah's stage labels have. Keyed by the level number; a level this
+        // table has never heard of falls back to the server's own words.
+        level_4: "Exceeds Expectations",
+        level_3: "Meets Expectations",
+        level_2: "Approaching Expectations",
+        level_1: "Needs Support",
+        level_short_4: "Exceeds",
+        level_short_3: "Meets",
+        level_short_2: "Approaching",
+        level_short_1: "Needs Support",
+        level_desc_4: "Consistently demonstrates mastery; applies skills independently; shows accuracy, depth, and confidence.",
+        level_desc_3: "Demonstrates grade-level proficiency; completes tasks with minimal support; shows solid understanding.",
+        level_desc_2: "Partial understanding; needs support or reminders; inconsistent performance.",
+        level_desc_1: "Limited understanding; requires significant guidance; skills not yet developed.",
+        // The NUMBER always; `mean_label` is printed beside it and never in
+        // place of it (App\Support\PerformanceLevel::labelForMean).
+        marks_levels_mean: "Average level {x}",
+        // A status is a sentence, never a number. An unhanded-in piece of work
+        // is not a zero on screen even though it is a zero in the average.
+        mark_missing: "Not handed in",
+        mark_excused: "Excused",
+        marks_truncated: "Showing the most recent {x}.",
     },
     ar: {
         // ------------------------------------------------------------ shared
@@ -398,6 +440,35 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         reports_partial_error: "تعذّر تحميل بعض التقارير الآن.",
         report_open_failed: "تعذّر فتح هذا التقرير.",
         report_download_failed: "تعذّر تنزيل هذا التقرير الآن.",
+        // ------------------------------------------------------------ الدرجات
+        // "الدرجات" for the marks themselves; the report card's year level is
+        // "الصف" elsewhere, so the two do not collide in Arabic the way "Marks"
+        // and "Grades" would in English.
+        tab_grades: "الدرجات",
+        marks_empty: "لا توجد درجات بعد. وعندما يسجّل المعلّم درجةً، ستظهر هنا.",
+        marks_error: "تعذّر تحميل بعض الدرجات الآن.",
+        marks_section_points: "الأعمال المُقيَّمة بالنقاط",
+        marks_section_levels: "مستويات الأداء",
+        marks_pieces_one: "في عمل واحد",
+        marks_pieces_two: "في عملين",
+        marks_pieces_few: "في {x} أعمال",
+        marks_pieces_many: "في {x} عملًا",
+        level_4: "يفوق التوقعات",
+        level_3: "يحقق التوقعات",
+        level_2: "يقترب من التوقعات",
+        level_1: "يحتاج إلى دعم",
+        level_short_4: "يفوق",
+        level_short_3: "يحقق",
+        level_short_2: "يقترب",
+        level_short_1: "يحتاج دعمًا",
+        level_desc_4: "يُظهر إتقانًا ثابتًا، ويطبّق المهارات باستقلالية، بدقة وعمق وثقة.",
+        level_desc_3: "يُظهر إتقانًا للمستوى الدراسي، ويُنجز المهام بأقل قدر من المساعدة، وفهمه راسخ.",
+        level_desc_2: "فهم جزئي، ويحتاج إلى مساعدة أو تذكير، وأداؤه غير مستقر.",
+        level_desc_1: "فهم محدود، ويحتاج إلى توجيه كبير، والمهارات لم تتكوّن بعد.",
+        marks_levels_mean: "متوسط المستوى {x}",
+        mark_missing: "لم يُسلَّم",
+        mark_excused: "معفى منه",
+        marks_truncated: "تُعرض أحدث {x} من الدرجات.",
     },
 };
 

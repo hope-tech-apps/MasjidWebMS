@@ -88,6 +88,20 @@
                         {{ t('tab_reports') }}
                     </button>
                 </li>
+                <!-- ALWAYS shown to a parent with a child in this class, even
+                     before anything is loaded and even when nothing is marked.
+                     A parent arriving from the "a mark has been posted" email
+                     has been told there is something to read, and a tab that
+                     hid itself until it had content would leave that parent
+                     hunting for a screen the school just told them exists.
+                     This deliberately does NOT copy the letters section's
+                     hide-when-empty behaviour, which solves the opposite
+                     problem — a track the school never teaches. -->
+                <li v-if="group.children?.length" class="nav-item">
+                    <button class="nav-link" :class="{ active: tab === 'grades' }" @click="tab = 'grades'">
+                        {{ t('tab_grades') }}
+                    </button>
+                </li>
                 <!-- "Handouts", not "Resources" — that is the word a parent uses. -->
                 <li class="nav-item">
                     <button class="nav-link" :class="{ active: tab === 'handouts' }" @click="tab = 'handouts'">
@@ -442,8 +456,8 @@
                         </summary>
                         <dl class="row small mt-2 mb-0">
                             <template v-for="l in levelKey" :key="l.level">
-                                <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ l.label }}</dt>
-                                <dd class="col-sm-8 text-muted" dir="auto">{{ l.description }}</dd>
+                                <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ levelPhrase('level', l.level, l.label) }}</dt>
+                                <dd class="col-sm-8 text-muted" dir="auto">{{ levelPhrase('level_desc', l.level, l.description) }}</dd>
                             </template>
                         </dl>
                     </details>
@@ -557,6 +571,188 @@
                             </div>
                         </div>
                     </template>
+                </template>
+            </section>
+
+            <!-- ---------------------------------------------------- marks -->
+            <!-- The read the "a mark has been posted" email has always implied
+                 and never had. Same visual language as the report card above,
+                 and for the same reason: NO progress bar and NO colour scale.
+                 App\Support\PerformanceLevel argues at length that a standards
+                 level shown as a percentage or a red pill is a misreading of
+                 it, and painting a 2 red says something the teacher did not
+                 say. The teacher's own gradebook has no colour scale either, so
+                 inventing one here would be diverging from it rather than
+                 matching it.
+
+                 A STATUS IS A SENTENCE, never a number. Work not handed in
+                 counts as a zero inside the average — that is what the
+                 denominator means — but drawing a "0" beside marks a child
+                 actually earned would tell a parent their child scored nothing
+                 rather than that nothing arrived. -->
+            <section v-else-if="tab === 'grades'">
+                <p v-if="gradesError" class="text-danger small">{{ tMessage(gradesError) }}</p>
+
+                <div v-if="gradesLoading && !gradesLoaded" class="text-center py-4">
+                    <span class="spinner-border spinner-border-sm text-success"></span>
+                </div>
+
+                <template v-else>
+                    <div v-for="child in group.children" :key="child.membership_id"
+                         class="card border-0 shadow-sm mb-3">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-3 mb-3">
+                                <PersonAvatar
+                                    :avatar="child.contact?.avatar"
+                                    :first-name="child.contact?.first_name"
+                                    :last-name="child.contact?.last_name"
+                                    :size="42" />
+                                <h2 class="h6 mb-0" dir="auto">{{ childName(child) }}</h2>
+                            </div>
+
+                            <p v-if="!marksFor(child).scores.length" class="text-muted small mb-0">
+                                {{ t('marks_empty') }}
+                            </p>
+
+                            <template v-else>
+                                <!-- POINTS AND LEVELS ARE NEVER ONE FIGURE. A
+                                     class can hold a spelling quiz out of 10 and
+                                     a rubric marked 1-4 at once, and the server
+                                     summarises the two separately for the reason
+                                     the levels scale exists. Each block is shown
+                                     only when there is work of that kind: an
+                                     empty "0 of 0" is a sentence about work that
+                                     was never set. -->
+                                <template v-if="marksFor(child).summary.points_counted > 0">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_section_points') }}</h3>
+                                    <p class="small mb-3">
+                                        <span class="fw-semibold">
+                                            {{ marksFor(child).summary.points_earned }}
+                                            {{ t('count_of') }}
+                                            {{ marksFor(child).summary.points_possible }}
+                                        </span>
+                                        <span class="text-muted">
+                                            &middot; {{ tCount('marks_pieces', marksFor(child).summary.points_counted) }}
+                                        </span>
+                                    </p>
+                                </template>
+
+                                <!-- RECORDED, not COUNTED. `missing` levels work
+                                     is deliberately outside the mean (see the
+                                     server's levelSummary), so a child whose only
+                                     levels work has not been handed in has
+                                     recorded 3 and counted 0 — and gating the
+                                     whole block on `counted` hid the ONE tally
+                                     that case has, while the key below (gated on
+                                     `recorded`, correctly) still rendered a
+                                     legend explaining a scale with nothing above
+                                     it. The two gates now agree. -->
+                                <template v-if="marksFor(child).summary.levels.recorded > 0">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_section_levels') }}</h3>
+                                    <!-- The NUMBER, with the word beside it and
+                                         never instead of it: a 2.5 sits between
+                                         two levels, and printing only the nearer
+                                         word would tell a parent their child is
+                                         one of them.
+
+                                         Inside its own `counted` check: with no
+                                         scored levels work the server sends
+                                         `mean: null`, and "Average level null" is
+                                         worse than no sentence at all. -->
+                                    <p v-if="marksFor(child).summary.levels.counted > 0" class="small mb-2">
+                                        <span class="fw-semibold">
+                                            {{ t('marks_levels_mean', String(marksFor(child).summary.levels.mean)) }}
+                                        </span>
+                                        <span v-if="marksFor(child).summary.levels.mean_label"
+                                              class="text-muted" dir="auto">
+                                            &middot; {{ levelPhrase('level_short', Math.round(Number(marksFor(child).summary.levels.mean)), marksFor(child).summary.levels.mean_label) }}
+                                        </span>
+                                    </p>
+                                    <!-- Every level, present even at zero, so
+                                         the shape does not change as marks come
+                                         in and "no 4s yet" is visible rather
+                                         than absent. -->
+                                    <ul class="list-unstyled small mb-3">
+                                        <li v-for="row in marksFor(child).summary.levels.distribution" :key="row.level"
+                                            class="d-flex justify-content-between">
+                                            <span dir="auto">{{ row.level }} &mdash; {{ levelPhrase('level_short', row.level, row.short_label) }}</span>
+                                            <span class="text-muted">{{ row.count }}</span>
+                                        </li>
+                                        <!-- Counted and shown, and deliberately
+                                             out of the mean above: 1 is not
+                                             "nothing", it is "Needs Support",
+                                             which is a judgement nobody made. -->
+                                        <li v-if="marksFor(child).summary.levels.missing"
+                                            class="d-flex justify-content-between">
+                                            <span>{{ t('mark_missing') }}</span>
+                                            <span class="text-muted">{{ marksFor(child).summary.levels.missing }}</span>
+                                        </li>
+                                    </ul>
+                                </template>
+
+                                <!-- THE KEY, from the payload and never
+                                     hardcoded — the same one the report card
+                                     opens with, open by default here too. A
+                                     parent meeting a 3 for the first time must
+                                     be able to answer "what does a 3 mean?"
+                                     without emailing the school. Shown whenever
+                                     any levels work exists, including the case
+                                     where all of it is missing and there is no
+                                     mean to explain. -->
+                                <details v-if="levelKey.length && marksFor(child).summary.levels.recorded"
+                                         class="mb-3" open>
+                                    <summary class="small text-primary" style="cursor:pointer">
+                                        {{ t('level_key_summary') }}
+                                    </summary>
+                                    <dl class="row small mt-2 mb-0">
+                                        <template v-for="l in levelKey" :key="l.level">
+                                            <dt class="col-sm-4 fw-semibold" dir="auto">{{ l.level }} &mdash; {{ levelPhrase('level', l.level, l.label) }}</dt>
+                                            <dd class="col-sm-8 text-muted" dir="auto">{{ levelPhrase('level_desc', l.level, l.description) }}</dd>
+                                        </template>
+                                    </dl>
+                                </details>
+
+                                <!-- Newest first, as the server ordered them.
+                                     Keyed by assignment id AND position: the
+                                     family payload carries no score ids, and
+                                     `:key="s.id"` would collapse every row onto
+                                     one undefined key — the same trap the report
+                                     card's marks document above. -->
+                                <ul class="list-unstyled mb-0">
+                                    <li v-for="(s, i) in marksFor(child).scores"
+                                        :key="`${s.assignment?.id ?? 'x'}-${i}`"
+                                        class="border-top py-2">
+                                        <div class="d-flex justify-content-between align-items-baseline gap-3">
+                                            <div class="flex-grow-1" style="min-width:10rem">
+                                                <!-- The teacher's own title for
+                                                     the work — a sūrah name, a
+                                                     page range — printed as they
+                                                     typed it. -->
+                                                <div class="small" dir="auto">{{ s.assignment?.title }}</div>
+                                                <div class="text-muted small">{{ onDay(s.assignment?.assigned_on) }}</div>
+                                            </div>
+                                            <span class="badge fw-normal flex-shrink-0" :class="markClass(s)">
+                                                {{ markText(s) }}
+                                            </span>
+                                        </div>
+                                        <!-- What the teacher actually wrote, and
+                                             the reason a parent opens this at
+                                             all. -->
+                                        <div v-if="s.note" class="text-muted small fst-italic mt-1" dir="auto">
+                                            {{ txMarkNote(child, s, i) }}
+                                        </div>
+                                    </li>
+                                </ul>
+
+                                <!-- A short list under a whole-term average says
+                                     so, rather than letting the average look as
+                                     though it came from what is visible. -->
+                                <p v-if="marksFor(child).scores_truncated" class="text-muted small mt-2 mb-0">
+                                    {{ t('marks_truncated', String(marksFor(child).scores_shown)) }}
+                                </p>
+                            </template>
+                        </div>
+                    </div>
                 </template>
             </section>
         </template>
@@ -748,7 +944,7 @@ const onAvatarSaved = (student: any) => {
     avatarFor.value = null;
 };
 const openedMessages = ref<any[]>([]);
-const tab = ref<'story' | 'messages' | 'children' | 'reports' | 'handouts'>('story');
+const tab = ref<'story' | 'messages' | 'children' | 'reports' | 'grades' | 'handouts'>('story');
 
 // ---------- starting a conversation ----------
 const composing = ref(false);
@@ -834,6 +1030,10 @@ watch(tab, (next) => {
     // refetch on every visit to the tab. `reportsLoading` stops a double-tap
     // firing two rounds of requests.
     if (next === 'reports' && !reportsLoaded.value && !reportsLoading.value) loadReportCards();
+    // Same guard shape as the reports tab, and for the same reason: having no
+    // marks yet is the ordinary state at the start of a term, so a length check
+    // would refetch every child's record on every visit to the tab.
+    if (next === 'grades' && !gradesLoaded.value && !gradesLoading.value) loadGrades();
 });
 const loading = ref(true);
 const error = ref<FamilyMessage | null>(null);
@@ -961,6 +1161,22 @@ const reportCards = ref<Record<number, any[]>>({});
 const reportsLoaded = ref(false);
 const reportsLoading = ref(false);
 const reportsError = ref<FamilyMessage | null>(null);
+/**
+ * A performance level in the portal's language.
+ *
+ * The four levels are a platform constant on the server (App\Support\PerformanceLevel),
+ * so the payload carries them in English whatever the portal is set to — the same
+ * seam the qāʿidah's stage labels have. The string table answers when it knows the
+ * level; anything else falls through to the server's own words, which are still
+ * true when they are not translated.
+ */
+const levelPhrase = (base: string, level: number | string | null, fallback?: string | null): string => {
+    const key = `${base}_${level ?? ''}`;
+    const translated = t(key);
+
+    return translated === key ? (fallback ?? '') : translated;
+};
+
 const levelKey = ref<any[]>([]);
 const openCard = ref<any>(null);
 const openCardFor = ref<any>(null);
@@ -1056,9 +1272,14 @@ const downloadCard = async () => {
 const levelText = (m: any): string => {
     if (m?.level === null || m?.level === undefined) return t('not_assessed');
 
-    // The short label is the school's own wording for the level and is printed
-    // as it arrives, in either language.
-    const short = levelKey.value.find((l: any) => l.level === m.level)?.short_label;
+    // The short label in the portal's language, falling back to the school's own
+    // wording as it arrives. Before this went through levelPhrase, an Arabic
+    // portal printed "3 · Meets" beside a heading it had just translated.
+    const short = levelPhrase(
+        'level_short',
+        m.level,
+        levelKey.value.find((l: any) => l.level === m.level)?.short_label
+    );
 
     return `${m.level} · ${short ?? m.level_label ?? ''}`.trim();
 };
@@ -1072,6 +1293,129 @@ const levelClass = (m: any): string =>
 const hasAttendance = computed(() =>
     openCard.value?.attendance != null && openCard.value.attendance.present !== null,
 );
+
+// ---------- marks ----------
+//
+// One request per child, because the endpoint is per-child by design: there is
+// no group-wide variant of a gradebook read in this realm, and there is not
+// going to be one. A class-wide view of marks is the comparison the whole module
+// refuses to make, and an API shaped to allow it would suggest otherwise even
+// while the audience rules held.
+const grades = ref<Record<number, any>>({});
+const gradesLoaded = ref(false);
+const gradesLoading = ref(false);
+const gradesError = ref<FamilyMessage | null>(null);
+
+/**
+ * One child's marks, with a shape the template can always read.
+ *
+ * The empty record is returned rather than null so every access below is
+ * `.summary.levels.counted` instead of a chain of `?.` that would silently
+ * render nothing if the payload ever changed shape. A child with no marks is a
+ * real and common state — most of a term starts there — and it renders the
+ * empty sentence, not a blank card.
+ */
+const EMPTY_MARKS = {
+    summary: {
+        recorded: 0, counted: 0, excused: 0,
+        points_earned: 0, points_possible: 0, points_counted: 0,
+        levels: { recorded: 0, counted: 0, missing: 0, mean: null, mean_label: null, distribution: [] },
+    },
+    scores: [],
+    scores_shown: 0,
+    scores_truncated: false,
+};
+
+const marksFor = (child: any): any => grades.value[child.membership_id] ?? EMPTY_MARKS;
+
+const loadGrades = async () => {
+    gradesLoading.value = true;
+    gradesError.value = null;
+
+    try {
+        for (const child of group.value?.children ?? []) {
+            try {
+                const res = await FamilyApiService.get(
+                    `${base.value}/members/${child.membership_id}/grades`,
+                );
+                grades.value[child.membership_id] = res.data?.data ?? EMPTY_MARKS;
+                // `performance_levels` is a SIBLING of `data`, not a member of
+                // it. The `?? existing` keeps a key already loaded by the
+                // reports tab rather than blanking the legend if a response ever
+                // arrives without one.
+                levelKey.value = res.data?.performance_levels ?? levelKey.value;
+            } catch (e) {
+                if (fail(e)) return;
+                // Caught INSIDE the loop: one sibling's failure must not blank
+                // the other's marks, which is the same reason loadReportCards()
+                // and loadChildRecords() catch here rather than around the loop.
+                grades.value[child.membership_id] = EMPTY_MARKS;
+                gradesError.value = { key: 'marks_error' };
+            }
+        }
+
+        gradesLoaded.value = true;
+    } finally {
+        gradesLoading.value = false;
+    }
+};
+
+/**
+ * A date with no time on it.
+ *
+ * `assigned_on` is a plain "2026-09-05", and `new Date()` reads a bare date as
+ * UTC midnight — which in every timezone west of Greenwich renders as the day
+ * before. Every other date on this screen carries a time and goes through
+ * `when()`; this one has to be pinned to LOCAL midnight first, or a parent in
+ * Carolina is told the work was set on the 4th.
+ */
+const onDay = (day: string | null | undefined) => (day ? when(`${day}T00:00:00`) : '');
+
+/**
+ * What one mark SAYS.
+ *
+ * Three statuses, three different sentences, which is why the column has three
+ * values rather than a nullable number:
+ *
+ *   - `missing` is "Not handed in". It counts as a zero inside the average,
+ *     because work not done is work not done, and it must still never be drawn
+ *     as a "0" beside marks the child earned — one of those is a statement about
+ *     a child's work and the other is a statement about their understanding.
+ *   - `excused` is "Excused" and counts in neither half of the average: the
+ *     office accepted the absence, and a number here would imply otherwise.
+ *   - `scored` is the mark, in the units it was marked in — "8 of 10" on the
+ *     points scale, and the LEVEL with the school's own word for it on the
+ *     levels scale. Never a percentage of four.
+ */
+const markText = (s: any): string => {
+    if (s?.status === 'missing') return t('mark_missing');
+    if (s?.status === 'excused') return t('mark_excused');
+    if (s?.points_earned === null || s?.points_earned === undefined) return t('not_assessed');
+
+    if (s.assignment?.scale === 'levels') {
+        // Through levelPhrase, so a mark reads "3 · يحقق" on a page that has
+        // already translated the heading, the average and the key above it.
+        const short = levelPhrase(
+            'level_short',
+            s.points_earned,
+            levelKey.value.find((l: any) => l.level === s.points_earned)?.short_label
+        );
+
+        return `${s.points_earned} · ${short}`.trim().replace(/ ·$/, '');
+    }
+
+    return `${s.points_earned} ${t('count_of')} ${s.assignment?.points_possible ?? ''}`.trim();
+};
+
+/**
+ * Two neutral pills and no third. There is deliberately no red, no amber and no
+ * green: a low mark is a fact a teacher recorded, and colouring it is a judgement
+ * this screen is not entitled to add on their behalf.
+ */
+const markClass = (s: any): string =>
+    s?.status === 'scored'
+        ? 'bg-primary-subtle text-primary-emphasis'
+        : 'bg-light text-muted';
 
 // ---------- translating what the school wrote ----------
 //
@@ -1117,6 +1461,21 @@ const KEY = {
     subjectMark: (card: any, subject: number, mark: number) =>
         `report:${card.id}:subject:${subject}:mark:${mark}:comment`,
     behaviourMark: (card: any, mark: number) => `report:${card.id}:behaviour:${mark}:comment`,
+    /**
+     * A teacher's note on one mark, addressed by CHILD, assignment and position.
+     *
+     * The family payload carries no score ids, so the key has to be built from
+     * what is there — the same problem the report-card marks above solve by
+     * position. The membership id is the part that is easy to leave out and must
+     * not be: two siblings in one classroom are marked on the SAME assignments,
+     * so `grade:9:0:note` would name Amina's note and Bilal's note at once, and
+     * whichever was collected second would render under both. That is not a
+     * missing translation — it is one child's teacher comment appearing on the
+     * other child's card, which is the exact disclosure this portal is built to
+     * prevent, arriving through the translation map instead of through the API.
+     */
+    markNote: (membershipId: number | string, score: any, i: number) =>
+        `grade:${membershipId}:${score.assignment?.id ?? 'x'}:${i}:note`,
 };
 
 const {
@@ -1213,6 +1572,20 @@ const translatableItems = computed<TranslatableItem[]>(() => {
         }
     }
 
+    if (tab.value === 'grades') {
+        // ONLY THE NOTES. An assignment title is a sūrah name, a page range or
+        // "Qāʿidah p. 12" — not prose, and a translator would mangle it into
+        // something the parent could not match against what their child brought
+        // home. The same argument this file already makes for names and for the
+        // class name applies, with the extra edge that a mistranslated title is
+        // harder to spot as wrong than a mistranslated sentence.
+        for (const [membershipId, record] of Object.entries(grades.value)) {
+            (record?.scores ?? []).forEach((score: any, i: number) => {
+                add(KEY.markNote(membershipId, score, i), score.note);
+            });
+        }
+    }
+
     // The open report card, which only the reports tab can be showing: the tab
     // watcher at the foot of this file closes it on the way out.
     const card = tab.value === 'reports' ? openCard.value : null;
@@ -1275,6 +1648,9 @@ const txSubjectMark = (card: any, subject: number, mark: number, row: any) =>
     tx(KEY.subjectMark(card, subject, mark), row.comment);
 const txBehaviourMark = (card: any, mark: number, row: any) =>
     tx(KEY.behaviourMark(card, mark), row.comment);
+// The child is part of the key, not decoration — see KEY.markNote.
+const txMarkNote = (child: any, score: any, i: number) =>
+    tx(KEY.markNote(child.membership_id, score, i), score.note);
 
 onMounted(async () => {
     try {
