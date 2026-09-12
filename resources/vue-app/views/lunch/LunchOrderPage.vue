@@ -6,6 +6,12 @@
                 <div class="lunch-badge">🍽️ {{ t('badge') }}</div>
                 <h1 v-if="menu">{{ menuTitle }}</h1>
                 <p v-if="menu?.service_date" class="lunch-date">{{ formatDate(menu.service_date) }}</p>
+                <!-- The deadline was in the payload from the first day and on no
+                     screen: a customer could fill a whole cart and be refused at
+                     submit by a cutoff nobody had shown them. The zone is printed
+                     with it because the cutoff belongs to the masjid's clock, and
+                     a bare "10:00" reads as the reader's own. -->
+                <p v-if="orderingClosesLabel" class="lunch-deadline">⏳ {{ orderingClosesLabel }}</p>
                 <p v-if="menuPickup" class="lunch-pickup">📍 {{ menuPickup }}</p>
             </header>
 
@@ -319,6 +325,25 @@ function itemDesc(item: any): string {
     return isAr.value && item.description_ar ? item.description_ar : (item.description || "");
 }
 
+/**
+ * "Orders close Friday at 10:00 AM EDT" — or nothing at all when the menu names
+ * no cutoff, which is a real configuration and not a missing value.
+ */
+const orderingClosesLabel = computed<string>(() => {
+    const iso = menu.value?.ordering_closes_at;
+    if (!iso) return "";
+
+    try {
+        const when = new Date(iso).toLocaleString(locale.value, {
+            weekday: "long", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+        });
+
+        return t("closes_at", when);
+    } catch {
+        return "";
+    }
+});
+
 function formatDate(d: string): string {
     try {
         return new Date(d + "T00:00:00").toLocaleDateString(locale.value, {
@@ -436,6 +461,7 @@ onMounted(() => store.fetchMenu(masjidId));
 }
 .lunch-head h1 { font-size: 22px; margin: 0; font-weight: 700; }
 .lunch-date { margin: 6px 0 0; opacity: 0.9; font-size: 14px; }
+.lunch-deadline { margin: 4px 0 0; font-size: 13px; opacity: .85; }
 .lunch-pickup { margin: 10px 0 0; font-size: 13px; opacity: 0.85; }
 .lunch-flyer { width: 100%; display: block; }
 .lunch-items { padding: 8px 0; }

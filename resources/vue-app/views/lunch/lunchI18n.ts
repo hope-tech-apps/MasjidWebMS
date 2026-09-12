@@ -26,6 +26,7 @@ const lang = ref<LunchLang>(initial());
 const STRINGS: Record<LunchLang, Record<string, string>> = {
     en: {
         badge: "Jummah Lunch",
+        closes_at: "Orders close {x}",
         loading_menu: "Loading the menu…",
         none_open: "No lunch is open for ordering right now.",
         check_back: "Please check back closer to Jummah.",
@@ -77,6 +78,7 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
     },
     ar: {
         badge: "غداء الجمعة",
+        closes_at: "يُغلق استقبال الطلبات {x}",
         loading_menu: "جارٍ تحميل القائمة…",
         none_open: "لا يوجد غداء متاح للطلب حالياً.",
         check_back: "يرجى المراجعة قرب موعد الجمعة.",

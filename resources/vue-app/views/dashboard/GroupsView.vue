@@ -46,6 +46,39 @@
                     </div>
                 </div>
 
+                <!--
+                    TAKING THE SCHOOL'S RECORDS OUT.
+
+                    The endpoint has existed since the school module shipped and
+                    nothing on any screen called it, which made it a promise the
+                    product could not keep on the one day it is owed: the day a
+                    school leaves. One dataset per file rather than a zip, because
+                    the server streams each one and never buffers a whole archive.
+                -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <details class="records-export">
+                            <summary>
+                                <i class="bi bi-download me-2"></i>Export this school's records
+                            </summary>
+                            <p class="text-muted small mt-2 mb-2">
+                                A copy of what Manara holds for this school, as CSV. Start with the
+                                manifest: it lists every dataset and how many rows each one has.
+                            </p>
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <select v-model="exportDataset" class="form-select form-select-sm w-auto">
+                                    <option v-for="d in EXPORT_DATASETS" :key="d.id" :value="d.id">{{ d.label }}</option>
+                                </select>
+                                <button class="btn btn-sm btn-outline-success" :disabled="exporting" @click="downloadExport">
+                                    <span v-if="exporting" class="spinner-border spinner-border-sm me-1"></span>
+                                    <i v-else class="bi bi-filetype-csv me-1"></i>
+                                    Download
+                                </button>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+
                 <!-- Loading State -->
                 <div v-if="loading" class="text-center py-5">
                     <div class="spinner-border text-primary" role="status">
@@ -233,6 +266,70 @@ const form = ref<GroupPayload>(emptyForm());
 /** What this tenant calls a group — "Classrooms", "Halaqat", "Teams". */
 const groupsTerm = computed<string>(() => masjidStore.term('groups'));
 
+/**
+ * The datasets SchoolRecordsExportController serves, in the order a person would
+ * want them: what the school IS, then what happened in it. The ids are the
+ * server's own — a label here is only what a human reads.
+ */
+const EXPORT_DATASETS = [
+    { id: 'manifest', label: 'Manifest — every dataset and its row count' },
+    { id: 'contacts', label: 'People' },
+    { id: 'classes', label: 'Classes' },
+    { id: 'enrollments', label: 'Enrolments' },
+    { id: 'guardians', label: 'Guardians' },
+    { id: 'class_staff', label: 'Teachers by class' },
+    { id: 'attendance', label: 'Attendance' },
+    { id: 'assignments', label: 'Assignments' },
+    { id: 'assignment_scores', label: 'Assignment scores' },
+    { id: 'report_cards', label: 'Report cards' },
+    { id: 'report_card_marks', label: 'Report card marks' },
+    { id: 'hifz', label: 'Hifz' },
+    { id: 'behaviour', label: 'Behaviour points' },
+    { id: 'behaviour_skills', label: 'Behaviour skills' },
+    { id: 'arabic_progress', label: 'Letter progress' },
+    { id: 'lesson_plans', label: 'Lesson plans' },
+];
+
+const exportDataset = ref<string>('manifest');
+const exporting = ref(false);
+
+/**
+ * A blob fetch, not a link: the export sits behind auth:sanctum + admin + tenant,
+ * so the Authorization header has to travel with the request and a plain <a href>
+ * would 401. Same shape as the form-responses CSV export.
+ */
+const downloadExport = async (): Promise<void> => {
+    const masjidId = localStorage.getItem('MASJID_APP_DASHBOARD_MASJID_ID');
+    if (!masjidId) return;
+
+    exporting.value = true;
+    try {
+        const token = localStorage.getItem('MASJID_APP_AUTH_TOKEN');
+        const resp = await fetch(
+            `/api/admin/masjids/${masjidId}/records/export?dataset=${encodeURIComponent(exportDataset.value)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!resp.ok) throw new Error(String(resp.status));
+
+        // The server names the file (it carries the school and the date); only
+        // fall back to a generic name if the header is missing.
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/);
+        const url = URL.createObjectURL(await resp.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = match ? match[1] : `records-${exportDataset.value}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch {
+        Swal.fire({ icon: 'error', title: 'Error!', text: 'Could not download that export. Please try again.' });
+    } finally {
+        exporting.value = false;
+    }
+};
+
 const groups = computed<Group[]>(() => (groupsStore.groupsPaginated?.data as Group[]) || []);
 
 /** The kind vocabulary as the SERVER states it; the literal list is a fallback for a cold load. */
@@ -372,6 +469,22 @@ watch(showFormModal, (open) => {
 
 <style scoped>
 /* Stats Card */
+/* A disclosure, not a card: this is the rarest thing on the screen and it must
+   not compete with the roster for attention. */
+.records-export {
+    background: #fff;
+    border: 1px solid #e6e9ec;
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+.records-export > summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    list-style: none;
+}
+.records-export > summary::-webkit-details-marker { display: none; }
+
 .stats-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     border-radius: 12px;
