@@ -565,10 +565,159 @@ Schedule::command('media:verify --json')->cron('17 */6 * * *')->withoutOverlappi
 | directories of stock seed art that will never have rows, and an amber that
 | burns every ordinary night is an amber that gets silenced.
 |
-| INERT UNTIL THE DESTINATION EXISTS. It writes to config('backup.destination'),
-| /var/backups/manara, which must exist and be owned by www-data because that is
-| who this cron runs as. `sudo bin/backup --install` creates it. Until then every
-| run refuses with an `error` line naming that command — loudly, rather than
-| appearing to work.
+| INERT UNTIL THE DESTINATION EXISTS, AND THAT IS EXACTLY WHAT HAPPENED. It
+| writes to config('backup.destination'), /var/backups/manara, which must exist
+| and be owned by www-data because that is who this cron runs as. `sudo
+| bin/backup --install` creates it. IT WAS NEVER RUN. From the day this schedule
+| line was added until 2026-09-12, every nightly run refused with an `error`
+| line naming that command, and this platform had never taken a single backup —
+| because the cron line ends in `>> /dev/null 2>&1` and nothing read the log.
+| Everything above worked. `backup:check`, below, is what was missing.
+|
+| ONE MORE FIELD IN THE LINE: `offsite`. After a set is written and verified it
+| is copied to the off-site store, and that step can never fail this command —
+| the set already exists on disk by then. Its outcome rides in the summary and
+| `backup:check` grades it, so a shipper that has been failing all week is
+| caught by the checker rather than by the exit code of a command that
+| succeeded.
 */
 Schedule::command('backup:run')->dailyAt('02:40')->withoutOverlapping(60);
+
+/*
+|--------------------------------------------------------------------------
+| The backup watchdog
+|--------------------------------------------------------------------------
+|
+| Everything above assumes somebody would notice a backup that stopped. Nobody
+| did. `backup:run` was scheduled nightly at 02:40 for weeks, /var/backups/manara
+| did not exist, the command refused correctly every single night with a clear
+| sentence and a remedy, and NOT ONE BACKUP WAS EVER TAKEN. The refusal went to
+| /dev/null with the rest of cron's output.
+|
+| WHY THIS IS NOT "ALERT WHEN backup:run FAILS"
+|
+| That alerter would have said nothing for the entire outage. On most of those
+| nights `backup:run` did not report a failure — it reported one into a black
+| hole, and on any night the scheduler itself had stopped it would not have run
+| at all. An alerter driven by events is silent exactly when the event source
+| dies, and the event source dying is the thing being watched for.
+|
+| So this command never looks at `backup:run`. It looks at the DESTINATION and
+| asks how old the newest set is that passes every check we would apply to one we
+| had just written. Nothing has to tell it anything; a backup that stops
+| happening produces a growing number, and a number crosses a threshold on its
+| own. That is the difference between a watchdog that can be starved into silence
+| and one that cannot.
+|
+| 14:20 UTC, and the hour is the point: half a day away from the 02:40 backup, so
+| the two never share a `schedule:run` minute, never share a lock, and a
+| `backup:run` wedged under `withoutOverlapping(60)` cannot take the checker with
+| it. Clear of the :17 media sweep, the :47 canary and the quarter-hourly reaper.
+| Mid-afternoon UTC is also late morning in US Eastern, where the operator is —
+| an alert that fires at 03:00 local is an alert read at 09:00 anyway.
+|
+| withoutOverlapping(30), not the bare call, for the reason the canary and the
+| media sweep both deviate: the bare form holds its lock for 24 hours, so one
+| killed run silences the watchdog for a day. A watchdog whose failure mode is
+| "stops watching, says nothing" is the failure mode it exists to prevent.
+|
+| THE ALERT CONTRACT
+|
+|   exit  status   level     meaning                                     action
+|   ----  -------  --------  ------------------------------------------  ------
+|    0    pass     info      a verified set younger than the threshold    none
+|                            (36h) is here, and the off-site position is
+|                            as configured
+|    1    failed   error     no set at all, no RECENT set, a set that no  page
+|                            longer verifies, an unusable destination, or
+|                            an off-site copy that is configured and is
+|                            not there
+|    2    blocked  error     no destination is configured, so this run    page
+|                            is not evidence about this platform
+|    3    partial  warning   it IS evidence and names what it could not   ticket
+|                            see: crashed `*.partial` runs left behind,
+|                            or a gap in the checker's OWN history
+|
+| ITS LOG CHANNEL DEFAULTS TO `monitors`, WHICH IS THE FIX FOR THE ORIGINAL BUG.
+| `media:verify` and `tenancy:canary` default their channel to the application's
+| own and expect an operator to point them at a delivering one; this task exists
+| because the one thing nobody did was the one manual step. `monitors` is the
+| stack of the ordinary file line plus `ops-alerts`, which emails at `error` and
+| is inert until OPS_ALERT_EMAIL is set — so setting that single variable turns
+| the on-call contract on for this and everything else pointed at it, and until
+| it is set this costs one no-op handler per run.
+|
+| AND WHAT IF THE CHECKER ITSELF STOPS RUNNING. Four defences, deliberately not
+| all of the same kind, because three of them share one point of failure — see
+| the docblock on App\Console\Commands\BackupCheck, which sets them out with the
+| code that enforces each. The short version: it does not depend on the thing it
+| watches; it writes and reads back its own run history, so a checker that was
+| dead for a week says so when it wakes; it writes one line on every run so the
+| ABSENCE of a line means something; and BACKUP_CHECK_HEARTBEAT_URL is a dead
+| man's switch pinged only after a clean run, which is the only one of the four
+| that survives this host going away. That URL is UNSET today, so the checker's
+| own silence is currently detectable and not alerted. That is the residual risk
+| and it is written down rather than implied away.
+*/
+Schedule::command('backup:check --json')->dailyAt('14:20')->withoutOverlapping(30);
+
+/*
+|--------------------------------------------------------------------------
+| The restore drill
+|--------------------------------------------------------------------------
+|
+| `bin/backup` has carried the sentence THE DATABASE HALF OF A RESTORE HAS NEVER
+| BEEN EXECUTED since the tooling was written. A verified archive is not a proven
+| restore, and the difference is only ever discovered on the day it matters. This
+| restores the newest set into a scratch schema on the managed database server,
+| checks that the rows that came back have the files that came back, and drops
+| the schema.
+|
+| NOT ONTO STAGING, and the reason is not squeamishness: staging is deliberately
+| scrubbed of real people, which is what makes it safe to hand around for
+| testing, and putting a production set on it would trade a backup problem for a
+| privacy incident involving children's school records. The full safety argument
+| — five independent guards, and what happens to a scratch schema if the process
+| is killed — is in App\Console\Commands\BackupDrill.
+|
+| WEEKLY, NOT NIGHTLY. What this proves changes slowly: it is a property of the
+| dump format, the client, the server and this code, not of a particular night's
+| data — and `backup:check` already opens every night's set and verifies both
+| halves from the inside. Nightly would restore a full copy of the production
+| database onto the managed instance every 24 hours, which costs real IO on the
+| server the application is running against and multiplies the window in which a
+| scratch schema exists at all. Weekly bounds "how long could the restore have
+| been broken without us knowing" to seven days, against an unbounded number of
+| days before this existed.
+|
+| Sunday 04:20 UTC: the quietest hour of the quietest day, well clear of the
+| 02:40 backup (so it drills a set that is already finished), the 03:10/03:25
+| sweeps and the 14:20 check.
+|
+| withoutOverlapping(120) — a restore of a growing database is the longest task
+| in this file, and two drills at once would mean two scratch copies of
+| production on the server at the same time. Two hours comfortably exceeds a run
+| and expires long inside the week.
+|
+| THE ALERT CONTRACT
+|
+|   exit  status   level     meaning                                     action
+|   ----  -------  --------  ------------------------------------------  ------
+|    0    pass     info      the set restored and what came back matches  none
+|                            what its manifest said it captured
+|    1    failed   error     THE BACKUP IS NOT A BACKUP: it did not       page
+|                            restore, or it restored and the rows or the
+|                            files are not what it claimed
+|    2    blocked  error     the drill could not run and proves nothing:  page
+|                            no set, no privilege to create a scratch
+|                            schema, a dump that names a database, an
+|                            unsafe prefix. The restore stays UNPROVEN
+|    3    partial  warning   it ran and could not check everything — the  ticket
+|                            row budget, or a manifest predating a field
+|
+| `blocked` pages rather than tickets on purpose. "The drill did not run" and
+| "the restore is broken" are different facts, but they put the platform in the
+| same position: nobody knows whether the backups work. That is the position this
+| whole slice of work exists to end.
+*/
+Schedule::command('backup:drill --json')->weeklyOn(0, '04:20')->withoutOverlapping(120);

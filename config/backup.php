@@ -236,4 +236,285 @@ return [
 
     'process_timeout' => (int) env('BACKUP_PROCESS_TIMEOUT', 1800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | The watchdog — because a backup that stops happening is silent
+    |--------------------------------------------------------------------------
+    |
+    | On 2026-09-12 this platform was found never to have taken a backup. Not a
+    | stale one: none, ever. `backup:run` had been scheduled nightly at 02:40 for
+    | weeks, /var/backups/manara did not exist because `sudo bin/backup --install`
+    | was never run on that box, and the command refused correctly every single
+    | night with the sentence "The backup destination is not usable, so nothing
+    | was written." Nobody ever saw it, because the cron line ends in
+    | `>> /dev/null 2>&1` and nothing else was watching.
+    |
+    | Every check in `backup:run` worked. The gap was that a REFUSAL and a
+    | SUCCESS are indistinguishable from the outside, and the outside is where
+    | everybody stands.
+    |
+    | `backup:check` is the outside. It does not watch `backup:run` — watching a
+    | command tells you nothing on the nights it does not run, which was every
+    | night — it looks at the DESTINATION and asks how old the newest verified
+    | set is. That is a pull, not a push, and it is the difference between a
+    | watchdog that can be starved into silence and one that cannot.
+    |
+    */
+
+    'check' => [
+
+        /*
+         * WHY THIS DEFAULTS TO `monitors` AND THE OTHER MONITORS DEFAULT TO null.
+         *
+         * `media:verify` and `tenancy:canary` both take a log channel from env
+         * and default to the application's own — which means their email path
+         * is OFF until somebody edits .env, and this task exists because the one
+         * thing nobody did was the one manual step. So this one defaults to the
+         * `monitors` stack (config/logging.php): the ordinary file line, plus
+         * `ops-alerts`, which emails the operator at level `error` and is inert
+         * while OPS_ALERT_EMAIL is unset. The stack sets `ignore_exceptions`, so
+         * a mail failure can never take down the file line beside it.
+         *
+         * Setting OPS_ALERT_EMAIL is therefore the single switch that turns the
+         * whole on-call contract on, for this and for anything else pointed at
+         * `monitors`. Until it is set, this channel costs one extra no-op
+         * handler per run and nothing else.
+         */
+        'log_channel' => env('BACKUP_CHECK_LOG_CHANNEL', 'monitors'),
+
+        /*
+         * HOW OLD THE NEWEST VERIFIED SET MAY BE BEFORE THIS IS AN EMERGENCY.
+         *
+         * 36 hours, not 24: `backup:run` is daily at 02:40, so a threshold of 24
+         * would page on any night the run was ten minutes late, and an alarm
+         * that fires on an ordinary Tuesday is an alarm that gets silenced —
+         * which is how this platform got here. 36 is one missed nightly run plus
+         * twelve hours of slack, so the FIRST missed night pages and no ordinary
+         * night does.
+         *
+         * It is measured from the manifest's `created_at`, which is written by
+         * the run that took the set, not from the file's mtime, which an rsync
+         * or a `cp -p` can carry across from somewhere else.
+         */
+        'max_age_hours' => (int) env('BACKUP_CHECK_MAX_AGE_HOURS', 36),
+
+        /*
+         * THE CHECKER'S OWN HEARTBEAT.
+         *
+         * A checker whose own failure is invisible reproduces the bug it exists
+         * to catch, so `backup:check` records every run here and reports the gap
+         * since its previous one. A check that has been dead for a week and then
+         * runs says so in its own output, and an operator reading the file has a
+         * history rather than a single line.
+         *
+         * storage/app/ for the reasons media:verify's baseline lives there: it
+         * survives a `git checkout` into the live tree, survives `cache:clear`,
+         * and is not in the database — a record of whether the backups are
+         * healthy must not live in the thing the backups exist to restore.
+         *
+         * Losing the file costs one run's self-history and nothing else.
+         */
+        'heartbeat_path' => env('BACKUP_CHECK_HEARTBEAT_PATH', storage_path('app/backup-check/last-run.json')),
+
+        'self_gap_hours' => (int) env('BACKUP_CHECK_SELF_GAP_HOURS', 36),
+
+        /*
+         * THE DEAD MAN'S SWITCH, AND THE ONLY PART OF THIS THAT SURVIVES THE HOST.
+         *
+         * Everything else here is in-band: a heartbeat file on the disk being
+         * watched, a log line written by the process being watched, an email
+         * sent by the application being watched. If `schedule:run` stops, if
+         * cron stops, if the droplet stops, EVERY ONE of those goes quiet
+         * together and quiet is exactly what a healthy night looks like. That is
+         * the residual shape of the original bug and no amount of in-band
+         * checking removes it.
+         *
+         * The only construction that does is an outside observer expecting to
+         * hear from us. Set this to a URL that alerts when it is NOT called
+         * (healthchecks.io, Better Stack, a DigitalOcean uptime check against a
+         * push endpoint) and the check pings it after a CLEAN run only — never
+         * after a failing one, so a failure and a silence both raise the alarm
+         * and only a genuinely healthy platform is quiet.
+         *
+         * Unset, as it is today, the checker's own silence is DETECTABLE (the
+         * heartbeat file and the missing log line both show it) but not
+         * ALERTED. That is the honest state and it is worth writing down rather
+         * than implying otherwise.
+         */
+        'heartbeat_url' => env('BACKUP_CHECK_HEARTBEAT_URL'),
+
+        'heartbeat_timeout' => (int) env('BACKUP_CHECK_HEARTBEAT_TIMEOUT', 10),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | The off-site copy — OFF, and off honestly
+    |--------------------------------------------------------------------------
+    |
+    | `bin/backup` has said in capitals since it was written that there is ONE
+    | COPY, ON ONE VOLUME, ON THE MACHINE IT IS BACKING UP: /var/backups/manara
+    | sits on the same 48G root filesystem as the application, so a destroyed
+    | droplet, a corrupted disk or a wrong `rm` takes the backups with the thing
+    | they were backing up. This block is what closes that, and it is switched
+    | OFF because there are no credentials for it yet.
+    |
+    | IT DOES NOT READ AWS_*. Production's AWS_ACCESS_KEY_ID and friends exist
+    | and are EMPTY, and they belong to the `s3` disk in config/filesystems.php —
+    | the disk MEDIA might live on one day, serving public images. The backup
+    | bucket is the opposite kind of object: private, write-mostly, and holding
+    | an entire organisation's database including records about children. One key
+    | pair for both means the credential that serves logos can also download
+    | every backup ever taken. See App\Support\Backup\OffsiteTarget.
+    |
+    | WHAT DIGITALOCEAN SPACES DOES AND DOES NOT BUY. It is the same provider as
+    | the droplet and the managed database, so it covers the failures that are
+    | actually likely — the droplet destroyed or rebuilt, the volume corrupted, a
+    | wrong `rm`, a deploy that eats the disk, ransomware on the host. It does
+    | NOT cover a DigitalOcean account compromise or suspension, because one
+    | login reaches all three. Put the Space in a DIFFERENT REGION from the
+    | droplet so a regional outage is not a single event, and treat a periodic
+    | copy at a second provider as the next piece of work rather than as done.
+    |
+    */
+
+    'offsite' => [
+
+        /*
+         * The master switch, explicit rather than inferred from "are the keys
+         * filled in". Inferring it means a half-finished .env edit — a bucket
+         * named, the secret not yet pasted — reads as "off-site is off" instead
+         * of "off-site is broken", and the difference between those two is
+         * whether anybody is told.
+         */
+        'enabled' => filter_var(env('BACKUP_OFFSITE_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+
+        'bucket' => env('BACKUP_OFFSITE_BUCKET'),
+
+        /*
+         * For DigitalOcean Spaces the region is the datacentre slug in the
+         * endpoint — nyc3, ams3, sgp1 — and it is part of the SigV4 credential
+         * scope, so a wrong value fails every request with a signature error
+         * that reads like a bad secret.
+         */
+        'region' => env('BACKUP_OFFSITE_REGION'),
+
+        /*
+         * The regional endpoint WITHOUT the bucket: https://nyc3.digitaloceanspaces.com.
+         * The bucket is prepended to the host (virtual-hosted style) unless
+         * `path_style` is on, which is for the S3-compatible stores that only
+         * serve the older shape.
+         */
+        'endpoint' => env('BACKUP_OFFSITE_ENDPOINT'),
+
+        'path_style' => filter_var(env('BACKUP_OFFSITE_PATH_STYLE', false), FILTER_VALIDATE_BOOLEAN),
+
+        'prefix' => env('BACKUP_OFFSITE_PREFIX', 'manara'),
+
+        'key' => env('BACKUP_OFFSITE_KEY'),
+
+        'secret' => env('BACKUP_OFFSITE_SECRET'),
+
+        /*
+         * Sent as `x-amz-server-side-encryption`. AES256 is SSE-S3: the store
+         * encrypts the object at rest with a key IT holds and manages.
+         *
+         * Be exact about what that is worth. It protects the bytes against
+         * somebody walking out of a datacentre with a disk. It protects them
+         * against NOTHING that has the bucket credential or the DigitalOcean
+         * account, because the store decrypts transparently for anyone who can
+         * read the object. These sets contain children's records and private
+         * media, so the protections that actually carry weight here are: a
+         * PRIVATE bucket, a key scoped to that bucket alone, TLS on the wire
+         * (OffsiteTarget refuses a non-https endpoint outright), and the local
+         * set's 0640 mode inside a 0750 directory.
+         *
+         * Client-side encryption before upload — where the store holds only
+         * ciphertext — is deliberately NOT implemented rather than half-done. A
+         * key kept on the same droplet protects against nothing, since anyone
+         * who can read the backups can read the key beside them; a key kept
+         * elsewhere is a custody process that has to survive the very incident
+         * the backups are for, and losing it turns every set into noise. That is
+         * a decision to make on purpose, with somewhere to put the key, not a
+         * config default to sneak in.
+         */
+        'encryption' => env('BACKUP_OFFSITE_SSE', 'AES256'),
+
+        /*
+         * Refuse rather than half-do. Above this, a single PUT is not allowed by
+         * S3 and the correct answer is multipart upload, which is not written
+         * here — an abandoned multipart leaves parts in the bucket that bill
+         * every month and restore nothing. Capped at 5 GiB by OffsiteTarget
+         * whatever this says.
+         */
+        'max_object_bytes' => (int) env('BACKUP_OFFSITE_MAX_OBJECT_BYTES', 5 * 1024 * 1024 * 1024),
+
+        'timeout' => (int) env('BACKUP_OFFSITE_TIMEOUT', 900),
+
+        /*
+         * Turn this on once the off-site copy is provisioned and expected to
+         * work. It changes `backup:check`'s verdict, not its output: while it is
+         * false, a missing off-site copy is stated loudly on every run and does
+         * not page — because today that is a known, accepted, ticketed gap and
+         * an amber that burns every ordinary night is an amber that gets
+         * silenced. Once `enabled` is true this is implied: a configured
+         * off-site copy that is not there is an error whatever this says.
+         */
+        'required' => filter_var(env('BACKUP_OFFSITE_REQUIRED', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | The restore drill — because an unpractised restore is not a backup
+    |--------------------------------------------------------------------------
+    |
+    | `bin/backup` carries the sentence THE DATABASE HALF OF A RESTORE HAS NEVER
+    | BEEN EXECUTED, and the reason: this droplet has the mysql CLIENT and no
+    | server (`/usr/sbin/mysqld` and `/usr/sbin/mariadbd` do not exist, both
+    | units read `inactive`), and the database is a DigitalOcean MANAGED instance.
+    |
+    | `backup:drill` executes it, on the managed server, into a SCRATCH SCHEMA it
+    | creates and drops. Not onto staging: staging is deliberately scrubbed of
+    | real people (see App\Console\Commands\StagingScrub), and shipping a
+    | production set there would put real children's records on the box that gets
+    | handed around for testing — trading a backup problem for a privacy
+    | incident. Not onto a local mysqld either, because installing a database
+    | server on the production application host to prove production is safe is
+    | changing production to check production.
+    |
+    | Every safety property of the drill is in App\Console\Commands\BackupDrill's
+    | docblock, where the code that enforces each one is next to it.
+    |
+    */
+
+    'drill' => [
+
+        'log_channel' => env('BACKUP_DRILL_LOG_CHANNEL', 'monitors'),
+
+        /*
+         * Every scratch schema this command creates begins with this, every
+         * schema it drops must begin with this, and the run REFUSES outright if
+         * the live database name begins with it. Three uses of one string, so
+         * there is no arrangement of configuration in which the drill's DROP can
+         * name the live schema.
+         */
+        'scratch_prefix' => env('BACKUP_DRILL_SCRATCH_PREFIX', 'manara_drill_'),
+
+        /*
+         * The cross-check pulls id and file_name for the restored media rows and
+         * looks for each file in the unpacked archive. Bounded for the reason
+         * media:verify bounds the same walk: past the ceiling the drill reports
+         * `partial` and names the truncation rather than reporting a clean
+         * result it did not earn.
+         */
+        'max_rows' => (int) env('BACKUP_DRILL_MAX_ROWS', 25000),
+
+        /*
+         * A restored dump that produces almost no tables restored almost
+         * nothing, however cleanly the client exited. The real schema is well
+         * over a hundred tables; 20 is a floor that cannot be met by an empty or
+         * half-applied dump and cannot fire on an ordinary one.
+         */
+        'minimum_tables' => (int) env('BACKUP_DRILL_MINIMUM_TABLES', 20),
+    ],
+
 ];

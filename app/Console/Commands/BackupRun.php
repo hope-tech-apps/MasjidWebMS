@@ -4,7 +4,9 @@ namespace App\Console\Commands;
 
 use App\Support\Backup\ArchiveIntegrity;
 use App\Support\Backup\BackupSet;
+use App\Support\Backup\HalfIntegrity;
 use App\Support\Backup\MediaTarget;
+use App\Support\Backup\OffsiteShipper;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -98,10 +100,20 @@ use Throwable;
  * carrying those states, on every run including a clean one, so a backup that
  * quietly stops happening does not look like a backup that is fine.
  *
+ * THE SET DOES NOT STAY ON THIS MACHINE — WHEN IT IS CONFIGURED TO LEAVE
+ *
+ * After the set is written, verified and moved into place, it is copied to the
+ * off-site store (App\Support\Backup\OffsiteShipper). That step can NEVER fail
+ * this command: a complete set already exists on disk by then, and a shipper
+ * able to turn a successful backup into a failed one is a shipper somebody
+ * eventually switches off. Its outcome is a field in the log line above, and
+ * `backup:check` is what grades it — including the case that matters most
+ * today, which is that no off-site store is configured at all.
+ *
  * WHAT THIS COMMAND DOES NOT COVER — see bin/backup for the full list.
- * Retention is a bounded count on ONE volume; there is no offsite copy; and the
- * relationship between these files and DigitalOcean's own managed-database
- * backups is written down nowhere.
+ * Retention is a bounded count on ONE volume; the off-site copy is OFF until
+ * credentials exist for it; and the relationship between these files and
+ * DigitalOcean's own managed-database backups is written down nowhere.
  */
 class BackupRun extends Command
 {
@@ -324,7 +336,11 @@ class BackupRun extends Command
             $databaseFile = $partial.'/'.BackupSet::DATABASE_FILE;
             rename($sqlPath.'.gz', $databaseFile);
 
-            $dbCheck = $this->verifyDatabaseHalf($databaseFile, $config);
+            // Moved to App\Support\Backup\HalfIntegrity so that `backup:check`,
+            // which asks the same question of a set that is now a day old,
+            // cannot come to a different answer about the same file. The
+            // sentences are the originals.
+            $dbCheck = HalfIntegrity::database($databaseFile, $config);
 
             if ($dbCheck !== null) {
                 return $this->refuseAndClean($partial, 'The database dump did not verify; no set was written.', [$dbCheck]);
@@ -452,7 +468,33 @@ class BackupRun extends Command
 
             $pruned = $shrank === null ? $this->prune($destination, $keep, $id) : [];
 
-            return $this->report($final, $manifest, $pruned, $destination, $shrank);
+            // THE SET STOPS BEING THE ONLY COPY HERE — or says why it did not.
+            //
+            // /var/backups/manara is on the same 48G root filesystem as the
+            // application, so until this line existed a destroyed droplet took
+            // the backups with the thing they were backing up. See
+            // App\Support\Backup\OffsiteShipper for the ordering that makes a
+            // remote set both halves or nothing.
+            //
+            // IT CANNOT FAIL THIS RUN, AND THAT IS DELIBERATE. A complete set
+            // has already been written, verified and moved into place; a
+            // credential rotation or a store outage must not turn that into a
+            // failure, because a shipper that can take down `backup:run` is a
+            // shipper somebody eventually switches off, and the local backup
+            // goes with it. The outcome is a FIELD in the single log line below
+            // and `backup:check` is what grades it — within the day, by asking
+            // the store whether the newest verified set is actually there.
+            //
+            // Its own try/catch rather than the outer one: an exception here
+            // would otherwise reach refuseAndClean() and report failure for a
+            // set that is finished and on disk.
+            try {
+                $offsite = OffsiteShipper::forConfig($config)->ship(BackupSet::at($final));
+            } catch (Throwable $e) {
+                $offsite = ['status' => 'failed', 'set' => $id, 'reason' => 'the off-site ship threw: '.$e->getMessage(), 'detail' => [], 'bytes' => 0, 'objects' => []];
+            }
+
+            return $this->report($final, $manifest, $pruned, $destination, $shrank, $offsite);
         } catch (Throwable $e) {
             return $this->refuseAndClean($partial, 'The backup run threw and no set was written.', [$e->getMessage()]);
         } finally {
@@ -460,47 +502,6 @@ class BackupRun extends Command
                 @unlink($credentials);
             }
         }
-    }
-
-    /**
-     * mysqldump writes a `-- Dump completed` line only when it finished. This is
-     * the check that tells a real dump from the 20-byte one in /root/backups.
-     */
-    private function verifyDatabaseHalf(string $file, array $config): ?string
-    {
-        $minimum = (int) ($config['database']['minimum_bytes'] ?? 4096);
-        $bytes = (int) filesize($file);
-
-        if ($bytes < $minimum) {
-            return sprintf(
-                '%s is %d bytes, under the %d-byte floor. /root/backups/pre-forms-migration-20260728-233129.sql.gz is 20 bytes and decompresses to nothing; that is what this floor is for.',
-                BackupSet::DATABASE_FILE,
-                $bytes,
-                $minimum,
-            );
-        }
-
-        $gz = ArchiveIntegrity::inspectGzip($file);
-
-        if (! $gz['ok']) {
-            return sprintf('%s: %s', BackupSet::DATABASE_FILE, $gz['error']);
-        }
-
-        if ($gz['bytes'] === 0) {
-            return sprintf('%s is a valid gzip stream that decompresses to nothing — the dump captured no rows.', BackupSet::DATABASE_FILE);
-        }
-
-        $marker = (string) ($config['database']['completion_marker'] ?? '-- Dump completed');
-
-        if ($marker !== '' && ! str_contains($gz['tail'], $marker)) {
-            return sprintf(
-                '%s does not end with "%s", the line mysqldump writes only when it finished. The dump was truncated.',
-                BackupSet::DATABASE_FILE,
-                $marker,
-            );
-        }
-
-        return null;
     }
 
     /**
@@ -934,7 +935,7 @@ class BackupRun extends Command
         return self::EXIT_OK;
     }
 
-    private function report(string $path, array $manifest, array $pruned, string $destination, ?array $shrank = null): int
+    private function report(string $path, array $manifest, array $pruned, string $destination, ?array $shrank = null, ?array $offsite = null): int
     {
         $integrity = $manifest['media_integrity'];
         $dangling = (int) ($integrity['rows_without_file'] ?? 0);
@@ -949,6 +950,10 @@ class BackupRun extends Command
             'media_disks' => $manifest['media_disks'] ?? [],
             'media_integrity' => $integrity,
             'retention_regression' => $shrank,
+            // Carried on EVERY run including a clean one, so that "these sets
+            // exist in one place only" is visible in the daily line rather than
+            // being something an operator has to go and read code to discover.
+            'offsite' => $offsite,
             'pruned' => $pruned,
             'sets_held' => count(BackupSet::all($destination)),
         ];
@@ -974,6 +979,10 @@ class BackupRun extends Command
 
             if ($pruned !== []) {
                 $this->line(sprintf('  pruned    %s', implode(', ', $pruned)));
+            }
+
+            if ($offsite !== null) {
+                $this->line(sprintf('  off-site  %s%s', $offsite['status'], $offsite['reason'] === null ? '' : ' — '.$offsite['reason']));
             }
         }
 

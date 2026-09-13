@@ -8,6 +8,12 @@
 #     sudo bin/backup --label=pre-r9   # name it, e.g. before a deploy
 #     sudo bin/backup --install        # one-time: create the destination
 #
+# and the three commands that make a set mean something, all via artisan:
+#
+#     php artisan backup:check         # is there a recent, verified, off-site set?
+#     php artisan backup:ship --all    # copy the sets here to the off-site store
+#     php artisan backup:drill         # prove the newest set actually restores
+#
 # WHY THIS EXISTS
 #
 # On 2026-08-17 a lobby television read "No announcements" while ten were live.
@@ -43,6 +49,25 @@
 # cron and no timer on this host that writes a backup. Every artifact in both was
 # made by hand, before a migration somebody was nervous about.)
 #
+# AND THEN THE SCHEDULED ONE WROTE NOTHING EITHER, FOR WEEKS.
+#
+# On 2026-09-12 this platform was found never to have taken a backup at all.
+# `backup:run` had been scheduled nightly at 02:40 since the day this file was
+# written; /var/backups/manara did not exist, because the `--install` above was
+# never run on that box; and the command refused every single night with the
+# sentence "The backup destination is not usable, so nothing was written." and
+# the remedy beside it.
+#
+# Every check in this tooling worked. Every refusal was correct. Nobody ever saw
+# one, because the cron line ends in `>> /dev/null 2>&1` and nothing else was
+# watching — and from the outside, which is where everybody stands, a refusal
+# and a success look exactly the same.
+#
+# That is what `php artisan backup:check` is for, and why it does not watch
+# `backup:run`: a watchdog that waits to be told about a failure is silent on
+# every night the thing it watches does not run, which was every night. It looks
+# at the destination and at the clock instead.
+#
 # ─────────────────────────────────────────────────────────────────────────────
 # WHAT THIS COVERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,12 +85,22 @@
 # WHAT THIS DOES NOT COVER — read this before trusting it
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# 1. IT IS ONE COPY, ON ONE VOLUME, ON THE MACHINE IT IS BACKING UP.
-#    /var/backups/manara is on the same 48G root filesystem as the application.
-#    A destroyed droplet, a corrupted disk, or a wrong `rm` takes the backups
-#    with the thing they were backing up. There is NO OFFSITE COPY. Nothing here
-#    ships a set anywhere, and until something does, this protects against
-#    mistakes and not against losing the machine.
+# 1. THE OFF-SITE COPY EXISTS AND IS SWITCHED OFF, BECAUSE THERE ARE NO
+#    CREDENTIALS FOR IT YET.
+#    /var/backups/manara is on the same 48G root filesystem as the application,
+#    so a destroyed droplet, a corrupted disk or a wrong `rm` takes the backups
+#    with the thing they were backing up. `backup:run` now copies each verified
+#    set to an S3-compatible store, and `backup:ship` does it for the sets that
+#    are already here — but production's AWS_* keys are empty, this reads its own
+#    BACKUP_OFFSITE_* variables, and none of them is set. So TODAY THERE IS STILL
+#    ONE COPY, ON ONE VOLUME, and `backup:check` says exactly that on every run
+#    rather than leaving it to be discovered.
+#    To turn it on, see deploy/README.md: a private Space in a region OTHER than
+#    this droplet's, a key scoped to that Space alone, and six .env lines. Note
+#    what that does and does not buy — DigitalOcean Spaces is the same provider
+#    as this droplet and the managed database, so it covers a destroyed droplet
+#    and a corrupted volume and it does NOT cover a compromised or suspended
+#    DigitalOcean account, which reaches all three.
 #
 # 2. RETENTION IS A COUNT, AND IT IS THE ONLY THING BOUNDING DISK USE.
 #    BACKUP_KEEP_SETS (default 14) sets are kept; older ones are deleted after a
@@ -90,29 +125,29 @@
 #    the only line the media has. Confirming DO's settings and writing them into
 #    deploy/README.md is an open task, not something this script did.
 #
-# 4. THE DATABASE HALF OF A RESTORE HAS NEVER BEEN EXECUTED. A verified archive
-#    is not a proven restore, and the two halves of `backup:restore` are not
-#    equally proven:
-#      the file half   IS executed — a real tar unpacks a real archive onto a
-#                      real disk in the test suite, and every refusal runs.
-#      the db half     is NOT. Nothing in this repository has ever applied a
-#                      dump to a real MySQL or MariaDB server, because there is
-#                      nowhere permitted to: this host carries the CLIENT only
-#                      (/usr/bin/mysql, /usr/bin/mariadb — there is no
-#                      /usr/sbin/mysqld and no /usr/sbin/mariadbd, and both
-#                      units read `inactive`), and the database is a DigitalOcean
-#                      MANAGED instance that is off limits. Installing a server
-#                      here to prove a backup is safe would mean changing
-#                      production to check that production is safe.
-#    What IS proven short of the server: the whole decompressed dump reaches a
-#    real child process on STDIN, byte for byte, and a non-zero exit from that
-#    process makes the command report failure. The client's own behaviour is
-#    taken from its manual — and that is exactly where the bug was: `mysql
-#    --execute='source dump.sql'` runs the client's SOURCE command, which does
-#    not abort on error and lets the client exit 0, so a restore that died on
-#    statement 812 of 4000 reported success. It is fed on stdin now.
-#    Restoring onto a scratch database on a schedule is still not built, and
-#    until it is, this line stays.
+# 4. THE DATABASE HALF OF A RESTORE IS EXERCISED WEEKLY, AND HERE IS EXACTLY
+#    WHAT THAT MEANS.
+#    It used to say "has never been executed", and it was true: nothing in this
+#    repository had applied a dump to a real MySQL or MariaDB server, because
+#    there was nowhere permitted to. This host carries the CLIENT only
+#    (/usr/bin/mysql, /usr/bin/mariadb — there is no /usr/sbin/mysqld and no
+#    /usr/sbin/mariadbd, and both units read `inactive`), and the database is a
+#    DigitalOcean MANAGED instance.
+#    `backup:drill`, scheduled Sunday 04:20 UTC, restores the newest set into a
+#    SCRATCH SCHEMA on that managed server — created by the drill, dropped by the
+#    drill, swept by the next drill if a kill left one behind — then counts the
+#    restored tables, counts the restored media rows against the manifest, and
+#    checks each of those rows against the files unpacked from the archive into a
+#    private 0700 directory. Not onto staging: staging is scrubbed of real people
+#    on purpose, and a production set there is a privacy incident.
+#    WHAT IS THEREFORE PROVEN: this dump, applied by this client, to this server,
+#    produces the tables and the rows the manifest claims, and its media archive
+#    holds the files those rows name.
+#    WHAT IS STILL NOT PROVEN: applying a set to the LIVE schema over an existing
+#    database, which is what `backup:restore --force` does and which nothing may
+#    rehearse on production. The drill restores into an empty schema; a real
+#    restore lands on top of live tables. Run `backup:drill --keep-scratch` and
+#    look, before trusting a restore in an emergency.
 #
 # 5. NOT COVERED AT ALL: the private disk (storage/app/private — form
 #    attachments, group media, credential documents, 8 KB today), .env, the

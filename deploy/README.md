@@ -95,7 +95,7 @@ Only browser origins need listing (native iOS/Android apps don't send an Origin
 header). The Nuxt site's client-side fetches (e.g. the splash modal) come from
 `www.burlingtonmasjid.com`, so that origin must stay in the list.
 
-## Backups — `bin/backup`, `backup:run`, `backup:restore`
+## Backups — `bin/backup`, `backup:run`, `backup:check`, `backup:ship`, `backup:drill`, `backup:restore`
 
 Every backup this server had before 2026-08-21 was a `mysqldump`. When the
 `media` table emptied — 226 rows, every masjid's logo, 45 announcement images —
@@ -120,6 +120,36 @@ sudo bin/backup                   # takes one
 `routes/console.php` schedules `backup:run` daily at 02:40 UTC. Until the
 destination exists every run refuses and logs at `error` naming `--install` — it
 does not fail quietly.
+
+**AND THAT IS EXACTLY WHAT HAPPENED.** On 2026-09-12 this platform was found
+never to have taken a backup at all — not a stale one, none, ever.
+`sudo bin/backup --install` above was never run on the droplet, so every nightly
+run since the schedule was added refused correctly, with a clear sentence and the
+remedy, into `>> /dev/null 2>&1`. Every check worked. Nobody was told, because
+from outside the machine a refusal and a success look the same.
+
+So there are now three more commands, and the first one is the important one:
+
+```sh
+sudo -u www-data HOME=/tmp php artisan backup:check      # is there a recent, verified, off-site set?
+sudo -u www-data HOME=/tmp php artisan backup:ship --all # copy what is here to the off-site store
+sudo -u www-data HOME=/tmp php artisan backup:drill      # prove the newest set really restores
+```
+
+`backup:check` runs daily at 14:20 UTC — half a day from the backup, so a wedged
+`backup:run` lock cannot take it with it. **It does not watch `backup:run`.** An
+alerter that waits to be told about a failure is silent on every night the thing
+it watches does not run, which was every night; this one reads the destination
+and the clock, and fails when the newest VERIFIED set is older than 36 hours
+(one missed nightly run plus slack).
+
+**`OPS_ALERT_EMAIL` is the single variable that makes any of this reach a
+person.** `backup:check` and `backup:drill` log to the `monitors` channel, which
+is the ordinary file line plus `ops-alerts`; `ops-alerts` emails at level `error`
+and is completely inert while that variable is empty — which is how it is on
+production right now. Set it.
+
+`backup:drill` runs weekly, Sunday 04:20 UTC.
 
 ### What a set is
 
@@ -263,19 +293,73 @@ the file half becomes `aws s3 sync` and that is **one config line** —
 set, a media disk whose driver is `s3` makes `backup:run` **refuse the whole
 run** rather than quietly writing a database-only set.
 
-### Which half of a restore has been exercised, and which has only been read
+### The off-site copy — built, and switched OFF until you provision it
 
-**Read this before you rely on `backup:restore` at three in the morning.** An
-untested restore path is a backup nobody has proven, and you are entitled to
-know which half has been run.
+`/var/backups/manara` is on the same 48G root filesystem as the application, so
+until this exists a destroyed droplet takes the backups with the thing they were
+backing up. `backup:run` now copies each verified set to an S3-compatible store,
+and `backup:ship --all` does the sets already on disk.
 
-**The file half is executed.** In the test suite a real `tar` unpacks a real
-`media.tar.gz` into a real directory, a real `gzip` decompresses a real dump,
-and the files are asserted to be on the disk afterwards. Every refusal this
-command makes is executed too.
+**It is off.** It reads its own `BACKUP_OFFSITE_*` variables, not the empty
+`AWS_*` ones, and none of them is set — so today there is still one copy on one
+volume, and `backup:check` says exactly that on every run rather than leaving it
+to be discovered.
 
-**The database half has never been applied to a real MySQL or MariaDB server**
-by anything in this repository, and it cannot be from here:
+To turn it on:
+
+1. Create a **private** Space in a region **other than this droplet's**, so a
+   regional outage is not a single event.
+2. Create a Spaces access key and restrict it to that Space. It must be its own
+   credential: the `AWS_*` keys belong to the disk *media* might live on one day
+   — public images — and this bucket holds an entire organisation's database
+   including children's records. One key pair for both means the credential that
+   serves logos can download every backup ever taken.
+3. Add to `.env` (and **parse-check the file before `config:cache`**, which
+   clears first — a bad `.env` plus `config:cache` is every request 500):
+
+   ```
+   BACKUP_OFFSITE_ENABLED=true
+   BACKUP_OFFSITE_BUCKET=manara-backups
+   BACKUP_OFFSITE_REGION=ams3
+   BACKUP_OFFSITE_ENDPOINT=https://ams3.digitaloceanspaces.com
+   BACKUP_OFFSITE_KEY=...
+   BACKUP_OFFSITE_SECRET=...
+   BACKUP_OFFSITE_PREFIX=manara
+   ```
+4. `php artisan backup:ship --dry-run` — prints the exact URLs, sends nothing.
+5. `php artisan backup:ship --all` — oldest first, so an interrupted run has made
+   progress through the history.
+6. `php artisan backup:check` — should now say `off-site: present`.
+7. `BACKUP_OFFSITE_REQUIRED=true`, so a regression pages instead of being noted.
+
+**Both halves or neither, in the bucket too.** The halves go up first, each is
+HEADed back at the byte length we sent, and the manifest goes **last** — a remote
+prefix with no `manifest.json` is not a set, exactly as a local `*.partial` is
+not. A ship that fails deletes what it put and never writes a manifest.
+
+**What protects the bytes.** TLS in transit (a non-`https` endpoint is refused
+outright), `x-amz-server-side-encryption: AES256` at rest, a private bucket, a
+key scoped to it alone, and locally 0640 files inside a 0750 directory. Be exact
+about the limit: SSE-S3 is the *provider's* key, so it stops a stolen disk and
+stops nothing that holds the bucket credential or the DigitalOcean account.
+Client-side encryption is deliberately not implemented — a key kept on this
+droplet protects nothing, and a key kept elsewhere is a custody process that has
+to survive the incident the backups are for.
+
+**And what the same provider does not buy.** Spaces covers a destroyed droplet, a
+corrupted volume, a wrong `rm`, ransomware on the host. It does **not** cover a
+compromised or suspended DigitalOcean account, which reaches droplet, managed
+database and Space alike. A copy at a second provider is the next piece of work.
+
+### The restore drill — the database half is now executed
+
+**Read this before you rely on `backup:restore` at three in the morning.**
+
+This section used to say the database half of a restore had never been applied to
+a real MySQL server by anything in this repository. It has now, weekly, since
+`backup:drill` exists — but only under conditions worth being precise about.
+
+The constraint has not changed:
 
 ```sh
 ls /usr/bin/mysql /usr/bin/mariadb        # the CLIENT is installed
@@ -283,39 +367,62 @@ ls /usr/sbin/mysqld /usr/sbin/mariadbd    # no such file — no SERVER is
 systemctl is-active mariadb mysql         # inactive, inactive
 ```
 
-The database is a DigitalOcean **managed** instance and is off limits, and this
-droplet is the production application host — installing a server on it to prove
-a backup is safe would be changing production to check that production is safe.
+So the drill restores into a **scratch schema on the managed database server** —
+created by the drill, dropped by the drill, and swept by the next drill if a kill
+left one behind. **Not onto staging**: staging is deliberately scrubbed of real
+people, which is what makes it safe to hand around for testing, and a production
+set there would trade a backup problem for a privacy incident involving
+children's school records.
 
-So the run stops one step short of the server. What *is* executed:
-`tests/Feature/Backup/BackupRestoreDatabaseHalfTest.php` puts a real child
-process exactly where the client stands, asserts that the entire decompressed
-dump reaches it **on stdin, byte for byte**, and asserts that this command
-reports failure when that process exits non-zero. The one thing taken on the
-manual's word is the client's own behaviour, and it is the thing that was wrong:
+It then asserts what came back: the table count, the restored `media` row count
+against the manifest, and each of those rows against files unpacked from the
+archive into a private 0700 directory. A client that exits 0 is not evidence.
+
+**Why it cannot touch live data** (five guards, each sufficient alone; the full
+argument is in `App\Console\Commands\BackupDrill`):
+
+- there is no `--database` option — the scratch name is generated;
+- three assertions run immediately before every statement including the `DROP`,
+  and a live database whose name begins with `BACKUP_DRILL_SCRATCH_PREFIX` makes
+  the drill **refuse to run at all**;
+- the decompressed dump is scanned and refused if it contains `USE` or
+  `CREATE DATABASE` — such a dump moves the client into the live schema, which
+  would overwrite production;
+- every invocation carries `--database=<scratch>` explicitly;
+- the media half is unpacked to a temporary directory, never the media disk.
+
+The backup user needs `CREATE` and `DROP` on `manara_drill_%`. If it does not
+have them the drill exits **2 (blocked)** and names the grant; it never proceeds
+without a scratch schema.
+
+**What is still not proven:** applying a set to the LIVE schema *on top of
+existing tables*, which is what `backup:restore --force` does and which nothing
+may rehearse on production. The drill restores into an empty schema. Run
+`backup:drill --keep-scratch` and look at the result before you trust a restore
+in an emergency.
+
+One thing about the restore path is worth keeping here, because it is the bug
+that started all of this:
 
 > `mysql --execute='source dump.sql'` runs the client's **own** `SOURCE`
 > command, and `SOURCE` does not stop on an error — it prints the failed
 > statement and carries on, and the client exits **0**. A restore that died on
 > statement 812 of 4000 therefore reported success. Fed on stdin the client runs
-> in batch mode, where the first error aborts and the exit status is non-zero
-> (that is precisely what `--force` exists to switch off). This command now feeds
-> the dump on stdin and passes no `--execute` at all.
-
-That paragraph stops being true the day somebody restores a set onto a scratch
-database and writes down here that they did. **Until then: the plumbing is
-proven, the client's behaviour is documented-and-assumed, and no restore of this
-system has ever been performed end to end.**
+> in batch mode, where the first error aborts and the exit status is non-zero.
+> `backup:restore` and `backup:drill` both feed the dump on stdin and pass no
+> `--execute` at all.
 
 ### What this does not cover
 
 The full statement is in the header of `bin/backup`; read it before trusting a
-backup. In short: **one copy, on the same volume as the application** (no
-offsite); retention is a bounded count (14 sets, ~175 MB at today's 12.5 MB per
+backup. In short: the off-site copy is **built and switched off** until somebody
+provisions a Space and fills in six `.env` lines, so today there is still **one
+copy, on the same volume as the application** — and `backup:check` says so on
+every run; retention is a bounded count (14 sets, ~175 MB at today's 12.5 MB per
 set, against 42 GB free) and a full volume makes the run refuse rather than
 part-write; the private disk, `.env` and server configuration are not in it; and
-**the database half of a restore has never been executed** — see the section
-above for exactly how far it has been taken.
+a restore **onto the live schema, over existing tables** has still never been
+executed — see the drill section above for exactly how far it has been taken.
 
 ### Open: DigitalOcean's own database backups
 

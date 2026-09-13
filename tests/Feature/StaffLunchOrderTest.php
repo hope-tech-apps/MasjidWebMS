@@ -503,8 +503,16 @@ class StaffLunchOrderTest extends TestCase
         Sanctum::actingAs($this->admin);
 
         // Form-encoded "0"s, exactly as the board's create form now sends them.
+        //
+        // The date is OUTSIDE the factory's window on purpose. MealMenuFactory
+        // picks `dateTimeBetween('+1 day', '+120 days')` at random, and setUp
+        // creates a menu through it, so any hand-picked date inside those 120
+        // days collides with `unique(masjid_id, service_date)` about one run in
+        // sixty — a failure with nothing to do with what this test asserts, in a
+        // suite where a red run has to mean something. `fake()->unique()` does
+        // not help: it only de-duplicates among faker's own draws.
         $this->post("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus", [
-            'title' => 'Switches off', 'service_date' => now()->addWeeks(9)->toDateString(),
+            'title' => 'Switches off', 'service_date' => now()->addDays(200)->toDateString(),
             'status' => MealMenu::STATUS_DRAFT, 'allow_donation' => '0', 'allow_fee_coverage' => '0',
         ], ['Accept' => 'application/json'])->assertSuccessful();
 
