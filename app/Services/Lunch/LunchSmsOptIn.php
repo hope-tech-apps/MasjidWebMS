@@ -81,7 +81,24 @@ class LunchSmsOptIn
             return DB::transaction(function () use ($menu, $masjidId, $e164, $name, $disclosure) {
                 $contact = $this->contactFor($masjidId, $e164, $name);
 
-                $this->consent->grant($contact, 'web_form', $disclosure);
+                // ONLY when there is no consent record yet. A returning customer
+                // ticking the same box next week is not making a new claim, and
+                // re-recording it would replace the date, the source and — the
+                // part this class cares about most — the exact sentence they
+                // agreed to with whatever DISCLOSURE says today. The docblock
+                // above promises "existing rows keep the sentence THEY were
+                // shown"; until this guard, every repeat order broke that
+                // promise. `SmsConsentService::grant()` now refuses a second
+                // grant outright, so this is also what keeps a repeat order from
+                // failing and taking the service-interest row below with it.
+                //
+                // A SUPPRESSED number still reaches grant() and still throws,
+                // which is the intended path: hasSmsConsent() is false for a
+                // contact who opted out, and a ticked checkbox is not them
+                // taking a STOP back.
+                if (! $contact->hasSmsConsent()) {
+                    $this->consent->grant($contact, 'web_form', $disclosure);
+                }
 
                 // The subscription itself. Idempotent: ordering three weeks
                 // running must not make three rows, and the pair is what

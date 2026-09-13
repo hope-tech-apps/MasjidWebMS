@@ -151,6 +151,148 @@
                 </div>
             </div>
 
+            <!--
+                Text messaging (SMS) — the A2P 10DLC registration OUTCOME.
+
+                Not a capability toggle, which is why it does not live in the
+                loop above: those say what an organisation may USE, this records
+                what the carriers decided. It is SuperAdmin-only for the reason
+                .claude/rules/broadcasts.md names — a masjid admin who could
+                declare their own sender "approved" would be putting
+                unregistered traffic on the carrier network in the platform's
+                name, and the refusal that protects them from that is the whole
+                mechanism.
+
+                Everything the panel asserts about sending comes off the wire.
+                `can_send` and `refusal_reason` are MasjidSmsSender::canSend()
+                and ::refusalReason() — the same two methods the sending path
+                calls — so this screen and a failed delivery row say the same
+                sentence rather than two that drift.
+            -->
+            <div class="d-flex flex-column gap-3 w-100">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <span class="fs-5 fw-semibold">
+                        Text messaging (SMS)
+                    </span>
+                    <span v-if="smsPanel?.sender" class="badge bg-secondary">
+                        {{ SMS_SENDER_STATUS_LABELS[smsPanel.sender.registration_status]
+                            ?? smsPanel.sender.registration_status }}
+                    </span>
+                    <span v-if="smsPanel" class="badge" :class="smsSendBadgeClass">
+                        {{ smsPanel.can_send ? 'Can send' : 'Cannot send' }}
+                    </span>
+                </div>
+
+                <span class="fs-6 text-muted">
+                    Carriers require each organization to register its own A2P 10DLC brand, campaign and
+                    sending number before it may send bulk texts. There is no shared number. Record what the
+                    carriers approved here — this does not perform the registration.
+                </span>
+
+                <div v-if="smsSenderStore.isLoading" class="fs-6 text-muted">
+                    Loading sender…
+                </div>
+
+                <template v-else-if="smsPanel">
+                    <!--
+                        PLATFORM-level, and louder than the tenant refusal
+                        because it is not this organisation's problem to fix: no
+                        provider credentials means nobody sends, however well
+                        registered they are.
+                    -->
+                    <div v-if="smsPanel.provider_configured === false" class="alert alert-danger py-2 mb-0">
+                        <i class="bi bi-exclamation-octagon me-1"></i>
+                        No SMS provider is configured on this deployment, so no organization can send —
+                        approved or not.
+                    </div>
+
+                    <!-- The server's own refusal sentence, verbatim. -->
+                    <div v-if="smsPanel.refusal_reason" class="alert alert-warning py-2 mb-0">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        {{ smsPanel.refusal_reason }}
+                    </div>
+
+                    <div v-if="smsPanel.sender?.approved_at" class="fs-6 text-muted">
+                        Approved {{ formatSmsDate(smsPanel.sender.approved_at) }}.
+                    </div>
+
+                    <!--
+                        Which provider account this deployment sends through.
+                        Platform-level and read-only: it is not a per-tenant
+                        choice, and there is no field for it below because an
+                        operator changing it here would be pointing one
+                        organisation at credentials that do not exist.
+                    -->
+                    <div v-if="smsPanel.provider" class="fs-6 text-muted">
+                        Provider on this deployment: <span class="fw-semibold">{{ smsPanel.provider }}</span>.
+                    </div>
+
+                    <form class="d-flex flex-column gap-3 w-100" @submit.prevent="saveSmsSender">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-phone-number">Sending number</label>
+                                <input id="sms-phone-number" type="text" class="form-control"
+                                    v-model.trim="smsForm.phone_number" placeholder="+16135550142"
+                                    :disabled="smsSenderStore.isSaving" />
+                                <div class="form-text">
+                                    Full international form. Inbound STOP messages are matched to this
+                                    organization by this number, so it must be exact.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-messaging-service">Messaging Service SID</label>
+                                <input id="sms-messaging-service" type="text" class="form-control"
+                                    v-model.trim="smsForm.messaging_service_sid" placeholder="MG…"
+                                    :disabled="smsSenderStore.isSaving" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-sender-label">Sender label</label>
+                                <input id="sms-sender-label" type="text" class="form-control"
+                                    v-model.trim="smsForm.sender_label" :disabled="smsSenderStore.isSaving" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-registration-status">Registration status</label>
+                                <select id="sms-registration-status" class="form-select"
+                                    v-model="smsForm.registration_status" :disabled="smsSenderStore.isSaving">
+                                    <option v-for="option in SMS_SENDER_STATUS_OPTIONS" :key="option.value"
+                                        :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-brand-id">Brand registration id</label>
+                                <input id="sms-brand-id" type="text" class="form-control"
+                                    v-model.trim="smsForm.brand_registration_id" :disabled="smsSenderStore.isSaving" />
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fs-6" for="sms-campaign-id">Campaign registration id</label>
+                                <input id="sms-campaign-id" type="text" class="form-control"
+                                    v-model.trim="smsForm.campaign_registration_id"
+                                    :disabled="smsSenderStore.isSaving" />
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fs-6" for="sms-notes">Notes</label>
+                                <textarea id="sms-notes" class="form-control" rows="2" v-model.trim="smsForm.notes"
+                                    :disabled="smsSenderStore.isSaving"></textarea>
+                            </div>
+                        </div>
+
+                        <div>
+                            <button type="submit" class="btn btn-primary btn-sm" :disabled="smsSenderStore.isSaving">
+                                <span v-if="smsSenderStore.isSaving"
+                                    class="spinner-border spinner-border-sm me-2"></span>
+                                {{ smsSenderStore.isSaving ? 'Saving…' : 'Save sender' }}
+                            </button>
+                        </div>
+                    </form>
+                </template>
+
+                <span v-else class="fs-6 text-muted">
+                    The sender could not be loaded for this organization.
+                </span>
+            </div>
+
             <!-- Layer 2: who can sign in to this organisation and what each can do. -->
             <div class="d-flex flex-column gap-2 w-100">
                 <span class="fs-5 fw-semibold">
@@ -238,9 +380,16 @@ import { CapabilityKey } from '@/core/types/data/Capability';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidsStore } from '@/stores/super/masjidsStore';
+import { useSmsSenderStore } from '@/stores/super/smsSenderStore';
+import {
+    SMS_SENDER_STATUS_LABELS,
+    SMS_SENDER_STATUS_OPTIONS,
+    SmsSenderPayload,
+    SmsSenderStatus,
+} from '@/core/types/data/masjid-related/SmsSender';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
-import { onBeforeMount, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeMount, onBeforeUnmount, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 // Lifecycle hooks
@@ -251,6 +400,7 @@ onBeforeMount(async () => {
         // still in flight (e.g. a build started in a previous session).
         await fetchProvisioningJobs();
         if (hasActiveJobs()) startPolling();
+        await loadSmsSender();
     } else {
         router.push('/dashboard/super/masjids');
     }
@@ -265,6 +415,7 @@ const route = useRoute();
 
 // Stores
 const masjidsStore = useMasjidsStore();
+const smsSenderStore = useSmsSenderStore();
 
 // Computed
 
@@ -603,6 +754,124 @@ const toggleAssistantAccess = (enabled: boolean) => {
             }
         })
 }
+
+// ---- Text messaging (SMS) sender identity (T-009) ----
+//
+// The panel records the OUTCOME of an A2P 10DLC registration. Nothing here
+// registers anything: brand and campaign registration happens in the provider
+// console and at the carriers, takes days, and can be refused. The steps an
+// operator performs are written out in .claude/rules/broadcasts.md.
+//
+// SuperAdmin-only, and it must stay on this screen. A self-serve "our number is
+// approved" control on the masjid dashboard is the specific failure that rule
+// names, because the organisation whose reputation it burns is every other
+// tenant on the provider account.
+
+const smsPanel = computed(() => smsSenderStore.panel);
+
+/**
+ * The form is seeded from the SAVED row, and from nothing else.
+ *
+ * `registration_status` falls back to `unregistered` — the value that means
+ * "nothing has been submitted", which is the truth about an organisation with
+ * no row. It is deliberately not `pending`: a default that quietly claims
+ * paperwork is in flight is a default that lies on every new organisation.
+ */
+const smsForm = ref<SmsSenderPayload>({
+    phone_number: '',
+    messaging_service_sid: '',
+    sender_label: '',
+    registration_status: 'unregistered',
+    brand_registration_id: '',
+    campaign_registration_id: '',
+    notes: '',
+});
+
+/**
+ * "Can send" is the SERVER's answer, never re-derived here.
+ *
+ * MasjidSmsSender::canSend() is approval AND an originating identity, and the
+ * sending path calls that method. A second copy of the rule in this component
+ * would show a green badge over a channel that then refuses.
+ */
+const smsSendBadgeClass = computed<string>(() =>
+    smsPanel.value?.can_send ? 'bg-success' : 'bg-secondary');
+
+const formatSmsDate = (iso: string): string => {
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+        ? iso
+        : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const loadSmsSender = async (): Promise<void> => {
+    const id = route.params.masjid_id as string;
+    if (!id) return;
+
+    try {
+        const panel = await smsSenderStore.fetchSender(id);
+        const sender = panel?.sender;
+        smsForm.value = {
+            phone_number: sender?.phone_number ?? '',
+            messaging_service_sid: sender?.messaging_service_sid ?? '',
+            sender_label: sender?.sender_label ?? '',
+            registration_status: (sender?.registration_status ?? 'unregistered') as SmsSenderStatus,
+            brand_registration_id: sender?.brand_registration_id ?? '',
+            campaign_registration_id: sender?.campaign_registration_id ?? '',
+            notes: sender?.notes ?? '',
+        };
+    } catch (e) {
+        // Non-fatal: the section says it could not load rather than inventing a
+        // state for a sender it has not read.
+        console.error('Fetch SMS sender error:', e);
+    }
+};
+
+/**
+ * Record the registration outcome.
+ *
+ * Approving is confirmed out loud because it is the moment this organisation
+ * starts putting traffic on the carrier network — and because "approved" here
+ * is a claim about what the carriers decided, not a wish.
+ */
+const saveSmsSender = async (): Promise<void> => {
+    const id = route.params.masjid_id as string;
+    if (!id) {
+        MSwal.fire('Sorry', 'The masjid ID is missing.', 'error');
+        return;
+    }
+
+    if (smsForm.value.registration_status === 'approved') {
+        const confirmed = await QSwal.fire(
+            'Question',
+            'Mark this organization as approved by the carriers? Only record this once the A2P 10DLC '
+            + 'brand and campaign have actually been approved — from this point its admins can send '
+            + 'text messages from this number.',
+            'question'
+        );
+        if (!confirmed.isConfirmed) return;
+    }
+
+    let swalInstance: SweetAlertOptions = { title: 'Info', text: 'Nothing', icon: 'info' };
+
+    try {
+        const saved = await smsSenderStore.saveSender(id, smsForm.value);
+        swalInstance.title = 'Success';
+        swalInstance.text = saved.can_send
+            ? 'Sender saved. This organization can send text messages.'
+            : `Sender saved. ${saved.refusal_reason ?? ''}`.trim();
+        swalInstance.icon = saved.can_send ? 'success' : 'warning';
+    } catch (e) {
+        // A 422 here is the validator's sentence — an unnormalisable number, or
+        // an "approved" sender with nothing to send from. Shown as written.
+        const error = e as AxiosError<BackendResponseData>;
+        swalInstance.title = 'Sorry';
+        swalInstance.text = getMessageFromObj(error) || 'Could not save the sender.';
+        swalInstance.icon = 'error';
+    } finally {
+        MSwal.fire(swalInstance);
+    }
+};
 
 // ---- App provisioning control plane ----
 

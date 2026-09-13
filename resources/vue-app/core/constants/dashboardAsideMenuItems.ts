@@ -402,6 +402,31 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin']
     },
     {
+        // The figures a grant application or a funder report asks for, with the
+        // definition of each one attached (T-024).
+        //
+        // Deliberately NO `requiresOrgTypes`: every vertical applies for grants,
+        // and App\Support\ImpactMetrics already picks the default metric set from
+        // Masjid::orgType() — a school sees its enrolment figures, a community org
+        // its intake ones, without this file knowing which. Gating the item to one
+        // vertical here would hide the screen from the tenants it was built for
+        // while the server happily answers them.
+        //
+        // `requiresCrm` matches the server: the route lives inside the `crm`
+        // group, so without it the item leads to a 403.
+        title: "Impact Report",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 3H7C5.9 3 5 3.9 5 5V19C5 20.1 5.9 21 7 21H17C18.1 21 19 20.1 19 19V8L14 3Z" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M14 3V8H19" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M9 17V13" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M12 17V10" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M15 17V14.5" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>`,
+        to: '/masjid/impact-report',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true
+    },
+    {
         title: "Donation Funds",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22C17.52 22 22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2ZM20 17.5C20 18.28 16.87 20 12 20C7.13 20 4 18.28 4 17.5V14.77C5.61 15.55 8.72 16 12 16C15.28 16 18.39 15.55 20 14.77V17.5ZM20 12.23C18.39 13.01 15.28 13.5 12 13.5C8.72 13.5 5.61 13.01 4 12.23V9.45C5.61 10.24 8.72 10.75 12 10.75C15.28 10.75 18.39 10.24 20 9.45V12.23ZM12 8.75C7.13 8.75 4 7.03 4 6.5C4 5.97 7.13 4 12 4C16.87 4 20 5.72 20 6.5C20 7.28 16.87 8.75 12 8.75Z" fill="white"/>

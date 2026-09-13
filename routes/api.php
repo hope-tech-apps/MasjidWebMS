@@ -12,6 +12,7 @@ use App\Http\Controllers\Mobile\MasjidMobileAppFeaturesController;
 use App\Http\Controllers\Mobile\Member\MemberAuthController;
 use App\Http\Controllers\Mobile\Member\MemberDeviceController;
 use App\Http\Controllers\Mobile\Member\MemberInterestsController;
+use App\Http\Controllers\Mobile\Member\MemberRecurringGivingController;
 use App\Http\Controllers\Mobile\MobileAppUsersController;
 use App\Http\Controllers\Mobile\NotificationsController;
 use App\Http\Controllers\Mobile\PrayersController;
@@ -172,6 +173,54 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
                 // see MemberDeviceController for why the second half matters.
                 Route::post('/me/device', [MemberDeviceController::class, 'store']);
                 Route::delete('/me/device', [MemberDeviceController::class, 'destroy']);
+
+                /*
+                | "Your monthly giving" — the donor acting on their OWN standing
+                | commitments. The first MONEY verbs in this realm.
+                |
+                | Addressed by `uuid`, never by `id`. `donation_subscriptions`
+                | already mints one, and an incrementing integer in a
+                | donor-facing URL is an invitation to walk the range. The
+                | pattern constraint means a junk handle is a 404 from the
+                | router, before anything queries a money table.
+                |
+                | Ownership is `uuid` AND `contact_id`, enforced in the
+                | controller, and a miss is a 404 — the tenant scope fences off
+                | other ORGANISATIONS and would still leave every member of this
+                | one inside it. See MemberRecurringGivingController.
+                |
+                | EVERY verb here carries its OWN throttle on top of the file's
+                | `mobile` limiter, because every verb here reaches Stripe.
+                | Authenticated, an inline throttle bucket is keyed on the CALLER
+                | rather than the address, so a donor on a congested mosque wifi
+                | cannot be locked out of cancelling a gift by somebody else's
+                | traffic — and nobody can hammer Stripe's API on a connected
+                | account through this door.
+                |
+                | The GET is on that budget too, and it is not the cheap door it
+                | looks like: it asks Stripe for the pause state of every live
+                | commitment the caller holds (a pause has nowhere local to live —
+                | see DonationService), so one request is one `subscriptions.retrieve`
+                | per commitment on the ORG's connected account, competing for the
+                | same Stripe rate limit as that org's live checkouts. Left on the
+                | realm's generic 60/min it would also be the one verb keyed on the
+                | IP — the shared bucket the mutating verbs were moved off — which
+                | is the opposite of what its cost deserves. 30/min is a screen a
+                | donor can refresh freely and no more.
+                */
+                Route::prefix('/me/recurring-giving')
+                    ->controller(MemberRecurringGivingController::class)
+                    ->where(['uuid' => '[0-9a-fA-F-]{36}'])
+                    ->group(function () {
+                        Route::middleware('throttle:30,1')->get('/', 'index');
+
+                        Route::middleware('throttle:20,1')->group(function () {
+                            Route::post('/{uuid}/pause', 'pause');
+                            Route::post('/{uuid}/resume', 'resume');
+                            Route::post('/{uuid}/cancel', 'cancel');
+                            Route::patch('/{uuid}', 'updateAmount');
+                        });
+                    });
             });
 
     });

@@ -14,13 +14,17 @@ use Symfony\Component\HttpFoundation\Response;
  * Two verbs on one resource, and they are deliberately NOT a single boolean
  * toggle:
  *
- *  - POST   grants consent. Refuses (422) when the contact has no usable number,
- *           and refuses when the number is on the suppression list — an admin
- *           cannot opt somebody back in after they texted STOP. Only the
- *           subscriber can, by texting START to the number they heard from.
+ *  - POST   grants consent, ONCE. Refuses (422) when the contact has no usable
+ *           number; when the number is on the suppression list — an admin cannot
+ *           opt somebody back in after they texted STOP, only the subscriber can,
+ *           by texting START to the number they heard from; and when a consent
+ *           record already stands, because re-recording it can only destroy the
+ *           date, source and evidence that make the first one evidence
+ *           (SmsConsentService::grant carries the full argument).
  *  - DELETE withdraws it, AND writes the durable suppression row so the
  *           withdrawal survives the contact being merged away, re-imported or
- *           deleted and re-added.
+ *           deleted and re-added — reporting in `meta.durable` whether that
+ *           second half was actually possible.
  *
  * A toggle would make those two look like inverses of each other, which is
  * exactly the misunderstanding that produces an unhonoured opt-out.
@@ -75,16 +79,37 @@ class ContactSmsConsentController extends Controller
      * Used when somebody asks to stop in person or on the phone rather than by
      * texting STOP. The suppression row is the point: clearing the columns alone
      * would let the next CSV import undo the withdrawal.
+     *
+     * ## The response says WHICH of the two halves happened
+     *
+     * The durable half can fail on its own: the suppression list is keyed on
+     * E.164 and `PhoneNumber` refuses a number it cannot resolve (a seven-digit
+     * local number, "…ext 4", a bare international number), so there is nothing
+     * to key a row on. This still answers 200 — the withdrawal IS recorded, and
+     * the person asked for it — but `meta.durable` says whether it reached the
+     * list that outlives this contact row, and `meta.message` carries the
+     * server's own remedy sentence when it did not.
+     *
+     * It is reported rather than thrown because the two audiences differ: the
+     * member's request has been honoured, so this is not a refusal; the
+     * OPERATOR, though, was being told the number was on a permanent
+     * do-not-text list that had never heard of it, and they are the only person
+     * who can fix the number. The SPA quotes `meta.message` verbatim; a screen
+     * that promised permanence it did not get is the defect this closes.
      */
     public function destroy($masjid_id, $contact_id)
     {
         $contact = Contact::findOrFail($contact_id);
 
-        $contact = $this->consent->withdraw($contact);
+        $withdrawal = $this->consent->withdraw($contact);
 
         return response()->json([
             'status' => 'success',
-            'data' => $contact->fresh(),
+            'data' => $withdrawal->contact->fresh(),
+            'meta' => [
+                'durable' => $withdrawal->isDurable(),
+                'message' => $withdrawal->remedy(),
+            ],
         ], Response::HTTP_OK);
     }
 }

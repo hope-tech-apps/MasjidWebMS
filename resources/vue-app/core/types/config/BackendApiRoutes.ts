@@ -33,6 +33,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/events` |
     `/api/admin/masjids/${string}/events?page=${number}` |
     `/api/admin/masjids/${string}/events/${string}/` |
+    // Duplicate one event onto new dates. It needs a member of its OWN because
+    // the `events/${string}/` shape above ends in a slash, so
+    // `.../events/9/duplicate` does not match it — which is why the call site
+    // was written with an `as BackendApiRoute` cast, and why the cast then hid
+    // that no such route existed server-side. With the shape declared here the
+    // call site passes the template literal directly — a cast on this path is
+    // now a bug, not a workaround.
+    `/api/admin/masjids/${string}/events/${string}/duplicate` |
     `/api/admin/masjids/${string}/services` |
     `/api/admin/masjids/${string}/services?page=${number}` |
     `/api/admin/masjids/${string}/services/${string}/` |
@@ -108,6 +116,14 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/offerings/${string}/registrations/${string}` |
     `/api/admin/masjids/${string}/behavior-skills` |
     `/api/admin/masjids/${string}/behavior-skills?${string}` |
+    // The impact report (T-024) — READ-ONLY, and the only call the screen
+    // makes. The `?${string}` is not optional decoration: impactReportStore
+    // always appends the serialized `from`/`to` bounds, and an all-time report
+    // is an EMPTY query string rather than an absent one, which this shape
+    // still matches. There is deliberately no second member for a bare
+    // `/impact/report`: no caller uses it, and a shape nobody calls is an
+    // inventory entry that cannot be trusted.
+    `/api/admin/masjids/${string}/impact/report?${string}` |
     `/api/admin/masjids/${string}/funds` |
     `/api/admin/masjids/${string}/funds/${string}` |
     `/api/admin/masjids/${string}/jummah-lunch/menus` |
@@ -152,6 +168,13 @@ export type BackendApiRoute =
     `/api/admin/hadiths/library/add` |
     `/api/admin/masjids/${string}/features` |
     `/api/admin/masjids/${string}/features/${string}/` |
+    // This organisation's text-message sender identity and the outcome of its
+    // A2P 10DLC carrier registration (T-009). GET reads it, PUT records it; both
+    // are `super`-only, so the only caller is the super shell's masjid details
+    // screen. The CONSENT half needs no entry of its own —
+    // `/api/admin/masjids/${string}/contacts/${string}` above already swallows
+    // the nested `/{contact_id}/sms-consent` segment.
+    `/api/admin/masjids/${string}/sms-sender` |
     `/api/admin/masjids/${string}/crm-access` |
     `/api/admin/masjids/${string}/assistant-access` |
     `/api/admin/masjids/${string}/assistant/chat` |

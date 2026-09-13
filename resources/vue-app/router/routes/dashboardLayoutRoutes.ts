@@ -292,6 +292,24 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/dashboard/DonationsDashboardView.vue")
             },
             {
+                // The impact report (T-024): the organisation's real figures for
+                // a date range, with the provenance a grant reviewer asks for.
+                //
+                // `requiresCrm` is not optional. The server route sits inside the
+                // `crm` group in routes/admin.php, so without it a tenant with no
+                // CRM reaches a screen whose only request 403s — a blank page
+                // where an explanation belongs.
+                path: 'impact-report',
+                name: 'masjid.impactReport',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Impact Report',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/ImpactReportView.vue")
+            },
+            {
                 // Route NAME is load-bearing: the dashboard's per-fund
                 // "view details" links here by name.
                 path: 'donations/funds/:fundId',

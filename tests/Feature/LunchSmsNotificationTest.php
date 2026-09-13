@@ -173,6 +173,101 @@ class LunchSmsNotificationTest extends TestCase
         $this->assertSame(3, MealOrder::withoutMasjidScope()->count());
     }
 
+    /**
+     * A REPEAT ORDER DOES NOT RE-WRITE THE CONSENT THE CUSTOMER ACTUALLY GAVE.
+     *
+     * The docblock on LunchSmsOptIn promises that "existing rows keep the
+     * sentence THEY were shown", which is the entire reason the disclosure is
+     * stored per-contact rather than looked up at read time. Until the guard in
+     * `attempt()`, every repeat order broke that promise: `grant()` forceFilled
+     * all five columns, so week two silently re-dated the consent to week two
+     * and replaced the stored sentence with whatever `DISCLOSURE` says today —
+     * destroying the only evidence of what the customer was shown when they
+     * first agreed, and the only proof that they agreed before the texts already
+     * sent to them.
+     *
+     * The record below is aged deliberately so that "unchanged" is checkable
+     * rather than coincidental.
+     */
+    #[Test]
+    public function a_returning_customer_keeps_the_consent_record_they_actually_agreed_to(): void
+    {
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody(['notify_sms' => true]), $this->header())
+            ->assertOk();
+
+        $contact = Contact::withoutMasjidScope()->firstOrFail();
+        $contact->forceFill([
+            'sms_consent_at' => '2025-03-04 09:00:00',
+            'sms_consent_evidence' => 'THE WORDING THEY WERE ACTUALLY SHOWN in March 2025.',
+        ])->save();
+
+        // Next Friday, same customer, same box.
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody(['notify_sms' => true]), $this->header())
+            ->assertOk();
+
+        $contact->refresh();
+
+        $this->assertSame('2025-03-04 09:00:00', $contact->sms_consent_at->toDateTimeString());
+        $this->assertSame(
+            'THE WORDING THEY WERE ACTUALLY SHOWN in March 2025.',
+            $contact->sms_consent_evidence,
+            'the sentence the customer agreed to is the evidence and is never restamped',
+        );
+        $this->assertSame('web_form', $contact->sms_consent_source);
+    }
+
+    /**
+     * …and an already-consenting customer can still SUBSCRIBE to something new.
+     *
+     * The other side of the same guard, and the reason it is a skip rather than
+     * a swallowed exception: `SmsConsentService::grant()` now refuses a second
+     * grant, `attempt()` writes the subscription inside the same transaction as
+     * the grant, and every failure in this class is swallowed so the customer
+     * keeps their food. Calling `grant()` unconditionally would therefore have
+     * rolled back the service-interest row for every returning customer — an
+     * opt-in that answers 200, saves the order, and subscribes nobody.
+     */
+    #[Test]
+    public function an_already_consenting_customer_can_still_subscribe_to_a_second_service(): void
+    {
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody(['notify_sms' => true]), $this->header())
+            ->assertOk();
+
+        $iftar = Service::create([
+            'masjid_id' => $this->masjid->id,
+            'title' => 'Ramadan Iftar',
+            'description' => 'Nightly iftar.',
+            'text' => 'Nightly iftar.',
+        ]);
+
+        $iftarMenu = MealMenu::factory()->forMasjid($this->masjid)->open()->create([
+            'allow_sms_optin' => true,
+            'notify_service_id' => $iftar->id,
+        ]);
+
+        $dish = MealMenuItem::factory()->create([
+            'masjid_id' => $this->masjid->id,
+            'meal_menu_id' => $iftarMenu->id,
+            'name' => 'Harees',
+            'price_minor' => 600,
+        ]);
+
+        $this->postJson('/api/v1/lunch-orders', $this->orderBody([
+            'menu_uuid' => $iftarMenu->uuid,
+            'items' => [['item_id' => $dish->id, 'quantity' => 1]],
+            'notify_sms' => true,
+        ]), $this->header())->assertOk();
+
+        $contact = Contact::withoutMasjidScope()->firstOrFail();
+
+        $this->assertSame(1, Contact::withoutMasjidScope()->count(), 'still one person');
+        $this->assertDatabaseHas('contact_service_interests', [
+            'contact_id' => $contact->id,
+            'service_id' => $iftar->id,
+        ]);
+        $this->assertSame(2, DB::table('contact_service_interests')->count());
+    }
+
     #[Test]
     public function a_number_that_texted_stop_cannot_be_reopted_in_by_a_web_form(): void
     {

@@ -71,6 +71,10 @@ export type MasjidDashboardRoute =
     '/masjid/annual-statements' |
     '/masjid/properties' |
     '/masjid/form-responses' |
+    // The funder-facing figures (T-024). Neutral path: every vertical applies
+    // for grants, and which figures it shows is decided server-side from the
+    // tenant's own vertical.
+    '/masjid/impact-report' |
     '/masjid/assistant' |
     '/azkar' |
     `/azkar/${number}` |
