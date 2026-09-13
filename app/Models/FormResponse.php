@@ -45,8 +45,14 @@ use LogicException;
  *   markPaid()          the signed Stripe webhook, online rows only
  *   settleCash()        a staff code at the gate: cash its holder owes
  *   settleCashBy()      an admin taking cash for an unpaid row
- *   markExternalPaid()  an admin recording a payment made elsewhere (Wix)
+ *   markExternalPaid()  an admin recording a payment made elsewhere (Wix), or one a
+ *                       family paying the office sent by Zelle, Cash App, Venmo or check
  *   markCollected() / uncollect()
+ *
+ * A family that chose to pay the office (BISS, 2026-09-13) is written with method
+ * `office`, UNPAID, owing the list price with no card fee. Settling it by hand turns
+ * it into `cash` or `external` like any other hand settlement, with `paid_via`
+ * saying how the money came (PAID_VIA).
  *
  * Pinned by tests/Feature/FormResponseSettlementTest.php and
  * tests/Feature/FormPaymentSchemaTest.php.
@@ -110,11 +116,54 @@ class FormResponse extends Model
     public const METHOD_ONLINE = 'online';     // hosted Stripe Checkout; only the webhook marks it paid
     public const METHOD_CASH = 'cash';         // a staff code at the gate, or an admin taking cash
     public const METHOD_EXTERNAL = 'external'; // paid elsewhere (the Wix fallback), marked by an admin
+    public const METHOD_OFFICE = 'office';     // the family chose to pay the office; unpaid until staff record it
 
     public const METHODS = [
         self::METHOD_ONLINE,
         self::METHOD_CASH,
         self::METHOD_EXTERNAL,
+        self::METHOD_OFFICE,
+    ];
+
+    /**
+     * How the money came, when staff record a payment by hand (`paid_via`; BISS,
+     * 2026-09-13). "Take cash" writes `cash`; "Mark paid" names one of
+     * PAID_VIA_EXTERNAL, and MUST name one for a family that chose to pay the office.
+     *
+     * Settlement still writes `payment_method` cash or external exactly as it always
+     * did, so every reader of the method — the cash totals, the roster, the receipts,
+     * the filters — keeps working; `paid_via` is the detail beside it. NULL on a card
+     * payment, and on every row settled before the column existed.
+     */
+    public const PAID_VIA_CASH = 'cash';
+    public const PAID_VIA_ZELLE = 'zelle';
+    public const PAID_VIA_CASHAPP = 'cashapp';
+    public const PAID_VIA_VENMO = 'venmo';
+    public const PAID_VIA_CHECK = 'check';
+
+    public const PAID_VIA = [
+        self::PAID_VIA_CASH,
+        self::PAID_VIA_ZELLE,
+        self::PAID_VIA_CASHAPP,
+        self::PAID_VIA_VENMO,
+        self::PAID_VIA_CHECK,
+    ];
+
+    /** What "Mark paid" may record. Cash is "Take cash", which says so itself. */
+    public const PAID_VIA_EXTERNAL = [
+        self::PAID_VIA_ZELLE,
+        self::PAID_VIA_CASHAPP,
+        self::PAID_VIA_VENMO,
+        self::PAID_VIA_CHECK,
+    ];
+
+    /** The words a screen, an export or a receipt uses for each. */
+    public const PAID_VIA_LABELS = [
+        self::PAID_VIA_CASH => 'Cash',
+        self::PAID_VIA_ZELLE => 'Zelle',
+        self::PAID_VIA_CASHAPP => 'Cash App',
+        self::PAID_VIA_VENMO => 'Venmo',
+        self::PAID_VIA_CHECK => 'Check',
     ];
 
     public const PAYMENT_UNPAID = 'unpaid';
@@ -456,18 +505,26 @@ class FormResponse extends Model
      */
     public function settleCashBy(User $operator): bool
     {
-        return $this->settleByHand(self::METHOD_CASH, $operator);
+        return $this->settleByHand(self::METHOD_CASH, $operator, self::PAID_VIA_CASH);
     }
 
     /**
      * "Mark paid (external)": the person paid somewhere else — the Wix page, if
-     * MEC's Stripe Connect is not live in time. Same lock and the same Stripe
-     * caveat as settleCashBy(). Recording it is what puts a Wix payer in the
-     * paid set the door filters on.
+     * MEC's Stripe Connect is not live in time, or the office's Zelle, Cash App,
+     * Venmo or a check. Same lock and the same Stripe caveat as settleCashBy().
+     * Recording it is what puts a Wix payer in the paid set the door filters on.
+     *
+     * $via is one of PAID_VIA_EXTERNAL or null, and a row whose family chose to pay
+     * the office must say which: the office's books are kept by how the money came.
+     * The controller refuses both before calling; these throws are the backstop.
      */
-    public function markExternalPaid(User $by): bool
+    public function markExternalPaid(User $by, ?string $via = null): bool
     {
-        return $this->settleByHand(self::METHOD_EXTERNAL, $by);
+        if ($via !== null && ! in_array($via, self::PAID_VIA_EXTERNAL, true)) {
+            throw new LogicException("\"{$via}\" is not a way a payment is recorded by hand.");
+        }
+
+        return $this->settleByHand(self::METHOD_EXTERNAL, $by, $via);
     }
 
     /**
@@ -599,14 +656,18 @@ class FormResponse extends Model
     }
 
     /** Admin cash and external payments: one shape, stamped by the first press only. */
-    private function settleByHand(string $method, User $by): bool
+    private function settleByHand(string $method, User $by, ?string $via): bool
     {
-        return $this->underLock(function (self $row) use ($method, $by): bool {
+        return $this->underLock(function (self $row) use ($method, $by, $via): bool {
             if ($row->isPaid()) {
                 return false;
             }
 
-            $row->forceFill(self::paidAs($method, $row->requireOwedMinor(), $row->currency) + [
+            if ($row->payment_method === self::METHOD_OFFICE && $via === null) {
+                throw new LogicException("Form response {$row->id} was to be paid at the office, so its payment must say how it came.");
+            }
+
+            $row->forceFill(self::paidAs($method, $row->requireOwedMinor(), $row->currency, $via) + [
                 'marked_paid_by_user_id' => $by->getKey(),
             ])->save();
 
@@ -616,15 +677,21 @@ class FormResponse extends Model
 
     /**
      * The columns a settlement by hand or by code writes. No card was charged, so
-     * no card fee was covered and the total is what was owed.
+     * no card fee was covered and the total is what was owed — which is also how a
+     * card registration's covered fee, or none at all for a family that paid the
+     * office, drops away.
+     *
+     * Cash says so in `paid_via` whoever took it (a code at the gate, an admin at the
+     * table); an external payment carries what the admin chose, or null.
      *
      * @return array<string,mixed>
      */
-    private static function paidAs(string $method, int $owed, ?string $currency): array
+    private static function paidAs(string $method, int $owed, ?string $currency, ?string $via = null): array
     {
         return [
             'payment_method' => $method,
             'payment_status' => self::PAYMENT_PAID,
+            'paid_via' => $method === self::METHOD_CASH ? self::PAID_VIA_CASH : $via,
             'currency' => $currency ?? 'usd',
             'amount_due_minor' => $owed,
             'fee_covered_minor' => 0,

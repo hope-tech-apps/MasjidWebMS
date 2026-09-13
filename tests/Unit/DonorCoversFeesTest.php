@@ -3,6 +3,8 @@
 namespace Tests\Unit;
 
 use App\Services\Stripe\DonationService;
+use App\Services\Stripe\FormResponseCheckoutService;
+use App\Support\StripeFees;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -32,6 +34,39 @@ class DonorCoversFeesTest extends TestCase
     {
         // intended $100.00 → round((10000 + 30) / (1 - 0.029)) = 10330 = $103.30
         $this->assertSame(10330, DonationService::grossUp(10000));
+    }
+
+    /**
+     * BISS Sunday School's family prices with the required card fee (2026-09-13): the
+     * card fee and the charge for 1..5 children, and the school netting exactly the tier
+     * price — at the configured 2.9% + 30¢ AND a platform fee of 0, which is what
+     * production runs with (STRIPE_PLATFORM_FEE_PERCENTAGE unset). The platform fee is
+     * taken on the charge and is NOT grossed up, so above 0 the school nets less.
+     */
+    #[Test]
+    public function the_family_price_table_nets_the_school_its_tier_price_only_at_a_platform_fee_of_zero(): void
+    {
+        $table = [
+            10000 => [330, 10330],
+            17000 => [539, 17539],
+            25000 => [778, 25778],
+            30000 => [927, 30927],
+            35000 => [1076, 36076],
+        ];
+
+        foreach ($table as $tier => [$fee, $charged]) {
+            $this->assertSame($fee, StripeFees::coverage($tier), "tier {$tier}");
+            $this->assertSame($charged, StripeFees::grossUp($tier), "tier {$tier}");
+            $this->assertSame($charged, DonationService::grossUp($tier), "tier {$tier}: the donation gross-up agrees");
+
+            $platform = FormResponseCheckoutService::applicationFee($charged);
+
+            $this->assertSame(0, $platform);
+            $this->assertSame($tier, $charged - StripeFees::on($charged) - $platform, "tier {$tier}: the school nets it");
+
+            // The caveat, pinned so nobody promises it at another platform rate.
+            $this->assertLessThan($tier, $charged - StripeFees::on($charged) - FormResponseCheckoutService::applicationFee($charged, 0.01));
+        }
     }
 
     #[Test]

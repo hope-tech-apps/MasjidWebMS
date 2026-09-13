@@ -6,6 +6,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Arr;
 
 /**
  * A sign-up form belonging to one masjid — event RSVP, membership application,
@@ -146,13 +147,20 @@ class Form extends Model
      */
     public const WHATSAPP_URL_PATTERN = '#^https://chat\.whatsapp\.com/[A-Za-z0-9]{10,64}\z#';
 
+    /** feeRule()['pricing'] on a form priced by how many entries it has (settings.fee.countTiers). */
+    public const PRICING_COUNT = 'count';
+
     /**
-     * Whether any price on this form is above zero: the flat amount, or any tier
-     * whatever its date.
+     * Whether any price on this form is above zero: the flat amount, any tier
+     * whatever its date, or any price by number of entries.
      *
      * Deliberately not `feeRule() !== null`. A $0 fee asks for nothing, and "does
      * this form charge?" must not change its answer as the tiers step, or a
      * row's settled state (FormResponse::isSettled()) would flip overnight.
+     *
+     * The count prices are read here too (BISS, 2026-09-13). Without them a form
+     * priced only by the number of children "charges nothing": takesOnlinePayment()
+     * would be false and every registration free.
      */
     public function chargesFee(): bool
     {
@@ -165,6 +173,10 @@ class Form extends Model
         $amounts = [$fee['amount'] ?? null];
 
         foreach (is_array($fee['tiers'] ?? null) ? $fee['tiers'] : [] as $tier) {
+            $amounts[] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
+        foreach (is_array($fee['countTiers'] ?? null) ? $fee['countTiers'] : [] as $tier) {
             $amounts[] = is_array($tier) ? ($tier['amount'] ?? null) : null;
         }
 
@@ -197,10 +209,73 @@ class Form extends Model
         return $this->paymentFlag('staffCodes') && $this->chargesFee();
     }
 
-    /** The optional "cover the card fee" checkbox: card payments only — cash has no card fee. */
+    /**
+     * The optional "cover the card fee" checkbox: card payments only — cash has no card fee.
+     *
+     * NOT widened by requiresFeeCoverage(). A renderer that predates the required
+     * fee reads allowFeeCoverage as "draw an unticked optional box"; publishing it
+     * true for a required fee would show $250.00 on the page while Stripe charges
+     * $257.78 (BISS critique, should_fix 1).
+     */
     public function allowsFeeCoverage(): bool
     {
         return $this->paymentFlag('allowFeeCoverage') && $this->takesOnlinePayment();
+    }
+
+    /**
+     * Every card payer covers the card fee, whatever the browser says
+     * (settings.payment.requireFeeCoverage; BISS, 2026-09-13). Card payments only:
+     * a staff-code entry and a registration paid at the office carry no card fee.
+     */
+    public function requiresFeeCoverage(): bool
+    {
+        return $this->paymentFlag('requireFeeCoverage') && $this->takesOnlinePayment();
+    }
+
+    /**
+     * The family may choose to pay the office instead of a card
+     * (settings.payment.officePayment; BISS, 2026-09-13), AND there is a price.
+     * Their registration is written unpaid, owing the list price with no card
+     * fee, and staff record the money when it arrives (Zelle, Cash App, Venmo,
+     * cash, check). With nothing to charge there is nothing to owe the office.
+     */
+    public function takesOfficePayment(): bool
+    {
+        return $this->paymentFlag('officePayment') && $this->chargesFee();
+    }
+
+    /**
+     * Whether any kind of payment is switched on and priced: card, staff codes or
+     * the office. Every "money moves here" gate asks this one question — the replay
+     * guard, the never-free quote and the save's paying-form rules — so an
+     * office-only form can never slip under all three.
+     */
+    public function takesPayment(): bool
+    {
+        return $this->takesOnlinePayment() || $this->takesStaffCodes() || $this->takesOfficePayment();
+    }
+
+    /**
+     * Card payment is on and the organisation can take a card RIGHT NOW (Stripe
+     * Connect live). What the payload calls `available`, and what a submission
+     * that did not say how it pays is routed by.
+     */
+    public function canTakeCardNow(): bool
+    {
+        return $this->takesOnlinePayment() && (bool) $this->masjid?->canAcceptDonations();
+    }
+
+    /**
+     * How to pay the office, in the office's own words (the Zelle and Cash App
+     * handles, the office hours), or null. Typed by the organisation, never
+     * hard-coded; shown on the page and in the "amount owed" email.
+     */
+    public function officeInstructions(): ?string
+    {
+        $payment = $this->settings['payment'] ?? null;
+        $text = is_array($payment) ? ($payment['officeInstructions'] ?? null) : null;
+
+        return is_string($text) && trim($text) !== '' ? trim($text) : null;
     }
 
     /**
@@ -335,7 +410,23 @@ class Form extends Model
      * The resolved amount is what gets stored on a response at submission time, so a
      * later price step never restates what somebody already agreed to pay.
      *
-     * @return array{amount: float, currency: string, perEntryOfSection: ?string, tiers: array, currentTier: ?array}|null
+     * ## Priced by the number of entries (`countTiers`; BISS, 2026-09-13)
+     *
+     * `countTiers` prices the WHOLE registration by how many rows the
+     * `perEntryOfSection` section has: [{min:1, amount:100, label:'1 child'},
+     * {min:2, amount:170}, …]. Such a form carries no `amount` and no date `tiers`
+     * (the save refuses the mix). Its rule adds `pricing: 'count'` and the readable
+     * `countTiers`, sorted by `min`; `amount` is the lowest tier's price, for
+     * display only, since what is owed depends on the submission —
+     * priceFor() resolves it. The keys a unit-priced rule has always had are
+     * unchanged, and a unit-priced rule gains none.
+     *
+     * A count schedule nothing can read makes the WHOLE rule null, so the form
+     * refuses entries, rather than skipping the bad tier: skipping one falls back
+     * to a cheaper tier, and a silent under-charge is what the date tiers' "an
+     * unreadable cut-off steps UP" rule exists to prevent.
+     *
+     * @return array{amount: float, currency: string, perEntryOfSection: ?string, tiers: array, currentTier: ?array, pricing?: string, countTiers?: array<int,array{min:int,amount:float,label:?string}>}|null
      */
     public function feeRule(?CarbonInterface $at = null): ?array
     {
@@ -343,6 +434,10 @@ class Form extends Model
 
         if (! is_array($fee)) {
             return null;
+        }
+
+        if (self::hasCountTiers($fee)) {
+            return self::countFeeRule($fee);
         }
 
         $tiers = is_array($fee['tiers'] ?? null) ? array_values($fee['tiers']) : [];
@@ -368,6 +463,183 @@ class Form extends Model
             'tiers' => $tiers,
             'currentTier' => $currentTier,
         ];
+    }
+
+    /** Whether settings.fee prices by the number of entries (any non-empty `countTiers`). */
+    public function pricesByCount(): bool
+    {
+        $fee = $this->settings['fee'] ?? null;
+
+        return is_array($fee) && self::hasCountTiers($fee);
+    }
+
+    /**
+     * THE price of one submission, in force at $at: every reader of "what does this
+     * owe" — FormSchema::amountDue() (the stored decimal), FormPayment::quote() (the
+     * cents snapshot and the Stripe line) and the emails' tier label — goes through
+     * here, so the three cannot disagree.
+     *
+     *   flat fee          unit = amount, quantity 1
+     *   per entry         unit = amount (the date tier in force), quantity = rows
+     *   count tiers       unit = the tier with the GREATEST min <= rows, whatever
+     *                     order the tiers were stored in; quantity 1 — or 0 with
+     *                     no rows, so an empty list owes nothing and the paying
+     *                     form's "Add at least one entry." refusal fires
+     *
+     * `entries` is the counted section's row count (1 on a flat fee); `label` names
+     * the tier ("Early bird", "3 children"), or null.
+     *
+     * Null when the form charges nothing, or when a count schedule cannot price
+     * this many rows (unreadable, or no tier starts low enough). A caller that
+     * takes payment refuses the submission on a null; it never charges less.
+     *
+     * @param  array<string,mixed>  $data  the cleaned submission (FormSchema::only()), or a stored row's data
+     * @return array{fee: array<string,mixed>, unit: float, quantity: int, entries: int, label: ?string}|null
+     */
+    public function priceFor(array $data, ?CarbonInterface $at = null): ?array
+    {
+        $fee = $this->feeRule($at);
+
+        if ($fee === null) {
+            return null;
+        }
+
+        $perEntry = $fee['perEntryOfSection'] ?? null;
+        $entries = null;
+
+        if ($perEntry !== null) {
+            $rows = Arr::get($data, $perEntry, []);
+            $entries = is_array($rows) ? count($rows) : 0;
+        }
+
+        if (($fee['pricing'] ?? null) === self::PRICING_COUNT) {
+            if ($entries === 0) {
+                return ['fee' => $fee, 'unit' => (float) $fee['amount'], 'quantity' => 0, 'entries' => 0, 'label' => null];
+            }
+
+            $tier = self::resolveCountTier($fee['countTiers'], (int) $entries);
+
+            if ($tier === null) {
+                return null;
+            }
+
+            return ['fee' => $fee, 'unit' => $tier['amount'], 'quantity' => 1, 'entries' => (int) $entries, 'label' => $tier['label']];
+        }
+
+        $label = $fee['currentTier']['label'] ?? null;
+
+        return [
+            'fee' => $fee,
+            'unit' => (float) $fee['amount'],
+            'quantity' => $entries ?? 1,
+            'entries' => $entries ?? 1,
+            'label' => is_string($label) && trim($label) !== '' ? trim($label) : null,
+        ];
+    }
+
+    /** @param  array<string,mixed>  $fee */
+    private static function hasCountTiers(array $fee): bool
+    {
+        // Anything but absent, null or an empty list is a count schedule, readable or
+        // not: a junk value must make the price unreadable, never quietly unit-priced.
+        return array_key_exists('countTiers', $fee) && $fee['countTiers'] !== null && $fee['countTiers'] !== [];
+    }
+
+    /**
+     * The fee rule of a form priced by count, or null when its schedule cannot be read
+     * or it counts no section.
+     *
+     * @param  array<string,mixed>  $fee
+     * @return array<string,mixed>|null
+     */
+    private static function countFeeRule(array $fee): ?array
+    {
+        $tiers = self::readableCountTiers($fee['countTiers']);
+        $perEntry = $fee['perEntryOfSection'] ?? null;
+
+        if ($tiers === null || ! is_string($perEntry) || trim($perEntry) === '') {
+            return null;
+        }
+
+        return [
+            'amount' => $tiers[0]['amount'],
+            'currency' => $fee['currency'] ?? 'USD',
+            'perEntryOfSection' => $perEntry,
+            'tiers' => [],
+            'currentTier' => null,
+            'pricing' => self::PRICING_COUNT,
+            'countTiers' => $tiers,
+        ];
+    }
+
+    /**
+     * A stored count schedule as whole-number mins and float amounts, sorted by min —
+     * or null when ANY tier cannot be read (a min that is not a positive whole
+     * number, a missing or negative amount, two tiers with one min). All or nothing:
+     * dropping the unreadable tier would price those families at the tier below.
+     *
+     * @return array<int,array{min:int,amount:float,label:?string}>|null
+     */
+    private static function readableCountTiers(mixed $raw): ?array
+    {
+        if (! is_array($raw) || $raw === []) {
+            return null;
+        }
+
+        $tiers = [];
+
+        foreach ($raw as $tier) {
+            if (! is_array($tier)) {
+                return null;
+            }
+
+            $min = $tier['min'] ?? null;
+            $amount = $tier['amount'] ?? null;
+
+            $min = is_bool($min) ? false : filter_var($min, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+            if ($min === false || is_bool($amount) || ! is_numeric($amount) || (float) $amount < 0 || ! is_finite((float) $amount)) {
+                return null;
+            }
+
+            if (isset($tiers[$min])) {
+                return null;
+            }
+
+            $label = $tier['label'] ?? null;
+
+            $tiers[$min] = [
+                'min' => $min,
+                'amount' => (float) $amount,
+                'label' => is_string($label) && trim($label) !== '' ? trim($label) : null,
+            ];
+        }
+
+        ksort($tiers);
+
+        return array_values($tiers);
+    }
+
+    /**
+     * The count tier for $count rows: the one with the greatest `min` that is at most
+     * $count. Chosen by comparison, not by position, so a schedule stored as
+     * [1, 5, 2] still charges a family of six the "5 or more" price and never the
+     * "2 children" one. Null when no tier starts low enough.
+     *
+     * @param  array<int,array{min:int,amount:float,label:?string}>  $tiers
+     * @return array{min:int,amount:float,label:?string}|null
+     */
+    private static function resolveCountTier(array $tiers, int $count): ?array
+    {
+        $chosen = null;
+
+        foreach ($tiers as $tier) {
+            if ($tier['min'] <= $count && ($chosen === null || $tier['min'] > $chosen['min'])) {
+                $chosen = $tier;
+            }
+        }
+
+        return $chosen;
     }
 
     /**

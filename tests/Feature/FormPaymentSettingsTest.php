@@ -425,6 +425,221 @@ class FormPaymentSettingsTest extends TestCase
         $this->assertArrayHasKey('settings.whatsappLabel', $this->errors($response));
     }
 
+    // ------------------------------------------------ BISS: family prices and the office
+
+    private const FAMILY_TIERS = [
+        ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+        ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+        ['min' => 4, 'amount' => 300, 'label' => '4 children'],
+        ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+    ];
+
+    /**
+     * Risk 2 of the BISS plan: a count-only paying form must be ACCEPTED (never "needs a
+     * price"), and every key it carries must be STORED — a key with no rule is dropped by
+     * validated() while the save still succeeds, and a form whose count prices vanished
+     * would be free.
+     */
+    #[Test]
+    public function a_family_priced_form_taking_card_and_the_office_is_accepted_and_stored_whole(): void
+    {
+        $doc = $this->familyDoc();
+
+        $this->postJson($this->url(), $doc)->assertStatus(201);
+        $form = Form::where('slug', $doc['slug'])->firstOrFail();
+
+        $this->assertEquals(self::FAMILY_TIERS, $form->settings['fee']['countTiers']);
+        $this->assertSame(
+            ['online' => true, 'requireFeeCoverage' => true, 'officePayment' => true, 'officeInstructions' => 'Zelle office@biss.example.'],
+            array_intersect_key($form->settings['payment'], array_flip(['online', 'requireFeeCoverage', 'officePayment', 'officeInstructions']))
+        );
+        $this->assertTrue($form->chargesFee());
+        $this->assertTrue($form->takesOnlinePayment());
+        $this->assertTrue($form->takesOfficePayment());
+        $this->assertTrue($form->requiresFeeCoverage());
+        $this->assertFalse($form->allowsFeeCoverage());
+        $this->assertSame(250.0, $form->priceFor(['attendees' => [[], [], []]])['unit']);
+
+        // The builder's whole-document save keeps it whole too.
+        $this->putJson($this->url($form), $doc)->assertOk();
+        $this->assertEquals(self::FAMILY_TIERS, $form->fresh()->settings['fee']['countTiers']);
+
+        // The office alone.
+        $officeOnly = $this->familyDoc(function (&$d) { $d['settings']['payment'] = ['officePayment' => true]; });
+        $this->postJson($this->url(), $officeOnly)->assertStatus(201);
+        $this->assertTrue(Form::where('slug', $officeOnly['slug'])->firstOrFail()->takesOfficePayment());
+    }
+
+    #[Test]
+    public function every_way_a_family_price_or_the_office_could_charge_the_wrong_amount_is_refused_by_name(): void
+    {
+        $cases = [
+            'prices by number of entries beside a flat amount' => [function (&$d) {
+                $d['settings']['fee']['amount'] = 100;
+            }, 'settings.fee.countTiers', 'replace the flat price'],
+
+            'prices by number of entries beside date steps' => [function (&$d) {
+                $d['settings']['fee']['tiers'] = [['label' => 'Early', 'amount' => 90, 'until' => '2026-10-01']];
+            }, 'settings.fee.countTiers', 'replace the flat price'],
+
+            // Checked on every form, not only a paying one: amount_due is stored either way.
+            'prices by number of entries beside a flat amount, no payment' => [function (&$d) {
+                unset($d['settings']['payment']);
+                $d['settings']['fee']['amount'] = 100;
+            }, 'settings.fee.countTiers', 'replace the flat price'],
+
+            'prices by number of entries counting no section' => [function (&$d) {
+                unset($d['settings']['fee']['perEntryOfSection']);
+            }, 'settings.fee.perEntryOfSection', 'section whose entries are counted'],
+
+            'a first price that does not start at 1' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][0]['min'] = 2;
+                $d['settings']['fee']['countTiers'][1]['min'] = 3;
+                $d['settings']['fee']['countTiers'][2]['min'] = 4;
+                $d['settings']['fee']['countTiers'][3]['min'] = 5;
+                $d['settings']['fee']['countTiers'][4]['min'] = 6;
+            }, 'settings.fee.countTiers.0.min', 'must start at 1'],
+
+            'two prices for the same number' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][2]['min'] = 2;
+            }, 'settings.fee.countTiers.2.min', 'start above the one before it'],
+
+            'prices out of order' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][1]['min'] = 4;
+                $d['settings']['fee']['countTiers'][3]['min'] = 2;
+            }, 'settings.fee.countTiers.2.min', 'start above the one before it'],
+
+            'a price cheaper than the one before it' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][4]['amount'] = 35;
+            }, 'settings.fee.countTiers.4.amount', 'cannot be lower'],
+
+            'a number of entries that is not a whole number' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][1]['min'] = 2.5;
+            }, 'settings.fee.countTiers.1.min', 'integer'],
+
+            'a 49¢ price' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][0]['amount'] = 0.49;
+            }, 'settings.fee.countTiers.0.amount', 'at least $0.50'],
+
+            'a price in fractions of a cent' => [function (&$d) {
+                $d['settings']['fee']['countTiers'][2]['amount'] = 250.005;
+            }, 'settings.fee.countTiers.2.amount', 'whole cents'],
+
+            'the counted section may be empty' => [function (&$d) {
+                $d['schema']['sections'][1]['minEntries'] = 0;
+            }, 'settings.fee.perEntryOfSection', 'at least one entry'],
+
+            // BISS critique must_fix 4: the office alone is a paying form.
+            'the office alone, with a counted section that may be empty' => [function (&$d) {
+                $d['settings']['payment'] = ['officePayment' => true];
+                $d['schema']['sections'][1]['minEntries'] = 0;
+            }, 'settings.fee.perEntryOfSection', 'at least one entry'],
+
+            'the office alone, with a 49¢ price' => [function (&$d) {
+                $d['settings']['payment'] = ['officePayment' => true];
+                $d['settings']['fee']['countTiers'][0]['amount'] = 0.49;
+            }, 'settings.fee.countTiers.0.amount', 'at least $0.50'],
+
+            'the office on a form that charges nothing' => [function (&$d) {
+                unset($d['settings']['fee']);
+                $d['settings']['payment'] = ['officePayment' => true];
+            }, 'settings.payment.officePayment', 'needs a price'],
+
+            'the office on a form whose only price is $0' => [function (&$d) {
+                $d['settings']['fee'] = ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'amount' => 0];
+                $d['settings']['payment'] = ['officePayment' => true];
+            }, 'settings.payment.officePayment', 'needs a price'],
+
+            'office instructions longer than a thousand characters' => [function (&$d) {
+                $d['settings']['payment']['officeInstructions'] = str_repeat('x', 1001);
+            }, 'settings.payment.officeInstructions', '1000'],
+        ];
+
+        foreach ($cases as $label => [$mutate, $field, $fragment]) {
+            $doc = $this->familyDoc($mutate);
+            $response = $this->postJson($this->url(), $doc);
+
+            $this->assertSame(422, $response->status(), "{$label}: accepted — " . $response->getContent());
+
+            $errors = $this->errors($response);
+
+            $this->assertArrayHasKey($field, $errors, "{$label}: refused, but not on {$field} — " . json_encode($errors));
+            $this->assertStringContainsString($fragment, implode(' ', (array) $errors[$field]), $label);
+            $this->assertFalse(Form::where('slug', $doc['slug'])->exists(), "{$label}: a refused form was written");
+        }
+    }
+
+    #[Test]
+    public function the_required_fee_and_office_switches_survive_every_spelling_on_every_door(): void
+    {
+        $spellings = [
+            [['requireFeeCoverage' => 'true', 'officePayment' => 'on'], true],
+            [['requireFeeCoverage' => '1', 'officePayment' => 'yes'], true],
+            [['requireFeeCoverage' => 'false', 'officePayment' => '0'], false],
+        ];
+
+        foreach ($spellings as [$switches, $expected]) {
+            $doc = $this->familyDoc(function (&$d) use ($switches) {
+                $d['settings']['payment'] = ['online' => 'true'] + $switches;
+            });
+
+            $this->postJson($this->url(), $doc)->assertStatus(201);
+            $payment = Form::where('slug', $doc['slug'])->firstOrFail()->settings['payment'];
+            $this->assertSame([$expected, $expected], [$payment['requireFeeCoverage'], $payment['officePayment']], 'POST ' . json_encode($switches));
+
+            $imported = $this->familyDoc(function (&$d) use ($switches) {
+                $d['settings']['payment'] = ['online' => 'true'] + $switches;
+            });
+            $this->assertSame(0, $this->import($imported));
+            $payment = Form::where('slug', $imported['slug'])->firstOrFail()->settings['payment'];
+            $this->assertSame([$expected, $expected], [$payment['requireFeeCoverage'], $payment['officePayment']], 'form:import ' . json_encode($switches));
+        }
+
+        foreach (['requireFeeCoverage', 'officePayment'] as $flag) {
+            $doc = $this->familyDoc(function (&$d) use ($flag) { $d['settings']['payment'][$flag] = 'maybe'; });
+            $response = $this->postJson($this->url(), $doc)->assertStatus(422);
+            $this->assertArrayHasKey("settings.payment.{$flag}", $this->errors($response));
+        }
+    }
+
+    #[Test]
+    public function a_partial_write_cannot_break_the_family_prices_or_switch_the_office_on_for_nothing(): void
+    {
+        $doc = $this->familyDoc();
+        $this->postJson($this->url(), $doc)->assertStatus(201);
+        $form = Form::where('slug', $doc['slug'])->firstOrFail();
+
+        $settings = $doc['settings'];
+        $settings['fee']['countTiers'][4]['amount'] = 35;
+        $this->putJson($this->url($form), ['settings' => $settings])->assertStatus(422);
+        $this->assertEquals(350, $form->fresh()->settings['fee']['countTiers'][4]['amount']);
+
+        $settings = $doc['settings'];
+        unset($settings['fee']);
+        $settings['payment'] = ['officePayment' => true];
+        $this->putJson($this->url($form), ['settings' => $settings])->assertStatus(422);
+        $this->assertTrue($form->fresh()->chargesFee());
+    }
+
+    /** The BISS registration shape on this file's festival document: per attendee, card + required fee + office. */
+    private function familyDoc(?callable $mutate = null): array
+    {
+        return $this->doc(function (&$d) use ($mutate) {
+            $d['settings']['fee'] = ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS];
+            $d['settings']['payment'] = [
+                'online' => true,
+                'requireFeeCoverage' => true,
+                'officePayment' => true,
+                'officeInstructions' => 'Zelle office@biss.example.',
+            ];
+
+            if ($mutate) {
+                $mutate($d);
+            }
+        });
+    }
+
     // -------------------------------------------------------------- helpers
 
     private function url(?Form $form = null): string

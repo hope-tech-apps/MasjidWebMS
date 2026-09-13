@@ -4,7 +4,6 @@ namespace App\Support;
 
 use App\Models\Form;
 use Carbon\CarbonInterface;
-use Illuminate\Support\Arr;
 use LogicException;
 
 /**
@@ -21,8 +20,14 @@ use LogicException;
  * (StoreFormRequest::crossCheck() refuses anything else).
  *
  * Amounts never come from the request. A payer's only say is the yes/no on
- * covering the card fee, and its amount is StripeFees::coverage() computed here
- * — the LunchOrderExtras rule.
+ * covering the card fee — and not even that when the form requires every card
+ * payer to cover it (settings.payment.requireFeeCoverage; BISS, 2026-09-13). Its
+ * amount is StripeFees::coverage() computed here — the LunchOrderExtras rule.
+ *
+ * The unit price, the quantity and the tier label all come from ONE
+ * Form::priceFor(), which is also what FormSchema::amountDue() and the emails
+ * read: flat, per entry, or priced by the number of entries (a family of three
+ * children is one line at the "3 children" price).
  *
  * Pinned by tests/Unit/FormPaymentTest.php.
  */
@@ -91,9 +96,10 @@ final class FormPayment
     }
 
     /**
-     * How many units a submission is charged for: the row count of the
-     * `perEntryOfSection` section — the count FormSchema::amountDue() multiplies
-     * by — or 1 on a flat fee.
+     * How many units a submission is charged for (Form::priceFor()): the row count
+     * of the `perEntryOfSection` section on a per-entry fee, 1 on a flat fee, and
+     * on a form priced by count 1 — the whole family at its tier's price — or 0
+     * when the list is empty.
      *
      * NOT `entry_count`. That counts the FIRST repeatable section and never goes
      * below 1 (FormSchema::entryCount()), so on a form with two repeatable
@@ -104,7 +110,7 @@ final class FormPayment
      */
     public static function quantity(Form $form, array $data): int
     {
-        return self::quantityFor($form->feeRule(), $data);
+        return $form->priceFor($data)['quantity'] ?? 1;
     }
 
     /**
@@ -119,19 +125,28 @@ final class FormPayment
     }
 
     /**
-     * The card fee a payer asked to cover, in cents.
+     * The card fee a payer covers, in cents.
      *
-     * The client says yes or no and nothing else: the amount is
-     * StripeFees::coverage() of what is owed, so the organisation nets the full
-     * price. Only when the form offers it (Form::allowsFeeCoverage(), which also
-     * requires card payment to be on) and only for a CARD payment — cash at the
-     * gate has no card fee to cover.
+     * The amount is StripeFees::coverage() of what is owed, so the organisation
+     * nets the full price (at a platform fee of 0; the application fee is taken on
+     * the grossed-up total and is not grossed up itself). Only for a CARD payment
+     * on a form that takes cards: cash at the gate and a registration paid at the
+     * office have no card fee to cover.
+     *
+     * When the form REQUIRES it (Form::requiresFeeCoverage()) every card payer
+     * covers it, and the browser's `cover_fees` cannot turn it off. Otherwise the
+     * client says yes or no, and a yes counts only where the form offers the
+     * checkbox (Form::allowsFeeCoverage()).
      */
     public static function feeCoveredMinor(Form $form, int $amountDueMinor, bool $coverFees, bool $online): int
     {
-        return ($coverFees && $online && $form->allowsFeeCoverage())
-            ? StripeFees::coverage($amountDueMinor)
-            : 0;
+        if (! $online || ! $form->takesOnlinePayment()) {
+            return 0;
+        }
+
+        $covered = $form->requiresFeeCoverage() || ($coverFees && $form->allowsFeeCoverage());
+
+        return $covered ? StripeFees::coverage($amountDueMinor) : 0;
     }
 
     /** The form's currency as Stripe and the money columns spell it: lower-case ISO-4217. */
@@ -156,7 +171,8 @@ final class FormPayment
      * caller's to refuse — with a 422, never the free path — and `total_minor`
      * is what it reads.
      *
-     * Null when the form charges nothing.
+     * Null when the form charges nothing, or when its price cannot be resolved for
+     * this submission (a count schedule nothing can read): the caller refuses it.
      *
      * @param  array<string,mixed>  $data  the cleaned submission (FormSchema::only())
      * @return array{
@@ -179,13 +195,13 @@ final class FormPayment
         bool $online = false,
         ?CarbonInterface $at = null
     ): ?array {
-        $fee = $form->feeRule($at);
+        $price = $form->priceFor($data, $at);
 
-        if ($fee === null) {
+        if ($price === null) {
             return null;
         }
 
-        $unit = self::toMinor($fee['amount']);
+        $unit = self::toMinor($price['unit']);
 
         // The settings rules refuse a negative price; this is the backstop for a
         // row written some other way. A negative line is a refund nobody asked for.
@@ -193,12 +209,12 @@ final class FormPayment
             throw new LogicException("Form {$form->id} has a negative price, so nothing can be charged for it.");
         }
 
-        $quantity = self::quantityFor($fee, $data);
+        $quantity = $price['quantity'];
         $amountDue = $unit * $quantity;
         $feeCovered = self::feeCoveredMinor($form, $amountDue, $coverFees, $online);
         $total = $amountDue + $feeCovered;
-        $currency = self::currencyOf($fee);
-        $tierLabel = self::tierLabel($fee);
+        $currency = self::currencyOf($price['fee']);
+        $tierLabel = $price['label'];
 
         $lines = [];
 
@@ -257,43 +273,12 @@ final class FormPayment
 
     // ---------------------------------------------------------------- helpers
 
-    /**
-     * @param  array<string,mixed>|null  $fee  Form::feeRule()
-     * @param  array<string,mixed>  $data
-     */
-    private static function quantityFor(?array $fee, array $data): int
-    {
-        // Exactly FormSchema::amountDue()'s reading, so the cents and the legacy
-        // decimal never count differently.
-        $perEntry = $fee['perEntryOfSection'] ?? null;
-
-        if ($perEntry === null) {
-            return 1;
-        }
-
-        $rows = Arr::get($data, $perEntry, []);
-
-        return is_array($rows) ? count($rows) : 0;
-    }
-
     /** @param  array<string,mixed>|null  $fee */
     private static function currencyOf(?array $fee): string
     {
         $currency = strtolower(trim((string) ($fee['currency'] ?? '')));
 
         return $currency !== '' ? $currency : 'usd';
-    }
-
-    /** @param  array<string,mixed>  $fee */
-    private static function tierLabel(array $fee): ?string
-    {
-        $label = $fee['currentTier']['label'] ?? null;
-
-        if (! is_string($label) || trim($label) === '') {
-            return null;
-        }
-
-        return trim($label);
     }
 
     private static function lineName(Form $form, ?string $tierLabel): string

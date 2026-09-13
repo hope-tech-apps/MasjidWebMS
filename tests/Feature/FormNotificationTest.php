@@ -450,6 +450,87 @@ class FormNotificationTest extends TestCase
         $this->assertEquals(200, (float) $response->amount_due);
     }
 
+    // ------------------------------------------------------------------ BISS (2026-09-13)
+
+    #[Test]
+    public function both_emails_name_the_family_rate_the_registration_was_priced_at(): void
+    {
+        Mail::fake();
+
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings() + ['fee' => [
+            'currency' => 'USD',
+            'perEntryOfSection' => 'attendees',
+            'countTiers' => [
+                ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+                ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+                ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+            ],
+        ]]);
+
+        // The payload registers two attendees.
+        $row = $this->moneyRow($form, ['payment_method' => FormResponse::METHOD_CASH, 'payment_status' => FormResponse::PAYMENT_PAID, 'paid_at' => now()]);
+
+        FormNotifier::submitted($form, $row);
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->tierLabel === '2 children');
+        Mail::assertQueued(FormResponseSubmitted::class, fn ($mail) => $mail->tierLabel === '2 children');
+    }
+
+    #[Test]
+    public function a_family_paying_the_office_is_emailed_what_it_owes_and_how_to_pay_with_nothing_settled_only(): void
+    {
+        Mail::fake();
+
+        $instructions = 'Zelle office@biss.example, or bring cash or a check on Sunday.';
+        $form = $this->makeForm($this->makeMasjid(), array_replace($this->payingSettings(), [
+            'payment' => ['online' => true, 'officePayment' => true, 'officeInstructions' => $instructions],
+        ]));
+
+        $row = $this->moneyRow($form, ['payment_method' => FormResponse::METHOD_OFFICE, 'payment_status' => FormResponse::PAYMENT_UNPAID]);
+
+        FormNotifier::submitted($form, $row);
+
+        Mail::assertQueued(FormSubmissionReceipt::class, function (FormSubmissionReceipt $mail) use ($row, $instructions) {
+            $html = $mail->render();
+
+            return $mail->responseId === $row->id
+                && $mail->amountLine === '$200.00'
+                && $mail->paymentLine === null
+                && $mail->whatsappUrl === null
+                && $mail->paymentNote === $instructions
+                && str_contains($html, 'Total due')
+                && ! str_contains($html, self::WHATSAPP)
+                && ! str_contains($html, 'Paid ');
+        });
+        Mail::assertQueued(FormResponseSubmitted::class, fn ($mail) => $mail->responseId === $row->id && $mail->paymentLine === null);
+
+        // With no instructions of its own, the form's payment note stands in.
+        $plain = $this->makeForm($this->makeMasjid(), array_replace($this->payingSettings(), ['payment' => ['officePayment' => true]]));
+        $owing = $this->moneyRow($plain, ['payment_method' => FormResponse::METHOD_OFFICE, 'payment_status' => FormResponse::PAYMENT_UNPAID]);
+
+        FormNotifier::submitted($plain, $owing);
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $owing->id
+            && $mail->paymentNote === 'Card payments on the masjid terminal carry a 3% service charge.');
+    }
+
+    #[Test]
+    public function a_payment_recorded_by_hand_says_how_it_came_when_staff_said_so(): void
+    {
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings());
+
+        foreach (['zelle' => 'Zelle', 'cashapp' => 'Cash App', 'venmo' => 'Venmo', 'check' => 'Check'] as $via => $label) {
+            $row = $this->moneyRow($form, [
+                'payment_method' => FormResponse::METHOD_EXTERNAL,
+                'payment_status' => FormResponse::PAYMENT_PAID,
+                'paid_via' => $via,
+                'paid_at' => now(),
+            ]);
+
+            $this->assertSame("Paid by {$label} (recorded by staff)", FormNotifier::paymentLine($row));
+        }
+    }
+
     /** The camp form, taking payment and handing out a group link once settled. */
     private function payingSettings(): array
     {

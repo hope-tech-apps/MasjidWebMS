@@ -922,8 +922,8 @@ class FormResponsesMoneyAdminTest extends TestCase
             'Submitted', 'Status', 'Entries', 'Amount due',
             'Registration no.', 'Payment method', 'Payment status', 'Paid at',
             'Staff code holder', 'Marked paid by', 'Card fee covered', 'Total paid',
-            'Collected at', 'Collected by',
-        ], array_slice($lines[0], 0, 14));
+            'Collected at', 'Collected by', 'Paid via',
+        ], array_slice($lines[0], 0, 15));
 
         $this->assertStringNotContainsString(',=HYPERLINK', $csv);
 
@@ -937,8 +937,10 @@ class FormResponsesMoneyAdminTest extends TestCase
         $this->assertSame('30.00', $byId[$cash->id][11]);
         $this->assertNotSame('', $byId[$cash->id][12]);
         $this->assertSame($this->admin->name, $byId[$cash->id][13]);
+        $this->assertSame('cash', $byId[$cash->id][14], 'cash at the gate says how it came too');
 
         $this->assertSame('', $byId[$wix->id][5]);
+        $this->assertSame('', $byId[$wix->id][14]);
         $this->assertSame('unpaid', $byId[$wix->id][6], 'a Wix-fallback row is unpaid, never blank');
         $this->assertSame('', $byId[$wix->id][11]);
     }
@@ -1117,6 +1119,44 @@ class FormResponsesMoneyAdminTest extends TestCase
         $this->assertNull($theirCard->fresh()->marked_paid_by_user_id);
         $this->assertSame([], self::$expired);
         Mail::assertNothingQueued();
+    }
+
+    // ---------------------------------------------- BISS: a card fee settled by hand
+
+    /**
+     * A family whose card checkout carried the required $7.78 fee, settled at the office
+     * instead: the fee drops away, and the office records the tier price.
+     */
+    #[Test]
+    public function a_card_registration_carrying_a_required_fee_settled_by_hand_records_the_tier_price_and_no_fee(): void
+    {
+        $form = $this->makeForm($this->masjid, [
+            'identity' => ['name' => 'fullName', 'email' => 'email'],
+            'notifyEmails' => ['office@biss.test'],
+            'fee' => ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => [
+                ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+                ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+                ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+            ]],
+            'payment' => ['online' => true, 'requireFeeCoverage' => true],
+        ]);
+
+        $money = ['amount_due_minor' => 25000, 'fee_covered_minor' => 778, 'total_minor' => 25778];
+
+        foreach (['take-cash' => [[], 'cash', 'cash'], 'mark-paid-external' => [['via' => 'check'], 'external', 'check']] as $action => [$body, $method, $via]) {
+            $row = $this->onlineUnpaid($money, ['amount_due' => 250], $form);
+            self::$pages[$row->stripe_checkout_session_id] = 'open';
+
+            $this->postJson($this->url("/{$row->id}/{$action}", $form), $body)->assertOk()
+                ->assertJsonPath('data.payment_method', $method)
+                ->assertJsonPath('data.paid_via', $via)
+                ->assertJsonPath('data.fee_covered_minor', 0)
+                ->assertJsonPath('data.total_minor', 25000);
+
+            $this->assertContains($row->stripe_checkout_session_id, self::$expired, "{$action}: the card page is closed first");
+            $this->assertSame(0, $row->fresh()->fee_covered_minor);
+            $this->assertSame(25000, $row->fresh()->total_minor);
+        }
     }
 
     // ---------------------------------------------------------------- helpers

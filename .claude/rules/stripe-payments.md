@@ -240,6 +240,41 @@ persisted before the call, webhook-only advancement). On top of them:
     row was priced at (`feeRule($response->submitted_at)`, the instant `lineItems()`
     prices the Stripe line at), not the tier in force when the payment is recorded.
 
+## Forms: the required card fee and paying the office (DECISIONS.md 2026-09-13)
+
+BISS Sunday School's registration adds two switches to a form's single payment:
+
+- **`payment.requireFeeCoverage`.** `FormPayment::feeCoveredMinor()` adds
+  `StripeFees::coverage()` to every CARD payment on the form, and `cover_fees` cannot
+  turn it off. `$online` is false for staff codes and office rows, so their fee is 0.
+  A card row settled by hand drops the fee (`FormResponse::paidAs()`). It never turns
+  `allowsFeeCoverage()` on; the payload publishes `requireFeeCoverage` as its own key.
+- **"Nets the full price" is conditional.** `application_fee_amount` is taken on the
+  grossed-up total and is not grossed up itself, and the rate is platform-wide config,
+  not the org's Connect pricing. `DonorCoversFeesTest` pins it at a platform fee of 0.
+- **An office row never touches Stripe.** It has `payment_method` `office`, is unpaid,
+  and has `fee_covered_minor` 0 with `total_minor` equal to what is owed. There is no
+  `refusal()` check, no return origin and no session. The checkout preflight, `canPay`
+  and the webhook's `explainNoTransition()` all read it as "not paid by card". A stray
+  card payment on one is recorded and logged, and never flips it.
+- **Office rows are the one unpaid money leg emailed at submit**
+  (`FormNotifier::submitted()`). The receipt's note carries the office's instructions,
+  and there is no group link. Settlement sends the paid receipt with
+  `toCoordinators: false`.
+- **Settled by hand exactly as before**: `cash` or `external`, plus `paid_via`.
+  - `markPaidExternal` on an office row without `via` is refused on the locked row
+    (`MarkFormResponsePaidRequest::refusal()`), before anything is written.
+  - `paidAs()` writes `paid_via` `cash` for every cash settlement, gate or table.
+  - `FormCashTotals` adds `external_by_via` (a detail, never a second total) and
+    `owed_office`.
+- **Routing (`FormSubmissionsController`).** A staff credential is always cash.
+  Otherwise the row is `office` when chosen, or when `pay_with` is absent and
+  `!Form::canTakeCardNow()`; otherwise it is a card payment.
+  - A choice the form does not offer is a 422 on `pay_with`, never swapped for the
+    other.
+  - The replay fingerprint adds `pay_with: office` for office rows only, so card
+    fingerprints written before the deploy still match their replays.
+
 ## Lunch orders marked paid by hand (DECISIONS.md 2026-09-11)
 
 The Jummah-lunch board's Mark paid (`MealOrdersController::markPaid`) is a

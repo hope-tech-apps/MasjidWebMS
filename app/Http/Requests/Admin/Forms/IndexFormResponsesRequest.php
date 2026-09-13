@@ -34,6 +34,10 @@ class IndexFormResponsesRequest extends BaseFormRequest
     /**
      * paid / unpaid / settled read the way FormResponse::isSettled() does, so a row with
      * no money leg on a form that charges is unpaid, never free; the rest are a method.
+     *
+     * `office` is the families who chose to pay the office and have NOT been recorded
+     * yet (BISS, 2026-09-13): recording one makes it cash or external, so it moves to
+     * that filter, and to `paid`. `unpaid` includes them.
      */
     public const PAYMENT_FILTERS = [
         'paid',
@@ -42,6 +46,7 @@ class IndexFormResponsesRequest extends BaseFormRequest
         FormResponse::METHOD_CASH,
         FormResponse::METHOD_ONLINE,
         FormResponse::METHOD_EXTERNAL,
+        FormResponse::METHOD_OFFICE,
     ];
 
     public const COLLECTED_FILTERS = ['yes', 'no'];

@@ -685,3 +685,35 @@ and it has to be argued as one.
   anyway. Do not re-engineer `isWithinWindow` on the strength of the tier fix;
   if the window is ever made timezone-aware it should be done deliberately, with
   the DST cases `TieredFeeTimezoneTest` already covers.
+
+## FAMILY PRICES ARE COUNTED, NOT MULTIPLIED (BISS, DECISIONS.md 2026-09-13)
+
+- **`settings.fee.countTiers` prices the WHOLE registration** by the row count of
+  `perEntryOfSection`: `[{min:1, amount:100, label:'1 child'}, …, {min:5, amount:350}]`.
+  `Form::priceFor()` is the only resolver. `FormSchema::amountDue()`,
+  `FormPayment::quote()` and `FormNotifier::tierLabel()` all read it. Never compute
+  unit × rows for such a form anywhere else: a family of three owes 250.00, not
+  100.00 × 3.
+- **Chosen by comparison, not by position.** The greatest `min` ≤ rows wins, so a list
+  stored as `[1, 5, 2]` charges six children the "5 or more" price. 0 rows gives
+  quantity 0 and owes 0, and a paying form refuses that with "Add at least one entry."
+- **All or nothing when unreadable.** A single bad tier makes `feeRule()` null, so the
+  form refuses entries, paying or not. A bad tier is:
+  - a min that is not a positive whole number;
+  - a missing or negative amount;
+  - a min used twice;
+  - a schedule that is not a list, or that counts no section.
+  Skipping the bad tier would price those families at the tier below. This is the
+  same rule as an unreadable cut-off stepping UP.
+- **The save refusals live in `StoreFormRequest::countTierProblems()`**, which
+  `crossCheck()` runs on EVERY form, on POST, on PUT (both halves resolved) and on
+  `form:import`. The 50¢ and whole-cents checks reach the tier prices through
+  `paymentProblems()`. Count pricing and date `tiers`/`amount` never share a form.
+  `FormDoorEquivalenceTest` pins the doors.
+- **The published fee omits `amount` and `tiers`** under count pricing
+  (`SectionContentBinder::publicFee()`), and `unitMinor` is null. A renderer that
+  predates it must see no total: not the lowest tier × rows, and not `Number(null)`.
+  `FormPaymentPayloadTest` pins the exact keys.
+- **`chargesFee()` reads `countTiers[].amount`.** `isSettled()`,
+  `takesOnlinePayment()` and the unpaid filters depend on it: a count-only form that
+  "charged nothing" would be free.

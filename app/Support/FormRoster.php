@@ -209,6 +209,10 @@ class FormRoster
     /**
      * The payment badge in words, for the roster and its CSV: "Paid by card", "Cash
      * (Najd Haddad)", "Paid elsewhere", "Unpaid" — or blank when nothing was ever owed.
+     *
+     * A family that chose to pay the office (BISS, 2026-09-13) reads "Owed — paying the
+     * office" until staff record it, then "Paid by Zelle" (or Cash App, Venmo, Check),
+     * or "Cash (who took it)" like any cash.
      */
     public static function paymentLabel(FormResponse $response): string
     {
@@ -219,13 +223,15 @@ class FormRoster
         }
 
         if ($state === FormResponse::PAYMENT_UNPAID) {
-            return 'Unpaid';
+            return $response->payment_method === FormResponse::METHOD_OFFICE ? 'Owed — paying the office' : 'Unpaid';
         }
+
+        $via = FormResponse::PAID_VIA_LABELS[$response->paid_via] ?? null;
 
         return match ($response->payment_method) {
             FormResponse::METHOD_ONLINE => 'Paid by card',
             FormResponse::METHOD_CASH => ($holder = self::holder($response)) !== null ? "Cash ({$holder})" : 'Cash',
-            FormResponse::METHOD_EXTERNAL => 'Paid elsewhere',
+            FormResponse::METHOD_EXTERNAL => $via !== null ? "Paid by {$via}" : 'Paid elsewhere',
             default => 'Paid',
         };
     }

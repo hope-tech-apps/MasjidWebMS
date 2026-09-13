@@ -75,18 +75,36 @@ use LogicException;
  * chargeable, the request's Origin is on config('forms.payment_return_origins') and
  * its return_path is a relative path (App\Support\FormPaymentReturn). A refusal
  * leaves no row. The row is then written UNPAID with its integer-cents snapshot
- * (App\Support\FormPayment, with the card fee only when the payer ticked the box and
- * the form offers it), and the hosted page is opened after the commit
+ * (App\Support\FormPayment, with the card fee when the payer ticked the box and the
+ * form offers it, or always when the form requires it), and the hosted page is opened after the commit
  * (App\Services\Stripe\FormResponseCheckoutService). Nobody is emailed yet: the
  * receipt and the coordinator email go when the signed webhook marks the row paid. If
  * Stripe fails after the commit, the answer is a 422 carrying the uuid, and the page
  * offers "Try payment again" (POST /api/v1/form-responses/{uuid}/checkout).
  *
+ * ## Paying the office (BISS, 2026-09-13)
+ *
+ * On a form that offers it (`settings.payment.officePayment`) a family may send
+ * `pay_with: office`. The registration is written UNPAID with method `office`, owing
+ * the list price with NO card fee (a required card fee is a card fee), and nothing on
+ * the card path is asked: no Stripe account, no return origin, no Stripe call. It is
+ * emailed at once — received, the amount owed, the office's own instructions
+ * (FormNotifier) — because nothing else will ever tell that family, and staff record
+ * the money when it comes (FormResponsesController::markPaidExternal()).
+ *
+ * A page that sends no `pay_with` pays by card whenever the form can take a card right
+ * now (Form::canTakeCardNow()), and otherwise pays the office when the form offers it:
+ * never a registration with no money leg on a form that takes payment. `pay_with:
+ * office` on a form that does not offer it, and `card` on one that takes no card, are a
+ * 422 before anything else is asked.
+ *
  * ## Never free by accident
  *
- * A form that takes payment (card or staff codes) never takes a submission that owes
- * nothing: an empty attendee list sent past the renderer, or a $0 price in force, is a
- * 422 — never the free path, which would hand out the group link and a bracelet.
+ * A form that takes payment (card, staff codes or the office) never takes a submission
+ * that owes nothing: an empty attendee list sent past the renderer, or a $0 price in
+ * force, is a 422 — never the free path, which would hand out the group link and a
+ * bracelet. A price the form cannot resolve (a count schedule nothing can read) is
+ * refused the same way, on every form, rather than stored as owing nothing.
  *
  * ## The replay guard
  *
@@ -164,11 +182,29 @@ class FormSubmissionsController extends Controller
             // owe twice, and a double-tapped card registration writing a second row with a
             // second page, so it is required wherever money moves. Asked before the
             // credential, and it says nothing about it.
+            // An office-only form is money moving too: a double-tap would make a family
+            // owe the office twice.
             if ($request->input('client_submission_key') === null
-                && ($credential !== null || $form->takesOnlinePayment() || $form->takesStaffCodes())) {
+                && ($credential !== null || $form->takesPayment())) {
                 return response()->json([
                     'status' => 'failed',
                     'data' => ['client_submission_key' => [SubmitFormResponseRequest::OUT_OF_DATE]],
+                ], 422);
+            }
+
+            // A choice this form does not offer is refused by name, never quietly swapped
+            // for the other: a family told "pay the office" must not be sent to Stripe.
+            $payWith = $request->input('pay_with');
+            $unoffered = match (true) {
+                $payWith === SubmitFormResponseRequest::PAY_WITH_OFFICE && ! $form->takesOfficePayment() => 'This form does not take payment at the office.',
+                $payWith === SubmitFormResponseRequest::PAY_WITH_CARD && ! $form->takesOnlinePayment() => 'This form does not take card payment.',
+                default => null,
+            };
+
+            if ($unoffered !== null) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['pay_with' => [$unoffered]],
                 ], 422);
             }
 
@@ -221,21 +257,33 @@ class FormSubmissionsController extends Controller
 
             $clean = $schema->only($submitted);
 
-            // A card registration: no staff credential, on a form that takes cards. A
-            // staff entry on the same form is cash, whatever the card switch says.
-            $online = $staffCode === null && $form->takesOnlinePayment();
+            // The office: no staff credential, on a form that offers it, when the family
+            // chose it — or said nothing on a form that cannot take a card right now.
+            $office = $staffCode === null
+                && $form->takesOfficePayment()
+                && ($payWith === SubmitFormResponseRequest::PAY_WITH_OFFICE || ($payWith === null && ! $form->canTakeCardNow()));
+
+            // A card registration: no staff credential and not the office, on a form that
+            // takes cards. A staff entry on the same form is cash, whatever the card
+            // switch says.
+            $online = $staffCode === null && ! $office && $form->takesOnlinePayment();
 
             // Never free by accident. Only a form that takes payment is asked, so every
-            // other form keeps exactly the behaviour it had. The card fee is the payer's
-            // yes/no, priced here, and only on a card payment.
+            // other form keeps exactly the behaviour it had. The card fee is priced here,
+            // and only on a card payment: the payer's yes/no, or always when the form
+            // requires it (FormPayment::feeCoveredMinor()).
             $quote = null;
 
-            if ($form->takesOnlinePayment() || $form->takesStaffCodes()) {
+            if ($form->takesPayment()) {
                 $quote = FormPayment::quote($form, $clean, $online && $request->boolean('cover_fees'), $online);
 
                 if ($quote === null || $quote['total_minor'] <= 0) {
                     return $this->owesNothing($form, $quote);
                 }
+            } elseif ($form->pricesByCount() && $form->priceFor($clean) === null) {
+                // A count schedule nothing can read, on a form that takes no payment:
+                // amount_due would be stored as nothing owed. Refused, never under-charged.
+                return $this->owesNothing($form, null);
             }
 
             // A card payment: everything that could stop the page opening, BEFORE any
@@ -257,10 +305,10 @@ class FormSubmissionsController extends Controller
             }
 
             $clientKey = $request->input('client_submission_key');
-            $fingerprint = $this->fingerprint($clean, $staffCode, $quote);
+            $fingerprint = $this->fingerprint($clean, $staffCode, $quote, $office);
 
             try {
-                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online): array {
+                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office): array {
                     // Re-read inside the transaction and lock, so two submissions racing for
                     // the last place cannot both pass the capacity check. The counter is the
                     // thing capacity is enforced against, so it must be read under the lock
@@ -338,6 +386,20 @@ class FormSubmissionsController extends Controller
                         ];
                     }
 
+                    // A family paying the office is written UNPAID, owing the list price:
+                    // no card was offered a fee, so none is covered, and the total is what
+                    // is owed. Staff settle it by hand when the money comes.
+                    if ($office) {
+                        $guarded += [
+                            'payment_method' => FormResponse::METHOD_OFFICE,
+                            'payment_status' => FormResponse::PAYMENT_UNPAID,
+                            'currency' => $quote['currency'],
+                            'amount_due_minor' => $quote['amount_due_minor'],
+                            'fee_covered_minor' => 0,
+                            'total_minor' => $quote['amount_due_minor'],
+                        ];
+                    }
+
                     $created->forceFill($guarded)->save();
 
                     // Inside the transaction, and only once the row exists: a submission
@@ -407,7 +469,8 @@ class FormSubmissionsController extends Controller
 
             // Deliberately after the transaction: the registration is already committed, so
             // a mail failure can neither roll it back nor reach the submitter. FormNotifier
-            // swallows its own errors for the same reason.
+            // swallows its own errors for the same reason. A family paying the office is
+            // emailed now, with what it owes and how to pay.
             FormNotifier::submitted($form, $response);
 
             return $this->accepted($form, $response);
@@ -433,21 +496,32 @@ class FormSubmissionsController extends Controller
     /**
      * What the replay guard compares: everything that decides what a row owes and who
      * owes it — the cleaned answers (the attendee rows are the quantity), the code
-     * whose holder takes the cash, and whether a card payer covers the card fee. A
-     * replay that differs in any of it is a different submission. Anything later
-     * added to what a row owes belongs in here too.
+     * whose holder takes the cash, whether a card payer covers the card fee, and
+     * whether the family pays the office. A replay that differs in any of it is a
+     * different submission. Anything later added to what a row owes belongs in here too.
+     *
+     * The office choice is added only when it was made, so every fingerprint taken
+     * before it existed — an unpaid card registration mid-checkout across the deploy —
+     * still matches its own replay. A card replay of an office registration, or the
+     * reverse, is a 409.
      *
      * @param  array<string,mixed>  $clean
      * @param  array<string,mixed>|null  $quote  FormPayment::quote()
      * @return array<string,mixed>
      */
-    private function fingerprint(array $clean, ?FormStaffCode $staffCode, ?array $quote): array
+    private function fingerprint(array $clean, ?FormStaffCode $staffCode, ?array $quote, bool $office = false): array
     {
-        return [
+        $fingerprint = [
             'data' => $clean,
             'staff_code_id' => $staffCode?->getKey(),
             'fee_covered' => $quote !== null && $quote['fee_covered_minor'] > 0,
         ];
+
+        if ($office) {
+            $fingerprint['pay_with'] = SubmitFormResponseRequest::PAY_WITH_OFFICE;
+        }
+
+        return $fingerprint;
     }
 
     /**

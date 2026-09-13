@@ -183,8 +183,9 @@ class SectionContentBinder
                 'successNextSteps' => $settings['successNextSteps'] ?? [],
                 'intro' => $settings['intro'] ?? null,
                 // feeRule() resolves the tier in force today, and carries the whole
-                // schedule so the page can show what the price becomes and when.
-                'fee' => $form->feeRule(),
+                // schedule so the page can show what the price becomes and when. A form
+                // priced by the number of entries publishes its own shape (publicFee()).
+                'fee' => self::publicFee($form),
             ],
         ];
 
@@ -220,11 +221,23 @@ class SectionContentBinder
      *                     active and not full. The registration WINDOW is ignored,
      *                     as the gate ignores it (Form::acceptsStaffEntry())
      *   unitMinor         the price in force today in cents (App\Support\FormPayment),
-     *                     so the page never converts the decimal fee itself
+     *                     so the page never converts the decimal fee itself. NULL on
+     *                     a form priced by the number of entries: there is no one
+     *                     unit price, and a renderer that predates countTiers then
+     *                     draws no total rather than a wrong one
      *   stripeFee*        Stripe's published rate, so the page can show the fee
      *                     before submitting. Display only: the server recomputes it
      *
-     * Pinned by tests/Feature/FormPaymentPayloadTest.php.
+     * Added for BISS (2026-09-13), on every paying form:
+     *
+     *   requireFeeCoverage  every card payer covers the card fee; the page shows it
+     *                       as a line, not a checkbox. allowFeeCoverage is NOT turned
+     *                       on by it, so an old renderer never offers an optional box
+     *                       for a fee the server will add anyway
+     *   officePayment       offer "Pay the school office" beside the card
+     *   officeInstructions  how to pay the office, or null (only while officePayment is on)
+     *   countTiers          [{min, amountMinor, label}] ascending, or null on a form
+     *                       not priced by count
      *
      * @return array<string,mixed>|null
      */
@@ -232,20 +245,71 @@ class SectionContentBinder
     {
         $online = $form->takesOnlinePayment();
         $staffCodes = $form->takesStaffCodes();
+        $office = $form->takesOfficePayment();
 
-        if (! $online && ! $staffCodes) {
+        if (! $online && ! $staffCodes && ! $office) {
             return null;
         }
 
+        $fee = $form->feeRule();
+        $byCount = $form->pricesByCount();
+
         return [
             'online' => $online,
-            'available' => $online && (bool) $form->masjid?->canAcceptDonations(),
+            'available' => $form->canTakeCardNow(),
             'allowFeeCoverage' => $form->allowsFeeCoverage(),
             'staffEntry' => $staffCodes && $form->acceptsStaffEntry(),
-            'unitMinor' => FormPayment::unitMinor($form),
+            'unitMinor' => $byCount ? null : FormPayment::unitMinor($form),
             'currency' => FormPayment::currencyFor($form),
             'stripeFeePercentage' => StripeFees::percentage(),
             'stripeFeeFixedMinor' => StripeFees::fixed(),
+            'requireFeeCoverage' => $form->requiresFeeCoverage(),
+            'officePayment' => $office,
+            'officeInstructions' => $office ? $form->officeInstructions() : null,
+            'countTiers' => $byCount && $fee !== null
+                ? array_map(fn (array $tier) => [
+                    'min' => $tier['min'],
+                    'amountMinor' => FormPayment::toMinor($tier['amount']),
+                    'label' => $tier['label'],
+                ], $fee['countTiers'])
+                : null,
+        ];
+    }
+
+    /**
+     * The fee the page draws with: feeRule() as it has always been published, except on
+     * a form priced by the number of entries (BISS, 2026-09-13), which publishes
+     *
+     *   {pricing: 'count', currency, perEntryOfSection, countTiers: [{min, amount, label}]}
+     *
+     * with NO `amount` key and NO `tiers` key. A renderer that predates count pricing
+     * multiplies `amount` by the rows for its "live total": with the lowest tier's price
+     * there it would show "$100 × 3 = $300" while the server charges $250 (BISS critique,
+     * must_fix 1), and with `amount: null` it would show "$0.00 × 3", since Number(null)
+     * is 0. With the key absent it shows no total at all. `perEntryOfSection` stays: the
+     * renderer counts the rows from it.
+     *
+     * Pinned by tests/Feature/FormPaymentPayloadTest.php.
+     *
+     * @return array<string,mixed>|null
+     */
+    private static function publicFee(Form $form): ?array
+    {
+        $fee = $form->feeRule();
+
+        if ($fee === null || ($fee['pricing'] ?? null) !== Form::PRICING_COUNT) {
+            return $fee;
+        }
+
+        return [
+            'pricing' => Form::PRICING_COUNT,
+            'currency' => $fee['currency'],
+            'perEntryOfSection' => $fee['perEntryOfSection'],
+            'countTiers' => array_map(fn (array $tier) => [
+                'min' => $tier['min'],
+                'amount' => $tier['amount'],
+                'label' => $tier['label'],
+            ], $fee['countTiers']),
         ];
     }
 

@@ -62,10 +62,21 @@ class FormNotifier
      * at the table for a registration made with no money leg. The payer still gets the
      * paid receipt, which is where the group link travels in the fallback (festival
      * brief, blocker 5); the coordinators do not hear about the same person twice.
+     *
+     * ## A family paying the office (BISS, 2026-09-13)
+     *
+     * The one unpaid money leg that IS emailed at submit: nothing else will ever tell
+     * that family their registration arrived. Both emails state the amount owed (the
+     * "Total due" line, since there is no payment line yet), and the receipt's note is
+     * the office's own instructions (settings.payment.officeInstructions), falling back
+     * to the form's payment note. Nothing settled-only rides along: no payment line and
+     * no group link (isSettled() is false). When staff record the money,
+     * FormResponsesController::settleByHand() sends the paid receipt with
+     * $toCoordinators false, so the coordinators hear about the family once.
      */
     public static function submitted(Form $form, FormResponse $response, bool $toCoordinators = true): void
     {
-        if ($response->hasMoneyLeg() && ! $response->isPaid()) {
+        if ($response->hasMoneyLeg() && ! $response->isPaid() && ! self::owesTheOffice($response)) {
             return;
         }
 
@@ -154,9 +165,11 @@ class FormNotifier
                     fn ($step) => is_string($step) && trim($step) !== ''
                 )),
                 // How to pay is noise once paid, and under the Wix fallback it is the pay-here
-                // link: restated on a paid receipt, it invites a second payment.
-                paymentNote: $paymentLine === null && is_string($settings['paymentNote'] ?? null)
-                    ? $settings['paymentNote']
+                // link: restated on a paid receipt, it invites a second payment. A family
+                // paying the office is told the office's own instructions instead.
+                paymentNote: $paymentLine === null
+                    ? (self::owesTheOffice($response) ? $form->officeInstructions() : null)
+                        ?? (is_string($settings['paymentNote'] ?? null) ? $settings['paymentNote'] : null)
                     : null,
                 masjidEmail: $masjid?->email,
                 paymentLine: $paymentLine,
@@ -339,7 +352,8 @@ class FormNotifier
      *
      * A card states what Stripe charged, the card fee included, because that can differ
      * from the price shown beside it. Cash and a payment staff recorded state only how:
-     * the amount is that price.
+     * the amount is that price. A payment staff recorded names how it came when they
+     * said so ("Paid by Zelle (recorded by staff)"; FormResponse::PAID_VIA).
      */
     public static function paymentLine(FormResponse $response): ?string
     {
@@ -347,14 +361,22 @@ class FormNotifier
             return null;
         }
 
+        $via = FormResponse::PAID_VIA_LABELS[$response->paid_via] ?? null;
+
         return match ($response->payment_method) {
             FormResponse::METHOD_ONLINE => $response->total_minor !== null
                 ? 'Paid ' . self::money((int) $response->total_minor, $response->currency) . ' by card'
                 : 'Paid by card',
             FormResponse::METHOD_CASH => 'Paid in cash',
-            FormResponse::METHOD_EXTERNAL => 'Paid (recorded by staff)',
+            FormResponse::METHOD_EXTERNAL => $via !== null ? "Paid by {$via} (recorded by staff)" : 'Paid (recorded by staff)',
             default => null,
         };
+    }
+
+    /** An unpaid registration whose family chose to pay the office. */
+    private static function owesTheOffice(FormResponse $response): bool
+    {
+        return $response->payment_method === FormResponse::METHOD_OFFICE && ! $response->isPaid();
     }
 
     /**
@@ -389,12 +411,16 @@ class FormNotifier
         return $code === 'USD' ? '$' . $amount : $amount . ' ' . $code;
     }
 
-    /** "Early bird", so a coordinator can see which price this registration locked in. */
+    /**
+     * "Early bird" or "3 children", so a coordinator can see which price this
+     * registration locked in: Form::priceFor() over the row's own answers at its
+     * submitted_at, the reading FormPayment::quote() named the Stripe line from.
+     */
     private static function tierLabel(Form $form, FormResponse $response): ?string
     {
-        $label = self::feeAtSubmit($form, $response)['currentTier']['label'] ?? null;
+        $data = is_array($response->data) ? $response->data : [];
 
-        return is_string($label) && trim($label) !== '' ? $label : null;
+        return $form->priceFor($data, $response->submitted_at)['label'] ?? null;
     }
 
     /**

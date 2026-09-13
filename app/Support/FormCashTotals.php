@@ -60,6 +60,15 @@ final class FormCashTotals
         $other = self::sums($base, ['payment_method'], [FormResponse::METHOD_ONLINE, FormResponse::METHOD_EXTERNAL])
             ->keyBy('payment_method');
 
+        // The external money again, split by how it came (BISS, 2026-09-13). The same rows
+        // as other_paid.external, never added to it: a detail, not a second total.
+        $byVia = self::sums($base, ['paid_via'], [FormResponse::METHOD_EXTERNAL])
+            ->keyBy(fn (object $row) => $row->paid_via ?? self::VIA_UNRECORDED);
+
+        // What families who chose to pay the office still owe. Unpaid, so in no total
+        // above; a paid one became cash or external and is counted there, once.
+        $owed = self::sums($base, ['payment_method'], [FormResponse::METHOD_OFFICE], FormResponse::PAYMENT_UNPAID)->first();
+
         return [
             // A paying form is USD (StoreFormRequest::crossCheck()), and every figure is cents.
             'currency' => 'usd',
@@ -69,18 +78,31 @@ final class FormCashTotals
                 FormResponse::METHOD_ONLINE => self::figures($other->get(FormResponse::METHOD_ONLINE), 'total'),
                 FormResponse::METHOD_EXTERNAL => self::figures($other->get(FormResponse::METHOD_EXTERNAL), 'total'),
             ],
+            'external_by_via' => collect([...FormResponse::PAID_VIA_EXTERNAL, self::VIA_UNRECORDED])
+                ->mapWithKeys(fn (string $via) => [$via => self::figures($byVia->get($via), 'total')])
+                ->all(),
+            // A cancelled registration owes nothing, so only the kept rows are summed.
+            'owed_office' => [
+                'submissions' => (int) ($owed?->submissions ?? 0),
+                'people' => (int) ($owed?->people ?? 0),
+                'owed_minor' => (int) ($owed?->total_minor ?? 0),
+            ],
         ];
     }
 
+    /** external_by_via's key for a payment marked paid without saying how (every Wix payer). */
+    private const VIA_UNRECORDED = 'unrecorded';
+
     /**
-     * The paid rows of the given methods, summed per group, with cancelled rows counted in
-     * their own columns. Portable SQL: CASE inside SUM, on both drivers.
+     * The rows of the given methods in one payment state (paid, unless asked), summed per
+     * group, with cancelled rows counted in their own columns. Portable SQL: CASE inside
+     * SUM, on both drivers.
      *
      * @param  array<int,string>  $groupBy
      * @param  array<int,string>  $methods
      * @return Collection<int,object>
      */
-    private static function sums(Builder $base, array $groupBy, array $methods): Collection
+    private static function sums(Builder $base, array $groupBy, array $methods, string $paymentStatus = FormResponse::PAYMENT_PAID): Collection
     {
         $query = clone $base;
         $grammar = $query->getGrammar();
@@ -88,7 +110,7 @@ final class FormCashTotals
 
         return $query
             ->reorder()
-            ->where('payment_status', FormResponse::PAYMENT_PAID)
+            ->where('payment_status', $paymentStatus)
             ->whereIn('payment_method', $methods)
             ->groupBy($groupBy)
             ->select($groupBy)

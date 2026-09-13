@@ -371,6 +371,17 @@
                                     paid elsewhere {{ money(cashTotals.other_paid.external.total_minor, cashTotals.currency) }}
                                     ({{ cashTotals.other_paid.external.submissions }}).
                                 </p>
+                                <p v-if="externalByVia.length" class="small text-muted mb-0">
+                                    Paid elsewhere, by how it came:
+                                    <template v-for="(part, partIndex) in externalByVia" :key="part.via">
+                                        {{ part.label }} {{ money(part.total_minor, cashTotals.currency) }} ({{ part.submissions }})<template v-if="partIndex < externalByVia.length - 1">, </template>
+                                    </template>.
+                                </p>
+                                <p v-if="cashTotals.owed_office && cashTotals.owed_office.submissions" class="small text-muted mb-0">
+                                    Still owed by families paying the office:
+                                    {{ money(cashTotals.owed_office.owed_minor, cashTotals.currency) }}
+                                    ({{ cashTotals.owed_office.submissions }}). Not in any total above until marked paid.
+                                </p>
                             </template>
                         </div>
                     </div>
@@ -477,10 +488,10 @@
                                                 type="button"
                                                 class="btn btn-sm btn-outline-secondary"
                                                 :disabled="busyRowId !== null"
-                                                :aria-label="`Mark registration #${response.id} paid (external)`"
-                                                @click="markPaidExternal(response)"
+                                                :aria-label="isOfficeRow(response) ? `Mark registration #${response.id} paid` : `Mark registration #${response.id} paid (external)`"
+                                                @click="markPaid(response, $event)"
                                             >
-                                                Mark paid (external)
+                                                {{ isOfficeRow(response) ? 'Mark paid' : 'Mark paid (external)' }}
                                             </button>
                                         </div>
                                     </td>
@@ -1072,6 +1083,16 @@
                                         </div>
                                     </dd>
 
+                                    <template v-if="isOfficeRow(selectedResponse)">
+                                        <dt class="col-sm-4 text-muted fw-normal small">Chose to pay</dt>
+                                        <dd class="col-sm-8">The office, not by card</dd>
+                                    </template>
+
+                                    <template v-if="selectedResponse.payment_state === 'paid' && selectedResponse.paid_via">
+                                        <dt class="col-sm-4 text-muted fw-normal small">Paid with</dt>
+                                        <dd class="col-sm-8">{{ paidViaLabel(selectedResponse.paid_via) }}</dd>
+                                    </template>
+
                                     <template v-if="(selectedResponse.fee_covered_minor ?? 0) > 0">
                                         <dt class="col-sm-4 text-muted fw-normal small">Card fee covered</dt>
                                         <dd class="col-sm-8">{{ money(selectedResponse.fee_covered_minor ?? 0, selectedResponse.currency) }}</dd>
@@ -1141,9 +1162,9 @@
                                         type="button"
                                         class="btn btn-sm btn-outline-secondary"
                                         :disabled="busyRowId !== null"
-                                        @click="markPaidExternal(selectedResponse)"
+                                        @click="markPaid(selectedResponse, $event)"
                                     >
-                                        Mark paid (external)
+                                        {{ isOfficeRow(selectedResponse) ? 'Mark paid' : 'Mark paid (external)' }}
                                     </button>
                                     <!-- The same check whatever an earlier answer said: a closed page's id
                                          stays on the row, so only asking Stripe can tell. A cancel that could
@@ -1283,6 +1304,88 @@
             </div>
         </Teleport>
 
+        <!-- Mark paid, on a registration whose family chose to pay the office. How the money came
+             is REQUIRED (the server refuses without it), and nothing is chosen for them, so a hurried
+             press cannot record the wrong way: the Jummah lunch board's precedent. It opens over the
+             registration's details, so it sits above them. -->
+        <Teleport to="body">
+            <div
+                v-if="officePaid.row"
+                ref="officePaidRoot"
+                class="modal office-paid-modal fade show d-block"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="office-paid-title"
+                aria-describedby="office-paid-owed"
+                tabindex="-1"
+                style="background: rgba(0,0,0,0.5);"
+                @click.self="closeOfficePaid"
+                @keydown="onOfficePaidKeydown"
+            >
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 id="office-paid-title" class="modal-title">
+                                Mark #{{ officePaid.row.id }} paid
+                                <span class="text-muted fw-normal small">{{ personName(officePaid.row) }}</span>
+                            </h5>
+                            <button
+                                type="button"
+                                class="btn-close"
+                                aria-label="Close without marking paid"
+                                :disabled="officePaid.saving"
+                                @click="closeOfficePaid"
+                            ></button>
+                        </div>
+                        <div class="modal-body">
+                            <p id="office-paid-owed">
+                                They chose to pay the office. Mark it paid only once
+                                {{ owedLabel(officePaidLive ?? officePaid.row) }} has arrived.
+                            </p>
+                            <fieldset :disabled="officePaid.saving">
+                                <legend class="form-label fs-6 mb-2">How did they pay?</legend>
+                                <div v-for="option in officePaidOptions" :key="option.value" class="form-check">
+                                    <input
+                                        :id="`office-paid-${option.value}`"
+                                        v-model="officePaid.via"
+                                        class="form-check-input"
+                                        type="radio"
+                                        name="office-paid-via"
+                                        :value="option.value"
+                                    />
+                                    <label class="form-check-label" :for="`office-paid-${option.value}`">{{ option.label }}</label>
+                                </div>
+                            </fieldset>
+                            <p class="small text-muted mt-2 mb-0">
+                                Paid in cash? Use Take cash instead, so the cash is counted with the rest.
+                                {{ settleEmailsLine(officePaidLive ?? officePaid.row) }}
+                            </p>
+                            <div v-if="officePaidStale && !officePaid.error" class="alert alert-info py-2 small mt-2 mb-0" role="status">
+                                {{ officePaidStale }}
+                            </div>
+                            <div v-if="officePaid.error" class="alert alert-danger py-2 small mt-2 mb-0" role="alert">
+                                {{ officePaid.error }}
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" :disabled="officePaid.saving" @click="closeOfficePaid">
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="btn btn-success"
+                                :disabled="!officePaid.via || officePaid.saving || !!officePaidStale"
+                                @click="confirmOfficePaid"
+                            >
+                                <span v-if="officePaid.saving" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                                {{ officePaid.saving ? 'Saving…' : 'Mark paid' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
         <FormStaffCodesModal
             v-if="selectedFormId"
             :show="showStaffCodes"
@@ -1322,6 +1425,9 @@ import {
     FormRosterColumn,
     FormRosterMeta,
     FormRosterSummary,
+    FormPaidVia,
+    FORM_OFFICE_MARK_PAID_VIA,
+    FORM_PAID_VIA_LABELS,
     formatMinorAmount
 } from '@/core/types/data/masjid-related/Form';
 import { useFormResponsesStore } from '@/stores/masjid/formResponsesStore';
@@ -1374,9 +1480,10 @@ const PAYMENT_FILTER_LABELS: Record<FormPaymentFilter, string> = {
     settled: 'Paid, or nothing to pay',
     cash: 'Cash',
     online: 'Card (paid or not)',
-    external: 'Paid (external)'
+    external: 'Paid (external)',
+    office: 'Paying the office, not paid yet'
 };
-const FALLBACK_PAYMENT_FILTERS: FormPaymentFilter[] = ['paid', 'unpaid', 'settled', 'cash', 'online', 'external'];
+const FALLBACK_PAYMENT_FILTERS: FormPaymentFilter[] = ['paid', 'unpaid', 'settled', 'cash', 'online', 'external', 'office'];
 
 /** FormResponsesController::destroy()'s refusal, word for word. */
 const DELETE_REFUSED = 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
@@ -1921,10 +2028,24 @@ const isCancelled = (row: FormResponseRow): boolean => row.status === 'cancelled
 /** A registration with a payment leg: never deleted, only cancelled. */
 const isMoneyRow = (row: FormResponseRow): boolean => !!row.payment_method;
 
-/** The badge: Unpaid / Paid by card / Paid in cash / Paid (external), or nothing owed. */
+/** A registration whose family chose to pay the office (settings.payment.officePayment). */
+const isOfficeRow = (row: FormResponseRow): boolean => row.payment_method === 'office';
+
+/** paid_via in plain words; a value this screen does not know is shown as it is. */
+const paidViaLabel = (via: string): string => FORM_PAID_VIA_LABELS[via as FormPaidVia] ?? via;
+
+/**
+ * The badge: Unpaid / Owed — paying the office / Paid by card / Paid in cash / Paid by Zelle
+ * / Paid (external), or nothing owed. How the money came (paid_via) wins over the method,
+ * because an office row says only who chose the office, not what arrived. "Paid by …"
+ * matches the roster, its CSV and the receipt (FormRoster::paymentLabel, FormNotifier).
+ */
 const paymentLabel = (row: FormResponseRow): string => {
-    if (row.payment_state === 'unpaid') return 'Unpaid';
+    if (row.payment_state === 'unpaid') return isOfficeRow(row) ? 'Owed — paying the office' : 'Unpaid';
     if (row.payment_state !== 'paid') return 'Nothing to pay';
+
+    if (row.paid_via === 'cash') return 'Paid in cash';
+    if (row.paid_via) return `Paid by ${paidViaLabel(row.paid_via)}`;
 
     switch (row.payment_method) {
         case 'online': return 'Paid by card';
@@ -1938,13 +2059,13 @@ const paymentLabel = (row: FormResponseRow): string => {
 const paymentDetail = (row: FormResponseRow): string | null => {
     if (row.payment_state !== 'paid') return null;
 
-    if (row.payment_method === 'cash') {
+    if (row.payment_method === 'cash' || row.paid_via === 'cash') {
         if (row.staff_code?.holder_name) return `held by ${row.staff_code.holder_name}`;
         if (row.marked_paid_by?.name) return `taken at the table by ${row.marked_paid_by.name}`;
         return null;
     }
 
-    if (row.payment_method === 'external' && row.marked_paid_by?.name) {
+    if ((row.payment_method === 'external' || isOfficeRow(row) || row.paid_via) && row.marked_paid_by?.name) {
         return `marked by ${row.marked_paid_by.name}`;
     }
 
@@ -2137,7 +2258,8 @@ const takeCash = async (row: FormResponseRow) => {
 
     const confirmed = await Swal.fire({
         title: `Take cash for #${row.id}?`,
-        text: `Collect ${owed} in cash from ${personName(row)}. This first closes any card payment page still open for this registration. If Stripe says they have just paid by card, nothing is recorded and you are told so. ${settleEmailsLine(row)}`,
+        // An office registration never had a card payment page, so nothing is said about one.
+        text: `Collect ${owed} in cash from ${personName(row)}. ${isOfficeRow(row) ? '' : 'This first closes any card payment page still open for this registration. If Stripe says they have just paid by card, nothing is recorded and you are told so. '}${settleEmailsLine(row)}`,
         icon: 'question',
         showCancelButton: true,
         confirmButtonText: `Record ${owed} in cash`,
@@ -2183,6 +2305,137 @@ const markPaidExternal = async (row: FormResponseRow) => {
     if (result) {
         toast('success', result.message ?? 'Marked paid.');
         refreshCashIfOpen();
+    }
+};
+
+/**
+ * "Mark paid". An office registration must say how the money came, so it opens the method
+ * picker; any other registration is marked paid (external) exactly as before.
+ */
+const markPaid = (row: FormResponseRow, event?: Event) =>
+    isOfficeRow(row) ? openOfficePaid(row, event) : markPaidExternal(row);
+
+// --- Mark paid, on an office registration --------------------------------------
+
+type OfficePaidState = {
+    row: FormResponseRow | null;
+    /** One of officePaidOptions' values, or '' until one is chosen. */
+    via: string;
+    error: string;
+    saving: boolean;
+};
+
+const blankOfficePaid = (): OfficePaidState => ({ row: null, via: '', error: '', saving: false });
+
+const officePaid = ref<OfficePaidState>(blankOfficePaid());
+
+/**
+ * The methods offered: the server's own list (meta.payment.paid_via) when it sends one,
+ * else this screen's copy, so the dialog still works on a server a deploy has not reached.
+ * A mismatch is loud either way: the server refuses a method it does not know, in words
+ * the dialog shows.
+ */
+const officePaidOptions = computed<{ value: string; label: string }[]>(() => {
+    const served = paymentMeta.value?.paid_via;
+    if (Array.isArray(served) && served.length) return served;
+    return FORM_OFFICE_MARK_PAID_VIA.map(value => ({ value, label: FORM_PAID_VIA_LABELS[value] }));
+});
+const officePaidRoot = ref<HTMLElement | null>(null);
+// The button that opened the dialog gets focus back when it closes, while it is still there.
+let officePaidReturnFocus: HTMLElement | null = null;
+
+/** The registration as the screen now has it, so a re-read while the dialog is open reaches it. */
+const officePaidLive = computed<FormResponseRow | null>(() => {
+    const opened = officePaid.value.row;
+    if (!opened) return null;
+    if (selectedResponse.value?.id === opened.id) return selectedResponse.value;
+    return responses.value.find(candidate => candidate.id === opened.id) ?? opened;
+});
+
+/** Why there is nothing to record any more: paid or cancelled since the list was read. */
+const officePaidStale = computed<string>(() => {
+    const row = officePaidLive.value;
+    if (!row) return '';
+    if (row.payment_state === 'paid') return `This registration already reads "${paymentLabel(row)}", so there is nothing to record.`;
+    if (isCancelled(row)) return 'This registration was cancelled, so it cannot be marked paid.';
+    return '';
+});
+
+const openOfficePaid = async (row: FormResponseRow, event?: Event) => {
+    const opener = event?.currentTarget;
+    officePaidReturnFocus = opener instanceof HTMLElement
+        ? opener
+        : (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+
+    officePaid.value = { ...blankOfficePaid(), row };
+
+    // Into the dialog, so a keyboard or screen-reader user starts at its title.
+    await nextTick();
+    officePaidRoot.value?.focus();
+};
+
+const closeOfficePaid = () => {
+    if (officePaid.value.saving) return;
+
+    officePaid.value = blankOfficePaid();
+
+    const returnTo = officePaidReturnFocus;
+    officePaidReturnFocus = null;
+    nextTick(() => {
+        if (returnTo?.isConnected) returnTo.focus();
+        else keepFocusInDetail();
+    });
+};
+
+/** Escape closes it (not mid-save) without closing the details under it; Tab stays inside. */
+const onOfficePaidKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeOfficePaid();
+        return;
+    }
+
+    trapTab(event, officePaidRoot.value);
+};
+
+/**
+ * POST mark-paid-external with `via`. A refusal stays in the dialog in the server's own words,
+ * and a 422 or 503 re-reads the registration first, so a row paid a minute ago shows as paid.
+ */
+const confirmOfficePaid = async () => {
+    const row = officePaidLive.value;
+    const via = officePaid.value.via;
+
+    if (!row || !via || !selectedFormId.value || busyRowId.value !== null || officePaidStale.value) return;
+
+    officePaid.value.saving = true;
+    officePaid.value.error = '';
+    busyRowId.value = row.id;
+
+    let result: FormResponseActionResult | null = null;
+
+    try {
+        result = await formResponsesStore.markPaidExternal(selectedFormId.value, row.id, via as FormPaidVia);
+        applyRow(result.data);
+    } catch (error: any) {
+        officePaid.value.error = serverMessage(error, 'Could not mark this registration paid.');
+
+        const status = error?.response?.status;
+        if (status === 422 || status === 503) await refreshRow(row.id);
+    } finally {
+        officePaid.value.saving = false;
+        busyRowId.value = null;
+    }
+
+    if (!result) return;
+
+    closeOfficePaid();
+    refreshCashIfOpen();
+
+    if (result.warning && result.message) {
+        Swal.fire({ icon: 'warning', title: 'Check this registration', text: result.message });
+    } else {
+        toast('success', result.message ?? `Marked paid: ${paidViaLabel(result.data.paid_via ?? via)}.`);
     }
 };
 
@@ -2307,6 +2560,27 @@ const refreshCashIfOpen = () => {
  * Counted over no filters, every cash entry a code made is in the totals, cancelled or
  * not, so its lifetime use count should equal its entries. A difference is worth a look.
  */
+/**
+ * The external money split by how it came, for the line under "paid elsewhere". Shown only
+ * once some payment says how it came, so a form marked paid only the old way (MEC's Wix
+ * payers) keeps the panel it had.
+ */
+const externalByVia = computed<{ via: string; label: string; total_minor: number; submissions: number }[]>(() => {
+    const split = cashTotals.value?.external_by_via;
+    if (!split) return [];
+
+    const parts = Object.entries(split)
+        .filter(([, figures]) => (figures?.submissions ?? 0) > 0)
+        .map(([via, figures]) => ({
+            via,
+            label: via === 'unrecorded' ? 'not recorded' : paidViaLabel(via),
+            total_minor: figures.total_minor,
+            submissions: figures.submissions
+        }));
+
+    return parts.some(part => part.via !== 'unrecorded') ? parts : [];
+});
+
 const usesDiffer = (holder: FormCashHolder): boolean =>
     !cashFiltersApplied.value &&
     holder.kind === 'code' &&
@@ -2756,5 +3030,10 @@ watch(showDetailModal, (open) => {
 
 .modal-dialog {
     margin: 1.75rem auto;
+}
+
+/* Mark paid on an office registration opens over the registration's details. */
+.office-paid-modal {
+    z-index: 1065;
 }
 </style>

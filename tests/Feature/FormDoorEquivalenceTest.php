@@ -62,6 +62,15 @@ class FormDoorEquivalenceTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** BISS: the whole registration, priced by how many children it has. */
+    private const COUNT_TIERS = [
+        ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+        ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+        ['min' => 4, 'amount' => 300, 'label' => '4 children'],
+        ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+    ];
+
     private Masjid $masjid;
 
     protected function setUp(): void
@@ -249,6 +258,52 @@ class FormDoorEquivalenceTest extends TestCase
                 $d['settings']['fee']['currency'] = 'CAD';
                 $d['settings']['payment'] = ['online' => true];
             }, false],
+
+            // BISS (2026-09-13): family prices, the required card fee and the office.
+            'prices by number of entries, card with the fee required and the office, as strings' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['settings']['payment'] = ['online' => 'true', 'requireFeeCoverage' => 'true', 'officePayment' => '1', 'officeInstructions' => 'Zelle the office.'];
+            }, true],
+            'paying the office alone' => [function (&$d) {
+                $d['settings']['payment'] = ['officePayment' => true];
+            }, true],
+            'prices by number of entries beside a flat amount' => [function (&$d) {
+                unset($d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+            }, false],
+            'prices by number of entries beside date steps' => [function (&$d) {
+                unset($d['settings']['fee']['amount']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+            }, false],
+            'prices by number of entries counting no section' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers'], $d['settings']['fee']['perEntryOfSection']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+            }, false],
+            'prices by number of entries starting at 2' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = array_slice(self::COUNT_TIERS, 1);
+            }, false],
+            'prices by number of entries out of order' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = [self::COUNT_TIERS[0], self::COUNT_TIERS[4], self::COUNT_TIERS[1]];
+            }, false],
+            'a price by number of entries cheaper than the one before it' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['settings']['fee']['countTiers'][4]['amount'] = 35;
+            }, false],
+            'paying the office on a form that charges nothing' => [function (&$d) {
+                unset($d['settings']['fee']);
+                $d['settings']['payment'] = ['officePayment' => true];
+            }, false],
+            'paying the office with an attendee list that may be empty' => [function (&$d) {
+                $d['schema']['sections'][1]['minEntries'] = 0;
+                $d['settings']['payment'] = ['officePayment' => true];
+            }, false],
+            'a required card fee switch that is not a yes or a no' => [function (&$d) {
+                $d['settings']['payment'] = ['online' => true, 'requireFeeCoverage' => 'maybe'];
+            }, false],
         ];
     }
 
@@ -323,6 +378,12 @@ class FormDoorEquivalenceTest extends TestCase
             'a WhatsApp link' => function (&$d) {
                 $d['settings']['whatsappUrl'] = 'https://chat.whatsapp.com/AbCdEf1234567890';
                 $d['settings']['whatsappLabel'] = 'Join the camp group';
+            },
+            // Every count price and every new switch stored, identically, by both doors.
+            'prices by number of entries with the new switches as strings' => function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['settings']['payment'] = ['online' => 'true', 'requireFeeCoverage' => 'on', 'officePayment' => '1', 'officeInstructions' => 'Zelle the office.'];
             },
         ];
 

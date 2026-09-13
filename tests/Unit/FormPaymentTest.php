@@ -343,6 +343,165 @@ class FormPaymentTest extends TestCase
         FormPayment::quote($form, []);
     }
 
+    // ------------------------------------------- priced by number of children (BISS)
+
+    /** BISS Sunday School 2026: the whole family, by how many children it registers. */
+    private const FAMILY_TIERS = [
+        ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+        ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+        ['min' => 4, 'amount' => 300, 'label' => '4 children'],
+        ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+    ];
+
+    #[Test]
+    public function a_family_is_charged_the_tier_for_its_number_of_children_and_five_is_the_cap(): void
+    {
+        $form = $this->form(['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS]);
+
+        foreach ([1 => 10000, 2 => 17000, 3 => 25000, 4 => 30000, 5 => 35000, 6 => 35000, 12 => 35000] as $children => $owed) {
+            $quote = FormPayment::quote($form, $this->attendees($children));
+
+            $this->assertSame($owed, $quote['amount_due_minor'], "{$children} children");
+            $this->assertSame($owed, $quote['unit_minor'], "{$children} children");
+            $this->assertSame(1, $quote['quantity'], "{$children} children: one family, never × rows");
+            $this->assertSame($owed, $quote['total_minor'], "{$children} children");
+            $this->assertSame(1, FormPayment::quantity($form, $this->attendees($children)));
+        }
+    }
+
+    #[Test]
+    public function a_family_with_no_children_owes_nothing_and_carries_no_lines(): void
+    {
+        $form = $this->form(
+            ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS],
+            ['online' => true, 'requireFeeCoverage' => true]
+        );
+
+        $quote = FormPayment::quote($form, $this->attendees(0), false, true);
+
+        $this->assertSame(0, $quote['quantity']);
+        $this->assertSame(0, $quote['amount_due_minor']);
+        $this->assertSame(0, $quote['fee_covered_minor'], 'no fee on nothing owed');
+        $this->assertSame(0, $quote['total_minor'], 'the caller refuses this; a paying form never takes the free path');
+        $this->assertSame([], $quote['line_items']);
+        $this->assertSame(0.0, FormSchema::for($form)->amountDue($this->attendees(0)));
+    }
+
+    #[Test]
+    public function the_tier_is_chosen_by_its_minimum_not_by_the_order_it_was_stored_in(): void
+    {
+        // Read in written order, a family of six would stop at the "2 children" tier.
+        $form = $this->form(['perEntryOfSection' => 'attendees', 'countTiers' => [
+            ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+            ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+            ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ]]);
+
+        $this->assertSame(35000, FormPayment::amountDueMinor($form, $this->attendees(6)));
+        $this->assertSame(17000, FormPayment::amountDueMinor($form, $this->attendees(4)));
+        $this->assertSame(17000, FormPayment::amountDueMinor($form, $this->attendees(2)));
+        $this->assertSame(10000, FormPayment::amountDueMinor($form, $this->attendees(1)));
+        $this->assertSame('5 or more children', FormPayment::quote($form, $this->attendees(6))['tier_label']);
+    }
+
+    #[Test]
+    public function a_schedule_nothing_can_read_prices_nothing_rather_than_a_cheaper_tier(): void
+    {
+        $unreadable = [
+            'a min that is not a whole number' => fn (array $t) => array_replace_recursive($t, [3 => ['min' => 'four']]),
+            'a min of zero' => fn (array $t) => array_replace_recursive($t, [0 => ['min' => 0]]),
+            'a tier with no amount' => function (array $t) { unset($t[4]['amount']); return $t; },
+            'a negative amount' => fn (array $t) => array_replace_recursive($t, [2 => ['amount' => -250]]),
+            'two tiers for one number' => fn (array $t) => array_replace_recursive($t, [3 => ['min' => 3]]),
+            'a tier that is not a tier' => fn (array $t) => [...$t, 'five'],
+            'a schedule that is not a list' => fn (array $t) => 'one hundred dollars',
+        ];
+
+        foreach ($unreadable as $label => $break) {
+            $form = $this->form(['perEntryOfSection' => 'attendees', 'countTiers' => $break(self::FAMILY_TIERS)], ['online' => true]);
+            $data = $this->attendees(5);
+
+            $this->assertNull($form->priceFor($data), $label);
+            $this->assertNull(FormPayment::quote($form, $data, false, true), $label);
+            $this->assertNull(FormSchema::for($form)->amountDue($data), $label);
+            $this->assertTrue($form->pricesByCount(), "{$label}: still a count schedule, never quietly unit-priced");
+        }
+
+        // Counting no section, and a family size no tier starts low enough for.
+        $this->assertNull($this->form(['countTiers' => self::FAMILY_TIERS])->priceFor($this->attendees(3)));
+        $this->assertNull(
+            $this->form(['perEntryOfSection' => 'attendees', 'countTiers' => array_slice(self::FAMILY_TIERS, 1)])->priceFor($this->attendees(1))
+        );
+    }
+
+    #[Test]
+    public function a_family_is_one_line_named_after_its_tier(): void
+    {
+        $form = $this->form(['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS]);
+
+        $this->assertSame([[
+            'quantity' => 1,
+            'price_data' => [
+                'currency' => 'usd',
+                'unit_amount' => 25000,
+                'product_data' => ['name' => 'Fall Festival 2026 (3 children)'],
+            ],
+        ]], FormPayment::quote($form, $this->attendees(3))['line_items']);
+
+        $this->assertSame(250.0, FormSchema::for($form)->amountDue($this->attendees(3)), 'the decimal is the tier, never 100 × 3');
+    }
+
+    #[Test]
+    public function a_required_card_fee_is_added_for_every_card_payer_whatever_the_browser_says(): void
+    {
+        $form = $this->form(
+            ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS],
+            ['online' => true, 'requireFeeCoverage' => true]
+        );
+
+        $table = [1 => [330, 10330], 2 => [539, 17539], 3 => [778, 25778], 4 => [927, 30927], 5 => [1076, 36076]];
+
+        foreach ($table as $children => [$fee, $total]) {
+            foreach ([false, true] as $coverFees) {
+                $quote = FormPayment::quote($form, $this->attendees($children), $coverFees, true);
+
+                $this->assertSame($fee, $quote['fee_covered_minor'], "{$children} children, cover_fees " . var_export($coverFees, true));
+                $this->assertSame($total, $quote['total_minor']);
+                $this->assertCount(2, $quote['line_items']);
+                $this->assertSame(
+                    $quote['amount_due_minor'],
+                    $quote['total_minor'] - StripeFees::on($quote['total_minor']),
+                    "{$children} children: the school nets the tier price at 2.9% + 30¢"
+                );
+            }
+        }
+    }
+
+    #[Test]
+    public function the_required_fee_is_never_added_off_the_card_path_and_never_widens_the_optional_box(): void
+    {
+        $fee = ['perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS];
+        $data = $this->attendees(3);
+
+        $required = $this->form($fee, ['online' => true, 'requireFeeCoverage' => true]);
+        $this->assertSame(0, FormPayment::quote($required, $data, true, false)['fee_covered_minor'], 'cash and the office have no card fee');
+
+        // The switch on a form that takes no card: nothing to add it to.
+        $noCard = $this->form($fee, ['staffCodes' => true, 'officePayment' => true, 'requireFeeCoverage' => true]);
+        $this->assertFalse($noCard->requiresFeeCoverage());
+        $this->assertSame(0, FormPayment::quote($noCard, $data, true, true)['fee_covered_minor']);
+
+        // Required is its own key: an old renderer must never be told to draw an optional box.
+        $this->assertTrue($required->requiresFeeCoverage());
+        $this->assertFalse($required->allowsFeeCoverage());
+
+        // Without the switch the optional box behaves as it always has.
+        $optional = $this->form($fee, ['online' => true, 'allowFeeCoverage' => true]);
+        $this->assertSame(0, FormPayment::quote($optional, $data, false, true)['fee_covered_minor']);
+        $this->assertSame(778, FormPayment::quote($optional, $data, true, true)['fee_covered_minor']);
+    }
+
     // --------------------------------------------------------------- helpers
 
     /**

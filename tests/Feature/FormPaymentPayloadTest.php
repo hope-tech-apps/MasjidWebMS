@@ -89,7 +89,24 @@ class FormPaymentPayloadTest extends TestCase
             'currency' => 'usd',
             'stripeFeePercentage' => 0.029,
             'stripeFeeFixedMinor' => 30,
+            // BISS (2026-09-13): off on a form that uses neither.
+            'requireFeeCoverage' => false,
+            'officePayment' => false,
+            'officeInstructions' => null,
+            'countTiers' => null,
         ], $settings['payment']);
+
+        // A unit-priced fee is published exactly as feeRule() always was: these keys, in
+        // this order, and these values (equals, not same: a whole float may come back
+        // from JSON as an int).
+        $this->assertSame(['amount', 'currency', 'perEntryOfSection', 'tiers', 'currentTier'], array_keys($settings['fee']));
+        $this->assertEquals([
+            'amount' => 25,
+            'currency' => 'USD',
+            'perEntryOfSection' => 'attendees',
+            'tiers' => [],
+            'currentTier' => null,
+        ], $settings['fee']);
 
         $body = $response->getContent();
 
@@ -185,6 +202,100 @@ class FormPaymentPayloadTest extends TestCase
             'payment',
             $this->page($noPrice)->json('data.sections.0.content.form.settings')
         );
+    }
+
+    // ---------------------------------------------- BISS: family prices and the office
+
+    private const FAMILY_TIERS = [
+        ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+        ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+        ['min' => 4, 'amount' => 300, 'label' => '4 children'],
+        ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+    ];
+
+    /**
+     * THE CONTRACT the renderer is built against (BISS critique must_fix 1 and
+     * should_fix 1). The fee carries no `tiers` and NO `amount` key at all, so a renderer
+     * that predates count pricing computes no "live total" — not $100 × 3 = $300 while the
+     * server charges $250, and not $0.00 × 3 from Number(null). It keeps
+     * `perEntryOfSection`, which the renderer counts rows from. The payment block carries
+     * no unit price, and allowFeeCoverage stays
+     * off although the fee is required, so no optional box is drawn for a fee the server
+     * adds anyway.
+     */
+    #[Test]
+    public function a_family_priced_form_publishes_its_tiers_and_never_a_unit_price_or_an_optional_fee_box(): void
+    {
+        // Stored out of order: published ascending.
+        $form = $this->payingForm(['settings' => array_replace($this->payingForm()->settings, [
+            'fee' => ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => [
+                self::FAMILY_TIERS[0], self::FAMILY_TIERS[4], self::FAMILY_TIERS[2], self::FAMILY_TIERS[1], self::FAMILY_TIERS[3],
+            ]],
+            'payment' => [
+                'online' => true,
+                'requireFeeCoverage' => true,
+                'officePayment' => true,
+                'officeInstructions' => '  Zelle office@biss.example, or cash on Sunday.  ',
+            ],
+        ])]);
+
+        $settings = $this->page($form)->json('data.sections.0.content.form.settings');
+
+        $this->assertSame(['pricing', 'currency', 'perEntryOfSection', 'countTiers'], array_keys($settings['fee']));
+        $this->assertSame(['min', 'amount', 'label'], array_keys($settings['fee']['countTiers'][0]));
+        $this->assertEquals([
+            'pricing' => 'count',
+            'currency' => 'USD',
+            'perEntryOfSection' => 'attendees',
+            'countTiers' => self::FAMILY_TIERS,
+        ], $settings['fee']);
+        $this->assertFalse(array_key_exists('amount', $settings['fee']), 'no amount key, not even a null one');
+        $this->assertFalse(array_key_exists('tiers', $settings['fee']));
+        $this->assertStringNotContainsString('"amount":null', $this->page($form)->getContent());
+
+        $this->assertSame([
+            'online' => true,
+            'available' => true,
+            'allowFeeCoverage' => false,
+            'staffEntry' => false,
+            'unitMinor' => null,
+            'currency' => 'usd',
+            'stripeFeePercentage' => 0.029,
+            'stripeFeeFixedMinor' => 30,
+            'requireFeeCoverage' => true,
+            'officePayment' => true,
+            'officeInstructions' => 'Zelle office@biss.example, or cash on Sunday.',
+            'countTiers' => [
+                ['min' => 1, 'amountMinor' => 10000, 'label' => '1 child'],
+                ['min' => 2, 'amountMinor' => 17000, 'label' => '2 children'],
+                ['min' => 3, 'amountMinor' => 25000, 'label' => '3 children'],
+                ['min' => 4, 'amountMinor' => 30000, 'label' => '4 children'],
+                ['min' => 5, 'amountMinor' => 35000, 'label' => '5 or more children'],
+            ],
+        ], $settings['payment']);
+    }
+
+    #[Test]
+    public function the_office_is_published_when_card_and_codes_are_off_and_its_instructions_only_while_it_is_on(): void
+    {
+        $officeOnly = $this->payingForm([], ['officePayment' => true, 'officeInstructions' => 'Pay the office on Sunday.']);
+        $payment = $this->page($officeOnly)->json('data.sections.0.content.form.settings.payment');
+
+        $this->assertNotNull($payment, 'the office is a payment the page must offer');
+        $this->assertFalse($payment['online']);
+        $this->assertFalse($payment['available']);
+        $this->assertFalse($payment['staffEntry']);
+        $this->assertTrue($payment['officePayment']);
+        $this->assertSame('Pay the office on Sunday.', $payment['officeInstructions']);
+        $this->assertSame(2500, $payment['unitMinor']);
+
+        $cardOnly = $this->payingForm([], ['online' => true, 'officeInstructions' => 'A draft nobody switched on.']);
+        $payment = $this->page($cardOnly)->json('data.sections.0.content.form.settings.payment');
+
+        $this->assertFalse($payment['officePayment']);
+        $this->assertNull($payment['officeInstructions']);
+        $this->assertStringNotContainsString('A draft nobody switched on', $this->page($cardOnly)->getContent());
     }
 
     // -------------------------------------------------------------- helpers

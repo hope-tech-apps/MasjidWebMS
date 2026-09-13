@@ -11,6 +11,7 @@ import {
     FormInsights,
     FormInsightsMeta,
     FormOption,
+    FormPaidVia,
     FormResponseActionResult,
     FormResponseDetail,
     FormResponseFilters,
@@ -33,8 +34,9 @@ import {
  * roster and the cash totals can never disagree about what is being shown.
  *
  * The door (DECISIONS.md 2026-09-11): collect / uncollect, take-cash and
- * mark-paid-external each answer with the row as it now stands. Their POSTs carry an
- * empty FormData, the encoding PHP parses; the server reads nothing from the body.
+ * mark-paid-external each answer with the row as it now stands. Their POSTs carry
+ * FormData, the encoding PHP parses. Only mark-paid-external's ever holds anything: `via`,
+ * how the money came, which an office registration must send.
  */
 export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
@@ -369,13 +371,27 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         return actionResult(res, 'Could not record the cash.');
     }
 
-    /** "Mark paid (external)": paid somewhere else, the Wix page. Same card-page rule as take-cash. */
-    async function markPaidExternal(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+    /**
+     * "Mark paid (external)": paid somewhere else, the Wix page. Same card-page rule as take-cash.
+     *
+     * `via` is how the money came (zelle / cashapp / venmo / check, meta.payment.paid_via). The server REQUIRES it on
+     * a registration whose family chose to pay the office, and refuses without it in words the
+     * screen shows. It is not sent when null, so every other registration posts exactly what
+     * it did before.
+     */
+    async function markPaidExternal(
+        formId: number | string,
+        responseId: number | string,
+        via: FormPaidVia | null = null
+    ): Promise<FormResponseActionResult> {
         const id = requireMasjidId();
+
+        const body = new FormData();
+        if (via) body.append('via', via);
 
         const res: AxiosResponse = await ApiService.post(
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/mark-paid-external`,
-            new FormData()
+            body
         );
 
         return actionResult(res, 'Could not mark this registration paid.');

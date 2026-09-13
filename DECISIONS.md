@@ -503,3 +503,79 @@ saying how. Asking at the moment of Mark paid records it while the person who
 took the money is standing there. Closing the card page first keeps one order
 to one payment, and the webhook warning is the backstop for a payment that
 slips past.
+
+## 2026-09-13 — Forms: family prices by number of children, a required card fee, and paying the office (narrows 2026-09-11's "a payer's only say is the yes/no on the card fee")
+
+**Decision (owner, 2026-09-13).** Burlington Islamic Sunday School (BISS)
+registers a family on one form: $100 for one child, $170 for two, $250 for
+three, $300 for four, $350 for five or more. Card payers always pay the card fee.
+A family may instead pay the school office by Zelle, Cash App, Venmo, cash or
+check. Five rules follow.
+
+1. **A form may be priced by its number of entries.** `settings.fee.countTiers`
+   is a list of `{min, amount, label}`, and `perEntryOfSection` names the section
+   that is counted. The tier with the greatest `min` at or below the row count
+   wins, whatever order the list was stored in, and 0 rows owe 0. One resolver,
+   `Form::priceFor()`, feeds `amount_due`, the cents snapshot, the Stripe line
+   ("Form (3 children)") and the emails' tier label. On POST, PUT and
+   `form:import` the save is refused when count tiers:
+   - sit beside `amount` or date `tiers`;
+   - count no section;
+   - do not start at `min` 1;
+   - have mins that are not strictly ascending;
+   - include a tier cheaper than the one before it;
+   - or, on a paying form, include a price under 50¢ or in fractions of a cent.
+   An unreadable stored schedule refuses entries. It never falls back to a
+   cheaper tier. `chargesFee()` reads the count prices.
+2. **What the page is sent.** Under count pricing the public fee is
+   `{pricing:'count', currency, perEntryOfSection, countTiers}`, with no
+   `amount` key and no `tiers` key. The payment block's `unitMinor` is null. A
+   renderer that predates this shows no total, rather than "$100 × 3" or
+   "$0.00 × 3".
+3. **`settings.payment.requireFeeCoverage`.** Every CARD payer covers
+   `StripeFees::coverage()`, whatever `cover_fees` says. Staff-code cash and
+   office payments carry no fee. The switch does NOT turn `allowFeeCoverage` on:
+   an old renderer would draw an optional box for a fee the server adds anyway.
+   "The school nets the tier price" holds only at a platform fee of 0
+   (production's) and at the platform-wide 2.9% + 30¢.
+4. **`settings.payment.officePayment`.** The submit takes `pay_with: card|office`.
+   - **An office row** has `payment_method` `office`, is unpaid, and owes the
+     tier price with a fee of 0. It makes no Stripe call and skips the return
+     origin check. It is emailed at once: received, the amount owed, and
+     `officeInstructions`.
+   - **When `pay_with` is absent**, the family pays by card if the form can take
+     a card right now, otherwise the office. It is never a row with no money leg.
+   - **A staff credential** keeps its cash path.
+   - **The office counts as payment** for the replay-key guard, the never-free
+     quote and the save's paying-form rules. An office option on a form with no
+     price is refused.
+5. **Settlement still writes cash or external**, so every reader of the method
+   keeps working. A new nullable `form_responses.paid_via`
+   (`cash|zelle|cashapp|venmo|check`) records how the money came.
+   - "Take cash" writes `cash`. "Mark paid" on an office row requires `via`
+     (`zelle|cashapp|venmo|check`).
+   - Unpaid office rows appear under the `office` filter and show "Owed — paying
+     the office" on the roster. A paid one counts once, as cash or external.
+
+**Alternatives.**
+- **Per-child pricing with a family discount.** Rejected: there is no cap at
+  five, and a discount is the adjustment hole T-006 closed.
+- **Widening `allowFeeCoverage` to mean required.** Rejected: the deployed
+  renderer would show $250.00 while Stripe charged $257.78.
+- **Keeping `office` as the method after payment.** Rejected: the cash totals,
+  roster, receipts and filters would all have had to learn it, and one missed
+  reader under-reports the books.
+- **`amount: null` in the public fee.** Rejected by the renderer lane:
+  `Number(null)` is 0.
+
+**Rationale.** Families pay the office as often as they pay by card. Recording how
+the money came, at the moment staff mark it paid, keeps the books countable by
+method without teaching every reader a new method. One price resolver means the
+page, the row, Stripe and the email cannot disagree about a family of three.
+
+**Known limits (Phase 1).**
+- An abandoned card checkout followed by an office resubmission is two
+  registrations, and an office row cannot be switched to card.
+- A required card fee is a surcharge, restricted on debit and prepaid cards and
+  in some states. The owner confirms before it goes live.
+- The gross-up uses the platform-wide rate, not BISS's own Connect pricing.

@@ -1,0 +1,358 @@
+{
+  "$comment": "Burlington Islamic Sunday School (BISS) 2026-27 enrollment — DRAFT. Import with: php artisan form:import <biss_org_id> database/forms/biss-2026.json. Pricing is by number of children (settings.fee.countTiers). payment.online stays FALSE until BISS's own Stripe account can take charges; until then every family is recorded as paying the school office. STILL TO ADD: (1) officeInstructions — the office's Zelle / Cash App / Venmo handles (owner to supply); (2) notifyEmails; (3) the calendar-backed cleaning-Sunday field (checkboxGroup, optionsSource school_meeting_days) once the school calendar ships and the 2026-27 year is entered.",
+  "slug": "biss-2026",
+  "name": "Burlington Islamic Sunday School — 2026–27 Enrollment",
+  "description": "Sundays 11:00 AM – 2:00 PM · First day Sunday, October 11, 2026 · 1908 S Mebane St, Burlington NC",
+  "is_active": false,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+  "settings": {
+    "submitButtonLabel": "Complete enrollment",
+    "intro": "<p><strong>Burlington Islamic Sunday School (BISS)</strong> meets every Sunday from <strong>11:00 AM to 2:00 PM</strong>, starting <strong>October 11, 2026</strong>, at Burlington Masjid, 1908 S Mebane St.</p><p>Each class covers <strong>Arabic</strong> (Al-Qaida An-Nooraniyya), <strong>Qur'an</strong> memorization and <strong>Islamic Studies</strong>. Children are placed in their class by age.</p><p><strong>Fees for the year:</strong> 1 child $100 · 2 children $170 · 3 children $250 · 4 children $300 · 5 or more children $350.</p><p>You can pay the school office (Zelle, Cash App, Venmo, cash or check), or pay by card online. Card payments include the card processing fee.</p>",
+    "fee": {
+      "currency": "USD",
+      "perEntryOfSection": "children",
+      "countTiers": [
+        { "min": 1, "amount": 100, "label": "1 child" },
+        { "min": 2, "amount": 170, "label": "2 children" },
+        { "min": 3, "amount": 250, "label": "3 children" },
+        { "min": 4, "amount": 300, "label": "4 children" },
+        { "min": 5, "amount": 350, "label": "5 or more children" }
+      ]
+    },
+    "payment": {
+      "online": false,
+      "requireFeeCoverage": true,
+      "officePayment": true,
+      "officeInstructions": null
+    },
+    "successTitle": "Jazak Allahu khairan — your enrollment is in!",
+    "successBody": "We've received your enrollment for Burlington Islamic Sunday School. The school office will confirm each child's class before the first day, October 11.",
+    "successNextSteps": [
+      "Complete your payment if you haven't already.",
+      "Watch your email for your children's class placement.",
+      "The first day of school is Sunday, October 11, 2026."
+    ],
+    "identity": {
+      "name": [
+        "parent1FirstName",
+        "parent1LastName"
+      ],
+      "email": "parent1Email",
+      "phone": "parent1Phone"
+    }
+  },
+  "schema": {
+    "sections": [
+      {
+        "id": "parent1",
+        "title": "Parent / Guardian",
+        "description": "The main contact for the school.",
+        "fields": [
+          {
+            "name": "parent1FirstName",
+            "label": "First name",
+            "type": "text",
+            "required": true,
+            "autocomplete": "given-name"
+          },
+          {
+            "name": "parent1LastName",
+            "label": "Last name",
+            "type": "text",
+            "required": true,
+            "autocomplete": "family-name"
+          },
+          {
+            "name": "parent1Relationship",
+            "label": "Relationship to the children",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "value": "father",
+                "label": "Father"
+              },
+              {
+                "value": "mother",
+                "label": "Mother"
+              },
+              {
+                "value": "guardian",
+                "label": "Legal guardian"
+              }
+            ]
+          },
+          {
+            "name": "parent1Phone",
+            "label": "Cell number",
+            "type": "tel",
+            "required": true,
+            "autocomplete": "tel"
+          },
+          {
+            "name": "parent1Email",
+            "label": "Email",
+            "type": "email",
+            "required": true,
+            "autocomplete": "email"
+          },
+          {
+            "name": "address",
+            "label": "Home address",
+            "type": "text",
+            "required": true,
+            "autocomplete": "street-address"
+          },
+          {
+            "name": "facebook",
+            "label": "Facebook (optional)",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "parent2",
+        "title": "Second Parent / Guardian",
+        "description": "Optional — so both parents can hear from the school.",
+        "fields": [
+          {
+            "name": "parent2FirstName",
+            "label": "First name",
+            "type": "text",
+            "required": false,
+            "autocomplete": "given-name"
+          },
+          {
+            "name": "parent2LastName",
+            "label": "Last name",
+            "type": "text",
+            "required": false,
+            "autocomplete": "family-name"
+          },
+          {
+            "name": "parent2Relationship",
+            "label": "Relationship to the children",
+            "type": "select",
+            "required": false,
+            "options": [
+              {
+                "value": "father",
+                "label": "Father"
+              },
+              {
+                "value": "mother",
+                "label": "Mother"
+              },
+              {
+                "value": "guardian",
+                "label": "Legal guardian"
+              }
+            ]
+          },
+          {
+            "name": "parent2Phone",
+            "label": "Cell number",
+            "type": "tel",
+            "required": false,
+            "autocomplete": "tel"
+          },
+          {
+            "name": "parent2Email",
+            "label": "Email",
+            "type": "email",
+            "required": false,
+            "autocomplete": "email"
+          }
+        ]
+      },
+      {
+        "id": "children",
+        "title": "Children Enrolling",
+        "description": "Add each child who will attend. The office places children in their class by age.",
+        "repeatable": true,
+        "minEntries": 1,
+        "maxEntries": 10,
+        "fields": [
+          {
+            "name": "firstName",
+            "label": "First name",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "lastName",
+            "label": "Last name",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "age",
+            "label": "Age",
+            "type": "number",
+            "required": true,
+            "min": 3,
+            "max": 18
+          },
+          {
+            "name": "sex",
+            "label": "Sex",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "value": "male",
+                "label": "Male"
+              },
+              {
+                "value": "female",
+                "label": "Female"
+              }
+            ]
+          },
+          {
+            "name": "schoolGrade",
+            "label": "Grade in public school",
+            "type": "select",
+            "required": true,
+            "options": [
+              {
+                "value": "Pre-K",
+                "label": "Pre-K"
+              },
+              {
+                "value": "KG",
+                "label": "KG"
+              },
+              {
+                "value": "1st",
+                "label": "1st"
+              },
+              {
+                "value": "2nd",
+                "label": "2nd"
+              },
+              {
+                "value": "3rd",
+                "label": "3rd"
+              },
+              {
+                "value": "4th",
+                "label": "4th"
+              },
+              {
+                "value": "5th",
+                "label": "5th"
+              },
+              {
+                "value": "6th",
+                "label": "6th"
+              },
+              {
+                "value": "7th",
+                "label": "7th"
+              },
+              {
+                "value": "8th",
+                "label": "8th"
+              },
+              {
+                "value": "9th",
+                "label": "9th"
+              },
+              {
+                "value": "10th",
+                "label": "10th"
+              },
+              {
+                "value": "11th",
+                "label": "11th"
+              },
+              {
+                "value": "12th",
+                "label": "12th"
+              }
+            ]
+          },
+          {
+            "name": "allergies",
+            "label": "Allergies or special needs",
+            "type": "textarea",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "emergency",
+        "title": "Emergency Contact",
+        "description": "Someone other than the parents we can reach if we cannot reach you.",
+        "fields": [
+          {
+            "name": "emergencyName",
+            "label": "Name",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "emergencyRelationship",
+            "label": "Relationship",
+            "type": "text",
+            "required": true
+          },
+          {
+            "name": "emergencyPhone",
+            "label": "Phone",
+            "type": "tel",
+            "required": true
+          }
+        ]
+      },
+      {
+        "id": "certification",
+        "title": "Parent Agreement",
+        "description": "I certify that I am the parent or legal guardian of the students listed above, and I will:",
+        "fields": [
+          {
+            "name": "promiseOnTime",
+            "label": "I will bring my children to school on time and pick them up on time.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "promiseBooks",
+            "label": "I will provide my children with the textbooks and notebooks they need.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "medicalAuthorization",
+            "label": "I authorize the school to obtain and provide emergency medical help for my children while they are at school.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "promiseHelpTeachers",
+            "label": "I will help the teachers with what my children need, such as homework and memorization review.",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "name": "signatureName",
+            "label": "Type your full name as your signature",
+            "type": "text",
+            "required": true,
+            "autocomplete": "name"
+          },
+          {
+            "name": "signatureDate",
+            "label": "Date",
+            "type": "date",
+            "required": true
+          }
+        ]
+      }
+    ]
+  }
+}

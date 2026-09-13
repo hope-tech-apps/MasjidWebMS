@@ -13,9 +13,35 @@ export type FormResponseStatus = 'new' | 'confirmed' | 'waitlisted' | 'cancelled
  * How a registration was paid (FormResponse::METHODS): `online` is hosted Stripe
  * Checkout, which only the signed webhook marks paid; `cash` is a staff code at the gate
  * or an admin taking cash at the table; `external` is paid somewhere else (the Wix
- * fallback), marked by an admin.
+ * fallback), marked by an admin; `office` is a family who chose to pay the office
+ * (settings.payment.officePayment). An office row is written unpaid; an admin marking it
+ * paid turns it into `cash` or `external` like any hand settlement, with `paid_via` saying
+ * how the money came. So `office` only ever describes a family still owing.
  */
-export type FormPaymentMethod = 'online' | 'cash' | 'external';
+export type FormPaymentMethod = 'online' | 'cash' | 'external' | 'office';
+
+/**
+ * How the money actually arrived on a row settled by hand (FormResponse::PAID_VIA). Take
+ * cash and a staff code write 'cash'; Mark paid writes one of the other four, or null for a
+ * payment marked without saying how. Null on a card payment and on rows settled before
+ * the column existed.
+ */
+export type FormPaidVia = 'cash' | 'zelle' | 'cashapp' | 'venmo' | 'check';
+
+/** paid_via in plain words. A stored value missing here is shown as it is. */
+export const FORM_PAID_VIA_LABELS: Record<FormPaidVia, string> = {
+    cash: 'Cash',
+    zelle: 'Zelle',
+    cashapp: 'Cash App',
+    venmo: 'Venmo',
+    check: 'Check'
+};
+
+/**
+ * The methods "Mark paid" offers on an office row, where the server REQUIRES one. Cash is
+ * not among them: cash goes through "Take cash", which records paid_via 'cash' itself.
+ */
+export const FORM_OFFICE_MARK_PAID_VIA: FormPaidVia[] = ['zelle', 'cashapp', 'venmo', 'check'];
 
 /** payment_status on a row with a money leg (FormResponse::PAYMENT_STATUSES). */
 export type FormPaymentStatus = 'unpaid' | 'paid';
@@ -90,6 +116,8 @@ export type FormResponseRow = {
     // payment (meta.payment.enabled false), and the screen shows no payment column there.
     uuid?: string | null;
     payment_method?: FormPaymentMethod | null;
+    /** How the money came, on a row settled by hand. Absent from an API older than office payment. */
+    paid_via?: FormPaidVia | null;
     payment_status?: FormPaymentStatus | null;
     /** 'paid'; 'unpaid' (a Wix-fallback row with no money leg included); null when nothing was owed. */
     payment_state?: FormPaymentStatus | null;
@@ -161,6 +189,10 @@ export type FormResponsesPaymentMeta = {
     charges_fee: boolean;
     online: boolean;
     staff_codes: boolean;
+    /** Form::takesOfficePayment(). Absent from an API older than office payment. */
+    office?: boolean;
+    /** What "Mark paid" may record (FormResponse::PAID_VIA_EXTERNAL), in the server's words. */
+    paid_via?: { value: string; label: string }[];
     codes: { id: number; holder_name: string; code_hint: string; revoked: boolean }[];
 };
 
@@ -291,6 +323,14 @@ export type FormCashTotals = {
     holders: FormCashHolder[];
     totals: FormCashFigures;
     other_paid: { online: FormOtherPaidFigures; external: FormOtherPaidFigures };
+    /**
+     * other_paid.external again, split by paid_via (zelle, cashapp, venmo, check, and
+     * `unrecorded` for a payment marked without saying how). A detail, never a second total.
+     * Absent from an API older than office payment.
+     */
+    external_by_via?: Record<string, FormOtherPaidFigures>;
+    /** Unpaid registrations whose family chose to pay the office: in no total above. */
+    owed_office?: { submissions: number; people: number; owed_minor: number };
 };
 
 // ============================================================================
@@ -576,18 +616,39 @@ export type FormFeeTier = {
 };
 
 /**
+ * A price by number of entries (a family price): the row with the greatest `min` at or
+ * below the number of entries submitted is the WHOLE price, never multiplied. The first
+ * row starts at 1, mins rise strictly, and no row costs less than the one before it.
+ * `amount` is in major units (170, not 17000).
+ */
+export type FormFeeCountTier = {
+    min: number;
+    amount: number;
+    /** What the receipt and the card page call this price: "2 children". */
+    label: string;
+    /** Stored only when StoreFormRequest::settingsRules() names it (see FormSettings). */
+    [key: string]: unknown;
+};
+
+/**
  * `perEntryOfSection` must name a REPEATABLE section; the amount is then multiplied by
  * the number of rows submitted. Null means one flat fee per submission.
  *
  * `amount` is optional when `tiers` carry the price (the festival form has no flat
  * amount at all); Form::feeRule() takes today's tier first and the amount only when no
  * tier applies.
+ *
+ * `countTiers` prices by the number of entries of `perEntryOfSection` instead, and is
+ * refused together with `amount` or `tiers`: a form has one way of pricing.
  */
 export type FormFeeRule = {
     amount?: number | null;
     currency?: string | null;
     perEntryOfSection?: string | null;
     tiers?: FormFeeTier[] | null;
+    countTiers?: FormFeeCountTier[] | null;
+    /** Form::feeRule()'s computed marker ('count'). Never sent by the builder. */
+    pricing?: string | null;
     /** Stored only when StoreFormRequest::settingsRules() names it (see FormSettings). */
     [key: string]: unknown;
 };
@@ -596,13 +657,21 @@ export type FormFeeRule = {
  * settings.payment (DECISIONS.md 2026-09-11). ABSENT on every form whose admin never set
  * up payment, and it must stay absent there: its presence alone
  * (Form::hasPaymentSettings()) puts the payment columns in both CSVs and the payment
- * badge on the list. So the builder writes it only once card payment or staff codes is
- * switched on (an Event date alone never does), and keeps it on a form that loaded with it.
+ * badge on the list. So the builder writes it only once card payment, staff codes or paying
+ * the office is switched on (an Event date alone never does), and keeps it on a form that
+ * loaded with it.
  */
 export type FormPaymentSettings = {
     online?: boolean;
     staffCodes?: boolean;
+    /** A card payer MAY tick a box to add the card processing fee. */
     allowFeeCoverage?: boolean;
+    /** Every card payer pays the card processing fee; the server adds it whatever the browser sends. */
+    requireFeeCoverage?: boolean;
+    /** People may choose to pay the office instead of by card. Needs a price. Office payers never pay the card fee. */
+    officePayment?: boolean;
+    /** How to pay the office (Zelle handle, office hours), emailed to an office payer. At most 1000 characters. */
+    officeInstructions?: string | null;
     /** 'YYYY-MM-DD'. Staff codes default to expiring at midnight at the end of it. */
     eventDate?: string | null;
     /** Stored only when StoreFormRequest::settingsRules() names it (see FormSettings). */

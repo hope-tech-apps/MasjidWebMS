@@ -603,6 +603,124 @@ class FormPaymentCheckoutTest extends TestCase
         $this->assertSame([], self::$created);
     }
 
+    // ------------------------------------------ BISS: family prices, the fee required
+
+    /** The whole registration by its number of attendees ("children" at BISS). */
+    private const FAMILY_TIERS = [
+        ['min' => 1, 'amount' => 100, 'label' => '1 child'],
+        ['min' => 2, 'amount' => 170, 'label' => '2 children'],
+        ['min' => 3, 'amount' => 250, 'label' => '3 children'],
+        ['min' => 4, 'amount' => 300, 'label' => '4 children'],
+        ['min' => 5, 'amount' => 350, 'label' => '5 or more children'],
+    ];
+
+    #[Test]
+    public function a_required_card_fee_is_charged_whatever_cover_fees_says(): void
+    {
+        $form = $this->familyForm();
+
+        foreach (['absent' => [], 'false' => ['cover_fees' => false], "'false'" => ['cover_fees' => 'false']] as $label => $extra) {
+            $before = count(self::$created);
+
+            $response = $this->submit($extra, $this->answers(3), $form)->assertOk()
+                ->assertJsonPath('data.amount_due_minor', 25000)
+                ->assertJsonPath('data.fee_covered_minor', 778)
+                ->assertJsonPath('data.total_minor', 25778);
+
+            $row = FormResponse::where('uuid', $response->json('data.uuid'))->firstOrFail();
+            $this->assertSame(778, $row->fee_covered_minor, $label);
+            $this->assertSame(25778, $row->total_minor, $label);
+            $this->assertSame('250.00', (string) $row->amount_due, "{$label}: the decimal is the tier price");
+
+            $this->assertSame([
+                ['quantity' => 1, 'price_data' => ['currency' => 'usd', 'unit_amount' => 25000, 'product_data' => ['name' => 'Fall Festival (3 children)']]],
+                ['quantity' => 1, 'price_data' => ['currency' => 'usd', 'unit_amount' => 778, 'product_data' => ['name' => 'Card processing fee']]],
+            ], self::$created[$before]['params']['line_items'], $label);
+        }
+    }
+
+    #[Test]
+    public function seven_children_pay_the_five_or_more_price_plus_its_fee(): void
+    {
+        $this->submit([], $this->answers(7), $this->familyForm())->assertOk()
+            ->assertJsonPath('data.amount_due_minor', 35000)
+            ->assertJsonPath('data.fee_covered_minor', 1076)
+            ->assertJsonPath('data.total_minor', 36076);
+
+        $this->assertSame('Fall Festival (5 or more children)', self::$created[0]['params']['line_items'][0]['price_data']['product_data']['name']);
+    }
+
+    #[Test]
+    public function a_replay_that_flips_cover_fees_on_a_required_fee_form_gets_the_first_page_not_a_409(): void
+    {
+        $form = $this->familyForm();
+        $key = ['client_submission_key' => 'family-render-key-0001'];
+
+        $first = $this->submit($key + ['cover_fees' => false], $this->answers(3), $form)->assertOk();
+        $second = $this->submit($key + ['cover_fees' => true], $this->answers(3), $form)->assertOk();
+
+        $this->assertSame($first->json('data.uuid'), $second->json('data.uuid'));
+        $this->assertSame($first->json('data.checkout_url'), $second->json('data.checkout_url'));
+        $this->assertSame(1, FormResponse::count());
+        $this->assertCount(1, self::$created);
+    }
+
+    #[Test]
+    public function a_staff_entry_on_a_required_fee_form_is_cash_at_the_tier_price_with_no_fee(): void
+    {
+        $form = $this->familyForm(['online' => true, 'staffCodes' => true, 'requireFeeCoverage' => true]);
+
+        FormStaffCode::factory()->withCode('B7SS-2QWD')->create([
+            'form_id' => $form->id,
+            'masjid_id' => $this->masjid->id,
+            'holder_name' => 'Najd Haddad',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $token = $this->postJson("/api/v1/forms/{$form->id}/staff-session", [
+            'staff_code' => 'B7SS-2QWD',
+            'device_id' => 'phone-najd-0002',
+        ], ['masjid-id' => (string) $this->masjid->id])->assertOk()->json('data.staff_token');
+
+        $this->postJson("/api/v1/forms/{$form->id}/responses", [
+            'data' => $this->answers(3),
+            'staff_token' => $token,
+            'device_id' => 'phone-najd-0002',
+            'client_submission_key' => 'family-cash-entry-1',
+        ], ['masjid-id' => (string) $this->masjid->id])
+            ->assertOk()
+            ->assertJsonPath('data.payment_method', 'cash')
+            ->assertJsonPath('data.fee_covered_minor', 0)
+            ->assertJsonPath('data.total_minor', 25000);
+
+        $this->assertSame([], self::$created);
+    }
+
+    /**
+     * Production runs with STRIPE_PLATFORM_FEE_PERCENTAGE unset, so 0. Only there does
+     * "the school nets the tier price" hold: the platform fee is taken on the grossed-up
+     * total and is not grossed up itself (BISS critique, should_fix 2).
+     */
+    #[Test]
+    public function the_school_nets_the_tier_price_at_a_platform_fee_of_zero(): void
+    {
+        $this->submit([], $this->answers(3), $this->familyForm())->assertOk();
+
+        $row = FormResponse::sole();
+        $this->assertArrayNotHasKey('application_fee_amount', self::$created[0]['params']['payment_intent_data']);
+        $this->assertSame(0, FormResponseCheckoutService::applicationFee((int) $row->total_minor));
+        $this->assertSame(25000, $row->total_minor - StripeFees::on((int) $row->total_minor));
+    }
+
+    /** $15-style festival form, priced by the number of attendees with the fee required. */
+    private function familyForm(array $payment = ['online' => true, 'requireFeeCoverage' => true]): Form
+    {
+        return $this->makeForm($this->masjid, [], [
+            'fee' => ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS],
+            'payment' => $payment,
+        ]);
+    }
+
     // ------------------------------------------------------------- the status read
 
     #[Test]

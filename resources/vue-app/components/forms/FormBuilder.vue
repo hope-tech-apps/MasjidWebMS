@@ -306,21 +306,38 @@
                         payment, switch it on under Payment below.
                     </p>
                     <p v-else class="text-muted small">
-                        This form takes payment (see Payment below), so this is the price people pay,
-                        per entry of the section chosen here. The total is worked out when the form is
-                        submitted and then frozen, so a later price change never restates what somebody
-                        already agreed to pay.
+                        This form takes payment (see Payment below), so this is the price people pay. The
+                        total is worked out when the form is submitted and then frozen, so a later price
+                        change never restates what somebody already agreed to pay.
                     </p>
+
+                    <!-- One way of pricing is saved: the server refuses a price by number of entries
+                         together with an amount or date steps (buildPayload() sends only the chosen one). -->
+                    <fieldset class="mb-3">
+                        <legend class="form-label fs-6 mb-1">How the price is worked out</legend>
+                        <div v-for="mode in PRICING_MODES" :key="mode.value" class="form-check">
+                            <input
+                                :id="`formFeePricing_${mode.value}`"
+                                class="form-check-input"
+                                type="radio"
+                                name="formFeePricing"
+                                :value="mode.value"
+                                :checked="draft.settings.feePricing === mode.value"
+                                :aria-describedby="`formFeePricingHelp_${mode.value}`"
+                                @change="setPricing(mode.value)"
+                            />
+                            <label class="form-check-label" :for="`formFeePricing_${mode.value}`">{{ mode.label }}</label>
+                            <div :id="`formFeePricingHelp_${mode.value}`" class="form-text mt-0">{{ mode.help }}</div>
+                        </div>
+                    </fieldset>
 
                     <div v-if="fieldIssue('settings.fee')" class="alert alert-danger py-2 small" role="alert">
                         {{ fieldIssue('settings.fee') }}
                     </div>
 
                     <div class="row">
-                        <div class="col-md-4 mb-3">
-                            <label class="form-label" for="formFeeAmount">
-                                {{ draft.settings.feeTiers.length ? 'Price when no step applies' : 'Amount' }}
-                            </label>
+                        <div v-if="draft.settings.feePricing !== 'count'" class="col-md-4 mb-3">
+                            <label class="form-label" for="formFeeAmount">{{ feeAmountLabel }}</label>
                             <input
                                 id="formFeeAmount"
                                 type="number"
@@ -330,7 +347,7 @@
                                 step="0.01"
                                 :value="draft.settings.feeAmount ?? ''"
                                 @input="draft.settings.feeAmount = toNumberOrNull(($event.target as HTMLInputElement).value); clearServerError('settings.fee.amount'); clearServerError('settings.fee')"
-                                :placeholder="draft.settings.feeTiers.length ? 'Optional' : 'No fee'"
+                                :placeholder="feeAmountOptional ? 'Optional' : 'No fee'"
                             />
                             <div v-if="fieldIssue('settings.fee.amount')" class="invalid-feedback d-block">
                                 {{ fieldIssue('settings.fee.amount') }}
@@ -352,8 +369,10 @@
                                 {{ fieldIssue('settings.fee.currency') }}
                             </div>
                         </div>
-                        <div class="col-md-5 mb-3">
-                            <label class="form-label" for="formFeePerEntry">Charged</label>
+                        <div v-if="draft.settings.feePricing !== 'flat'" class="col-md-5 mb-3">
+                            <label class="form-label" for="formFeePerEntry">
+                                {{ draft.settings.feePricing === 'count' ? 'Count the entries of' : 'Charged' }}
+                            </label>
                             <select
                                 id="formFeePerEntry"
                                 class="form-select"
@@ -361,24 +380,30 @@
                                 v-model="draft.settings.feePerEntryOfSection"
                                 @change="clearServerError('settings.fee.perEntryOfSection')"
                             >
-                                <option :value="null">Once per submission</option>
+                                <option :value="null">
+                                    {{ draft.settings.feePricing === 'dateSteps' ? 'Once per submission' : 'Choose a repeating section' }}
+                                </option>
                                 <option
                                     v-for="section in repeatableSections"
                                     :key="section.id"
                                     :value="section.id"
                                 >
-                                    Per entry of "{{ section.title || section.id }}"
+                                    {{ sectionChoiceLabel(section) }}
                                 </option>
                             </select>
                             <div v-if="fieldIssue('settings.fee.perEntryOfSection')" class="invalid-feedback d-block">
                                 {{ fieldIssue('settings.fee.perEntryOfSection') }}
                             </div>
+                            <small v-if="!repeatableSections.length" class="form-text text-muted">
+                                No section repeats yet. Switch on "Repeats?" for a section first, for example one
+                                entry per child.
+                            </small>
                         </div>
                     </div>
 
                     <!-- Price steps: an early-bird price, then a standard one. Carried through a
                          save even when nobody edits them, or saving would drop the price. -->
-                    <div class="mb-2">
+                    <div v-if="draft.settings.feePricing === 'dateSteps'" class="mb-2">
                         <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
                             <span class="form-label mb-0">Price steps by date</span>
                             <button
@@ -461,6 +486,107 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Price by number of entries (settings.fee.countTiers): the row for the number of
+                         entries submitted is the WHOLE price, never multiplied. -->
+                    <div v-if="draft.settings.feePricing === 'count'" class="mb-2">
+                        <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                            <span class="form-label mb-0">Prices by number of entries</span>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                :disabled="draft.settings.feeCountTiers.length >= MAX_COUNT_TIERS"
+                                @click="addCountTier"
+                            >
+                                <i class="bi bi-plus-circle"></i> Add a price
+                            </button>
+                        </div>
+                        <p class="form-text mt-0">
+                            Each price is the whole amount for that many entries, up to the next row. The first row
+                            starts at 1, and the last row also covers any larger number. For example: 1 child $100,
+                            2 children $170, 5 or more children $350.
+                        </p>
+
+                        <div v-if="fieldIssue('settings.fee.countTiers')" class="alert alert-danger py-2 small" role="alert">
+                            {{ fieldIssue('settings.fee.countTiers') }}
+                        </div>
+
+                        <div
+                            v-for="(tier, tierIndex) in draft.settings.feeCountTiers"
+                            :key="tierIndex"
+                            class="row g-2 align-items-start mb-2"
+                            role="group"
+                            :aria-label="`Price ${tierIndex + 1} by number of entries`"
+                        >
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1" :for="`formCountTierMin${tierIndex}`">From this many entries</label>
+                                <input
+                                    :id="`formCountTierMin${tierIndex}`"
+                                    type="number"
+                                    inputmode="numeric"
+                                    class="form-control form-control-sm"
+                                    :class="{ 'is-invalid': !!fieldIssue(`settings.fee.countTiers.${tierIndex}.min`) }"
+                                    min="1"
+                                    step="1"
+                                    :value="tier.min ?? ''"
+                                    :aria-describedby="`formCountTierRange${tierIndex}`"
+                                    @input="tier.min = toNumberOrNull(($event.target as HTMLInputElement).value); clearCountTierErrors()"
+                                />
+                                <div v-if="fieldIssue(`settings.fee.countTiers.${tierIndex}.min`)" class="invalid-feedback d-block">
+                                    {{ fieldIssue(`settings.fee.countTiers.${tierIndex}.min`) }}
+                                </div>
+                                <div :id="`formCountTierRange${tierIndex}`" class="form-text mt-0">{{ countTierRange(tierIndex) }}</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1" :for="`formCountTierAmount${tierIndex}`">Price</label>
+                                <input
+                                    :id="`formCountTierAmount${tierIndex}`"
+                                    type="number"
+                                    class="form-control form-control-sm"
+                                    :class="{ 'is-invalid': !!fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`) }"
+                                    min="0"
+                                    step="0.01"
+                                    :value="tier.amount ?? ''"
+                                    @input="tier.amount = toNumberOrNull(($event.target as HTMLInputElement).value); clearCountTierErrors()"
+                                />
+                                <div v-if="fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`)" class="invalid-feedback d-block">
+                                    {{ fieldIssue(`settings.fee.countTiers.${tierIndex}.amount`) }}
+                                </div>
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label small mb-1" :for="`formCountTierLabel${tierIndex}`">Name</label>
+                                <input
+                                    :id="`formCountTierLabel${tierIndex}`"
+                                    type="text"
+                                    class="form-control form-control-sm"
+                                    :class="{ 'is-invalid': !!fieldIssue(`settings.fee.countTiers.${tierIndex}.label`) }"
+                                    maxlength="60"
+                                    v-model="tier.label"
+                                    placeholder="e.g. 2 children"
+                                    aria-describedby="formCountTierLabelHelp"
+                                    @input="clearCountTierErrors()"
+                                />
+                                <div v-if="fieldIssue(`settings.fee.countTiers.${tierIndex}.label`)" class="invalid-feedback d-block">
+                                    {{ fieldIssue(`settings.fee.countTiers.${tierIndex}.label`) }}
+                                </div>
+                            </div>
+                            <div class="col-md-1">
+                                <span class="form-label small mb-1 d-none d-md-block" aria-hidden="true">&nbsp;</span>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-danger"
+                                    :aria-label="`Remove price ${tierIndex + 1}`"
+                                    :disabled="draft.settings.feeCountTiers.length === 1"
+                                    @click="removeCountTier(tierIndex)"
+                                >
+                                    <i class="bi bi-x-lg" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <p id="formCountTierLabelHelp" class="form-text mt-0">
+                            The name is what the receipt and the card payment page call the price.
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -472,9 +598,9 @@
                 <div class="card-body">
                     <h6 class="mb-1"><i class="bi bi-credit-card me-2"></i>Payment</h6>
                     <p class="text-muted small">
-                        Off by default. With either kind of payment on, the fee above must be charged per
-                        entry of a section that needs at least one entry, and every price must be at least
-                        $0.50.
+                        Off by default. With any kind of payment on, the fee above must be charged per entry,
+                        or by number of entries, of a section that needs at least one entry, and every price
+                        must be at least $0.50.
                     </p>
 
                     <!-- Card -->
@@ -527,26 +653,35 @@
                         </div>
                     </div>
 
-                    <!-- Card fee -->
-                    <div class="form-check form-switch ms-md-4">
-                        <input
-                            id="formPaymentFeeCover"
-                            class="form-check-input"
-                            type="checkbox"
-                            role="switch"
-                            v-model="draft.settings.paymentAllowFeeCoverage"
-                            :disabled="!draft.settings.paymentOnline"
-                            aria-describedby="formPaymentFeeCoverHelp"
-                            @change="clearServerError('settings.payment.allowFeeCoverage')"
-                        />
-                        <label class="form-check-label" for="formPaymentFeeCover">Offer to cover the card fee</label>
-                    </div>
-                    <div id="formPaymentFeeCoverHelp" class="form-text ms-md-4 mb-3">
-                        Adds an optional checkbox so a card payer can add the card processing fee to their total.
-                        Card payments only.
-                    </div>
+                    <!-- Card fee: who pays the card processing fee on a card payment
+                         (allowFeeCoverage / requireFeeCoverage). An office payer and a staff-code entry
+                         never pay it. -->
+                    <fieldset class="ms-md-4 mb-3" :disabled="!draft.settings.paymentOnline">
+                        <legend class="form-label fs-6 mb-1">Card processing fee</legend>
+                        <div v-for="choice in FEE_COVERAGE_CHOICES" :key="choice.value" class="form-check">
+                            <input
+                                :id="`formPaymentFee_${choice.value}`"
+                                class="form-check-input"
+                                type="radio"
+                                name="formPaymentFeeCoverage"
+                                :value="choice.value"
+                                v-model="draft.settings.paymentFeeCoverage"
+                                :aria-describedby="`formPaymentFeeHelp_${choice.value}`"
+                                @change="clearServerError('settings.payment.allowFeeCoverage'); clearServerError('settings.payment.requireFeeCoverage')"
+                            />
+                            <label class="form-check-label" :for="`formPaymentFee_${choice.value}`">{{ choice.label }}</label>
+                            <div :id="`formPaymentFeeHelp_${choice.value}`" class="form-text mt-0">{{ choice.help }}</div>
+                        </div>
+                        <div class="form-text">
+                            Card payments only. People who pay the office, and entries made with a staff code, never
+                            pay this fee.<template v-if="!draft.settings.paymentOnline"> Switch on card payment to choose.</template>
+                        </div>
+                    </fieldset>
                     <div v-if="fieldIssue('settings.payment.allowFeeCoverage')" class="invalid-feedback d-block ms-md-4 mb-2">
                         {{ fieldIssue('settings.payment.allowFeeCoverage') }}
+                    </div>
+                    <div v-if="fieldIssue('settings.payment.requireFeeCoverage')" class="invalid-feedback d-block ms-md-4 mb-2">
+                        {{ fieldIssue('settings.payment.requireFeeCoverage') }}
                     </div>
 
                     <!-- Staff codes -->
@@ -571,6 +706,57 @@
                         {{ fieldIssue('settings.payment.staffCodes') }}
                     </div>
 
+                    <!-- Pay the office (officePayment / officeInstructions): chosen on the form instead of
+                         the card. The registration is saved as owed, with no card fee, and marked paid on
+                         Form Responses, which asks how the money came. -->
+                    <div class="form-check form-switch">
+                        <input
+                            id="formPaymentOffice"
+                            class="form-check-input"
+                            type="checkbox"
+                            role="switch"
+                            v-model="draft.settings.paymentOfficePayment"
+                            aria-describedby="formPaymentOfficeHelp"
+                            @change="clearServerError('settings.payment.officePayment'); clearServerError('settings.fee')"
+                        />
+                        <label class="form-check-label" for="formPaymentOffice">Let people choose to pay the office</label>
+                    </div>
+                    <div id="formPaymentOfficeHelp" class="form-text mb-2">
+                        People can choose to pay the office (by Zelle, Cash App, Venmo, check or cash) instead of by
+                        card. Their registration is saved as owed and they are told how to pay. When the money
+                        arrives, mark it paid on Form Responses and say how it came. People who pay the office
+                        never pay the card processing fee.
+                    </div>
+                    <div v-if="fieldIssue('settings.payment.officePayment')" class="invalid-feedback d-block mb-2">
+                        {{ fieldIssue('settings.payment.officePayment') }}
+                    </div>
+
+                    <div v-if="draft.settings.paymentOfficePayment" class="ms-md-4 mb-3">
+                        <label class="form-label" for="formPaymentOfficeInstructions">How to pay the office</label>
+                        <textarea
+                            id="formPaymentOfficeInstructions"
+                            class="form-control"
+                            :class="{ 'is-invalid': !!fieldIssue('settings.payment.officeInstructions') }"
+                            rows="3"
+                            :maxlength="OFFICE_INSTRUCTIONS_MAX"
+                            v-model="draft.settings.paymentOfficeInstructions"
+                            placeholder="e.g. Zelle to office@example.org, or bring cash or a check to the office on Sunday between 10am and 1pm."
+                            aria-describedby="formPaymentOfficeInstructionsHelp"
+                            @input="clearServerError('settings.payment.officeInstructions')"
+                        ></textarea>
+                        <div v-if="fieldIssue('settings.payment.officeInstructions')" class="invalid-feedback d-block">
+                            {{ fieldIssue('settings.payment.officeInstructions') }}
+                        </div>
+                        <div id="formPaymentOfficeInstructionsHelp" class="form-text">
+                            Shown to people who choose to pay the office, and emailed to them with the amount they owe.
+                            {{ draft.settings.paymentOfficeInstructions.length }} of {{ OFFICE_INSTRUCTIONS_MAX }} characters.
+                        </div>
+                        <div v-if="!draft.settings.paymentOfficeInstructions.trim()" class="small text-warning-emphasis mt-1">
+                            <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
+                            Without instructions, people who choose the office are told only what they owe.
+                        </div>
+                    </div>
+
                     <div class="row">
                         <div class="col-md-4 mb-2">
                             <label class="form-label" for="formPaymentEventDate">Event date</label>
@@ -587,7 +773,7 @@
                                 @input="clearServerError('settings.payment.eventDate')"
                             />
                             <div v-if="!paymentOn" id="formPaymentEventDateLocked" class="form-text">
-                                Switch on card payment or staff cash codes above to set the event date.
+                                Switch on a kind of payment above to set the event date.
                             </div>
                             <div v-if="fieldIssue('settings.payment.eventDate')" class="invalid-feedback d-block">
                                 {{ fieldIssue('settings.payment.eventDate') }}
@@ -826,6 +1012,7 @@ import {
     FormPayload,
     FormSchemaSection,
     FormSettings,
+    FormFeeCountTier,
     FormFeeRule,
     FormFeeTier,
     FormPaymentSettings,
@@ -845,9 +1032,10 @@ import { useRouter } from 'vue-router';
 import Swal from 'sweetalert2';
 
 /**
- * The sign-up form builder: sections, questions, the identity map, the fee rule (with its
- * date-stepped prices), payment (card, staff cash codes, the event day) and the WhatsApp
- * group link.
+ * The sign-up form builder: sections, questions, the identity map, the fee rule (one price,
+ * per entry, date-stepped prices, or prices by number of entries), payment (card and who
+ * pays its fee, staff cash codes, paying the office, the event day) and the WhatsApp group
+ * link.
  *
  * Settings travel in BOTH directions through load() and buildPayload(), and a key needs
  * both edits or saving silently drops it (.claude/rules/shipping.md): the festival form's
@@ -898,6 +1086,23 @@ type DraftTier = {
     extra: Record<string, unknown>;
 };
 
+/** One price by number of entries as the builder edits it; `extra` as on DraftTier. */
+type DraftCountTier = {
+    min: number | null;
+    amount: number | null;
+    label: string;
+    extra: Record<string, unknown>;
+};
+
+/**
+ * How the fee's price is worked out. Exactly one is saved (buildPayload()): the server
+ * refuses countTiers together with amount or tiers.
+ */
+type FeePricing = 'flat' | 'perEntry' | 'dateSteps' | 'count';
+
+/** Who pays the card processing fee on a card payment. */
+type FeeCoverage = 'absorb' | 'optional' | 'required';
+
 type DraftSettings = {
     submitButtonLabel: string;
     successTitle: string;
@@ -913,11 +1118,17 @@ type DraftSettings = {
     feeAmount: number | null;
     feeCurrency: string;
     feePerEntryOfSection: string | null;
+    feePricing: FeePricing;
     feeTiers: DraftTier[];
+    feeCountTiers: DraftCountTier[];
     // settings.payment, flattened like identity and fee.
     paymentOnline: boolean;
     paymentStaffCodes: boolean;
-    paymentAllowFeeCoverage: boolean;
+    /** allowFeeCoverage ('optional') and requireFeeCoverage ('required') as one choice. */
+    paymentFeeCoverage: FeeCoverage;
+    paymentOfficePayment: boolean;
+    /** '' for none. */
+    paymentOfficeInstructions: string;
     /** 'YYYY-MM-DD', or '' for none. */
     paymentEventDate: string;
     whatsappUrl: string;
@@ -936,6 +1147,12 @@ type Preserved = {
     fee: Record<string, unknown>;
     payment: Record<string, unknown>;
     hadPaymentBlock: boolean;
+    /**
+     * The keys the loaded payment block carried. The keys added for office payment and the
+     * required card fee are written only once used or when already there, so a form that
+     * never used them saves exactly as it did before they existed.
+     */
+    loadedPaymentKeys: string[];
 };
 
 /** The settings keys buildPayload() writes itself; every other key is sent back as loaded. */
@@ -944,8 +1161,11 @@ const MANAGED_SETTINGS_KEYS = [
     'confirmationEmail', 'paymentNote', 'intro', 'identity', 'fee', 'payment',
     'whatsappUrl', 'whatsappLabel'
 ] as const;
-const MANAGED_FEE_KEYS = ['amount', 'currency', 'perEntryOfSection', 'tiers'] as const;
-const MANAGED_PAYMENT_KEYS = ['online', 'staffCodes', 'allowFeeCoverage', 'eventDate'] as const;
+// `pricing` is Form::feeRule()'s computed marker, never part of what is saved.
+const MANAGED_FEE_KEYS = ['amount', 'currency', 'perEntryOfSection', 'tiers', 'countTiers', 'pricing'] as const;
+const MANAGED_PAYMENT_KEYS = [
+    'online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment', 'officeInstructions', 'eventDate'
+] as const;
 
 const IDENTITY_SLOTS = [
     { key: 'identityName', slot: 'name', label: 'Name question' },
@@ -955,6 +1175,53 @@ const IDENTITY_SLOTS = [
 
 /** FormPayment::MIN_CHARGE_MINOR: Stripe's smallest card charge. */
 const MIN_CHARGE_MINOR = 50;
+
+const PRICING_MODES: { value: FeePricing; label: string; help: string }[] = [
+    {
+        value: 'flat',
+        label: 'One price per submission',
+        help: 'Everyone who submits pays the same amount, however many people they add.'
+    },
+    {
+        value: 'perEntry',
+        label: 'A price for each entry',
+        help: 'The price is multiplied by the number of entries in a repeating section, for example per attendee.'
+    },
+    {
+        value: 'dateSteps',
+        label: 'Prices that change by date',
+        help: 'For example an early-bird price, then a standard price. Charged once per submission or per entry.'
+    },
+    {
+        value: 'count',
+        label: 'Price by number of entries',
+        help: 'One total for 1 entry, another for 2, and so on, for example a family price by number of children. It is not multiplied.'
+    }
+];
+
+const FEE_COVERAGE_CHOICES: { value: FeeCoverage; label: string; help: string }[] = [
+    {
+        value: 'absorb',
+        label: 'This organisation pays it',
+        help: 'Card payers pay the price. The fee comes out of what this organisation receives.'
+    },
+    {
+        value: 'optional',
+        label: 'Card payers can choose to add it',
+        help: 'Adds an optional checkbox so a card payer can add the card processing fee to their total.'
+    },
+    {
+        value: 'required',
+        label: 'Card payers always pay it',
+        help: 'The card processing fee is added to every card payment and cannot be removed. Check that a card surcharge is allowed for this organisation first.'
+    }
+];
+
+/** Rows of prices by number of entries, as many as date steps allow. */
+const MAX_COUNT_TIERS = 10;
+
+/** StoreFormRequest's limit on settings.payment.officeInstructions. */
+const OFFICE_INSTRUCTIONS_MAX = 1000;
 
 type Draft = {
     name: string;
@@ -989,10 +1256,14 @@ const blankSettings = (): DraftSettings => ({
     feeAmount: null,
     feeCurrency: 'USD',
     feePerEntryOfSection: null,
+    feePricing: 'flat',
     feeTiers: [],
+    feeCountTiers: [],
     paymentOnline: false,
     paymentStaffCodes: false,
-    paymentAllowFeeCoverage: false,
+    paymentFeeCoverage: 'absorb',
+    paymentOfficePayment: false,
+    paymentOfficeInstructions: '',
     paymentEventDate: '',
     whatsappUrl: '',
     whatsappLabel: ''
@@ -1033,7 +1304,7 @@ const blankDraft = (): Draft => ({
 
 const draft = ref<Draft>(blankDraft());
 
-const blankPreserved = (): Preserved => ({ settings: {}, fee: {}, payment: {}, hadPaymentBlock: false });
+const blankPreserved = (): Preserved => ({ settings: {}, fee: {}, payment: {}, hadPaymentBlock: false, loadedPaymentKeys: [] });
 
 const preserved = ref<Preserved>(blankPreserved());
 
@@ -1097,10 +1368,36 @@ const buildTier = (tier: DraftTier): FormFeeTier => {
     return clean;
 };
 
+const toDraftCountTier = (tier: unknown): DraftCountTier => {
+    const record = asRecord(tier);
+
+    return {
+        min: toAmount(record.min),
+        amount: toAmount(record.amount),
+        label: typeof record.label === 'string' ? record.label : '',
+        extra: omit(record, ['min', 'amount', 'label'])
+    };
+};
+
+// A missing number goes as null so the server names the row, as the problems list does.
+const buildCountTier = (tier: DraftCountTier): FormFeeCountTier => ({
+    ...tier.extra,
+    min: tier.min as number,
+    amount: tier.amount as number,
+    label: tier.label.trim()
+});
+
+/** Which pricing a stored fee uses. No fee at all reads as one price, left empty. */
+const pricingOf = (fee: Record<string, any>): FeePricing => {
+    if (Array.isArray(fee.countTiers) && fee.countTiers.length) return 'count';
+    if (Array.isArray(fee.tiers) && fee.tiers.length) return 'dateSteps';
+    return typeof fee.perEntryOfSection === 'string' && fee.perEntryOfSection ? 'perEntry' : 'flat';
+};
+
 /**
  * settings.payment, or null to leave it out. Written for a form that already had one
  * (a festival form with both switches off after the day is still reconciled from its
- * payment columns), or once card payment or staff codes is switched on. Nothing else
+ * payment columns), or once card payment, staff codes or paying the office is switched on. Nothing else
  * writes it: its presence alone (Form::hasPaymentSettings()) puts a fee form's list and
  * both CSVs into payment mode, badging every family "Unpaid", and the builder has no way
  * back. So the card-fee switch alone does not (it does nothing without card payment), and
@@ -1116,8 +1413,19 @@ const buildPaymentBlock = (): FormPaymentSettings | null => {
         ...preserved.value.payment,
         online: s.paymentOnline,
         staffCodes: s.paymentStaffCodes,
-        allowFeeCoverage: s.paymentAllowFeeCoverage
+        allowFeeCoverage: s.paymentFeeCoverage === 'optional'
     };
+
+    // Written once used, or when the loaded block already had them, so a form that never
+    // used them (MEC's festival form) saves the block it had.
+    const had = (key: string): boolean => preserved.value.loadedPaymentKeys.includes(key);
+    const requireFee = s.paymentFeeCoverage === 'required';
+    if (requireFee || had('requireFeeCoverage')) payment.requireFeeCoverage = requireFee;
+    if (s.paymentOfficePayment || had('officePayment')) payment.officePayment = s.paymentOfficePayment;
+
+    const officeInstructions = s.paymentOfficeInstructions.trim();
+    if (officeInstructions) payment.officeInstructions = officeInstructions;
+    else if (had('officeInstructions')) payment.officeInstructions = null;
 
     if (eventDate) payment.eventDate = eventDate;
 
@@ -1191,7 +1499,8 @@ const load = async () => {
             settings: omit(settings, MANAGED_SETTINGS_KEYS),
             fee: omit(fee, MANAGED_FEE_KEYS),
             payment: omit(payment, MANAGED_PAYMENT_KEYS),
-            hadPaymentBlock
+            hadPaymentBlock,
+            loadedPaymentKeys: Object.keys(payment)
         };
 
         draft.value = {
@@ -1225,10 +1534,16 @@ const load = async () => {
                 feePerEntryOfSection: typeof fee.perEntryOfSection === 'string' && fee.perEntryOfSection
                     ? fee.perEntryOfSection
                     : null,
+                feePricing: pricingOf(fee),
                 feeTiers: (Array.isArray(fee.tiers) ? fee.tiers : []).map(toDraftTier),
+                feeCountTiers: (Array.isArray(fee.countTiers) ? fee.countTiers : []).map(toDraftCountTier),
                 paymentOnline: readFlag(payment.online),
                 paymentStaffCodes: readFlag(payment.staffCodes),
-                paymentAllowFeeCoverage: readFlag(payment.allowFeeCoverage),
+                paymentFeeCoverage: readFlag(payment.requireFeeCoverage)
+                    ? 'required'
+                    : (readFlag(payment.allowFeeCoverage) ? 'optional' : 'absorb'),
+                paymentOfficePayment: readFlag(payment.officePayment),
+                paymentOfficeInstructions: typeof payment.officeInstructions === 'string' ? payment.officeInstructions : '',
                 paymentEventDate: typeof payment.eventDate === 'string' ? payment.eventDate : '',
                 whatsappUrl: typeof settings.whatsappUrl === 'string' ? settings.whatsappUrl : '',
                 whatsappLabel: typeof settings.whatsappLabel === 'string' ? settings.whatsappLabel : ''
@@ -1299,21 +1614,40 @@ const buildPayload = (): FormPayload => {
     if (hasIdentity(draftSettings.identityPhone)) identity.phone = draftSettings.identityPhone;
     if (Object.keys(identity).length) settings.identity = identity;
 
-    // A fee is an amount, price steps, or both: the festival form has steps and no amount.
-    // With neither there is no fee, and the form is free.
-    const tiers = draftSettings.feeTiers.map(buildTier);
+    // Only the chosen pricing is sent: the server refuses countTiers together with an amount
+    // or date steps, and this is what widens the old "amount or steps" gate so prices by
+    // number of entries are not dropped (a form priced only by them would save as free).
+    const pricing = draftSettings.feePricing;
+    const currency = (draftSettings.feeCurrency || 'USD').toUpperCase();
 
-    if (draftSettings.feeAmount !== null || tiers.length) {
-        const fee: FormFeeRule = {
-            ...preserved.value.fee,
-            currency: (draftSettings.feeCurrency || 'USD').toUpperCase(),
-            perEntryOfSection: draftSettings.feePerEntryOfSection || null
-        };
+    if (pricing === 'count') {
+        const countTiers = draftSettings.feeCountTiers.map(buildCountTier);
 
-        if (draftSettings.feeAmount !== null) fee.amount = draftSettings.feeAmount;
-        if (tiers.length) fee.tiers = tiers;
+        if (countTiers.length) {
+            settings.fee = {
+                ...preserved.value.fee,
+                currency,
+                perEntryOfSection: draftSettings.feePerEntryOfSection || null,
+                countTiers
+            };
+        }
+    } else {
+        // A fee is an amount, price steps, or both: the festival form has steps and no amount.
+        // With neither there is no fee, and the form is free.
+        const tiers = pricing === 'dateSteps' ? draftSettings.feeTiers.map(buildTier) : [];
 
-        settings.fee = fee;
+        if (draftSettings.feeAmount !== null || tiers.length) {
+            const fee: FormFeeRule = {
+                ...preserved.value.fee,
+                currency,
+                perEntryOfSection: pricing === 'flat' ? null : (draftSettings.feePerEntryOfSection || null)
+            };
+
+            if (draftSettings.feeAmount !== null) fee.amount = draftSettings.feeAmount;
+            if (tiers.length) fee.tiers = tiers;
+
+            settings.fee = fee;
+        }
     }
 
     const payment = buildPaymentBlock();
@@ -1802,19 +2136,24 @@ const problems = computed<string[]>(() => {
         }
     });
 
-    if (draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
+    const pricing = draft.value.settings.feePricing;
+
+    if (pricing !== 'count' && draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
         found.push('The fee cannot be negative.');
     }
 
-    const perEntry = draft.value.settings.feePerEntryOfSection;
+    const perEntry = pricing === 'flat' ? null : draft.value.settings.feePerEntryOfSection;
     if (perEntry && !repeatableSections.value.some(section => section.id === perEntry)) {
         found.push(`The fee is charged per entry of "${perEntry}", which is not a repeating section.`);
     }
 
     Object.entries(paymentIssues.value).forEach(([key, message]) => {
         const step = /^settings\.fee\.tiers\.(\d+)\./.exec(key);
+        const countRow = /^settings\.fee\.countTiers\.(\d+)\./.exec(key);
 
-        if (step) {
+        if (countRow) {
+            found.push(`Price ${Number(countRow[1]) + 1} by number of entries: ${message}`);
+        } else if (step) {
             found.push(`Price step ${Number(step[1]) + 1}: ${message}`);
         } else if (key.startsWith('settings.whatsapp')) {
             found.push(`WhatsApp group link: ${message}`);
@@ -1828,11 +2167,98 @@ const problems = computed<string[]>(() => {
 
 // ------------------------------------------------------------ fee and payment
 
-/** Card payment or staff cash codes: the switches that put the fee under crossCheck's rules. */
-const paymentOn = computed(() => draft.value.settings.paymentOnline || draft.value.settings.paymentStaffCodes);
+/** Card payment, staff cash codes or paying the office: the switches that put the fee under crossCheck's rules. */
+const paymentOn = computed(() =>
+    draft.value.settings.paymentOnline || draft.value.settings.paymentStaffCodes || draft.value.settings.paymentOfficePayment
+);
+
+/** With date steps, the amount is only the price when no step applies. */
+const feeAmountOptional = computed(() =>
+    draft.value.settings.feePricing === 'dateSteps' && draft.value.settings.feeTiers.length > 0
+);
+
+const feeAmountLabel = computed(() => {
+    if (feeAmountOptional.value) return 'Price when no step applies';
+    return draft.value.settings.feePricing === 'perEntry' ? 'Price per entry' : 'Amount';
+});
+
+const sectionChoiceLabel = (section: FormSchemaSection): string => {
+    const title = section.title || section.id;
+    return draft.value.settings.feePricing === 'count' ? `"${title}"` : `Per entry of "${title}"`;
+};
 
 /** Whole cents, with room for float noise (19.99 * 100 is 1998.9999999999998). */
 const isWholeCents = (amount: number): boolean => Math.abs(Math.round(amount * 100) - amount * 100) < 1e-6;
+
+/**
+ * StoreFormRequest's refusals for a price by number of entries, mirrored. They apply whether
+ * or not payment is on: no counted section; a counted section that can be left empty; a
+ * first row not starting at 1; rows not starting at ever more entries; a price under $0.50
+ * or in fractions of a cent; a price lower than the row above it (a typo guard). The name
+ * is this screen's own ask, because the receipt and the card page are worded with it.
+ */
+const countTierIssues = (s: DraftSettings): Record<string, string> => {
+    const issues: Record<string, string> = {};
+
+    if (!s.feePerEntryOfSection) {
+        issues['settings.fee.perEntryOfSection'] = 'Choose the repeating section whose entries are counted.';
+    } else {
+        const section = repeatableSections.value.find(candidate => candidate.id === s.feePerEntryOfSection);
+
+        if (section && (section.minEntries ?? 0) < 1) {
+            issues['settings.fee.perEntryOfSection'] = `"${section.title || section.id}" must require at least one entry when the price depends on the number of entries.`;
+        }
+    }
+
+    if (!s.feeCountTiers.length) {
+        issues['settings.fee.countTiers'] = 'Add at least one price.';
+        return issues;
+    }
+
+    let previousMin: number | null = null;
+    let previousAmount: number | null = null;
+
+    s.feeCountTiers.forEach((tier, index) => {
+        const key = `settings.fee.countTiers.${index}`;
+        const min = tier.min;
+
+        if (min === null || !Number.isInteger(min) || min < 1 || min > 1000) {
+            issues[`${key}.min`] = 'Enter a whole number of entries, from 1 to 1000.';
+        } else {
+            if (index === 0 && min !== 1) {
+                issues[`${key}.min`] = 'The first price must start at 1 entry.';
+            } else if (previousMin !== null && min <= previousMin) {
+                issues[`${key}.min`] = `Must be more than ${previousMin}, where the price above it starts.`;
+            }
+
+            previousMin = previousMin === null ? min : Math.max(previousMin, min);
+        }
+
+        const amount = tier.amount;
+
+        if (amount === null) {
+            issues[`${key}.amount`] = 'Every price needs an amount.';
+        } else if (amount < 0) {
+            issues[`${key}.amount`] = 'A price cannot be negative.';
+        } else if (!isWholeCents(amount)) {
+            issues[`${key}.amount`] = 'A price must be in whole cents (at most two decimal places).';
+        } else if (Math.round(amount * 100) < MIN_CHARGE_MINOR) {
+            issues[`${key}.amount`] = 'Every price must be at least $0.50, the smallest amount a card can be charged.';
+        } else {
+            if (previousAmount !== null && amount < previousAmount) {
+                issues[`${key}.amount`] = 'This costs less than the price above it. Prices cannot go down as entries go up, so check for a typo.';
+            }
+
+            previousAmount = previousAmount === null ? amount : Math.max(previousAmount, amount);
+        }
+
+        if (!tier.label.trim()) {
+            issues[`${key}.label`] = 'Give this price a name, for example "2 children".';
+        }
+    });
+
+    return issues;
+};
 
 /**
  * StoreFormRequest's settings rules and crossCheck()'s payment rules, keyed as the server
@@ -1843,45 +2269,73 @@ const paymentIssues = computed<Record<string, string>>(() => {
     const issues: Record<string, string> = {};
     const s = draft.value.settings;
 
+    const pricing = s.feePricing;
+
     const link = s.whatsappUrl.trim();
     if (link && !FORM_WHATSAPP_URL_PATTERN.test(link)) {
         issues['settings.whatsappUrl'] = 'The WhatsApp group link must be a WhatsApp invite link starting https://chat.whatsapp.com/.';
     }
 
-    s.feeTiers.forEach((tier, index) => {
-        if (tier.amount === null) {
-            issues[`settings.fee.tiers.${index}.amount`] = 'Every price step needs a price.';
-        } else if (tier.amount < 0) {
-            issues[`settings.fee.tiers.${index}.amount`] = 'A price cannot be negative.';
-        }
+    if (s.paymentOfficeInstructions.trim().length > OFFICE_INSTRUCTIONS_MAX) {
+        issues['settings.payment.officeInstructions'] = `Keep the instructions for paying the office to ${OFFICE_INSTRUCTIONS_MAX} characters or fewer.`;
+    }
 
-        // A date input can only produce this shape; a stored unpadded date cannot be shown in one.
-        if (tier.until && !/^\d{4}-\d{2}-\d{2}$/.test(tier.until)) {
-            issues[`settings.fee.tiers.${index}.until`] = `"${tier.until}" is not a date. Choose the step's last day again.`;
-        }
-    });
+    // Only the chosen pricing is saved, so only its own values are checked.
+    if (pricing === 'dateSteps') {
+        s.feeTiers.forEach((tier, index) => {
+            if (tier.amount === null) {
+                issues[`settings.fee.tiers.${index}.amount`] = 'Every price step needs a price.';
+            } else if (tier.amount < 0) {
+                issues[`settings.fee.tiers.${index}.amount`] = 'A price cannot be negative.';
+            }
+
+            // A date input can only produce this shape; a stored unpadded date cannot be shown in one.
+            if (tier.until && !/^\d{4}-\d{2}-\d{2}$/.test(tier.until)) {
+                issues[`settings.fee.tiers.${index}.until`] = `"${tier.until}" is not a date. Choose the step's last day again.`;
+            }
+        });
+    }
+
+    if (pricing === 'count') {
+        Object.assign(issues, countTierIssues(s));
+    }
+
+    if (pricing === 'perEntry' && s.feeAmount !== null && !s.feePerEntryOfSection) {
+        issues['settings.fee.perEntryOfSection'] = 'Choose the repeating section to charge per entry of.';
+    }
 
     if (!paymentOn.value) return issues;
 
-    if (!s.feePerEntryOfSection) {
-        issues['settings.fee.perEntryOfSection'] = 'A form that takes payment must charge its fee per entry of a repeatable section (for example, per attendee).';
-    } else {
-        const section = repeatableSections.value.find(candidate => candidate.id === s.feePerEntryOfSection);
+    if (!issues['settings.fee.perEntryOfSection']) {
+        if (pricing === 'flat') {
+            issues['settings.fee.perEntryOfSection'] = 'A form that takes payment cannot charge one price per submission. Choose a pricing that counts the entries of a repeating section.';
+        } else if (!s.feePerEntryOfSection) {
+            issues['settings.fee.perEntryOfSection'] = 'A form that takes payment must charge its fee per entry of a repeatable section (for example, per attendee).';
+        } else {
+            const section = repeatableSections.value.find(candidate => candidate.id === s.feePerEntryOfSection);
 
-        if (section && (section.minEntries ?? 0) < 1) {
-            issues['settings.fee.perEntryOfSection'] = `"${section.title || section.id}" must require at least one entry on a form that takes payment, or a registration with no entries would owe nothing.`;
+            if (section && (section.minEntries ?? 0) < 1) {
+                issues['settings.fee.perEntryOfSection'] = `"${section.title || section.id}" must require at least one entry on a form that takes payment, or a registration with no entries would owe nothing.`;
+            }
         }
     }
 
-    if (s.feeAmount === null && s.feeTiers.length === 0) {
+    const hasPrice = pricing === 'count'
+        ? s.feeCountTiers.length > 0
+        : s.feeAmount !== null || (pricing === 'dateSteps' && s.feeTiers.length > 0);
+
+    if (!hasPrice && !issues['settings.fee.countTiers']) {
         issues['settings.fee'] = 'A form that takes payment needs a price.';
     }
 
+    // Prices by number of entries were checked above, payment or not.
     const prices: [string, number][] = [];
-    if (s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
-    s.feeTiers.forEach((tier, index) => {
-        if (tier.amount !== null) prices.push([`settings.fee.tiers.${index}.amount`, tier.amount]);
-    });
+    if (pricing !== 'count' && s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
+    if (pricing === 'dateSteps') {
+        s.feeTiers.forEach((tier, index) => {
+            if (tier.amount !== null) prices.push([`settings.fee.tiers.${index}.amount`, tier.amount]);
+        });
+    }
 
     prices.forEach(([key, amount]) => {
         if (issues[key]) return;
@@ -1930,6 +2384,75 @@ const addTier = () => {
 const removeTier = (index: number) => {
     draft.value.settings.feeTiers.splice(index, 1);
     clearTierErrors();
+};
+
+/** Refusals about the fee no longer describe it once its pricing changes. */
+const clearFeeErrors = () => {
+    const remaining = { ...serverFieldErrorsByKey.value };
+    Object.keys(remaining).filter(key => key === 'settings.fee' || key.startsWith('settings.fee.')).forEach(key => delete remaining[key]);
+    serverFieldErrorsByKey.value = remaining;
+};
+
+/** Rows are keyed by position and checked against each other, so any edit clears them all. */
+const clearCountTierErrors = () => {
+    const remaining = { ...serverFieldErrorsByKey.value };
+    Object.keys(remaining).filter(key => key === 'settings.fee' || key.startsWith('settings.fee.countTiers')).forEach(key => delete remaining[key]);
+    serverFieldErrorsByKey.value = remaining;
+};
+
+const setPricing = (pricing: FeePricing) => {
+    const s = draft.value.settings;
+    if (s.feePricing === pricing) return;
+
+    s.feePricing = pricing;
+
+    // With one repeating section there is only one section to count.
+    if ((pricing === 'perEntry' || pricing === 'count') && !s.feePerEntryOfSection && repeatableSections.value.length === 1) {
+        s.feePerEntryOfSection = repeatableSections.value[0].id;
+    }
+
+    if (pricing === 'count' && !s.feeCountTiers.length) {
+        s.feeCountTiers.push({ min: 1, amount: null, label: '', extra: {} });
+    }
+
+    clearFeeErrors();
+};
+
+const addCountTier = () => {
+    const tiers = draft.value.settings.feeCountTiers;
+    if (tiers.length >= MAX_COUNT_TIERS) return;
+
+    // The next row starts one entry after the last one, when that one has a usable number.
+    const last = tiers[tiers.length - 1];
+    const min = !last ? 1 : (last.min !== null && Number.isInteger(last.min) ? last.min + 1 : null);
+
+    tiers.push({ min, amount: null, label: '', extra: {} });
+    clearCountTierErrors();
+};
+
+const removeCountTier = (index: number) => {
+    draft.value.settings.feeCountTiers.splice(index, 1);
+    clearCountTierErrors();
+};
+
+/** "Applies to 2 entries", "Applies to 2 to 4 entries", "Applies to 5 or more entries"; '' until the numbers make sense. */
+const countTierRange = (index: number): string => {
+    const tiers = draft.value.settings.feeCountTiers;
+    const usable = (value: number | null | undefined): value is number =>
+        typeof value === 'number' && Number.isInteger(value) && value >= 1;
+
+    const min = tiers[index]?.min;
+    if (!usable(min)) return '';
+
+    if (index === tiers.length - 1) return `Applies to ${min} or more entries`;
+
+    const next = tiers[index + 1]?.min;
+    if (!usable(next) || next <= min) return '';
+
+    const upTo = next - 1;
+    if (upTo === min) return `Applies to ${min} ${min === 1 ? 'entry' : 'entries'}`;
+
+    return `Applies to ${min} to ${upTo} entries`;
 };
 
 // ------------------------------------------------------------ Stripe connection

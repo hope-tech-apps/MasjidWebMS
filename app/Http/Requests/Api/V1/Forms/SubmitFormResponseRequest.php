@@ -36,6 +36,13 @@ class SubmitFormResponseRequest extends BaseFormRequest
     /** What a page that sent no usable replay key is told (here, and FormSubmissionsController). */
     public const OUT_OF_DATE = 'This page is out of date. Reload it and try again.';
 
+    /** `pay_with`: how the family chose to pay (BISS, 2026-09-13). Absent is decided by the server. */
+    public const PAY_WITH_CARD = 'card';
+
+    public const PAY_WITH_OFFICE = 'office';
+
+    public const PAY_WITH = [self::PAY_WITH_CARD, self::PAY_WITH_OFFICE];
+
     /**
      * The endpoint is deliberately unauthenticated — it is the public submit URL.
      * Which form may be submitted to, and by whom, is decided in the controller
@@ -114,9 +121,15 @@ class SubmitFormResponseRequest extends BaseFormRequest
 
             // The card-fee checkbox (FormSubmissionsController): a yes/no, never an
             // amount; the fee is priced on the server, and only for a card payment.
+            // On a form that requires the fee it is ignored: every card payer covers it.
             // The return address is checked there too, and only for a card payment,
             // so every other form is untouched by it (App\Support\FormPaymentReturn).
             'cover_fees' => ['nullable', 'boolean'],
+
+            // Card, or pay the office. Whether THIS form offers the choice is the
+            // controller's to decide, since only it knows the form; a renderer that
+            // sends nothing gets the server's choice.
+            'pay_with' => ['nullable', 'string', 'in:' . implode(',', self::PAY_WITH)],
         ];
     }
 
@@ -131,6 +144,8 @@ class SubmitFormResponseRequest extends BaseFormRequest
             'client_submission_key.string' => self::OUT_OF_DATE,
             'client_submission_key.regex' => self::OUT_OF_DATE,
             'cover_fees.boolean' => 'The card fee answer must be yes or no.',
+            'pay_with.string' => 'Choose to pay by card or at the office.',
+            'pay_with.in' => 'Choose to pay by card or at the office.',
         ];
     }
 }

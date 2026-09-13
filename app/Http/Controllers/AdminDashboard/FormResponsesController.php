@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Forms\IndexFormResponsesRequest;
+use App\Http\Requests\Admin\Forms\MarkFormResponsePaidRequest;
 use App\Http\Requests\Admin\Forms\UpdateFormResponseRequest;
 use App\Models\Form;
 use App\Models\FormResponse;
@@ -53,7 +54,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  *   takeCash              cash for an unpaid registration, under the row lock: the open
  *                         card page is closed first, and when Stripe says the payer has
  *                         just paid, the cash is refused (festival brief, blocker 4).
- *   markPaidExternal      a payment made somewhere else: the Wix fallback (blocker 5).
+ *   markPaidExternal      a payment made somewhere else: the Wix fallback (blocker 5), or
+ *                         the Zelle / Cash App / Venmo / check a family paying the office
+ *                         sent, which must say which (`via`; BISS, 2026-09-13).
  *   cashTotals            what each holder owes, over this screen's own query.
  *   update (cancel)       cancelling an unpaid card registration closes its open card
  *                         page under the same row lock, so it is never left payable.
@@ -694,25 +697,30 @@ class FormResponsesController extends Controller
      * takeCash(); recorded as payment_method 'external', stamped with who marked it. That
      * is what puts a Wix payer in the paid set the door filters on, and the receipt it
      * sends is where the group link travels in the fallback.
+     *
+     * `via` (MarkFormResponsePaidRequest) says how the money came and lands in
+     * `paid_via`. A family that chose to pay the office MUST have one — the office keeps
+     * its books by how the money came — so its absence is refused on the locked row,
+     * before anything is recorded. For every other row it stays optional.
      */
-    public function markPaidExternal(Request $request, FormResponseCheckoutService $checkout, $masjid_id, $form_id, $response_id): JsonResponse
+    public function markPaidExternal(MarkFormResponsePaidRequest $request, FormResponseCheckoutService $checkout, $masjid_id, $form_id, $response_id): JsonResponse
     {
-        return $this->settleByHand($request, $checkout, FormResponse::METHOD_EXTERNAL, $masjid_id, $form_id, $response_id);
+        return $this->settleByHand($request, $checkout, FormResponse::METHOD_EXTERNAL, $masjid_id, $form_id, $response_id, $request->validated('via'));
     }
 
     /** takeCash() and markPaidExternal(): one path, two methods. */
-    private function settleByHand(Request $request, FormResponseCheckoutService $checkout, string $method, $masjid_id, $form_id, $response_id): JsonResponse
+    private function settleByHand(Request $request, FormResponseCheckoutService $checkout, string $method, $masjid_id, $form_id, $response_id, ?string $via = null): JsonResponse
     {
         [, $form, $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
         $operator = $request->user();
 
         try {
-            [$outcome, $announced] = DB::transaction(function () use ($checkout, $method, $form, $response, $operator): array {
+            [$outcome, $announced] = DB::transaction(function () use ($checkout, $method, $form, $response, $operator, $via): array {
                 $row = $this->lockRow($response, $form);
 
                 // Everyone but a card payer still waiting on Stripe was emailed at submit
-                // (FormNotifier never emails an unpaid money leg), and the coordinators
-                // need not hear about the same registration twice.
+                // (FormNotifier emails no unpaid money leg but a family paying the office),
+                // and the coordinators need not hear about the same registration twice.
                 $announced = $row->payment_method !== FormResponse::METHOD_ONLINE;
 
                 if ($row->isPaid()) {
@@ -727,13 +735,19 @@ class FormResponsesController extends Controller
                     return ['nothing', $announced];
                 }
 
+                // A family paying the office: the books must say how the money came. Cash
+                // says so itself (settleCashBy()); anything else has to be named.
+                if ($method === FormResponse::METHOD_EXTERNAL && $row->payment_method === FormResponse::METHOD_OFFICE && $via === null) {
+                    return ['via-required', $announced];
+                }
+
                 if ($row->payment_method === FormResponse::METHOD_ONLINE && $checkout->closeOpenSession($row) === 'complete') {
                     return ['paid-on-stripe', $announced];
                 }
 
                 $settled = $method === FormResponse::METHOD_CASH
                     ? $row->settleCashBy($operator)
-                    : $row->markExternalPaid($operator);
+                    : $row->markExternalPaid($operator, $via);
 
                 return [$settled ? 'settled' : 'paid:' . $row->payment_method, $announced];
             });
@@ -766,6 +780,7 @@ class FormResponsesController extends Controller
             return $this->refused(match ($outcome) {
                 'cancelled' => 'This registration is cancelled. Re-open it before recording a payment.',
                 'nothing' => 'This registration has nothing to pay.',
+                'via-required' => MarkFormResponsePaidRequest::refusal(),
                 'paid-on-stripe' => 'This registration has just been paid by card, and Stripe is confirming it. Do not take a second payment.',
                 'paid:' . FormResponse::METHOD_ONLINE => 'This registration has already been paid by card. Do not take a second payment.',
                 'paid:' . FormResponse::METHOD_CASH => 'Cash has already been recorded for this registration.',
@@ -815,6 +830,10 @@ class FormResponsesController extends Controller
                     'Registration no.', 'Payment method', 'Payment status', 'Paid at',
                     'Staff code holder', 'Marked paid by', 'Card fee covered', 'Total paid',
                     'Collected at', 'Collected by',
+                    // Last, so every column before it keeps its place (BISS, 2026-09-13). An
+                    // unpaid family paying the office reads Payment method "office", status
+                    // "unpaid"; once paid, "cash" or "external" with how it came here.
+                    'Paid via',
                 );
             }
 
@@ -850,6 +869,7 @@ class FormResponsesController extends Controller
                             $response->isPaid() && $response->total_minor !== null ? $this->minor((int) $response->total_minor) : '',
                             optional($response->collected_at)->format('Y-m-d H:i'),
                             $this->csvCell((string) $response->collectedBy?->name),
+                            (string) $response->paid_via,
                         );
                     }
 
@@ -969,6 +989,13 @@ class FormResponsesController extends Controller
             'charges_fee' => $form->chargesFee(),
             'online' => $form->takesOnlinePayment(),
             'staff_codes' => $form->takesStaffCodes(),
+            // Families may pay the office (BISS, 2026-09-13), and the ways "Mark paid" can
+            // say the money came — required for those families, optional otherwise.
+            'office' => $form->takesOfficePayment(),
+            'paid_via' => array_map(
+                fn (string $via) => ['value' => $via, 'label' => FormResponse::PAID_VIA_LABELS[$via]],
+                FormResponse::PAID_VIA_EXTERNAL
+            ),
             // For the "Staff member" filter. Never the digest.
             'codes' => $form->staffCodes()
                 ->orderBy('holder_name')
@@ -1166,6 +1193,8 @@ class FormResponsesController extends Controller
             'fee_covered_minor' => (int) $response->fee_covered_minor,
             'total_minor' => $response->total_minor,
             'paid_at' => optional($response->paid_at)->toIso8601String(),
+            // How a payment recorded by hand came (FormResponse::PAID_VIA), or null.
+            'paid_via' => $response->paid_via,
             // An unpaid card registration whose hosted page has been opened. It may have
             // expired since (a page lives 30 minutes); "Take cash" closes it either way,
             // and refuses if Stripe says it was paid.

@@ -12,8 +12,11 @@ use Illuminate\Validation\Rule;
 
 class StoreFormRequest extends BaseFormRequest
 {
-    /** The `settings.payment` switches (DECISIONS.md 2026-09-11), coerced alike on every door. */
-    public const PAYMENT_FLAGS = ['online', 'staffCodes', 'allowFeeCoverage'];
+    /**
+     * The `settings.payment` switches (DECISIONS.md 2026-09-11; the required card fee and
+     * paying the office, 2026-09-13), coerced alike on every door.
+     */
+    public const PAYMENT_FLAGS = ['online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment'];
 
     /**
      * The builder may post either JSON or FormData depending on the SPA screen, so
@@ -223,6 +226,17 @@ class StoreFormRequest extends BaseFormRequest
             'settings.fee.tiers.*.label' => 'nullable|string|max:60',
             'settings.fee.currency' => 'nullable|string|size:3',
             'settings.fee.perEntryOfSection' => 'nullable|string|max:255',
+            // Priced by the number of entries (BISS, 2026-09-13): the WHOLE registration
+            // costs the tier with the greatest `min` at or below the counted section's
+            // row count (Form::priceFor()). Every key has a rule, because a key without
+            // one is dropped by validated() while the save still succeeds — and a form
+            // whose count prices vanished would be free. The shape across tiers (first
+            // min 1, ascending, never cheaper, not beside `amount`/`tiers`) is
+            // countTierProblems() in crossCheck().
+            'settings.fee.countTiers' => 'nullable|array|max:10',
+            'settings.fee.countTiers.*.min' => 'required|integer|min:1|max:1000',
+            'settings.fee.countTiers.*.amount' => 'required|numeric|min:0|max:1000000',
+            'settings.fee.countTiers.*.label' => 'nullable|string|max:60',
 
             // Payment (DECISIONS.md 2026-09-11). Absent means off, which is every
             // form written before the festival. Each switch is a real boolean by
@@ -233,6 +247,16 @@ class StoreFormRequest extends BaseFormRequest
             'settings.payment.online' => 'nullable|boolean',
             'settings.payment.staffCodes' => 'nullable|boolean',
             'settings.payment.allowFeeCoverage' => 'nullable|boolean',
+            // Every card payer covers the card fee; the browser cannot turn it off
+            // (FormPayment::feeCoveredMinor()). A separate key, so allowFeeCoverage
+            // keeps meaning "an optional checkbox" to every renderer already deployed.
+            'settings.payment.requireFeeCoverage' => 'nullable|boolean',
+            // The family may choose to pay the office; staff record how the money came.
+            // Turning it on puts the fee under the paying-form rules like the other two.
+            'settings.payment.officePayment' => 'nullable|boolean',
+            // How to pay the office, in its own words (handles, hours). Published on the
+            // page and in the "amount owed" email, so nothing private belongs here.
+            'settings.payment.officeInstructions' => 'nullable|string|max:1000',
             // The day of the event: staff codes default to expiring at the end of it, on
             // the masjid's clock (Form::eventDate()). A calendar date and nothing else.
             // A form carries no other event day, and guessing one from closes_at put
@@ -338,9 +362,86 @@ class StoreFormRequest extends BaseFormRequest
                 "\"{$label}\" is not a repeatable section, so the fee cannot be charged per entry of it.";
         }
 
-        // A key already refused above keeps its first, more specific message.
-        foreach (self::paymentProblems($schema, $settings) as $field => $message) {
-            $problems[$field] ??= $message;
+        // A key already refused above keeps its first, more specific message. The count
+        // schedule is checked on EVERY form, paying or not, because amount_due is
+        // stored from it either way.
+        foreach ([self::countTierProblems($settings), self::paymentProblems($schema, $settings)] as $found) {
+            foreach ($found as $field => $message) {
+                $problems[$field] ??= $message;
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
+     * A price by number of entries that could silently charge the wrong amount
+     * (BISS, 2026-09-13). Refused when `countTiers` is sent:
+     *
+     *  - beside `amount` or date `tiers`: one of the two would be ignored without a
+     *    word, the defect class every rule in this file exists to stop;
+     *  - with no `perEntryOfSection`: nothing would be counted;
+     *  - with a first `min` other than 1: some family sizes would have no price;
+     *  - with mins not strictly ascending (a repeat included): the schedule is read by
+     *    comparison, but a list an office cannot read top to bottom is a typo waiting;
+     *  - with a tier cheaper than the one before it: $35 typed for $350.
+     *
+     * Values the field rules already refuse (a min that is not a whole number, an
+     * amount that is not a number) are left to those rules. The 50-cent minimum and
+     * whole cents reach the tier prices through paymentProblems().
+     *
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function countTierProblems(array $settings): array
+    {
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $tiers = $fee['countTiers'] ?? null;
+
+        if (! is_array($tiers) || $tiers === []) {
+            return [];
+        }
+
+        $problems = [];
+
+        if (($fee['amount'] ?? null) !== null || (is_array($fee['tiers'] ?? null) && $fee['tiers'] !== [])) {
+            $problems['settings.fee.countTiers'] =
+                'Prices by number of entries replace the flat price and the date steps. Remove the amount and the date steps, or the prices by number of entries.';
+        }
+
+        $perEntry = $fee['perEntryOfSection'] ?? null;
+
+        if ($perEntry === null || (is_string($perEntry) && trim($perEntry) === '')) {
+            $problems['settings.fee.perEntryOfSection'] =
+                'Prices by number of entries need the repeatable section whose entries are counted (for example, children).';
+        }
+
+        $previous = null;
+
+        foreach (array_values($tiers) as $i => $tier) {
+            $min = is_array($tier) && ! is_bool($tier['min'] ?? null)
+                ? filter_var($tier['min'] ?? null, FILTER_VALIDATE_INT)
+                : false;
+            $amount = is_array($tier) ? ($tier['amount'] ?? null) : null;
+
+            if ($min === false) {
+                continue;
+            }
+
+            if ($i === 0 && $min !== 1) {
+                $problems['settings.fee.countTiers.0.min'] =
+                    'The first price by number of entries must start at 1, so every family size has a price.';
+            }
+
+            if ($previous !== null && $min <= $previous['min']) {
+                $problems["settings.fee.countTiers.{$i}.min"] =
+                    'Each price by number of entries must start above the one before it: list them in order, with no number twice.';
+            } elseif ($previous !== null && is_numeric($amount) && is_numeric($previous['amount']) && (float) $amount < (float) $previous['amount']) {
+                $problems["settings.fee.countTiers.{$i}.amount"] =
+                    'A price for more entries cannot be lower than the price for fewer. Check this amount for a typo.';
+            }
+
+            $previous = ['min' => $min, 'amount' => $amount];
         }
 
         return $problems;
@@ -348,8 +449,11 @@ class StoreFormRequest extends BaseFormRequest
 
     /**
      * NEVER FREE BY ACCIDENT (festival brief, blocker 1): what a form must be
-     * before it may take money — card payment (`payment.online`) or cash by staff
-     * code (`payment.staffCodes`). With either switch on:
+     * before it may take money — card payment (`payment.online`), cash by staff
+     * code (`payment.staffCodes`) or paying the office (`payment.officePayment`,
+     * BISS 2026-09-13; an office-only form owes money like the other two, and a
+     * registration owing $0 at the office is the free path by another name). With
+     * any switch on:
      *
      *  1. The fee is charged per entry of a repeatable section that DEMANDS at
      *     least one entry. FormSchema::validator() adds a minimum-rows rule only
@@ -358,10 +462,12 @@ class StoreFormRequest extends BaseFormRequest
      *     FormSchema::amountDue() multiplies the price by zero. A flat fee is not
      *     allowed on a paying form: the festival charges per attendee (owner,
      *     2026-09-10), and one per-entry rule is what the door counts bracelets by.
-     *  2. EVERY price — the flat amount and each tier, not only the tier in force
-     *     today — is at least Stripe's 50¢ and a whole number of cents. A $0
-     *     early-bird tier would make the form free until its cut-off; 12.345 has
-     *     no honest cent value (FormPayment::wholeMinor()).
+     *  2. EVERY price — the flat amount, each date tier (not only the one in force
+     *     today) and each price by number of entries — is at least Stripe's 50¢
+     *     and a whole number of cents. A $0 early-bird tier would make the form
+     *     free until its cut-off; 12.345 has no honest cent value
+     *     (FormPayment::wholeMinor()). Paying the office on a form with no price
+     *     above zero is refused by name.
      *  3. A card payment is in US dollars, the only currency the Checkout path is
      *     built and tested for. Cash by code carries no such limit.
      *
@@ -377,8 +483,9 @@ class StoreFormRequest extends BaseFormRequest
     {
         $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
         $online = self::switchedOn($payment['online'] ?? null);
+        $office = self::switchedOn($payment['officePayment'] ?? null);
 
-        if (! $online && ! self::switchedOn($payment['staffCodes'] ?? null)) {
+        if (! $online && ! $office && ! self::switchedOn($payment['staffCodes'] ?? null)) {
             return [];
         }
 
@@ -410,8 +517,20 @@ class StoreFormRequest extends BaseFormRequest
             $prices["settings.fee.tiers.{$i}.amount"] = is_array($tier) ? ($tier['amount'] ?? null) : null;
         }
 
+        // A form priced only by count is a paying form with prices, never "needs a price".
+        foreach (is_array($fee['countTiers'] ?? null) ? array_values($fee['countTiers']) : [] as $i => $tier) {
+            $prices["settings.fee.countTiers.{$i}.amount"] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
         if ($prices === []) {
             $problems['settings.fee'] = 'A form that takes payment needs a price.';
+        }
+
+        $priced = array_filter($prices, fn ($amount) => is_numeric($amount) && (float) $amount > 0);
+
+        if ($office && $priced === []) {
+            $problems['settings.payment.officePayment'] =
+                'Paying the office needs a price on the form. This form charges nothing, so there would be nothing to pay.';
         }
 
         foreach ($prices as $field => $amount) {
@@ -502,6 +621,13 @@ class StoreFormRequest extends BaseFormRequest
             'settings.payment.online' => 'card payment switch',
             'settings.payment.staffCodes' => 'staff codes switch',
             'settings.payment.allowFeeCoverage' => 'card fee switch',
+            'settings.payment.requireFeeCoverage' => 'required card fee switch',
+            'settings.payment.officePayment' => 'pay the office switch',
+            'settings.payment.officeInstructions' => 'office payment instructions',
+            'settings.fee.countTiers' => 'prices by number of entries',
+            'settings.fee.countTiers.*.min' => 'number of entries',
+            'settings.fee.countTiers.*.amount' => 'price',
+            'settings.fee.countTiers.*.label' => 'price label',
             'settings.payment.eventDate' => 'event date',
             'settings.whatsappUrl' => 'WhatsApp group link',
             'settings.whatsappLabel' => 'WhatsApp button label',

@@ -462,24 +462,30 @@ class FormSchema
      * The amount owed, computed at submission time and then stored, so a later price
      * change does not restate what someone already agreed to pay.
      *
+     * Read through Form::priceFor(), the resolver FormPayment::quote() prices the cents
+     * snapshot from, so the decimal and the cents never count differently — a family
+     * of three on a form priced by the number of children stores 250.00, never
+     * 100.00 × 3.
+     *
+     * Null when the form charges nothing, or when its price cannot be resolved for
+     * this submission; a form that takes payment refuses the submission first.
+     *
      * @param  array<string,mixed>  $data
      */
     public function amountDue(array $data): ?float
     {
-        $fee = $this->form->feeRule();
+        $price = $this->form->priceFor($data);
 
-        if ($fee === null) {
+        if ($price === null) {
             return null;
         }
 
-        if ($fee['perEntryOfSection'] === null) {
-            return $fee['amount'];
+        // A flat fee: byte-for-byte what this always returned.
+        if ($price['fee']['perEntryOfSection'] === null) {
+            return $price['fee']['amount'];
         }
 
-        $rows = Arr::get($data, $fee['perEntryOfSection'], []);
-        $count = is_array($rows) ? count($rows) : 0;
-
-        return round($fee['amount'] * $count, 2);
+        return round($price['unit'] * $price['quantity'], 2);
     }
 
     /**

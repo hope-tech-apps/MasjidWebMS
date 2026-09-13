@@ -194,6 +194,21 @@ const feeSummary = computed(() => {
     const fee = selectedForm.value?.settings?.fee;
     if (!fee) return null;
 
+    // Priced by number of entries: each row is the WHOLE price for that many entries, so it
+    // must never read as "USD 100 per entry" (that would be $300 for 3, not $250).
+    const countTiers = Array.isArray(fee.countTiers) ? fee.countTiers : [];
+    if (countTiers.length) {
+        const sorted = [...countTiers].sort((a, b) => Number(a.min) - Number(b.min));
+        const prices = sorted.map((tier, index) => {
+            const label = typeof tier.label === 'string' ? tier.label.trim() : '';
+            const entries = label || (index === sorted.length - 1 ? `${tier.min} or more entries` : `${tier.min} entries`);
+            return `${fee.currency || 'USD'} ${tier.amount} for ${entries}`;
+        });
+        const counted = fee.perEntryOfSection ? ` of "${fee.perEntryOfSection}"` : '';
+
+        return `${prices.join(' · ')} (the whole price, by number of entries${counted})`;
+    }
+
     // A form priced by date steps may carry no flat amount at all (the festival form).
     const tiers = Array.isArray(fee.tiers) ? fee.tiers : [];
     if (!tiers.length && (fee.amount === null || fee.amount === undefined)) return null;
