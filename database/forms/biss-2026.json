@@ -9,7 +9,7 @@
   "capacity": null,
   "settings": {
     "submitButtonLabel": "Complete enrollment",
-    "intro": "<p><strong>Burlington Islamic Sunday School (BISS)</strong> meets every Sunday from <strong>11:00 AM to 2:00 PM</strong>, starting <strong>October 11, 2026</strong>, at Burlington Masjid, 1908 S Mebane St.</p><p>Each class covers <strong>Arabic</strong> (Al-Qaida An-Nooraniyya), <strong>Qur'an</strong> memorization and <strong>Islamic Studies</strong>. Children are placed in their class by age.</p><p><strong>Fees for the year:</strong> 1 child $100 · 2 children $170 · 3 children $250 · 4 children $300 · 5 or more children $350.</p><p>You can pay the school office (Zelle, Cash App, Venmo, cash or check), or pay by card online. Card payments include the card processing fee.</p>",
+    "intro": "<p><strong>Burlington Islamic Sunday School (BISS)</strong> meets every Sunday from <strong>11:00 AM to 2:00 PM</strong>, starting <strong>October 11, 2026</strong>, at Burlington Masjid, 1908 S Mebane St.</p><p>Each class covers <strong>Arabic</strong> (Al-Qaida An-Nooraniyya), <strong>Qur'an</strong> memorization and <strong>Islamic Studies</strong>. Children are placed in their class by age.</p><p><strong>Fees for the year:</strong> 1 child $100 · 2 children $170 · 3 children $250 · 4 children $300 · 5 or more children $350.</p><p>Pay the school office by Zelle, Cash App, Venmo, cash or check. The office will confirm each payment.</p>",
     "fee": {
       "currency": "USD",
       "perEntryOfSection": "children",
