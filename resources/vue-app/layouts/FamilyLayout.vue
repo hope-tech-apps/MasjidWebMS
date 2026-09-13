@@ -25,6 +25,13 @@
                      should flip. Same argument, and same remedy, as the style
                      block at the foot of FamilyClass.vue. -->
                 <div v-if="familyStore.isSignedIn" class="push-end d-flex align-items-center gap-3">
+                    <!-- Icon-only on a phone, so the accessible name carries the words. -->
+                    <router-link :to="`/family/${masjidId}/calendar`"
+                                 class="small text-decoration-none d-inline-flex align-items-center gap-1"
+                                 :class="isCalendarActive ? 'fw-semibold text-success' : 'text-muted'"
+                                 :aria-label="t('layout_calendar')" :title="t('layout_calendar')">
+                        <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">{{ t('layout_calendar') }}</span>
+                    </router-link>
                     <span class="text-muted small d-none d-sm-inline" dir="auto">{{ familyStore.displayName }}</span>
                     <button class="btn btn-sm btn-outline-secondary" @click="signOut">{{ t('layout_sign_out') }}</button>
                 </div>
@@ -53,6 +60,7 @@ const familyStore = useFamilyStore();
 const { lang, dir, t } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId ?? familyStore.masjidId ?? ''));
+const isCalendarActive = computed(() => route.name === 'familyCalendar');
 const orgName = ref('');
 const orgLogo = ref<string | null>(null);
 

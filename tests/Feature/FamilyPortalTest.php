@@ -1599,6 +1599,34 @@ class FamilyPortalTest extends TestCase
         ], $writes);
     }
 
+    #[Test]
+    public function a_parent_reads_the_school_calendar_of_their_own_organisation(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-20 12:00:00'));
+
+        $year = \App\Models\SchoolYear::create([
+            'masjid_id' => $this->masjid->id, 'label' => '2026–27',
+            'first_day' => '2026-10-11', 'last_day' => '2027-05-30',
+        ]);
+        \App\Models\SchoolClosure::create([
+            'masjid_id' => $this->masjid->id, 'school_year_id' => $year->id,
+            'closed_on' => '2026-11-22', 'reason' => 'Thanksgiving weekend',
+        ]);
+
+        $other = $this->makeMasjid();
+        \App\Models\SchoolYear::create([
+            'masjid_id' => $other->id, 'label' => 'Another school year',
+            'first_day' => '2026-10-10', 'last_day' => '2027-05-29',
+        ]);
+
+        $response = $this->as($this->parentA)->getJson($this->url('/school-calendar'))->assertOk();
+
+        $response->assertJsonCount(1, 'data.years');
+        $response->assertJsonCount(12, 'data.upcoming');
+        $response->assertJsonPath('data.upcoming.0', ['date' => '2026-11-22', 'closed' => true, 'reason' => 'Thanksgiving weekend']);
+        $this->assertStringNotContainsString('Another school year', $response->getContent());
+    }
+
     // ------------------------------- 7. the §7 hazard, pinned rather than hidden
 
     #[Test]

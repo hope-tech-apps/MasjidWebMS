@@ -3,8 +3,11 @@
 namespace App\Http\Requests\Teacher;
 
 use App\Models\AttendanceRecord;
+use App\Support\SchoolCalendar;
+use App\Support\TenantContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * Saving a class register for ONE day, in one request.
@@ -37,6 +40,30 @@ class SaveAttendanceRequest extends FormRequest
             'marks.*.status' => ['required', Rule::in(AttendanceRecord::STATUSES)],
             'marks.*.note' => ['nullable', 'string', 'max:500'],
         ];
+    }
+
+    /**
+     * A no-school day has no register (the school calendar). Only CLOSURES are
+     * refused: a day off the meeting weekday, or outside every school year, is
+     * still allowed, and a school with no calendar is unchanged. The controller
+     * checks again inside its write transaction, under the year's row lock, for a
+     * closure added after this ran.
+     */
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $v): void {
+            $masjidId = app(TenantContext::class)->get();
+
+            if ($v->errors()->has('session_date') || $masjidId === null) {
+                return;
+            }
+
+            $closure = SchoolCalendar::closureFor((int) $masjidId, (string) $this->input('session_date'));
+
+            if ($closure !== null) {
+                $v->errors()->add('session_date', SchoolCalendar::noRegisterMessage($closure));
+            }
+        });
     }
 
     public function messages(): array

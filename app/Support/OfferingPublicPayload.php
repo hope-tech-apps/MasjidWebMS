@@ -375,7 +375,8 @@ final class OfferingPublicPayload
         return [
             'name' => $form->name,
             'description' => $form->description,
-            'schema' => $form->schema,
+            // Same offer set as bindForm and the register door (FormOptionSources).
+            'schema' => FormOptionSources::schema($form, FormOptionSources::OFFER),
             'settings' => [
                 'submitButtonLabel' => $settings['submitButtonLabel'] ?? 'Register',
                 'successTitle' => $settings['successTitle'] ?? null,

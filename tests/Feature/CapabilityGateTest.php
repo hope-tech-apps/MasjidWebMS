@@ -99,6 +99,13 @@ class CapabilityGateTest extends TestCase
         $this->assertFalse($school->hasCapability('crm'));
         $this->assertSame((bool) $masjid->assistant_enabled, $masjid->hasCapability('assistant'));
 
+        // The school calendar is new, so nobody had it: off for schools too, and
+        // switched on per organisation (DECISIONS.md 2026-09-14). A default of
+        // true would have handed Al-Razi a screen nobody decided to give it.
+        $this->assertFalse($masjid->hasCapability('school_calendar'));
+        $this->assertFalse($school->hasCapability('school_calendar'));
+        $this->assertFalse($this->org('community')->hasCapability('school_calendar'));
+
         // A typo is never a grant.
         $this->assertFalse($masjid->hasCapability('web_page'));
     }
@@ -252,5 +259,6 @@ class CapabilityGateTest extends TestCase
 
         $this->assertArrayHasKey('web_pages', $seen);
         $this->assertArrayHasKey('jummah_lunch', $seen);
+        $this->assertArrayHasKey('school_calendar', $seen);
     }
 }

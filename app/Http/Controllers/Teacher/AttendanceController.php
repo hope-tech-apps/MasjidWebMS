@@ -7,6 +7,7 @@ use App\Models\AttendanceRecord;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Support\SchoolCalendar;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -43,6 +44,24 @@ class AttendanceController extends TeacherController
         $group = Group::findOrFail($group_id);
         $date = $this->sessionDate($request->query('date'));
 
+        // What the school calendar says about this day. Only `closed` changes the
+        // register: a closed day has no register to take, so it serves no
+        // students and reads as not taken. A school with no calendar gets
+        // has_calendar false and exactly the register it always had (Al-Razi).
+        $schoolDay = SchoolCalendar::for((int) $group->masjid_id)->schoolDay($date->toDateString());
+
+        if ($schoolDay['closed']) {
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'session_date' => $date->toDateString(),
+                    'taken' => false,
+                    'students' => [],
+                    'school_day' => $schoolDay,
+                ],
+            ], Response::HTTP_OK);
+        }
+
         $students = $group->memberships()
             ->participants()->current()
             ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
@@ -67,6 +86,7 @@ class AttendanceController extends TeacherController
                         'note' => $record?->note,
                     ];
                 })->values(),
+                'school_day' => $schoolDay,
             ],
         ], Response::HTTP_OK);
     }
@@ -112,7 +132,17 @@ class AttendanceController extends TeacherController
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        DB::transaction(function () use ($marks, $group, $date) {
+        $closed = DB::transaction(function () use ($marks, $group, $date) {
+            // SaveAttendanceRequest refused a closed day already, but the office
+            // may have closed it since. Re-read under the school year's row lock —
+            // the lock SchoolCalendarController::storeClosure counts marks under —
+            // so marks can never end up hidden beneath a closure.
+            $closure = SchoolCalendar::closureFor((int) $group->masjid_id, $date->toDateString(), lock: true);
+
+            if ($closure !== null) {
+                return $closure;
+            }
+
             foreach ($marks as $mark) {
                 AttendanceRecord::updateOrCreate(
                     [
@@ -128,7 +158,16 @@ class AttendanceController extends TeacherController
                     ]
                 );
             }
+
+            return null;
         });
+
+        if ($closed !== null) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['session_date' => [SchoolCalendar::noRegisterMessage($closed)]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         return $this->index(new Request(['date' => $date->toDateString()]), $masjid_id, $group_id);
     }

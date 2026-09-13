@@ -8,6 +8,8 @@ import {
     Form,
     FormFieldTypeInfo,
     FormOption,
+    FormOptionsSourceInfo,
+    readOptionsSources,
     FormPayload,
     FormStaffCode,
     FormStaffCodeIssued,
@@ -36,6 +38,11 @@ export const useFormsStore = defineStore('formsStore', () => {
     // The builder's palette. Seeded with the compiled-in fallback so the editor is
     // usable even before (or without) a successful /field-types call.
     const fieldTypes = ref<FormFieldTypeInfo[]>([...FORM_FIELD_TYPES]);
+
+    // Where a choice question's options may come from instead of a typed list
+    // (the school calendar). Empty until /field-types answers, and empty from a
+    // server that offers none — the builder then offers typed lists only.
+    const optionsSources = ref<FormOptionsSourceInfo[]>([]);
 
     // Stores
     const masjidStore = useMasjidStore();
@@ -82,6 +89,7 @@ export const useFormsStore = defineStore('formsStore', () => {
                 if (res.data?.status === 'success' && Array.isArray(res.data?.data) && res.data.data.length) {
                     fieldTypes.value = res.data.data;
                 }
+                optionsSources.value = readOptionsSources(res.data);
             })
             .catch((e: Error) => {
                 console.error('Fetch form field types error: ', e);
@@ -240,6 +248,7 @@ export const useFormsStore = defineStore('formsStore', () => {
     return {
         formOptions,
         fieldTypes,
+        optionsSources,
         masjidId,
         fetchFormOptions,
         fetchFieldTypes,

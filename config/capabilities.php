@@ -45,6 +45,16 @@ return [
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
+    'school_calendar' => [
+        'label' => 'School calendar',
+        'description' => 'School days, no-school days, and the school-day choices on registration forms.',
+        // New, so nobody reached it before: OFF for every organisation, schools
+        // included, and switched on per organisation by a SuperAdmin (BISS
+        // first). A school default of true would have handed Al-Razi a new
+        // screen nobody decided to give it. DECISIONS.md 2026-09-14.
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+    ],
+
     'crm' => [
         'label' => 'Members, classes & giving',
         'description' => 'Member directory, groups and classes, teachers, programs, donations and funds.',

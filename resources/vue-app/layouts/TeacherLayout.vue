@@ -15,6 +15,14 @@
                                  :class="isClassesActive ? 'fw-semibold text-success' : 'text-muted'">
                         My Classes
                     </router-link>
+                    <!-- Icon-only on a phone (where My Classes is the brand link),
+                         so it keeps an accessible name that contains the visible word. -->
+                    <router-link to="/teacher/calendar"
+                                 class="nav-link px-0 d-inline-flex align-items-center gap-1"
+                                 :class="isCalendarActive ? 'fw-semibold text-success' : 'text-muted'"
+                                 aria-label="School calendar" title="School calendar">
+                        <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
+                    </router-link>
                     <span v-if="teacherName" class="text-muted small d-none d-md-inline">{{ teacherName }}</span>
                     <button class="btn btn-sm btn-outline-secondary" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>
@@ -53,6 +61,7 @@ const signingOut = ref(false);
 
 // The classes list is the shell's home; keep its nav pill lit while browsing it.
 const isClassesActive = computed(() => route.path === '/teacher');
+const isCalendarActive = computed(() => route.name === 'teacherCalendar');
 
 onMounted(async () => {
     // The header comes from the teacher's own self endpoint — the shell never

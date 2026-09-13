@@ -305,11 +305,12 @@ class FormNotifier
 
         foreach ($form->sections() as $section) {
             foreach ($section['fields'] ?? [] as $field) {
-                if (! isset($field['name']) || ! is_array($field['options'] ?? null)) {
+                if (! isset($field['name']) || ! is_array($field)) {
                     continue;
                 }
 
-                foreach ($field['options'] as $option) {
+                // Typed options as stored, or a calendar-sourced question's days.
+                foreach (FormOptionSources::resolve($form, $field, FormOptionSources::LABEL) as $option) {
                     if (isset($option['value'])) {
                         $map[$field['name']][(string) $option['value']] =
                             (string) ($option['label'] ?? $option['value']);

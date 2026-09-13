@@ -444,6 +444,24 @@ Route::prefix('admin')->group(function () {
                 Route::get('{masjid_id}/section-types', [PageSectionsController::class, 'sectionTypes']);
             });
 
+            // School calendar: the school year's dates and its no-school days
+            // (`school_calendar`, off for every organisation until a SuperAdmin
+            // switches it on; SuperAdmins always pass). NOT inside `crm`: a
+            // registration form needs the calendar before any class or contact
+            // exists. Teachers and families read it through their own realms,
+            // ungated. Every write answers with the whole calendar.
+            Route::prefix('{masjid_id}/school-calendar')->middleware('capability:school_calendar')
+                ->controller(\App\Http\Controllers\AdminDashboard\SchoolCalendarController::class)
+                ->group(function () {
+                    Route::get('/', 'index');
+                    Route::post('/years', 'storeYear');
+                    Route::put('/years/{year_id}', 'updateYear');
+                    Route::delete('/years/{year_id}', 'destroyYear');
+                    Route::post('/closures', 'storeClosure');
+                    Route::put('/closures/{closure_id}', 'updateClosure'); // the reason only
+                    Route::delete('/closures/{closure_id}', 'destroyClosure');
+                });
+
             // Sign-up Forms Management (event RSVPs, membership, camp registration).
             // Open to MasjidAdmin as well as SuperAdmin — a masjid builds its own forms.
             Route::prefix('{masjid_id}/forms')->controller(FormsController::class)->group(function () {

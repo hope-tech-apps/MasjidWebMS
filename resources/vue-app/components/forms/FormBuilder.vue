@@ -246,6 +246,8 @@
                         :id-prefix="`form_s${sectionIndex}_f${fieldIndex}`"
                         :name-problem="fieldNameProblems[`${sectionIndex}:${fieldIndex}`] ?? null"
                         :conditional-sources="conditionalSourcesFor(section)"
+                        :options-sources="formsStore.optionsSources"
+                        :in-repeatable="!!section.repeatable"
                         @label-input="onFieldLabelInput(section, field, $event)"
                         @type-change="onFieldTypeChange(field, $event)"
                         @move-up="moveField(section, fieldIndex, -1)"
@@ -1020,6 +1022,7 @@ import {
     FORM_WHATSAPP_URL_PATTERN,
     deriveFormIdentifier,
     deriveFormSlug,
+    selectionCountProblem,
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
 import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
@@ -1694,14 +1697,26 @@ const buildField = (field: FormField): FormField => {
     }
 
     if (CHOICE_FIELD_TYPES.includes(field.type)) {
-        clean.options = (field.options ?? []).map(option => {
-            const cleanOption: FormFieldOption = {
-                value: option.value.trim(),
-                label: option.label.trim()
-            };
-            if (option.detail) cleanOption.detail = option.detail;
-            return cleanOption;
-        });
+        if (field.optionsSource) {
+            // A reference, never a copy: the server fills the choices in when it
+            // serves the form, so no `options` key goes with it.
+            clean.optionsSource = field.optionsSource;
+        } else {
+            clean.options = (field.options ?? []).map(option => {
+                const cleanOption: FormFieldOption = {
+                    value: option.value.trim(),
+                    label: option.label.trim()
+                };
+                if (option.detail) cleanOption.detail = option.detail;
+                return cleanOption;
+            });
+        }
+    }
+
+    if (field.type === 'checkboxGroup') {
+        // Blank means no limit, so only a real number is sent; a minimum of 0 is no minimum.
+        if (typeof field.minSelections === 'number' && field.minSelections > 0) clean.minSelections = field.minSelections;
+        if (typeof field.maxSelections === 'number') clean.maxSelections = field.maxSelections;
     }
 
     if (field.requiredIf) {
@@ -1947,8 +1962,20 @@ const onFieldLabelInput = (section: FormSchemaSection, field: FormField, label: 
 const onFieldTypeChange = (field: FormField, type: FormFieldType) => {
     field.type = type;
 
-    // A choice question is refused without options, so open one empty row straight away.
-    if (CHOICE_FIELD_TYPES.includes(type) && !field.options?.length) {
+    // Only a choice question can take its choices from a source.
+    if (!CHOICE_FIELD_TYPES.includes(type)) {
+        delete field.optionsSource;
+    }
+
+    // "How many can they pick" belongs to a checkboxGroup alone.
+    if (type !== 'checkboxGroup') {
+        delete field.minSelections;
+        delete field.maxSelections;
+    }
+
+    // A choice question is refused without options, so open one empty row straight away —
+    // unless its choices come from a source, which stores none.
+    if (CHOICE_FIELD_TYPES.includes(type) && !field.optionsSource && !field.options?.length) {
         field.options = [{ value: '', label: '', detail: null }];
     }
 
@@ -2077,7 +2104,13 @@ const problems = computed<string[]>(() => {
                 found.push(`${name} — "${question}": ${keyProblem}`);
             }
 
-            if (CHOICE_FIELD_TYPES.includes(field.type)) {
+            if (CHOICE_FIELD_TYPES.includes(field.type) && field.optionsSource) {
+                // Mirrors ValidFormSchema: a sourced question stores no options and is
+                // refused inside a section that repeats.
+                if (section.repeatable) {
+                    found.push(`${name} — "${question}": choices from the school calendar can't be used in a section that repeats.`);
+                }
+            } else if (CHOICE_FIELD_TYPES.includes(field.type)) {
                 const options = field.options ?? [];
 
                 if (options.length === 0) {
@@ -2092,6 +2125,11 @@ const problems = computed<string[]>(() => {
                 if (new Set(values).size !== values.length) {
                     found.push(`${name} — "${question}": two choices share the same stored value.`);
                 }
+            }
+
+            const countProblem = selectionCountProblem(field);
+            if (countProblem) {
+                found.push(`${name} — "${question}": ${countProblem}`);
             }
 
             if (

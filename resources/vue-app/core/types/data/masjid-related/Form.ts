@@ -559,6 +559,48 @@ export type FormFieldConditional = {
     value: number;
 };
 
+/**
+ * Where a choice question's options can come from instead of a typed list.
+ *
+ * A sourced field stores NO options — it is a reference, never a copy — and the
+ * server fills them in when it serves the form (app/Support/FormOptionSources.php).
+ * `school_meeting_days`: the upcoming school days that are not closed, as ISO
+ * dates. Only on select/radio/checkboxGroup, and never inside a repeatable section.
+ */
+export type FormOptionsSource = 'school_meeting_days';
+
+export const SCHOOL_MEETING_DAYS: FormOptionsSource = 'school_meeting_days';
+
+/** One entry of `options_sources` on GET /forms/field-types. */
+export type FormOptionsSourceInfo = {
+    key: FormOptionsSource;
+    label: string;
+    /** False while the organisation cannot supply it (e.g. no school year yet). */
+    available: boolean;
+};
+
+/**
+ * `options_sources` out of the field-types response, wherever the server put it
+ * (beside `data`, under `meta`, or inside an object `data`). Anything unreadable
+ * is an empty list, which the builder treats as "typed lists only" — today's
+ * behaviour.
+ */
+export function readOptionsSources(body: any): FormOptionsSourceInfo[] {
+    const raw = body?.options_sources
+        ?? body?.meta?.options_sources
+        ?? (body?.data && !Array.isArray(body.data) ? body.data.options_sources : undefined);
+
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+        .filter((source: any) => source && typeof source.key === 'string')
+        .map((source: any) => ({
+            key: source.key as FormOptionsSource,
+            label: String(source.label ?? source.key),
+            available: source.available === true,
+        }));
+}
+
 export type FormField = {
     name: string;
     label: string;
@@ -570,10 +612,57 @@ export type FormField = {
     min?: number | null;
     max?: number | null;
     options?: FormFieldOption[];
+    /** Choices served by the server from this source; `options` is then absent. */
+    optionsSource?: FormOptionsSource | null;
+    /** checkboxGroup only: the fewest choices an answer may tick. Absent = no minimum. */
+    minSelections?: number | null;
+    /** checkboxGroup only: the most choices an answer may tick. Absent = no limit. */
+    maxSelections?: number | null;
     /** Long legal copy the renderer hides behind a "read full text" disclosure. */
     bodyText?: string | null;
     requiredIf?: FormFieldConditional | null;
 };
+
+/**
+ * What is wrong with a checkboxGroup's "how many can they pick", or null.
+ * Shared by the question editor (shown inline) and the builder's save check.
+ */
+export function selectionCountProblem(field: FormField): string | null {
+    if (field.type !== 'checkboxGroup') return null;
+
+    const min = field.minSelections ?? null;
+    const max = field.maxSelections ?? null;
+
+    if (min !== null && (!Number.isInteger(min) || min < 0)) return 'The minimum must be a whole number, 0 or more.';
+    if (max !== null && (!Number.isInteger(max) || max < 1)) return 'The maximum must be a whole number, 1 or more.';
+    if (min !== null && max !== null && min > max) return 'The minimum cannot be more than the maximum.';
+
+    // A typed list shorter than the minimum can never be answered. A sourced list
+    // changes over time, so it is left to the server.
+    const typed = field.optionsSource ? null : (field.options ?? []).length;
+    if (typed !== null && typed > 0 && min !== null && min > typed) {
+        return `The minimum is ${min}, but there ${typed === 1 ? 'is only 1 choice' : `are only ${typed} choices`}.`;
+    }
+
+    return null;
+}
+
+/** "They must pick exactly 2." — the one-line preview under the Min / Max boxes. */
+export function selectionCountPreview(field: FormField): string {
+    const min = field.minSelections && field.minSelections > 0 ? field.minSelections : null;
+    const max = field.maxSelections ?? null;
+
+    let rule: string;
+    if (min === null && max === null) rule = 'They can pick as many as they like.';
+    else if (min !== null && max !== null && min === max) rule = `They must pick exactly ${min}.`;
+    else if (min !== null && max !== null) rule = `They must pick between ${min} and ${max}.`;
+    else if (min !== null) rule = `They must pick at least ${min}.`;
+    else rule = `They can pick up to ${max}.`;
+
+    return min !== null && !field.required
+        ? `${rule.slice(0, -1)} if they answer — the question is optional.`
+        : rule;
+}
 
 export type FormSchemaSection = {
     id: string;

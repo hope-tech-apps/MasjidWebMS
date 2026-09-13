@@ -8,7 +8,9 @@ use App\Http\Requests\Admin\Forms\UpdateFormRequest;
 use App\Models\Masjid;
 use App\Models\Offering;
 use App\Support\Errors;
+use App\Support\FormOptionSources;
 use App\Support\FormSchema;
+use App\Support\SchoolCalendar;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -119,11 +121,23 @@ class FormsController extends Controller
                     // repeatable section, which the submit payload has no shape for.
                     'allowed_in_repeatable' => false,
                 ] : null,
+                // How many a choose-any question may ask for (FormSchema::selectionBounds).
+                'selection_keys' => $type === 'checkboxGroup' ? ['minSelections', 'maxSelections'] : [],
             ])->values();
+
+            // Where a choice question's options may come from instead of a typed
+            // list. `available` is whether this organisation has a school year to
+            // draw days from; a sourced question saved before then offers nothing.
+            $hasCalendar = SchoolCalendar::for((int) $masjid_id)->hasCalendar();
 
             return response()->json([
                 'status' => 'success',
                 'data' => $types,
+                'options_sources' => collect(FormOptionSources::SOURCES)->map(fn ($label, $key) => [
+                    'key' => $key,
+                    'label' => $label,
+                    'available' => $key === FormOptionSources::SCHOOL_MEETING_DAYS && $hasCalendar,
+                ])->values(),
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
