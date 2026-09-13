@@ -9,8 +9,13 @@ use App\Models\GroupMembership;
 use App\Models\GroupStaff;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
+use App\Models\SchoolClosure;
+use App\Models\SchoolYear;
 use App\Models\User;
+use App\Http\Requests\Teacher\SaveAttendanceRequest;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Auth;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -278,6 +283,141 @@ class TeacherAttendanceTest extends TestCase
 
         $this->assertStringNotContainsString('@example.test', $body);
         $this->assertStringNotContainsString('+1555', $body);
+    }
+
+    // ------------------------------------------------------ the school calendar
+
+    #[Test]
+    public function a_no_school_day_has_no_register_to_take(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-22 15:00:00'));
+        $this->calendar(closedOn: '2026-11-22');
+
+        $this->putJson($this->url().'/attendance', [
+            'session_date' => '2026-11-22',
+            'marks' => [['membership_id' => $this->kg->id, 'status' => 'present']],
+        ])->assertUnprocessable()->assertJsonPath(
+            'data.session_date.0',
+            'There was no school on Sunday, November 22, 2026 (Thanksgiving weekend), so there is no register to take.'
+        );
+
+        $this->assertDatabaseCount('attendance_records', 0);
+    }
+
+    #[Test]
+    public function the_register_says_why_there_is_no_school(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-30 15:00:00'));
+        $this->calendar(closedOn: '2026-11-22');
+
+        $closed = $this->getJson($this->url().'/attendance?date=2026-11-22')->assertOk();
+        $this->assertSame([], $closed->json('data.students'));
+        $this->assertFalse($closed->json('data.taken'));
+        $this->assertSame([
+            'has_calendar' => true, 'in_year' => true, 'meeting_day' => true,
+            'closed' => true, 'reason' => 'Thanksgiving weekend',
+        ], $closed->json('data.school_day'));
+
+        $open = $this->getJson($this->url().'/attendance?date=2026-11-29')->assertOk();
+        $this->assertCount(2, $open->json('data.students'));
+        $this->assertFalse($open->json('data.school_day.closed'));
+        $this->assertTrue($open->json('data.school_day.meeting_day'));
+    }
+
+    #[Test]
+    public function a_school_without_a_calendar_takes_a_register_on_any_day_as_before(): void
+    {
+        $today = now()->toDateString();
+
+        $response = $this->getJson($this->url().'/attendance?date='.$today)->assertOk();
+        $this->assertCount(2, $response->json('data.students'));
+        $this->assertFalse($response->json('data.school_day.has_calendar'));
+        $this->assertFalse($response->json('data.school_day.closed'));
+
+        $this->putJson($this->url().'/attendance', [
+            'session_date' => $today,
+            'marks' => [['membership_id' => $this->kg->id, 'status' => 'present']],
+        ])->assertOk();
+
+        $this->assertDatabaseCount('attendance_records', 1);
+    }
+
+    #[Test]
+    public function a_closure_cannot_be_laid_over_a_register_already_taken(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-22 15:00:00'));
+        $year = $this->calendar();
+
+        $this->putJson($this->url().'/attendance', [
+            'session_date' => '2026-11-22',
+            'marks' => [
+                ['membership_id' => $this->preK->id, 'status' => 'present'],
+                ['membership_id' => $this->kg->id, 'status' => 'absent'],
+            ],
+        ])->assertOk();
+
+        // The office, the same morning, tries to call the day off.
+        Auth::forgetGuards();
+        Sanctum::actingAs(User::factory()->create([
+            'type' => 'SuperAdmin', 'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]));
+
+        $response = $this->postJson("/api/admin/masjids/{$this->school->id}/school-calendar/closures", [
+            'school_year_id' => $year->id, 'closed_on' => '2026-11-22', 'reason' => 'Snow day',
+        ])->assertUnprocessable();
+
+        $this->assertStringContainsString('2 attendance marks', $response->json('data.closed_on.0'));
+        $this->assertSame(0, SchoolClosure::withoutMasjidScope()->count());
+        $this->assertDatabaseCount('attendance_records', 2);
+    }
+
+    #[Test]
+    public function a_closure_landing_after_the_check_still_stops_the_register_being_written(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-22 15:00:00'));
+        $year = $this->calendar();
+
+        // The office closes the day in the gap between the request's validation
+        // (which found no closure) and the controller's write. Only the re-check
+        // inside the write transaction can catch this one.
+        $afterValidation = null;
+        $this->app->afterResolving(SaveAttendanceRequest::class, function (SaveAttendanceRequest $request) use ($year, &$afterValidation) {
+            $afterValidation = (fn () => $this->validator !== null)->call($request);
+
+            SchoolClosure::create([
+                'masjid_id' => $this->school->id, 'school_year_id' => $year->id,
+                'closed_on' => '2026-11-22', 'reason' => 'Snow day',
+            ]);
+        });
+
+        $this->putJson($this->url().'/attendance', [
+            'session_date' => '2026-11-22',
+            'marks' => [['membership_id' => $this->kg->id, 'status' => 'present']],
+        ])->assertUnprocessable()->assertJsonPath(
+            'data.session_date.0',
+            'There was no school on Sunday, November 22, 2026 (Snow day), so there is no register to take.'
+        );
+
+        $this->assertTrue($afterValidation, 'the closure must land AFTER validation, or this proves nothing');
+        $this->assertDatabaseCount('attendance_records', 0);
+    }
+
+    /** BISS's shape: Sundays from 2026-10-11, optionally one no-school day. */
+    private function calendar(?string $closedOn = null): SchoolYear
+    {
+        $year = SchoolYear::create([
+            'masjid_id' => $this->school->id, 'label' => '2026–27',
+            'first_day' => '2026-10-11', 'last_day' => '2027-05-30',
+        ]);
+
+        if ($closedOn !== null) {
+            SchoolClosure::create([
+                'masjid_id' => $this->school->id, 'school_year_id' => $year->id,
+                'closed_on' => $closedOn, 'reason' => 'Thanksgiving weekend',
+            ]);
+        }
+
+        return $year;
     }
 
     private function enrol(Group $group, string $firstName, string $grade): GroupMembership

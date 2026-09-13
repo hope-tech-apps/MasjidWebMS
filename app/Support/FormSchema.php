@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Form;
+use Closure;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -54,6 +55,14 @@ class FormSchema
      */
     public const UPLOAD_KEY = 'files';
 
+    /**
+     * The live offer set of each options source, read once per validation so one
+     * submission is checked against one calendar (FormOptionSources).
+     *
+     * @var array<string,array<int,array<string,mixed>>>
+     */
+    private array $offered = [];
+
     public function __construct(private readonly Form $form)
     {
     }
@@ -77,6 +86,7 @@ class FormSchema
     {
         $rules = [];
         $attributes = [];
+        $messages = [];
 
         foreach ($this->form->sections() as $section) {
             $sectionId = $section['id'] ?? null;
@@ -120,6 +130,12 @@ class FormSchema
                 }
                 $rules[$field['name']] = $this->rulesForField($field);
                 $attributes[$field['name']] = $field['label'] ?? $field['name'];
+
+                // A required calendar question nobody CAN answer says why, rather
+                // than "is required" to a family looking at no choices.
+                if ($why = $this->unanswerable($field)) {
+                    $messages[$field['name'].'.required'] = $why;
+                }
             }
         }
 
@@ -130,7 +146,7 @@ class FormSchema
             $attributes[$key] = $attributes[substr($key, 0, -2)] ?? $key;
         }
 
-        $validator = Validator::make($data, $rules, [], $attributes);
+        $validator = Validator::make($data, $rules, $messages, $attributes);
 
         $this->applyConditionalRequirements($validator, $data);
 
@@ -139,7 +155,7 @@ class FormSchema
 
     /**
      * @param  array<string,mixed>  $field
-     * @return array<int,string>
+     * @return array<int,mixed>
      */
     private function rulesForField(array $field): array
     {
@@ -201,13 +217,20 @@ class FormSchema
             case 'radio':
                 $rules[] = 'string';
                 $values = $this->optionValues($field);
-                if ($values !== []) {
+                if (FormOptionSources::isSourced($field)) {
+                    // Checked against the LIVE set even when it is EMPTY: an empty
+                    // set must refuse every answer, never switch the check off.
+                    $rules[] = FormOptionSources::rule($values);
+                } elseif ($values !== []) {
                     $rules[] = 'in:' . implode(',', $values);
                 }
                 break;
 
             case 'checkboxGroup':
                 $rules[] = 'array';
+                if ($count = $this->selectionCountRule($field)) {
+                    $rules[] = $count;
+                }
                 break;
 
             case 'text':
@@ -236,7 +259,8 @@ class FormSchema
             }
 
             $values = $this->optionValues($field);
-            if ($values === []) {
+            $sourced = FormOptionSources::isSourced($field);
+            if ($values === [] && ! $sourced) {
                 continue;
             }
 
@@ -244,7 +268,7 @@ class FormSchema
                 ? $sectionId . '.*.' . $field['name'] . '.*'
                 : $field['name'] . '.*';
 
-            $rules[$key] = ['string', Rule::in($values)];
+            $rules[$key] = ['string', $sourced ? FormOptionSources::rule($values) : Rule::in($values)];
         }
 
         return $rules;
@@ -423,10 +447,104 @@ class FormSchema
         return $out;
     }
 
-    /** @return array<int,string> */
+    /**
+     * How many a choose-any question asks for: [minSelections, maxSelections],
+     * each null when unset. ValidFormSchema has already refused anything but
+     * whole numbers of at least 1, on a checkboxGroup, with min <= max.
+     *
+     * @param  array<string,mixed>  $field
+     * @return array{0:?int,1:?int}
+     */
+    public static function selectionBounds(array $field): array
+    {
+        $read = fn ($v): ?int => is_int($v) || (is_string($v) && ctype_digit($v)) ? (int) $v : null;
+
+        return [$read($field['minSelections'] ?? null), $read($field['maxSelections'] ?? null)];
+    }
+
+    /**
+     * "Pick exactly 2 Sundays." Counts a NON-EMPTY answer only: whether the
+     * question may be left blank is `required`'s decision, as for every field.
+     *
+     * A calendar question with fewer days open than it asks for cannot be
+     * answered correctly by anyone, so it says that instead; an EMPTY offer set
+     * is the member rule's to report (FormOptionSources::NONE_OPEN).
+     *
+     * @param  array<string,mixed>  $field
+     */
+    private function selectionCountRule(array $field): ?Closure
+    {
+        [$min, $max] = self::selectionBounds($field);
+
+        if ($min === null && $max === null) {
+            return null;
+        }
+
+        $offered = null;
+        $singular = 'option';
+
+        if (FormOptionSources::isSourced($field)) {
+            $values = $this->optionValues($field);
+            $offered = count($values);
+            $singular = isset($values[0]) ? (SchoolCalendar::day($values[0])?->format('l') ?? 'day') : 'day';
+        }
+
+        $noun = fn (int $n): string => $n === 1 ? $singular : $singular.'s';
+
+        return function (string $attribute, mixed $value, Closure $fail) use ($min, $max, $offered, $noun): void {
+            $picked = is_array($value) ? count($value) : 0;
+
+            if ($picked === 0 || $offered === 0) {
+                return;
+            }
+
+            if ($offered !== null && $min !== null && $offered < $min) {
+                $fail(FormOptionSources::NOT_ENOUGH_OPEN);
+            } elseif ($min !== null && $min === $max && $picked !== $min) {
+                $fail(sprintf('Pick exactly %d %s.', $min, $noun($min)));
+            } elseif ($min !== null && $picked < $min) {
+                $fail(sprintf('Pick at least %d %s.', $min, $noun($min)));
+            } elseif ($max !== null && $picked > $max) {
+                $fail(sprintf('Pick no more than %d %s.', $max, $noun($max)));
+            }
+        };
+    }
+
+    /**
+     * Why a calendar question cannot be answered at all right now, or null.
+     *
+     * @param  array<string,mixed>  $field
+     */
+    private function unanswerable(array $field): ?string
+    {
+        if (! FormOptionSources::isSourced($field)) {
+            return null;
+        }
+
+        $offered = count($this->optionValues($field));
+        [$min] = self::selectionBounds($field);
+
+        return match (true) {
+            $offered === 0 => FormOptionSources::NONE_OPEN,
+            $min !== null && $offered < $min => FormOptionSources::NOT_ENOUGH_OPEN,
+            default => null,
+        };
+    }
+
+    /**
+     * The values a choice field accepts. A calendar-sourced field reads the
+     * live OFFER set — open meeting days after today — and never stored options.
+     *
+     * @return array<int,string>
+     */
     private function optionValues(array $field): array
     {
-        $options = $field['options'] ?? [];
+        if (FormOptionSources::isSourced($field)) {
+            $source = is_scalar($field['optionsSource']) ? (string) $field['optionsSource'] : '';
+            $options = $this->offered[$source] ??= FormOptionSources::resolve($this->form, $field, FormOptionSources::OFFER);
+        } else {
+            $options = $field['options'] ?? [];
+        }
 
         if (! is_array($options)) {
             return [];

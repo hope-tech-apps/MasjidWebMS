@@ -49,6 +49,14 @@ const familyRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/family/FamilyClass.vue"),
                 meta: { pageTitle: "Class", family: true },
             },
+            {
+                // Read-only, behind the parent guard like every other screen
+                // that calls an authenticated family endpoint.
+                path: 'calendar',
+                name: 'familyCalendar',
+                component: () => import("@/views/family/FamilyCalendar.vue"),
+                meta: { pageTitle: "School Calendar", family: true },
+            },
         ],
         beforeEnter: (to) => {
             if (!to.meta?.family) {

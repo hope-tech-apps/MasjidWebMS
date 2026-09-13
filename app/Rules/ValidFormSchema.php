@@ -2,6 +2,7 @@
 
 namespace App\Rules;
 
+use App\Support\FormOptionSources;
 use App\Support\FormSchema;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -166,7 +167,17 @@ class ValidFormSchema implements ValidationRule
                     return;
                 }
 
-                if (in_array($type, ['select', 'radio', 'checkboxGroup'], true)) {
+                // A choice question may take its options from a live source
+                // (FormOptionSources) instead of a typed list. It then stores NO
+                // options — a reference, never a copy — so the non-empty rule
+                // below does not apply to it.
+                if (isset($field['optionsSource'])) {
+                    if ($error = $this->optionsSourceProblem($field, $type, $name, $label, ! empty($section['repeatable']))) {
+                        $fail($error);
+
+                        return;
+                    }
+                } elseif (in_array($type, ['select', 'radio', 'checkboxGroup'], true)) {
                     $options = $field['options'] ?? null;
 
                     if (! is_array($options) || $options === []) {
@@ -196,6 +207,12 @@ class ValidFormSchema implements ValidationRule
                     }
                 }
 
+                if ($error = $this->selectionCountProblem($field, $type, $name, $label)) {
+                    $fail($error);
+
+                    return;
+                }
+
                 if ($type === 'number' && isset($field['min'], $field['max'])) {
                     if (is_numeric($field['min']) && is_numeric($field['max']) && $field['max'] < $field['min']) {
                         $fail("{$label}: \"{$name}\" has a maximum lower than its minimum.");
@@ -219,6 +236,81 @@ class ValidFormSchema implements ValidationRule
         if ($repeatableCount > 1) {
             $fail('A form can have at most one repeatable section.');
         }
+    }
+
+    /**
+     * A sourced choice question: a source this server knows, on a choice type, in
+     * a flat section (one answer per submission — the roster and insights read
+     * it there), with no typed options competing with the source.
+     *
+     * @param  array<string,mixed>  $field
+     */
+    private function optionsSourceProblem(array $field, string $type, string $name, string $label, bool $repeatable): ?string
+    {
+        $source = $field['optionsSource'];
+
+        if (! is_string($source) || ! array_key_exists($source, FormOptionSources::SOURCES)) {
+            return "{$label}: \"{$name}\" takes its choices from a source this form builder does not know.";
+        }
+
+        if (! in_array($type, FormOptionSources::TYPES, true)) {
+            return "{$label}: \"{$name}\" takes its choices from the school calendar, so it must be a dropdown, choose-one or choose-any question.";
+        }
+
+        if ($repeatable) {
+            return "{$label}: \"{$name}\" takes its choices from the school calendar, which cannot go inside a repeatable section.";
+        }
+
+        $options = $field['options'] ?? null;
+
+        if ($options !== null && $options !== []) {
+            return "{$label}: \"{$name}\" takes its choices from the school calendar, so it cannot also list its own options.";
+        }
+
+        return null;
+    }
+
+    /**
+     * minSelections / maxSelections: how many a choose-any question asks for.
+     * Whole numbers of at least 1, min no higher than max, and never more than a
+     * typed list actually has. A calendar-sourced list is live, so a shortfall
+     * there is reported at submit instead (FormOptionSources::NOT_ENOUGH_OPEN).
+     *
+     * @param  array<string,mixed>  $field
+     */
+    private function selectionCountProblem(array $field, string $type, string $name, string $label): ?string
+    {
+        $keys = array_filter(['minSelections', 'maxSelections'], fn ($key) => ($field[$key] ?? null) !== null);
+
+        if ($keys === []) {
+            return null;
+        }
+
+        if ($type !== 'checkboxGroup') {
+            return "{$label}: \"{$name}\" can only say how many to pick on a choose-any question.";
+        }
+
+        foreach ($keys as $key) {
+            $value = $field[$key];
+
+            if (! ((is_int($value) && $value >= 1) || (is_string($value) && ctype_digit($value) && (int) $value >= 1))) {
+                return "{$label}: \"{$name}\" needs a whole number of at least 1 for how many to pick.";
+            }
+        }
+
+        [$min, $max] = FormSchema::selectionBounds($field);
+
+        if ($min !== null && $max !== null && $max < $min) {
+            return "{$label}: \"{$name}\" asks for at least {$min} but no more than {$max}.";
+        }
+
+        $options = $field['options'] ?? null;
+
+        if (! isset($field['optionsSource']) && is_array($options) && $min !== null && $min > count($options)) {
+            return "{$label}: \"{$name}\" asks for at least {$min} picks but only has ".count($options).' options.';
+        }
+
+        return null;
     }
 
     /**

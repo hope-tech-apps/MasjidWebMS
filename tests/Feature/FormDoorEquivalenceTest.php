@@ -249,7 +249,55 @@ class FormDoorEquivalenceTest extends TestCase
                 $d['settings']['fee']['currency'] = 'CAD';
                 $d['settings']['payment'] = ['online' => true];
             }, false],
+
+            // The school calendar (DECISIONS.md 2026-09-14). A sourced question
+            // stores no options; a pick count belongs to a choose-any question.
+            'a question whose days come from the school calendar, pick exactly two' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['minSelections' => 2, 'maxSelections' => 2]);
+            }, true],
+            'a typed choose-any question asking for one or two' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning([
+                    'optionsSource' => null,
+                    'options' => [['value' => 'am', 'label' => 'Morning'], ['value' => 'pm', 'label' => 'Afternoon']],
+                    'minSelections' => '1', 'maxSelections' => '2',
+                ]);
+            }, true],
+            'an options source nobody knows' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['optionsSource' => 'the_moon']);
+            }, false],
+            'an options source on a text question' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['type' => 'text']);
+            }, false],
+            'an options source inside the repeatable section' => [function (&$d) {
+                $d['schema']['sections'][1]['fields'][] = self::cleaning();
+            }, false],
+            'an options source beside typed options' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['options' => [['value' => 'x', 'label' => 'X']]]);
+            }, false],
+            'how many to pick, on a text question' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][0]['minSelections'] = 2;
+            }, false],
+            'a pick minimum above its maximum' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['minSelections' => 3, 'maxSelections' => 2]);
+            }, false],
+            'a pick count that is not a whole number' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['minSelections' => 1.5]);
+            }, false],
+            'a pick minimum above the options a typed list has' => [function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning([
+                    'optionsSource' => null, 'options' => [['value' => 'am', 'label' => 'Morning']], 'minSelections' => 2,
+                ]);
+            }, false],
         ];
+    }
+
+    /** @param array<string,mixed> $overrides */
+    private static function cleaning(array $overrides = []): array
+    {
+        return array_merge([
+            'name' => 'cleaning', 'label' => 'Cleaning Sundays',
+            'type' => 'checkboxGroup', 'optionsSource' => 'school_meeting_days',
+        ], $overrides);
     }
 
     /**
@@ -323,6 +371,9 @@ class FormDoorEquivalenceTest extends TestCase
             'a WhatsApp link' => function (&$d) {
                 $d['settings']['whatsappUrl'] = 'https://chat.whatsapp.com/AbCdEf1234567890';
                 $d['settings']['whatsappLabel'] = 'Join the camp group';
+            },
+            'a calendar-sourced question asking for two' => function (&$d) {
+                $d['schema']['sections'][0]['fields'][] = self::cleaning(['minSelections' => 2, 'maxSelections' => 2]);
             },
         ];
 

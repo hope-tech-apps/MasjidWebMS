@@ -137,6 +137,28 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // cannot read the page most needs to find.
         layout_portal: "Family Portal",
         layout_sign_out: "Sign out",
+        layout_calendar: "School calendar",
+
+        // --------------------------------------------------- FamilyCalendar
+        // Only the chrome. A year's name and the reason there is no school on a
+        // day are the school's own words and are shown as written.
+        cal_title: "School calendar",
+        cal_sub: "The days school meets this year, and the days there's no school.",
+        cal_back: "Back to my classes",
+        cal_loading: "Loading the school calendar…",
+        cal_empty_title: "The school calendar hasn't been published yet",
+        cal_empty_body: "When the school adds its school year, the days will show up here.",
+        cal_load_error: "We could not load the school calendar just now. Please try again.",
+        cal_retry: "Try again",
+        cal_upcoming: "Coming up",
+        cal_no_upcoming: "There are no more school days this year.",
+        cal_school_day: "School day",
+        cal_no_school: "No school",
+        cal_today: "Today",
+        cal_year: "School year",
+        // {x} is the weekday's name from Intl, already in the portal's language.
+        cal_meets_every: "Classes meet every {x}",
+        cal_no_days: "No school days are listed for this year.",
 
         // ------------------------------- translating what the school wrote
         // These are the only strings in this file rendered in BOTH languages at
@@ -353,6 +375,27 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         // ------------------------------------------------------ FamilyLayout
         layout_portal: "بوابة الأسرة",
         layout_sign_out: "تسجيل الخروج",
+        layout_calendar: "التقويم المدرسي",
+
+        // --------------------------------------------------- FamilyCalendar
+        cal_title: "التقويم المدرسي",
+        cal_sub: "أيام الدراسة في هذا العام، والأيام التي لا دراسة فيها.",
+        cal_back: "العودة إلى صفوف أبنائي",
+        cal_loading: "جارٍ تحميل التقويم المدرسي…",
+        cal_empty_title: "لم تنشر المدرسة تقويمها الدراسي بعد",
+        cal_empty_body: "عندما تضيف المدرسة عامها الدراسي، ستظهر الأيام هنا.",
+        cal_load_error: "تعذّر تحميل التقويم المدرسي الآن. يرجى المحاولة مرة أخرى.",
+        cal_retry: "إعادة المحاولة",
+        cal_upcoming: "الأيام القادمة",
+        cal_no_upcoming: "لا توجد أيام دراسة أخرى في هذا العام.",
+        cal_school_day: "يوم دراسي",
+        cal_no_school: "لا دراسة",
+        cal_today: "اليوم",
+        cal_year: "العام الدراسي",
+        // Intl supplies the weekday with its article ("الأحد"), so the sentence
+        // reads "كل يوم الأحد" — every Sunday.
+        cal_meets_every: "تُعقد الدراسة كل يوم {x}",
+        cal_no_days: "لا توجد أيام دراسة مدرجة لهذا العام.",
 
         // ------------------------------- translating what the school wrote
         tr_translate: "ترجمة",

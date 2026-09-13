@@ -173,7 +173,9 @@ class SectionContentBinder
             'slug' => $form->slug,
             'name' => $form->name,
             'description' => $form->description,
-            'schema' => $form->schema,
+            // A calendar-sourced question arrives with today's open days filled in
+            // (FormOptionSources); every other form publishes its schema as stored.
+            'schema' => FormOptionSources::schema($form, FormOptionSources::OFFER),
             'accepting' => $form->acceptsSubmissions(),
             'closed_reason' => $form->closedReason(),
             'settings' => [

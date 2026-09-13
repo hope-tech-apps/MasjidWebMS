@@ -267,6 +267,34 @@ class TeacherRealmTest extends TestCase
             ->assertForbidden();
     }
 
+    #[Test]
+    public function a_teacher_reads_their_own_schools_calendar_only(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00'));
+
+        \App\Models\SchoolYear::create([
+            'masjid_id' => $this->school->id, 'label' => 'Our year',
+            'first_day' => '2026-10-11', 'last_day' => '2027-05-30',
+        ]);
+
+        $otherSchool = $this->makeSchool();
+        \App\Models\SchoolYear::create([
+            'masjid_id' => $otherSchool->id, 'label' => 'Their year',
+            'first_day' => '2026-10-10', 'last_day' => '2027-05-29',
+        ]);
+
+        $response = $this->getJson($this->base().'/school-calendar')->assertOk();
+
+        $response->assertJsonCount(1, 'data.years');
+        $response->assertJsonPath('data.years.0.label', 'Our year');
+        $response->assertJsonCount(12, 'data.upcoming');
+        $response->assertJsonPath('data.upcoming.0', ['date' => '2026-10-11', 'closed' => false, 'reason' => null]);
+        $this->assertStringNotContainsString('Their year', $response->getContent());
+
+        // Another school's calendar is not reachable by editing the id.
+        $this->getJson("/api/teacher/masjids/{$otherSchool->id}/school-calendar")->assertForbidden();
+    }
+
     // ------------------------------------------------------------- helpers
 
     private function base(): string

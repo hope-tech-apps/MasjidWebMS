@@ -219,6 +219,22 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/TeachersView.vue")
             },
+            {
+                // School years and the days there is no school. Beside Teachers
+                // because the register reads it. `requiresCapability`, not
+                // `requiresCrm`: registration needs the calendar before any
+                // classes exist. The server's `capability:school_calendar` gate
+                // is the boundary; a SuperAdmin passes both.
+                path: 'school-calendar',
+                name: 'masjid.schoolCalendar',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    requiresCapability: 'school_calendar',
+                    pageTitle: 'School Calendar'
+                },
+                component: () => import("@/views/dashboard/SchoolCalendarView.vue")
+            },
             // The clinic's intake queue. Registered here, with the other
             // per-feature route files, because these are children of the
             // /masjid dashboard layout — see appointmentsManagementRoutes.ts.

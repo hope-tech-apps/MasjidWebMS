@@ -4,7 +4,7 @@
 // the organisation's administrators can use all of it. The admin masjid payload
 // carries `capabilities` (key -> has it). A key a payload lacks reads as "not
 // had", and a SuperAdmin is never gated by one — they set organisations up.
-export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant';
+export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar';
 
 export type CapabilityInfo = {
     key: CapabilityKey;
@@ -38,6 +38,7 @@ export const CAPABILITY_LABELS: Record<CapabilityKey, string> = {
     jummah_lunch: 'Friday lunch ordering',
     crm: 'Members, classes & giving',
     assistant: 'Manara Assistant',
+    school_calendar: 'School calendar',
 };
 
 /** One organisation a login belongs to, as the SuperAdmin's user screens see it. */

@@ -249,12 +249,14 @@ class FormInsights
 
         $counts = collect($flat)->countBy();
 
-        $options = collect($field['options'] ?? [])
+        // A calendar-sourced question is read against EVERY meeting day, closed
+        // ones labelled, plus any stored date outside them (FormOptionSources::LABEL).
+        $options = collect(FormOptionSources::resolve($this->form, $field, FormOptionSources::LABEL, $counts->keys()->all()))
             ->map(fn ($option) => [
                 'value' => $option['value'] ?? '',
                 'label' => $option['label'] ?? ($option['value'] ?? ''),
                 'count' => (int) ($counts[$option['value'] ?? ''] ?? 0),
-            ])
+            ] + (FormOptionSources::isSourced($field) && isset($option['detail']) ? ['detail' => $option['detail']] : []))
             ->all();
 
         return [

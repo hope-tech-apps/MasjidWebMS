@@ -43,6 +43,14 @@ const teacherRoutes: RouteRecordRaw[] = [
                 component: () => import("@/views/teacher/TeacherClass.vue"),
                 meta: { pageTitle: 'Class' },
             },
+            {
+                // Read-only. The office edits the calendar on the admin
+                // School Calendar screen; a teacher only needs to see it.
+                path: 'calendar',
+                name: 'teacherCalendar',
+                component: () => import("@/views/teacher/TeacherCalendar.vue"),
+                meta: { pageTitle: 'School Calendar' },
+            },
         ],
     },
 ];

@@ -103,15 +103,36 @@
                                v-model="attDate" :max="todayIso" @change="loadAttendance" />
                     </div>
                     <div class="flex-grow-1"></div>
-                    <button class="btn btn-sm btn-outline-secondary" :disabled="attLoading || !students.length"
+                    <button v-if="!attClosed" class="btn btn-sm btn-outline-secondary" :disabled="attLoading || !students.length"
                             @click="markAllPresent">
                         <i class="bi bi-check2-all me-1"></i>All present
                     </button>
                 </div>
 
                 <div v-if="attLoading" class="text-muted small">Loading the register…</div>
+                <!-- A day the school calendar marks as NO SCHOOL has no register:
+                     the server answers no students and refuses a save, so the
+                     screen says why instead of showing a register that cannot be
+                     kept. -->
+                <div v-else-if="attClosed" class="alert alert-secondary d-flex gap-2 align-items-start" role="status">
+                    <i class="bi bi-calendar-x fs-5"></i>
+                    <div>
+                        <div class="fw-semibold">
+                            {{ attDate === todayIso ? 'No school today' : `No school on ${attDateLabel}` }}{{ schoolDay?.reason ? ` — ${schoolDay.reason}` : '' }}
+                        </div>
+                        <div class="small text-muted">
+                            The school calendar marks this day as closed, so there is no register to take.
+                            Pick another day to see its register.
+                        </div>
+                    </div>
+                </div>
                 <div v-else-if="!students.length" class="text-muted small">No students on this roster yet.</div>
                 <template v-else>
+                    <!-- Advice, never a block: a class can meet off the calendar. -->
+                    <div v-if="offDayNote" class="alert alert-light border py-2 small">
+                        <i class="bi bi-info-circle me-1"></i>{{ offDayNote }}
+                    </div>
+
                     <div class="small mb-2" :class="attTaken ? 'text-success' : 'text-muted'">
                         <i :class="`bi ${attTaken ? 'bi-check-circle' : 'bi-circle'} me-1`"></i>
                         {{ attTaken ? 'Register taken for this day.' : 'Not taken yet for this day.' }}
@@ -1461,6 +1482,7 @@
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
+import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useAuthStore } from '@/stores/authStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -1574,6 +1596,23 @@ const attError = ref('');
 
 const markedCount = computed(() => Object.keys(marks.value).length);
 
+/**
+ * What the school calendar says about the register's day (`data.school_day`).
+ * Null when the server sent none — an org without a calendar, or a server that
+ * predates it — which behaves exactly as the register always has.
+ */
+const schoolDay = ref<SchoolDayStatus | null>(null);
+const attClosed = computed(() => !!schoolDay.value?.closed);
+const attDateLabel = computed(() => formatSchoolDay(attDate.value, 'en-US'));
+
+const offDayNote = computed(() => {
+    const day = schoolDay.value;
+    if (!day || !day.has_calendar || day.closed || day.meeting_day) return '';
+    return day.in_year
+        ? "This isn't one of the school's meeting days on the calendar. You can still take a register if the class met."
+        : 'This day is outside the school year on the calendar. You can still take a register if the class met.';
+});
+
 const loadAttendance = async () => {
     attLoading.value = true;
     attError.value = '';
@@ -1581,6 +1620,16 @@ const loadAttendance = async () => {
     try {
         const res = await TeacherApiService.get(`${base.value}/attendance?date=${attDate.value}`);
         const data = res.data?.data ?? {};
+        const day = data.school_day;
+        schoolDay.value = day && typeof day === 'object'
+            ? {
+                has_calendar: !!day.has_calendar,
+                in_year: !!day.in_year,
+                meeting_day: !!day.meeting_day,
+                closed: !!day.closed,
+                reason: day.reason ? String(day.reason) : null,
+            }
+            : null;
         attTaken.value = !!data.taken;
         const next: Record<number, string> = {};
         for (const s of data.students ?? []) {
@@ -1590,6 +1639,7 @@ const loadAttendance = async () => {
         }
         marks.value = next;
     } catch {
+        schoolDay.value = null;
         attError.value = 'Could not load the register.';
     } finally {
         attLoading.value = false;

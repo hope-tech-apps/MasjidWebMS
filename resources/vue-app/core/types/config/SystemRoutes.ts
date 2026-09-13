@@ -51,6 +51,8 @@ export type MasjidDashboardRoute =
     // they lead. Neutral path like /groups; the label is authored, not from the
     // terminology pack.
     '/masjid/teachers' |
+    // School years and no-school days (`school_calendar` capability).
+    '/masjid/school-calendar' |
     // The intake triage queue (Community vertical) and one request's own page.
     '/masjid/appointment-requests' |
     `/masjid/appointment-requests/${number}` |

@@ -503,3 +503,47 @@ saying how. Asking at the moment of Mark paid records it while the person who
 took the money is standing there. Closing the card page first keeps one order
 to one payment, and the webhook warning is the backstop for a payment that
 slips past.
+
+## 2026-09-14 — School calendar: years and no-school days, off by default, and form choices drawn from it
+
+**Decision.** Burlington Islamic Sunday School needs school dates and a
+cleaning-Sunday sign-up whose choices follow them.
+
+1. **Two tenant-scoped tables.** `school_years` has a label, `first_day` and
+   `last_day`. The meeting weekday is `first_day`'s and is not stored.
+   `school_closures` has `closed_on` and `reason`. `App\Support\SchoolCalendar`
+   answers every calendar question on the school's own clock.
+2. **The `school_calendar` capability defaults OFF for every org type, schools
+   included.** It is switched on for BISS with a SuperAdmin override, and
+   SuperAdmins always pass. Al-Razi gets nothing it did not ask for.
+3. **Only closures are enforced on the register.** A closed day has no register.
+   A closure over existing marks is refused with the count, under a row lock on
+   the year that the register save also takes. An organisation with no year is
+   unchanged.
+4. **Nothing is stranded.** An edit that moves a closure out of its year is
+   refused and names the dates. A delete is refused while closures, marks or
+   form answers point at the year, and names the counts.
+5. **A choice question may take `optionsSource: 'school_meeting_days'`** and
+   stores no options. Families are offered open meeting days after today.
+   Admin readers label every meeting day, closed ones included. If no days are
+   open, every answer is refused.
+6. **A choose-any question may set `minSelections` / `maxSelections`** (owner:
+   each family picks exactly 2 cleaning Sundays). The counts apply to an answer
+   that was given; `required` decides a blank. Fewer open days than the minimum
+   is refused as "Not enough cleaning Sundays are open right now".
+
+**Alternatives.**
+- **Default the capability on for schools.** Rejected: Al-Razi would get a new
+  screen by accident.
+- **Store the weekday, or one row per school day.** Rejected: the stored copy
+  can disagree, and closing one Sunday should be one write.
+- **Cascade a year delete.** Rejected: registers would reopen and answers would
+  lose their labels.
+- **Copy the days into the form's options at save.** Rejected: a closure would
+  not reach the form.
+- **Skip the in-list check when the calendar offers nothing.** Rejected: any
+  string would be accepted.
+
+**Rationale.** One authority and one lock keep the register, the forms and the
+three reads in agreement. Starting OFF means shipping the calendar changes
+nothing for any existing organisation.

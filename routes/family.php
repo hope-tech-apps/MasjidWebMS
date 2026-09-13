@@ -197,6 +197,12 @@ Route::prefix('family')
             Route::post('/translations', [TranslationsController::class, 'store'])
                 ->middleware('throttle:family-translate');
 
+            // The school calendar: meeting days, no-school days and the reasons
+            // the office gave. A GET — the counted writes above are untouched —
+            // and not capability-gated: an organisation with no calendar
+            // answers `years: []`.
+            Route::get('/school-calendar', [\App\Http\Controllers\Family\SchoolCalendarController::class, 'index']);
+
             // The entry point: which groups this parent stands in, and which
             // children they hold in each. Every route below is addressed with
             // ids discovered here.

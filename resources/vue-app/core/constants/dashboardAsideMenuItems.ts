@@ -309,6 +309,24 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin']
     },
     {
+        // School years and no-school days, which the attendance register, the
+        // teacher and family calendars and a sign-up question's "school days"
+        // choices all read. Shown once the organisation HAS `school_calendar`
+        // (a SuperAdmin sees it regardless); the server's gate is the boundary.
+        title: "School Calendar",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3.5" y="5" width="17" height="15.5" rx="2" stroke="white" stroke-width="1.7"/>
+                <path d="M3.5 9.5H20.5" stroke="white" stroke-width="1.7"/>
+                <path d="M8 3V6.5" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M16 3V6.5" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8 13.5H10M14 13.5H16M8 17H10" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/school-calendar',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCapability: 'school_calendar'
+    },
+    {
         // Offerings — the things people register and pay for, and the roster and
         // fee plans hung off each one.
         //

@@ -102,6 +102,59 @@
 
             <!-- Options (choice questions only) -->
             <div v-if="hasOptions" class="mb-3 border-top pt-3">
+                <!-- WHERE THE CHOICES COME FROM. Offered only when the server lists a
+                     source, and never inside a repeating section (the server refuses
+                     it there). A question that already carries a source always shows
+                     the chooser, so it can be switched back to a typed list. -->
+                <fieldset v-if="showSourceChooser" class="mb-3">
+                    <legend class="form-label fs-6 float-none mb-1">Choices come from</legend>
+                    <div class="form-check">
+                        <input
+                            class="form-check-input"
+                            type="radio"
+                            :id="`${idPrefix}_src_typed`"
+                            :name="`${idPrefix}_src`"
+                            :checked="!field.optionsSource"
+                            @change="useTypedChoices"
+                        />
+                        <label class="form-check-label" :for="`${idPrefix}_src_typed`">A list I type</label>
+                    </div>
+                    <div class="form-check">
+                        <input
+                            class="form-check-input"
+                            type="radio"
+                            :id="`${idPrefix}_src_calendar`"
+                            :name="`${idPrefix}_src`"
+                            :checked="field.optionsSource === SCHOOL_MEETING_DAYS"
+                            :disabled="!calendarSelectable"
+                            :aria-describedby="calendarHint ? `${idPrefix}_src_calendar_hint` : undefined"
+                            @change="useCalendarChoices"
+                        />
+                        <label class="form-check-label" :for="`${idPrefix}_src_calendar`">
+                            The school calendar (meeting days)
+                        </label>
+                    </div>
+                    <small v-if="calendarHint" :id="`${idPrefix}_src_calendar_hint`" class="form-text text-muted d-block">
+                        {{ calendarHint }}
+                    </small>
+                </fieldset>
+
+                <template v-if="field.optionsSource">
+                    <div v-if="inRepeatable" class="alert alert-warning py-2 small mb-2">
+                        Choices from the school calendar can't be used in a section that repeats. Switch to a list
+                        you type, or move this question to a section that is asked once.
+                    </div>
+                    <div class="alert alert-light border py-2 small mb-0">
+                        <i class="bi bi-calendar3 me-1"></i>
+                        Families will see the upcoming school days that aren't marked as no school, listed by date.
+                        Days that pass, or that the office later marks as no school, drop off the list by themselves.
+                        <span v-if="!calendarAvailable" class="d-block mt-1 text-danger">
+                            There's no school year on the calendar yet, so right now families would have no days to pick.
+                        </span>
+                    </div>
+                </template>
+
+                <template v-else>
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <label class="form-label mb-0">Choices <span class="text-danger">*</span></label>
                     <button type="button" class="btn btn-sm btn-outline-primary" @click="addOption">
@@ -166,6 +219,56 @@
 
                 <div v-if="options.length === 0" class="alert alert-warning py-2 mb-0 small">
                     A choice question needs at least one choice — the form cannot be saved without one.
+                </div>
+                </template>
+            </div>
+
+            <!-- How many (Choose any only). Blank means no limit. -->
+            <div v-if="field.type === 'checkboxGroup'" class="mb-3 border-top pt-3">
+                <label class="form-label d-block mb-1" :id="`${idPrefix}_count_label`">How many can they pick?</label>
+                <div class="row g-2 align-items-end" role="group" :aria-labelledby="`${idPrefix}_count_label`">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small mb-1" :for="`${idPrefix}_min_selections`">Min</label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            inputmode="numeric"
+                            class="form-control form-control-sm"
+                            :id="`${idPrefix}_min_selections`"
+                            :class="{ 'is-invalid': !!selectionProblem }"
+                            :aria-describedby="`${idPrefix}_count_preview`"
+                            :value="field.minSelections ?? ''"
+                            @input="field.minSelections = toNumberOrNull(($event.target as HTMLInputElement).value)"
+                            placeholder="No minimum"
+                        />
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label small mb-1" :for="`${idPrefix}_max_selections`">Max</label>
+                        <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            inputmode="numeric"
+                            class="form-control form-control-sm"
+                            :id="`${idPrefix}_max_selections`"
+                            :class="{ 'is-invalid': !!selectionProblem }"
+                            :aria-describedby="`${idPrefix}_count_preview`"
+                            :value="field.maxSelections ?? ''"
+                            @input="field.maxSelections = toNumberOrNull(($event.target as HTMLInputElement).value)"
+                            placeholder="No limit"
+                        />
+                    </div>
+                    <div class="col-md-6">
+                        <div
+                            :id="`${idPrefix}_count_preview`"
+                            class="small"
+                            :class="selectionProblem ? 'text-danger' : 'text-muted'"
+                            aria-live="polite"
+                        >
+                            {{ selectionProblem || selectionPreview }}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -314,7 +417,11 @@ import {
     FormFieldOption,
     FormFieldType,
     FormFieldTypeInfo,
+    FormOptionsSourceInfo,
+    SCHOOL_MEETING_DAYS,
     deriveFormIdentifier,
+    selectionCountPreview,
+    selectionCountProblem,
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
 import { computed, ref } from 'vue';
@@ -342,6 +449,10 @@ const props = defineProps<{
      * the backend only evaluates conditionals on flat questions.
      */
     conditionalSources: { id: string; title: string; fields: { name: string; label: string }[] }[];
+    /** From GET /forms/field-types `options_sources`; empty when the server offers none. */
+    optionsSources?: FormOptionsSourceInfo[];
+    /** True when this question sits in a repeatable section, where a source is refused. */
+    inRepeatable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -378,6 +489,55 @@ const typeLabel = computed(() =>
 const hasOptions = computed(() => CHOICE_FIELD_TYPES.includes(props.field.type));
 
 const options = computed<FormFieldOption[]>(() => props.field.options ?? []);
+
+// ---------- where the choices come from ----------
+
+const calendarSource = computed(() =>
+    props.optionsSources?.find(source => source.key === SCHOOL_MEETING_DAYS) ?? null
+);
+
+/** The organisation can supply it right now (it has a school year). */
+const calendarAvailable = computed(() => !!calendarSource.value?.available);
+
+const showSourceChooser = computed(() =>
+    !!props.field.optionsSource || (!props.inRepeatable && calendarSource.value !== null)
+);
+
+const calendarSelectable = computed(() =>
+    props.field.optionsSource === SCHOOL_MEETING_DAYS || (calendarAvailable.value && !props.inRepeatable)
+);
+
+const calendarHint = computed(() => {
+    if (props.field.optionsSource === SCHOOL_MEETING_DAYS || calendarAvailable.value) return '';
+    return 'Add a school year on the School Calendar screen first.';
+});
+
+/**
+ * The typed choices set aside when the calendar is picked, so switching straight back
+ * does not make someone retype them. Only in memory: a sourced question saves no options.
+ */
+const stashedOptions = ref<FormFieldOption[] | null>(null);
+
+const useCalendarChoices = () => {
+    if (props.field.options?.length) {
+        stashedOptions.value = props.field.options.map(option => ({ ...option }));
+    }
+    props.field.options = [];
+    props.field.optionsSource = SCHOOL_MEETING_DAYS;
+};
+
+const useTypedChoices = () => {
+    delete props.field.optionsSource;
+    props.field.options = stashedOptions.value?.length
+        ? stashedOptions.value
+        : [{ value: '', label: '', detail: null }];
+    stashedOptions.value = null;
+};
+
+// ---------- how many can they pick (checkboxGroup) ----------
+
+const selectionProblem = computed(() => selectionCountProblem(props.field));
+const selectionPreview = computed(() => selectionCountPreview(props.field));
 
 // A required checkbox means "must be ticked" server-side (`accepted`), not merely present.
 const requiredLabel = computed(() => {
