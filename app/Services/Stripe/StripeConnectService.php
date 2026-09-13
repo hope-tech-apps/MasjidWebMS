@@ -32,6 +32,14 @@ class StripeConnectService
      */
     public function ensureConnectedAccount(Masjid $masjid): Masjid
     {
+        // A linked org charges its forms through another org's account and keeps
+        // its own NULL (DECISIONS.md 2026-09-15). Creating one here would put two
+        // accounts behind one org's forms; StripeConnectController answers 409
+        // first, and this is the backstop for every other caller.
+        if ($masjid->forms_card_via_masjid_id !== null) {
+            throw new \LogicException('This organisation charges its form card payments through another organisation; remove that link before creating its own Stripe account.');
+        }
+
         if ($masjid->stripe_account_id) {
             return $masjid;
         }

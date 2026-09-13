@@ -152,6 +152,183 @@
             </div>
 
             <!--
+                Form card payments through the parent organisation (SuperAdmin-only;
+                DECISIONS.md 2026-09-15). Shown only for an organisation with a parent,
+                because the link must equal parent_id. It moves where FORM card payments
+                land and nothing else. No Stripe account id is read or shown here.
+            -->
+            <div v-if="parentId" class="d-flex flex-column gap-2 w-100">
+                <div class="d-flex flex-wrap align-items-center gap-3">
+                    <span class="fs-5 fw-semibold">
+                        Form card payments
+                    </span>
+                    <span v-if="!formsCard.loading && formsCard.account" class="badge"
+                        :class="formsCardReady ? 'bg-success' : 'bg-secondary'">
+                        {{ formsCardReady ? 'Can take card payments' : 'Card payments refused' }}
+                    </span>
+                </div>
+
+                <span class="fs-6 text-muted">
+                    A program of {{ parentLabel }} can take card payments on its forms through
+                    {{ parentLabel }}'s existing Stripe account instead of connecting its own. Donations,
+                    lunch orders and every other payment for this organisation are not affected.
+                </span>
+
+                <div v-if="formsCard.loading" class="fs-6 text-muted">
+                    Checking…
+                </div>
+
+                <template v-else>
+                    <span class="fs-6 fw-semibold">
+                        <template v-if="formsCardLinked">
+                            Card payments on this organisation's forms go through {{ formsCardHolderName }}'s Stripe account.
+                        </template>
+                        <template v-else-if="formsCard.account?.state === 'own'">
+                            Card payments on this organisation's forms go to its own Stripe account.
+                        </template>
+                        <template v-else-if="formsCard.account">
+                            This organisation's forms cannot take card payments: it has no ready Stripe account of its
+                            own and is not linked to {{ parentLabel }}.
+                        </template>
+                    </span>
+
+                    <div v-if="formsCardProblem" class="alert alert-warning py-2 mb-0">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Card payment on forms is refused right now, because {{ formsCardProblem }}.
+                    </div>
+
+                    <div v-if="formsCardLinked && linkFields.forms_card_via_set_at" class="fs-6 text-muted">
+                        Linked {{ formatLinkDate(linkFields.forms_card_via_set_at) }}.
+                    </div>
+
+                    <div v-if="formsCard.loadError" class="fs-6 text-muted">
+                        {{ formsCard.loadError }}
+                    </div>
+
+                    <div>
+                        <button v-if="!formsCardLinked" type="button" class="btn btn-sm btn-primary"
+                            :disabled="formsCard.saving || !formsCard.parentName || !!linkBlockedReason"
+                            :aria-describedby="linkBlockedReason && formsCard.parentName ? 'forms-card-link-blocked' : undefined"
+                            @click="openLinkDialog">
+                            Charge through {{ parentLabel }}
+                        </button>
+                        <button v-else type="button" class="btn btn-sm btn-outline-danger"
+                            :disabled="formsCard.saving" @click="unlinkFormsCard">
+                            <span v-if="formsCard.saving" class="spinner-border spinner-border-sm me-2"></span>
+                            Stop charging through {{ formsCardHolderName }}
+                        </button>
+                    </div>
+
+                    <div v-if="!formsCardLinked && formsCard.parentName && linkBlockedReason"
+                        id="forms-card-link-blocked" class="fs-6 text-muted">
+                        This cannot be linked: {{ linkBlockedReason }}
+                    </div>
+                </template>
+
+                <!-- The confirm dialog: what linking means, in plain words, then the parent's
+                     name typed exactly and where the consent is recorded. -->
+                <Teleport to="body">
+                    <div v-if="linkDialog.open" ref="linkDialogRoot" class="modal fade show d-block" role="dialog"
+                        aria-modal="true" aria-labelledby="forms-card-link-title" tabindex="-1"
+                        style="background: rgba(0,0,0,0.5);" @click.self="closeLinkDialog"
+                        @keydown="onLinkDialogKeydown">
+                        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 id="forms-card-link-title" class="modal-title">
+                                        Charge {{ childLabel }}'s form card payments through {{ parentLabel }}?
+                                    </h5>
+                                    <button type="button" class="btn-close" aria-label="Close without linking"
+                                        :disabled="formsCard.saving" @click="closeLinkDialog"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-2">This is what it means:</p>
+                                    <ul class="mb-3">
+                                        <li class="mb-1">
+                                            <strong>Card payments on {{ childLabel }}'s forms land in {{ parentLabel }}'s
+                                                Stripe account</strong>, not in an account of {{ childLabel }}'s own.
+                                            {{ parentLabel }} is the business the family pays.
+                                        </li>
+                                        <li class="mb-1">
+                                            <strong>Everyone who can see {{ parentLabel }}'s Stripe account sees these
+                                                payments</strong>: the family's email address, the amount and what they paid for.
+                                        </li>
+                                        <li class="mb-1">
+                                            <strong>Refunds and disputes are handled in {{ parentLabel }}'s Stripe
+                                                dashboard.</strong> {{ childLabel }}'s admins cannot refund a card payment from
+                                            Manara, and a dispute counts against {{ parentLabel }}'s account.
+                                        </li>
+                                        <li class="mb-1">
+                                            <strong>Families' card statements show {{ parentLabel }}</strong>, with a short
+                                            tag for {{ childLabel }} after it.
+                                        </li>
+                                        <li class="mb-1">
+                                            Donations, lunch orders and every other payment for {{ childLabel }} stay as they
+                                            are. Only its forms take card payments this way.
+                                        </li>
+                                    </ul>
+                                    <p class="small text-muted mb-3">
+                                        Only do this when {{ childLabel }} is a program of {{ parentLabel }} (the same legal
+                                        organisation) and {{ parentLabel }} has agreed.
+                                        <!-- The holder's Stop button needs the `crm` gate and manage donations
+                                             (routes/admin.php, connect group); without CRM it never renders. -->
+                                        <template v-if="formsCard.parentCrmEnabled">
+                                            {{ parentLabel }}'s admins who manage donations can stop it at any time from
+                                            their Giving Dashboard, and a Manara super admin can remove it here.
+                                        </template>
+                                        <template v-else>
+                                            {{ parentLabel }} does not use Manara's CRM, so its admins cannot stop it from
+                                            Manara themselves: a Manara super admin can remove it here.
+                                        </template>
+                                    </p>
+
+                                    <div class="mb-3">
+                                        <label class="form-label fs-6" for="forms-card-typed-name">
+                                            Type <strong>{{ formsCard.parentName }}</strong> to confirm
+                                        </label>
+                                        <input id="forms-card-typed-name" v-model="linkDialog.typedName" type="text"
+                                            class="form-control" autocomplete="off" spellcheck="false"
+                                            :disabled="formsCard.saving" />
+                                        <div v-if="linkDialog.typedName && !typedNameMatches" class="form-text text-danger">
+                                            This must match the name exactly, including capitals and spaces.
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label fs-6" for="forms-card-consent">
+                                            Where is {{ parentLabel }}'s agreement recorded?
+                                        </label>
+                                        <textarea id="forms-card-consent" v-model="linkDialog.consent" class="form-control"
+                                            rows="3" :maxlength="FORMS_CARD_CONSENT_MAX" :disabled="formsCard.saving"
+                                            placeholder="For example: the owner's decision of 2026-09-13, recorded in DECISIONS.md"></textarea>
+                                        <div class="form-text">
+                                            Kept in the link's permanent history. {{ linkDialog.consent.length }} of
+                                            {{ FORMS_CARD_CONSENT_MAX }} characters.
+                                        </div>
+                                    </div>
+
+                                    <div v-if="linkDialog.error" class="alert alert-danger py-2 mb-0" role="alert">
+                                        {{ linkDialog.error }}
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-outline-secondary" :disabled="formsCard.saving"
+                                        @click="closeLinkDialog">
+                                        Cancel
+                                    </button>
+                                    <button type="button" class="btn btn-danger" :disabled="!canConfirmLink"
+                                        @click="confirmLink">
+                                        <span v-if="formsCard.saving" class="spinner-border spinner-border-sm me-2"></span>
+                                        Charge through {{ parentLabel }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </Teleport>
+            </div>
+
+            <!--
                 Text messaging (SMS) — the A2P 10DLC registration OUTCOME.
 
                 Not a capability toggle, which is why it does not live in the
@@ -387,9 +564,18 @@ import {
     SmsSenderPayload,
     SmsSenderStatus,
 } from '@/core/types/data/masjid-related/SmsSender';
+import { useConnectStore } from '@/stores/masjid/connectStore';
+import {
+    FORMS_CARD_CONSENT_MAX,
+    FormsCardAccount,
+    FormsCardVia,
+    formsCardProblemText,
+} from '@/core/types/data/masjid-related/StripeConnect';
+import { serverMessage } from '@/core/helpers/serverMessage';
+import { trapTab } from '@/core/helpers/focusTrap';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
-import { computed, onBeforeMount, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 // Lifecycle hooks
@@ -754,6 +940,311 @@ const toggleAssistantAccess = (enabled: boolean) => {
             }
         })
 }
+
+// ---- Form card payments through the parent organisation (DECISIONS.md 2026-09-15) ----
+//
+// SuperAdmin-only. A child program organisation's FORM card payments may go through its
+// parent's existing Stripe account. The PATCH answers a non-SuperAdmin with 403 and no
+// validation keys, and 422s unless the target is the parent, onboarded and not linked
+// itself; both are shown as the server wrote them.
+//
+// Account ids: the admin show of this organisation and of its parent (GET masjids/{id})
+// return the whole masjids row, stripe_account_id included. The page is SuperAdmin-only,
+// so that shows nobody more than they could already read. This panel keeps only booleans
+// derived from those columns (has its own account, can take charges) and never stores or
+// renders an id. The booleans only disable the link button with a reason; the PATCH's
+// refusal stays the authority.
+
+/** The admin show returns the whole masjids row; Masjid.ts does not type these columns. */
+type MasjidFormsCardFields = {
+    parent_id?: number | null;
+    forms_card_via_masjid_id?: number | null;
+    forms_card_via_set_at?: string | null;
+    stripe_account_id?: string | null;
+    stripe_charges_enabled?: boolean | null;
+};
+
+type FormsCardPanel = {
+    loading: boolean;
+    saving: boolean;
+    /** The parent's name, read from its own admin record. '' until read. */
+    parentName: string;
+    /**
+     * Facts about the parent from that same record, null until read. crmEnabled decides
+     * whether its admins can stop the link themselves (the revoke route is in the `crm`
+     * group); chargeReady mirrors FormChargeAccount's holder rules (acct_ id, charges on);
+     * linked is the parent's own link, which the server refuses as holder_linked.
+     */
+    parentCrmEnabled: boolean | null;
+    parentChargeReady: boolean | null;
+    parentLinked: boolean | null;
+    /** GET forms/card-account for this organisation, or null when it could not be read. */
+    account: FormsCardAccount | null;
+    /** The link as the server last described it, or null when not linked. */
+    via: FormsCardVia | null;
+    loadError: string;
+};
+
+const connectStore = useConnectStore();
+
+const linkFields = computed<MasjidFormsCardFields>(() => (masjid.value ?? {}) as MasjidFormsCardFields);
+const parentId = computed<number | null>(() => linkFields.value.parent_id ?? null);
+
+const formsCard = ref<FormsCardPanel>({
+    loading: false, saving: false, parentName: '',
+    parentCrmEnabled: null, parentChargeReady: null, parentLinked: null,
+    account: null, via: null, loadError: ''
+});
+
+/** Names with a neutral stand-in, so no sentence on the screen has a hole in it. */
+const parentLabel = computed(() => formsCard.value.parentName || 'its parent organisation');
+const childLabel = computed(() => masjid.value?.name || 'this organisation');
+
+const formsCardLinked = computed(() => formsCard.value.via !== null);
+const formsCardHolderName = computed(() => formsCard.value.via?.holder.name || parentLabel.value);
+
+/** The server's answer (forms/card-account), never re-derived here. */
+const formsCardReady = computed(() =>
+    formsCard.value.account?.state === 'own' || formsCard.value.account?.state === 'linked');
+
+const formsCardProblem = computed(() => formsCardProblemText(
+    formsCardLinked.value
+        ? formsCard.value.via?.problem
+        : (formsCard.value.account?.state === 'unavailable' ? formsCard.value.account.problem : null)
+));
+
+const formatLinkDate = (iso: string): string => {
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+        ? iso
+        : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+/**
+ * The link as the card-account read describes it. A link on the row that the read could not
+ * confirm still shows as a link (not ready), so the Unlink button is never hidden from it.
+ */
+const viaFromAccount = (account: FormsCardAccount | null): FormsCardVia | null => {
+    if (account?.holder) {
+        return { holder: account.holder, ready: account.state === 'linked', problem: account.problem };
+    }
+
+    const linkedTo = linkFields.value.forms_card_via_masjid_id ?? null;
+    if (linkedTo === null) return null;
+
+    const name = linkedTo === parentId.value && formsCard.value.parentName
+        ? formsCard.value.parentName
+        : `organisation #${linkedTo}`;
+
+    return { holder: { id: linkedTo, name }, ready: false, problem: account?.problem ?? null };
+};
+
+const loadFormsCard = async (): Promise<void> => {
+    const childId = masjid.value?.id;
+    const parent = parentId.value;
+    if (!childId || !parent) return;
+
+    formsCard.value.loading = true;
+    formsCard.value.loadError = '';
+    formsCard.value.parentCrmEnabled = null;
+    formsCard.value.parentChargeReady = null;
+    formsCard.value.parentLinked = null;
+
+    const [parentRead, accountRead] = await Promise.allSettled([
+        ApiService.get(`/api/admin/masjids/${parent}/`),
+        connectStore.fetchFormsCardAccount(childId),
+    ]);
+
+    if (parentRead.status === 'fulfilled'
+        && parentRead.value.data?.status === 'success'
+        && typeof parentRead.value.data?.data?.name === 'string') {
+        const row = parentRead.value.data.data as MasjidFormsCardFields & { name: string; crm_enabled?: boolean | null };
+
+        formsCard.value.parentName = row.name;
+        formsCard.value.parentCrmEnabled = row.crm_enabled === true;
+        // Booleans only: the id itself is never kept (see the note at the top of this section).
+        formsCard.value.parentChargeReady = typeof row.stripe_account_id === 'string'
+            && row.stripe_account_id.length > 5
+            && row.stripe_account_id.startsWith('acct_')
+            && row.stripe_charges_enabled === true;
+        formsCard.value.parentLinked = row.forms_card_via_masjid_id !== null && row.forms_card_via_masjid_id !== undefined;
+    }
+
+    const account = accountRead.status === 'fulfilled' ? accountRead.value : null;
+    formsCard.value.account = account;
+    formsCard.value.via = viaFromAccount(account);
+
+    if (!formsCard.value.parentName) {
+        formsCard.value.loadError = 'The parent organisation could not be read, so this cannot be linked from here right now.';
+    } else if (accountRead.status === 'rejected') {
+        formsCard.value.loadError = serverMessage(accountRead.reason,
+            'Whether this organisation can take card payments on its forms could not be checked just now.');
+    }
+
+    formsCard.value.loading = false;
+};
+
+// The masjid loads without being awaited, so the panel loads when it (or its link) arrives.
+watch(
+    () => [masjid.value?.id, parentId.value, linkFields.value.forms_card_via_masjid_id],
+    () => { loadFormsCard(); },
+    { immediate: true }
+);
+
+/** Put the server's answer on screen, and on the loaded row (which re-reads the panel). */
+const applyFormsCardResult = (via: FormsCardVia | null): void => {
+    formsCard.value.via = via;
+    if (masjid.value) {
+        (masjid.value as Masjid & MasjidFormsCardFields).forms_card_via_masjid_id = via?.holder.id ?? null;
+    }
+};
+
+type LinkDialogState = { open: boolean; typedName: string; consent: string; error: string };
+
+const linkDialog = ref<LinkDialogState>({ open: false, typedName: '', consent: '', error: '' });
+const linkDialogRoot = ref<HTMLElement | null>(null);
+let linkDialogReturnFocus: HTMLElement | null = null;
+
+/** Exactly, as the server compares it: no trimming, no case folding. */
+const typedNameMatches = computed(() =>
+    !!formsCard.value.parentName && linkDialog.value.typedName === formsCard.value.parentName);
+
+const canConfirmLink = computed(() =>
+    typedNameMatches.value
+    && linkDialog.value.consent.trim() !== ''
+    && linkDialog.value.consent.length <= FORMS_CARD_CONSENT_MAX
+    && !formsCard.value.saving);
+
+/**
+ * Why a link would certainly be refused, read from the rows this page already has, else ''.
+ * Each mirrors a FormChargeAccount::linkProblem() code (has_own_account, holder_linked,
+ * holder_not_onboarded / holder_charges_disabled). It only disables the button with the
+ * reason shown; the PATCH's refusal stays the authority for everything else (is_holder).
+ */
+const linkBlockedReason = computed<string>(() => {
+    const ownAccount = linkFields.value.stripe_account_id;
+
+    if (formsCard.value.account?.state === 'own' || (typeof ownAccount === 'string' && ownAccount !== '')) {
+        return `${childLabel.value} has its own Stripe account, so its forms charge on that.`;
+    }
+
+    if (formsCard.value.parentLinked === true) {
+        return `${parentLabel.value} charges its own form payments through another organisation.`;
+    }
+
+    if (formsCard.value.parentChargeReady === false) {
+        return `${parentLabel.value} has no connected Stripe account that can take card payments right now.`;
+    }
+
+    return '';
+});
+
+const openLinkDialog = async (): Promise<void> => {
+    if (!parentId.value || !formsCard.value.parentName || linkBlockedReason.value) return;
+
+    linkDialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    linkDialog.value = { open: true, typedName: '', consent: '', error: '' };
+
+    await nextTick();
+    linkDialogRoot.value?.focus();
+};
+
+const closeLinkDialog = (): void => {
+    if (formsCard.value.saving) return;
+
+    linkDialog.value = { open: false, typedName: '', consent: '', error: '' };
+
+    const returnTo = linkDialogReturnFocus;
+    linkDialogReturnFocus = null;
+    nextTick(() => { if (returnTo?.isConnected) returnTo.focus(); });
+};
+
+const onLinkDialogKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeLinkDialog();
+        return;
+    }
+
+    trapTab(event, linkDialogRoot.value);
+};
+
+/** PATCH the link. A refusal stays in the dialog, word for word. */
+const confirmLink = async (): Promise<void> => {
+    const childId = masjid.value?.id;
+    const parent = parentId.value;
+    if (!childId || !parent || !canConfirmLink.value) return;
+
+    formsCard.value.saving = true;
+    linkDialog.value.error = '';
+
+    let via: FormsCardVia | null = null;
+    let saved = false;
+
+    try {
+        const result = await connectStore.setFormsCardAccount(childId, {
+            via_masjid_id: parent,
+            typed_holder_name: linkDialog.value.typedName,
+            consent_reference: linkDialog.value.consent,
+        });
+        via = result.forms_card_via;
+        saved = true;
+    } catch (e) {
+        linkDialog.value.error = serverMessage(e, 'The link was not saved.');
+    } finally {
+        formsCard.value.saving = false;
+    }
+
+    if (!saved) return;
+
+    closeLinkDialog();
+    applyFormsCardResult(via);
+
+    if (!via) {
+        MSwal.fire('Check this organisation',
+            'The server did not confirm the link. Reload the page to see what was saved.', 'warning');
+    } else if (via.ready) {
+        MSwal.fire('Linked', `Card payments on ${childLabel.value}'s forms now go through ${via.holder.name ?? parentLabel.value}.`, 'success');
+    } else {
+        const problem = formsCardProblemText(via.problem);
+        MSwal.fire('Linked, but not ready',
+            `The link is saved, but card payments on ${childLabel.value}'s forms are refused right now`
+            + `${problem ? `, because ${problem}` : ''}.`, 'warning');
+    }
+};
+
+const unlinkFormsCard = async (): Promise<void> => {
+    const childId = masjid.value?.id;
+    if (!childId || !formsCard.value.via) return;
+
+    const holder = formsCardHolderName.value;
+
+    const confirmed = await QSwal.fire(
+        'Question',
+        `Stop charging ${childLabel.value}'s form card payments through ${holder}? New card payments on its `
+        + `forms will be refused until this is set again, and families will be sent to pay the office where a `
+        + `form offers it. Payments already made stay in ${holder}'s Stripe account, and a card payment page `
+        + `opened in the last half hour can still be paid and recorded.`,
+        'question'
+    );
+    if (!confirmed.isConfirmed) return;
+
+    formsCard.value.saving = true;
+    let swalInstance: SweetAlertOptions = { title: 'Info', text: 'Nothing', icon: 'info' };
+
+    try {
+        const result = await connectStore.setFormsCardAccount(childId, { via_masjid_id: null });
+        applyFormsCardResult(result.forms_card_via);
+        swalInstance = result.forms_card_via
+            ? { title: 'Check this organisation', text: 'The server still reports a link. Reload the page to see what was saved.', icon: 'warning' }
+            : { title: 'Unlinked', text: `${childLabel.value}'s forms no longer take card payments through ${holder}.`, icon: 'success' };
+    } catch (e) {
+        swalInstance = { title: 'Sorry', text: serverMessage(e, 'The link was not removed.'), icon: 'error' };
+    } finally {
+        formsCard.value.saving = false;
+        MSwal.fire(swalInstance);
+    }
+};
 
 // ---- Text messaging (SMS) sender identity (T-009) ----
 //

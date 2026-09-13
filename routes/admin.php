@@ -468,6 +468,10 @@ Route::prefix('admin')->group(function () {
                 Route::get('/', 'index');
                 Route::get('/options', 'options');        // literal paths first, so they
                 Route::get('/field-types', 'fieldTypes'); // are not captured as {form_id}
+                // Whether this org's forms can take a card now, and through whom
+                // (DECISIONS.md 2026-09-15). No acct_ id, and no manage-donations
+                // permission, so the form builder can read it.
+                Route::get('/card-account', [\App\Http\Controllers\AdminDashboard\FormsCardAccountController::class, 'show']);
                 Route::post('/', 'store');
                 Route::get('/{form_id}', 'show');
                 Route::put('/{form_id}', 'update');
@@ -606,6 +610,11 @@ Route::prefix('admin')->group(function () {
             // auth first (FamilyAuthGuardTest sweeps every admin route with a
             // family token), and the controller refuses it with a 422.
             Route::patch('{masjid_id}/capabilities/{capability}', [MasjidsController::class, 'setCapability']);
+            // SuperAdmin-only: charge a child program org's FORM card payments
+            // through its parent's Connect account (DECISIONS.md 2026-09-15). The
+            // SuperAdmin check is SetFormsCardAccountRequest::authorize(), so a
+            // non-super admin is refused before any validation can describe the link.
+            Route::patch('{masjid_id}/forms-card-account', [\App\Http\Controllers\AdminDashboard\FormsCardAccountController::class, 'update']);
 
             // App-provisioning control plane (SuperAdmin only). "Generate apps"
             // dispatches a GitHub Actions workflow (self-hosted runner) that
@@ -628,6 +637,16 @@ Route::prefix('admin')->group(function () {
             // browser would do overnight.
             Route::post('{masjid_id}/assistant/chat', [AssistantController::class, 'chat'])
                 ->middleware(['assistant', 'throttle:20,1']);
+
+            // The HOLDER withdraws consent (DECISIONS.md 2026-09-15): removes a
+            // link that charges another org's form card payments through this
+            // org's Connect account. Revoke only; setting a link is SuperAdmin-only.
+            // Gated like the Connect routes (auth:sanctum + admin + tenant bound to
+            // the HOLDER + manage donations) but deliberately OUTSIDE `crm`: the
+            // link keeps charging whether or not the holder's CRM is switched on,
+            // so withdrawing consent must not depend on that switch either.
+            Route::delete('{masjid_id}/connect/forms-card-for/{child_id}', [\App\Http\Controllers\AdminDashboard\FormsCardAccountController::class, 'revoke'])
+                ->middleware('permission:manage donations');
 
             // The CRM route group — every endpoint gated by `crm`
             // (EnsureCrmEnabled): 403 unless this masjid's crm_enabled is true.
@@ -1103,6 +1122,8 @@ Route::prefix('admin')->group(function () {
                 Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
                     Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
                     Route::get('/status', 'status')->middleware('permission:manage donations');
+                    // The holder's revoke (forms-card-for/{child_id}) is registered
+                    // ABOVE this group, outside `crm`: see the note there.
                 });
 
                 // Donation funds (designations). Viewing is gated by

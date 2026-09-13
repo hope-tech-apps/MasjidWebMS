@@ -27,7 +27,15 @@ class MarkFormResponsePaidRequest extends BaseFormRequest
     {
         return [
             'via' => ['nullable', 'string', Rule::in(FormResponse::PAID_VIA_EXTERNAL)],
+            // DECISIONS.md 2026-09-15: see TakeFormResponseCashRequest.
+            TakeFormResponseCashRequest::CONFIRM_HOLDER_CHECKED => ['sometimes', 'accepted'],
         ];
+    }
+
+    /** Whether the admin said they checked the account holder's Stripe dashboard (TakeFormResponseCashRequest). */
+    public function confirmsHolderChecked(): bool
+    {
+        return TakeFormResponseCashRequest::confirmed($this);
     }
 
     /** "Choose how they paid: Zelle, Cash App, Venmo or Check. …", from the model's own labels. */
@@ -41,9 +49,12 @@ class MarkFormResponsePaidRequest extends BaseFormRequest
 
     protected function failedValidation(Validator $validator): void
     {
+        $confirmOnly = $validator->errors()->has(TakeFormResponseCashRequest::CONFIRM_HOLDER_CHECKED)
+            && ! $validator->errors()->has('via');
+
         throw new HttpResponseException(response()->json([
             'status' => 'failed',
-            'message' => self::refusal(),
+            'message' => $confirmOnly ? TakeFormResponseCashRequest::refusal() : self::refusal(),
         ], Response::HTTP_UNPROCESSABLE_ENTITY));
     }
 }

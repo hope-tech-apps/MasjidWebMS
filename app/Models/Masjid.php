@@ -5,6 +5,9 @@ namespace App\Models;
 use App\Traits\SearchableTrait;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -143,6 +146,17 @@ class Masjid extends Model implements HasMedia
         // identity, so it stays in — classified deliberately rather than
         // published by default, which is the whole point of the guard.
         'mailing_locale',
+        // Which organisation's Connect account charges this one's FORM card
+        // payments, and who set that (DECISIONS.md 2026-09-15). An internal
+        // money link between two tenants decided by a SuperAdmin, not public
+        // identity; the actor id is an internal user id like `updated_by`.
+        'forms_card_via_masjid_id',
+        'forms_card_via_set_at',
+        'forms_card_via_set_by',
+        // When Stripe last told us this organisation's account stopped letting the
+        // platform act for it (account.application.deauthorized, or a 403 on a
+        // pinned page). Internal payment-health state, not public identity.
+        'stripe_deauthorized_at',
     ];
 
     protected $searchableFields = ['name', 'email', 'address'];
@@ -487,6 +501,44 @@ class Masjid extends Model implements HasMedia
     protected static function booted(): void
     {
         static::forceDeleted(function (Masjid $masjid) {
+            // A child whose FORM card payments were charged through this
+            // organisation loses that link too (DECISIONS.md 2026-09-15), in the
+            // same transaction as its audit row. The resolver would already fail
+            // closed on a missing holder; nulling it means a future organisation
+            // can never inherit a link by reusing an id, and the history says
+            // why the link ended.
+            DB::transaction(function () use ($masjid) {
+                $linked = Masjid::withTrashed()
+                    ->where('forms_card_via_masjid_id', $masjid->id)
+                    ->lockForUpdate()
+                    ->pluck('id');
+
+                foreach ($linked as $childId) {
+                    Masjid::withTrashed()->whereKey($childId)->update([
+                        'forms_card_via_masjid_id' => null,
+                        'forms_card_via_set_at' => now(),
+                        'forms_card_via_set_by' => Auth::id(),
+                    ]);
+
+                    MasjidFormsCardLinkLog::record(
+                        (int) $childId,
+                        (int) $masjid->id,
+                        MasjidFormsCardLinkLog::ACTION_UNLINK,
+                        Auth::id() !== null ? (int) Auth::id() : null,
+                        $masjid->stripe_account_id,
+                        null,
+                        'The holder organisation was permanently deleted.',
+                    );
+                }
+
+                if ($linked->isNotEmpty()) {
+                    Log::warning('Forms card links removed: the holder organisation was permanently deleted.', [
+                        'holder_masjid_id' => $masjid->id,
+                        'child_masjid_ids' => $linked->all(),
+                    ]);
+                }
+            });
+
             Masjid::withTrashed()
                 ->where('parent_id', $masjid->id)
                 ->update(['parent_id' => null]);
@@ -521,6 +573,28 @@ class Masjid extends Model implements HasMedia
     public function isChildOrg(): bool
     {
         return $this->parent_id !== null;
+    }
+
+    /**
+     * The organisation whose Connect account charges this one's FORM card
+     * payments, if a SuperAdmin linked them (DECISIONS.md 2026-09-15).
+     *
+     * A pointer only. Whether the link is usable is decided every time by
+     * App\Services\Stripe\FormChargeAccount, which requires it to equal
+     * `parent_id` and the holder to be live and onboarded. The three
+     * `forms_card_via_*` columns are deliberately absent from `$fillable`: their
+     * writers are FormsCardAccountController and the force-delete hook above,
+     * each in a transaction with a MasjidFormsCardLinkLog row.
+     */
+    public function formsCardHolder()
+    {
+        return $this->belongsTo(Masjid::class, 'forms_card_via_masjid_id');
+    }
+
+    /** The organisations whose form card payments are charged through this one. */
+    public function formsCardChildren()
+    {
+        return $this->hasMany(Masjid::class, 'forms_card_via_masjid_id');
     }
 
     /**

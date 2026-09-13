@@ -183,13 +183,33 @@ class FormResponsePaymentsController extends Controller
      * Whether "Return to payment" can work: unpaid by card, not cancelled, and the card
      * leg is up. A cancelled registration is refused by the checkout itself; saying so
      * here keeps the page from offering a button that can only fail.
+     *
+     * One exception to "the card leg is up" (DECISIONS.md 2026-09-15): card payment is
+     * unavailable right now (unlinked, revoked, the holder disconnected), but this row's
+     * page was PINNED and has not reached its pinned expiry. That page may still be open,
+     * or paid and not yet recorded, so the button stays: the checkout asks Stripe on the
+     * pin first (FormResponseCheckoutService::preflight()) and hands the open page back or
+     * answers "confirming". Nothing here calls Stripe.
      */
     private function canPay(FormResponse $row, Form $form): bool
     {
-        return $row->payment_method === FormResponse::METHOD_ONLINE
-            && ! $row->isPaid()
-            && ! $row->isCancelled()
-            && $form->takesOnlinePayment()
-            && FormResponseCheckoutService::refusal(Masjid::find($row->masjid_id), (int) $row->total_minor) === null;
+        if ($row->payment_method !== FormResponse::METHOD_ONLINE
+            || $row->isPaid()
+            || $row->isCancelled()
+            || ! $form->takesOnlinePayment()) {
+            return false;
+        }
+
+        $refusal = FormResponseCheckoutService::refusal(Masjid::find($row->masjid_id), (int) $row->total_minor);
+
+        if ($refusal === null) {
+            return true;
+        }
+
+        return $refusal === FormResponseCheckoutService::UNAVAILABLE
+            && $row->hasChargePin()
+            && $row->stripe_checkout_session_id !== null
+            && $row->charge_expires_at !== null
+            && $row->charge_expires_at->isFuture();
     }
 }

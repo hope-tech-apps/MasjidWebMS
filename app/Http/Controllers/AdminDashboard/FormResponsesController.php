@@ -5,11 +5,13 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Forms\IndexFormResponsesRequest;
 use App\Http\Requests\Admin\Forms\MarkFormResponsePaidRequest;
+use App\Http\Requests\Admin\Forms\TakeFormResponseCashRequest;
 use App\Http\Requests\Admin\Forms\UpdateFormResponseRequest;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Models\User;
+use App\Services\Stripe\FormChargeAccount;
 use App\Services\Stripe\FormCheckoutRefused;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\Errors;
@@ -96,6 +98,9 @@ class FormResponsesController extends Controller
      *   none            there is no card page: not a card registration, or no page was opened
      *   unchecked       a page is on the row, but the organisation has no Stripe account on
      *                   record to ask, so nobody knows whether it is still open
+     *   unreachable     the page was pinned to another organisation's account, which no longer
+     *                   lets the platform check or close it (DECISIONS.md 2026-09-15): retrying
+     *                   cannot help, and the page takes no payment once it expires
      */
     private const CARD_PAGE_CLOSED = 'closed';
 
@@ -512,9 +517,21 @@ class FormResponsesController extends Controller
             return [self::PAGE_NOT_CLOSED, true, self::CARD_PAGE_UNCONFIRMED];
         }
 
+        // A page charged through another organisation's account (DECISIONS.md 2026-09-15):
+        // only that organisation can refund it, so the admin is told who, and how it finds it.
+        $refund = FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.';
+
         return match ($closed) {
-            'complete' => ['This registration had just been paid by card, so it will show as paid once Stripe confirms it. Refund it in Stripe if it should not stand.', true, self::CARD_PAGE_PAID_ON_STRIPE],
+            'complete' => ["This registration had just been paid by card, so it will show as paid once Stripe confirms it. {$refund}", true, self::CARD_PAGE_PAID_ON_STRIPE],
             'expired' => ['Cancelled, and its card payment page is closed.', false, self::CARD_PAGE_CLOSED],
+            // The page is pinned to an account Stripe no longer lets the platform act on.
+            // Retrying cannot help; the page takes no payment once charge_expires_at passes.
+            FormResponseCheckoutService::UNREACHABLE => [
+                'Cancelled. Its card payment page is on ' . ($this->holderName($row) ?? 'another organisation') . '\'s Stripe account, which no longer lets us check or close it, '
+                . 'so it can take a payment until it expires. If one lands, ' . $refund,
+                true,
+                FormResponseCheckoutService::UNREACHABLE,
+            ],
             // The row carries a page and is unpaid, so closeOpenSession() found no Stripe
             // account on record to ask about it.
             null => [null, false, self::CARD_PAGE_UNCHECKED],
@@ -549,7 +566,72 @@ class FormResponsesController extends Controller
 
         $amount = $row->total_minor !== null ? ' (' . FormNotifier::money((int) $row->total_minor, $row->currency) . ')' : '';
 
-        return ["This registration was already paid by card{$amount}. Cancelling does not refund it. Refund it in Stripe if it should not stand.", true];
+        // Charged through another organisation's account (DECISIONS.md 2026-09-15): only it
+        // can refund, and the payment intent is how it finds the charge.
+        $refund = FormChargeAccount::refundInstruction($row) ?? 'Refund it in Stripe if it should not stand.';
+
+        return ["This registration was already paid by card{$amount}. Cancelling does not refund it. {$refund}", true];
+    }
+
+    /**
+     * The organisation whose account a row's card page was pinned to, withTrashed, read once
+     * per request (a list page shows many rows of one holder). Null for a row never pinned.
+     */
+    private function pinHolder(FormResponse $row): ?Masjid
+    {
+        if ($row->charge_masjid_id === null) {
+            return null;
+        }
+
+        $id = (int) $row->charge_masjid_id;
+        $cache = request()->attributes->get('forms.charge_holders', []);
+
+        if (! array_key_exists($id, $cache)) {
+            $cache[$id] = Masjid::withTrashed()->find($id);
+            request()->attributes->set('forms.charge_holders', $cache);
+        }
+
+        return $cache[$id];
+    }
+
+    /** The pinned holder's name, or null. Never its account id. */
+    private function holderName(FormResponse $row): ?string
+    {
+        return $this->pinHolder($row)?->name;
+    }
+
+    /** `charged_through`: {id, name} of the other organisation a row was charged through, or null. */
+    private function chargedThroughOf(FormResponse $row): ?array
+    {
+        $holder = $row->isChargedThroughAnotherOrg() ? $this->pinHolder($row) : null;
+
+        return $holder !== null ? ['id' => (int) $holder->id, 'name' => $holder->name] : null;
+    }
+
+    /**
+     * `page_unreachable`: true only when it is KNOWN that nobody can ask Stripe about an
+     * unpaid card row's pinned page any more, because no live organisation holds the account
+     * it was opened on (the holder offboarded, or moved to another account). A disconnect
+     * Stripe has not told us about reads false here, and take cash answers 409 when it meets it.
+     */
+    private function knownUnreachable(FormResponse $row): bool
+    {
+        if (! $row->hasChargePin()
+            || $row->payment_method !== FormResponse::METHOD_ONLINE
+            || $row->isPaid()
+            || $row->stripe_checkout_session_id === null) {
+            return false;
+        }
+
+        $pin = (string) $row->charge_account_id;
+        $cache = request()->attributes->get('forms.live_accounts', []);
+
+        if (! array_key_exists($pin, $cache)) {
+            $cache[$pin] = Masjid::query()->where('stripe_account_id', $pin)->exists();
+            request()->attributes->set('forms.live_accounts', $cache);
+        }
+
+        return ! $cache[$pin];
     }
 
     /**
@@ -685,9 +767,9 @@ class FormResponsesController extends Controller
      * (FormResponse::settleCashBy()). If Stripe cannot say the page is closed, nothing is
      * recorded: cash is never taken against a page that might still be paid.
      */
-    public function takeCash(Request $request, FormResponseCheckoutService $checkout, $masjid_id, $form_id, $response_id): JsonResponse
+    public function takeCash(TakeFormResponseCashRequest $request, FormResponseCheckoutService $checkout, $masjid_id, $form_id, $response_id): JsonResponse
     {
-        return $this->settleByHand($request, $checkout, FormResponse::METHOD_CASH, $masjid_id, $form_id, $response_id);
+        return $this->settleByHand($request, $checkout, FormResponse::METHOD_CASH, $masjid_id, $form_id, $response_id, null, $request->confirmsHolderChecked());
     }
 
     /**
@@ -705,17 +787,26 @@ class FormResponsesController extends Controller
      */
     public function markPaidExternal(MarkFormResponsePaidRequest $request, FormResponseCheckoutService $checkout, $masjid_id, $form_id, $response_id): JsonResponse
     {
-        return $this->settleByHand($request, $checkout, FormResponse::METHOD_EXTERNAL, $masjid_id, $form_id, $response_id, $request->validated('via'));
+        return $this->settleByHand($request, $checkout, FormResponse::METHOD_EXTERNAL, $masjid_id, $form_id, $response_id, $request->validated('via'), $request->confirmsHolderChecked());
     }
 
-    /** takeCash() and markPaidExternal(): one path, two methods. */
-    private function settleByHand(Request $request, FormResponseCheckoutService $checkout, string $method, $masjid_id, $form_id, $response_id, ?string $via = null): JsonResponse
+    /**
+     * takeCash() and markPaidExternal(): one path, two methods.
+     *
+     * A card page pinned to an account Stripe no longer lets the platform act on
+     * (closeOpenSession() answers UNREACHABLE; DECISIONS.md 2026-09-15) cannot be checked or
+     * closed. Nothing is recorded, a 409 `page_unreachable` says whose account it is and when
+     * the page stops taking payments, UNLESS that time has passed AND the admin confirms
+     * ($holderChecked) they checked the holder's Stripe dashboard. Only then is it settled.
+     */
+    private function settleByHand(Request $request, FormResponseCheckoutService $checkout, string $method, $masjid_id, $form_id, $response_id, ?string $via = null, bool $holderChecked = false): JsonResponse
     {
         [, $form, $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
         $operator = $request->user();
+        $unreachable = null;
 
         try {
-            [$outcome, $announced] = DB::transaction(function () use ($checkout, $method, $form, $response, $operator, $via): array {
+            [$outcome, $announced] = DB::transaction(function () use ($checkout, $method, $form, $response, $operator, $via, $holderChecked, &$unreachable): array {
                 $row = $this->lockRow($response, $form);
 
                 // Everyone but a card payer still waiting on Stripe was emailed at submit
@@ -741,8 +832,35 @@ class FormResponsesController extends Controller
                     return ['via-required', $announced];
                 }
 
-                if ($row->payment_method === FormResponse::METHOD_ONLINE && $checkout->closeOpenSession($row) === 'complete') {
-                    return ['paid-on-stripe', $announced];
+                if ($row->payment_method === FormResponse::METHOD_ONLINE) {
+                    $closed = $checkout->closeOpenSession($row);
+
+                    if ($closed === 'complete') {
+                        return ['paid-on-stripe', $announced];
+                    }
+
+                    // Stripe no longer lets the platform check the page on the account it was
+                    // pinned to. Settled only once the page can take no payment (its pinned
+                    // expiry has passed) and the admin says they checked the holder's dashboard.
+                    if ($closed === FormResponseCheckoutService::UNREACHABLE) {
+                        $expired = $row->charge_expires_at !== null && $row->charge_expires_at->isPast();
+
+                        if (! $expired || ! $holderChecked) {
+                            $unreachable = ['row' => $row, 'expired' => $expired];
+
+                            return ['unreachable', $announced];
+                        }
+
+                        Log::warning('A form registration was settled by hand although Stripe no longer lets the platform check its card page; the page had expired and the admin confirmed checking the account holder\'s dashboard.', [
+                            'masjid_id' => $row->masjid_id,
+                            'form_id' => $row->form_id,
+                            'form_response_id' => $row->id,
+                            'charge_masjid_id' => $row->charge_masjid_id,
+                            'checkout_session_id' => $row->stripe_checkout_session_id,
+                            'method' => $method,
+                            'user_id' => $operator?->id,
+                        ]);
+                    }
                 }
 
                 $settled = $method === FormResponse::METHOD_CASH
@@ -774,6 +892,10 @@ class FormResponsesController extends Controller
             ], Response::HTTP_SERVICE_UNAVAILABLE);
         } catch (\Exception $e) {
             return $this->failed($e);
+        }
+
+        if ($outcome === 'unreachable') {
+            return $this->pageUnreachable($unreachable['row'], $unreachable['expired']);
         }
 
         if ($outcome !== 'settled') {
@@ -1062,6 +1184,31 @@ class FormResponsesController extends Controller
         ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
+    /**
+     * 409 `page_unreachable` (DECISIONS.md 2026-09-15, D9): the card page was pinned to an
+     * account Stripe no longer lets the platform check or close, so nothing was recorded.
+     * Names the organisation whose Stripe dashboard shows the payment (never its account
+     * id) and when the page stops taking payments. $expired: that time has passed, so a
+     * confirmed check is all that is missing.
+     */
+    private function pageUnreachable(FormResponse $row, bool $expired): JsonResponse
+    {
+        $holder = $row->charge_masjid_id !== null ? Masjid::withTrashed()->find((int) $row->charge_masjid_id) : null;
+        $name = $holder?->name ?? 'the organisation it was charged through';
+
+        $message = $expired
+            ? "Stripe no longer lets us check this registration's card payment page on {$name}'s Stripe account. The page can no longer take a payment, but it may have been paid before it closed. Check {$name}'s Stripe dashboard for this payment, then confirm you have checked. Nothing was recorded."
+            : "Stripe no longer lets us check this registration's card payment page on {$name}'s Stripe account, and the page can still take a payment until it expires. Nothing was recorded. Try again after it expires.";
+
+        return response()->json([
+            'status' => 'failed',
+            'code' => 'page_unreachable',
+            'message' => $message,
+            'holder_name' => $holder?->name,
+            'expires_at' => optional($row->charge_expires_at)->toIso8601String(),
+        ], Response::HTTP_CONFLICT);
+    }
+
     private function failed(\Throwable $e): JsonResponse
     {
         return response()->json([
@@ -1202,6 +1349,19 @@ class FormResponsesController extends Controller
             'card_page_opened' => $response->payment_method === FormResponse::METHOD_ONLINE
                 && $state === FormResponse::PAYMENT_UNPAID
                 && $response->stripe_checkout_session_id !== null,
+            // Charged through another organisation's account (DECISIONS.md 2026-09-15): who
+            // holds the charge ({id, name}, never its account id), the payment intent that
+            // organisation finds it by, what it did to the charge in its own dashboard
+            // (`refunded` | `disputed`, which never changes payment_status), and whether the
+            // unpaid page is known to be beyond checking. Null / false for every other row.
+            'charged_through' => $this->chargedThroughOf($response),
+            'stripe_payment_intent_id' => $response->stripe_payment_intent_id,
+            'charge_flag' => $response->charge_flag,
+            'charge_flagged_at' => optional($response->charge_flagged_at)->toIso8601String(),
+            // How much of that charge the holder has refunded so far (minor units), or null:
+            // below total_minor is a PARTIAL refund (the card fee back, say), not a full one.
+            'charge_refunded_minor' => $response->charge_refunded_minor,
+            'page_unreachable' => $this->knownUnreachable($response),
             // Whose cash this is, at the gate. Never the code, and never its digest.
             'staff_code' => $response->staffCode !== null ? [
                 'id' => $response->staffCode->id,

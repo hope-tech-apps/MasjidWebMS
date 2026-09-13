@@ -290,11 +290,22 @@ class FormSubmissionsController extends Controller
 
             $clean = $schema->only($submitted);
 
+            // A retry of a card registration whose page was PINNED to an account
+            // (DECISIONS.md 2026-09-15), arriving after card payment became unavailable
+            // (unlinked, or the holder disconnected): it gets its own row's answer, never
+            // "unavailable" or the office, because its page may already be paid or still
+            // open (FormResponseCheckoutService::preflight() asks Stripe on the pin). Looked
+            // up only in exactly that case, so every other submission, and every row that
+            // was never pinned, is routed and refused exactly as before.
+            $pinnedReplay = $staffCode === null && $form->takesOnlinePayment() && ! $form->canTakeCardNow()
+                ? $this->pinnedCardReplay((int) $form->id, $request->input('client_submission_key'))
+                : null;
+
             // The office: no staff credential, on a form that offers it, when the family
             // chose it — or said nothing on a form that cannot take a card right now.
             $office = $staffCode === null
                 && $form->takesOfficePayment()
-                && ($payWith === SubmitFormResponseRequest::PAY_WITH_OFFICE || ($payWith === null && ! $form->canTakeCardNow()));
+                && ($payWith === SubmitFormResponseRequest::PAY_WITH_OFFICE || ($payWith === null && ! $form->canTakeCardNow() && $pinnedReplay === null));
 
             // A card registration: no staff credential and not the office, on a form that
             // takes cards. A staff entry on the same form is cash, whatever the card
@@ -341,7 +352,8 @@ class FormSubmissionsController extends Controller
             if ($online) {
                 $refusal = FormResponseCheckoutService::refusal(Masjid::find($masjidId), $quote['total_minor']);
 
-                if ($refusal !== null) {
+                // A pinned replay is answered from its own row below, before any refusal.
+                if ($refusal !== null && $pinnedReplay === null) {
                     return response()->api(422, $refusal, null);
                 }
 
@@ -544,6 +556,25 @@ class FormSubmissionsController extends Controller
             ->where('form_id', $formId)
             ->where('client_submission_key', $clientKey)
             ->first();
+    }
+
+    /**
+     * The earlier CARD registration under this client_submission_key whose page was pinned
+     * to an account (DECISIONS.md 2026-09-15), or null. store() asks only when card payment
+     * is unavailable right now, so its replay is answered from its own row (its page paid,
+     * or still open) rather than refused or sent to the office.
+     */
+    private function pinnedCardReplay(int $formId, mixed $clientKey): ?FormResponse
+    {
+        if (! is_string($clientKey) || $clientKey === '') {
+            return null;
+        }
+
+        $earlier = $this->earlierSubmission($formId, $clientKey);
+
+        return $earlier !== null && $earlier->payment_method === FormResponse::METHOD_ONLINE && $earlier->hasChargePin()
+            ? $earlier
+            : null;
     }
 
     /**

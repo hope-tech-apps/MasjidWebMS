@@ -92,6 +92,10 @@ final class TenantScopingCoverageTest extends TestCase
             'reason' => 'The `masjid_user` membership pivot is the table the tenant is derived FROM. Scoping it would make "which masjids may this user act on?" answerable only from inside a masjid the user is already bound to, and its creating hook would stamp memberships into the wrong organisation. Isolation here is an authorization concern (TenantResolver + the API surface). See .claude/rules/tenant-scoping.md.',
             'has_masjid_id_column' => true,
         ],
+        \App\Models\MasjidFormsCardLinkLog::class => [
+            'reason' => 'The append-only ledger of forms card links (DECISIONS.md 2026-09-15). Each row joins TWO tenants, the child whose forms charge and the holder whose Connect account is charged, so there is no single masjid to scope it to and the table carries child_masjid_id/holder_masjid_id instead of masjid_id. Written only by FormsCardAccountController (SuperAdmin link, holder revoke) and the Masjid force-delete hook; no HTTP read.',
+            'has_masjid_id_column' => false,
+        ],
         StripeWebhookEvent::class => [
             'reason' => 'The Stripe idempotency ledger. The webhook route is unauthenticated and inbound events span every masjid, so the table carries no masjid_id at all; the UNIQUE index on stripe_event_id is what makes at-least-once delivery safe. See StripeWebhookController.',
             'has_masjid_id_column' => false,

@@ -93,14 +93,21 @@ class FormResponse extends Model
         'marked_paid_by_user_id' => 'integer',
         'collected_by_user_id' => 'integer',
         'status_changed_by_user_id' => 'integer',
+        'charge_masjid_id' => 'integer',
+        'charge_expires_at' => 'datetime',
+        'charge_flagged_at' => 'datetime',
+        'charge_refunded_minor' => 'integer',
     ];
 
     /**
      * The replay guard's digest is derived from personal data and has no use on
-     * any screen, so it never serialises.
+     * any screen, so it never serialises. The pinned account id is another
+     * organisation's acct_ string for a row charged through it (DECISIONS.md
+     * 2026-09-15), which the row's own organisation is never shown.
      */
     protected $hidden = [
         'client_payload_hash',
+        'charge_account_id',
     ];
 
     /**
@@ -172,6 +179,20 @@ class FormResponse extends Model
     public const PAYMENT_STATUSES = [
         self::PAYMENT_UNPAID,
         self::PAYMENT_PAID,
+    ];
+
+    /**
+     * What the holder of a pinned charge did to it in its own Stripe dashboard
+     * (`charge_flag`; DECISIONS.md 2026-09-15). A flag never changes payment_status: it
+     * tells the organisation to look.
+     */
+    public const CHARGE_FLAG_REFUNDED = 'refunded';
+
+    public const CHARGE_FLAG_DISPUTED = 'disputed';
+
+    public const CHARGE_FLAGS = [
+        self::CHARGE_FLAG_REFUNDED,
+        self::CHARGE_FLAG_DISPUTED,
     ];
 
     /**
@@ -653,6 +674,73 @@ class FormResponse extends Model
                 ->where('uuid', $uuid)
                 ->whereNotNull('payment_method')
                 ->exists();
+    }
+
+    /**
+     * Whether a card page of this row was pinned to an account (DECISIONS.md 2026-09-15):
+     * every row of an organisation charged through another's account, and any row that
+     * ever was. A pinned row's pages are read, closed and settled on the pin alone, and
+     * its webhooks never take the legacy path. Pins are never cleared.
+     */
+    public function hasChargePin(): bool
+    {
+        return is_string($this->charge_account_id) && $this->charge_account_id !== '';
+    }
+
+    /** Charged on another organisation's account (the pin's holder is not this row's organisation). */
+    public function isChargedThroughAnotherOrg(): bool
+    {
+        return $this->charge_masjid_id !== null && (int) $this->charge_masjid_id !== (int) $this->masjid_id;
+    }
+
+    /**
+     * The row a linked charge's opaque reference names. Global: the reference is unique
+     * and random, and the webhook that asks runs unbound. The caller still requires the
+     * event's account to equal the row's pin.
+     */
+    public static function findByChargeRef(string $ref): ?self
+    {
+        return $ref === '' ? null : static::query()->where('charge_ref', $ref)->first();
+    }
+
+    /**
+     * Record that the holder refunded, or a payer disputed, this row's pinned charge.
+     * payment_status is never touched. A dispute is never overwritten by a refund
+     * (the dispute is the one that costs a fee and a deadline).
+     *
+     * $refundedMinor is how much of the charge Stripe says is refunded so far
+     * (charge.amount_refunded). It only ever rises, so a partial refund followed by a
+     * full one reads as the full one, and it is recorded even while a dispute holds the
+     * flag. True when anything was written.
+     */
+    public function flagCharge(string $flag, ?int $refundedMinor = null): bool
+    {
+        if (! in_array($flag, self::CHARGE_FLAGS, true)) {
+            throw new LogicException("\"{$flag}\" is not a charge flag.");
+        }
+
+        return $this->underLock(function (self $row) use ($flag, $refundedMinor): bool {
+            $changes = [];
+
+            if ($flag === self::CHARGE_FLAG_REFUNDED && $refundedMinor !== null && $refundedMinor > (int) $row->charge_refunded_minor) {
+                $changes['charge_refunded_minor'] = $refundedMinor;
+            }
+
+            $keepsFlag = $row->charge_flag === $flag
+                || ($row->charge_flag === self::CHARGE_FLAG_DISPUTED && $flag === self::CHARGE_FLAG_REFUNDED);
+
+            if (! $keepsFlag) {
+                $changes['charge_flag'] = $flag;
+            }
+
+            if ($changes === []) {
+                return false;
+            }
+
+            $row->forceFill($changes + ['charge_flagged_at' => now()])->save();
+
+            return true;
+        });
     }
 
     /** Admin cash and external payments: one shape, stamped by the first press only. */

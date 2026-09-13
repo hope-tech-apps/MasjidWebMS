@@ -38,6 +38,16 @@ class StripeConnectController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
 
+            // An org whose form card payments charge through another org's
+            // account must not grow an account of its own beside that link
+            // (DECISIONS.md 2026-09-15): a SuperAdmin removes the link first.
+            if ($masjid->forms_card_via_masjid_id !== null) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => 'This organisation takes form card payments through another organisation\'s Stripe account. A super admin must remove that link before it connects its own.',
+                ], Response::HTTP_CONFLICT);
+            }
+
             $refreshUrl = route('connect.refresh', ['masjid_id' => $masjid->id]);
             $returnUrl = route('connect.return', ['masjid_id' => $masjid->id]);
 
@@ -82,6 +92,12 @@ class StripeConnectController extends Controller
                 'stripe_account_id' => $masjid->stripe_account_id,
                 'charges_enabled' => (bool) $masjid->stripe_charges_enabled,
                 'payouts_enabled' => (bool) $masjid->stripe_payouts_enabled,
+                // DECISIONS.md 2026-09-15. For a child: whose account charges its
+                // forms, by name, and whether that works now. For a holder: who
+                // charges through it. Neither block ever carries an acct_ id: the
+                // child's own stripe_account_id above stays its own (NULL).
+                'forms_card_via' => FormsCardAccountController::viaSummary($masjid),
+                'forms_card_for' => FormsCardAccountController::forSummary($masjid),
             ],
         ], Response::HTTP_OK);
     }

@@ -39,8 +39,42 @@
             </div>
 
             <template v-else-if="connectStatus">
+                <!--
+                    0 — Form card payments go through another organisation's account
+                    (DECISIONS.md 2026-09-15). Onboarding is refused while this is set, so
+                    no Connect or Resume button is offered, and the holder's account id is
+                    never on the wire.
+                -->
+                <div v-if="formsCardVia">
+                    <p class="mb-2 fw-semibold">
+                        Card payments for forms go through {{ formsCardHolderName }}
+                    </p>
+                    <div class="d-flex gap-2 flex-wrap mb-2">
+                        <span v-if="formsCardVia.ready" class="badge bg-success-subtle text-success">
+                            <i class="bi bi-check-circle me-1"></i>Ready for card payments
+                        </span>
+                        <span v-else class="badge bg-warning-subtle text-warning">
+                            <i class="bi bi-exclamation-triangle me-1"></i>Card payments refused right now
+                        </span>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Manara has set this organisation up to take card payments on its forms through
+                        {{ formsCardHolderName }}'s Stripe account. The money lands in that account,
+                        families' card statements show {{ formsCardHolderName }}, and refunds and
+                        disputes are handled in {{ formsCardHolderName }}'s Stripe dashboard. Donations
+                        and other payments are not taken by card for this organisation, so there is nothing
+                        to connect here.
+                    </p>
+                    <p v-if="!formsCardVia.ready" class="small text-danger mb-0 mt-2">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        Forms cannot take card payments right now<template v-if="formsCardProblem">, because {{ formsCardProblem }}</template>.
+                        Families can still pay the office where a form offers it. Ask
+                        {{ formsCardHolderName }} or your Manara contact to fix it.
+                    </p>
+                </div>
+
                 <!-- 1 — No connected account yet -->
-                <div v-if="!connectStatus.stripe_account_id">
+                <div v-else-if="!connectStatus.stripe_account_id">
                     <p class="mb-1 fw-semibold">Online giving is not set up</p>
                     <p class="text-muted small mb-3">
                         Connect a Stripe account so donors can give by card. Stripe hosts the
@@ -97,6 +131,50 @@
                     </p>
                 </div>
 
+                <!--
+                    The holder's side: the organisations whose form card payments land in THIS
+                    account. The holder can stop one here (a revoke only; setting a link stays
+                    with a SuperAdmin).
+                -->
+                <div v-if="formsCardFor.length" class="border-top pt-3 mt-3">
+                    <p class="mb-1 fw-semibold">Other organisations taking form card payments through this account</p>
+                    <p class="text-muted small mb-2">
+                        Card payments on these organisations' forms land in this organisation's Stripe
+                        account. Everyone who can see that Stripe account sees those payments, including
+                        the family's email address, and refunds and disputes for them are handled in its
+                        Stripe dashboard.
+                    </p>
+                    <ul class="list-unstyled mb-0">
+                        <li
+                            v-for="org in formsCardFor"
+                            :key="org.id"
+                            class="d-flex align-items-center justify-content-between flex-wrap gap-2 py-1"
+                        >
+                            <span>{{ org.name }}</span>
+                            <button
+                                type="button"
+                                class="btn btn-outline-danger btn-sm"
+                                :disabled="revokingId !== null"
+                                :aria-label="`Stop taking card payments for ${org.name}'s forms`"
+                                @click="revoke(org)"
+                            >
+                                <span v-if="revokingId === org.id" class="spinner-border spinner-border-sm me-1"></span>
+                                Stop
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+
+                <p v-if="revokeNotice" class="small text-success mb-0 mt-3" role="status">
+                    <i class="bi bi-check-circle me-1"></i>
+                    {{ revokeNotice }}
+                </p>
+
+                <p v-if="revokeError" class="small text-danger mb-0 mt-3" role="alert">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    {{ revokeError }}
+                </p>
+
                 <!-- The Stripe tab was opened: tell the admin how the loop closes. -->
                 <p v-if="onboardingLaunched" class="small text-info mb-0 mt-3">
                     <i class="bi bi-box-arrow-up-right me-1"></i>
@@ -115,17 +193,22 @@
 
 <script setup lang="ts">
 import { computed, onBeforeMount, ref } from 'vue';
+import Swal from 'sweetalert2';
 import { useConnectStore, isForbidden, envelopeMessage } from '@/stores/masjid/connectStore';
+import { FormsCardOrg, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 
 /**
  * Stripe Connect onboarding panel — the admin-portal replacement for a
  * developer running the onboarding script on the server.
  *
- * Three states, decided ONLY by the raw /connect/status payload:
+ * States, decided ONLY by the raw /connect/status payload:
+ *   0. forms_card_via set              → form card payments go through another organisation;
+ *                                        no onboarding is offered (the server 409s it)
  *   1. no stripe_account_id            → not connected, offer "Connect with Stripe"
  *   2. account but !charges_enabled    → onboarding unfinished, offer "Resume onboarding"
  *   3. charges_enabled                 → connected; payouts_enabled may still lag
  *      (Stripe review), which is stated as normal rather than left to read as broken.
+ * forms_card_for adds, under any of them, the organisations charging through this one.
  */
 
 const connectStore = useConnectStore();
@@ -138,8 +221,17 @@ const forbidden = ref(false);          // 403 → the panel renders nothing at a
 const statusError = ref('');
 const onboardingError = ref('');
 const onboardingLaunched = ref(false);
+const revokingId = ref<number | null>(null);
+const revokeError = ref('');
+const revokeNotice = ref('');
 
 const connectStatus = computed(() => connectStore.connectStatus);
+const formsCardVia = computed(() => connectStatus.value?.forms_card_via ?? null);
+const formsCardFor = computed<FormsCardOrg[]>(() =>
+    Array.isArray(connectStatus.value?.forms_card_for) ? connectStatus.value!.forms_card_for! : []);
+const formsCardProblem = computed(() => formsCardProblemText(formsCardVia.value?.problem));
+/** The server sends a null name only when the holder row is gone entirely. */
+const formsCardHolderName = computed(() => formsCardVia.value?.holder.name || 'another organisation');
 
 // Lifecycle
 onBeforeMount(async () => {
@@ -167,8 +259,51 @@ const refresh = async (): Promise<void> => {
     // the instruction (and any stale onboarding error) leaves with it.
     onboardingLaunched.value = false;
     onboardingError.value = '';
+    revokeError.value = '';
+    revokeNotice.value = '';
     await loadStatus();
     refreshing.value = false;
+};
+
+/**
+ * Stop another organisation's form card payments going through this account
+ * (DELETE .../connect/forms-card-for/{child_id}). Confirmed first, because only a
+ * SuperAdmin can set it up again. A refusal is shown in the server's own words and never
+ * hides the panel: the admin could read the status, so a 403 here is a message.
+ */
+const revoke = async (org: FormsCardOrg): Promise<void> => {
+    if (revokingId.value !== null) return;
+
+    revokeError.value = '';
+    revokeNotice.value = '';
+
+    const confirmed = await Swal.fire({
+        icon: 'warning',
+        title: `Stop taking card payments for ${org.name}?`,
+        text: `New card payments on ${org.name}'s forms will be refused, and families will be sent to pay `
+            + `the office where a form offers it. Card payments already made stay in this Stripe account, `
+            + `and a card payment page opened in the last half hour can still be paid and recorded. Only `
+            + `your Manara contact can set this up again.`,
+        showCancelButton: true,
+        confirmButtonText: 'Stop card payments',
+        cancelButtonText: 'Keep them'
+    });
+
+    if (!confirmed.isConfirmed) return;
+
+    revokingId.value = org.id;
+    try {
+        await connectStore.revokeFormsCardFor(org.id);
+        revokeNotice.value = `Stopped. ${org.name}'s forms no longer take card payments through this account.`;
+    } catch (e) {
+        revokeError.value = envelopeMessage(e, `Could not stop card payments for ${org.name}. Please try again.`);
+    } finally {
+        revokingId.value = null;
+    }
+
+    // Read the list back from the server rather than removing the row by hand, so what is
+    // shown is what was saved. A failed re-read says so in the panel.
+    await loadStatus();
 };
 
 /**

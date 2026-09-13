@@ -1,5 +1,5 @@
 {
-  "$comment": "Burlington Islamic Sunday School (BISS) 2026-27 enrollment — DRAFT. Import with: php artisan form:import <biss_org_id> database/forms/biss-2026.json. Pricing is by number of children (settings.fee.countTiers). payment.online stays FALSE until BISS's own Stripe account can take charges; until then every family is recorded as paying the school office. The cleaning-Sunday question (section `cleaning`) draws its choices from the school calendar and requires exactly two: BEFORE switching the form on, turn the school_calendar capability on for the org and enter the 2026-27 school year and its no-school Sundays — with no open Sundays the required question refuses every enrollment. STILL TO ADD: (1) officeInstructions — the office's Zelle / Cash App / Venmo handles (owner to supply); (2) notifyEmails.",
+  "$comment": "Burlington Islamic Sunday School (BISS) 2026-27 enrollment. Import with: php artisan form:import <biss_org_id> database/forms/biss-2026.json. Pricing is by number of children (settings.fee.countTiers). Card payments (payment.online) go through BURLINGTON MASJID's Stripe account: BISS has no account of its own, and card stays unavailable (families see only the office route) until a SuperAdmin links BISS to its parent with PATCH /api/admin/masjids/<biss>/forms-card-account and FORMS_PAYMENT_RETURN_ORIGINS lists the BISS site. Card payers always cover the card fee; office payers never do. The cleaning-Sunday question (section `cleaning`) draws its choices from the school calendar and requires exactly two: BEFORE switching the form on, turn the school_calendar capability on for the org and enter the 2026-27 school year (2026-10-11 to 2027-05-30) and its seven no-school Sundays — with no open Sundays the required question refuses every enrollment.",
   "slug": "biss-2026",
   "name": "Burlington Islamic Sunday School — 2026–27 Enrollment",
   "description": "Sundays 11:00 AM – 2:00 PM · First day Sunday, October 11, 2026 · 1908 S Mebane St, Burlington NC",
@@ -9,7 +9,7 @@
   "capacity": null,
   "settings": {
     "submitButtonLabel": "Complete enrollment",
-    "intro": "<p><strong>Burlington Islamic Sunday School (BISS)</strong> meets every Sunday from <strong>11:00 AM to 2:00 PM</strong>, starting <strong>October 11, 2026</strong>, at Burlington Masjid, 1908 S Mebane St.</p><p>Each class covers <strong>Arabic</strong> (Al-Qaida An-Nooraniyya), <strong>Qur'an</strong> memorization and <strong>Islamic Studies</strong>. Children are placed in their class by age.</p><p><strong>Fees for the year:</strong> 1 child $100 · 2 children $170 · 3 children $250 · 4 children $300 · 5 or more children $350.</p><p>Pay the school office by Zelle, Cash App, Venmo, cash or check. The office will confirm each payment.</p>",
+    "intro": "<p><strong>Burlington Islamic Sunday School (BISS)</strong> meets every Sunday from <strong>11:00 AM to 2:00 PM</strong>, starting <strong>October 11, 2026</strong>, at Burlington Masjid, 1908 S Mebane St.</p><p>Each class covers <strong>Arabic</strong> (Al-Qaida An-Nooraniyya), <strong>Qur'an</strong> memorization and <strong>Islamic Studies</strong>. Children are placed in their class by age.</p><p><strong>Fees for the year:</strong> 1 child $100 · 2 children $170 · 3 children $250 · 4 children $300 · 5 or more children $350.</p><p>Pay by card online, or pay the school office by Zelle, Cash App, Venmo, cash or check. Card payments include the card processing fee and are processed by Burlington Masjid.</p>",
     "fee": {
       "currency": "USD",
       "perEntryOfSection": "children",
@@ -22,7 +22,7 @@
       ]
     },
     "payment": {
-      "online": false,
+      "online": true,
       "requireFeeCoverage": true,
       "officePayment": true,
       "officeInstructions": "Send your payment by Zelle, Cash App or Venmo to (336) 567-6340 — Burlington Islamic Sunday School. Please put your family name in the note. You can also pay the school office in cash or by check."

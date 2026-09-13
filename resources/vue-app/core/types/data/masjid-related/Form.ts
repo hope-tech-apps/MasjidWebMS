@@ -46,6 +46,24 @@ export const FORM_OFFICE_MARK_PAID_VIA: FormPaidVia[] = ['zelle', 'cashapp', 've
 /** payment_status on a row with a money leg (FormResponse::PAYMENT_STATUSES). */
 export type FormPaymentStatus = 'unpaid' | 'paid';
 
+/** What the webhook saw happen to a card payment later, in the holder's Stripe account (form_responses.charge_flag). */
+export type FormChargeFlag = 'refunded' | 'disputed';
+
+/**
+ * Take cash / Mark paid refused because the card page is on a Stripe account Manara can no
+ * longer check (a 409, FormResponsesController::settleByHand()). The server records it only
+ * once the page's expiry has passed AND the request says confirm_holder_checked.
+ */
+export type FormPageUnreachable = {
+    code: 'page_unreachable';
+    /** The server's own sentence. */
+    message: string;
+    /** The organisation whose Stripe dashboard to check. */
+    holder_name: string | null;
+    /** When the card page stopped taking payments (ISO 8601), or null when not known. */
+    expires_at: string | null;
+};
+
 /**
  * The list's payment filter (IndexFormResponsesRequest::PAYMENT_FILTERS). paid / unpaid /
  * settled read the way FormResponse::isSettled() does; the rest are a METHOD, so `online`
@@ -131,6 +149,23 @@ export type FormResponseRow = {
     paid_at?: string | null;
     /** An unpaid card registration whose Stripe page has been opened: it may still be paid. */
     card_page_opened?: boolean;
+
+    // Charged through another organisation (DECISIONS.md 2026-09-15). All absent from an
+    // API older than the link.
+    /**
+     * The organisation whose Stripe account the card page was opened on, when that is not
+     * this organisation (a program charging through its parent). Null for its own account.
+     */
+    charged_through?: FormResponsePerson | null;
+    /** The card payment's Stripe id, for finding it in the Stripe dashboard. */
+    stripe_payment_intent_id?: string | null;
+    /** Refunded or disputed in the holder's Stripe dashboard. payment_status is never changed by it. */
+    charge_flag?: FormChargeFlag | null;
+    charge_flagged_at?: string | null;
+    /** Minor units refunded so far in the holder's dashboard; only ever rises. Null when nothing was refunded. */
+    charge_refunded_minor?: number | null;
+    /** The card page is on an account Stripe no longer lets Manara check. True only when known. */
+    page_unreachable?: boolean;
     /** Whose cash this is. Never the code itself. */
     staff_code?: { id: number; holder_name: string; code_hint: string } | null;
     marked_paid_by?: FormResponsePerson | null;
@@ -264,8 +299,11 @@ export type FormResponseUpdatePayload = {
  *  - none:           no card payment page is on record for it.
  *  - unchecked:      a page is on record, but the organisation has no Stripe account on
  *                    record to ask about it. The server sends no message; the screen words it.
+ *  - unreachable:    the page is on a Stripe account that no longer lets Manara check it
+ *                    (charged through another organisation that disconnected). The cancel
+ *                    still stands.
  */
-export const FORM_CARD_PAGES = ['closed', 'paid_on_stripe', 'unconfirmed', 'none', 'unchecked'] as const;
+export const FORM_CARD_PAGES = ['closed', 'paid_on_stripe', 'unconfirmed', 'none', 'unchecked', 'unreachable'] as const;
 export type FormCardPage = typeof FORM_CARD_PAGES[number];
 
 /**

@@ -6,6 +6,7 @@ use App\Mail\DonationReceiptMail;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\DonationReceipt;
+use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Models\StripeWebhookEvent;
 use App\Services\Crm\DonorContactService;
@@ -18,6 +19,7 @@ use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Symfony\Component\HttpFoundation\Response;
@@ -266,9 +268,137 @@ class StripeWebhookController extends Controller
             'subscription_schedule.completed' => $isRegistration
                 ? $this->registrationPayments->handleScheduleCompleted($object, $account)
                 : null,
-            'account.updated' => $this->connect->syncAccountStatus($object),
+            // Unchanged for every account the platform was never disconnected from. One whose
+            // disconnection was recorded ignores an update Stripe created before it
+            // (syncAccountStatusUnlessStale()).
+            'account.updated' => $this->syncAccountStatusUnlessStale($object, $event),
+            // New for DECISIONS.md 2026-09-15, all three additive (each was `default`'s
+            // null before). A refund or dispute only FLAGS a form registration whose charge
+            // was pinned to the event's account; every other charge is acked as before.
+            'charge.refunded' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_REFUNDED),
+            'charge.dispute.created' => $this->formResponsePayments->handleChargeFlag($object, $account, FormResponse::CHARGE_FLAG_DISPUTED),
+            // An organisation disconnected the platform from its Standard account. No
+            // account.updated follows, so the stored flags would say "can take charges"
+            // forever: cleared here, so every gate that reads them fails closed.
+            'account.application.deauthorized' => $this->handleAccountDeauthorized($account, $event),
             default => null, // unhandled event types are acked and ignored.
         };
+    }
+
+    /**
+     * account.application.deauthorized (DECISIONS.md 2026-09-15): the connected account
+     * `event.account` no longer lets the platform act on it. Clear the charges and payouts
+     * flags of the live organisation(s) holding it, so FormChargeAccount (and
+     * canAcceptDonations()) stop offering card payments on an account nothing can be
+     * charged on. The account id itself is kept: pinned pages still name it.
+     *
+     * The disconnection is RECORDED (`masjids.stripe_deauthorized_at`, Stripe's time for
+     * the event), because Stripe does not order deliveries: an account.updated queued or
+     * retried from before the disconnect, landing after this, would otherwise turn the
+     * flags back on. Only an update Stripe created after it (a reconnect) does.
+     * FormResponseCheckoutService stamps the same column when Stripe refuses a pinned page
+     * this event never arrived for. Logged at warning.
+     */
+    private function handleAccountDeauthorized(?string $account, array $event): void
+    {
+        if (! is_string($account) || ! str_starts_with($account, 'acct_')) {
+            Log::warning('A Stripe deauthorization arrived without a connected account; nothing was changed.');
+
+            return;
+        }
+
+        $at = self::eventCreated($event) ?? now()->getTimestamp();
+        $holders = Masjid::query()->where('stripe_account_id', $account)->get();
+
+        foreach ($holders as $holder) {
+            // Never moved earlier: a later stamp (a refused page seen first) already covers this.
+            $stamp = max($at, self::deauthorizedAt($holder) ?? 0);
+
+            $holder->forceFill([
+                'stripe_charges_enabled' => false,
+                'stripe_payouts_enabled' => false,
+                'stripe_deauthorized_at' => Carbon::createFromTimestampUTC($stamp)->format('Y-m-d H:i:s'),
+            ])->save();
+        }
+
+        Log::warning('An organisation disconnected the platform from its Stripe account; its card payments are switched off.', [
+            'account' => $account,
+            'masjid_ids' => $holders->pluck('id')->all(),
+        ]);
+    }
+
+    /**
+     * account.updated, exactly as before (StripeConnectService::syncAccountStatus()) for
+     * every account with no recorded disconnection. For one with a recorded disconnection
+     * (handleAccountDeauthorized(), or a pinned form page Stripe refused):
+     *
+     *  - an update Stripe created at or before that moment is a late delivery from before
+     *    the disconnect: ignored, at warning, so the flags stay off;
+     *  - one created after it is the account connected again: the record is cleared and the
+     *    flags follow Stripe from then on.
+     */
+    private function syncAccountStatusUnlessStale(array $object, array $event): void
+    {
+        $accountId = $object['id'] ?? null;
+
+        if (is_string($accountId) && $accountId !== '') {
+            $marked = Masjid::query()
+                ->where('stripe_account_id', $accountId)
+                ->whereNotNull('stripe_deauthorized_at')
+                ->get();
+
+            if ($marked->isNotEmpty()) {
+                $since = (int) $marked->map(fn (Masjid $masjid) => self::deauthorizedAt($masjid) ?? 0)->max();
+                $created = self::eventCreated($event);
+
+                if ($created === null || $created <= $since) {
+                    Log::warning('A Stripe account update created before the platform was disconnected from that account arrived late; it was ignored, so its card payments stay off.', [
+                        'account' => $accountId,
+                        'event_created' => $created,
+                        'deauthorized_at' => $since,
+                        'charges_enabled' => (bool) ($object['charges_enabled'] ?? false),
+                        'masjid_ids' => $marked->pluck('id')->all(),
+                    ]);
+
+                    return;
+                }
+
+                foreach ($marked as $masjid) {
+                    $masjid->forceFill(['stripe_deauthorized_at' => null])->save();
+                }
+
+                Log::warning('A Stripe account the platform had been disconnected from sent an update created after the disconnection; its card payment flags follow Stripe again.', [
+                    'account' => $accountId,
+                    'event_created' => $created,
+                    'charges_enabled' => (bool) ($object['charges_enabled'] ?? false),
+                    'masjid_ids' => $marked->pluck('id')->all(),
+                ]);
+            }
+        }
+
+        $this->connect->syncAccountStatus($object);
+    }
+
+    /** Stripe's own time for an event (unix seconds), or null when it carries none. */
+    private static function eventCreated(array $event): ?int
+    {
+        $created = $event['created'] ?? null;
+
+        return is_int($created) || (is_string($created) && ctype_digit($created)) ? (int) $created : null;
+    }
+
+    /** The recorded disconnection of $masjid's account, as unix seconds (UTC), or null. */
+    private static function deauthorizedAt(Masjid $masjid): ?int
+    {
+        $value = $masjid->stripe_deauthorized_at;
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return $value instanceof \DateTimeInterface
+            ? $value->getTimestamp()
+            : Carbon::parse((string) $value, 'UTC')->getTimestamp();
     }
 
     private function handleCheckoutCompleted(array $session): void

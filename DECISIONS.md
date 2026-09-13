@@ -654,3 +654,85 @@ cleaning-Sunday sign-up whose choices follow them.
 **Rationale.** One authority and one lock keep the register, the forms and the
 three reads in agreement. Starting OFF means shipping the calendar changes
 nothing for any existing organisation.
+
+## 2026-09-15 — A child program org's FORM card payments may charge through its parent's Stripe account (narrows 2026-08-10's "every org is its own merchant of record")
+
+**Decision.** The 2026-08-10 doctrine stays the rule for every org and every money
+flow, with one exception. A SuperAdmin may link a child program org's FORM card
+payments to its parent's existing Connect account, when the child is a program of
+the parent's legal entity. For those payments the PARENT is the merchant of record.
+
+**Consent basis for BISS.** Burlington Islamic Sunday School is a program of
+Burlington Masjid (masjid 1). The owner decided on 2026-09-13: "We will use the
+Masjid Stripe information that is pre-existing already". The link's audit row
+carries a `consent_reference` naming that decision. Before the link is switched on
+in production, record here that BISS falls under Burlington Masjid's legal entity
+and EIN (or that Stripe confirmed it is acceptable), and that Burlington's account
+holder agreed to be merchant of record for BISS registrations, refunds and disputes
+included. Without that record, the link stays off.
+
+1. **The link.** `masjids.forms_card_via_masjid_id` (+ `_set_at`, `_set_by`), not
+   fillable, on the public directory denylist, no FK. It must equal the child's
+   `parent_id`. BISS keeps `stripe_account_id` NULL, so
+   `masjids_active_stripe_account_unique` still holds and no `acct_` id is copied.
+2. **Who changes it.**
+   - Only a SuperAdmin sets or removes it
+     (`PATCH /api/admin/masjids/{id}/forms-card-account`). The check is in the
+     FormRequest's `authorize()`, so a non-super admin gets a 403 with no
+     validation detail.
+   - Setting it is refused unless the holder is the parent, live, onboarded and
+     not itself linked, the child has no account of its own and nobody charges
+     through it, and the SuperAdmin types the holder's exact name plus a consent
+     reference.
+   - The holder's own admin (manage donations) may revoke it
+     (`DELETE .../masjids/{holder}/connect/forms-card-for/{child}`) but never set
+     it. That route sits outside the `crm` gate: the link charges whether or not
+     the holder's CRM is on, so withdrawing consent must not depend on it.
+   - Archiving (soft-deleting) the child keeps its link, as a soft delete is
+     reversible. Card is unavailable while it is archived. The holder still sees
+     the child and can revoke it, and a SuperAdmin can remove it.
+   - Force-deleting the holder removes it.
+   - Every change writes an append-only `masjid_forms_card_links_log` row in the
+     same transaction.
+3. **One resolver.** `FormChargeAccount::for()` answers every Forms card question
+   and reads the holder's account live. Any doubt means card unavailable, never a
+   different payee. `canAcceptDonations()` is unchanged, so a linked child still
+   takes no donations, lunch orders or registrations.
+4. **Pinned, matched strictly, disclosed by name.**
+   - Each response row pins the account its page was opened on.
+   - Linked sessions route on a random `form_charge_ref`, never the public uuid
+     (the return URLs still carry it; see Known limits).
+   - Inbound events must match the pin and the session or amount.
+   - A holder disconnect fails closed.
+   - Refunds and disputes flag the row.
+   - The child's admins see the holder's name and a ready flag, never its account
+     id. A linked org cannot start Connect onboarding (409).
+
+**Alternatives.**
+- **Copy Burlington's account id onto BISS.** Rejected: it breaks the unique index,
+  routes Burlington's donations to BISS, and turns on every BISS money flow.
+- **BISS onboards its own Stripe account.** The owner declined for Phase 1.
+- **A general account-sharing table for every money flow.** Rejected: donations,
+  lunch and registrations do not need it, and every one of those reads would have
+  to change.
+
+**Rationale.** BISS needs card payment for its registration form now, and
+Burlington already has a working account. A narrow, audited, SuperAdmin-only
+link, checked again on every read, keeps every other org and every other flow
+exactly as it was.
+
+**Known limits.**
+- Burlington's Stripe dashboard users see BISS payers' email addresses, amounts
+  and line items. Code cannot scope that.
+- Refunds are manual, in Burlington's dashboard. A refund or dispute flags the
+  BISS row but never changes its payment status.
+- The card fee gross-up uses the platform-wide rate, not Burlington's Stripe
+  pricing. Compare the smoke payment's real fee before `requireFeeCoverage` goes
+  live.
+- BISS disputes and volume count against Burlington's account, which also carries
+  its donations and lunch orders.
+- Stripe return URLs of a linked session carry the BISS row uuid, which
+  Burlington's Stripe users can read. With the BISS masjid id it reads the payment
+  status and a settled row's WhatsApp link, and reopens checkout on an unpaid row.
+  Closing it needs the public form page to recover the uuid from submit-time storage.
+  Accepted for launch: Burlington's Stripe users are the masjid's own staff.

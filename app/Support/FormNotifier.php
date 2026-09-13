@@ -7,6 +7,7 @@ use App\Mail\FormSubmissionReceipt;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Masjid;
+use App\Services\Stripe\FormChargeAccount;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -375,10 +376,19 @@ class FormNotifier
 
         $via = FormResponse::PAID_VIA_LABELS[$response->paid_via] ?? null;
 
+        // A card payment taken on another organisation's account (BISS through Burlington
+        // Masjid; DECISIONS.md 2026-09-15) says whose name the card statement carries.
+        $processedBy = '';
+
+        if ($response->payment_method === FormResponse::METHOD_ONLINE && $response->isChargedThroughAnotherOrg()) {
+            $holder = FormChargeAccount::chargedThrough($response);
+            $processedBy = $holder !== null ? " (processed by {$holder->name})" : '';
+        }
+
         return match ($response->payment_method) {
-            FormResponse::METHOD_ONLINE => $response->total_minor !== null
+            FormResponse::METHOD_ONLINE => ($response->total_minor !== null
                 ? 'Paid ' . self::money((int) $response->total_minor, $response->currency) . ' by card'
-                : 'Paid by card',
+                : 'Paid by card') . $processedBy,
             FormResponse::METHOD_CASH => 'Paid in cash',
             FormResponse::METHOD_EXTERNAL => $via !== null ? "Paid by {$via} (recorded by staff)" : 'Paid (recorded by staff)',
             default => null,

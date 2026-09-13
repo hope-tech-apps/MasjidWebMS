@@ -636,38 +636,45 @@
                     </div>
                     <div id="formPaymentOnlineHelp" class="form-text mb-2">
                         After submitting, people go to a Stripe page to pay by card. The money goes to this
-                        organisation's own Stripe account, so card payment works only once that account is
-                        connected. Card payment is in US dollars only.
+                        organisation's Stripe account (or, where Manara has set it up, its parent organisation's),
+                        so card payment works only once that account is ready. Card payment is in US dollars only.
                     </div>
                     <div v-if="fieldIssue('settings.payment.online')" class="invalid-feedback d-block mb-2">
                         {{ fieldIssue('settings.payment.online') }}
                     </div>
 
+                    <!-- Whether a card payment would be taken right now, and through whom
+                         (GET forms/card-account, the same answer the submit gets). -->
                     <div v-if="draft.settings.paymentOnline" class="mb-3" role="status">
-                        <div v-if="connectState === 'loading'" class="small text-muted">
+                        <div v-if="cardAccountState === 'loading'" class="small text-muted">
                             <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                            Checking this organisation's Stripe connection…
+                            Checking how this organisation takes card payments…
                         </div>
-                        <div v-else-if="connectState === 'ready'" class="small text-success">
-                            <i class="bi bi-check-circle me-1" aria-hidden="true"></i>
-                            This organisation's Stripe account is connected and can take card payments.
-                        </div>
-                        <div v-else-if="connectState === 'none'" class="alert alert-warning py-2 small mb-0">
-                            This organisation has not connected a Stripe account, so card payment will be refused.
-                            Connect it on the
-                            <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">Giving Dashboard (opens in a new tab)</a><span v-else>Giving Dashboard</span>.
-                        </div>
-                        <div v-else-if="connectState === 'unfinished'" class="alert alert-warning py-2 small mb-0">
-                            This organisation's Stripe setup is not finished, so card payment will be refused until it
-                            is. Finish it on the
-                            <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">Giving Dashboard (opens in a new tab)</a><span v-else>Giving Dashboard</span>.
-                        </div>
-                        <div v-else-if="connectState === 'forbidden'" class="small text-muted">
-                            This account cannot see whether Stripe is connected. Ask an admin who manages donations
-                            to check before switching this on.
-                        </div>
-                        <div v-else-if="connectState === 'failed'" class="small text-muted">
-                            Could not check the Stripe connection just now. Card payment works only once it is connected.
+                        <template v-else-if="cardAccountState === 'loaded' && cardAccount">
+                            <div v-if="cardAccount.state === 'own'" class="small text-success">
+                                <i class="bi bi-check-circle me-1" aria-hidden="true"></i>
+                                This organisation's Stripe account is connected and can take card payments.
+                            </div>
+                            <div v-else-if="cardAccount.state === 'linked' && cardAccount.holder" class="small text-success">
+                                <i class="bi bi-check-circle me-1" aria-hidden="true"></i>
+                                Card payments go through {{ cardAccount.holder.name }}'s Stripe account, and it can take them.
+                                The money lands in that account, card statements show {{ cardAccount.holder.name }}, and refunds
+                                are made in {{ cardAccount.holder.name }}'s Stripe dashboard.
+                            </div>
+                            <div v-else-if="cardAccount.holder || formsCardProblemIsLink(cardAccount.problem)" class="alert alert-warning py-2 small mb-0">
+                                Card payments for this organisation go through {{ cardHolderName }}, but card payment
+                                will be refused right now<template v-if="cardProblemText">, because {{ cardProblemText }}</template>.
+                                Ask {{ cardHolderName }} or your Manara contact to fix it.
+                            </div>
+                            <div v-else class="alert alert-warning py-2 small mb-0">
+                                Card payment will be refused<template v-if="cardProblemText">, because {{ cardProblemText }}</template>.
+                                Connect or finish this organisation's Stripe account on the
+                                <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">Giving Dashboard (opens in a new tab)</a><span v-else>Giving Dashboard</span>.
+                            </div>
+                        </template>
+                        <div v-else-if="cardAccountState === 'failed'" class="small text-muted">
+                            Could not check just now whether this organisation can take card payments. Card payment works
+                            only once its Stripe account is ready.
                         </div>
                     </div>
 
@@ -1044,7 +1051,8 @@ import {
 import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
-import { isForbidden, useConnectStore } from '@/stores/masjid/connectStore';
+import { useConnectStore } from '@/stores/masjid/connectStore';
+import { FormsCardAccount, formsCardProblemIsLink, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverFieldErrors, serverMessage } from '@/core/helpers/serverMessage';
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -2550,15 +2558,20 @@ const countTierRange = (index: number): string => {
     return `Applies to ${min} to ${upTo} entries`;
 };
 
-// ------------------------------------------------------------ Stripe connection
-// Card payment goes to the organisation's own connected Stripe account, so the Payment
-// card says whether it is connected. /connect/status is behind the CRM gate and
-// `manage donations`, so a 403 means "this account cannot see it", not "not connected".
+// ------------------------------------------------------------ Card payment account
+// Card payment goes to the organisation's own Stripe account, or through its parent's when
+// a SuperAdmin has linked them (DECISIONS.md 2026-09-15). GET forms/card-account answers
+// with the resolver the submit uses, sits in the forms route group (no `manage donations`
+// needed, unlike /connect/status), and never carries an account id.
 
 const connectStore = useConnectStore();
 const router = useRouter();
 
-const connectState = ref<'idle' | 'loading' | 'ready' | 'unfinished' | 'none' | 'forbidden' | 'failed'>('idle');
+const cardAccountState = ref<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
+const cardAccount = ref<FormsCardAccount | null>(null);
+const cardProblemText = computed(() => formsCardProblemText(cardAccount.value?.problem));
+const cardHolderName = computed(() => cardAccount.value?.holder?.name || 'another organisation');
+const CARD_ACCOUNT_STATES = ['own', 'linked', 'unavailable'];
 
 const donationsHref = computed<string | null>(() => {
     try {
@@ -2568,24 +2581,27 @@ const donationsHref = computed<string | null>(() => {
     }
 });
 
-const loadConnectState = async () => {
-    if (connectState.value !== 'idle') return;
+const loadCardAccount = async () => {
+    if (cardAccountState.value !== 'idle') return;
 
-    connectState.value = 'loading';
+    cardAccountState.value = 'loading';
 
     try {
-        await connectStore.fetchStatus();
-        const status = connectStore.connectStatus;
+        const account = await connectStore.fetchFormsCardAccount();
+        // A state this screen does not know is not guessed at: it says it could not check.
+        if (!CARD_ACCOUNT_STATES.includes(account.state)) throw new Error('Unknown card account state.');
 
-        connectState.value = !status?.stripe_account_id ? 'none' : (status.charges_enabled ? 'ready' : 'unfinished');
+        cardAccount.value = account;
+        cardAccountState.value = 'loaded';
     } catch (error) {
-        connectState.value = isForbidden(error) ? 'forbidden' : 'failed';
+        cardAccount.value = null;
+        cardAccountState.value = 'failed';
     }
 };
 
 // Only asked once card payment is on (or loaded on): most forms never need it.
 watch(() => draft.value.settings.paymentOnline, (online) => {
-    if (online) loadConnectState();
+    if (online) loadCardAccount();
 }, { immediate: true });
 </script>
 

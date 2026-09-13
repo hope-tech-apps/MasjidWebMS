@@ -9,6 +9,7 @@ use App\Models\Form;
 use App\Models\Masjid;
 use App\Models\MasjidAbout;
 use App\Models\Section;
+use App\Services\Stripe\FormChargeAccount;
 
 /**
  * Phase 1 content-unification.
@@ -256,7 +257,7 @@ class SectionContentBinder
         $fee = $form->feeRule();
         $byCount = $form->pricesByCount();
 
-        return [
+        $payment = [
             'online' => $online,
             'available' => $form->canTakeCardNow(),
             'allowFeeCoverage' => $form->allowsFeeCoverage(),
@@ -276,6 +277,20 @@ class SectionContentBinder
                 ], $fee['countTiers'])
                 : null,
         ];
+
+        // Card payments taken on another organisation's account (BISS through Burlington
+        // Masjid; DECISIONS.md 2026-09-15): the name the card statement will carry, so the
+        // page can say so. Added ONLY while that is where a card would be charged; every
+        // other form publishes exactly the keys it always did. A name, never an account id.
+        if ($online) {
+            $charge = FormChargeAccount::for($form->masjid);
+
+            if ($charge !== null && $charge->linked) {
+                $payment['cardChargedBy'] = (string) $charge->holder->name;
+            }
+        }
+
+        return $payment;
     }
 
     /**

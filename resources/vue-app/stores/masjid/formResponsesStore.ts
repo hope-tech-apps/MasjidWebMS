@@ -3,7 +3,7 @@ import { ref } from "vue"
 import { useMasjidStore } from "../masjidStore";
 import { useAuthStore } from "../authStore";
 import ApiService from "@/core/services/ApiService";
-import { AxiosResponse } from "axios";
+import { AxiosResponse, isAxiosError } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import {
     FORM_CARD_PAGES,
@@ -11,6 +11,7 @@ import {
     FormInsights,
     FormInsightsMeta,
     FormOption,
+    FormPageUnreachable,
     FormPaidVia,
     FormResponseActionResult,
     FormResponseDetail,
@@ -35,9 +36,31 @@ import {
  *
  * The door (DECISIONS.md 2026-09-11): collect / uncollect, take-cash and
  * mark-paid-external each answer with the row as it now stands. Their POSTs carry
- * FormData, the encoding PHP parses. Only mark-paid-external's ever holds anything: `via`,
- * how the money came, which an office registration must send.
+ * FormData, the encoding PHP parses. Mark-paid-external's may hold `via`, how the money
+ * came, which an office registration must send; take-cash's and mark-paid-external's hold
+ * `confirm_holder_checked` only on the retry after a 409 page_unreachable.
  */
+/**
+ * A take-cash or mark-paid refusal saying the card page is on a Stripe account Manara can no
+ * longer check: HTTP 409 with `code: 'page_unreachable'`. Anything else is null, and the
+ * caller shows it as any other refusal.
+ */
+export function pageUnreachable(error: unknown): FormPageUnreachable | null {
+    if (!isAxiosError(error) || error.response?.status !== 409) return null;
+
+    const body: any = error.response?.data;
+    if (!body || typeof body !== 'object' || body.code !== 'page_unreachable') return null;
+
+    return {
+        code: 'page_unreachable',
+        message: typeof body.message === 'string' && body.message.trim()
+            ? body.message
+            : 'The card payment page for this registration can no longer be checked, so nothing was recorded.',
+        holder_name: typeof body.holder_name === 'string' && body.holder_name.trim() ? body.holder_name : null,
+        expires_at: typeof body.expires_at === 'string' && body.expires_at ? body.expires_at : null
+    };
+}
+
 export const useFormResponsesStore = defineStore('formResponsesStore', () => {
 
     // State
@@ -359,13 +382,24 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     /**
      * Cash taken at the table for an unpaid registration. The server closes any open card
      * payment page first, and records nothing if Stripe says the payer has just paid.
+     *
+     * `confirmHolderChecked` is sent only after a 409 page_unreachable (pageUnreachable()),
+     * once the admin has ticked that they checked the holder's Stripe dashboard. It is never
+     * sent otherwise, so every other take-cash posts exactly what it did before.
      */
-    async function takeCash(formId: number | string, responseId: number | string): Promise<FormResponseActionResult> {
+    async function takeCash(
+        formId: number | string,
+        responseId: number | string,
+        confirmHolderChecked: boolean = false
+    ): Promise<FormResponseActionResult> {
         const id = requireMasjidId();
+
+        const body = new FormData();
+        if (confirmHolderChecked) body.append('confirm_holder_checked', '1');
 
         const res: AxiosResponse = await ApiService.post(
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/take-cash`,
-            new FormData()
+            body
         );
 
         return actionResult(res, 'Could not record the cash.');
@@ -382,12 +416,15 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     async function markPaidExternal(
         formId: number | string,
         responseId: number | string,
-        via: FormPaidVia | null = null
+        via: FormPaidVia | null = null,
+        confirmHolderChecked: boolean = false
     ): Promise<FormResponseActionResult> {
         const id = requireMasjidId();
 
         const body = new FormData();
         if (via) body.append('via', via);
+        // As on takeCash(): only on the retry after a 409 page_unreachable.
+        if (confirmHolderChecked) body.append('confirm_holder_checked', '1');
 
         const res: AxiosResponse = await ApiService.post(
             `/api/admin/masjids/${id}/forms/${formId}/responses/${responseId}/mark-paid-external`,
@@ -412,6 +449,7 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
     }
 
     return {
+        pageUnreachable,
         rosterPaginated,
         rosterMeta,
         fetchRoster,

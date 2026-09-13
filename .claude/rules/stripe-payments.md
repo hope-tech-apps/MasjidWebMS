@@ -23,6 +23,11 @@ holds funds and who bears liability.
   receives ONLY its application fee; the org bears its own refunds/disputes.
 - **Never** use destination charges, `transfer_data`, `on_behalf_of` escrow, or
   hold platform-side balances. The platform must never be the merchant of record.
+- **One narrowing (DECISIONS.md 2026-09-15):** a SuperAdmin may point a child
+  program org's FORM card payments at its parent's account. It is still a direct
+  charge on one connected account, and the PARENT is the merchant of record for
+  them. See "Forms may charge through a parent's account" below; nothing else
+  shares an account.
 - **PCI SAQ A**: card data is entered on Stripe's hosted Checkout page. This app
   never sees a PAN — never build a custom card form or handle raw card data.
 - `application_fee_amount` is sent ONLY when > 0 (Stripe rejects a zero fee).
@@ -279,6 +284,73 @@ BISS Sunday School's registration adds two switches to a form's single payment:
     other.
   - The replay fingerprint adds `pay_with: office` for office rows only, so card
     fingerprints written before the deploy still match their replays.
+
+## Forms may charge through a parent's account (DECISIONS.md 2026-09-15)
+
+A narrow exception to "every org is its own merchant of record", for FORM card
+payments only. BISS (a school org, `parent_id` = Burlington Masjid) takes form card
+payments on Burlington's existing Connect account and keeps its own
+`stripe_account_id` NULL, so `masjids_active_stripe_account_unique` still holds.
+Donations, lunch orders and registrations are untouched for every org, and
+`Masjid::canAcceptDonations()` is NOT changed: a linked child still cannot take a
+donation.
+
+- **The link** is `masjids.forms_card_via_masjid_id` (+ `_set_at`, `_set_by`). Not
+  fillable, on `PUBLIC_DIRECTORY_DENYLIST`, no FK. Its only writers are
+  `FormsCardAccountController` and the `Masjid` force-delete hook, and every write is
+  one transaction with a `masjid_forms_card_links_log` row (append-only: `link`,
+  `unlink`, `revoke`, the actor, the typed holder name, the consent reference, the
+  last four of the holder's `acct_`).
+  - **Set** only by a SuperAdmin: `PATCH .../masjids/{id}/forms-card-account`. The
+    check is `SetFormsCardAccountRequest::authorize()`, so a non-super gets a 403 with
+    no validation keys. Refused (422, `code`) unless the holder is the child's parent,
+    live, onboarded and not itself linked, the child has no account of its own and
+    no one charges through it, and the typed name equals the holder's name.
+  - **Revoked** by the holder's admin (`permission:manage donations`, tenant-bound to
+    the holder): `DELETE .../masjids/{holder}/connect/forms-card-for/{child}`.
+    Deliberately NOT behind `crm`: consent withdrawal must work while the holder's
+    CRM is off. Archived children stay listed in `forms_card_for` and stay
+    revocable, because a restore brings the link back.
+  - The typed holder name is compared with surrounding whitespace trimmed on both
+    sides (TrimStrings has already trimmed the input); case and inner spacing must
+    match.
+  - **Onboarding** refuses a linked org (409 in the controller, `LogicException` in
+    `ensureConnectedAccount`).
+- **One resolver** answers every Forms card question:
+  `App\Services\Stripe\FormChargeAccount::for($org)`. A linked org gets the holder's
+  account, read LIVE, only while the link equals `parent_id`, the holder is live, not
+  itself linked, and has an `acct_` account with charges enabled. Anything else is
+  null: card is unavailable, never a different payee. Never copy an account id or a
+  charges flag onto the child.
+- **The account is pinned on the row** (`form_responses.charge_account_id`, hidden,
+  never cleared) when a page opens, before the Stripe call. Retrieve, expire, cancel,
+  take cash and the webhook use the pin, never a fresh lookup.
+- **Linked sessions keep the public handle out of metadata.** Their metadata is
+  `form_charge_ref` (a random per-row key) and `form_id`: no `form_response_uuid`, no
+  `client_reference_id`, no `masjid_id`, and Adaptive Pricing is off, because the
+  holder's Stripe users can read the session. The statement descriptor suffix names
+  the child. KNOWN EXCEPTION: `success_url` / `cancel_url` still carry the row uuid
+  (`FormPaymentReturn::urls`). With the child's masjid id it reads the payment status,
+  a settled row's WhatsApp link, and reopens checkout on an unpaid row, until the
+  public form page keeps the uuid itself.
+- **Stripe refusing a pinned account fails closed.** A 403 / `account_invalid` (never a
+  401, which is the platform's own key) switches off the live org holding exactly that
+  account and stamps `masjids.stripe_deauthorized_at`; while stamped, an
+  `account.updated` created at or before the stamp is ignored.
+- **Refunds and disputes flag only the payment recorded on a paid pinned row**
+  (payment intent id matched with `hash_equals`); `charge_refunded_minor` records the
+  amount refunded so far and a dispute outranks a refund.
+- **Inbound, a pinned row is matched strictly**: `hash_equals(pin, event.account)`
+  plus the session id or the amount and currency. A mismatch records nothing, and a
+  pinned row never falls through to the unpinned path. Unpinned rows (every org that
+  is not linked) keep today's path and warning texts.
+- **The admin surfaces never show the holder's account id to the child.**
+  `connect/status` adds `forms_card_via` / `forms_card_for` (names and a ready flag);
+  `forms/card-account` answers `own | linked | unavailable`.
+- The holder disconnecting the platform clears its charges flags
+  (`account.application.deauthorized`), so the resolver fails closed. Refunds and
+  disputes on a linked charge only FLAG the row (`charge_flag`); refunds are done by
+  hand in the holder's dashboard.
 
 ## Lunch orders marked paid by hand (DECISIONS.md 2026-09-11)
 

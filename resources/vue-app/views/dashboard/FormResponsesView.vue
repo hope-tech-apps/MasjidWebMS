@@ -474,6 +474,13 @@
                                         <div v-if="cardPageStarted(response)" class="small text-warning-emphasis">
                                             <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>Card payment started
                                         </div>
+                                        <!-- Refunded or disputed in the holder's Stripe dashboard: the row still reads paid. -->
+                                        <div v-if="response.charge_flag" class="mt-1">
+                                            <span class="badge" :class="chargeFlagBadgeClass(response)">{{ chargeFlagLabel(response) }}</span>
+                                        </div>
+                                        <div v-if="response.page_unreachable && response.payment_state === 'unpaid'" class="small text-danger-emphasis">
+                                            <i class="bi bi-exclamation-octagon me-1" aria-hidden="true"></i>Card page may no longer be checkable
+                                        </div>
                                         <div v-if="canTakePayment(response)" class="d-flex flex-wrap gap-1 mt-1">
                                             <button
                                                 type="button"
@@ -1064,6 +1071,13 @@
                                     <dd class="col-sm-8">
                                         <span class="badge" :class="paymentBadgeClass(selectedResponse)">{{ paymentLabel(selectedResponse) }}</span>
                                         <span v-if="paymentDetail(selectedResponse)" class="small text-muted ms-1">{{ paymentDetail(selectedResponse) }}</span>
+                                        <span v-if="selectedResponse.charge_flag" class="badge ms-1" :class="chargeFlagBadgeClass(selectedResponse)">{{ chargeFlagLabel(selectedResponse) }}</span>
+                                        <div v-if="selectedResponse.charge_flag" class="small text-danger-emphasis mt-1">
+                                            <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ chargeFlagExplanation(selectedResponse) }}
+                                        </div>
+                                        <div v-if="selectedResponse.page_unreachable && selectedResponse.payment_state === 'unpaid'" class="small text-danger-emphasis mt-1">
+                                            <i class="bi bi-exclamation-octagon me-1" aria-hidden="true"></i>{{ unreachableNote(selectedResponse) }}
+                                        </div>
                                         <div v-if="cardPageStarted(selectedResponse)" class="small text-warning-emphasis mt-1">
                                             <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
                                             <template v-if="!isCancelled(selectedResponse)">
@@ -1086,6 +1100,32 @@
                                     <template v-if="isOfficeRow(selectedResponse)">
                                         <dt class="col-sm-4 text-muted fw-normal small">Chose to pay</dt>
                                         <dd class="col-sm-8">The office, not by card</dd>
+                                    </template>
+
+                                    <!-- A program charging through its parent's Stripe account (DECISIONS.md 2026-09-15). -->
+                                    <template v-if="selectedResponse.charged_through?.name">
+                                        <dt class="col-sm-4 text-muted fw-normal small">Charged through</dt>
+                                        <dd class="col-sm-8">
+                                            {{ selectedResponse.charged_through.name }}
+                                            <div class="small text-muted">
+                                                The card payment page was opened on {{ selectedResponse.charged_through.name }}'s Stripe
+                                                account. Refunds and disputes for it are handled in that Stripe dashboard.
+                                            </div>
+                                        </dd>
+                                    </template>
+
+                                    <!-- Only for a row charged through another organisation: the serializer sends
+                                         the id for every row, and screens of organisations that are not linked stay
+                                         as they were. -->
+                                    <template v-if="selectedResponse.stripe_payment_intent_id && selectedResponse.charged_through?.name">
+                                        <dt class="col-sm-4 text-muted fw-normal small">Card payment id</dt>
+                                        <dd class="col-sm-8">
+                                            <code class="user-select-all text-break">{{ selectedResponse.stripe_payment_intent_id }}</code>
+                                            <div class="small text-muted">
+                                                Search for this id in {{ selectedResponse.charged_through.name }}'s
+                                                Stripe dashboard to find the payment, for example to refund it.
+                                            </div>
+                                        </dd>
                                     </template>
 
                                     <template v-if="selectedResponse.payment_state === 'paid' && selectedResponse.paid_via">
@@ -1388,6 +1428,104 @@
             </div>
         </Teleport>
 
+        <!-- Take cash / Mark paid refused with 409 page_unreachable: the card page is on a Stripe
+             account Manara can no longer check (charged through another organisation that has
+             since disconnected). Nothing is recorded until the page's expiry has passed AND the
+             admin says they checked that Stripe dashboard. It opens over the details, so it sits
+             above them. -->
+        <Teleport to="body">
+            <div
+                v-if="unreachable.row && unreachable.info"
+                ref="unreachableRoot"
+                class="modal unreachable-modal fade show d-block"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="unreachable-title"
+                aria-describedby="unreachable-body"
+                tabindex="-1"
+                style="background: rgba(0,0,0,0.5);"
+                @click.self="closeUnreachable"
+                @keydown="onUnreachableKeydown"
+            >
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 id="unreachable-title" class="modal-title">
+                                The card payment page can't be checked
+                                <span class="text-muted fw-normal small">#{{ unreachable.row.id }} {{ personName(unreachable.row) }}</span>
+                            </h5>
+                            <button
+                                type="button"
+                                class="btn-close"
+                                aria-label="Close without recording a payment"
+                                :disabled="unreachable.saving"
+                                @click="closeUnreachable"
+                            ></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="unreachable-body">
+                                <p class="mb-2"><strong>Nothing was recorded.</strong> {{ unreachable.info.message }}</p>
+                                <p class="mb-2">
+                                    This family was sent to a card payment page on {{ unreachableDashboard }}'s account, and Stripe
+                                    no longer lets Manara look at that account. So Manara cannot tell whether they paid by card.
+                                </p>
+                                <p v-if="unreachableExpiresLabel && !unreachableExpired" class="alert alert-warning py-2 small mb-2">
+                                    That page can still take a card payment until {{ unreachableExpiresLabel }}. Wait until then,
+                                    check {{ unreachableDashboard }}, and try again.
+                                </p>
+                                <p v-else-if="unreachableExpiresLabel" class="mb-2">
+                                    The page stopped taking card payments at {{ unreachableExpiresLabel }}.
+                                </p>
+                                <p v-else class="mb-2">
+                                    When the page stopped taking card payments is not known.
+                                </p>
+                                <p class="small text-muted mb-3">
+                                    In {{ unreachableDashboard }}, look under Payments for
+                                    <template v-if="unreachable.row.respondent_email">{{ unreachable.row.respondent_email }}</template><template v-else>this family</template>
+                                    and {{ owedLabel(unreachableLive ?? unreachable.row) }}<template v-if="unreachable.row.submitted_at">, around {{ formatDateTime(unreachable.row.submitted_at) }}</template>.
+                                    If they did pay by card, do not record a second payment here.
+                                </p>
+                            </div>
+                            <div class="form-check">
+                                <input
+                                    id="unreachable-checked"
+                                    v-model="unreachable.checked"
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    :disabled="unreachable.saving || !unreachableExpired || !!unreachableStale"
+                                />
+                                <label class="form-check-label" for="unreachable-checked">
+                                    I checked {{ unreachableDashboard }} and this family did not pay by card
+                                </label>
+                            </div>
+                            <div v-if="unreachableStale && !unreachable.error" class="alert alert-info py-2 small mt-2 mb-0" role="status">
+                                {{ unreachableStale }}
+                            </div>
+                            <div v-if="unreachable.error" class="alert alert-danger py-2 small mt-2 mb-0" role="alert">
+                                {{ unreachable.error }}
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" :disabled="unreachable.saving" @click="closeUnreachable">
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="btn btn-success"
+                                :disabled="!unreachable.checked || !unreachableExpired || unreachable.saving || busyRowId !== null || !!unreachableStale"
+                                @click="confirmUnreachable"
+                            >
+                                <span v-if="unreachable.saving" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                                <template v-if="unreachable.saving">Saving…</template>
+                                <template v-else-if="unreachable.kind === 'cash'">Record {{ owedLabel(unreachableLive ?? unreachable.row) }} in cash</template>
+                                <template v-else>Mark paid (external)</template>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
         <FormStaffCodesModal
             v-if="selectedFormId"
             :show="showStaffCodes"
@@ -1400,7 +1538,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed, watch, nextTick } from 'vue';
+import { ref, onBeforeMount, onBeforeUnmount, computed, watch, nextTick } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
@@ -1427,12 +1565,13 @@ import {
     FormRosterColumn,
     FormRosterMeta,
     FormRosterSummary,
+    FormPageUnreachable,
     FormPaidVia,
     FORM_OFFICE_MARK_PAID_VIA,
     FORM_PAID_VIA_LABELS,
     formatMinorAmount
 } from '@/core/types/data/masjid-related/Form';
-import { useFormResponsesStore } from '@/stores/masjid/formResponsesStore';
+import { pageUnreachable, useFormResponsesStore } from '@/stores/masjid/formResponsesStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { serverMessage } from '@/core/helpers/serverMessage';
@@ -2087,6 +2226,58 @@ const paymentBadgeClass = (row: FormResponseRow): string => {
  */
 const cardPageStarted = (row: FormResponseRow): boolean => row.payment_state === 'unpaid' && row.card_page_opened === true;
 
+// --- Charged through another organisation (DECISIONS.md 2026-09-15) ----------
+
+/** "{holder}'s Stripe dashboard" for a row charged through another organisation, else "the Stripe dashboard". */
+const chargeDashboard = (row: FormResponseRow): string =>
+    row.charged_through?.name ? `${row.charged_through.name}'s Stripe dashboard` : 'the Stripe dashboard';
+
+/**
+ * The badge: "Refunded at Burlington Masjid" / "Partly refunded $10.44 at Burlington Masjid" /
+ * "Disputed at Burlington Masjid", or "… in Stripe" for its own account. A refund smaller than
+ * what the family paid (charge_refunded_minor < total_minor) is never shown as a full refund.
+ */
+const chargeFlagLabel = (row: FormResponseRow): string => {
+    const where = row.charged_through?.name ? `at ${row.charged_through.name}` : 'in Stripe';
+    if (row.charge_flag === 'disputed') return `Disputed ${where}`;
+
+    const refunded = row.charge_refunded_minor;
+    const partial = typeof refunded === 'number' && typeof row.total_minor === 'number' && refunded < row.total_minor;
+    return partial ? `Partly refunded ${money(refunded, row.currency)} ${where}` : `Refunded ${where}`;
+};
+
+const chargeFlagBadgeClass = (row: FormResponseRow): string =>
+    row.charge_flag === 'disputed' ? 'bg-danger-subtle text-danger-emphasis' : 'bg-secondary-subtle text-secondary-emphasis';
+
+/**
+ * What the flag means for the admin. The webhook sets it and never changes payment_status
+ * (a refund may be partial, and whether the registration stands is the organisation's call),
+ * so the row still reads paid and the screen says so.
+ */
+const chargeFlagExplanation = (row: FormResponseRow): string => {
+    const when = row.charge_flagged_at ? ` on ${formatDateTime(row.charge_flagged_at)}` : '';
+    const standing = isCancelled(row)
+        ? 'This registration is already cancelled.'
+        : 'This registration still reads as paid here: cancel it if it should not stand.';
+
+    if (row.charge_flag === 'disputed') {
+        return `The family disputed this card payment with their bank${when}. The dispute is answered in ${chargeDashboard(row)}. ${standing}`;
+    }
+
+    return `A refund was made on this card payment in ${chargeDashboard(row)}${when}. ${standing}`;
+};
+
+/**
+ * The line on an unpaid row the server flags `page_unreachable`. Worded as a possibility,
+ * never a promise: the flag means no live organisation holds the pinned account, while the
+ * 409 that opens the check dialog comes from Stripe refusing the call. A holder archived
+ * with its account still connected is flagged yet closes normally, and a disconnect Stripe
+ * reported is not flagged yet answers 409 (FormResponsesController::knownUnreachable).
+ */
+const unreachableNote = (row: FormResponseRow): string =>
+    `Its card payment page was opened on a Stripe account${row.charged_through?.name ? ` (${row.charged_through.name}'s)` : ''} `
+    + `that Stripe may no longer let Manara check. Take cash and Mark paid may ask you to check ${chargeDashboard(row)} first.`;
+
 /** What an unpaid row owes: the cents snapshot, else the legacy dollar amount. */
 const owedLabel = (row: FormResponseRow): string =>
     row.amount_due_minor !== null && row.amount_due_minor !== undefined
@@ -2139,7 +2330,9 @@ const runRowAction = async (
     row: FormResponseRow,
     action: (formId: number) => Promise<FormResponseActionResult>,
     failureTitle: string,
-    fallback: string
+    fallback: string,
+    /** Take cash and Mark paid: a 409 page_unreachable opens its own dialog instead of an error. */
+    onUnreachable: ((info: FormPageUnreachable) => void) | null = null
 ): Promise<FormResponseActionResult | null> => {
     if (!selectedFormId.value || busyRowId.value !== null) return null;
 
@@ -2151,13 +2344,21 @@ const runRowAction = async (
         await keepFocusInDetail();
         return result;
     } catch (error: any) {
-        // A refusal (422) or an unconfirmed Stripe close (503) usually means the row moved
-        // since the list was read: paid by card a minute ago, cancelled at the next table.
-        // Show it as it now stands first, so "already paid by card" never sits beside
-        // "Unpaid" and a Take cash button.
+        // A refusal (422), a page that cannot be checked (409) or an unconfirmed Stripe close
+        // (503) usually means the row moved since the list was read: paid by card a minute
+        // ago, cancelled at the next table. Show it as it now stands first, so "already paid
+        // by card" never sits beside "Unpaid" and a Take cash button.
         const status = error?.response?.status;
-        if (status === 422 || status === 503) await refreshRow(row.id);
+        if (status === 422 || status === 409 || status === 503) await refreshRow(row.id);
         await keepFocusInDetail();
+
+        // The card page is on a Stripe account Manara can no longer check: the admin is asked
+        // to check it themselves, in its own dialog, rather than shown a dead end.
+        const unreachableInfo = onUnreachable ? pageUnreachable(error) : null;
+        if (unreachableInfo && onUnreachable) {
+            onUnreachable(unreachableInfo);
+            return null;
+        }
 
         Swal.fire({ icon: 'error', title: failureTitle, text: serverMessage(error, fallback) });
         return null;
@@ -2274,7 +2475,8 @@ const takeCash = async (row: FormResponseRow) => {
         row,
         formId => formResponsesStore.takeCash(formId, row.id),
         'Nothing was recorded',
-        'Could not record the cash.'
+        'Could not record the cash.',
+        info => openUnreachable(row, 'cash', null, info)
     );
 
     if (result) {
@@ -2301,7 +2503,8 @@ const markPaidExternal = async (row: FormResponseRow) => {
         row,
         formId => formResponsesStore.markPaidExternal(formId, row.id),
         'Nothing was recorded',
-        'Could not mark this registration paid.'
+        'Could not mark this registration paid.',
+        info => openUnreachable(row, 'external', null, info)
     );
 
     if (result) {
@@ -2441,6 +2644,172 @@ const confirmOfficePaid = async () => {
     }
 };
 
+// --- A card page Manara can no longer check (409 page_unreachable) -------------
+//
+// The page was opened on another organisation's Stripe account (a program charging through
+// its parent) and that account no longer lets Manara look (DECISIONS.md 2026-09-15, D9).
+// Take cash and Mark paid (external) are refused with 409 until the page's expiry has passed
+// AND the request carries confirm_holder_checked. The dialog asks for exactly that, in words.
+
+type SettleKind = 'cash' | 'external';
+
+type UnreachableState = {
+    row: FormResponseRow | null;
+    kind: SettleKind;
+    /** Sent with Mark paid, as the first press sent it (null for every non-office row). */
+    via: FormPaidVia | null;
+    info: FormPageUnreachable | null;
+    checked: boolean;
+    error: string;
+    saving: boolean;
+};
+
+const blankUnreachable = (): UnreachableState => ({
+    row: null, kind: 'cash', via: null, info: null, checked: false, error: '', saving: false
+});
+
+const unreachable = ref<UnreachableState>(blankUnreachable());
+const unreachableRoot = ref<HTMLElement | null>(null);
+let unreachableReturnFocus: HTMLElement | null = null;
+
+// A clock, so the dialog notices the page's expiry passing while it is open.
+const unreachableNow = ref(Date.now());
+let unreachableClock: ReturnType<typeof setInterval> | null = null;
+
+const stopUnreachableClock = () => {
+    if (unreachableClock) {
+        clearInterval(unreachableClock);
+        unreachableClock = null;
+    }
+};
+
+onBeforeUnmount(stopUnreachableClock);
+
+/** The registration as the screen now has it, so a re-read while the dialog is open reaches it. */
+const unreachableLive = computed<FormResponseRow | null>(() => {
+    const opened = unreachable.value.row;
+    if (!opened) return null;
+    if (selectedResponse.value?.id === opened.id) return selectedResponse.value;
+    return responses.value.find(candidate => candidate.id === opened.id) ?? opened;
+});
+
+/** "Burlington Masjid's Stripe dashboard": the server's holder name first, then the row's. */
+const unreachableDashboard = computed<string>(() => {
+    const holder = unreachable.value.info?.holder_name ?? unreachableLive.value?.charged_through?.name ?? null;
+    return holder ? `${holder}'s Stripe dashboard` : 'the Stripe dashboard the card page was opened on';
+});
+
+const unreachableExpiresAt = computed<number | null>(() => {
+    const iso = unreachable.value.info?.expires_at;
+    if (!iso) return null;
+    const at = Date.parse(iso);
+    return isNaN(at) ? null : at;
+});
+
+const unreachableExpiresLabel = computed<string>(() =>
+    unreachableExpiresAt.value === null ? '' : formatDateTime(unreachable.value.info?.expires_at ?? null));
+
+/**
+ * Whether the page can no longer take a payment. An expiry the server did not send is not
+ * held against the admin: the retry is allowed and the server decides, in its own words.
+ */
+const unreachableExpired = computed<boolean>(() =>
+    unreachableExpiresAt.value === null || unreachableExpiresAt.value <= unreachableNow.value);
+
+/** Why there is nothing to record any more: paid or cancelled since the list was read. */
+const unreachableStale = computed<string>(() => {
+    const row = unreachableLive.value;
+    if (!row) return '';
+    if (row.payment_state === 'paid') return `This registration already reads "${paymentLabel(row)}", so there is nothing to record.`;
+    if (isCancelled(row)) return 'This registration was cancelled, so no payment can be recorded.';
+    return '';
+});
+
+const openUnreachable = async (row: FormResponseRow, kind: SettleKind, via: FormPaidVia | null, info: FormPageUnreachable) => {
+    unreachableReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    unreachable.value = { ...blankUnreachable(), row, kind, via, info };
+
+    unreachableNow.value = Date.now();
+    if (!unreachableClock) unreachableClock = setInterval(() => { unreachableNow.value = Date.now(); }, 5000);
+
+    await nextTick();
+    unreachableRoot.value?.focus();
+};
+
+const closeUnreachable = () => {
+    if (unreachable.value.saving) return;
+
+    unreachable.value = blankUnreachable();
+    stopUnreachableClock();
+
+    const returnTo = unreachableReturnFocus;
+    unreachableReturnFocus = null;
+    nextTick(() => {
+        if (returnTo?.isConnected) returnTo.focus();
+        else keepFocusInDetail();
+    });
+};
+
+/** Escape closes it (not mid-save) without closing the details under it; Tab stays inside. */
+const onUnreachableKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeUnreachable();
+        return;
+    }
+
+    trapTab(event, unreachableRoot.value);
+};
+
+/**
+ * The retry, with confirm_holder_checked. A refusal stays in the dialog in the server's own
+ * words (a second 409 updates what it knows about the page), and re-reads the registration.
+ */
+const confirmUnreachable = async () => {
+    const row = unreachableLive.value;
+    const state = unreachable.value;
+
+    if (!row || !state.checked || !unreachableExpired.value || unreachableStale.value) return;
+    if (!selectedFormId.value || busyRowId.value !== null) return;
+
+    const fallback = state.kind === 'cash' ? 'Could not record the cash.' : 'Could not mark this registration paid.';
+
+    state.saving = true;
+    state.error = '';
+    busyRowId.value = row.id;
+
+    let result: FormResponseActionResult | null = null;
+
+    try {
+        result = state.kind === 'cash'
+            ? await formResponsesStore.takeCash(selectedFormId.value, row.id, true)
+            : await formResponsesStore.markPaidExternal(selectedFormId.value, row.id, state.via, true);
+        applyRow(result.data);
+    } catch (error: any) {
+        const again = pageUnreachable(error);
+        if (again) state.info = again;
+        state.error = again ? again.message : serverMessage(error, fallback);
+
+        const status = error?.response?.status;
+        if (status === 422 || status === 409 || status === 503) await refreshRow(row.id);
+    } finally {
+        state.saving = false;
+        busyRowId.value = null;
+    }
+
+    if (!result) return;
+
+    closeUnreachable();
+    refreshCashIfOpen();
+
+    if (result.warning && result.message) {
+        Swal.fire({ icon: 'warning', title: 'Check this registration', text: result.message });
+    } else {
+        toast('success', result.message ?? (state.kind === 'cash' ? 'Cash recorded.' : 'Marked paid.'));
+    }
+};
+
 /**
  * Say "cancelled" again: the server asks Stripe about a cancelled registration's card page,
  * closes it if it is still open, and answers with what it found (`card_page`).
@@ -2499,6 +2868,11 @@ const triageAnswer = (result: FormResponseActionResult, asked: 'save' | 'check')
                 ?? 'Cancelled, but its card payment page could not be closed, so it may still take a payment.', true);
         case 'unchecked':
             return told('warning', CARD_PAGE_UNCHECKED);
+        case 'unreachable':
+            // The cancel stands; the page is on a Stripe account Manara can no longer check.
+            return told('warning', result.message
+                ?? 'Cancelled, but its card payment page is on a Stripe account Manara can no longer check, so it could not be '
+                + 'closed. Look for a payment from this family in that Stripe dashboard, and refund it there if it should not stand.');
         case 'none':
             if (result.message) return told(result.warning ? 'warning' : 'success', result.message);
             return asked === 'check' ? told('success', 'No card payment page is open for this registration.') : plainSave;
@@ -3035,7 +3409,8 @@ watch(showDetailModal, (open) => {
 }
 
 /* Mark paid on an office registration opens over the registration's details. */
-.office-paid-modal {
+.office-paid-modal,
+.unreachable-modal {
     z-index: 1065;
 }
 </style>

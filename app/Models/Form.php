@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Stripe\FormChargeAccount;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -257,13 +258,15 @@ class Form extends Model
     }
 
     /**
-     * Card payment is on and the organisation can take a card RIGHT NOW (Stripe
-     * Connect live). What the payload calls `available`, and what a submission
-     * that did not say how it pays is routed by.
+     * Card payment is on and the organisation can take a card RIGHT NOW: on its own
+     * live Connect account, or on the parent's account a SuperAdmin linked it to
+     * (App\Services\Stripe\FormChargeAccount; DECISIONS.md 2026-09-15). What the
+     * payload calls `available`, and what a submission that did not say how it pays
+     * is routed by.
      */
     public function canTakeCardNow(): bool
     {
-        return $this->takesOnlinePayment() && (bool) $this->masjid?->canAcceptDonations();
+        return $this->takesOnlinePayment() && FormChargeAccount::for($this->masjid) !== null;
     }
 
     /**
