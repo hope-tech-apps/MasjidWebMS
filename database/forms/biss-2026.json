@@ -25,8 +25,9 @@
       "online": false,
       "requireFeeCoverage": true,
       "officePayment": true,
-      "officeInstructions": null
+      "officeInstructions": "Send your payment by Zelle, Cash App or Venmo to (336) 567-6340 — Burlington Islamic Sunday School. Please put your family name in the note. You can also pay the school office in cash or by check."
     },
+    "notifyEmails": ["burlingtonsundayschool@gmail.com"],
     "successTitle": "Jazak Allahu khairan — your enrollment is in!",
     "successBody": "We've received your enrollment for Burlington Islamic Sunday School. The school office will confirm each child's class before the first day, October 11.",
     "successNextSteps": [
