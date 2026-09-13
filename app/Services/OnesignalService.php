@@ -326,6 +326,13 @@ class OnesignalService
      * NOTE: iOS plays `ios_sound` only if the named file is bundled in the app
      * and ≤30s (same cap as a background local-notification sound).
      *
+     * ANDROID gets its sound from a NOTIFICATION CHANNEL, not from the payload.
+     * This method used to set iOS fields only, and the backstop targets devices
+     * by subscription id with no platform filter — so every Android handset in
+     * the fleet received the adhan reminder with the default system tone. Pass
+     * $androidChannelId to fix that; see the parameter note for which OneSignal
+     * field it lands in and why the other one is wrong.
+     *
      * @param string[] $subscription_ids OneSignal subscription (player) IDs.
      * @param string|null $iosCategory iOS notification category id (e.g.
      *        "PRAYER_ADHAN") so long-pressing the push shows its actions
@@ -334,8 +341,15 @@ class OnesignalService
      *        masjid's OWN OneSignal app if it has one; otherwise the shared app.
      *        Required for delivery once a masjid is on its own app, since
      *        subscription ids are app-scoped. Defaults null -> current behavior.
+     * @param string|null $androidChannelId The id of a channel the ANDROID APP
+     *        itself created (e.g. "prayer_adhan_v1"), which is what decides the
+     *        sound on Android 8+. Sent as `existing_android_channel_id`; the
+     *        near-identical `android_channel_id` takes a OneSignal DASHBOARD
+     *        uuid instead, and an app channel id put there is accepted and then
+     *        ignored — a silent default-tone push. Last in the list so every
+     *        existing positional caller keeps working.
      */
-    public function sendPrayerAlert(array $subscription_ids, string $title, string $body, ?string $iosSound = null, array $data = [], ?string $iosCategory = null, ?Masjid $masjid = null)
+    public function sendPrayerAlert(array $subscription_ids, string $title, string $body, ?string $iosSound = null, array $data = [], ?string $iosCategory = null, ?Masjid $masjid = null, ?string $androidChannelId = null)
     {
         $subscription_ids = array_values(array_filter($subscription_ids));
 
@@ -368,6 +382,22 @@ class OnesignalService
 
             if (!empty($iosCategory)) {
                 $payload['ios_category'] = $iosCategory;
+            }
+
+            if (!empty($androidChannelId)) {
+                // The APP's own channel id. See the docblock for why this is
+                // NOT `android_channel_id`.
+                $payload['existing_android_channel_id'] = $androidChannelId;
+
+                // Pre-Oreo handsets have no channels and read this instead. The
+                // bare resource name, no extension — Android resolves res/raw
+                // by name, and "adhan.mp3" resolves to nothing. Derived from the
+                // iOS filename because both platforms ship the SAME two sounds
+                // under the same base name (adhan.wav / adhan.mp3), so a second
+                // parameter would only be a second place to get it wrong.
+                if (!empty($iosSound)) {
+                    $payload['android_sound'] = pathinfo($iosSound, PATHINFO_FILENAME);
+                }
             }
 
             $response = Http::withHeaders([

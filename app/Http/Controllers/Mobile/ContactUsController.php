@@ -27,6 +27,22 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * The lookup below is scoped to the masjid in the ROUTE, and an existing
  * account's stored details are never replaced from this endpoint.
+ *
+ * ## The org switcher widened WHERE a device may write, not WHO it may be
+ *
+ * The apps now ship an organisation switcher (MasjidsController::orgs): a
+ * member's handset is registered with its HOME organisation and can walk into
+ * one of that organisation's LISTED children. The device row stays pinned to
+ * home — nothing re-registers it — so opening Contact Us inside a child posted
+ * the home device id at the child's masjid id and got the 404 below, on iOS and
+ * Android alike.
+ *
+ * `acceptedDeviceHomes()` therefore accepts a device registered with the route
+ * organisation OR with its parent, and only when the parent's switcher would
+ * actually have offered this organisation. That is the same set the switcher
+ * shows and no wider: an UNLISTED child is still a 404 (nothing offers it), and
+ * a device from an unrelated organisation is still a 404 — which is the scope
+ * the security fix above exists for and must survive this.
  */
 class ContactUsController extends Controller
 {
@@ -43,12 +59,14 @@ class ContactUsController extends Controller
     {
         try {
             // Tenant comes from the ROUTE, never from the body — and the device
-            // must belong to it. Previously unscoped, so a device id from
-            // another masjid resolved to that masjid's record.
+            // must belong to it, or to the organisation that published it as a
+            // child. Previously unscoped, so a device id from another masjid
+            // resolved to that masjid's record; see the class docblock for both
+            // halves.
             $masjidId = (int) $request->route('masjid_id');
 
             $mobileAppUser = MobileAppUser::where('device_id', $request->input('device_id'))
-                ->where('masjid_id', $masjidId)
+                ->whereIn('masjid_id', $this->acceptedDeviceHomes($masjidId))
                 ->first();
 
             // Answered explicitly rather than dereferenced. The old code went
@@ -78,6 +96,13 @@ class ContactUsController extends Controller
             }
 
             $message = ContactUsMessage::create([
+                // The organisation is FILED from the same variable the notifier
+                // is handed below, so the inbox and the email can no longer
+                // disagree. Deriving it from the device instead — which is what
+                // the admin inbox used to do — files a switched member's message
+                // under their HOME organisation while emailing the child they
+                // actually wrote to.
+                'masjid_id' => $masjidId,
                 'contact_us_account_id' => $contactUsAccount->id,
                 'contact_us_reason_id' => $reason->id,
                 'message' => $request->input('message'),
@@ -109,6 +134,38 @@ class ContactUsController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * The organisations a device may be registered with and still be allowed to
+     * write to $masjidId.
+     *
+     * Always $masjidId itself. Plus its PARENT, but only when the parent's
+     * switcher would have offered $masjidId — that is the one and only way a
+     * member arrives here holding a device registered somewhere else.
+     *
+     * The membership test goes THROUGH `Masjid::listedChildren()` rather than
+     * re-reading `listed_at` here on purpose. What the switcher offers and what
+     * this endpoint accepts are one rule, and a second copy of a rule is the
+     * shape that drifts (.claude/rules/shipping.md — "when a rule is written
+     * down in several places, it has already broken"). Asking the relationship
+     * means an unlisted child cannot become reachable here without also
+     * appearing in the switcher.
+     *
+     * Derived entirely from server state: the caller supplies a masjid id in the
+     * URL, never the set it is checked against.
+     *
+     * @return array<int,int>
+     */
+    private function acceptedDeviceHomes(int $masjidId): array
+    {
+        $parent = Masjid::find($masjidId)?->parent;
+
+        if ($parent !== null && $parent->listedChildren()->whereKey($masjidId)->exists()) {
+            return [$masjidId, (int) $parent->id];
+        }
+
+        return [$masjidId];
     }
 
     /**

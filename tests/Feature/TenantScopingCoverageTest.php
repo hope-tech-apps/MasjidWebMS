@@ -125,6 +125,7 @@ final class TenantScopingCoverageTest extends TestCase
         \App\Models\AppVersionSetting::class => 'Per-masjid mobile app version gate, read and written only through AppConfigController on a /masjids/{id} route.',
         \App\Models\AssistantFeatureRequest::class => 'Assistant feature-request log, written only by the assistant ToolRegistry which resolves the masjid itself.',
         \App\Models\ContactReason::class => 'Admin-managed picklist behind /masjids/{id}/contact-reasons and the public mobile mirror; hand-scoped in ContactReasonsController.',
+        \App\Models\ContactUsMessage::class => 'Gained masjid_id when the org switcher made the old contacter -> mobileAppUser derivation file a message under a different organisation than the one it was emailed to. Kept hand-scoped: BOTH intake controllers are unauthenticated and bind no tenant, so the global scope would add nothing on the write path and the creating hook would stamp nothing. Read only through ContactRequestsController::ownedBy(); proven by ContactUsReplyTenantIsolationTest.',
         \App\Models\DonationLink::class => 'Per-masjid external giving link, hand-scoped by its controller and surfaced through SectionContentBinder.',
         \App\Models\Event::class => 'Pre-CRM public content, hand-scoped in EventsController.',
         \App\Models\Form::class => 'Forms slice predates the CRM trait; Form/FormResponse/FormResponseAttachment hand-filter by masjid_id throughout and share a retrofit task.',

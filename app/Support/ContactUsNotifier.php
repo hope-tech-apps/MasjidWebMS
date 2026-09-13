@@ -88,10 +88,21 @@ class ContactUsNotifier
      *
      * `$masjid` is the tenant the CONTROLLER resolved — the header-checked
      * organisation on the website door, the route's organisation on the mobile
-     * one. It is passed in rather than walked back out of the message's
-     * relations so that the notification can only ever go to the organisation
-     * the message was actually filed against. A null masjid (a row deleted
-     * between the resolve and here) is a log line, not an exception.
+     * one. It was passed in rather than walked out of the message's relations
+     * because walking them reached the SENDER'S DEVICE, which is a different
+     * question and, once the apps gained an organisation switcher, a different
+     * answer.
+     *
+     * That is no longer why. `contact_us_messages.masjid_id` now records the
+     * organisation the message was filed against, and both callers set it from
+     * this very variable — so the argument and `$message->masjid_id` are the
+     * same organisation by construction, and reading the column would be the
+     * stronger contract. Until this takes the message's word for it, the two
+     * agreeing is a convention held by two call sites rather than a guarantee.
+     *
+     * A null masjid (the organisation soft-deleted between the resolve and
+     * here) is a log line, not an exception — the message is still filed under
+     * its id and simply announced to nobody.
      */
     public static function received(ContactUsMessage $message, ?Masjid $masjid, string $source): void
     {

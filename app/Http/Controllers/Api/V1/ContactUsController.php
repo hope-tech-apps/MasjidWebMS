@@ -94,6 +94,11 @@ class ContactUsController extends Controller
             }
 
             $message = ContactUsMessage::create([
+                // Filed under the organisation THIS controller resolved from the
+                // checked `masjid-id` header — the same one the notifier is
+                // handed below. One variable decides both, so a message can
+                // never be emailed to one organisation and listed under another.
+                'masjid_id' => $masjidId,
                 'contact_us_account_id' => $contactUsAccount->id,
                 'contact_us_reason_id' => $reason->id,
                 'message' => $request->input('message'),

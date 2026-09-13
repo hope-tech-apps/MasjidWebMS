@@ -31,14 +31,17 @@ use Throwable;
  * (so the second person to open a message could not tell whether the first had
  * already handled it — two people answering the same stranger).
  *
- * ## Tenancy is HAND-SCOPED here, three joins deep
+ * ## Tenancy is HAND-SCOPED here
  *
- * ContactUsMessage does not use BelongsToMasjid and carries no `masjid_id`; the
- * organisation is reached through contacter -> mobileAppUser -> masjid_id. Every
- * query below goes through `ownedBy()`, so another organisation's message id
- * resolves to a 404 rather than a 403 or a leak, and targeting a different
+ * ContactUsMessage does not use BelongsToMasjid — both intake controllers are
+ * unauthenticated and bind no tenant, so a global scope would constrain nothing
+ * where it matters. It DOES carry its own `masjid_id` (it used to be derived
+ * three joins deep through contacter -> mobileAppUser, which stopped being the
+ * right answer when the apps gained an organisation switcher; see `ownedBy()`).
+ * Every query below goes through `ownedBy()`, so another organisation's message
+ * id resolves to a 404 rather than a 403 or a leak, and targeting a different
  * organisation in the ROUTE is a 403 from ResolveMasjidTenant before this
- * controller runs. `ownedBy()` exists so the join can never be forgotten on a
+ * controller runs. `ownedBy()` exists so the filter can never be forgotten on a
  * new verb — the two added by T-042d both write. See
  * .claude/rules/tenant-scoping.md and the model docblocks.
  *
@@ -373,15 +376,23 @@ class ContactRequestsController extends Controller
     /**
      * Messages belonging to ONE organisation.
      *
-     * The single place the three-join tenant filter is written. Every verb goes
-     * through it; a new one that forgets it would be a cross-tenant read, and
+     * The single place the tenant filter is written. Every verb goes through it;
+     * a new one that forgets it would be a cross-tenant read, and
      * `ContactUsReplyTenantIsolationTest` fails if any does.
+     *
+     * It reads `contact_us_messages.masjid_id` — the organisation the sender
+     * chose and the one the notifier emailed — rather than the three-join
+     * derivation through contacter -> mobileAppUser it used to. The derivation
+     * answered a DIFFERENT question, "which organisation is this handset
+     * registered with", and the organisation switcher made the two diverge: a
+     * member standing in a listed child writes to the child while their device
+     * stays pinned to the parent, so the email went to the child's staff and the
+     * row was listable only by the parent's admins. The old join survives only
+     * in the migration that backfilled this column.
      */
     private function ownedBy(Masjid $masjid): Builder
     {
-        return ContactUsMessage::whereHas('contacter.mobileAppUser', function ($query) use ($masjid) {
-            $query->where('masjid_id', $masjid->id);
-        });
+        return ContactUsMessage::where('masjid_id', $masjid->id);
     }
 
     /**

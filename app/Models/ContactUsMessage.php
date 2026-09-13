@@ -22,18 +22,31 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * `markAnswered()` / `markUnanswered()`, so "answered but by nobody" and
  * "answered by someone at no particular time" are not reachable states.
  *
- * ## Tenancy is hand-scoped, and deliberately so
+ * ## The organisation is a COLUMN now, and still hand-scoped
  *
- * This model has no `masjid_id` and does NOT use BelongsToMasjid. The tenant is
- * resolved through `contacter.mobileAppUser.masjid_id` by every query that
- * touches it. MobileAppUser sits on TenantScopingCoverageTest's
- * HAND_SCOPED_LEGACY list because the public mobile API never runs the tenant
- * middleware — there is no bound tenant on the write path for a global scope to
- * read. See .claude/rules/tenant-scoping.md and the T-042d migrations.
+ * `masjid_id` names the organisation the message was sent TO. It used to be
+ * derived — contacter -> mobileAppUser -> masjid_id — and that derivation
+ * became wrong the day the apps gained an organisation switcher: a member
+ * standing in a listed child writes to the child while their device stays
+ * registered with the parent, so the message was emailed to one organisation
+ * and listed under another. See the
+ * add_masjid_id_to_contact_us_messages_table migration.
+ *
+ * The model still does NOT use BelongsToMasjid, and it is on
+ * TenantScopingCoverageTest's HAND_SCOPED_LEGACY roster for the reason the
+ * previous migration gave: the two intake controllers are UNAUTHENTICATED and
+ * never bind a tenant, so a global scope would add no constraint on the write
+ * path and the `creating` hook would stamp nothing. Nothing about the boundary
+ * would improve; the scoping would merely look automatic while remaining hand
+ * written. `ContactRequestsController::ownedBy()` is still the only reader, and
+ * `ContactUsReplyTenantIsolationTest` is still what proves it.
+ *
+ * See .claude/rules/tenant-scoping.md.
  */
 class ContactUsMessage extends Model
 {
     protected $fillable = [
+        'masjid_id',
         'contact_us_account_id',
         'contact_us_reason_id',
         'message',
@@ -45,6 +58,43 @@ class ContactUsMessage extends Model
     protected $casts = [
         'answered_at' => 'datetime',
     ];
+
+    /**
+     * Last-resort fill for the organisation, from the sender's device.
+     *
+     * The two intake controllers set `masjid_id` explicitly, from the
+     * organisation they resolved and emailed — that is the contract and it wins
+     * here, because this hook only fires when the column is still unset.
+     *
+     * The hook exists for every OTHER writer: a console command, a seeder, a
+     * test fixture. A message with no organisation is not a validation error
+     * anywhere; it is a row that appears in no inbox, i.e. a message that
+     * arrived and silently vanished. Deriving the old way is strictly better
+     * than leaving it null, and it is what the row would have shown before this
+     * column existed.
+     *
+     * Deliberately NOT a fallback for a switched sender: the derivation is the
+     * thing the switcher broke. Only an explicit write is right there.
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (ContactUsMessage $message): void {
+            if ($message->masjid_id !== null) {
+                return;
+            }
+
+            $message->masjid_id = ContactUsAccount::with('mobileAppUser')
+                ->find($message->contact_us_account_id)
+                ?->mobileAppUser
+                ?->masjid_id;
+        });
+    }
+
+    /** The organisation this message was sent to. */
+    public function masjid(): BelongsTo
+    {
+        return $this->belongsTo(Masjid::class);
+    }
 
     public function contacter(): BelongsTo
     {

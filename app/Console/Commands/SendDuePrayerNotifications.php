@@ -43,6 +43,31 @@ class SendDuePrayerNotifications extends Command
 
     private const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
 
+    /**
+     * The notification channels the ANDROID app creates for itself, one per
+     * sound (res/raw/adhan.mp3, res/raw/iqamah.mp3).
+     *
+     * On Android 8+ the channel — not the payload — decides what a notification
+     * sounds like, so a push that names no channel plays the default system
+     * tone. This backstop targets devices by subscription id with NO platform
+     * filter, so until these were sent every Android handset got the adhan
+     * reminder as a generic ping while iOS got the adhan.
+     *
+     * The strings must match the app's channel ids EXACTLY: OneSignal accepts an
+     * id that names no channel on the handset and silently falls back to the
+     * default tone. A channel's sound is also fixed for its lifetime, which is
+     * what the `_v1` suffix is for — changing a sound means a new channel id on
+     * both sides, never an edit to an existing one.
+     *
+     * PUBLIC so `prayers:test-push` can send on the SAME channels rather than
+     * repeating the strings. That command exists to prove the sound on a real
+     * handset, and a second copy of these ids is the one place a typo would
+     * make the verification tool disagree with the thing it verifies.
+     */
+    public const ANDROID_CHANNEL_ADHAN = 'prayer_adhan_v1';
+
+    public const ANDROID_CHANNEL_IQAMA = 'prayer_iqama_v1';
+
     public function handle(OnesignalService $onesignal): int
     {
         $now = Carbon::now('UTC');
@@ -133,6 +158,13 @@ class SendDuePrayerNotifications extends Command
             : "The time for {$label} prayer has arrived";
         $sound = $type === 'iqama' ? 'iqamah.wav' : 'adhan.wav';
 
+        // Kept next to $sound deliberately: the two are the same decision on two
+        // platforms, and a new prayer sound that updates one and not the other
+        // is a push that is right on iOS and a default ping on Android.
+        $androidChannel = $type === 'iqama'
+            ? self::ANDROID_CHANNEL_IQAMA
+            : self::ANDROID_CHANNEL_ADHAN;
+
         Log::info(sprintf(
             'prayers:send-due %s %s masjid=%d recipients=%d%s',
             $type, $label, $masjid->id, count($subscriptionIds), $dryRun ? ' [dry-run]' : ''
@@ -158,7 +190,9 @@ class SendDuePrayerNotifications extends Command
             // Adhan pushes carry the category so long-press shows "Play Full Adhan".
             $type === 'adhan' ? 'PRAYER_ADHAN' : null,
             // Route through the masjid's own OneSignal app when provisioned.
-            $masjid
+            $masjid,
+            // Android's equivalent of ios_sound + ios_category in one field.
+            $androidChannel
         );
     }
 }

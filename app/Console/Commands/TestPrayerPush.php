@@ -49,7 +49,14 @@ class TestPrayerPush extends Command
             $sound,
             ['type' => 'prayer_test'],
             $iqama ? null : 'PRAYER_ADHAN',
-            $masjid
+            $masjid,
+            // The SAME channel the backstop sends on. Without it this command
+            // cannot do the job it exists for on Android: the push would arrive
+            // with the default system tone, and the person holding the handset
+            // would read a working server-side path as a broken one.
+            $iqama
+                ? SendDuePrayerNotifications::ANDROID_CHANNEL_IQAMA
+                : SendDuePrayerNotifications::ANDROID_CHANNEL_ADHAN
         );
 
         $this->info("Sent to device {$deviceId} (subscription {$subscriptionId})");

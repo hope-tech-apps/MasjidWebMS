@@ -26,10 +26,13 @@ use Tests\TestCase;
  *
  * **`contact_us_replies` carries no `masjid_id` and uses no global scope.** Its
  * tenancy is entirely derived — a reply hangs off a ContactUsMessage, which is
- * hand-scoped three joins deep through contacter -> mobileAppUser ->
- * masjid_id, because the public mobile API never binds a tenant for a global
- * scope to read (MobileAppUser is on TenantScopingCoverageTest's
- * HAND_SCOPED_LEGACY list for exactly that reason).
+ * hand-scoped on its OWN `masjid_id` column and still uses no global scope,
+ * because the public mobile API never binds a tenant for one to read (both
+ * ContactUsMessage and MobileAppUser are on TenantScopingCoverageTest's
+ * HAND_SCOPED_LEGACY list for exactly that reason). The message's column
+ * replaced a three-join derivation through contacter -> mobileAppUser when the
+ * apps' organisation switcher made those two answers diverge; nothing about the
+ * reply's own derived tenancy changed.
  *
  * Derived tenancy is weaker than a global scope: there is no database
  * constraint, no `creating` hook, and nothing in MySQL that would notice a
