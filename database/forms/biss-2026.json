@@ -199,7 +199,7 @@
           },
           {
             "name": "sex",
-            "label": "Sex",
+            "label": "Gender",
             "type": "select",
             "required": true,
             "options": [
