@@ -96,6 +96,17 @@ return [
     'submit_per_hour' => max(1, (int) env('FORMS_SUBMIT_PER_HOUR', 8)),
 
     /*
+     * Registrations a family paying the OFFICE may make per form per email address
+     * per 24 hours (abuse review, 2026-09-14). Each office registration emails the
+     * address typed on the form — the org's name, the amount owed and its payment
+     * handles — and the coordinators, with no payment to slow anyone down, so an
+     * anonymous caller could otherwise mail any address from the org at the per-
+     * connection rate above. Card registrations and staff-code entries do not meet
+     * it. Floored at 1.
+     */
+    'office_per_day' => max(1, (int) env('FORMS_OFFICE_PER_DAY', 3)),
+
+    /*
      * The ONLY origins a Stripe return URL may be built on: the public sites
      * that host a paying form, as exact scheme://host[:port], comma-separated
      * (https://mec.hopetechapps.com,https://mec-web.pages.dev).

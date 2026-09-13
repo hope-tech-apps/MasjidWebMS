@@ -8,12 +8,14 @@ use App\Http\Requests\Admin\SchoolCalendar\StoreSchoolYearRequest;
 use App\Http\Requests\Admin\SchoolCalendar\UpdateSchoolClosureRequest;
 use App\Http\Requests\Admin\SchoolCalendar\UpdateSchoolYearRequest;
 use App\Models\AttendanceRecord;
+use App\Models\Masjid;
 use App\Models\SchoolClosure;
 use App\Models\SchoolYear;
 use App\Support\FormOptionSources;
 use App\Support\SchoolCalendar;
 use App\Support\SchoolCalendarPayload;
 use App\Support\TenantContext;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -49,8 +51,17 @@ class SchoolCalendarController extends Controller
     /** POST .../school-calendar/years */
     public function storeYear(StoreSchoolYearRequest $request, $masjid_id): JsonResponse
     {
-        // masjid_id is never taken from the request: the creating hook stamps it.
-        SchoolYear::create($request->safe()->only(['label', 'first_day', 'last_day']));
+        $data = $request->safe()->only(['label', 'first_day', 'last_day']);
+        $masjidId = $this->masjidId($masjid_id);
+
+        $this->refusingDuplicateYear($data, function () use ($data, $masjidId): void {
+            DB::transaction(function () use ($data, $masjidId): void {
+                $this->lockOrganisationAndRefuseOverlap($masjidId, $data, null);
+
+                // masjid_id is never taken from the request: the creating hook stamps it.
+                SchoolYear::create($data);
+            });
+        });
 
         return $this->calendar($masjid_id, Response::HTTP_CREATED);
     }
@@ -66,8 +77,13 @@ class SchoolCalendarController extends Controller
     {
         $year = SchoolYear::findOrFail($year_id);
         $data = $request->safe()->only(['label', 'first_day', 'last_day']);
+        $masjidId = $this->masjidId($masjid_id);
 
-        DB::transaction(function () use ($year, $data): void {
+        $this->refusingDuplicateYear($data, fn () => DB::transaction(function () use ($year, $data, $masjidId): void {
+            // Organisation first, then the year: the same order storeYear takes,
+            // and nothing takes them the other way round.
+            $this->lockOrganisationAndRefuseOverlap($masjidId, $data, $year->id);
+
             $locked = SchoolYear::query()->whereKey($year->id)->lockForUpdate()->firstOrFail();
             $weekday = SchoolCalendar::day($data['first_day'])->dayOfWeek;
 
@@ -92,7 +108,7 @@ class SchoolCalendarController extends Controller
             }
 
             $locked->update($data);
-        });
+        }));
 
         return $this->calendar($masjid_id);
     }
@@ -116,7 +132,9 @@ class SchoolCalendarController extends Controller
             $last = $locked->last_day->toDateString();
 
             $closures = $locked->closures()->count();
+            // The organisation named as well as scoped (.claude/rules/school-calendar.md).
             $marks = AttendanceRecord::query()
+                ->where('masjid_id', $masjidId)
                 ->whereDate('session_date', '>=', $first)
                 ->whereDate('session_date', '<=', $last)
                 ->count();
@@ -151,28 +169,101 @@ class SchoolCalendarController extends Controller
     public function storeClosure(StoreSchoolClosureRequest $request, $masjid_id): JsonResponse
     {
         $data = $request->safe()->only(['school_year_id', 'closed_on', 'reason']);
+        $masjidId = $this->masjidId($masjid_id);
 
-        DB::transaction(function () use ($data): void {
-            $year = SchoolYear::query()->whereKey($data['school_year_id'])->lockForUpdate()->firstOrFail();
-
-            $marks = AttendanceRecord::query()->whereDate('session_date', $data['closed_on'])->count();
-
-            if ($marks > 0) {
-                throw ValidationException::withMessages(['closed_on' => sprintf(
-                    'A register was already taken on %s (%s), so it cannot become a no-school day. Clear those marks first if there really was no school.',
-                    SchoolCalendar::label($data['closed_on']),
-                    self::count($marks, 'attendance mark'),
-                )]);
-            }
-
-            SchoolClosure::create([
-                'school_year_id' => $year->id,
-                'closed_on' => $data['closed_on'],
-                'reason' => $data['reason'],
+        try {
+            DB::transaction(function () use ($data, $masjidId): void {
+                $this->writeClosure($data, $masjidId);
+            });
+        } catch (UniqueConstraintViolationException) {
+            // Two presses landing together: the request's duplicate check saw
+            // neither, school_closure_day_unique stopped the second.
+            throw ValidationException::withMessages([
+                'closed_on' => SchoolCalendar::label($data['closed_on']).' is already a no-school day.',
             ]);
-        });
+        }
 
         return $this->calendar($masjid_id, Response::HTTP_CREATED);
+    }
+
+    /** @param  array{school_year_id:mixed,closed_on:string,reason:string}  $data */
+    private function writeClosure(array $data, int $masjidId): void
+    {
+        // Every query here names the organisation as well as relying on the scope
+        // (.claude/rules/school-calendar.md): another school's register marks on
+        // the same Sunday must never block this one's closure.
+        $year = SchoolYear::query()
+            ->where('masjid_id', $masjidId)
+            ->whereKey($data['school_year_id'])
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        // The request checked the day against the year it read; the year may
+        // have been edited since. Checked again against the LOCKED row.
+        $day = $data['closed_on'];
+
+        if ($day < $year->first_day->toDateString() || $day > $year->last_day->toDateString()
+            || SchoolCalendar::day($day)?->dayOfWeek !== $year->meetingWeekday()) {
+            throw ValidationException::withMessages(['closed_on' => sprintf(
+                '%s is no longer inside the %s school year or on its meeting day. Reload the calendar and try again.',
+                SchoolCalendar::label($day),
+                $year->label,
+            )]);
+        }
+
+        $marks = AttendanceRecord::query()
+            ->where('masjid_id', $masjidId)
+            ->whereDate('session_date', $day)
+            ->count();
+
+        if ($marks > 0) {
+            throw ValidationException::withMessages(['closed_on' => sprintf(
+                'A register was already taken on %s (%s), so it cannot become a no-school day. Clear those marks first if there really was no school.',
+                SchoolCalendar::label($day),
+                self::count($marks, 'attendance mark'),
+            )]);
+        }
+
+        SchoolClosure::create([
+            'school_year_id' => $year->id,
+            'closed_on' => $day,
+            'reason' => $data['reason'],
+        ]);
+    }
+
+    /**
+     * Every write to an organisation's years queues on its `masjids` row, so two
+     * overlapping years saved at the same moment cannot both pass the overlap
+     * check. Plain reads of the row are not blocked (InnoDB reads a snapshot).
+     *
+     * @param  array{first_day:string,last_day:string}  $data
+     */
+    private function lockOrganisationAndRefuseOverlap(int $masjidId, array $data, ?int $ignoreYearId): void
+    {
+        Masjid::query()->whereKey($masjidId)->lockForUpdate()->first();
+
+        $overlap = SchoolCalendar::overlappingYear($masjidId, $data['first_day'], $data['last_day'], $ignoreYearId);
+
+        if ($overlap !== null) {
+            throw ValidationException::withMessages(['first_day' => SchoolCalendar::overlapMessage($overlap)]);
+        }
+    }
+
+    /**
+     * school_year_org_start_unique turned into a 422 instead of a 500. With the
+     * organisation lock above it should be unreachable; it is the backstop.
+     *
+     * @param  array{first_day:string}  $data
+     */
+    private function refusingDuplicateYear(array $data, callable $write): void
+    {
+        try {
+            $write();
+        } catch (UniqueConstraintViolationException) {
+            throw ValidationException::withMessages([
+                'first_day' => 'A school year already starts on '.SchoolCalendar::label($data['first_day']).'.',
+            ]);
+        }
     }
 
     /** PUT .../school-calendar/closures/{closure_id} — the reason only; a different day is a new closure. */

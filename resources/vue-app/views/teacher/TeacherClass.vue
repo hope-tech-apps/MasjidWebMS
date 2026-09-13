@@ -1480,6 +1480,7 @@
 
 <script setup lang="ts">
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
+import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -1668,9 +1669,21 @@ const saveAttendance = async () => {
         attTaken.value = !!res.data?.data?.taken;
         attSaved.value = true;
     } catch (e: any) {
-        attError.value = e?.response?.data?.data?.marks?.[0]
-            ?? e?.response?.data?.message
-            ?? 'Could not save the register.';
+        // The server's own words: a closed day is refused as
+        // 422 {status:'failed', data:{session_date:["There was no school on …"]}}.
+        const message = apiErrorText(e, 'Could not save the register.');
+        attError.value = message;
+
+        // A refusal about the DAY means the calendar changed under this screen
+        // (the office closed it after the register opened). Re-read it, so the
+        // "No school" banner replaces a register that can no longer be kept.
+        const bag = e?.response?.data?.data;
+        if (e?.response?.status === 422 && bag && typeof bag === 'object' && 'session_date' in bag) {
+            attSaving.value = false;
+            await loadAttendance();
+            // loadAttendance clears the error. Keep the reason unless the banner now says it.
+            if (!attClosed.value) attError.value = message;
+        }
     } finally {
         attSaving.value = false;
     }

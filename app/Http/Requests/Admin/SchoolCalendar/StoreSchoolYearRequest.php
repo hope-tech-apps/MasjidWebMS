@@ -3,8 +3,8 @@
 namespace App\Http\Requests\Admin\SchoolCalendar;
 
 use App\Http\Requests\BaseFormRequest;
-use App\Models\SchoolYear;
 use App\Support\SchoolCalendar;
+use App\Support\TenantContext;
 use Illuminate\Validation\Validator;
 
 /**
@@ -65,20 +65,17 @@ class StoreSchoolYearRequest extends BaseFormRequest
                 return;
             }
 
-            $overlap = SchoolYear::query()
-                ->when($this->yearBeingEdited(), fn ($q, int $id) => $q->whereKeyNot($id))
-                ->whereDate('first_day', '<=', $last->toDateString())
-                ->whereDate('last_day', '>=', $first->toDateString())
-                ->orderBy('first_day')
-                ->first();
+            // Asked again under the organisation's row lock in the controller;
+            // this early answer is for the message on an ordinary save.
+            $overlap = SchoolCalendar::overlappingYear(
+                (int) (app(TenantContext::class)->get() ?? $this->route('masjid_id')),
+                $first->toDateString(),
+                $last->toDateString(),
+                $this->yearBeingEdited(),
+            );
 
             if ($overlap !== null) {
-                $v->errors()->add('first_day', sprintf(
-                    'These dates overlap the %s school year (%s to %s).',
-                    $overlap->label,
-                    SchoolCalendar::label($overlap->first_day->toDateString()),
-                    SchoolCalendar::label($overlap->last_day->toDateString()),
-                ));
+                $v->errors()->add('first_day', SchoolCalendar::overlapMessage($overlap));
             }
         });
     }

@@ -36,6 +36,9 @@ use Illuminate\Support\Facades\Mail;
  */
 class FormNotifier
 {
+    /** The coordinators' payment line for a family that chose to pay the office and has not yet. */
+    public const OWED_AT_THE_OFFICE = 'Owed — paying the office';
+
     /** A settings array is admin-editable; this stops a typo becoming a mail blast. */
     private const MAX_RECIPIENTS = 20;
 
@@ -102,7 +105,14 @@ class FormNotifier
 
         $paymentLine = self::paymentLine($response);
 
-        self::attempt('coordinators', $form, $response, function () use ($form, $response, $masjid, $people, $paymentLine, $toCoordinators) {
+        // The coordinators' copy of a family paying the office says it still owes, in the
+        // payment slot (money review, 2026-09-14). The family's receipt does not: it states
+        // "Total due" with the office's instructions instead.
+        // Drawn as owed, never in the paid green, with the amount labelled "Amount owed".
+        $owedAtOffice = $paymentLine === null && self::owesTheOffice($response);
+        $coordinatorPaymentLine = $paymentLine ?? ($owedAtOffice ? self::OWED_AT_THE_OFFICE : null);
+
+        self::attempt('coordinators', $form, $response, function () use ($form, $response, $masjid, $people, $coordinatorPaymentLine, $owedAtOffice, $toCoordinators) {
             if (! $toCoordinators) {
                 return;
             }
@@ -132,7 +142,8 @@ class FormNotifier
                 tierLabel: self::tierLabel($form, $response),
                 people: $people,
                 adminUrl: self::adminUrl(),
-                paymentLine: $paymentLine,
+                paymentLine: $coordinatorPaymentLine,
+                paymentOwed: $owedAtOffice,
             ));
         });
 
@@ -414,14 +425,27 @@ class FormNotifier
 
     /**
      * "Early bird" or "3 children", so a coordinator can see which price this
-     * registration locked in: Form::priceFor() over the row's own answers at its
-     * submitted_at, the reading FormPayment::quote() named the Stripe line from.
+     * registration locked in: FormPayment::quote() over the row's own answers at its
+     * submitted_at, the reading the Stripe line is named from.
+     *
+     * Only when that quote still reproduces what the row owes (its cents snapshot, or the
+     * decimal on a row without one). If the admin has edited the prices since, the label
+     * of today's schedule would sit beside yesterday's amount, so there is none: the
+     * FormResponseCheckoutService::lineItems() rule (money review, 2026-09-14).
      */
     private static function tierLabel(Form $form, FormResponse $response): ?string
     {
         $data = is_array($response->data) ? $response->data : [];
 
-        return $form->priceFor($data, $response->submitted_at)['label'] ?? null;
+        try {
+            $quote = FormPayment::quote($form, $data, false, false, $response->submitted_at);
+        } catch (\LogicException) {
+            return null; // a price the form can no longer state
+        }
+
+        $owed = $response->owedMinor();
+
+        return $quote !== null && $owed !== null && $quote['amount_due_minor'] === $owed ? $quote['tier_label'] : null;
     }
 
     /**

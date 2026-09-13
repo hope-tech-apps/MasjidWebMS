@@ -58,7 +58,8 @@
                                 @if ($paymentLine)
                                     <tr>
                                         <td style="padding:12px 16px; color:#7b8794;">Payment</td>
-                                        <td style="padding:12px 16px; text-align:right; font-weight:600; color:#2f9e57;">{{ $paymentLine }}</td>
+                                        {{-- Green only once paid: an office registration still owed reads in neutral grey. --}}
+                                        <td style="padding:12px 16px; text-align:right; font-weight:600; color:{{ $owed ? '#52606d' : '#2f9e57' }};">{{ $paymentLine }}</td>
                                     </tr>
                                 @endif
                                 <tr>

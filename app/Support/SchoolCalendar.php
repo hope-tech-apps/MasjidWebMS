@@ -211,21 +211,63 @@ final class SchoolCalendar
      */
     public static function closureFor(int $masjidId, string $day, bool $lock = false): ?SchoolClosure
     {
-        $year = SchoolYear::query()
-            ->where('masjid_id', $masjidId)
-            ->whereDate('first_day', '<=', $day)
-            ->whereDate('last_day', '>=', $day)
-            ->when($lock, fn ($q) => $q->lockForUpdate())
-            ->first();
+        $next = self::day($day)?->addDay()->toDateString();
 
-        if ($year === null) {
+        if ($next === null) {
             return null;
         }
 
+        if ($lock) {
+            $year = SchoolYear::query()
+                ->where('masjid_id', $masjidId)
+                ->whereDate('first_day', '<=', $day)
+                ->whereDate('last_day', '>=', $day)
+                ->orderBy('first_day')
+                ->lockForUpdate()
+                ->first();
+
+            if ($year === null) {
+                return null;
+            }
+        }
+
+        // By (masjid_id, closed_on), which school_closure_org_day_idx serves. A
+        // HALF-OPEN range on the raw column rather than whereDate(): DATE() around
+        // the column stops MySQL using the index, and `>= day AND < next day` is
+        // still right on SQLite, where the cast stores 'Y-m-d 00:00:00' (the
+        // closed BETWEEN is what LessonPlanController::index warns about).
         return SchoolClosure::query()
-            ->where('school_year_id', $year->id)
-            ->whereDate('closed_on', $day)
+            ->where('masjid_id', $masjidId)
+            ->where('closed_on', '>=', $day)
+            ->where('closed_on', '<', $next)
             ->first();
+    }
+
+    /**
+     * The earliest of an organisation's years sharing a day with [$first, $last],
+     * leaving out the year being edited. StoreSchoolYearRequest asks it for the
+     * message; SchoolCalendarController asks it again under the organisation's
+     * row lock, where the answer cannot change before the write.
+     */
+    public static function overlappingYear(int $masjidId, string $first, string $last, ?int $ignoreYearId = null): ?SchoolYear
+    {
+        return SchoolYear::query()
+            ->where('masjid_id', $masjidId)
+            ->when($ignoreYearId, fn ($q, int $id) => $q->whereKeyNot($id))
+            ->whereDate('first_day', '<=', $last)
+            ->whereDate('last_day', '>=', $first)
+            ->orderBy('first_day')
+            ->first();
+    }
+
+    public static function overlapMessage(SchoolYear $year): string
+    {
+        return sprintf(
+            'These dates overlap the %s school year (%s to %s).',
+            $year->label,
+            self::label($year->first_day->toDateString()),
+            self::label($year->last_day->toDateString()),
+        );
     }
 
     public static function noRegisterMessage(SchoolClosure $closure): string

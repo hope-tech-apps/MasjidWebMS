@@ -496,6 +496,11 @@ class FormPaymentTest extends TestCase
         $this->assertTrue($required->requiresFeeCoverage());
         $this->assertFalse($required->allowsFeeCoverage());
 
+        // Both stored: required wins, and the optional box is never offered.
+        $both = $this->form($fee, ['online' => true, 'allowFeeCoverage' => true, 'requireFeeCoverage' => true]);
+        $this->assertFalse($both->allowsFeeCoverage());
+        $this->assertSame(778, FormPayment::quote($both, $data, false, true)['fee_covered_minor']);
+
         // Without the switch the optional box behaves as it always has.
         $optional = $this->form($fee, ['online' => true, 'allowFeeCoverage' => true]);
         $this->assertSame(0, FormPayment::quote($optional, $data, false, true)['fee_covered_minor']);

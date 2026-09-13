@@ -530,6 +530,17 @@ class FormPaymentSettingsTest extends TestCase
                 $d['schema']['sections'][1]['minEntries'] = 0;
             }, 'settings.fee.perEntryOfSection', 'at least one entry'],
 
+            // The top tier is open-ended: without a cap, one registration could carry any
+            // number of children at the "5 or more" price. The message names the section.
+            'the counted section has no maximum' => [function (&$d) {
+                unset($d['schema']['sections'][1]['maxEntries']);
+            }, 'settings.fee.perEntryOfSection', '"attendees" needs a maximum number of entries'],
+
+            'the counted section has no maximum, on a form that takes no payment' => [function (&$d) {
+                unset($d['settings']['payment']);
+                $d['schema']['sections'][1]['maxEntries'] = 0;
+            }, 'settings.fee.perEntryOfSection', '"attendees" needs a maximum number of entries'],
+
             // BISS critique must_fix 4: the office alone is a paying form.
             'the office alone, with a counted section that may be empty' => [function (&$d) {
                 $d['settings']['payment'] = ['officePayment' => true];
@@ -554,6 +565,14 @@ class FormPaymentSettingsTest extends TestCase
             'office instructions longer than a thousand characters' => [function (&$d) {
                 $d['settings']['payment']['officeInstructions'] = str_repeat('x', 1001);
             }, 'settings.payment.officeInstructions', '1000'],
+
+            'the card fee both optional and required' => [function (&$d) {
+                $d['settings']['payment']['allowFeeCoverage'] = true;
+            }, 'settings.payment.requireFeeCoverage', 'not both'],
+
+            'the card fee both optional and required, before any payment is switched on' => [function (&$d) {
+                $d['settings']['payment'] = ['allowFeeCoverage' => 'true', 'requireFeeCoverage' => 'on'];
+            }, 'settings.payment.requireFeeCoverage', 'not both'],
         ];
 
         foreach ($cases as $label => [$mutate, $field, $fragment]) {
@@ -626,6 +645,7 @@ class FormPaymentSettingsTest extends TestCase
     private function familyDoc(?callable $mutate = null): array
     {
         return $this->doc(function (&$d) use ($mutate) {
+            $d['schema']['sections'][1]['maxEntries'] = 10;
             $d['settings']['fee'] = ['currency' => 'USD', 'perEntryOfSection' => 'attendees', 'countTiers' => self::FAMILY_TIERS];
             $d['settings']['payment'] = [
                 'online' => true,

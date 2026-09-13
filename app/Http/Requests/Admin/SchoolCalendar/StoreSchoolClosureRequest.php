@@ -6,6 +6,7 @@ use App\Http\Requests\BaseFormRequest;
 use App\Models\SchoolClosure;
 use App\Models\SchoolYear;
 use App\Support\SchoolCalendar;
+use App\Support\TenantContext;
 use Illuminate\Validation\Validator;
 
 /**
@@ -38,7 +39,13 @@ class StoreSchoolClosureRequest extends BaseFormRequest
                 return;
             }
 
-            $year = SchoolYear::find((int) $this->input('school_year_id'));
+            // Named as well as scoped (.claude/rules/school-calendar.md).
+            $masjidId = (int) (app(TenantContext::class)->get() ?? $this->route('masjid_id'));
+
+            $year = SchoolYear::query()
+                ->where('masjid_id', $masjidId)
+                ->whereKey((int) $this->input('school_year_id'))
+                ->first();
 
             if ($year === null) {
                 $v->errors()->add('school_year_id', 'That school year does not exist.');
@@ -72,7 +79,7 @@ class StoreSchoolClosureRequest extends BaseFormRequest
                 return;
             }
 
-            if (SchoolClosure::query()->where('school_year_id', $year->id)->whereDate('closed_on', $day)->exists()) {
+            if (SchoolClosure::query()->where('masjid_id', $masjidId)->where('school_year_id', $year->id)->whereDate('closed_on', $day)->exists()) {
                 $v->errors()->add('closed_on', SchoolCalendar::label($day).' is already a no-school day.');
             }
         });

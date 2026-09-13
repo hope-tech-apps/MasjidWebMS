@@ -279,6 +279,14 @@ class AuthController extends Controller
                     // and mobile payloads too.
                     $masjid->logo_url = $logo?->original_url;
                     $user->setRelation('masjid', $masjid);
+
+                    // Whether the teacher shell offers its Calendar link: the
+                    // school has at least one school year. Teacher branch only,
+                    // additive, and a fact about the school rather than the
+                    // teacher. This route binds no tenant, so the school is named.
+                    $user->school_calendar_published = \App\Models\SchoolYear::query()
+                        ->where('masjid_id', (int) $masjid->id)
+                        ->exists();
                 }
 
                 return response()->json([

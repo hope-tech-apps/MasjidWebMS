@@ -467,8 +467,14 @@ class FormNotificationTest extends TestCase
             ],
         ]]);
 
-        // The payload registers two attendees.
-        $row = $this->moneyRow($form, ['payment_method' => FormResponse::METHOD_CASH, 'payment_status' => FormResponse::PAYMENT_PAID, 'paid_at' => now()]);
+        // The payload registers two attendees, owing the "2 children" price.
+        $row = $this->moneyRow($form, [
+            'payment_method' => FormResponse::METHOD_CASH,
+            'payment_status' => FormResponse::PAYMENT_PAID,
+            'paid_at' => now(),
+            'amount_due_minor' => 17000,
+            'total_minor' => 17000,
+        ]);
 
         FormNotifier::submitted($form, $row);
 
@@ -502,7 +508,34 @@ class FormNotificationTest extends TestCase
                 && ! str_contains($html, self::WHATSAPP)
                 && ! str_contains($html, 'Paid ');
         });
-        Mail::assertQueued(FormResponseSubmitted::class, fn ($mail) => $mail->responseId === $row->id && $mail->paymentLine === null);
+        // The coordinators' copy says the family still owes the office (money review,
+        // 2026-09-14): labelled as owed, and never in the green a paid line is drawn in.
+        Mail::assertQueued(FormResponseSubmitted::class, function (FormResponseSubmitted $mail) use ($row) {
+            $html = $mail->render();
+
+            return $mail->responseId === $row->id
+                && $mail->paymentLine === 'Owed — paying the office'
+                && $mail->paymentOwed === true
+                && str_contains($html, 'color:#7b8794;">Amount owed</td>')
+                && str_contains($html, 'color:#52606d;">Owed — paying the office</td>')
+                && ! str_contains($html, 'color:#2f9e57;">Owed')
+                && ! str_contains($html, '>Price</td>');
+        });
+
+        // A paid registration's line keeps the green, and its amount reads as the price.
+        $paid = $this->moneyRow($form, ['payment_method' => FormResponse::METHOD_CASH, 'payment_status' => FormResponse::PAYMENT_PAID, 'paid_at' => now()]);
+
+        FormNotifier::submitted($form, $paid);
+
+        Mail::assertQueued(FormResponseSubmitted::class, function (FormResponseSubmitted $mail) use ($paid) {
+            $html = $mail->render();
+
+            return $mail->responseId === $paid->id
+                && $mail->paymentOwed === false
+                && str_contains($html, 'color:#7b8794;">Price</td>')
+                && str_contains($html, 'color:#2f9e57;">Paid in cash</td>')
+                && ! str_contains($html, 'Amount owed');
+        });
 
         // With no instructions of its own, the form's payment note stands in.
         $plain = $this->makeForm($this->makeMasjid(), array_replace($this->payingSettings(), ['payment' => ['officePayment' => true]]));
@@ -512,6 +545,43 @@ class FormNotificationTest extends TestCase
 
         Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $owing->id
             && $mail->paymentNote === 'Card payments on the masjid terminal carry a 3% service charge.');
+    }
+
+    /**
+     * Money review, 2026-09-14: the tier label rides only when today's schedule still
+     * reproduces what the row owes, as the Stripe line's name does. Prices edited after the
+     * submit leave the stored amount and no label, never today's label beside yesterday's
+     * amount.
+     */
+    #[Test]
+    public function a_price_edited_after_the_submit_leaves_the_amount_and_drops_the_mismatched_tier_label(): void
+    {
+        Mail::fake();
+
+        $form = $this->makeForm($this->makeMasjid(), $this->payingSettings());
+        $row = $this->moneyRow($form, [
+            'payment_method' => FormResponse::METHOD_CASH,
+            'payment_status' => FormResponse::PAYMENT_PAID,
+            'paid_at' => now(),
+        ]);
+
+        FormNotifier::submitted($form, $row);
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->tierLabel === 'Early bird' && $mail->amountLine === '$200.00');
+
+        // The early-bird price goes from $100 to $120 after this family registered at $100.
+        $settings = $form->settings;
+        $settings['fee']['tiers'][0]['amount'] = 120;
+        $form->update(['settings' => $settings]);
+
+        Mail::fake();
+        FormNotifier::submitted($form->fresh(), $row->fresh());
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn ($mail) => $mail->responseId === $row->id
+            && $mail->amountLine === '$200.00'
+            && $mail->tierLabel === null);
+        Mail::assertQueued(FormResponseSubmitted::class, fn ($mail) => $mail->responseId === $row->id
+            && $mail->amountLine === '$200.00'
+            && $mail->tierLabel === null);
     }
 
     #[Test]

@@ -43,7 +43,7 @@
                     <p class="small text-muted mb-3">
                         <i class="bi bi-clock me-1"></i>
                         Dates follow the school's time zone<template v-if="timezone"> ({{ timezone }})</template>.
-                        Today there is {{ formatDay(today) }}.
+                        Today is {{ formatDay(today) }}.
                     </p>
 
                     <!-- Which year -->
@@ -267,19 +267,27 @@
                         </div>
                         <div class="modal-body">
                             <div v-if="deleteError" class="alert alert-danger py-2 small" role="alert">{{ deleteError }}</div>
-                            <p class="mb-2">
-                                This removes the school year {{ formatDay(deleteTarget.first_day) }} – {{ formatDay(deleteTarget.last_day) }}<template
-                                    v-if="deleteTarget.closures.length"> and its {{ deleteTarget.closures.length }}
-                                    no-school day{{ deleteTarget.closures.length === 1 ? '' : 's' }}</template>.
-                            </p>
-                            <p class="text-muted small mb-0">
-                                Teachers and families will stop seeing these dates, and a sign-up question that lists
-                                school days will have none to offer until another year is added.
-                            </p>
+                            <!-- The server refuses a year that still has no-school days, so
+                                 say so up front instead of offering a button it will refuse. -->
+                            <div v-if="deleteBlockedBy > 0" class="alert alert-warning py-2 small mb-0" role="status">
+                                Remove this year's {{ deleteBlockedBy }} no-school day{{ deleteBlockedBy === 1 ? '' : 's' }} first.
+                                Click each one in the list and choose "Make it a school day again".
+                            </div>
+                            <template v-else>
+                                <p class="mb-2">
+                                    This removes the school year {{ formatDay(deleteTarget.first_day) }} – {{ formatDay(deleteTarget.last_day) }}.
+                                </p>
+                                <p class="text-muted small mb-0">
+                                    Teachers and families will stop seeing these dates, and a sign-up question that lists
+                                    school days will have none to offer until another year is added.
+                                </p>
+                            </template>
                         </div>
                         <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" :disabled="deletingYear" @click="cancelDeleteYear">Cancel</button>
-                            <button type="button" class="btn btn-danger" :disabled="deletingYear" @click="confirmDeleteYear">
+                            <button type="button" class="btn btn-secondary" :disabled="deletingYear" @click="cancelDeleteYear">
+                                {{ deleteBlockedBy > 0 ? 'Close' : 'Cancel' }}
+                            </button>
+                            <button type="button" class="btn btn-danger" :disabled="deletingYear || deleteBlockedBy > 0" @click="confirmDeleteYear">
                                 <span v-if="deletingYear" class="spinner-border spinner-border-sm me-1" role="status"></span>
                                 Delete year
                             </button>
@@ -542,6 +550,9 @@ const saveYear = async () => {
 const deleteTarget = ref<SchoolYear | null>(null);
 const deletingYear = ref(false);
 const deleteError = ref('');
+
+/** No-school days still on the year being deleted; the server refuses the delete while any remain. */
+const deleteBlockedBy = computed(() => deleteTarget.value?.closures.length ?? 0);
 
 const askDeleteYear = (year: SchoolYear) => {
     deleteError.value = '';

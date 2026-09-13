@@ -144,6 +144,7 @@ class FormSchema
         foreach ($this->memberRules() as $key => $memberRules) {
             $rules[$key] = $memberRules;
             $attributes[$key] = $attributes[substr($key, 0, -2)] ?? $key;
+            $messages[$key.'.distinct'] = 'Each choice can be picked only once.';
         }
 
         $validator = Validator::make($data, $rules, $messages, $attributes);
@@ -268,7 +269,9 @@ class FormSchema
                 ? $sectionId . '.*.' . $field['name'] . '.*'
                 : $field['name'] . '.*';
 
-            $rules[$key] = ['string', $sourced ? FormOptionSources::rule($values) : Rule::in($values)];
+            // `distinct`: the same choice twice is not two choices, and would
+            // otherwise satisfy "pick exactly 2" with one Sunday.
+            $rules[$key] = ['string', 'distinct', $sourced ? FormOptionSources::rule($values) : Rule::in($values)];
         }
 
         return $rules;

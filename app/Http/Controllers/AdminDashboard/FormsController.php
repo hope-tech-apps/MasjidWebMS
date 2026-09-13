@@ -7,6 +7,7 @@ use App\Http\Requests\Admin\Forms\StoreFormRequest;
 use App\Http\Requests\Admin\Forms\UpdateFormRequest;
 use App\Models\Masjid;
 use App\Models\Offering;
+use App\Models\User;
 use App\Support\Errors;
 use App\Support\FormOptionSources;
 use App\Support\FormSchema;
@@ -90,7 +91,7 @@ class FormsController extends Controller
     public function fieldTypes($masjid_id)
     {
         try {
-            Masjid::findOrFail($masjid_id);
+            $masjid = Masjid::findOrFail($masjid_id);
 
             $labels = [
                 'text' => 'Short text',
@@ -125,20 +126,24 @@ class FormsController extends Controller
                 'selection_keys' => $type === 'checkboxGroup' ? ['minSelections', 'maxSelections'] : [],
             ])->values();
 
-            // Where a choice question's options may come from instead of a typed
-            // list. `available` is whether this organisation has a school year to
-            // draw days from; a sourced question saved before then offers nothing.
-            $hasCalendar = SchoolCalendar::for((int) $masjid_id)->hasCalendar();
+            $payload = ['status' => 'success', 'data' => $types];
 
-            return response()->json([
-                'status' => 'success',
-                'data' => $types,
-                'options_sources' => collect(FormOptionSources::SOURCES)->map(fn ($label, $key) => [
+            // Where a choice question's options may come from instead of a typed
+            // list — ABSENT unless this organisation has the school calendar (or
+            // the caller is a SuperAdmin), so a masjid, or a school that has not
+            // switched it on, is never offered a choice its save would refuse.
+            // `available` is whether there is a school year to draw days from.
+            if ($this->mayUseOptionSources($masjid)) {
+                $hasCalendar = SchoolCalendar::for((int) $masjid->id)->hasCalendar();
+
+                $payload['options_sources'] = collect(FormOptionSources::SOURCES)->map(fn ($label, $key) => [
                     'key' => $key,
                     'label' => $label,
                     'available' => $key === FormOptionSources::SCHOOL_MEETING_DAYS && $hasCalendar,
-                ])->values(),
-            ], Response::HTTP_OK);
+                ])->values();
+            }
+
+            return response()->json($payload, Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -147,11 +152,60 @@ class FormsController extends Controller
         }
     }
 
+    /**
+     * The school calendar capability, as `capability:` reads it: the organisation
+     * has it, or the caller is a SuperAdmin (EnsureOrgCapability).
+     */
+    private function mayUseOptionSources(Masjid $masjid): bool
+    {
+        $user = auth()->user();
+
+        return ($user instanceof User && $user->type === 'SuperAdmin') || $masjid->hasCapability('school_calendar');
+    }
+
+    /**
+     * A calendar-sourced question ADDED by this write, on an organisation without
+     * the school calendar, is a 422. One already stored is left alone — an
+     * organisation that loses the capability keeps an editable form, whose
+     * question simply offers what the calendar has — so "added" means a question
+     * name (with its source) the stored schema did not already carry.
+     *
+     * Checked here rather than in ValidFormSchema because it needs the caller and
+     * the stored form; `form:import` is an operator's command and is not gated.
+     */
+    private function newOptionSourceRefusal(Masjid $masjid, mixed $schema, mixed $stored): ?\Illuminate\Http\JsonResponse
+    {
+        if (! is_array($schema) || $this->mayUseOptionSources($masjid)) {
+            return null;
+        }
+
+        $sourced = fn (mixed $s): array => collect(is_array($s) && is_array($s['sections'] ?? null) ? $s['sections'] : [])
+            ->flatMap(fn ($section) => is_array($section) && is_array($section['fields'] ?? null) ? $section['fields'] : [])
+            ->filter(fn ($field) => FormOptionSources::isSourced($field) && is_string($field['name'] ?? null))
+            ->map(fn (array $field) => $field['name'].'|'.json_encode($field['optionsSource']))
+            ->values()->all();
+
+        if (array_diff($sourced($schema), $sourced($stored)) === []) {
+            return null;
+        }
+
+        return response()->json([
+            'status' => 'failed',
+            'data' => ['schema' => [
+                'The school calendar is not switched on for this organisation, so a question cannot take its choices from it.',
+            ]],
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
     /** POST /api/admin/masjids/{masjid_id}/forms */
     public function store(StoreFormRequest $request, $masjid_id)
     {
         try {
             $masjid = Masjid::findOrFail($masjid_id);
+
+            if ($refusal = $this->newOptionSourceRefusal($masjid, $request->validated('schema'), null)) {
+                return $refusal;
+            }
 
             $form = $masjid->forms()->create($request->safe()->all());
 
@@ -192,6 +246,10 @@ class FormsController extends Controller
         try {
             $masjid = Masjid::findOrFail($masjid_id);
             $form = $masjid->forms()->findOrFail($form_id);
+
+            if ($refusal = $this->newOptionSourceRefusal($masjid, $request->validated('schema'), $form->schema)) {
+                return $refusal;
+            }
 
             $form->update($request->safe()->all());
 

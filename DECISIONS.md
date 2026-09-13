@@ -579,6 +579,37 @@ page, the row, Stripe and the email cannot disagree about a family of three.
 - A required card fee is a surcharge, restricted on debit and prepaid cards and
   in some states. The owner confirms before it goes live.
 - The gross-up uses the platform-wide rate, not BISS's own Connect pricing.
+- **Unpaid office rows count toward capacity and never lapse.** Nothing expires
+  a family that chose the office and never paid. Do not turn `officePayment` on
+  for a form with a `capacity` unless someone has a plan to cancel stale rows.
+- **Office registrations are limited per email** (abuse review, 2026-09-14).
+  Each one emails the typed address and the coordinators and costs nothing, so
+  each email address may make `forms.office_per_day` (3) per form per 24 hours.
+  The bucket is an HMAC of the lower-cased, trimmed identity email. The next
+  registration is a 429 before any row or email, and a replay of a written row
+  still gets its answer. Card and staff-code entries do not meet the limit, and
+  an office submission with no email meets only the per-connection limiter. The
+  check and the charge are not atomic, so concurrent requests can slip one or two
+  past it.
+- **Count pricing needs a cap:** the counted section must have `maxEntries`, or
+  the save is refused, since the top tier is open-ended.
+
+**Refinements from the money review (2026-09-14).**
+- **The card fee is optional or required, never both.** The save refuses the
+  pair by name. `Form::allowsFeeCoverage()` is false whenever the fee is
+  required, so the page is never told `allowFeeCoverage: true` beside
+  `requireFeeCoverage: true`.
+- **The emails name a tier only when it still prices the row.** A re-quote at
+  `submitted_at` must reproduce the owed cents, the rule `lineItems()` already
+  follows. After a price edit the amount stands with no label.
+- **The replay fingerprint carries what the client chose, not the route the
+  server took.**
+  - `pay_with` is included only when sent.
+  - `fee_covered` is what a card payment of the answers would cover, false for
+    a staff entry. Card-row fingerprints are unchanged.
+  - A retry after the card came or went replays the first row instead of a 409.
+- **The coordinators' email for an unpaid office row** carries the payment line
+  "Owed — paying the office".
 
 ## 2026-09-14 — School calendar: years and no-school days, off by default, and form choices drawn from it
 

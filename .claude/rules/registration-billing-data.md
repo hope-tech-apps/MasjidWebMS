@@ -709,6 +709,8 @@ and it has to be argued as one.
   `crossCheck()` runs on EVERY form, on POST, on PUT (both halves resolved) and on
   `form:import`. The 50¢ and whole-cents checks reach the tier prices through
   `paymentProblems()`. Count pricing and date `tiers`/`amount` never share a form.
+  The counted section must have `maxEntries`: the top tier is open-ended, so without
+  a cap one registration could add any number of entries at its price.
   `FormDoorEquivalenceTest` pins the doors.
 - **The published fee omits `amount` and `tiers`** under count pricing
   (`SectionContentBinder::publicFee()`), and `unitMinor` is null. A renderer that

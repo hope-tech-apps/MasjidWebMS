@@ -298,6 +298,29 @@ class FormPaymentPayloadTest extends TestCase
         $this->assertStringNotContainsString('A draft nobody switched on', $this->page($cardOnly)->getContent());
     }
 
+    /**
+     * Money review, 2026-09-14: optional and required never both reach the page. Even a
+     * stored pair (the save refuses it) publishes allowFeeCoverage false, or an old
+     * renderer draws an unticked box for a fee the server adds anyway.
+     */
+    #[Test]
+    public function a_required_card_fee_never_publishes_the_optional_box_even_when_both_switches_were_stored(): void
+    {
+        $both = $this->payingForm([], ['online' => true, 'allowFeeCoverage' => true, 'requireFeeCoverage' => true]);
+        $payment = $this->page($both)->json('data.sections.0.content.form.settings.payment');
+
+        $this->assertTrue($payment['requireFeeCoverage']);
+        $this->assertFalse($payment['allowFeeCoverage']);
+        $this->assertFalse($both->fresh()->allowsFeeCoverage());
+
+        // Optional alone is still optional.
+        $optional = $this->payingForm([], ['online' => true, 'allowFeeCoverage' => true]);
+        $payment = $this->page($optional)->json('data.sections.0.content.form.settings.payment');
+
+        $this->assertTrue($payment['allowFeeCoverage']);
+        $this->assertFalse($payment['requireFeeCoverage']);
+    }
+
     // -------------------------------------------------------------- helpers
 
     /**

@@ -102,10 +102,11 @@
 
             <!-- Options (choice questions only) -->
             <div v-if="hasOptions" class="mb-3 border-top pt-3">
-                <!-- WHERE THE CHOICES COME FROM. Offered only when the server lists a
-                     source, and never inside a repeating section (the server refuses
-                     it there). A question that already carries a source always shows
-                     the chooser, so it can be switched back to a typed list. -->
+                <!-- WHERE THE CHOICES COME FROM. Shown only when the server lists a source
+                     (it omits the list for an organisation without the school calendar), and
+                     never offered inside a repeating section (the server refuses it there).
+                     A question already carrying a source keeps the chooser while the list is
+                     there; without the list, its note offers the way back to a typed list. -->
                 <fieldset v-if="showSourceChooser" class="mb-3">
                     <legend class="form-label fs-6 float-none mb-1">Choices come from</legend>
                     <div class="form-check">
@@ -148,9 +149,20 @@
                         <i class="bi bi-calendar3 me-1"></i>
                         Families will see the upcoming school days that aren't marked as no school, listed by date.
                         Days that pass, or that the office later marks as no school, drop off the list by themselves.
-                        <span v-if="!calendarAvailable" class="d-block mt-1 text-danger">
+                        <span v-if="!calendarSource" class="d-block mt-1 text-danger">
+                            This organisation does not have the school calendar, so right now families would have no days to pick.
+                        </span>
+                        <span v-else-if="!calendarAvailable" class="d-block mt-1 text-danger">
                             There's no school year on the calendar yet, so right now families would have no days to pick.
                         </span>
+                        <button
+                            v-if="!showSourceChooser"
+                            type="button"
+                            class="btn btn-sm btn-link p-0 d-block mt-1"
+                            @click="useTypedChoices"
+                        >
+                            Use a list I type instead
+                        </button>
                     </div>
                 </template>
 
@@ -269,6 +281,14 @@
                             {{ selectionProblem || selectionPreview }}
                         </div>
                     </div>
+                </div>
+                <!-- A warning, never a blocker: the calendar may simply not be entered yet. -->
+                <div
+                    v-if="calendarMinimumWarning"
+                    :id="`${idPrefix}_calendar_minimum_warning`"
+                    class="small text-warning-emphasis mt-2"
+                >
+                    <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ calendarMinimumWarning }}
                 </div>
             </div>
 
@@ -499,8 +519,12 @@ const calendarSource = computed(() =>
 /** The organisation can supply it right now (it has a school year). */
 const calendarAvailable = computed(() => !!calendarSource.value?.available);
 
+/**
+ * Hidden outright, not disabled, when the server sends no sources: an organisation without
+ * the school calendar has nothing to choose between.
+ */
 const showSourceChooser = computed(() =>
-    !!props.field.optionsSource || (!props.inRepeatable && calendarSource.value !== null)
+    calendarSource.value !== null && (!!props.field.optionsSource || !props.inRepeatable)
 );
 
 const calendarSelectable = computed(() =>
@@ -538,6 +562,19 @@ const useTypedChoices = () => {
 
 const selectionProblem = computed(() => selectionCountProblem(props.field));
 const selectionPreview = computed(() => selectionCountPreview(props.field));
+
+/**
+ * A required question fed by the school calendar with a minimum: while fewer school days
+ * than that are open, no registration can answer it, so every one is refused.
+ */
+const calendarMinimumWarning = computed(() => {
+    const min = props.field.minSelections;
+
+    if (props.field.optionsSource !== SCHOOL_MEETING_DAYS || !props.field.required) return '';
+    if (typeof min !== 'number' || !Number.isInteger(min) || min < 1) return '';
+
+    return `Every registration will be refused while fewer than ${min} school days are open — enter the school year (and keep enough upcoming days) before switching the form on.`;
+});
 
 // A required checkbox means "must be ticked" server-side (`accepted`), not merely present.
 const requiredLabel = computed(() => {

@@ -1,5 +1,5 @@
 {
-  "$comment": "Burlington Islamic Sunday School (BISS) 2026-27 enrollment — DRAFT. Import with: php artisan form:import <biss_org_id> database/forms/biss-2026.json. Pricing is by number of children (settings.fee.countTiers). payment.online stays FALSE until BISS's own Stripe account can take charges; until then every family is recorded as paying the school office. STILL TO ADD: (1) officeInstructions — the office's Zelle / Cash App / Venmo handles (owner to supply); (2) notifyEmails; (3) the calendar-backed cleaning-Sunday field (checkboxGroup, optionsSource school_meeting_days) once the school calendar ships and the 2026-27 year is entered.",
+  "$comment": "Burlington Islamic Sunday School (BISS) 2026-27 enrollment — DRAFT. Import with: php artisan form:import <biss_org_id> database/forms/biss-2026.json. Pricing is by number of children (settings.fee.countTiers). payment.online stays FALSE until BISS's own Stripe account can take charges; until then every family is recorded as paying the school office. The cleaning-Sunday question (section `cleaning`) draws its choices from the school calendar and requires exactly two: BEFORE switching the form on, turn the school_calendar capability on for the org and enter the 2026-27 school year and its no-school Sundays — with no open Sundays the required question refuses every enrollment. STILL TO ADD: (1) officeInstructions — the office's Zelle / Cash App / Venmo handles (owner to supply); (2) notifyEmails.",
   "slug": "biss-2026",
   "name": "Burlington Islamic Sunday School — 2026–27 Enrollment",
   "description": "Sundays 11:00 AM – 2:00 PM · First day Sunday, October 11, 2026 · 1908 S Mebane St, Burlington NC",
@@ -306,6 +306,22 @@
             "label": "Phone",
             "type": "tel",
             "required": true
+          }
+        ]
+      },
+      {
+        "id": "cleaning",
+        "title": "Cleaning Sundays",
+        "description": "Every family helps keep the masjid clean after school. Pick the two Sundays your family will help.",
+        "fields": [
+          {
+            "name": "cleaningSundays",
+            "label": "Pick two Sundays",
+            "type": "checkboxGroup",
+            "required": true,
+            "optionsSource": "school_meeting_days",
+            "minSelections": 2,
+            "maxSelections": 2
           }
         ]
       },

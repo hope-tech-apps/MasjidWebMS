@@ -212,14 +212,15 @@ class Form extends Model
     /**
      * The optional "cover the card fee" checkbox: card payments only — cash has no card fee.
      *
-     * NOT widened by requiresFeeCoverage(). A renderer that predates the required
-     * fee reads allowFeeCoverage as "draw an unticked optional box"; publishing it
-     * true for a required fee would show $250.00 on the page while Stripe charges
-     * $257.78 (BISS critique, should_fix 1).
+     * NEVER true while the fee is required (requiresFeeCoverage()), even if both switches
+     * were stored. A renderer that predates the required fee reads allowFeeCoverage as
+     * "draw an unticked optional box"; publishing it true beside a required fee would show
+     * $250.00 on the page while Stripe charges $257.78 (BISS critique, should_fix 1;
+     * money review, 2026-09-14). The save refuses the pair; this is the read half.
      */
     public function allowsFeeCoverage(): bool
     {
-        return $this->paymentFlag('allowFeeCoverage') && $this->takesOnlinePayment();
+        return $this->paymentFlag('allowFeeCoverage') && ! $this->requiresFeeCoverage() && $this->takesOnlinePayment();
     }
 
     /**

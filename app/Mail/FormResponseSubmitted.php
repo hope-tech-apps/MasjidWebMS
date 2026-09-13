@@ -45,6 +45,12 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
         public string $adminUrl,
         /** How it was paid ("Paid $30.87 by card"); null for a registration that has paid nothing. */
         public ?string $paymentLine = null,
+        /**
+         * True when $paymentLine says the family still OWES the office ("Owed — paying the
+         * office"; BISS, 2026-09-14): the amount reads "Amount owed" and the line is not
+         * drawn in the paid green. Defaulted, so a mail queued before it existed still builds.
+         */
+        public bool $paymentOwed = false,
     ) {
     }
 
@@ -74,8 +80,15 @@ class FormResponseSubmitted extends Mailable implements ShouldQueue
                 'tierLabel' => $this->tierLabel,
                 'people' => $this->people,
                 'adminUrl' => $this->adminUrl,
-                'amountLabel' => $this->paymentLine ? 'Price' : 'Amount due',
+                'amountLabel' => match (true) {
+                    $this->paymentOwed => 'Amount owed',
+                    $this->paymentLine !== null && $this->paymentLine !== '' => 'Price',
+                    default => 'Amount due',
+                },
                 'paymentLine' => $this->paymentLine,
+                // `owed`, NOT paymentOwed: Mailable::buildViewData() lays every public property
+                // over these keys, so a key sharing a property's name would render the raw one.
+                'owed' => $this->paymentOwed,
             ],
         );
     }

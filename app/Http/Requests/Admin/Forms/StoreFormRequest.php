@@ -365,7 +365,7 @@ class StoreFormRequest extends BaseFormRequest
         // A key already refused above keeps its first, more specific message. The count
         // schedule is checked on EVERY form, paying or not, because amount_due is
         // stored from it either way.
-        foreach ([self::countTierProblems($settings), self::paymentProblems($schema, $settings)] as $found) {
+        foreach ([self::countTierProblems($schema, $settings), self::paymentProblems($schema, $settings)] as $found) {
             foreach ($found as $field => $message) {
                 $problems[$field] ??= $message;
             }
@@ -381,6 +381,8 @@ class StoreFormRequest extends BaseFormRequest
      *  - beside `amount` or date `tiers`: one of the two would be ignored without a
      *    word, the defect class every rule in this file exists to stop;
      *  - with no `perEntryOfSection`: nothing would be counted;
+     *  - on a counted section with no `maxEntries`: the top tier is open-ended, so one
+     *    registration could carry any number of entries at its price;
      *  - with a first `min` other than 1: some family sizes would have no price;
      *  - with mins not strictly ascending (a repeat included): the schedule is read by
      *    comparison, but a list an office cannot read top to bottom is a typo waiting;
@@ -393,7 +395,7 @@ class StoreFormRequest extends BaseFormRequest
      * @param  array<string,mixed>  $settings
      * @return array<string,string>
      */
-    private static function countTierProblems(array $settings): array
+    private static function countTierProblems(array $schema, array $settings): array
     {
         $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
         $tiers = $fee['countTiers'] ?? null;
@@ -414,6 +416,16 @@ class StoreFormRequest extends BaseFormRequest
         if ($perEntry === null || (is_string($perEntry) && trim($perEntry) === '')) {
             $problems['settings.fee.perEntryOfSection'] =
                 'Prices by number of entries need the repeatable section whose entries are counted (for example, children).';
+        } elseif (is_string($perEntry) && ($section = self::repeatableSection($schema, $perEntry)) !== null) {
+            // The top tier is open-ended ("5 or more"), so without a cap one registration
+            // could carry any number of entries at that price (abuse review, 2026-09-14).
+            // A name that is not a repeatable section at all is refused by crossCheck().
+            $max = $section['maxEntries'] ?? null;
+
+            if (! is_numeric($max) || (int) $max < 1) {
+                $problems['settings.fee.perEntryOfSection'] =
+                    "\"{$perEntry}\" needs a maximum number of entries when the form is priced by number of entries, or one registration could add entries without limit at the top price.";
+            }
         }
 
         $previous = null;
@@ -485,12 +497,22 @@ class StoreFormRequest extends BaseFormRequest
         $online = self::switchedOn($payment['online'] ?? null);
         $office = self::switchedOn($payment['officePayment'] ?? null);
 
+        // The card fee is optional OR required, never both: a renderer that predates the
+        // required fee would draw an unticked box for a fee the server adds anyway. Refused
+        // on every form, paying or not, so switching card payment on later cannot inherit it.
+        $bothFeeSwitches = [];
+
+        if (self::switchedOn($payment['allowFeeCoverage'] ?? null) && self::switchedOn($payment['requireFeeCoverage'] ?? null)) {
+            $bothFeeSwitches['settings.payment.requireFeeCoverage'] =
+                'The card fee is either an optional checkbox or always added for card payers, not both. Turn one of them off.';
+        }
+
         if (! $online && ! $office && ! self::switchedOn($payment['staffCodes'] ?? null)) {
-            return [];
+            return $bothFeeSwitches;
         }
 
         $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
-        $problems = [];
+        $problems = $bothFeeSwitches;
 
         $perEntry = $fee['perEntryOfSection'] ?? null;
 

@@ -20,6 +20,7 @@ use App\Support\FormStaffCodes;
 use App\Support\PublicTenant;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
 use LogicException;
 
 /**
@@ -98,6 +99,15 @@ use LogicException;
  * office` on a form that does not offer it, and `card` on one that takes no card, are a
  * 422 before anything else is asked.
  *
+ * An office registration costs the caller nothing and emails the address it typed, so
+ * each email address may make config('forms.office_per_day') of them per form per 24
+ * hours (abuse review, 2026-09-14). The next is a 429 BEFORE anything is written or
+ * sent. The bucket is keyed by the form and an HMAC of the lower-cased, trimmed identity
+ * email, and is charged only when an office row is actually written, so a replay of an
+ * accepted registration still gets its own answer. An office submission with no email
+ * has nobody to mail and meets only the per-connection limiter. Card registrations and
+ * staff-code entries never meet it.
+ *
  * ## Never free by accident
  *
  * A form that takes payment (card, staff codes or the office) never takes a submission
@@ -126,6 +136,29 @@ use LogicException;
  */
 class FormSubmissionsController extends Controller
 {
+    /** What an email address that has used up its office registrations is told. */
+    public const OFFICE_LIMITED = 'This email has already registered several times today. Please contact the office.';
+
+    /** The office limiter's window. */
+    private const OFFICE_LIMIT_SECONDS = 86400;
+
+    /**
+     * The office limiter's bucket for this form and email, or null when there is no email
+     * to key it by. Lower-cased and trimmed, so "Amal@Example.com " is the same family;
+     * an HMAC on APP_KEY, never the address, because a cache key is not where an email
+     * address belongs.
+     */
+    private static function officeLimitKey(Form $form, ?string $email): ?string
+    {
+        $email = strtolower(trim((string) $email));
+
+        if ($email === '') {
+            return null;
+        }
+
+        return 'form-office:' . $form->id . '|' . hash_hmac('sha256', $email, (string) config('app.key'));
+    }
+
     /**
      * POST /api/v1/forms/{form_id}/responses
      */
@@ -286,6 +319,21 @@ class FormSubmissionsController extends Controller
                 return $this->owesNothing($form, null);
             }
 
+            // A family paying the office: at most office_per_day registrations per email on
+            // this form, refused before any write or email. A replay of a row already
+            // written is let through to get its own answer.
+            $officeLimit = $office ? self::officeLimitKey($form, $schema->identity($clean)['respondent_email']) : null;
+            $clientKey = $request->input('client_submission_key');
+
+            if ($officeLimit !== null
+                && RateLimiter::tooManyAttempts($officeLimit, (int) config('forms.office_per_day', 3))
+                && ($clientKey === null || $this->earlierSubmission((int) $form->id, $clientKey) === null)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => self::OFFICE_LIMITED,
+                ], 429, ['Retry-After' => RateLimiter::availableIn($officeLimit)]);
+            }
+
             // A card payment: everything that could stop the page opening, BEFORE any
             // write, so a refusal never leaves an unpayable row behind.
             $returnTo = null;
@@ -304,8 +352,7 @@ class FormSubmissionsController extends Controller
                 }
             }
 
-            $clientKey = $request->input('client_submission_key');
-            $fingerprint = $this->fingerprint($clean, $staffCode, $quote, $office);
+            $fingerprint = $this->fingerprint($form, $clean, $staffCode, $quote, $request->boolean('cover_fees'), $payWith);
 
             try {
                 [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office): array {
@@ -460,6 +507,12 @@ class FormSubmissionsController extends Controller
                 return response()->api(422, $reason ?? 'This form is no longer accepting responses.', null);
             }
 
+            // Charged only for a row this request wrote: a replay, a refusal or a full
+            // form above never spends a family's allowance.
+            if ($officeLimit !== null) {
+                RateLimiter::hit($officeLimit, self::OFFICE_LIMIT_SECONDS);
+            }
+
             // A card registration is not settled until Stripe says so, so nobody is
             // emailed now: the webhook sends the receipt and the coordinator email when
             // it marks the row paid.
@@ -496,29 +549,40 @@ class FormSubmissionsController extends Controller
     /**
      * What the replay guard compares: everything that decides what a row owes and who
      * owes it — the cleaned answers (the attendee rows are the quantity), the code
-     * whose holder takes the cash, whether a card payer covers the card fee, and
-     * whether the family pays the office. A replay that differs in any of it is a
-     * different submission. Anything later added to what a row owes belongs in here too.
+     * whose holder takes the cash, whether a card payment would cover the card fee, and
+     * how the family SAID it pays. A replay that differs in any of it is a different
+     * submission. Anything later added to what a row owes belongs in here too.
      *
-     * The office choice is added only when it was made, so every fingerprint taken
-     * before it existed — an unpaid card registration mid-checkout across the deploy —
-     * still matches its own replay. A card replay of an office registration, or the
-     * reverse, is a 409.
+     * Both of the last two are what the CLIENT decided, never the route the server took
+     * (money review, 2026-09-14). A page that sends no `pay_with` is routed by whether the
+     * card can be taken right now, and that can change between a request and its retry; a
+     * retry of the same answers under the same key then gets the first row back rather
+     * than a 409. So:
+     *
+     *  - `fee_covered` is what a CARD payment of these answers would cover
+     *    (FormPayment::feeCoveredMinor() as if online), for every entry without a staff
+     *    credential — the same value a card registration has always been fingerprinted
+     *    with, so fingerprints written before this change still match. A staff entry is
+     *    never a card payment: false, as always.
+     *  - `pay_with` is added only when the client sent it. A page that chose the office
+     *    and then the card under one key is a 409.
      *
      * @param  array<string,mixed>  $clean
      * @param  array<string,mixed>|null  $quote  FormPayment::quote()
      * @return array<string,mixed>
      */
-    private function fingerprint(array $clean, ?FormStaffCode $staffCode, ?array $quote, bool $office = false): array
+    private function fingerprint(Form $form, array $clean, ?FormStaffCode $staffCode, ?array $quote, bool $coverFees, ?string $payWith): array
     {
         $fingerprint = [
             'data' => $clean,
             'staff_code_id' => $staffCode?->getKey(),
-            'fee_covered' => $quote !== null && $quote['fee_covered_minor'] > 0,
+            'fee_covered' => $staffCode === null
+                && $quote !== null
+                && FormPayment::feeCoveredMinor($form, (int) $quote['amount_due_minor'], $coverFees, true) > 0,
         ];
 
-        if ($office) {
-            $fingerprint['pay_with'] = SubmitFormResponseRequest::PAY_WITH_OFFICE;
+        if ($payWith !== null) {
+            $fingerprint['pay_with'] = $payWith;
         }
 
         return $fingerprint;

@@ -15,9 +15,12 @@
                                  :class="isClassesActive ? 'fw-semibold text-success' : 'text-muted'">
                         My Classes
                     </router-link>
-                    <!-- Icon-only on a phone (where My Classes is the brand link),
-                         so it keeps an accessible name that contains the visible word. -->
-                    <router-link to="/teacher/calendar"
+                    <!-- Only once the school has published a calendar
+                         (`school_calendar_published` on /api/teacher/user); the
+                         route itself stays reachable by URL. Icon-only on a phone
+                         (where My Classes is the brand link), so it keeps an
+                         accessible name that contains the visible word. -->
+                    <router-link v-if="calendarPublished" to="/teacher/calendar"
                                  class="nav-link px-0 d-inline-flex align-items-center gap-1"
                                  :class="isCalendarActive ? 'fw-semibold text-success' : 'text-muted'"
                                  aria-label="School calendar" title="School calendar">
@@ -58,6 +61,8 @@ const authStore = useAuthStore();
 const school = ref<TeacherSchool | null>(null);
 const teacherName = ref('');
 const signingOut = ref(false);
+/** True only when the self payload says so; missing, false or a failed read hide the link. */
+const calendarPublished = ref(false);
 
 // The classes list is the shell's home; keep its nav pill lit while browsing it.
 const isClassesActive = computed(() => route.path === '/teacher');
@@ -72,11 +77,13 @@ onMounted(async () => {
         if (data) {
             school.value = data.masjid ?? null;
             teacherName.value = [data.first_name, data.last_name].filter(Boolean).join(' ');
+            calendarPublished.value = data.school_calendar_published === true;
         }
     } catch {
         // A failure here is not fatal to the shell — the classes screen shows its
         // own error, and a 401 is already handled by TeacherApiService.
         school.value = null;
+        calendarPublished.value = false;
     }
 });
 

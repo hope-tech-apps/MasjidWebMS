@@ -1371,14 +1371,16 @@
                             <button type="button" class="btn btn-outline-secondary" :disabled="officePaid.saving" @click="closeOfficePaid">
                                 Cancel
                             </button>
+                            <!-- Disabled while ANY row action is in flight (busyRowId), which
+                                 confirmOfficePaid() would otherwise ignore without a word. -->
                             <button
                                 type="button"
                                 class="btn btn-success"
-                                :disabled="!officePaid.via || officePaid.saving || !!officePaidStale"
+                                :disabled="!officePaid.via || officePaid.saving || busyRowId !== null || !!officePaidStale"
                                 @click="confirmOfficePaid"
                             >
-                                <span v-if="officePaid.saving" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                                {{ officePaid.saving ? 'Saving…' : 'Mark paid' }}
+                                <span v-if="officePaid.saving || busyRowId !== null" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                                {{ officePaid.saving || busyRowId !== null ? 'Saving…' : 'Mark paid' }}
                             </button>
                         </div>
                     </div>

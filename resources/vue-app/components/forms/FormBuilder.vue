@@ -213,15 +213,27 @@
                                 />
                             </div>
                             <div class="col-md-2 mb-3">
-                                <label class="form-label">Max entries</label>
+                                <label class="form-label" :for="`sectionMaxEntries${sectionIndex}`">Max entries</label>
                                 <input
+                                    :id="`sectionMaxEntries${sectionIndex}`"
                                     type="number"
                                     class="form-control"
+                                    :class="{ 'is-invalid': countPricingNeedsMax(section) }"
                                     min="1"
                                     :value="section.maxEntries ?? ''"
+                                    :aria-describedby="countPricingNeedsMax(section) ? `sectionMaxEntriesNeeded${sectionIndex}` : undefined"
                                     @input="section.maxEntries = toNumberOrNull(($event.target as HTMLInputElement).value)"
                                     placeholder="No limit"
                                 />
+                                <!-- Prices by number of entries count this section, and the server refuses
+                                     an open-ended count (StoreFormRequest::countTierProblems()). -->
+                                <div
+                                    v-if="countPricingNeedsMax(section)"
+                                    :id="`sectionMaxEntriesNeeded${sectionIndex}`"
+                                    class="invalid-feedback d-block"
+                                >
+                                    Needed: the prices go by the number of entries here.
+                                </div>
                             </div>
                             <div class="col-md-4 mb-3">
                                 <label class="form-label">Add button label</label>
@@ -337,7 +349,7 @@
                         {{ fieldIssue('settings.fee') }}
                     </div>
 
-                    <div class="row">
+                    <div v-if="draft.settings.feePricing !== 'none'" class="row">
                         <div v-if="draft.settings.feePricing !== 'count'" class="col-md-4 mb-3">
                             <label class="form-label" for="formFeeAmount">{{ feeAmountLabel }}</label>
                             <input
@@ -349,7 +361,7 @@
                                 step="0.01"
                                 :value="draft.settings.feeAmount ?? ''"
                                 @input="draft.settings.feeAmount = toNumberOrNull(($event.target as HTMLInputElement).value); clearServerError('settings.fee.amount'); clearServerError('settings.fee')"
-                                :placeholder="feeAmountOptional ? 'Optional' : 'No fee'"
+                                :placeholder="feeAmountOptional ? 'Optional' : 'Enter a price'"
                             />
                             <div v-if="fieldIssue('settings.fee.amount')" class="invalid-feedback d-block">
                                 {{ fieldIssue('settings.fee.amount') }}
@@ -570,6 +582,10 @@
                                 />
                                 <div v-if="fieldIssue(`settings.fee.countTiers.${tierIndex}.label`)" class="invalid-feedback d-block">
                                     {{ fieldIssue(`settings.fee.countTiers.${tierIndex}.label`) }}
+                                </div>
+                                <!-- A warning, never a refusal: the server accepts a price with no name. -->
+                                <div v-else-if="!tier.label.trim()" class="form-text text-warning-emphasis mt-0">
+                                    No name yet. A name such as "2 children" tells people which price applies.
                                 </div>
                             </div>
                             <div class="col-md-1">
@@ -1101,7 +1117,7 @@ type DraftCountTier = {
  * How the fee's price is worked out. Exactly one is saved (buildPayload()): the server
  * refuses countTiers together with amount or tiers.
  */
-type FeePricing = 'flat' | 'perEntry' | 'dateSteps' | 'count';
+type FeePricing = 'none' | 'flat' | 'perEntry' | 'dateSteps' | 'count';
 
 /** Who pays the card processing fee on a card payment. */
 type FeeCoverage = 'absorb' | 'optional' | 'required';
@@ -1181,6 +1197,12 @@ const MIN_CHARGE_MINOR = 50;
 
 const PRICING_MODES: { value: FeePricing; label: string; help: string }[] = [
     {
+        // Chosen, never fallen into: an emptied price box does not make a form free (paymentIssues()).
+        value: 'none',
+        label: 'No price',
+        help: 'The form is free. Nobody owes anything for submitting it.'
+    },
+    {
         value: 'flat',
         label: 'One price per submission',
         help: 'Everyone who submits pays the same amount, however many people they add.'
@@ -1259,7 +1281,7 @@ const blankSettings = (): DraftSettings => ({
     feeAmount: null,
     feeCurrency: 'USD',
     feePerEntryOfSection: null,
-    feePricing: 'flat',
+    feePricing: 'none',
     feeTiers: [],
     feeCountTiers: [],
     paymentOnline: false,
@@ -1390,10 +1412,14 @@ const buildCountTier = (tier: DraftCountTier): FormFeeCountTier => ({
     label: tier.label.trim()
 });
 
-/** Which pricing a stored fee uses. No fee at all reads as one price, left empty. */
+/**
+ * Which pricing a stored fee uses. A fee with no amount, no date steps and no prices by
+ * number of entries charges nothing (Form::feeRule() is null), so it reads as No price.
+ */
 const pricingOf = (fee: Record<string, any>): FeePricing => {
     if (Array.isArray(fee.countTiers) && fee.countTiers.length) return 'count';
     if (Array.isArray(fee.tiers) && fee.tiers.length) return 'dateSteps';
+    if (toAmount(fee.amount) === null) return 'none';
     return typeof fee.perEntryOfSection === 'string' && fee.perEntryOfSection ? 'perEntry' : 'flat';
 };
 
@@ -1422,6 +1448,7 @@ const buildPaymentBlock = (): FormPaymentSettings | null => {
     // Written once used, or when the loaded block already had them, so a form that never
     // used them (MEC's festival form) saves the block it had.
     const had = (key: string): boolean => preserved.value.loadedPaymentKeys.includes(key);
+    // One choice, so never both on: the server refuses allowFeeCoverage with requireFeeCoverage.
     const requireFee = s.paymentFeeCoverage === 'required';
     if (requireFee || had('requireFeeCoverage')) payment.requireFeeCoverage = requireFee;
     if (s.paymentOfficePayment || had('officePayment')) payment.officePayment = s.paymentOfficePayment;
@@ -1623,7 +1650,9 @@ const buildPayload = (): FormPayload => {
     const pricing = draftSettings.feePricing;
     const currency = (draftSettings.feeCurrency || 'USD').toUpperCase();
 
-    if (pricing === 'count') {
+    if (pricing === 'none') {
+        // No price, chosen as such (an empty price box under another choice blocks the save).
+    } else if (pricing === 'count') {
         const countTiers = draftSettings.feeCountTiers.map(buildCountTier);
 
         if (countTiers.length) {
@@ -2176,11 +2205,11 @@ const problems = computed<string[]>(() => {
 
     const pricing = draft.value.settings.feePricing;
 
-    if (pricing !== 'count' && draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
+    if (pricing !== 'count' && pricing !== 'none' && draft.value.settings.feeAmount !== null && draft.value.settings.feeAmount < 0) {
         found.push('The fee cannot be negative.');
     }
 
-    const perEntry = pricing === 'flat' ? null : draft.value.settings.feePerEntryOfSection;
+    const perEntry = pricing === 'flat' || pricing === 'none' ? null : draft.value.settings.feePerEntryOfSection;
     if (perEntry && !repeatableSections.value.some(section => section.id === perEntry)) {
         found.push(`The fee is charged per entry of "${perEntry}", which is not a repeating section.`);
     }
@@ -2220,6 +2249,18 @@ const feeAmountLabel = computed(() => {
     return draft.value.settings.feePricing === 'perEntry' ? 'Price per entry' : 'Amount';
 });
 
+/**
+ * The section that prices by number of entries count, when it has no maximum of 1 or more.
+ * The server refuses that on every form, paying or not: the top price is open-ended, so one
+ * registration could add entries without limit at that price.
+ */
+const countPricingNeedsMax = (section: FormSchemaSection): boolean =>
+    draft.value.settings.feePricing === 'count' &&
+    !!section.repeatable &&
+    !!section.id &&
+    section.id === draft.value.settings.feePerEntryOfSection &&
+    !(Number(section.maxEntries) >= 1);
+
 const sectionChoiceLabel = (section: FormSchemaSection): string => {
     const title = section.title || section.id;
     return draft.value.settings.feePricing === 'count' ? `"${title}"` : `Per entry of "${title}"`;
@@ -2229,27 +2270,33 @@ const sectionChoiceLabel = (section: FormSchemaSection): string => {
 const isWholeCents = (amount: number): boolean => Math.abs(Math.round(amount * 100) - amount * 100) < 1e-6;
 
 /**
- * StoreFormRequest's refusals for a price by number of entries, mirrored. They apply whether
- * or not payment is on: no counted section; a counted section that can be left empty; a
- * first row not starting at 1; rows not starting at ever more entries; a price under $0.50
- * or in fractions of a cent; a price lower than the row above it (a typo guard). The name
- * is this screen's own ask, because the receipt and the card page are worded with it.
+ * StoreFormRequest's refusals for a price by number of entries, mirrored where the server
+ * applies them.
+ *
+ * On EVERY form (countTierProblems() and the field rules): a counted section; an amount on
+ * every row, never negative; a first row starting at 1; rows starting at ever more entries,
+ * 1 to 1000; no row cheaper than the one above it (a typo guard).
+ *
+ * Only on a form that takes payment (`paying`; paymentProblems()): whole cents and at least
+ * $0.50. The counted section's "at least one entry" is the paying-form rule in
+ * paymentIssues(), as for every other pricing.
+ *
+ * A missing name is never refused (the server accepts one): the row shows a warning.
  */
-const countTierIssues = (s: DraftSettings): Record<string, string> => {
+const countTierIssues = (s: DraftSettings, paying: boolean): Record<string, string> => {
     const issues: Record<string, string> = {};
+
+    const counted = repeatableSections.value.find(candidate => candidate.id === s.feePerEntryOfSection);
 
     if (!s.feePerEntryOfSection) {
         issues['settings.fee.perEntryOfSection'] = 'Choose the repeating section whose entries are counted.';
-    } else {
-        const section = repeatableSections.value.find(candidate => candidate.id === s.feePerEntryOfSection);
-
-        if (section && (section.minEntries ?? 0) < 1) {
-            issues['settings.fee.perEntryOfSection'] = `"${section.title || section.id}" must require at least one entry when the price depends on the number of entries.`;
-        }
+    } else if (counted && countPricingNeedsMax(counted)) {
+        issues['settings.fee.perEntryOfSection'] = `“${counted.title || counted.id}” needs a maximum number of entries when prices go by number of entries. Set “Max entries” on that section, under Questions above.`;
     }
 
     if (!s.feeCountTiers.length) {
-        issues['settings.fee.countTiers'] = 'Add at least one price.';
+        // Zero rows would save as a free form: that has to be chosen as No price.
+        issues['settings.fee.countTiers'] = 'Add at least one price, or choose No price.';
         return issues;
     }
 
@@ -2278,20 +2325,16 @@ const countTierIssues = (s: DraftSettings): Record<string, string> => {
             issues[`${key}.amount`] = 'Every price needs an amount.';
         } else if (amount < 0) {
             issues[`${key}.amount`] = 'A price cannot be negative.';
-        } else if (!isWholeCents(amount)) {
-            issues[`${key}.amount`] = 'A price must be in whole cents (at most two decimal places).';
-        } else if (Math.round(amount * 100) < MIN_CHARGE_MINOR) {
-            issues[`${key}.amount`] = 'Every price must be at least $0.50, the smallest amount a card can be charged.';
+        } else if (paying && !isWholeCents(amount)) {
+            issues[`${key}.amount`] = 'A price on a form that takes payment must be in whole cents (at most two decimal places).';
+        } else if (paying && Math.round(amount * 100) < MIN_CHARGE_MINOR) {
+            issues[`${key}.amount`] = 'Every price on a form that takes payment must be at least $0.50, the smallest amount a card can be charged.';
         } else {
             if (previousAmount !== null && amount < previousAmount) {
                 issues[`${key}.amount`] = 'This costs less than the price above it. Prices cannot go down as entries go up, so check for a typo.';
             }
 
             previousAmount = previousAmount === null ? amount : Math.max(previousAmount, amount);
-        }
-
-        if (!tier.label.trim()) {
-            issues[`${key}.label`] = 'Give this price a name, for example "2 children".';
         }
     });
 
@@ -2335,16 +2378,26 @@ const paymentIssues = computed<Record<string, string>>(() => {
     }
 
     if (pricing === 'count') {
-        Object.assign(issues, countTierIssues(s));
+        Object.assign(issues, countTierIssues(s, paymentOn.value));
     }
 
     if (pricing === 'perEntry' && s.feeAmount !== null && !s.feePerEntryOfSection) {
         issues['settings.fee.perEntryOfSection'] = 'Choose the repeating section to charge per entry of.';
     }
 
+    // A priced choice with no price would save the form as FREE without a word (switching away
+    // from prices by number of entries leaves the box empty). Free has to be chosen: No price.
+    if ((pricing === 'flat' || pricing === 'perEntry') && s.feeAmount === null) {
+        issues['settings.fee.amount'] = 'Enter a price, or choose No price.';
+    }
+
+    if (pricing === 'dateSteps' && s.feeAmount === null && s.feeTiers.length === 0) {
+        issues['settings.fee'] = 'Enter a price, or add a price step, or choose No price.';
+    }
+
     if (!paymentOn.value) return issues;
 
-    if (!issues['settings.fee.perEntryOfSection']) {
+    if (!issues['settings.fee.perEntryOfSection'] && pricing !== 'none') {
         if (pricing === 'flat') {
             issues['settings.fee.perEntryOfSection'] = 'A form that takes payment cannot charge one price per submission. Choose a pricing that counts the entries of a repeating section.';
         } else if (!s.feePerEntryOfSection) {
@@ -2358,17 +2411,21 @@ const paymentIssues = computed<Record<string, string>>(() => {
         }
     }
 
-    const hasPrice = pricing === 'count'
-        ? s.feeCountTiers.length > 0
-        : s.feeAmount !== null || (pricing === 'dateSteps' && s.feeTiers.length > 0);
+    const hasPrice = pricing === 'none'
+        ? false
+        : (pricing === 'count'
+            ? s.feeCountTiers.length > 0
+            : s.feeAmount !== null || (pricing === 'dateSteps' && s.feeTiers.length > 0));
 
-    if (!hasPrice && !issues['settings.fee.countTiers']) {
-        issues['settings.fee'] = 'A form that takes payment needs a price.';
+    if (!hasPrice && !issues['settings.fee.countTiers'] && !issues['settings.fee.amount'] && !issues['settings.fee']) {
+        issues['settings.fee'] = pricing === 'none'
+            ? 'A form that takes payment needs a price. Choose how the price is worked out above.'
+            : 'A form that takes payment needs a price.';
     }
 
-    // Prices by number of entries were checked above, payment or not.
+    // Prices by number of entries are checked in countTierIssues().
     const prices: [string, number][] = [];
-    if (pricing !== 'count' && s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
+    if (pricing !== 'count' && pricing !== 'none' && s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
     if (pricing === 'dateSteps') {
         s.feeTiers.forEach((tier, index) => {
             if (tier.amount !== null) prices.push([`settings.fee.tiers.${index}.amount`, tier.amount]);

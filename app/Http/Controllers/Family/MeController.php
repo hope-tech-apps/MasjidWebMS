@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Family;
 
 use App\Http\Controllers\Controller;
 use App\Models\Contact;
+use App\Models\SchoolYear;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -61,6 +62,13 @@ class MeController extends Controller
                 // them only what they already know. Never the hash — see
                 // Contact::$hidden — and never a fact about anybody else.
                 'has_password' => $contact->hasFamilyPassword(),
+                // Whether the portal should offer its Calendar link: the
+                // organisation has at least one school year. A fact about the
+                // school, not the parent, and a boolean only — the calendar
+                // itself is GET .../school-calendar. Named as well as scoped.
+                'school_calendar_published' => SchoolYear::query()
+                    ->where('masjid_id', (int) $contact->masjid_id)
+                    ->exists(),
             ],
         ], Response::HTTP_OK);
     }

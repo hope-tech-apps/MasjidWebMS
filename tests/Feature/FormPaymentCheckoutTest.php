@@ -721,6 +721,130 @@ class FormPaymentCheckoutTest extends TestCase
         ]);
     }
 
+    // ------------------------------------------- replays of rows written before the deploy
+
+    /** origin/main's cleaned answers for $this->answers(2), spelled out: FormSchema::only() keeps what was sent. */
+    private const PRE_DEPLOY_DATA = [
+        'fullName' => 'Amal Yusuf',
+        'email' => 'amal@example.com',
+        'attendees' => [['attendeeName' => 'Guest 1'], ['attendeeName' => 'Guest 2']],
+    ];
+
+    /**
+     * Tests review, 2026-09-14. The replay fingerprint changed shape this round, and a replay
+     * test that hashes with the code under test cannot see a fingerprint that no longer
+     * matches what production already wrote. These rows carry the hash origin/main (1a7cde1)
+     * wrote, from a LITERAL array in its fingerprint() shape — ['data', 'staff_code_id',
+     * 'fee_covered'] — so a card registration mid-checkout across the deploy still gets its
+     * own row and page back, never a 409.
+     */
+    #[Test]
+    public function a_card_registration_written_before_this_deploy_still_replays_to_its_own_row_and_page(): void
+    {
+        foreach (['without the card fee' => [false, []], 'with the card fee' => [true, ['cover_fees' => true]]] as $label => [$feeCovered, $extra]) {
+            $suffix = $feeCovered ? 'fee' : 'nofee';
+            $session = "cs_pre_deploy_{$suffix}";
+            $fee = $feeCovered ? StripeFees::coverage(3000) : 0;
+            self::$pages[$session] = 'open';
+
+            $row = new FormResponse([
+                'form_id' => $this->form->id,
+                'masjid_id' => $this->masjid->id,
+                'data' => self::PRE_DEPLOY_DATA,
+                'respondent_name' => 'Amal Yusuf',
+                'respondent_email' => 'amal@example.com',
+                'entry_count' => 2,
+                'amount_due' => 30,
+                'status' => 'new',
+                'submitted_at' => now(),
+            ]);
+
+            $row->forceFill([
+                'client_submission_key' => "pre-deploy-card-{$suffix}",
+                'client_payload_hash' => FormResponse::payloadHash([
+                    'data' => self::PRE_DEPLOY_DATA,
+                    'staff_code_id' => null,
+                    'fee_covered' => $feeCovered,
+                ]),
+                'payment_method' => 'online',
+                'payment_status' => 'unpaid',
+                'currency' => 'usd',
+                'amount_due_minor' => 3000,
+                'fee_covered_minor' => $fee,
+                'total_minor' => 3000 + $fee,
+                'idempotency_key' => 'form_response_pre_deploy_' . $suffix,
+                'stripe_checkout_session_id' => $session,
+            ])->save();
+
+            $this->submit(['client_submission_key' => "pre-deploy-card-{$suffix}"] + $extra)
+                ->assertOk()
+                ->assertJsonPath('data.uuid', $row->uuid)
+                ->assertJsonPath('data.checkout_url', "https://checkout.stripe.test/pay/{$session}");
+        }
+
+        $this->assertSame(2, FormResponse::count(), 'no replay wrote a second row');
+        $this->assertSame([], self::$created, 'each got its open page back; none was made');
+    }
+
+    /** The same, for cash a staff member took at the gate before the deploy. */
+    #[Test]
+    public function a_staff_entry_written_before_this_deploy_still_replays_to_its_own_row(): void
+    {
+        $form = $this->makeForm($this->masjid, [], ['payment' => ['online' => true, 'staffCodes' => true, 'allowFeeCoverage' => true]]);
+
+        $code = FormStaffCode::factory()->withCode('PRE1-2XWD')->create([
+            'form_id' => $form->id,
+            'masjid_id' => $this->masjid->id,
+            'holder_name' => 'Najd Haddad',
+            'expires_at' => now()->addDay(),
+        ]);
+
+        $token = $this->postJson("/api/v1/forms/{$form->id}/staff-session", [
+            'staff_code' => 'PRE1-2XWD',
+            'device_id' => 'phone-najd-pre-1',
+        ], ['masjid-id' => (string) $this->masjid->id])->assertOk()->json('data.staff_token');
+
+        $row = new FormResponse([
+            'form_id' => $form->id,
+            'masjid_id' => $this->masjid->id,
+            'data' => self::PRE_DEPLOY_DATA,
+            'entry_count' => 2,
+            'amount_due' => 30,
+            'status' => 'new',
+            'submitted_at' => now(),
+        ]);
+
+        $row->forceFill([
+            'client_submission_key' => 'pre-deploy-cash-0001',
+            'client_payload_hash' => FormResponse::payloadHash([
+                'data' => self::PRE_DEPLOY_DATA,
+                'staff_code_id' => $code->id,
+                'fee_covered' => false,
+            ]),
+            'payment_method' => 'cash',
+            'payment_status' => 'paid',
+            'paid_at' => now(),
+            'currency' => 'usd',
+            'amount_due_minor' => 3000,
+            'total_minor' => 3000,
+            'staff_code_id' => $code->id,
+        ])->save();
+
+        // The box ticked on the staff phone, as the gate page sends it: cash has no card fee.
+        $this->postJson("/api/v1/forms/{$form->id}/responses", [
+            'data' => $this->answers(),
+            'staff_token' => $token,
+            'device_id' => 'phone-najd-pre-1',
+            'cover_fees' => true,
+            'client_submission_key' => 'pre-deploy-cash-0001',
+        ], ['masjid-id' => (string) $this->masjid->id])
+            ->assertOk()
+            ->assertJsonPath('data.uuid', $row->uuid)
+            ->assertJsonPath('data.payment_method', 'cash');
+
+        $this->assertSame(1, FormResponse::count());
+    }
+
     // ------------------------------------------------------------- the status read
 
     #[Test]

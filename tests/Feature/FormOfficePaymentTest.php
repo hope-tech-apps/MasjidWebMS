@@ -242,23 +242,43 @@ class FormOfficePaymentTest extends TestCase
             'device_id' => 'phone-najd-biss-1',
         ], ['masjid-id' => (string) $this->masjid->id])->assertOk()->json('data.staff_token');
 
-        $this->postJson("/api/v1/forms/{$form->id}/responses", [
+        $entry = [
             'data' => $this->answers(3),
             'staff_token' => $token,
             'device_id' => 'phone-najd-biss-1',
             'client_submission_key' => 'biss-cash-entry-0001',
-        ], ['masjid-id' => (string) $this->masjid->id])
+        ];
+
+        // Were the office branch to take this entry, the row would be written `office` and
+        // settleCash() — which refuses a row that already has a money leg — would throw:
+        // this answer would be a 500, not a paid cash entry.
+        $uuid = $this->postJson("/api/v1/forms/{$form->id}/responses", $entry, ['masjid-id' => (string) $this->masjid->id])
             ->assertOk()
             ->assertJsonPath('data.payment_method', 'cash')
             ->assertJsonPath('data.payment_status', 'paid')
             ->assertJsonPath('data.fee_covered_minor', 0)
-            ->assertJsonPath('data.total_minor', 25000);
+            ->assertJsonPath('data.total_minor', 25000)
+            ->json('data.uuid');
 
         $row = FormResponse::sole();
         $this->assertSame(FormResponse::METHOD_CASH, $row->payment_method);
         $this->assertNotNull($row->staff_code_id);
         $this->assertSame(0, FormResponse::where('payment_method', FormResponse::METHOD_OFFICE)->count());
         $this->assertSame([], self::$created);
+
+        // The staff phone's retry is the same entry, not a second one.
+        $this->postJson("/api/v1/forms/{$form->id}/responses", $entry, ['masjid-id' => (string) $this->masjid->id])
+            ->assertOk()
+            ->assertJsonPath('data.uuid', $uuid);
+        $this->assertSame(1, FormResponse::count());
+
+        // And it spent none of this family's office allowance: three office registrations
+        // from the same address still go through, and only the fourth is refused.
+        foreach ([1, 2, 3] as $children) {
+            $this->submit(['pay_with' => 'office'], $children, $form)->assertOk()->assertJsonPath('data.payment_method', 'office');
+        }
+
+        $this->submit(['pay_with' => 'office'], 1, $form)->assertStatus(429);
     }
 
     #[Test]
@@ -312,6 +332,123 @@ class FormOfficePaymentTest extends TestCase
         $this->assertSame([], self::$created);
     }
 
+    /**
+     * Abuse review, 2026-09-14: an office registration costs nothing and emails the address
+     * typed on the form, so each address gets forms.office_per_day (3) per form per day.
+     */
+    #[Test]
+    public function an_email_may_register_three_times_a_day_at_the_office_and_the_fourth_is_refused_before_anything_is_written(): void
+    {
+        $form = $this->familyForm(['online' => true, 'staffCodes' => true, 'officePayment' => true, 'officeInstructions' => self::INSTRUCTIONS]);
+
+        $this->submit(['pay_with' => 'office'], 1, $form)->assertOk();
+        $this->submit(['pay_with' => 'office'], 2, $form)->assertOk();
+        $third = $this->submit(['pay_with' => 'office', 'client_submission_key' => 'office-third-00003'], 3, $form)
+            ->assertOk()
+            ->assertJsonPath('data.payment_method', 'office');
+
+        // The same address, spelled the way a second tab might.
+        $this->submit(['pay_with' => 'office'], 2, $form, email: 'AMAL@Example.COM')
+            ->assertStatus(429)
+            ->assertHeader('Retry-After')
+            ->assertExactJson(['status' => 'error', 'message' => 'This email has already registered several times today. Please contact the office.']);
+
+        $this->assertSame(3, FormResponse::where('form_id', $form->id)->count(), 'the fourth wrote no row');
+        Mail::assertQueued(FormSubmissionReceipt::class, 3);
+        Mail::assertQueued(FormResponseSubmitted::class, 3);
+
+        // A retry of an accepted registration still gets its own answer.
+        $this->submit(['pay_with' => 'office', 'client_submission_key' => 'office-third-00003'], 3, $form)
+            ->assertOk()
+            ->assertJsonPath('data.uuid', $third->json('data.uuid'));
+
+        // Another address is another allowance.
+        $this->submit(['pay_with' => 'office'], 1, $form, email: 'bilal@example.com')
+            ->assertOk()
+            ->assertJsonPath('data.payment_method', 'office');
+
+        // The card never meets the limit.
+        $this->submit(['pay_with' => 'card'], 2, $form)
+            ->assertOk()
+            ->assertJsonPath('data.payment_method', 'online');
+
+        // Nor does a staff member taking cash from the same family.
+        FormStaffCode::factory()->withCode('BISS-8QWD')->create([
+            'form_id' => $form->id,
+            'masjid_id' => $this->masjid->id,
+            'holder_name' => 'Najd Haddad',
+            'expires_at' => now()->addDays(3),
+        ]);
+
+        $token = $this->postJson("/api/v1/forms/{$form->id}/staff-session", [
+            'staff_code' => 'BISS-8QWD',
+            'device_id' => 'phone-najd-biss-2',
+        ], ['masjid-id' => (string) $this->masjid->id])->assertOk()->json('data.staff_token');
+
+        $this->postJson("/api/v1/forms/{$form->id}/responses", [
+            'data' => $this->answers(2),
+            'staff_token' => $token,
+            'device_id' => 'phone-najd-biss-2',
+            'client_submission_key' => 'biss-cash-entry-0002',
+        ], ['masjid-id' => (string) $this->masjid->id])
+            ->assertOk()
+            ->assertJsonPath('data.payment_method', 'cash');
+
+        // Each form keeps its own allowance.
+        $this->submit(['pay_with' => 'office'], 1)->assertOk()->assertJsonPath('data.payment_method', 'office');
+
+        // And a day later the family may register again.
+        $this->travel(25)->hours();
+
+        $this->submit(['pay_with' => 'office'], 1, $form)->assertOk()->assertJsonPath('data.payment_method', 'office');
+
+        $this->assertSame(4, FormResponse::where('form_id', $form->id)->where('respondent_email', 'amal@example.com')->where('payment_method', FormResponse::METHOD_OFFICE)->count());
+    }
+
+    /**
+     * Money review, 2026-09-14: the replay fingerprint carries what the CLIENT chose, not the
+     * route the server took, so a retry that lands after the card came or went replays.
+     */
+    #[Test]
+    public function a_retry_after_the_card_comes_or_goes_replays_the_first_row_when_the_page_chose_nothing(): void
+    {
+        // The card is down, so a page that says nothing is sent to the office…
+        $this->masjid->forceFill(['stripe_charges_enabled' => false])->save();
+        $key = ['client_submission_key' => 'retry-across-card-0001'];
+
+        $office = $this->submit($key, 3)->assertOk()->assertJsonPath('data.payment_method', 'office');
+
+        // …and it comes back before the retry lands.
+        $this->masjid->forceFill(['stripe_charges_enabled' => true])->save();
+
+        $this->submit($key, 3)->assertOk()
+            ->assertJsonPath('data.uuid', $office->json('data.uuid'))
+            ->assertJsonPath('data.payment_method', 'office');
+
+        $this->assertSame(1, FormResponse::count());
+        $this->assertSame([], self::$created);
+
+        // The other way round: a card registration, then the card goes down.
+        $key2 = ['client_submission_key' => 'retry-across-card-0002'];
+
+        $card = $this->submit($key2, 2)->assertOk()->assertJsonPath('data.payment_method', 'online');
+        $this->masjid->forceFill(['stripe_charges_enabled' => false])->save();
+
+        $this->submit($key2, 2)->assertOk()
+            ->assertJsonPath('data.uuid', $card->json('data.uuid'))
+            ->assertJsonPath('data.payment_method', 'online');
+
+        $this->assertSame(2, FormResponse::count());
+        $this->assertCount(1, self::$created);
+
+        // A page that SAID how it pays is held to it: the other choice under one key is a 409.
+        $this->submit($key2 + ['pay_with' => 'office'], 2)->assertStatus(409);
+        $this->submit(['client_submission_key' => 'retry-across-card-0003', 'pay_with' => 'office'], 1)->assertOk();
+        $this->submit(['client_submission_key' => 'retry-across-card-0003'], 1)->assertStatus(409);
+
+        $this->assertSame(3, FormResponse::count());
+    }
+
     #[Test]
     public function an_office_registration_is_never_payable_by_card_afterwards(): void
     {
@@ -345,9 +482,18 @@ class FormOfficePaymentTest extends TestCase
             && $mail->paymentLine === null
             && $mail->paymentNote === self::INSTRUCTIONS
             && $mail->whatsappUrl === null);
-        Mail::assertQueued(FormResponseSubmitted::class, fn (FormResponseSubmitted $mail) => $mail->responseId === $row->id
-            && $mail->amountLine === '$250.00'
-            && $mail->paymentLine === null);
+        Mail::assertQueued(FormResponseSubmitted::class, function (FormResponseSubmitted $mail) use ($row) {
+            $html = $mail->render();
+
+            // Owed, not paid: "Amount owed", and the line in neutral grey, never the paid green.
+            return $mail->responseId === $row->id
+                && $mail->amountLine === '$250.00'
+                && $mail->paymentLine === 'Owed — paying the office'
+                && $mail->paymentOwed === true
+                && str_contains($html, 'color:#7b8794;">Amount owed</td>')
+                && str_contains($html, 'color:#52606d;">Owed — paying the office</td>')
+                && ! str_contains($html, 'color:#2f9e57;">Owed');
+        });
 
         Sanctum::actingAs($this->admin);
 
@@ -564,7 +710,7 @@ class FormOfficePaymentTest extends TestCase
         return FormResponse::where('uuid', $uuid)->firstOrFail();
     }
 
-    private function submit(array $extra = [], int $children = 3, ?Form $form = null, ?string $origin = self::ORIGIN, string $name = 'Amal Yusuf'): TestResponse
+    private function submit(array $extra = [], int $children = 3, ?Form $form = null, ?string $origin = self::ORIGIN, string $name = 'Amal Yusuf', string $email = 'amal@example.com'): TestResponse
     {
         $form ??= $this->form;
         $headers = ['masjid-id' => (string) $form->masjid_id];
@@ -574,17 +720,17 @@ class FormOfficePaymentTest extends TestCase
         }
 
         return $this->postJson("/api/v1/forms/{$form->id}/responses", array_merge([
-            'data' => $this->answers($children, $name),
+            'data' => $this->answers($children, $name, $email),
             'return_path' => '/',
             'client_submission_key' => (string) Str::uuid(),
         ], $extra), $headers);
     }
 
-    private function answers(int $children, string $name = 'Amal Yusuf'): array
+    private function answers(int $children, string $name = 'Amal Yusuf', string $email = 'amal@example.com'): array
     {
         return [
             'fullName' => $name,
-            'email' => 'amal@example.com',
+            'email' => $email,
             'children' => array_map(fn (int $n) => ['childName' => "{$name} child {$n}"], $children > 0 ? range(1, $children) : []),
         ];
     }

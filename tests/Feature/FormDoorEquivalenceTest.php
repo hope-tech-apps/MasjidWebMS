@@ -263,6 +263,7 @@ class FormDoorEquivalenceTest extends TestCase
             'prices by number of entries, card with the fee required and the office, as strings' => [function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
                 $d['settings']['payment'] = ['online' => 'true', 'requireFeeCoverage' => 'true', 'officePayment' => '1', 'officeInstructions' => 'Zelle the office.'];
             }, true],
             'paying the office alone' => [function (&$d) {
@@ -271,27 +272,42 @@ class FormDoorEquivalenceTest extends TestCase
             'prices by number of entries beside a flat amount' => [function (&$d) {
                 unset($d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
             }, false],
             'prices by number of entries beside date steps' => [function (&$d) {
                 unset($d['settings']['fee']['amount']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
             }, false],
             'prices by number of entries counting no section' => [function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers'], $d['settings']['fee']['perEntryOfSection']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
             }, false],
             'prices by number of entries starting at 2' => [function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = array_slice(self::COUNT_TIERS, 1);
+                $d['schema']['sections'][1]['maxEntries'] = 10;
             }, false],
             'prices by number of entries out of order' => [function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = [self::COUNT_TIERS[0], self::COUNT_TIERS[4], self::COUNT_TIERS[1]];
+                $d['schema']['sections'][1]['maxEntries'] = 10;
             }, false],
             'a price by number of entries cheaper than the one before it' => [function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
                 $d['settings']['fee']['countTiers'][4]['amount'] = 35;
+            }, false],
+            // The top tier is open-ended, so the counted section must be capped.
+            'prices by number of entries on a section with no maximum' => [function (&$d) {
+                unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
+                $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+            }, false],
+            // The card fee is optional or required, never both (money review, 2026-09-14).
+            'the card fee both optional and required' => [function (&$d) {
+                $d['settings']['payment'] = ['online' => true, 'allowFeeCoverage' => 'true', 'requireFeeCoverage' => '1'];
             }, false],
             'paying the office on a form that charges nothing' => [function (&$d) {
                 unset($d['settings']['fee']);
@@ -430,6 +446,7 @@ class FormDoorEquivalenceTest extends TestCase
             'prices by number of entries with the new switches as strings' => function (&$d) {
                 unset($d['settings']['fee']['amount'], $d['settings']['fee']['tiers']);
                 $d['settings']['fee']['countTiers'] = self::COUNT_TIERS;
+                $d['schema']['sections'][1]['maxEntries'] = 10;
                 $d['settings']['payment'] = ['online' => 'true', 'requireFeeCoverage' => 'on', 'officePayment' => '1', 'officeInstructions' => 'Zelle the office.'];
             },
             'a calendar-sourced question asking for two' => function (&$d) {

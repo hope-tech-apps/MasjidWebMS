@@ -257,6 +257,11 @@ BISS Sunday School's registration adds two switches to a form's single payment:
   `refusal()` check, no return origin and no session. The checkout preflight, `canPay`
   and the webhook's `explainNoTransition()` all read it as "not paid by card". A stray
   card payment on one is recorded and logged, and never flips it.
+- **Office submissions are limited per email.** There are
+  `forms.office_per_day` (3) per form per 24 hours, keyed by an HMAC of the
+  normalised identity email. The next one is a 429 before any write, and the bucket
+  is charged only when a row is written. Unpaid office rows hold capacity and never
+  lapse (DECISIONS.md 2026-09-13, Known limits).
 - **Office rows are the one unpaid money leg emailed at submit**
   (`FormNotifier::submitted()`). The receipt's note carries the office's instructions,
   and there is no group link. Settlement sends the paid receipt with

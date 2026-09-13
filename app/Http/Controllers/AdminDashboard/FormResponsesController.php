@@ -869,7 +869,8 @@ class FormResponsesController extends Controller
                             $response->isPaid() && $response->total_minor !== null ? $this->minor((int) $response->total_minor) : '',
                             optional($response->collected_at)->format('Y-m-d H:i'),
                             $this->csvCell((string) $response->collectedBy?->name),
-                            (string) $response->paid_via,
+                            // From an allowlist today; guarded like every other cell anyway.
+                            $this->csvCell((string) $response->paid_via),
                         );
                     }
 
