@@ -9,9 +9,12 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\PermissionRegistrar;
 use Tests\TestCase;
 
 /**
@@ -565,5 +568,358 @@ class ContactCredentialCrudTest extends TestCase
         Sanctum::actingAs($this->adminA);
 
         $this->get($this->url() . "/{$this->credentialA->id}/document")->assertStatus(404);
+    }
+
+
+    // ---------- what the credentials SCREEN guarantees ----------
+    //
+    // T-043e put a Vue panel on this API (ContactCredentialsPanel.vue, inside the
+    // member card) plus its store and its payload type. The panel deliberately
+    // holds no rules of its own — three of .claude/rules/credentials.md's
+    // non-negotiables are exactly the things a screen re-implements in
+    // TypeScript for convenience.
+    //
+    // THE FIRST VERSION OF THIS SECTION COULD NOT FAIL. It asserted meta.kinds,
+    // the derived status, the download_url prefix and the contacts permissions —
+    // all of it server behaviour T-023 shipped and this wave never touched, so
+    // every one of those tests passed unchanged with the panel's <template>
+    // emptied. Each test below therefore pairs the server premise with the
+    // SLICE'S half of the same bargain, read off the files, in the style of
+    // RegistrationManualIntakeTest::the_roster_screen_offers_the_button…. A
+    // screen is not testable from PHPUnit, but the four promises its docblocks
+    // make about what it must NOT re-implement are, and those are the four whose
+    // breach shows a coordinator a wrong answer about somebody's safeguarding
+    // paperwork.
+
+    /** The panel, its store and its payload type — the whole T-043e slice, as text. */
+    private function slice(): array
+    {
+        $paths = [
+            'panel' => 'resources/vue-app/views/dashboard/contacts/ContactCredentialsPanel.vue',
+            'store' => 'resources/vue-app/stores/masjid/contactCredentialsStore.ts',
+            'types' => 'resources/vue-app/core/types/data/masjid-related/ContactCredential.ts',
+            'card' => 'resources/vue-app/views/dashboard/ContactsView.vue',
+        ];
+
+        $slice = [];
+
+        foreach ($paths as $key => $path) {
+            $contents = file_get_contents(base_path($path));
+            $this->assertIsString($contents, "{$path} has been moved or removed");
+            $slice[$key] = $contents;
+        }
+
+        return $slice;
+    }
+
+    #[Test]
+    public function the_credential_form_renders_its_types_and_its_file_filter_from_the_servers_meta(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        $meta = $this->getJson($this->url())->assertOk()->json('meta');
+
+        // The form's Type options are meta.kinds. That is the whole point of
+        // ContactCredentialsController::meta(): adding a kind is one PHP
+        // constant — never a DB enum, never an ALTER TABLE — and it must reach
+        // the screen with NO Vue edit.
+        $this->assertSame(ContactCredential::KINDS, $meta['kinds']);
+        $this->assertSame(ContactCredential::STATUSES, $meta['statuses']);
+
+        // The screen labels its renewal-chase chip with THIS number and sends it
+        // back as ?expiring_within_days=N, so the chip and the amber badges can
+        // never disagree about what "expiring" means.
+        $this->assertSame(ContactCredential::expiringThresholdDays(), $meta['expiring_within_days']);
+
+        // And the file picker's filter is the server's allowlist, not a copy.
+        // config/credentials.php says the list is "comma-separated in .env so a
+        // tenant-specific need can be met without a deploy"; a fleet that widens
+        // it for phone-camera scans must not end up with a server that accepts
+        // the scan and a picker that greys it out.
+        $this->assertSame(
+            array_values((array) config('credentials.document.mime_types')),
+            $meta['document_mime_types']
+        );
+
+        $slice = $this->slice();
+
+        // The screen's half: options bound to the server's list…
+        $this->assertStringContainsString('v-for="kind in kinds"', $slice['panel']);
+        $this->assertStringContainsString('credentialsStore.meta?.kinds', $slice['panel']);
+
+        // …and the file filter bound to the server's allowlist rather than
+        // typed. The literal that used to sit in this markup is what this
+        // assertion exists to keep out.
+        $this->assertStringContainsString(':accept="acceptedDocumentTypes"', $slice['panel']);
+        $this->assertStringContainsString('credentialsStore.meta?.document_mime_types', $slice['panel']);
+
+        foreach (['image/jpeg', 'image/png', 'application/pdf', '.pdf,'] as $literal) {
+            $this->assertStringNotContainsString(
+                $literal,
+                $slice['panel'],
+                "the document allowlist is env-tunable config; a copy of '{$literal}' in the SPA "
+                . 'is wrong on the first deployment that tunes it',
+            );
+        }
+    }
+
+    #[Test]
+    public function the_panel_reads_the_servers_derived_status_and_computes_none_of_its_own(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        $row = $this->getJson($this->url())->assertOk()->json('data.0');
+
+        // The premise: the answer ships on the payload, so the screen never has
+        // a reason to work it out.
+        $this->assertArrayHasKey('status', $row);
+        $this->assertContains($row['status'], ContactCredential::STATUSES);
+
+        // And it stays derived. A `status` column would be correct until
+        // midnight and then wrong, with nothing responsible for refreshing it —
+        // which is why one has never existed.
+        $this->assertFalse(
+            Schema::hasColumn('contact_credentials', 'status'),
+            'status is derived from expires_at at read time; storing it makes it stale at midnight'
+        );
+
+        $slice = $this->slice();
+
+        // The screen's half. A second copy of the
+        // config('credentials.expiring_within_days') window agrees on the day it
+        // is written and then drifts, in the direction that badges an expired
+        // background check green — so the panel reads `status` off the row and
+        // owns no clock at all. `Date.now()` is the only practical way to derive
+        // one client-side, and this screen has no other use for the current
+        // time; `formatDate` parses a given day, it does not ask what today is.
+        $this->assertStringContainsString('statusBadgeClass(credential.status)', $slice['panel']);
+        $this->assertStringNotContainsString('Date.now(', $slice['panel']);
+        $this->assertStringNotContainsString('Date.now(', $slice['store']);
+
+        // The window itself is only ever read from meta, never named.
+        $this->assertStringContainsString(
+            'credentialsStore.meta?.expiring_within_days',
+            $slice['panel']
+        );
+
+        // The type mirrors the payload and adds nothing: `status` is a plain
+        // field on it, not something a caller is invited to construct.
+        $this->assertStringContainsString('status: CredentialStatus;', $slice['types']);
+    }
+
+    #[Test]
+    public function the_scan_is_reachable_only_through_the_url_the_server_named(): void
+    {
+        Sanctum::actingAs($this->adminA);
+
+        $response = $this->post($this->url(), [
+            'kind' => ContactCredential::KIND_BACKGROUND_CHECK,
+            'document' => $this->pdf('dbs-check.pdf'),
+        ])->assertStatus(201);
+
+        // The ONLY link to the bytes is the authenticated endpoint, which
+        // re-resolves masjid -> contact -> credential before anything leaves.
+        $this->assertStringStartsWith('/api/admin/', $response->json('data.document.download_url'));
+
+        // Nothing in the payload points at the filesystem. A /storage URL is
+        // world-readable to anyone who guesses it, and the disk and path are
+        // server internals whose disclosure only invites someone to try fetching
+        // the file some other way (.claude/rules/private-uploads.md).
+        $payload = json_encode($response->json());
+        $this->assertStringNotContainsString('/storage/', (string) $payload);
+        $this->assertStringNotContainsString('document_path', (string) $payload);
+        $this->assertStringNotContainsString('document_disk', (string) $payload);
+
+        $slice = $this->slice();
+
+        // The screen's half. The panel hands the server's own string to the
+        // store untouched, and the store fetches it as a blob THROUGH the axios
+        // instance so the bearer token travels with it — a plain <a href> would
+        // 401, and an assembled /storage path would need no token at all, which
+        // is the failure.
+        $this->assertStringContainsString('fetchDocumentBlob(scan.download_url)', $slice['panel']);
+        $this->assertStringContainsString("responseType: 'blob'", $slice['store']);
+
+        // No path is BUILT anywhere in the slice. Asserted on the three ways a
+        // path can actually be written — a single-quoted string, a double-quoted
+        // string, an interpolated template literal — rather than on the bare
+        // word, because all three files discuss /storage/ at length in the
+        // comments that explain why none of them may write one. A test that
+        // tripped on its own explanation would be deleted within the week.
+        foreach (["'/storage", '"/storage', '/storage/${'] as $construction) {
+            foreach (['panel', 'store', 'types'] as $file) {
+                $this->assertStringNotContainsString(
+                    $construction,
+                    $slice[$file],
+                    'the scan has no public URL and the SPA must never assemble one',
+                );
+            }
+        }
+
+        // And it is never rendered inline: a stranger's safeguarding paperwork
+        // is handed over as a download or not at all. `:src` is the assertion
+        // that matters — an <img> or an <iframe> can only show these bytes by
+        // binding one, and the panel binds none anywhere.
+        $this->assertStringNotContainsString(':src', $slice['panel']);
+        $this->assertStringNotContainsString('window.open(', $slice['panel']);
+    }
+
+    #[Test]
+    public function a_refused_read_is_not_reported_to_the_coordinator_as_an_empty_record(): void
+    {
+        // An admin holding ONE permission — the same `view contacts` that opens
+        // the member card this panel lives inside.
+        $readerMasjid = $this->makeMasjid();
+        $reader = $this->makeAdminFor($readerMasjid);
+        $reader->syncRoles([]);
+        $reader->givePermissionTo('view contacts');
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        $contact = Contact::factory()->create(['masjid_id' => $readerMasjid->id]);
+        ContactCredential::factory()->create([
+            'masjid_id' => $readerMasjid->id,
+            'contact_id' => $contact->id,
+        ]);
+
+        Sanctum::actingAs($reader);
+
+        $listUrl = "/api/admin/masjids/{$readerMasjid->id}/contacts/{$contact->id}/credentials";
+
+        // Reading the panel needs nothing more than `view contacts`…
+        $this->getJson($listUrl)->assertOk();
+
+        // …and writing still needs `manage contacts`, which this reader lacks.
+        // The screen mints no third authority of its own.
+        $this->postJson($listUrl, ['kind' => ContactCredential::KIND_BLS_CERTIFICATION])
+            ->assertStatus(403);
+
+        // The screen adds NO permission. `view/manage credentials` would change
+        // the seeded set that RolesAndPermissionsSeeder and
+        // RolePermissionBridgeTest pin, which this additive slice must not do.
+        $this->assertSame(8, Permission::count());
+
+        // THE SCREEN'S HALF, and the reason this refusal is worth a test at all:
+        // a 403 an admin can actually be handed. `load()` used to swallow every
+        // failure into `clear()`, so a refused or failed read rendered as "No
+        // credentials recorded for this person." — a false factual statement
+        // about a background check, made to the one person who reads this card
+        // to decide whether a volunteer may work unsupervised, and made in the
+        // direction that hides a record rather than inventing one.
+        $panel = $this->slice()['panel'];
+
+        $this->assertStringContainsString('const loadError = ref', $panel);
+        $this->assertStringContainsString('v-else-if="loadError"', $panel);
+
+        // The catch must SET it, not merely clear the list.
+        $start = strpos($panel, 'const load = async ()');
+        $this->assertNotFalse($start, 'the panel no longer has a load()');
+        $body = substr($panel, $start, strpos($panel, "\n};", $start) - $start);
+        $this->assertStringContainsString('loadError.value = apiErrorText(', $body);
+
+        // And the WRITE is withdrawn while the read is refused. `meta` is kept
+        // across members on purpose, so a 403 on this person still leaves the
+        // Type options populated from the last member who loaded — without this
+        // the button stays lit and offers to add a credential to a record the
+        // admin was just told they may not read.
+        $this->assertStringContainsString('!kinds.length || Boolean(loadError)', $panel);
+
+        // And the failure branch must come BEFORE the empty state, or the empty
+        // state swallows it again.
+        $errorAt = strpos($panel, 'v-else-if="loadError"');
+        $emptyAt = strpos($panel, 'No credentials recorded for this person.');
+        $this->assertNotFalse($emptyAt, 'the empty state has been renamed; re-check the ordering below');
+        $this->assertLessThan(
+            $emptyAt,
+            $errorAt,
+            'an unanswered question and an empty record must not read identically on a safeguarding card'
+        );
+    }
+
+    #[Test]
+    public function a_reply_for_the_previous_member_cannot_land_on_the_card_now_open(): void
+    {
+        // Two people in one org, each with a credential. This is the arrangement
+        // the disclosure needs: the card is per-member, the Pinia store is one.
+        $other = Contact::factory()->create(['masjid_id' => $this->masjidA->id]);
+        ContactCredential::factory()->create([
+            'masjid_id' => $this->masjidA->id,
+            'contact_id' => $other->id,
+        ]);
+
+        Sanctum::actingAs($this->adminA);
+
+        // The premise: the endpoint is per-contact and answers only for the
+        // contact in the path, so a list under the wrong name can only ever come
+        // from the SPA keeping the wrong answer.
+        $mine = $this->getJson($this->url())->assertOk()->json('data');
+        $theirs = $this->getJson($this->url($this->masjidA, $other))->assertOk()->json('data');
+
+        $this->assertSame([$this->credentialA->id], array_column($mine, 'id'));
+        $this->assertNotSame(
+            array_column($mine, 'id'),
+            array_column($theirs, 'id'),
+            'two members must not answer with the same credential rows'
+        );
+
+        $slice = $this->slice();
+
+        // The panel is actually on the member card. Everything else in this
+        // section is about a component nobody can reach if this line goes.
+        $this->assertStringContainsString('ContactCredentialsPanel', $slice['card']);
+        $this->assertStringContainsString(
+            '<ContactCredentialsPanel :contact="selectedContact" />',
+            $slice['card']
+        );
+
+        // THE SEQUENCING GUARD. ContactsView never nulls `selectedContact` when
+        // the card closes, so the panel is destroyed and re-created per member
+        // while both instances share this store. Open A, close it, open B, and
+        // A's slow reply is still on the wire: without the guard the last reply
+        // to arrive wins and the card headed with B's NAME lists A's licence
+        // numbers, A's document names, and a paperclip that downloads A's
+        // background check. Clearing the list before the request cannot help —
+        // the reply was already issued.
+        $this->assertStringContainsString('const ticket = ++currentRead;', $slice['store']);
+        $this->assertStringContainsString(
+            'if (ticket !== currentRead || contactId !== currentContactId) return;',
+            $slice['store']
+        );
+
+        // The assignments must sit AFTER the guard, or it guards nothing.
+        // strrpos, so this pins the guard standing in front of the assignment
+        // rather than the one in the failure path below.
+        $guardAt = strrpos($slice['store'], 'if (ticket !== currentRead');
+        $assignAt = strpos($slice['store'], 'credentials.value = res.data.data');
+        $this->assertNotFalse($assignAt, 'fetchCredentials no longer assigns the list; re-check this guard');
+        $this->assertLessThan(
+            $assignAt,
+            $guardAt,
+            'a stale reply must be dropped before it can touch the list or the vocabulary'
+        );
+
+        // THE FAILURE IS SEQUENCED TOO. The same disclosure runs backwards if it
+        // is not: A's read fails slowly, B's has already succeeded, and a
+        // handler in a component that no longer exists empties the list under
+        // B's name — leaving B's card saying nobody recorded anything. So the
+        // store, not the view, owns the emptying, and the VIEW no longer clears
+        // from its catch.
+        $this->assertStringContainsString('throw error;', $slice['store']);
+
+        $loadAt = strpos($slice['panel'], 'const load = async ()');
+        $this->assertNotFalse($loadAt, 'the panel no longer has a load()');
+        $loadBody = substr($slice['panel'], $loadAt, strpos($slice['panel'], "\n};", $loadAt) - $loadAt);
+        $this->assertStringNotContainsString(
+            'credentialsStore.clear()',
+            $loadBody,
+            "a failed read must not clear a list it may no longer own"
+        );
+
+        // And closing the card invalidates the read as well as emptying the
+        // list, so a reply nobody is waiting for cannot repopulate the store for
+        // whichever member is opened next.
+        $clearAt = strpos($slice['store'], 'function clear(): void {');
+        $this->assertNotFalse($clearAt, 'the store no longer has a clear()');
+        $clearBody = substr($slice['store'], $clearAt, strpos($slice['store'], "\n    }", $clearAt) - $clearAt);
+        $this->assertStringContainsString('currentRead++;', $clearBody);
     }
 }

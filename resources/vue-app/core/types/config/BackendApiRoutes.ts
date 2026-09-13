@@ -4,6 +4,18 @@ export type BackendApiRoute =
     '/api/admin/user' |
     '/api/admin/masjids' |
     '/api/admin/logout' |
+    // Two-step sign-in for the acting admin's OWN account (T-043d). No masjid
+    // segment on purpose: these are per-ACCOUNT, not per-organisation, and the
+    // controller only ever touches Auth::user().
+    '/api/admin/2fa/enroll' |
+    '/api/admin/2fa/confirm' |
+    '/api/admin/2fa' |
+    '/api/admin/2fa/recovery-codes' |
+    // The one 2FA path that is NOT about the caller's own account: a SuperAdmin
+    // clearing a stranded second factor for somebody who has lost both their
+    // phone and their printed codes. Super-gated, needs the operator's own live
+    // code, and writes a permanent record — see TwoFactorController::resetForUser.
+    `/api/admin/2fa/reset/${string}` |
     `/api/admin/masjids/${string}/` |
     `/api/admin/masjids/${string}/search?search_for=${string}` |
     `/api/admin/masjids/${string}/details` |
@@ -32,6 +44,24 @@ export type BackendApiRoute =
     // One shape, three verbs: GET reads the state and the audit trail, POST
     // enables/re-addresses, DELETE revokes. See ContactFamilyLoginController.
     `/api/admin/masjids/${string}/contacts/${string}/family-login` |
+    // Volunteer credentials on one contact (T-023) — the licences, background
+    // checks and certifications a Community org tracks on a provider. The
+    // `/contacts/${string}` shape above would already swallow these, but they
+    // are spelled out for the same reason groups and teachers are: the union is
+    // the only place the SPA's endpoint surface is written down.
+    //
+    // `?${string}` carries ?expiring_within_days=N — the renewal chase read,
+    // and a READ, not a reminder. The trailing `/${string}` shape carries GET
+    // (one credential), PUT (edit) and DELETE.
+    //
+    // The document download is deliberately ABSENT from this union: its URL is
+    // supplied by the server on the payload (`document.download_url`), is
+    // fetched as a blob straight off the axios instance so the bearer token
+    // travels with it, and must never be a path assembled in the SPA
+    // (.claude/rules/private-uploads.md).
+    `/api/admin/masjids/${string}/contacts/${string}/credentials` |
+    `/api/admin/masjids/${string}/contacts/${string}/credentials?${string}` |
+    `/api/admin/masjids/${string}/contacts/${string}/credentials/${string}` |
     // Groups — the org -> group -> member level, and everything hung off it
     // (roster, class story, threads, behaviour awards, hifz). One `${string}`
     // pattern per endpoint SHAPE rather than per id: the ids are interpolated at
@@ -128,6 +158,13 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/iqama` |
     `/api/admin/masjids/${string}/jumaa` |
     `/api/admin/masjids/${string}/theme` |
+    // The organisation's nisab price (T-043c). ONE shape, two verbs: GET returns
+    // the stored row plus the nisab reference resolved by the same server code
+    // the public calculator answers donors from; POST saves the price, its date
+    // and its cited source. The calculator itself is NOT here — it is the public
+    // /api/v1 endpoint, called with a tokenless client and the `masjid-id`
+    // header so the office exercises the donor's real path.
+    `/api/admin/masjids/${string}/zakat-settings` |
     `/api/admin/masjids/${string}/notifications` |
     `/api/admin/azkar` |
     `/api/admin/azkar/${string}/` |
@@ -157,3 +194,14 @@ export type BackendApiRoute =
     `/api/admin/onboarding/provision` |
     `/api/admin/onboarding/intake/geocode` |
     `/api/admin/search?search_for=${string}`
+    // T-041i (entering a registration by hand). Appended with a LEADING pipe so
+    // this adds lines and edits none — three agents can append to this union in
+    // one wave without touching each other's text.
+    //
+    // The contact PICKER on the manual-registration modal, and on the offline
+    // donation form, which has been casting `as any` past this union since it
+    // was built: the only shape here is `contacts?page=`, and the picker sends
+    // `?search=…&per_page=…`. The build is `vite build` with no type-check, so
+    // nothing said so. POST …/offerings/{id}/registrations needs no entry — it
+    // is the same path shape as the roster GET, which is already above.
+    | `/api/admin/masjids/${string}/contacts?${string}`

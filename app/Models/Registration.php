@@ -70,6 +70,33 @@ class Registration extends Model
         self::PAYMENT_CANCELED,
     ];
 
+    // -------------------------------------------------------- which door (T-041i)
+
+    /**
+     * WHICH DOOR this registration came through — and nothing else. It is not a
+     * third state machine: `source` never changes after the row is written, and
+     * no read path anywhere may branch on it to decide what somebody owes or
+     * whether a seat is held. Both doors run the same intake transaction, take a
+     * seat under the same lock, and snapshot the same price.
+     *
+     *  - PUBLIC — the unauthenticated /api/v1 endpoints. Every row that existed
+     *    before T-041i, which is what the column default records.
+     *  - STAFF  — an administrator recorded it on the roster screen: a family
+     *    paying at the desk, a phone call, a household with no email address.
+     *    `entered_by_user_id` names them.
+     *
+     * PHP constants over a plain string column, never a DB enum — same reasoning
+     * as STATUSES above and `MealOrder::SOURCE_ONLINE`/`SOURCE_STAFF`, the
+     * precedent this follows.
+     */
+    public const SOURCE_PUBLIC = 'public';
+    public const SOURCE_STAFF = 'staff';
+
+    public const SOURCES = [
+        self::SOURCE_PUBLIC,
+        self::SOURCE_STAFF,
+    ];
+
     protected $fillable = [
         'uuid',
         'masjid_id',
@@ -86,11 +113,29 @@ class Registration extends Model
         'stripe_subscription_schedule_id',
         'checkout_expires_at',
         'idempotency_key',
+        // `source`, `entered_by_user_id` and `staff_note` are DELIBERATELY
+        // ABSENT, for the same reason GroupMembership's provenance columns are:
+        // they record on whose authority a registration — and therefore the
+        // guardian edge it materialises — exists, so no request body may set
+        // them and no mass assignment may carry them in from a payload. The one
+        // writer that legitimately sets them is `enteredByStaff()` below, which
+        // is also what keeps "who may enter a registration by hand" answerable
+        // by finding its callers.
     ];
 
+    /**
+     * The column defaults are stated HERE as well as in the schema.
+     *
+     * A row created without naming `source` read NULL in memory until it was
+     * refreshed while the same row read 'public' from the database — the exact
+     * split GroupMembership's `$attributes` docblock records for `provenance`.
+     * Any writer handing an unrefreshed model to a read path would otherwise get
+     * a different answer from the one the row actually has.
+     */
     protected $attributes = [
         'status' => self::STATUS_PENDING,
         'payment_status' => self::PAYMENT_NONE,
+        'source' => self::SOURCE_PUBLIC,
     ];
 
     protected function casts(): array
@@ -177,6 +222,53 @@ class Registration extends Model
         return $this->belongsTo(FormResponse::class);
     }
 
+    /**
+     * The administrator who recorded this registration by hand, or null for
+     * every registration that came through the public door.
+     *
+     * Nullable rather than required even on the staff path, because a console
+     * or seeder caller has no `users` row to name — the same call
+     * `GroupMembership::confirmedByStaff()` and `ContactFamilyLoginController`
+     * already make. A staff entry with no recorded actor is still better
+     * evidence than one with no provenance at all, and the gap is visible on the
+     * screen as such rather than guessed at.
+     */
+    public function enteredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'entered_by_user_id');
+    }
+
+    /**
+     * Stamp this registration as one an authenticated administrator entered by
+     * hand — THE ONE PLACE `source` becomes 'staff'.
+     *
+     * Written with forceFill because the three columns are not fillable: they
+     * record on whose authority the row exists, and the guardian edge
+     * `RegistrationService::writeRosterMemberships()` derives from it opens a
+     * child's behaviour, ḥifẓ and safeguarding records to whoever holds it. The
+     * service cannot see who asked — `confirm()` runs from a webhook days later
+     * with no request and no principal — so the door that assembled the
+     * registrant list is the only place that can record the author, and this is
+     * that record.
+     *
+     * IT CLAIMS NOTHING ABOUT MONEY. Nothing here touches `payment_status`,
+     * `adjusted_total_minor` or any Stripe column, and no caller may add one:
+     * a registration is paid when a signature-verified webhook says so, when
+     * its plan is free, or when a 100% waiver routes it through `confirm()`.
+     */
+    public function enteredByStaff(?User $actor, ?string $note = null): static
+    {
+        $note = $note === null ? null : trim($note);
+
+        $this->forceFill([
+            'source' => self::SOURCE_STAFF,
+            'entered_by_user_id' => $actor?->getKey(),
+            'staff_note' => $note === '' ? null : $note,
+        ]);
+
+        return $this;
+    }
+
     /** Who this registration is FOR (one row per child/participant). */
     public function registrants(): HasMany
     {
@@ -210,10 +302,15 @@ class Registration extends Model
      * deadline, and nothing is owed a second time.
      *
      * Only RegistrationPaymentService::holdWhilePaymentClears() produces this
-     * shape. register(), promoteFromWaitlist() and checkout() always give a
-     * pending, awaiting seat a deadline, and every settlement moves the money
-     * state on. One definition, so the checkout door and anything that explains
-     * the state agree.
+     * shape, and `stripe_checkout_session_id` is the clause that keeps it that
+     * way. A pending, awaiting seat with NO deadline is otherwise also what
+     * `register()` and `promoteFromWaitlist()` write for a STAFF-entered
+     * registration — deliberately, because no session exists to expire — so the
+     * two shapes differ only in whether a Checkout Session was ever opened. Drop
+     * the session clause and every hand-entered seat starts claiming a payment
+     * is on its way when nobody has paid anything. Every settlement moves the
+     * money state on. One definition, so the checkout door and anything that
+     * explains the state agree.
      */
     public function paymentIsClearing(): bool
     {

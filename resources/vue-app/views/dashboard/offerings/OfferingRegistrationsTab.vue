@@ -5,26 +5,32 @@
                 <h6 class="mb-1">Registrations</h6>
                 <p class="text-muted small mb-0">
                     Sign-ups arrive from the public form and are advanced by Stripe.
-                    Nothing on this screen creates one.
+                    You can also add one here for a family who paid at the desk or
+                    phoned in — it takes a seat, and records no payment.
                 </p>
             </div>
-            <!-- Two server-rendered views of the same filtered set. -->
-            <div class="btn-group btn-group-sm" role="group">
-                <button
-                    type="button"
-                    class="btn"
-                    :class="view === 'registrations' ? 'btn-success' : 'btn-outline-secondary'"
-                    @click="setView('registrations')"
-                >
-                    <i class="bi bi-receipt me-1"></i>By sign-up
-                </button>
-                <button
-                    type="button"
-                    class="btn"
-                    :class="view === 'registrants' ? 'btn-success' : 'btn-outline-secondary'"
-                    @click="setView('registrants')"
-                >
-                    <i class="bi bi-person-lines-fill me-1"></i>By person
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <!-- Two server-rendered views of the same filtered set. -->
+                <div class="btn-group btn-group-sm" role="group">
+                    <button
+                        type="button"
+                        class="btn"
+                        :class="view === 'registrations' ? 'btn-success' : 'btn-outline-secondary'"
+                        @click="setView('registrations')"
+                    >
+                        <i class="bi bi-receipt me-1"></i>By sign-up
+                    </button>
+                    <button
+                        type="button"
+                        class="btn"
+                        :class="view === 'registrants' ? 'btn-success' : 'btn-outline-secondary'"
+                        @click="setView('registrants')"
+                    >
+                        <i class="bi bi-person-lines-fill me-1"></i>By person
+                    </button>
+                </div>
+                <button type="button" class="btn btn-sm btn-success" @click="showAdd = true">
+                    <i class="bi bi-plus-lg me-1"></i>Add a registration
                 </button>
             </div>
         </div>
@@ -102,7 +108,11 @@
                 The public sign-up page is not live yet. Publishing this offering's
                 sign-up form as a page section collects <em>form responses</em>, which
                 do not take a seat or charge anyone — they will not show up here.
+                To enrol a family yourself, use <strong>Add a registration</strong>.
             </p>
+            <button type="button" class="btn btn-sm btn-success mt-3" @click="showAdd = true">
+                <i class="bi bi-plus-lg me-1"></i>Add a registration
+            </button>
         </div>
 
         <!-- By sign-up -->
@@ -131,6 +141,19 @@
                             </router-link>
                             <div v-if="registration.contact?.email" class="text-muted small">
                                 {{ registration.contact.email }}
+                            </div>
+                            <!--
+                                WHICH DOOR, and nothing more. It is not a state:
+                                a staff-entered registration holds its seat and
+                                owes its money on exactly the same terms as a
+                                public one. The badge exists so an admin reading
+                                a roster of thirty can see the two the office
+                                typed, and read the reason they typed them.
+                            -->
+                            <div v-if="registration.source === 'staff'" class="mt-1">
+                                <span class="badge bg-secondary-subtle text-secondary-emphasis" :title="registration.staff_note || ''">
+                                    <i class="bi bi-pencil-square me-1"></i>Entered by the office
+                                </span>
                             </div>
                         </td>
                         <td class="text-center">{{ registration.registrants_count ?? '—' }}</td>
@@ -283,21 +306,33 @@
         <!--
             Said once, at the bottom of the list, because the absence of the two
             buttons an operator expects is a design decision rather than an
-            oversight.
+            oversight — and it is the sentence "Add a registration" has to be
+            read against, or an admin will look for "mark as paid" beside it.
         -->
         <div class="alert alert-light border small mt-4 mb-0">
             <i class="bi bi-shield-check me-1"></i>
             Payment states come from Stripe's webhooks, which are the record of what
             actually happened to the money. There is deliberately no "mark as paid"
             and no refund button here: refunds are made in your own Stripe dashboard,
-            where your organization holds the funds.
+            where your organization holds the funds. A registration you add by hand on
+            a paid plan is created <strong>unpaid</strong> for the same reason — take
+            the money through Stripe, or waive it with <strong>Grant aid</strong>.
         </div>
+
+        <ManualRegistrationModal
+            v-if="showAdd"
+            :offeringId="offeringId"
+            @close="showAdd = false"
+            @created="onCreated"
+        />
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onBeforeMount, watch } from 'vue';
+import Swal from 'sweetalert2';
 import Pagination from '@/components/partials/Pagination.vue';
+import ManualRegistrationModal from './ManualRegistrationModal.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     REGISTRATION_PAYMENT_STATUSES,
@@ -318,11 +353,18 @@ import { apiErrorText } from '@/core/services/ApiErrors';
  * The roster of one offering, in whichever of the two server views the operator
  * asked for.
  *
- * READ-ONLY BY CONSTRUCTION. Registrations are created by the public endpoints
- * and advanced by signature-verified Stripe webhooks; the backend exposes no
- * store or update route for them at all. The three writes that DO exist (grant
- * aid, promote off the waitlist, cancel) each act on one registration and live
- * on that registration's own page, where there is room to say what they do.
+ * ONE WRITE, AND IT MOVES NO MONEY. Registrations arrive from the public
+ * endpoints and are advanced by signature-verified Stripe webhooks; T-041i added
+ * a single create path for the family who paid at the desk or phoned in, because
+ * the office previously had nowhere to put them and the only thing they COULD
+ * publish — the intake form as a page section — writes a FormResponse that takes
+ * no seat and charges nobody. The modal is deliberate about what it does not do:
+ * no amount, no "paid", no payment method, and a paid plan entered by hand is
+ * created unpaid. See ManualRegistrationModal.
+ *
+ * The three writes that act on an EXISTING registration (grant aid, promote off
+ * the waitlist, cancel) still live on that registration's own page, where there
+ * is room to say what they do.
  *
  * WHAT THIS TABLE DELIBERATELY DOES NOT SHOW: an amount-paid-to-date column. The
  * list endpoint does not serve the payment ledger, and adding up succeeded
@@ -356,6 +398,7 @@ const {
 const loading = ref(false);
 const loadError = ref('');
 const searchQuery = ref('');
+const showAdd = ref(false);
 const view = ref<RegistrationView>('registrations');
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -441,6 +484,40 @@ const clearFilters = async () => {
     filters.search = '';
     searchQuery.value = '';
     await loadData(1);
+};
+
+/**
+ * A registration was entered by hand.
+ *
+ * The confirmation reads back the OUTCOME THE SERVER CHOSE rather than "Added":
+ * the same submission is confirmed on a free plan, unpaid-and-holding-a-seat on
+ * a paid one, and waitlisted if the last place went while the modal was open.
+ * An admin who was told "Added" and later found the family on the waitlist would
+ * reasonably believe the app had lost the registration.
+ */
+const onCreated = async (registration: Registration) => {
+    showAdd.value = false;
+    await loadData(1);
+
+    Swal.fire({
+        icon: registration.status === 'waitlisted' ? 'info' : 'success',
+        title: registration.status === 'waitlisted' ? 'Added to the waitlist' : 'Registration added',
+        text: outcomeText(registration),
+    });
+};
+
+const outcomeText = (registration: Registration): string => {
+    if (registration.status === 'waitlisted') {
+        return 'This offering was full, so no seat was taken and nothing is owed. '
+            + 'Promote them from the roster when a place frees up.';
+    }
+
+    if (registration.payment_status === 'awaiting') {
+        return 'A seat is held and the plan\'s price is recorded, but nothing has been paid. '
+            + 'Take the payment through Stripe, or waive it with Grant aid.';
+    }
+
+    return 'Confirmed — this plan has nothing to pay.';
 };
 
 const detailRoute = (registrationId: number) => ({

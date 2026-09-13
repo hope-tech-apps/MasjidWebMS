@@ -36,8 +36,10 @@ use Symfony\Component\HttpFoundation\Response;
  * ## This endpoint WRITES NOTHING
  *
  * Unlike the other public POSTs here, nothing is persisted — the tenant is
- * resolved for throttling, branding and future per-org configuration, and no
- * row is created. That is also why `calculate` is a POST despite being a pure
+ * resolved for throttling, branding and (since T-043c) for the organization's
+ * OWN nisab price, and no row is created. The tenant lookup is a read; the
+ * calculator writes nothing and logs nothing on any path. That is also why
+ * `calculate` is a POST despite being a pure
  * read: its body is a person's complete net worth, and a GET would put that in
  * a query string and from there into access logs and browser history. The
  * figures must never reach Log::* on any path; the catch below reports through
@@ -48,6 +50,17 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ZakatCalculatorController extends Controller
 {
+    /**
+     * The organization this request named, set by resolveTenant().
+     *
+     * A property rather than a return value so the tenant contract below keeps
+     * its two-answer shape (null = fine, a response = send this), while both
+     * methods can still hand the resolved masjid to ZakatCalculator::forMasjid()
+     * without a second lookup. Controllers are per-request instances, so nothing
+     * leaks between callers.
+     */
+    private ?Masjid $tenant = null;
+
     /**
      * POST /api/v1/zakat/calculate
      */
@@ -63,7 +76,7 @@ class ZakatCalculatorController extends Controller
             return response()->api(
                 200,
                 'Zakat calculated.',
-                ZakatCalculator::fromConfig()->calculate($request->validated())
+                ZakatCalculator::forMasjid($this->tenant)->calculate($request->validated())
             );
         } catch (\Exception $e) {
             return response()->api(500, Errors::publicMessage($e), null);
@@ -94,7 +107,7 @@ class ZakatCalculatorController extends Controller
             return response()->api(
                 200,
                 'Nisab reference.',
-                ZakatCalculator::fromConfig()->reference($filters)
+                ZakatCalculator::forMasjid($this->tenant)->reference($filters)
             );
         } catch (\Exception $e) {
             return response()->api(500, Errors::publicMessage($e), null);
@@ -117,9 +130,17 @@ class ZakatCalculatorController extends Controller
             return response()->api(400, 'A masjid must be specified.', null);
         }
 
-        if (! Masjid::whereKey($masjidId)->exists()) {
+        // Fetched rather than ->exists() since T-043c: the organization's own
+        // nisab price is read per masjid, so the row this check already needed
+        // is the row the calculator is built from. The 404 stays identical for a
+        // missing id and a bogus one.
+        $masjid = Masjid::whereKey($masjidId)->first();
+
+        if ($masjid === null) {
             return response()->api(404, 'The zakat calculator is not available.', null);
         }
+
+        $this->tenant = $masjid;
 
         return null;
     }

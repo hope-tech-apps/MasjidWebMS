@@ -18,6 +18,23 @@ export const useAuthStore = defineStore('authStore', () => {
     const token = ref<string | null>(null);
     const dashboardMasjidId = ref<number | string | null>(null);
 
+    /**
+     * The server answered the last sign-in attempt with a two-step challenge.
+     *
+     * This flag is the whole reason an enrolled admin can reach the dashboard at
+     * all. The challenge arrives as HTTP 200 with `status: 'two_factor_required'`
+     * and no token — a 200 that is not a success — and login()'s else branch used
+     * to treat every non-success as a fatal error and pop "Sorry, a two-factor
+     * authentication code is required to continue." An admin who had turned 2FA
+     * on was then stuck on that popup forever, because the sign-in form had no
+     * field to put a code in. Special-casing it here, and rendering a code field
+     * when it is true, is the fix.
+     */
+    const twoFactorRequired = ref<boolean>(false);
+
+    /** The inline refusal under the code field (wrong code, or locked out). */
+    const twoFactorError = ref<string>('');
+
     // Stores
     const masjidStore = useMasjidStore();
 
@@ -47,29 +64,79 @@ export const useAuthStore = defineStore('authStore', () => {
         localStorage.setItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id, (id + ''));
     }
 
-    async function login(email: string, password: string): Promise<SystemRoute | void> {
+    /**
+     * Sign in. The two-step arguments are OPTIONAL and are sent only when the
+     * caller has them.
+     *
+     * An admin who has not enrolled posts email + password and nothing else, on
+     * one round trip, exactly as before this existed — the extra fields are
+     * absent from the body, not empty in it, so the server sees the same request
+     * it always saw.
+     *
+     * The challenge is STATELESS: there is no half-signed-in session on the
+     * server, so answering it means re-posting the email and password alongside
+     * the code. That is deliberate — a partial-login token would be a second
+     * credential that exists precisely for accounts in the middle of proving
+     * themselves.
+     */
+    async function login(
+        email: string,
+        password: string,
+        twoFactorCode?: string,
+        recoveryCode?: string,
+    ): Promise<SystemRoute | void> {
 
         const formdata = new FormData();
         formdata.append('email', email);
         formdata.append('password', password);
+        if (twoFactorCode) {
+            formdata.append('two_factor_code', twoFactorCode);
+        }
+        if (recoveryCode) {
+            formdata.append('two_factor_recovery_code', recoveryCode);
+        }
+
+        twoFactorError.value = '';
 
         await ApiService.post('/api/admin/login', formdata)
             .then((res: AxiosResponse) => {
                 if (res.data?.status === 'success' && res.data?.data) {
+                    twoFactorRequired.value = false;
                     user.value = res.data?.data?.user ?? null;
                     token.value = res.data?.data?.token ?? "";
+                } else if (res.data?.status === 'two_factor_required') {
+                    // A 200 that is NOT a success: correct password, second
+                    // factor still owed. Never MSwal this — it is the normal
+                    // next step of a normal sign-in, and an error popup over it
+                    // is what locked enrolled admins out.
+                    twoFactorRequired.value = true;
                 } else {
                     MSwal.fire('Sorry', getMessageFromObj(res), 'error');
                 }
             })
             .catch((error: AxiosError<BackendResponseData>) => {
                 console.log(error);
-                MSwal.fire('Sorry', getMessageFromObj(error), 'error');
+                // Once the code screen is up, a refusal belongs UNDER the field
+                // the user just typed into, not in a modal they have to dismiss
+                // before they can try the next 30-second code. 422 = wrong code,
+                // 429 = too many wrong codes.
+                const status = error.response?.status;
+                if (twoFactorRequired.value && (status === 422 || status === 429)) {
+                    twoFactorError.value = getMessageFromObj(error);
+                } else {
+                    MSwal.fire('Sorry', getMessageFromObj(error), 'error');
+                }
             })
             .finally(() => {
                 authenticate()
             });
 
+    }
+
+    /** Drop the challenge state — used when the user backs out of the code screen. */
+    function cancelTwoFactorChallenge() {
+        twoFactorRequired.value = false;
+        twoFactorError.value = '';
     }
 
     /**
@@ -131,5 +198,10 @@ export const useAuthStore = defineStore('authStore', () => {
             });
     }
 
-    return { user, isAuthenticated, token, dashboardMasjidId, login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId }
+    return {
+        user, isAuthenticated, token, dashboardMasjidId,
+        twoFactorRequired, twoFactorError,
+        login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId,
+        cancelTwoFactorChallenge,
+    }
 })

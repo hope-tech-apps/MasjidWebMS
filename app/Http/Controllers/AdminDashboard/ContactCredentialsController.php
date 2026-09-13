@@ -235,8 +235,20 @@ class ContactCredentialsController extends Controller
 
     /**
      * The vocabulary the SPA needs to render a credential form without
-     * hardcoding it: the kind constants, the derived statuses, and the default
-     * expiring window the status accessor uses.
+     * hardcoding it: the kind constants, the derived statuses, the default
+     * expiring window the status accessor uses, and the document allowlist.
+     *
+     * `document_mime_types` is here for the file input's `accept` attribute.
+     * The allowlist is env-tunable on purpose (config/credentials.php: "comma-
+     * separated in .env so a tenant-specific need can be met without a
+     * deploy"), so a copy of it typed into the SPA is wrong on the first fleet
+     * that tunes it — and wrong in a silent way: the server accepts the scan
+     * while the file picker greys it out, with nothing on screen saying why.
+     * The list is not a secret; it is the same set the refusal message names.
+     *
+     * The SIZE ceiling is deliberately absent. Nothing in a file picker can use
+     * it, the screen prints no number on purpose, and the server's own refusal
+     * states it in words when a file is too big.
      */
     private function meta(): array
     {
@@ -244,6 +256,7 @@ class ContactCredentialsController extends Controller
             'kinds' => ContactCredential::KINDS,
             'statuses' => ContactCredential::STATUSES,
             'expiring_within_days' => ContactCredential::expiringThresholdDays(),
+            'document_mime_types' => array_values((array) config('credentials.document.mime_types', [])),
         ];
     }
 }

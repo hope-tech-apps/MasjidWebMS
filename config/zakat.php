@@ -95,6 +95,28 @@ return [
             ? (int) env('ZAKAT_SILVER_PRICE_PER_GRAM_MINOR')
             : null,
 
+        /*
+         * How long an ORGANIZATION's quoted price stays usable, in days (T-043c).
+         *
+         * Since T-043c a masjid types its own price into masjid_zakat_settings
+         * and dates it. That date is what makes the figure falsifiable, and this
+         * window is what the date is measured against: past it, the calculator
+         * still reports the threshold the office recorded — with its date and
+         * its cited source — but stops saying whether anyone meets it, exactly
+         * as it does when no price exists at all. `meets_nisab` and
+         * `zakat_due_minor` go back to null.
+         *
+         * That is not a fiqh position; it is the same refusal-to-guess this
+         * whole file is built on. A threshold from a price nobody has looked at
+         * since last Ramadan can tell a payer they owe nothing when they do, and
+         * an obligation is not the place to serve a cached answer.
+         *
+         * 30 days is a review cadence an office can actually keep. Shorten it if
+         * your organization publishes the threshold prominently; do not lengthen
+         * it to silence the warning.
+         */
+        'price_freshness_days' => (int) env('ZAKAT_PRICE_FRESHNESS_DAYS', 30),
+
     ],
 
     /*

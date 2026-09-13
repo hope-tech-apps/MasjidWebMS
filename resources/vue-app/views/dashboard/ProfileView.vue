@@ -88,6 +88,23 @@
         </div>
 
     </Form>
+
+    <!--
+        Two-step sign-in, for THIS account only (T-043d).
+
+        A sibling card rather than part of the profile form on purpose: saving
+        your name and turning a second factor on are different acts with
+        different consequences, and one Save button over both would let a
+        password change quietly carry a security change with it.
+
+        This screen is routed twice — admin/profile and the SuperAdmin profile —
+        so both admin realms reach it with no routing work. Teacher and
+        LunchStaff have no route here and would get 401 from /api/admin/2fa/*
+        anyway (UserAdminMiddleware::ADMIN_TYPES), so they cannot enrol; that is
+        stated in twoFactorStore's docblock and is a follow-on, not a widening of
+        ADMIN_TYPES.
+    -->
+    <TwoFactorPanel class="mt-4" />
 </template>
 
 <script setup lang="ts">
@@ -96,6 +113,7 @@ import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue';
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue';
 import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
+import TwoFactorPanel from '@/components/TwoFactorPanel.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';

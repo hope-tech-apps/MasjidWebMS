@@ -61,6 +61,8 @@ export type MasjidDashboardRoute =
     '/masjid/offerings' |
     `/masjid/offerings/${number}` |
     `/masjid/offerings/${number}/registrations/${number}` |
+    // The zakat calculator screen and the nisab price it publishes from.
+    '/masjid/zakat' |
     '/masjid/funds' |
     '/masjid/jummah-lunch' |
     '/masjid/team' |

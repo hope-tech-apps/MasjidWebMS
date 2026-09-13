@@ -433,6 +433,28 @@
                                 </div>
                             </div>
 
+                            <!--
+                                Volunteer credentials (T-023).
+
+                                The server has recorded these since T-023 and no
+                                screen could see or add one, so a coordinator's
+                                only copy of who holds a current background check
+                                was the spreadsheet the table was built to
+                                replace. The panel is its own component because
+                                this modal is already 1,400 lines and because the
+                                credential rules are worth reading in one place:
+                                options from the server's meta, status read never
+                                recomputed, the scan only through its
+                                authenticated download URL, the licence number
+                                masked.
+
+                                No new permission is involved — a credential is an
+                                attribute OF the member directory, so whoever may
+                                read this card may read these, and the seeded
+                                permission set stays at eight.
+                            -->
+                            <ContactCredentialsPanel :contact="selectedContact" />
+
                             <h6 class="text-muted mb-2">Giving history</h6>
                             <div class="table-responsive" style="max-height:40vh; overflow-y:auto;">
                                 <table class="table table-sm align-middle mb-0">
@@ -759,6 +781,7 @@
 <script setup lang="ts">
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
+import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { Contact, ContactPayload, FamilyLoginEvent, FamilyLoginStatus } from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';

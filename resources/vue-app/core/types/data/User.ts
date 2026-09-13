@@ -21,4 +21,13 @@ export type User = {
     avatar: Media;
     /** The organisation(s) this login belongs to and its access there (SuperAdmin user screens). */
     organisations?: UserOrganisation[];
+    /**
+     * When this login's two-step sign-in was confirmed, or null/absent.
+     *
+     * The ONLY 2FA field any payload carries — the secret, the recovery codes
+     * and the replay fingerprint are all in `User::$hidden` and never leave the
+     * server. It is here so the SuperAdmin user screen can tell whether there
+     * is a second factor to clear for somebody who has lost their phone.
+     */
+    two_factor_confirmed_at?: string | null;
 }

@@ -1,4 +1,5 @@
 import { Contact } from '@/core/types/data/masjid-related/Contact';
+import { FormSchemaDefinition } from '@/core/types/data/masjid-related/Form';
 
 /**
  * Offerings, fee plans and registrations — the T-006 registration + billing
@@ -208,6 +209,15 @@ export type OfferingFormRef = {
     name: string;
     slug?: string;
     is_active?: boolean;
+    /**
+     * The questions themselves, as the SHOW endpoint eager-loads them.
+     *
+     * Read-only here and never edited through an offering: a form is authored on
+     * the forms screen, and `App\Support\FormSchema` derives every validation
+     * rule from the STORED copy on both intake doors. The manual-registration
+     * modal draws from this; it does not judge from it.
+     */
+    schema?: FormSchemaDefinition | null;
 };
 
 /** Where confirmed registrants are materialised as group memberships. Nullable. */
@@ -513,6 +523,18 @@ export type Registration = {
     stripe_subscription_schedule_id: string | null;
     checkout_expires_at: string | null;
     idempotency_key?: string | null;
+    /**
+     * WHICH DOOR this signup came through (T-041i) — and nothing more. It is not
+     * a third state machine and no screen may branch on it to decide what
+     * somebody owes or whether a seat is held: both doors run the same intake
+     * transaction, take a seat under the same lock, and snapshot the same price.
+     * A roster badge saying "entered by the office" is all it is for.
+     */
+    source?: RegistrationSource;
+    /** Who typed it, when `source` is `staff`. Null on every public signup. */
+    entered_by_user_id?: number | null;
+    /** Why it was entered by hand, in the words the administrator typed. */
+    staff_note?: string | null;
     created_at: string;
     updated_at: string;
     /** The payer / guardian. */
@@ -546,3 +568,49 @@ export type RegistrationFilters = {
  * and three registrants, which is what a teacher printing a class list wants.
  */
 export type RegistrationView = 'registrations' | 'registrants';
+
+// ------------------------------------------- entering a registration by hand
+
+/** Which door a registration came through. Mirrors `Registration::SOURCES`. */
+export type RegistrationSource = 'public' | 'staff';
+
+/**
+ * One person on a hand-entered registration: an EXISTING contact, or a new one
+ * to create from a typed name.
+ *
+ * Exactly one of the two, never both. The server refuses a row carrying both
+ * because there is no honest way to resolve it — attaching the id would ignore
+ * a name the admin typed on purpose, using the name would ignore the person
+ * they picked.
+ */
+export type ManualRegistrantInput = {
+    contact_id: number | null;
+    name: string;
+    email: string;
+    phone: string;
+};
+
+/**
+ * The body of `POST …/offerings/{id}/registrations` (T-041i).
+ *
+ * NOTE WHAT IS NOT HERE, because it is the point of the whole feature: no
+ * amount, no currency, no payment_status, no "paid", no payment method. A price
+ * is the server's — snapshotted from the immutable fee plan at intake — and a
+ * registration is paid only when a signature-verified Stripe webhook says so,
+ * when its plan is free, or when a 100% waiver routes it through confirm().
+ * A hand-entered registration on a paid plan is created UNPAID, and the modal
+ * says so before the admin submits it.
+ */
+export type ManualRegistrationPayload = {
+    fee_plan_id: number;
+    /** An existing payer; XOR with `payer` below. */
+    payer_contact_id: number | null;
+    /** A payer to create. `name` is required when no `payer_contact_id` is sent. */
+    payer: { name: string; email: string; phone: string } | null;
+    /** Empty means the payer is registering themselves. */
+    registrants: ManualRegistrantInput[];
+    /** The offering's intake-form answers, validated server-side against its stored schema. */
+    data: Record<string, unknown>;
+    /** Why this was entered by hand, for the office to read later. */
+    note: string;
+};

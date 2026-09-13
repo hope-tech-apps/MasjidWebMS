@@ -51,32 +51,74 @@ class AuthController extends Controller
             return response()->json(['message' => 'invalid credentials']);
         }
 
-        // --- Additive 2FA gate (NO lockout) ------------------------------------
+        // --- Additive 2FA gate (NO permanent lockout) --------------------------
         // Runs ONLY after valid email+password, and ONLY for users who have
         // CONFIRMED enrollment. Unenrolled users skip this entirely and log in
-        // exactly as before — no extra step, no behavior change. A future
+        // exactly as before — no extra step, no behavior change. Nothing inside
+        // this block may move above it or grow a condition that a user with
+        // two_factor_confirmed_at === null can satisfy: that is the difference
+        // between an opt-in second factor and locking every administrator on the
+        // platform out at once. A future
         // `crm.require_admin_2fa` flag (default false) can enforce enrollment
         // globally without another code change; it is intentionally NOT consulted
         // here so today's behavior is preserved.
         if ($user->hasTwoFactorEnabled()) {
+            $twoFactor = app(TwoFactorService::class);
             $code = $request->input('two_factor_code');
+            $recoveryCode = $request->input('two_factor_recovery_code');
+
+            // Repeated wrong codes lock the SECOND FACTOR for a few minutes.
+            // This is a row-level counter, deliberately duplicating the
+            // `throttle:login` limiter rather than trusting it: that one is
+            // keyed on email+IP and lives in the cache, so an attacker who
+            // already holds the password and rotates addresses is not slowed by
+            // it, and a cache flush re-arms them. The lock always EXPIRES on its
+            // own — a permanent lock on somebody else's second factor is a free
+            // denial of service, and there is no honest answer to "who unlocks
+            // me?" that is not the clock.
+            if ($twoFactor->isLockedOut($user)) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'Too many incorrect codes. Try again in '
+                        . $twoFactor->lockedForMinutes($user) . ' minute(s).',
+                ], Response::HTTP_TOO_MANY_REQUESTS);
+            }
 
             // No code supplied -> return a clear challenge WITHOUT issuing a
-            // token, so the client can prompt for the code and retry.
-            if (empty($code)) {
+            // token, so the client can prompt for the code and retry. HTTP 200
+            // with no token is the shape the SPA switches on; do not "improve"
+            // it to a 401/403.
+            if (empty($code) && empty($recoveryCode)) {
                 return response()->json([
                     'status' => 'two_factor_required',
                     'message' => 'A two-factor authentication code is required to continue.',
                 ], Response::HTTP_OK);
             }
 
-            // Wrong code -> deny before any token is created.
-            if (! app(TwoFactorService::class)->verify($user->two_factor_secret, $code)) {
+            // A recovery code is the way back in for somebody whose
+            // authenticator is gone. It is SPENT here — consumeRecoveryCode()
+            // removes it and saves before this method mints anything — so the
+            // same printed line cannot be replayed, by them or by whoever found
+            // the paper. On success the flow continues to token minting exactly
+            // as a valid TOTP code does; there is no second-class session.
+            $accepted = ! empty($recoveryCode)
+                ? $twoFactor->consumeRecoveryCode($user, (string) $recoveryCode)
+                : $twoFactor->verifyAndConsume($user, (string) $code);
+
+            // Wrong code -> deny before any token is created. One message for
+            // every kind of wrong (bad, replayed, unknown recovery code): a
+            // refusal that distinguishes them tells an attacker which guesses
+            // were close.
+            if (! $accepted) {
+                $twoFactor->registerFailure($user);
+
                 return response()->json([
                     'status' => 'failed',
                     'message' => 'The two-factor authentication code is invalid.',
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
+
+            $twoFactor->clearFailures($user);
         }
         // -----------------------------------------------------------------------
 

@@ -2,6 +2,10 @@
 
 namespace App\Support;
 
+use App\Models\Masjid;
+use App\Models\MasjidZakatSetting;
+use Illuminate\Support\Carbon;
+
 /**
  * ZakatCalculator — the arithmetic behind the public zakat calculator (T-031).
  *
@@ -96,11 +100,52 @@ class ZakatCalculator
      * Where the metal price used for the threshold came from, so the payload can
      * distinguish a figure the caller supplied from one the deployment
      * configured — and "there wasn't one" from "it was zero".
+     *
+     * Precedence, highest first: REQUEST (the caller asserted a price for this
+     * one call, so it is current by construction), ORGANIZATION (this masjid's
+     * office typed and dated it — T-043c), CONFIG (a deployment-wide fallback in
+     * .env, one price for every tenant on the deploy and carrying no date).
      */
     public const PRICE_SOURCE_REQUEST = 'request';
 
+    public const PRICE_SOURCE_ORGANIZATION = 'organization';
+
     public const PRICE_SOURCE_CONFIG = 'config';
 
+    /**
+     * How old the price behind the threshold is KNOWN to be.
+     *
+     * Reported beside the figure so no reader has to assume. Neither STALE nor
+     * UNDATED is a softer CURRENT: the calculator gives a verdict ONLY on a
+     * price whose currency is established, and withholds it on the other two
+     * exactly as it does when there is no price at all. A threshold computed
+     * from a quote nobody has refreshed — or one whose age cannot be checked —
+     * can tell a payer they owe nothing when they do (.claude/rules/zakat.md).
+     *
+     * UNDATED is not folded into STALE because they are different facts, and the
+     * fix differs: a stale quote needs refreshing by the office that owns it, an
+     * undated one (a deployment `.env` price) needs replacing with a dated one.
+     * Saying which is which is the point of naming them at all.
+     */
+    public const FRESHNESS_CURRENT = 'current';
+
+    public const FRESHNESS_STALE = 'stale';
+
+    public const FRESHNESS_UNDATED = 'undated';
+
+    /**
+     * The trailing arguments are optional so every existing caller — and
+     * fromConfig() itself — keeps building the same object it always did. They
+     * carry the ORGANIZATION's own quote (T-043c), which is the only price that
+     * arrives with a date and a citation attached.
+     *
+     * Note the shape: gold and silver each get their own price, date and
+     * citation, and they are named as three-of-a-kind rather than collected
+     * into one date for the object. That is not verbosity — a single
+     * `$priceQuotedOn` here would be a field whose meaning depends on which
+     * price was written last, and nisab() would have no way to ask "when was
+     * THIS number read".
+     */
     public function __construct(
         private readonly string $defaultBasis,
         private readonly float $goldGrams,
@@ -110,6 +155,25 @@ class ZakatCalculator
         private readonly int $rateNumerator,
         private readonly int $rateDenominator,
         private readonly string $currency,
+        private readonly ?int $orgGoldPricePerGramMinor = null,
+        private readonly ?int $orgSilverPricePerGramMinor = null,
+        /**
+         * Y-m-d, the day the organization read THAT METAL's price off a market
+         * source, and its own free-text citation of where.
+         *
+         * One pair per metal, never one pair for the row. The two prices are
+         * edited months apart, and a shared date belongs to whichever was saved
+         * last: re-quoting gold would re-date a silver price nobody had looked
+         * at since spring, and nisab() — which resolves the price per metal —
+         * would hand a donor a hard verdict off it while printing a date it was
+         * never read on. The date is only evidence while it stays attached to
+         * the number it was read with.
+         */
+        private readonly ?string $orgGoldPriceQuotedOn = null,
+        private readonly ?string $orgGoldPriceQuotedFrom = null,
+        private readonly ?string $orgSilverPriceQuotedOn = null,
+        private readonly ?string $orgSilverPriceQuotedFrom = null,
+        private readonly int $priceFreshnessDays = 30,
     ) {
     }
 
@@ -129,6 +193,64 @@ class ZakatCalculator
             (int) config('zakat.rate.numerator', 1),
             (int) config('zakat.rate.denominator', 40),
             strtoupper((string) config('services.stripe.currency', 'usd')),
+            // No organization price on this path, but the review window still
+            // travels: it is reported in every payload, so a deployment that
+            // shortened it must not see 30 come back.
+            priceFreshnessDays: (int) config('zakat.nisab.price_freshness_days', 30),
+        );
+    }
+
+    /**
+     * Build for ONE organization, overlaying its own quoted price on the
+     * deployment's configuration (T-043c).
+     *
+     * This is what turns a permanently-"unknown" endpoint into a usable one.
+     * Before it, the only price a threshold could come from was a `.env` value
+     * shared by every tenant on the deploy — one price for every masjid, edited
+     * by hand on a production box. Now the office that answers for the figure is
+     * the one that types it, dates it, and says where it got it.
+     *
+     * Read through the documented `withoutMasjidScope()` bypass with an explicit
+     * `masjid_id`: the public calculator runs with NO bound tenant (it resolves
+     * the masjid itself from the `masjid-id` header), so the global scope would
+     * add no constraint and the explicit filter is the actual isolation. On the
+     * admin path a tenant IS bound, and going through the bypass keeps this one
+     * query behaving identically on both — the ImpactMetrics::withTenant shape
+     * (.claude/rules/tenant-scoping.md).
+     *
+     * An organization with no row, or a row with no price, falls all the way
+     * through to config and then to "unknown". Nothing here invents a price.
+     */
+    public static function forMasjid(Masjid $masjid): self
+    {
+        $base = self::fromConfig();
+
+        $setting = MasjidZakatSetting::withoutMasjidScope()
+            ->where('masjid_id', $masjid->getKey())
+            ->first();
+
+        if ($setting === null) {
+            return $base;
+        }
+
+        $basis = $setting->nisab_basis;
+
+        return new self(
+            in_array($basis, self::BASES, true) ? $basis : $base->defaultBasis,
+            $base->goldGrams,
+            $base->silverGrams,
+            $base->goldPricePerGramMinor,
+            $base->silverPricePerGramMinor,
+            $base->rateNumerator,
+            $base->rateDenominator,
+            $base->currency,
+            orgGoldPricePerGramMinor: $setting->gold_price_per_gram_minor,
+            orgSilverPricePerGramMinor: $setting->silver_price_per_gram_minor,
+            orgGoldPriceQuotedOn: $setting->gold_price_quoted_on?->format('Y-m-d'),
+            orgGoldPriceQuotedFrom: $setting->gold_price_quoted_from,
+            orgSilverPriceQuotedOn: $setting->silver_price_quoted_on?->format('Y-m-d'),
+            orgSilverPriceQuotedFrom: $setting->silver_price_quoted_from,
+            priceFreshnessDays: (int) config('zakat.nisab.price_freshness_days', 30),
         );
     }
 
@@ -153,7 +275,17 @@ class ZakatCalculator
         // Null threshold stays null here rather than collapsing to false: "we
         // could not tell" and "you are under the threshold" are different
         // answers, and only one of them means you owe nothing.
-        $nisab['meets_nisab'] = $nisab['threshold_minor'] === null
+        //
+        // A price whose currency is not ESTABLISHED lands in that same "could
+        // not tell" state, and that is the point of dating the price at all
+        // (T-043c). The threshold is still reported, with whatever date it has,
+        // because it is a fact about what was recorded — but comparing today's
+        // wealth against a quote nobody has refreshed, or one whose age cannot
+        // be established at all, produces a verdict that LOOKS derived and is
+        // not. An out-of-date nisab is worse than none: somebody may pay against
+        // it. So the verdict requires FRESHNESS_CURRENT, not merely a number.
+        $nisab['meets_nisab'] = ($nisab['threshold_minor'] === null
+            || $nisab['price_freshness'] !== self::FRESHNESS_CURRENT)
             ? null
             : $net >= $nisab['threshold_minor'];
 
@@ -180,7 +312,7 @@ class ZakatCalculator
                 false => 0,
                 default => null,
             },
-            'assumptions' => $this->assumptions($nisab['basis']),
+            'assumptions' => $this->assumptions($nisab),
             'disclaimer' => 'This is an arithmetic aid, not a religious ruling. Every assumption it '
                 . 'made is listed above; several are matters on which qualified scholars differ. '
                 . 'Confirm your own position with a scholar you trust.',
@@ -208,7 +340,7 @@ class ZakatCalculator
                 'percent' => round($this->rateNumerator / $this->rateDenominator * 100, 4),
             ],
             'nisab' => $nisab,
-            'assumptions' => $this->assumptions($nisab['basis']),
+            'assumptions' => $this->assumptions($nisab),
         ];
     }
 
@@ -242,8 +374,20 @@ class ZakatCalculator
     /**
      * The threshold, and how it was arrived at.
      *
+     * Everything a reader needs to judge the figure travels with it: which metal
+     * and weight, the price per gram, WHICH LAYER supplied that price, WHEN it
+     * was quoted, WHERE the office says it got it, and how old it is allowed to
+     * be. A threshold shown without those is a number nobody can check — and
+     * this one may be the number somebody pays an obligation against.
+     *
+     * Price precedence is request > organization > config, resolved PER METAL:
+     * an office that publishes only the silver threshold has no reason to have
+     * typed a gold one, and a payer who chooses the gold basis must not be
+     * handed the silver office's quote by accident. Whichever layer supplied the
+     * figure is the layer named in `price_source`.
+     *
      * @param  array<string,mixed>  $input
-     * @return array{basis:string,grams:float,price_per_gram_minor:?int,price_source:?string,threshold_minor:?int,meets_nisab:?bool}
+     * @return array{basis:string,grams:float,price_per_gram_minor:?int,price_source:?string,price_quoted_on:?string,price_quoted_from:?string,price_freshness:?string,price_freshness_days:int,threshold_minor:?int,meets_nisab:?bool}
      */
     private function nisab(array $input): array
     {
@@ -252,23 +396,53 @@ class ZakatCalculator
 
         $grams = $basis === self::BASIS_GOLD ? $this->goldGrams : $this->silverGrams;
 
-        // Request beats config: the caller's site may be showing a live spot
-        // price, which is closer to the truth than anything pinned in a file.
+        // Request beats everything: the caller's site may be showing a live spot
+        // price, which is closer to the truth than anything stored anywhere, and
+        // it was asserted for THIS call so it cannot be out of date.
         $requestPrice = self::nullableInt($input['nisab_price_per_gram'] ?? null);
+        // The organization's price, its date and its citation are read TOGETHER
+        // off the resolved basis. Splitting that resolution — taking the price
+        // from one metal and the date from the row — is precisely the bug the
+        // per-metal columns exist to make unrepresentable, so the three are
+        // picked in one expression and never re-derived further down.
+        $orgPrice = $basis === self::BASIS_GOLD
+            ? $this->orgGoldPricePerGramMinor
+            : $this->orgSilverPricePerGramMinor;
+        $orgQuotedOn = $basis === self::BASIS_GOLD
+            ? $this->orgGoldPriceQuotedOn
+            : $this->orgSilverPriceQuotedOn;
+        $orgQuotedFrom = $basis === self::BASIS_GOLD
+            ? $this->orgGoldPriceQuotedFrom
+            : $this->orgSilverPriceQuotedFrom;
         $configPrice = $basis === self::BASIS_GOLD
             ? $this->goldPricePerGramMinor
             : $this->silverPricePerGramMinor;
 
-        $price = $requestPrice ?? $configPrice;
-        $priceSource = $requestPrice !== null
-            ? self::PRICE_SOURCE_REQUEST
-            : ($configPrice !== null ? self::PRICE_SOURCE_CONFIG : null);
+        $price = $requestPrice ?? $orgPrice ?? $configPrice;
+        $priceSource = match (true) {
+            $requestPrice !== null => self::PRICE_SOURCE_REQUEST,
+            $orgPrice !== null => self::PRICE_SOURCE_ORGANIZATION,
+            $configPrice !== null => self::PRICE_SOURCE_CONFIG,
+            default => null,
+        };
+
+        $freshness = $this->freshnessOf($priceSource, $orgQuotedOn);
 
         return [
             'basis' => $basis,
             'grams' => $grams,
             'price_per_gram_minor' => $price,
             'price_source' => $priceSource,
+            // Only an organization's quote carries these two; a request price is
+            // the caller's own and a config price is a line in a deployment file.
+            'price_quoted_on' => $priceSource === self::PRICE_SOURCE_ORGANIZATION
+                ? $orgQuotedOn
+                : null,
+            'price_quoted_from' => $priceSource === self::PRICE_SOURCE_ORGANIZATION
+                ? $orgQuotedFrom
+                : null,
+            'price_freshness' => $freshness,
+            'price_freshness_days' => $this->priceFreshnessDays,
             // Rounded to the nearest minor unit; the weight is a float only
             // because grams genuinely are fractional, and this is the single
             // point where it meets the money.
@@ -276,6 +450,48 @@ class ZakatCalculator
             // Filled by calculate(); a threshold alone answers nothing.
             'meets_nisab' => null,
         ];
+    }
+
+    /**
+     * How old the chosen price is known to be.
+     *
+     *   request      — asserted for this call, so current by construction. This
+     *                  class does not verify it and says so in the assumptions.
+     *   organization — dated by the office. Current until the review window
+     *                  passes; STALE after it, and UNDATED if the row somehow
+     *                  carries a price with no date (the write path forbids it,
+     *                  so such a row predates the requirement or went round it).
+     *   config       — a deployment file has no quote date, so how current it is
+     *                  cannot be shown. UNDATED, honestly, rather than assumed.
+     *                  Note what this costs: the `.env` escape hatch can still
+     *                  publish a THRESHOLD, but it can no longer make the
+     *                  calculator say whether anyone meets it. That is the
+     *                  intended reading of "never ship a hardcoded metal price".
+     *
+     * A quote dated in the future reads as current; the request rejects such a
+     * date at the boundary, and this only has to not misbehave if one exists.
+     *
+     * `$quotedOn` is passed IN rather than read off the object because this
+     * class holds two of them, one per metal, and the answer is only true of the
+     * price it was read with. Reading a date off `$this` here would put the
+     * choice of metal in two places — nisab() picking the price and freshnessOf()
+     * picking the date — and the two would be free to disagree. That exact
+     * disagreement is the defect the per-metal columns were introduced to end:
+     * a silver quote from June judged current because gold was re-priced in
+     * September. The signature makes the pairing the caller's single decision.
+     */
+    private function freshnessOf(?string $priceSource, ?string $quotedOn): ?string
+    {
+        return match ($priceSource) {
+            null => null,
+            self::PRICE_SOURCE_REQUEST => self::FRESHNESS_CURRENT,
+            self::PRICE_SOURCE_CONFIG => self::FRESHNESS_UNDATED,
+            default => $quotedOn === null
+                ? self::FRESHNESS_UNDATED
+                : (Carbon::now()->startOfDay()->greaterThan(
+                    Carbon::parse($quotedOn)->startOfDay()->addDays($this->priceFreshnessDays)
+                ) ? self::FRESHNESS_STALE : self::FRESHNESS_CURRENT),
+        };
     }
 
     /**
@@ -306,10 +522,17 @@ class ZakatCalculator
      * client can render or translate them; `statement` is written to be read by
      * the donor as-is.
      *
+     * Takes the resolved nisab block rather than the basis alone since T-043c:
+     * WHERE the metal price came from and HOW OLD it is are facts about this
+     * particular answer, so the sentence describing them has to be built from
+     * the same resolution the threshold was.
+     *
+     * @param  array<string,mixed>  $nisab  the resolved block from nisab()
      * @return array<int,array{key:string,statement:string}>
      */
-    private function assumptions(string $basis): array
+    private function assumptions(array $nisab): array
     {
+        $basis = $nisab['basis'];
         $other = $basis === self::BASIS_GOLD ? 'silver' : 'gold';
 
         return [
@@ -341,6 +564,10 @@ class ZakatCalculator
                     . 'configured by this organization. It is not a live market quote. When no price '
                     . 'is available the threshold is reported as unknown rather than guessed, and no '
                     . 'claim is made about whether you owe zakat.',
+            ],
+            [
+                'key' => 'metal_price_quoted_on',
+                'statement' => $this->priceProvenanceStatement($nisab),
             ],
             [
                 'key' => 'rate_scope',
@@ -387,6 +614,72 @@ class ZakatCalculator
                     . 'not stored.',
             ],
         ];
+    }
+
+    /**
+     * The `metal_price_quoted_on` assumption: where this threshold's price came
+     * from, when it was true, and what is NOT being claimed as a result.
+     *
+     * Deliberately free of fiqh. Every sentence below is a statement about this
+     * software and about a date in a database — which layer supplied a number,
+     * what day a person recorded it, and whether the tool is therefore willing
+     * to say anything about the threshold. The disputed religious positions are
+     * the OTHER assumptions in the list; conflating the two would let a
+     * bookkeeping fact borrow the authority of a ruling, or the reverse.
+     *
+     * @param  array<string,mixed>  $nisab
+     */
+    private function priceProvenanceStatement(array $nisab): string
+    {
+        $days = $this->priceFreshnessDays;
+        $quotedOn = $nisab['price_quoted_on'] !== null
+            ? Carbon::parse($nisab['price_quoted_on'])->format('j F Y')
+            : null;
+
+        // The office's own citation, appended verbatim where it exists. A reader
+        // checking the threshold needs to be able to go to the same source.
+        $citation = $nisab['price_quoted_from'] !== null && $nisab['price_quoted_from'] !== ''
+            ? ' The organization gives its source for that price as: ' . $nisab['price_quoted_from'] . '.'
+            : ' The organization did not record where it took that price from.';
+
+        if ($nisab['price_source'] === self::PRICE_SOURCE_REQUEST) {
+            return 'The metal price used was supplied with this request rather than taken from any '
+                . 'stored figure, so it is as current as whatever supplied it. This tool did not '
+                . 'verify it against any market.';
+        }
+
+        if ($nisab['price_source'] === self::PRICE_SOURCE_ORGANIZATION) {
+            if ($nisab['price_freshness'] === self::FRESHNESS_STALE) {
+                return "The metal price behind this threshold was recorded by this organization on "
+                    . "{$quotedOn}, which is more than {$days} days ago." . $citation . ' The '
+                    . 'threshold that price implies is still shown so you can see the figure and its '
+                    . 'date — but because the price is out of date, nothing is said here about '
+                    . 'whether your wealth reaches the threshold or what you owe. Ask the '
+                    . 'organization for a current figure before relying on it.';
+            }
+
+            if ($quotedOn === null) {
+                return 'The metal price behind this threshold was recorded by this organization, but '
+                    . 'no date was stored with it, so how current it is cannot be checked.' . $citation
+                    . ' For that reason nothing is said here about whether your wealth reaches the '
+                    . 'threshold or what you owe.';
+            }
+
+            return "The metal price behind this threshold was recorded by this organization on "
+                . "{$quotedOn} and is reviewed every {$days} days." . $citation . ' It is not a live '
+                . 'market quote, and this tool did not verify it.';
+        }
+
+        if ($nisab['price_source'] === self::PRICE_SOURCE_CONFIG) {
+            return 'The metal price used is the one configured for this installation rather than one '
+                . 'this organization recorded. It carries no quote date, so how current it is cannot '
+                . 'be checked and it is not a live market quote. For that reason the threshold is '
+                . 'shown but nothing is said here about whether your wealth reaches it.';
+        }
+
+        return 'No metal price is available, so no threshold can be stated. Nothing is said here '
+            . 'about whether your wealth reaches the nisab or what you owe — only the one-fortieth '
+            . 'of your net wealth is shown, as arithmetic.';
     }
 
     /** A configured/supplied value that may legitimately be absent. */

@@ -8,6 +8,7 @@ import splashAnnouncementsManagementRoutes from "@/router/routes/splashAnnouncem
 import broadcastsManagementRoutes from "@/router/routes/broadcastsManagementRoutes"
 import appointmentsManagementRoutes from "@/router/routes/appointmentsManagementRoutes"
 import offeringsManagementRoutes from "@/router/routes/offeringsManagementRoutes"
+import zakatRoutes from "@/router/routes/zakatRoutes"
 
 const dashboardRoutes: RouteRecordRaw[] = [
     {
@@ -228,6 +229,10 @@ const dashboardRoutes: RouteRecordRaw[] = [
             // directory, and its fee plans are prices. See
             // offeringsManagementRoutes.ts.
             ...offeringsManagementRoutes,
+            // The zakat calculator and the nisab price behind it. Sits with the
+            // giving screens because that is where an admin looks for it, but
+            // carries no `requiresCrm` — see zakatRoutes.ts for why.
+            ...zakatRoutes,
             {
                 path: 'funds',
                 name: 'masjid.funds',

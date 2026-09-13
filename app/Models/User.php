@@ -113,6 +113,17 @@ class User extends Authenticatable implements HasMedia
         // Never expose the raw TOTP secret in API payloads (the login/user
         // endpoints serialize the whole User model).
         'two_factor_secret',
+        // The recovery codes are shown EXACTLY ONCE, in the response to the
+        // request that generates them, and are never carried by an ordinary
+        // payload. `/api/admin/user` runs on every page load and its body ends
+        // up in browser caches, proxy logs and support screenshots; a set of
+        // codes that each replace the second factor does not belong in it.
+        // TwoFactorTest::recovery_codes_are_never_present_in_a_user_payload
+        // pins this — the whole feature is only as private as this line.
+        'two_factor_recovery_codes',
+        // Derived from a live code (keyed HMAC). Nothing outside the replay
+        // check has any use for it, and it is credential material.
+        'two_factor_last_code_hash',
     ];
 
     /**
@@ -129,6 +140,16 @@ class User extends Authenticatable implements HasMedia
             // transparently decrypts it. Requires APP_KEY (already set).
             'two_factor_secret' => 'encrypted',
             'two_factor_confirmed_at' => 'datetime',
+            // Ciphertext at rest, a plain array in PHP. Encrypted rather than
+            // hashed on purpose — the user must be able to LOOK at these again
+            // after enrollment, which is what makes them a recovery path rather
+            // than a one-shot printout. The migration docblock argues it in
+            // full; keep this cast and the $hidden entry above together, and
+            // note that removing the cast is silent (nothing else notices), so
+            // TwoFactorTest asserts on the raw column.
+            'two_factor_recovery_codes' => 'encrypted:array',
+            'two_factor_last_used_at' => 'datetime',
+            'two_factor_locked_until' => 'datetime',
         ];
     }
 

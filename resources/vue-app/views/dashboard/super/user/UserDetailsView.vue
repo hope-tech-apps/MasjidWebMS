@@ -56,6 +56,71 @@
                     <p v-else class="small text-muted mb-0">{{ whyFixed(org) }}</p>
                 </div>
             </div>
+
+            <!--
+                Two-step sign-in: the ONE place on the platform where one person
+                acts on another's second factor. Shown only when there is
+                something to clear, and written as a deliberate, slow form
+                rather than a button — see resetTwoFactor() below.
+            -->
+            <div v-if="canSeeTwoFactorSection" class="d-flex flex-column gap-3 w-100">
+                <span class="fs-5 fw-semibold">Two-step sign-in</span>
+
+                <div v-if="!user.two_factor_confirmed_at" class="text-muted">
+                    This login has no second factor set up, so there is nothing to clear.
+                </div>
+
+                <div v-else class="access-card">
+                    <p class="mb-2">
+                        On since {{ twoFactorOnSince }}.
+                        Clear it only when they have lost <strong>both</strong> their authenticator
+                        and their printed recovery codes — anyone who still has either should turn it
+                        off themselves from their own profile.
+                    </p>
+                    <p class="small text-muted">
+                        This removes their second factor. It does not change their password and does
+                        not sign anybody in. {{ user.name }} is emailed about it, and your name and
+                        the reason below are kept on the account record permanently.
+                    </p>
+
+                    <div class="row g-2">
+                        <div class="col-12">
+                            <label class="form-label small fw-semibold mb-1" for="tfa-reason">
+                                Why are you clearing it?
+                            </label>
+                            <textarea id="tfa-reason" v-model="resetReason" class="form-control form-control-sm"
+                                rows="2" :disabled="twoFactorStore.isLoading"
+                                placeholder="e.g. Phone lost 12 Sep, no recovery sheet. Identity confirmed by video call."></textarea>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-semibold mb-1" for="tfa-email">
+                                Type their email address to confirm
+                            </label>
+                            <input id="tfa-email" v-model="resetEmail" type="email" autocomplete="off"
+                                class="form-control form-control-sm" :disabled="twoFactorStore.isLoading"
+                                :placeholder="user.email">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-semibold mb-1" for="tfa-code">
+                                A code from <em>your</em> authenticator
+                            </label>
+                            <input id="tfa-code" v-model="resetCode" type="text" inputmode="numeric"
+                                autocomplete="one-time-code" maxlength="6"
+                                class="form-control form-control-sm" :disabled="twoFactorStore.isLoading"
+                                placeholder="123456">
+                        </div>
+                    </div>
+
+                    <div v-if="twoFactorStore.errorMessage" class="alert alert-danger py-2 px-3 small mt-3 mb-0">
+                        {{ twoFactorStore.errorMessage }}
+                    </div>
+
+                    <button type="button" class="btn btn-sm btn-outline-danger mt-3"
+                        :disabled="!canSubmitReset || twoFactorStore.isLoading" @click="resetTwoFactor">
+                        {{ twoFactorStore.isLoading ? 'Clearing…' : 'Clear two-step sign-in' }}
+                    </button>
+                </div>
+            </div>
         </div>
     </DataItemContainer>
 </template>
@@ -70,11 +135,12 @@ import { User } from '@/core/types/data/User';
 import { useUsersStore } from '@/stores/super/usersStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useTwoFactorStore } from '@/stores/twoFactorStore';
 import { CAPABILITY_LABELS, TeamAccess, UserOrganisation } from '@/core/types/data/Capability';
 import { accessBadge, accessLabel } from '@/core/helpers/access';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
-import { onBeforeMount, ref } from 'vue';
+import { computed, onBeforeMount, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 // Lifecycle hooks
@@ -152,6 +218,74 @@ const changeAccess = async (org: UserOrganisation, access: TeamAccess) => {
             await reload();
             MSwal.fire(swalInstance);
         });
+}
+
+// ---- Two-step sign-in: the operator door -----------------------------------
+//
+// The one act on this screen that touches somebody else's CREDENTIALS rather
+// than their access, and the only reason it exists is that without it a
+// confirmed enrolment whose phone and printed sheet are both gone is a
+// permanent lockout with no path back except an UPDATE typed into the
+// production database. The server enforces every rule that matters (SuperAdmin
+// only, the operator's own live code, never on yourself, a permanent record,
+// an email to the person it was done to) — the form's job is to make the act
+// feel like what it is, which is why it asks for three things and offers no
+// one-click version.
+const twoFactorStore = useTwoFactorStore();
+const resetReason = ref('');
+const resetEmail = ref('');
+const resetCode = ref('');
+
+// The section is rendered for SuperAdmins only. The route is already behind the
+// super guard, so this is not the security boundary — it is what keeps the
+// screen honest if these views are ever reused somewhere less protected.
+const canSeeTwoFactorSection = computed(() => authStore.user?.type === 'SuperAdmin');
+
+// Formatted here rather than in the template: `two_factor_confirmed_at` is
+// `string | null | undefined`, and a `v-else` does not narrow it for the type
+// checker even though the branch cannot be reached with a null.
+const twoFactorOnSince = computed(() => {
+    const at = user.value?.two_factor_confirmed_at;
+    return at ? new Date(at).toLocaleDateString() : '';
+});
+
+const canSubmitReset = computed(() =>
+    resetReason.value.trim().length >= 10
+    && resetEmail.value.trim().length > 0
+    && resetCode.value.trim().length > 0);
+
+const resetTwoFactor = async () => {
+    if (!user.value?.id || !canSubmitReset.value) return;
+
+    const answer = await QSwal.fire(
+        'Warning',
+        `Clear two-step sign-in for ${user.value.name}? They will be emailed, and this is recorded against your name.`,
+        'warning',
+    );
+    if (!answer.isConfirmed) return;
+
+    const result = await twoFactorStore.clearForUser(
+        user.value.id,
+        resetCode.value.trim(),
+        resetEmail.value.trim(),
+        resetReason.value.trim(),
+    );
+
+    // The code is single-use whatever the outcome, so it never survives a
+    // submit — leaving it in the box invites a second press that can only fail.
+    resetCode.value = '';
+
+    if (!result.ok) return;
+
+    resetReason.value = '';
+    resetEmail.value = '';
+    await usersStore.fetchUser(route.params.user_id as string, user);
+
+    // The server's own sentence, because it says whether the notice to the
+    // affected admin actually went out — a mail outage does not undo the reset,
+    // and an operator who thinks they were told when they were not is the
+    // failure this whole design is built to avoid.
+    MSwal.fire({ title: 'Cleared', text: result.message, icon: 'success' });
 }
 
 // Enter that organisation's dashboard on its Team & Access screen, the same

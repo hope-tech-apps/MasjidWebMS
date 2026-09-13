@@ -384,6 +384,24 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresOrgTypes: ['masjid']
     },
     {
+        // Deliberately NOT gated on the CRM or on a vertical. This is the only
+        // screen that can set the metal price the PUBLIC zakat calculator
+        // answers from; hiding it from a tenant without the CRM would leave that
+        // organisation's endpoint telling visitors "threshold unknown" for ever
+        // with nowhere to fix it. Writing is gated server-side.
+        title: "Zakat Calculator",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 3V21" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M4 7H20" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M7 7L4 14H10L7 7Z" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M17 7L14 14H20L17 7Z" stroke="white" stroke-width="1.6" stroke-linejoin="round" fill="none"/>
+                <path d="M9 21H15" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/zakat',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+    },
+    {
         title: "Donation Funds",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2C6.48 2 2 4.02 2 6.5V17.5C2 19.98 6.48 22 12 22C17.52 22 22 19.98 22 17.5V6.5C22 4.02 17.52 2 12 2ZM20 17.5C20 18.28 16.87 20 12 20C7.13 20 4 18.28 4 17.5V14.77C5.61 15.55 8.72 16 12 16C15.28 16 18.39 15.55 20 14.77V17.5ZM20 12.23C18.39 13.01 15.28 13.5 12 13.5C8.72 13.5 5.61 13.01 4 12.23V9.45C5.61 10.24 8.72 10.75 12 10.75C15.28 10.75 18.39 10.24 20 9.45V12.23ZM12 8.75C7.13 8.75 4 7.03 4 6.5C4 5.97 7.13 4 12 4C16.87 4 20 5.72 20 6.5C20 7.28 16.87 8.75 12 8.75Z" fill="white"/>

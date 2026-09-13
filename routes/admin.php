@@ -76,6 +76,7 @@ use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
+use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
 use App\Http\Controllers\AdminDashboard\TwoFactorController;
 use App\Http\Controllers\AdminDashboard\UsersController;
 use Illuminate\Support\Facades\Route;
@@ -107,7 +108,20 @@ Route::prefix('admin')->group(function () {
         Route::prefix('2fa')->controller(TwoFactorController::class)->group(function () {
             Route::post('/enroll', 'enroll');
             Route::post('/confirm', 'confirm');
+            // A fresh set, invalidating the old one. Same reasoning as the rest
+            // of this group: it is an admin acting on their OWN second factor,
+            // so it is not permission-gated, and the controller re-checks the
+            // current code before it hands any codes out.
+            Route::post('/recovery-codes', 'recoveryCodes');
             Route::delete('/', 'disable');
+            // The way back for an administrator who has lost both their
+            // authenticator and their recovery codes. NOT part of the group's
+            // "an admin manages their own second factor" rule above — this one
+            // acts on SOMEBODY ELSE, so it carries `super` here as the first
+            // gate, and the controller re-checks the role, demands the
+            // operator's OWN live code, refuses self-service, and writes an
+            // append-only record before it clears anything.
+            Route::post('/reset/{user_id}', 'resetForUser')->middleware('super');
         });
 
         Route::prefix('users')->middleware('super')->controller(UsersController::class)->group(function () {
@@ -1099,6 +1113,18 @@ Route::prefix('admin')->group(function () {
                 // here; there is still deliberately no destroy route, because a
                 // gift that never happened is a $0 correction with a note, not a
                 // hole in the ledger.
+                // The gold and silver prices the nisab threshold is computed
+                // from. Read with `view donations` because the calculator shows
+                // the figure; written with `manage donations` because a wrong
+                // price makes every zakat answer on the screen wrong. It is a
+                // price and a date, never a ruling.
+                Route::prefix('{masjid_id}/zakat-settings')
+                    ->controller(MasjidZakatSettingController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view donations');
+                        Route::post('/', 'save')->middleware('permission:manage donations');
+                    });
+
                 Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     // Manual/offline gift entry (cash/check/Zelle/…). Stripe gifts
@@ -1193,13 +1219,39 @@ Route::prefix('admin')->group(function () {
                     });
 
                 // The roster of one offering + the explicit admin actions.
-                // Registrations are created by the PUBLIC endpoints (T-006c)
-                // and advanced by webhooks; there is deliberately no store or
-                // update route here.
+                //
+                // Registrations arrive through the PUBLIC endpoints (T-006c) and
+                // are advanced by signature-verified webhooks. T-041i added ONE
+                // create route and no update route, and the distinction is not
+                // pedantry: a family pays at the desk in cash or phones in, and
+                // the office had nowhere to put them — publishing the intake
+                // form instead writes a FormResponse, which takes no seat and
+                // charges nobody.
+                //
+                // `store` is `manage contacts` rather than `view contacts`, and
+                // the reason is the GUARDIAN EDGE. Confirming a registration
+                // materialises a guardian edge from the payer over every
+                // registrant (RegistrationService::writeRosterMemberships), and
+                // that edge is the single fact the parent portal reads to decide
+                // whose child's behaviour, ḥifẓ and safeguarding records a
+                // credential opens. The PUBLIC endpoint may therefore only name
+                // people it creates in the same request; this route may name
+                // EXISTING contacts, which is an assertion of authority — so it
+                // takes the same permission as editing the directory itself,
+                // where the same person could establish the same relationship by
+                // hand today. It is NOT `manage donations`, because a
+                // hand-entered registration moves no money: a paid plan is
+                // created unpaid and stays unpaid until Stripe says otherwise.
+                //
+                // There is still deliberately no UPDATE route: a registration's
+                // seat changes through promote/cancel and its price through
+                // adjustments, each of which re-checks its own invariant.
                 Route::prefix('{masjid_id}/offerings/{offering_id}/registrations')
                     ->controller(RegistrationsController::class)
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view contacts');
+                        // Enter a registration by hand — the desk/phone path.
+                        Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::get('/{registration_id}', 'show')->middleware('permission:view contacts');
                         // Granting aid decides what a family is charged.
                         Route::post('/{registration_id}/adjustments', 'storeAdjustment')

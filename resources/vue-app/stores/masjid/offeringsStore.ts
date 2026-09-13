@@ -5,10 +5,12 @@ import ApiService from "@/core/services/ApiService";
 import { AxiosResponse } from "axios";
 import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
+import { Contact } from "@/core/types/data/masjid-related/Contact";
 import {
     AdjustmentPayload,
     FeePlan,
     FeePlanPayload,
+    ManualRegistrationPayload,
     Offering,
     OfferingFilters,
     OfferingOption,
@@ -518,6 +520,69 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
         throw new Error('Failed to cancel the registration.');
     }
 
+    /**
+     * Enter a registration BY HAND (T-041i): a family paying at the desk, a
+     * phone call, a household with no email address.
+     *
+     * THIS IS NOT AN EXCEPTION TO POINT 3 IN THE HEADER, and the body is where
+     * you can see it. There is no amount, no currency, no payment_status, no
+     * "paid" and no payment method in `ManualRegistrationPayload`, and adding
+     * one would be inventing money movement in the browser. The server prices
+     * the registration from the immutable fee plan and creates a paid plan
+     * `pending / awaiting` — unpaid, and saying so on every screen — until a
+     * signature-verified Stripe webhook advances it, or Grant aid waives it to
+     * zero, or the plan was free to begin with.
+     *
+     * Sent as a PLAIN OBJECT so ApiService serialises it as JSON. Not FormData:
+     * the payload nests (`registrants[]`, `data{}`), and flattening it into
+     * `registrants.0.contact_id` keys is how a body arrives half-parsed and 422s
+     * with every field empty.
+     *
+     * Refusals to show verbatim: a 422 whose `data` is a STRING is the service's
+     * own refusal (a closed offering, an inactive plan); a 422 whose `data` is an
+     * OBJECT is a field bag — either this request's own rules or the offering's
+     * intake schema, which is why the modal marks fields from it rather than
+     * printing one sentence.
+     */
+    async function createRegistration(
+        offeringId: number | string,
+        payload: ManualRegistrationPayload
+    ): Promise<Registration> {
+        const id = masjidId();
+        if (!id) throw new Error('Masjid not specified.');
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${id}/offerings/${offeringId}/registrations` as BackendApiRoute,
+            payload
+        );
+
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+
+        throw new Error('Failed to record the registration.');
+    }
+
+    /**
+     * People in this organisation's directory matching what the admin typed, for
+     * the payer and registrant pickers.
+     *
+     * Read-only and capped: a picker is not a directory export. It exists so an
+     * admin can attach the EXISTING person rather than typing a name that forks
+     * a returning child into a second record.
+     */
+    async function searchContacts(term: string, limit = 8): Promise<Contact[]> {
+        const id = masjidId();
+        const query = term.trim();
+        if (!id || !query) return [];
+
+        const res: AxiosResponse = await ApiService.get(
+            `/api/admin/masjids/${id}/contacts?search=${encodeURIComponent(query)}&per_page=${limit}` as BackendApiRoute
+        );
+
+        return res.data?.data?.data ?? [];
+    }
+
     return {
         offeringsPaginated,
         offeringsMeta,
@@ -537,6 +602,8 @@ export const useOfferingsStore = defineStore('offeringsStore', () => {
         fetchRegistration,
         grantAdjustment,
         promoteRegistration,
-        cancelRegistration
+        cancelRegistration,
+        createRegistration,
+        searchContacts
     }
 })

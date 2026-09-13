@@ -107,6 +107,26 @@ class ApiService {
         return ApiService.VueApp.axios.delete(resource);
     }
 
+    /**
+     * Delete WITH a request body (axios puts it in `config.data`).
+     *
+     * For the handful of endpoints where the destructive verb itself has to be
+     * proven — today only DELETE /api/admin/2fa, which requires a live
+     * two-factor code. The alternative is a query string, and a credential in a
+     * URL lands in browser history, server access logs and any proxy in the
+     * middle, so it is not an alternative at all.
+     *
+     * The Content-Type is set explicitly for the same reason post() sets it:
+     * the global default is a boundary-less "multipart/form-data" that PHP
+     * cannot parse, which would deliver an empty body and a 422.
+     */
+    public static deleteWithBody(resource: BackendApiRoute, data: any): Promise<AxiosResponse> {
+        return ApiService.VueApp.axios.delete(resource, {
+            data,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
+
     // Post or Put
     public static changeRecords(resource: BackendApiRoute, data: any, isPut: boolean): Promise<AxiosResponse> {
         if (isPut) {

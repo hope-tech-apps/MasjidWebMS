@@ -89,6 +89,25 @@ use Illuminate\Validation\ValidationException;
  * enrolment screen, an importer — is asserting that its own act carries that
  * authority, and had better be authenticated.
  *
+ * T-041i BUILT THAT ADMIN ENROLMENT SCREEN, and this is how it satisfies the
+ * paragraph above rather than quietly stepping around it. `register()` takes an
+ * optional `StaffEntry` — an object whose whole content is "an authenticated
+ * administrator is making this claim", plus who they are — and
+ * `AdminDashboard\RegistrationsController::store` is the only HTTP caller that
+ * constructs one, behind `permission:manage contacts` inside the `crm` gate.
+ * The claim is then RECORDED rather than merely made: `enteredByStaff()` stamps
+ * `source = staff` and `entered_by_user_id`, so an assertion of authority
+ * carries an author the office can go and ask.
+ *
+ * It is deliberately NOT an upgrade of the claim. The roster edges written
+ * below stay `self_asserted` on both paths, so entering a registration by hand
+ * lists a child and widens nobody's read access over them — confirming an edge
+ * stays a separate, deliberate act on the group screen
+ * (GroupMembership::confirmedByStaff, .claude/rules/groups.md). The permission
+ * gate is what makes the staff path safe enough to resolve a registrant to an
+ * EXISTING contact at all; the provenance floor is what makes it safe if the
+ * gate is ever mis-set.
+ *
  * THE ROSTER IS A MATERIALISATION, NOT THE REGISTRATION. It is optional by
  * construction (`offerings.group_id` is nullable and an offering without one
  * registers families perfectly well), so a group that cannot be resolved is
@@ -133,6 +152,10 @@ class RegistrationService
      * @param  array<string,mixed>  $intakeData  answers for the offering's intake form
      * @param  array<int,Contact>  $registrants  who the registration is FOR;
      *         empty means the payer registers themselves
+     * @param  StaffEntry|null  $staffEntry  present ONLY when an authenticated
+     *         administrator is entering this by hand (T-041i). See the class
+     *         docblock: its presence is the guardian claim's author, and it also
+     *         decides whether a paid pending carries a checkout window at all.
      *
      * @throws RegistrationException  closed offering, cross-tenant reference,
      *         inactive/mismatched/unknown plan
@@ -143,7 +166,8 @@ class RegistrationService
         FeePlan $feePlan,
         Contact $payer,
         array $intakeData,
-        array $registrants = []
+        array $registrants = [],
+        ?StaffEntry $staffEntry = null
     ): Registration {
         $registrants = $this->normalizeRegistrants($payer, $registrants);
 
@@ -205,7 +229,7 @@ class RegistrationService
 
         $listTotal = $this->listTotalFor($feePlan);
 
-        return DB::transaction(function () use ($offering, $feePlan, $payer, $registrants, $form, $schema, $clean, $listTotal): Registration {
+        return DB::transaction(function () use ($offering, $feePlan, $payer, $registrants, $form, $schema, $clean, $listTotal, $staffEntry): Registration {
             // THE capacity lock: re-read the offering under lockForUpdate so
             // the counter is read under the same lock the insert will bump.
             $locked = Offering::query()->whereKey($offering->id)->lockForUpdate()->first();
@@ -271,12 +295,50 @@ class RegistrationService
                 $attributes += [
                     'status' => Registration::STATUS_PENDING,
                     'payment_status' => Registration::PAYMENT_AWAITING,
-                    'checkout_expires_at' => now()->addMinutes($this->checkoutWindowMinutes()),
-                    'idempotency_key' => 'reg_checkout_' . Str::uuid(),
                 ];
+
+                // A STAFF-ENTERED PAID SEAT GETS NO CHECKOUT WINDOW, AND THAT IS
+                // THE WHOLE POINT OF THE BRANCH.
+                //
+                // `checkout_expires_at` is not a general "unpaid seats expire"
+                // deadline — it is the lifetime of a hosted Checkout Session a
+                // browser has open, and `Registration::scopeCheckoutExpiredBefore`
+                // sweeps precisely (pending, awaiting, non-null window). Stamping
+                // the default 30 minutes onto a registration an administrator
+                // just typed at the desk would have T-006f's reaper release the
+                // seat before the family reached the car park: the roster shows
+                // the child, and half an hour later it silently does not, with
+                // nothing on any screen saying why and the office believing the
+                // place was held.
+                //
+                // NULL is the honest value. It means "no deadline was ever set",
+                // which is exactly true — no session exists to expire, and no
+                // money is in flight to lose. The seat is held because a human
+                // said so, and it is released the same way: Grant aid waiving it
+                // to zero (which routes through confirm()), or Cancel. If the
+                // office later sends this family a payment link, the checkout
+                // service mints the key and the window at that moment, and the
+                // seat becomes reapable then — correctly, because only then is
+                // there a Stripe leg to abandon.
+                if ($staffEntry === null) {
+                    $attributes += [
+                        'checkout_expires_at' => now()->addMinutes($this->checkoutWindowMinutes()),
+                        'idempotency_key' => 'reg_checkout_' . Str::uuid(),
+                    ];
+                }
             }
 
-            $registration = Registration::create($attributes);
+            // NOT `Registration::create()`: `source`, `entered_by_user_id` and
+            // `staff_note` are not fillable on purpose (they record on whose
+            // authority the row exists), so the staff stamp goes on through the
+            // model's own forceFill seam and cannot arrive from a payload.
+            $registration = new Registration($attributes);
+
+            if ($staffEntry !== null) {
+                $registration->enteredByStaff($staffEntry->user, $staffEntry->note);
+            }
+
+            $registration->save();
 
             foreach ($registrants as $contact) {
                 Registrant::create([
@@ -480,12 +542,36 @@ class RegistrationService
      * admin clicking promote while a public registration takes the last seat
      * cannot oversell it. A full offering refuses.
      *
-     * The promoted row lands where intake would have put it had a seat been
-     * free: total 0 → confirmed synchronously through `confirm()` (the single
+     * The promoted row lands EXACTLY where intake would have put it had a seat
+     * been free — and "exactly" is the word that matters, because this method
+     * has to reproduce every carve-out `register()` makes, not merely the happy
+     * one. Total 0 → confirmed synchronously through `confirm()` (the single
      * confirmation seam, so the roster materialises through the exact same
-     * code); total > 0 → pending + awaiting with a fresh checkout window and a
-     * fresh idempotency key, so the registrant can pay through the public
-     * re-mint endpoint. Nothing here talks to Stripe.
+     * code); total > 0 → pending + awaiting, with a checkout window and an
+     * idempotency key ONLY on the public path, so the registrant can pay through
+     * the public re-mint endpoint. Nothing here talks to Stripe.
+     *
+     * THE STAFF CARVE-OUT IS REPRODUCED HERE, and it was missed once.
+     * `register()` leaves `checkout_expires_at` and `idempotency_key` null for a
+     * staff-entered row because that column is the lifetime of a hosted Checkout
+     * Session a browser has open, not a general "unpaid seats expire" deadline —
+     * see the long comment there. Every word of that reasoning survives the
+     * waitlist: a family pays at the desk for a full class, the office types the
+     * registration (waitlisted, source=staff, no window), and a week later a
+     * place frees and the office clicks Promote. Stamping the default 30 minutes
+     * at THAT moment is the same defect one week later — no Stripe session ever
+     * existed to null the window, so 45 minutes on (30 + the reaper's 15-minute
+     * grace) `scopeCheckoutExpiredBefore` matches the row and `releaseSeat()`
+     * cancels the seat the office believed it had just handed out. The roster
+     * showed the child; now it silently does not.
+     *
+     * So the branch below asks `source`, exactly as intake does. NULL is the
+     * honest value on both doors: no session exists to expire and no money is in
+     * flight to lose. If the office later sends this family a payment link,
+     * `RegistrationCheckoutService` mints both — `keyFor()` mints a fresh key
+     * when `idempotency_key` is null and `resolveExpiresAt()` falls back to the
+     * Stripe floor when the window is null — and the seat becomes reapable then,
+     * correctly, because only then is there a Stripe leg to abandon.
      */
     public function promoteFromWaitlist(Registration $registration): Registration
     {
@@ -538,8 +624,20 @@ class RegistrationService
             } else {
                 $locked->status = Registration::STATUS_PENDING;
                 $locked->payment_status = Registration::PAYMENT_AWAITING;
-                $locked->checkout_expires_at = now()->addMinutes($this->checkoutWindowMinutes());
-                $locked->idempotency_key = 'reg_checkout_' . Str::uuid();
+
+                // The staff carve-out, asked the same way intake asks it (see
+                // the docblock): a seat an administrator typed by hand gets no
+                // checkout window and no key, because there is no session to
+                // expire — and a window nothing will ever null is a standing
+                // instruction to the reaper to cancel the seat.
+                if ($locked->source === Registration::SOURCE_STAFF) {
+                    $locked->checkout_expires_at = null;
+                    $locked->idempotency_key = null;
+                } else {
+                    $locked->checkout_expires_at = now()->addMinutes($this->checkoutWindowMinutes());
+                    $locked->idempotency_key = 'reg_checkout_' . Str::uuid();
+                }
+
                 $locked->save();
             }
 

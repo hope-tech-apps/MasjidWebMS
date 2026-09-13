@@ -136,6 +136,7 @@ return [
         // Live authentication material.
         'contact_login_codes' => 'SHA-256 of a live portal OTP plus requested_ip. Short-lived by design; one-way FK to contacts.',
         'app_signup_codes' => 'Same shape and additionally stores the raw email the code was mailed to.',
+        'two_factor_reset_events' => 'Who cleared whose second factor, when, from what IP, and why — staff emails snapshotted so the record survives an erased account. A SECURITY RETENTION RECORD in production: never truncate it there. Expendable only in the staging copy, where it describes resets that did not happen to people who are not these people. Dropped by query, which is how this scrub works and why the model\'s append-only guard (no update(), no delete()) does not block it — that guard protects the application from itself, not the database from its operator.',
         'contact_login_events' => 'The login audit log: actor_name, actor_email, actor_ip, login_email. A RETENTION RECORD in production — never truncate it there; expendable only in the staging copy.',
         'personal_access_tokens' => 'Live Sanctum bearer tokens for real admins and real devices. Polymorphic, nothing FKs it.',
         'password_reset_tokens' => 'Live reset tokens keyed by a real email address — the email IS the primary key.',
@@ -265,6 +266,11 @@ return [
             'stripe_checkout_session_id',
             'stripe_subscription_id',
             'stripe_subscription_schedule_id',
+            // Why the office typed this registration in by hand, in their own
+            // words — "mum paid cash at the desk, dad is deployed". Free text
+            // about a named family, and the only column on this table that
+            // carries any.
+            'staff_note',
         ],
 
         'registration_payments' => [
