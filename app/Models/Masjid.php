@@ -346,8 +346,8 @@ class Masjid extends Model implements HasMedia
      *
      * `capability_overrides` is deliberately not fillable. Its application
      * writer is MasjidsController::setCapability (each flip also lands in
-     * masjid_capability_changes); App\Support\DemoSchoolSeeder writes it
-     * directly for a demo tenant.
+     * masjid_capability_changes); the opt-in demo-tenant seeder writes it
+     * directly for its demo tenant.
      *
      * Fail-CLOSED, which is right for grants. Never ask it whether a MODULE is
      * off — use moduleIsOff(), which fails open.

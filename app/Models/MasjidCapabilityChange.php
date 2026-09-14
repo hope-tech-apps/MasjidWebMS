@@ -16,8 +16,8 @@ use RuntimeException;
  * nothing, and its creating hook must never stamp a row with a bound tenant
  * other than the one flipped. Listed in TenantScopingCoverageTest's DECLINED.
  *
- * Out of scope, said plainly: App\Support\DemoSchoolSeeder writes
- * capability_overrides directly for a demo tenant, and the mobile app drawer
+ * Out of scope, said plainly: the opt-in demo-tenant seeder writes
+ * capability_overrides directly for its demo tenant, and the mobile app drawer
  * (masjid_mobile_app_features) is its own switch with no ledger.
  *
  * APPEND-ONLY, with the same honest limit as MasjidFormsCardLinkLog: the hooks
