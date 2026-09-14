@@ -246,6 +246,72 @@ being true.
   that change carries whatever abilities it was minted with — check the
   `personal_access_tokens` backlog before relying on it as a gate.
 
+## How an app member LEAVES — `DELETE .../me`, `DELETE .../me/device`, `/account-deletion` (2026-09-14)
+
+**One service decides what deleting an account means:
+`App\Services\Member\MemberAccountDeletion`.** The app route
+(`MemberAccountController`) and the public page (`AccountDeletionController`)
+both call it. Never write a second deletion path, and never clear login columns
+from a controller.
+
+- **Owner decision: remove the login, keep the office's records.** Every time:
+  delete every token the contact holds; release every handset
+  (`mobile_app_users.contact_id` back to NULL, rows kept); delete service
+  interests; delete outstanding codes (family codes by contact, app codes by
+  address); clear `verified_at`, `login_enabled_at`, `password`,
+  `password_set_at`. Then hard-delete the contact ONLY when
+  `signup_source = 'app'` and `reasonsToKeep()` is empty. Otherwise keep it as
+  the office wrote it.
+- **Never set `login_revoked_at` here.** That is the office cutting somebody off,
+  and it would stop the person from ever signing up again. When a family login
+  was on, append a `revoked` event with no actor: the admin panel badges any
+  unknown verb "Enabled", so do not invent one.
+- **"Office data" is enumerated from the schema, not guessed.** `OFFICE_RECORDS`
+  (tables by contact id, guardian edges included), `OFFICE_RECORDS_BY_ADDRESS`
+  (form responses and appointment requests from the same address in the same
+  organisation), `OFFICE_COLUMNS` (contacts columns only the office or an
+  office-granted login fills), an `email` that differs from `login_email`, and a
+  broadcast snapshot naming the id. `MemberAccountDeletionCoverageTest` walks the
+  schema: **a new `contact_id` / `*_contact_id` column anywhere, or any new
+  column on `contacts`, fails the suite until it is classified.** In doubt,
+  classify it as office data. Keeping a row is the safe direction.
+- **Both routes are OUTSIDE `crm`**, still behind `auth:family` +
+  `member.active` + `family.tenant`. An organisation can switch its CRM off
+  after people signed up; store policy requires deletion wherever sign-up
+  exists, and a sign-out must still release the phone. `POST /me/device`,
+  interests and sign-in stay behind `crm`. Do not tidy these back into the
+  `crm` group.
+- **Every body from these routes has `data`.** Success is
+  `{"status":"success","data":{}}`. Refusals built by the shared JSON renderer
+  (401 from the guard or `member.active`, 403 from `family.tenant`, 429) gain
+  `data: {}` through `App\Support\MobileErrorEnvelope`, hooked with
+  `$exceptions->respond()` in bootstrap/app.php and matched on the route name
+  `mobile.member.me.*`. A new leaving route must carry that name prefix. The
+  member sign-in 410 carries `data` too. Other API routes' error bodies are
+  deliberately unchanged.
+- **The public page is not a directory.** The picker is `Masjid::listed()` and
+  nothing else; never filter it by `crm_enabled` (denylisted from public
+  payloads). The code step renders identically, and mails a code, for every
+  address. Only the confirm step, after the mailbox is proven, says whether an
+  account existed. Addresses are matched with the tenant bound to the chosen
+  organisation, and `deleteByAddress()` returns null when nothing is bound.
+- **Deletion codes live in `app_signup_codes`, with the purpose inside the
+  HMAC.** A sign-in code's digest is unchanged; a deletion code is
+  `hmac('account_deletion|' . code)`, so neither can stand in for the other. Same
+  TTL, same attempt cap charged across every live row for the address, single
+  use. The mail is `FamilyLoginCodeMail` with `purpose`, still NOT
+  `ShouldQueue`.
+- **The page reuses the app door's limiters BY NAME** (`throttle:member-login`,
+  `throttle:member-verify`). A named limiter's cache key includes its name, so a
+  copied limiter would hand out a second allowance. `familyLoginKey()` reads the
+  organisation from the form body only when the route has no `{masjid_id}`, and
+  `tooManyLoginAttempts()` answers a non-API request with the page (HTML 429);
+  API bodies are unchanged.
+
+Pinned by `tests/Feature/MemberAccountDeletionTest.php`,
+`tests/Feature/AccountDeletionPageTest.php` and
+`tests/Feature/MemberAccountDeletionCoverageTest.php`.
+
 ## `users.type` is the source of truth — spatie roles are a bridge
 
 - The legacy `users.type` enum (`SuperAdmin` / `MasjidAdmin` / `User`) still

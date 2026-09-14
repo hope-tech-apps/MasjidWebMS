@@ -948,3 +948,91 @@ money for a switched-off organisation, and never refuses money that already move
 - **A SuperAdmin who opens a not-offered screen by typed URL sees no switched-off notice.**
 - **Public checkout, the funds list and the appointment intake still ignore `crm_enabled`** (Q2b is
   not built).
+
+## 2026-09-14 — App members can delete their account: the login goes, the office's record stays
+
+**Decision.** A member who signed in through an organisation's app can delete the account from the
+app (`DELETE /api/mobile/masjids/{home}/me`) or from a public page (`/account-deletion`). Both run
+one service, `App\Services\Member\MemberAccountDeletion`. The owner's answer (2026-09-14, side-menu
+spec decision 7): "Remove login, keep office records." This is stage S1a of the side-menu spec; the
+R0 app builds call it.
+
+1. **What always happens.**
+   - Every token the contact holds is deleted.
+   - Every handset it claimed is released (`mobile_app_users.contact_id` back to NULL). The device
+     row stays and still receives broadcasts to everyone.
+   - Its service interests are deleted, and its outstanding sign-in codes (by contact and by
+     address).
+   - `verified_at`, `login_enabled_at`, `password` and `password_set_at` are cleared.
+   - A `Log::warning` records the outcome, the reasons a record was kept and the counts, with no
+     address in it.
+2. **When the contact itself is deleted.** Only when app sign-up created it (`signup_source = 'app'`,
+   the one value MemberSignupService writes) AND the office holds nothing about the person:
+   - no office-filled column on the contact (phone, notes, placeholder or import batch, SMS consent,
+     avatars, a family login, a revocation or a password), and an `email` still equal to the
+     `login_email` sign-up wrote;
+   - no row by contact id in contact cards, credentials, login events, donations, recurring gifts,
+     group memberships (either side of a guardian edge), group messages, threads, thread reads, meal
+     orders, registrants or registrations (receipts hang off donations);
+   - no form response or appointment request from the same address in the same organisation;
+   - no broadcast that named the contact as a recipient.
+
+   Otherwise the contact stays exactly as the office wrote it, and only the login goes. When a
+   family login was on, the access history gets a `revoked` row with no actor. `login_revoked_at` is
+   never set, so the person can sign up again later.
+3. **Outside `crm`.** `DELETE .../me` and `DELETE .../me/device` (moved) sit in their own group with
+   `auth:family`, `member.active` and `family.tenant`. An organisation can switch its CRM off after
+   people signed up, and App Store 5.1.1(v) and Google Play both require deletion wherever sign-up
+   exists. Signing in, claiming a handset and interests stay behind `crm`.
+4. **Every body from these routes carries `data`.** Success is `{"status":"success","data":{}}`. The
+   shared JSON renderer's 401, 403 and 429 for these two routes gain `data: {}` through a `respond()`
+   hook keyed on the route names `mobile.member.me.*`. The member sign-in 410 carries `data: {}` too.
+   Other API error bodies are unchanged.
+5. **The public page** (Google Play's required web link).
+   - Tenant-neutral, on this app's host, before the SPA catch-all, CSRF-protected, readable without
+     scripts.
+   - The organisation picker is the app directory (`Masjid::listed()`), nothing more.
+   - Asking for a code answers the same page, and mails a code, for every address.
+   - The code is an app sign-in code with the purpose inside the HMAC: a sign-in code cannot confirm
+     a deletion and a deletion code cannot sign anybody in.
+   - Only after the right code does the page say whether there was an account and whether the office
+     keeps records.
+   - Its two POSTs use the app door's own `member-login` and `member-verify` limiters, so the two
+     doors share one allowance per address.
+
+**Alternatives.**
+- **Also erase contacts the office created that hold no records** (decision 7's alternative).
+  Rejected by the owner: a contact staff typed is the office's, even when empty.
+- **Soft-delete the contact.** Rejected: the person's name and address would stay in the CRM, which
+  is not deletion.
+- **Set `login_revoked_at`.** Rejected: that is the office's lever, and it would bar the person from
+  ever signing up again.
+- **Keep `DELETE /me` behind `crm`.** Rejected: switching the CRM off would make deletion impossible
+  for existing members (spec critique M5).
+- **A separate code table, or a `purpose` column.** Rejected: a new column breaks sign-in between
+  deploy and migrate. The purpose in the digest needs no schema change and keeps one set of TTL and
+  attempt rules.
+- **Mail a code only when the address has an account.** Rejected: the request's timing would then say
+  which addresses have accounts.
+- **Add `data` to every API error body.** Rejected: other clients parse those bodies today.
+
+**Rationale.** `contacts` is the CRM, and several foreign keys cascade from it, so a member's button
+must never remove a gift history, a guardian edge or a roster row. What belongs to the person always
+goes: the login, the sessions, the phone's link to them and their notification choices.
+`MemberAccountDeletionCoverageTest` walks the schema and fails when a new contact column or
+`contact_id` column is not classified, so the office-data list cannot silently fall behind.
+
+**Known limits.**
+- A kept contact keeps its `login_email`, so the office can see which address signed in and can turn
+  a family login back on.
+- A name staff corrected after sign-up is not detectable. Such a contact, with nothing else on file,
+  is erased.
+- Recurring gifts are not cancelled. A donor with a live monthly gift keeps it, and so keeps the
+  contact.
+- `email_suppressions` and `sms_suppressions` are keyed on the address and survive, by design.
+- The page offers only directory-listed organisations. A member of an unlisted one deletes from the
+  app or asks the office.
+- A contact created inside a child organisation by the older MEC TestFlight build is deleted through
+  that organisation (in the page, if it is listed). R0 builds keep the member realm on the home
+  organisation.
+- Rollback: `git revert` on main and ship. There is no migration.

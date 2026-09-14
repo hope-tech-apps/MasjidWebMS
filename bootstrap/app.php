@@ -176,6 +176,15 @@ return Application::configure(basePath: dirname(__DIR__))
             'onesignal_rest_api_key',
         ]);
 
+        // Runs AFTER any renderer below has built the response. It changes
+        // nothing except refusals from the member routes an app calls to leave
+        // (DELETE .../me and .../me/device), which gain an empty `data` object
+        // so the iPhone app can decode the 401, 403 or 429 it is given. See
+        // App\Support\MobileErrorEnvelope.
+        $exceptions->respond(function (Response $response, Throwable $e, Request $request) {
+            return \App\Support\MobileErrorEnvelope::withDataKey($response, $request);
+        });
+
         // JSON renderer for API + AJAX requests — preserves the legacy envelope
         // ({status, message}) the Vue admin and mobile clients expect, but
         // never leaks $e->getMessage() in production.

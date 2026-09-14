@@ -28,6 +28,16 @@ use Illuminate\Database\Eloquent\Model;
  * (which expires and is prunable) and never writes a single contact into the
  * CRM the office works in.
  *
+ * ---------------------------------------------------------------------------
+ * Two purposes, told apart by the digest
+ * ---------------------------------------------------------------------------
+ * Most rows are sign-in codes. The public /account-deletion page also issues a
+ * code here to confirm DELETING the account at an address. There is no purpose
+ * column: MemberSignupService writes the purpose into the HMAC, so a deletion
+ * code never matches a sign-in lookup and a sign-in code never confirms a
+ * deletion. They share the TTL, the attempt cap and single use, and a wrong
+ * guess at either door charges every live row for the address.
+ *
  * Tenant-scoped like every CRM model (.claude/rules/tenant-scoping.md). That
  * matters more here than usual: the mobile API is UNBOUND by default and names
  * its masjid in the URL, so the route MUST bind the tenant before touching this

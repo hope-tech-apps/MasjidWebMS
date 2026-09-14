@@ -40,6 +40,17 @@ use Illuminate\Mail\Mailables\Envelope;
  */
 class FamilyLoginCodeMail extends Mailable
 {
+    /** A code that signs somebody in (both realms). The default. */
+    public const PURPOSE_SIGN_IN = 'sign_in';
+
+    /**
+     * A code that confirms deleting an app account, from the public
+     * /account-deletion page. Carried on THIS class rather than a second
+     * mailable for the reason the class docblock gives: a copy is a second
+     * chance for somebody to make a credential mail `ShouldQueue`.
+     */
+    public const PURPOSE_ACCOUNT_DELETION = 'account_deletion';
+
     public function __construct(
         public string $orgName,
         public string $code,
@@ -51,7 +62,13 @@ class FamilyLoginCodeMail extends Mailable
          * note BroadcastMail and FormSubmissionReceipt carry.
          */
         public ?string $orgEmail = null,
+        public string $purpose = self::PURPOSE_SIGN_IN,
     ) {
+    }
+
+    public function isForAccountDeletion(): bool
+    {
+        return $this->purpose === self::PURPOSE_ACCOUNT_DELETION;
     }
 
     public function envelope(): Envelope
@@ -63,7 +80,9 @@ class FamilyLoginCodeMail extends Mailable
             // on a lock screen, in a notification preview and in a shared
             // household inbox list; naming the school there would disclose the
             // family's association with it to anyone glancing at the phone.
-            subject: 'Your sign-in code',
+            // A deletion code says what it is for, so a person who did not ask
+            // for it knows somebody tried to delete their account.
+            subject: $this->isForAccountDeletion() ? 'Your account deletion code' : 'Your sign-in code',
             replyTo: $this->orgEmail && filter_var($this->orgEmail, FILTER_VALIDATE_EMAIL)
                 ? [$this->orgEmail]
                 : [],
@@ -78,6 +97,7 @@ class FamilyLoginCodeMail extends Mailable
                 'orgName' => $this->orgName,
                 'code' => $this->code,
                 'expiresInMinutes' => $this->expiresInMinutes,
+                'forAccountDeletion' => $this->isForAccountDeletion(),
                 'greeting' => $this->recipientName
                     ? 'Assalamu alaikum ' . $this->recipientName . ','
                     : 'Assalamu alaikum,',

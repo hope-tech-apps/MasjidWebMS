@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AccountDeletionController;
 use App\Http\Controllers\ConnectOnboardingLandingController;
 use App\Http\Controllers\UnsubscribeController;
 use App\Support\Environment;
@@ -91,6 +92,32 @@ Route::middleware('throttle:unsubscribe')->group(function () {
         ->whereNumber('masjid_id')
         ->name('unsubscribe.resubscribe');
 });
+
+/*
+ * Public account deletion for app members (Google Play's required web link).
+ *
+ * Tenant-neutral: one page for every organisation, with a picker limited to the
+ * app directory. A visitor proves they read the mailbox with an emailed code,
+ * then the SAME service the app's "Delete account" calls does the work. See
+ * App\Http\Controllers\AccountDeletionController.
+ *
+ * In the `web` group, so both POSTs need the CSRF token the page renders. The
+ * two POSTs reuse the app sign-in door's own limiters by NAME: a named limiter's
+ * buckets are keyed on its name, so a copy would give a second allowance.
+ *
+ * Declared BEFORE the SPA catch-all below, which would otherwise swallow them.
+ */
+Route::get('/account-deletion', [AccountDeletionController::class, 'show'])
+    ->middleware('throttle:60,1')
+    ->name('account-deletion.show');
+
+Route::post('/account-deletion', [AccountDeletionController::class, 'requestCode'])
+    ->middleware('throttle:member-login')
+    ->name('account-deletion.request');
+
+Route::post('/account-deletion/confirm', [AccountDeletionController::class, 'confirm'])
+    ->middleware('throttle:member-verify')
+    ->name('account-deletion.confirm');
 
 /*
  * On a hostname a school has pointed at this application, the root of that

@@ -80,6 +80,10 @@ class MemberAuthController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'That code is no longer usable. Please request a new one.',
+                // Present on the refusal too. The iPhone app decodes error bodies
+                // through the same `Response<T>` envelope, so a 410 without it
+                // showed a generic failure instead of this sentence.
+                'data' => new \stdClass(),
             ], Response::HTTP_GONE);
         }
 

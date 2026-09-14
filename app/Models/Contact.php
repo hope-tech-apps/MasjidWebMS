@@ -152,8 +152,14 @@ class Contact extends Model implements AuthenticatableContract
      *     request body — not a CRM update, not a roster import — can set a
      *     family's credential as a side effect of editing something else. The
      *     service writes it only for the contact the caller's OWN token names.
+     *   - `App\Services\Member\MemberAccountDeletion` — CLEARS `login_enabled_at`,
+     *     `verified_at` and `password` / `password_set_at` when a member deletes
+     *     their own account (or hard-deletes the contact, when app sign-up
+     *     created it and the office holds nothing about them). It appends a
+     *     `revoked` event whenever a family login was on. It never sets any of
+     *     them, and never sets `login_revoked_at`.
      *
-     * If a fourth writer ever appears, the audit trail stops being complete —
+     * If another writer ever appears, the audit trail stops being complete —
      * which is the point of keeping the list this short.
      */
     protected $fillable = [

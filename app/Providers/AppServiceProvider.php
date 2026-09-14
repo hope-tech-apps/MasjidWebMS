@@ -743,15 +743,35 @@ class AppServiceProvider extends ServiceProvider
         $submitted = $request->input('email');
         $email = is_scalar($submitted) ? strtolower(trim((string) $submitted)) : '';
 
-        $masjidId = (int) $request->route('masjid_id');
+        // The public account-deletion page (routes/web.php) is the one caller
+        // with no {masjid_id} in its path: it names the organisation in the form
+        // body. It shares the app door's `member-login` / `member-verify`
+        // buckets on purpose, so the fallback reads the body, cast the same way.
+        // Every API route using this helper has the segment, so their buckets
+        // are exactly what they were.
+        $routeMasjid = $request->route('masjid_id');
+        $bodyMasjid = $request->input('masjid_id');
+
+        $masjidId = $routeMasjid !== null
+            ? (int) $routeMasjid
+            : (is_scalar($bodyMasjid) ? (int) $bodyMasjid : 0);
 
         return $prefix . ':' . hash('sha256', $masjidId . '|' . $email);
     }
 
-    /** One 429 body for both family sign-in limiters — see the note above. */
+    /**
+     * One 429 for the sign-in limiters — see the note above. The API doors get
+     * the JSON body they always had. The account-deletion page shares
+     * `member-login` and `member-verify` and is a web page, so it gets its own
+     * page back instead.
+     */
     private function tooManyLoginAttempts(): callable
     {
-        return function () {
+        return function (Request $request, array $headers = []) {
+            if (! $request->is('api/*') && ! $request->expectsJson()) {
+                return \App\Http\Controllers\AccountDeletionController::throttled($headers);
+            }
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'Too many sign-in attempts. Please try again later.',

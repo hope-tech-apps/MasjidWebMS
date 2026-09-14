@@ -136,10 +136,12 @@ class ContactLoginEvent extends Model
 
     /**
      * Everything is fillable because nothing here is reachable from a request
-     * body: rows are written in exactly one place
-     * (App\Services\Family\FamilyAccessService::record), from values that
-     * service derives from the authenticated actor and the contact it just
-     * changed. No controller passes a payload to `create()` on this model.
+     * body: rows are written in exactly two places, from values each derives
+     * from the authenticated actor and the contact it just changed:
+     * App\Services\Family\FamilyAccessService::record, and
+     * App\Services\Member\MemberAccountDeletion, which writes one `revoked` row
+     * with no actor when a member deleting their account ends a family login.
+     * No controller passes a payload to `create()` on this model.
      */
     protected $fillable = [
         'masjid_id',

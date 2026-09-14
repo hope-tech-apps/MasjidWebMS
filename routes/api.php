@@ -159,7 +159,33 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         | `member.active` gates on `verified_at`, where the family realm's
         | `family.active` gates on `login_enabled_at`. A self-registered member
         | therefore reaches these routes and NO family route.
+        |
+        | Two groups. This first one is how a member LEAVES: deleting the
+        | account, and releasing the handset on sign-out.
+        |
+        | The same three gates as the group below and deliberately NOT `crm`.
+        | An organisation can switch its CRM off after people signed up, and
+        | both of these must still work then: App Store 5.1.1(v) and Google
+        | Play both require deletion wherever sign-up exists, and a sign-out
+        | that cannot release the phone leaves it receiving that member's
+        | notifications. Sign-in and claiming a handset stay behind `crm`.
+        |
+        | Named `mobile.member.me.*` so every refusal from these two carries
+        | an empty `data` object (App\Support\MobileErrorEnvelope, hooked in
+        | bootstrap/app.php): the iPhone app cannot decode a body without one.
+        | What deleting means is App\Services\Member\MemberAccountDeletion.
         */
+        Route::prefix('{masjid_id}')
+            ->middleware(['auth:family', 'member.active', 'family.tenant'])
+            ->whereNumber('masjid_id')
+            ->name('mobile.member.me.')
+            ->group(function () {
+                Route::delete('/me', [\App\Http\Controllers\Mobile\Member\MemberAccountController::class, 'destroy'])
+                    ->name('destroy');
+                Route::delete('/me/device', [MemberDeviceController::class, 'destroy'])
+                    ->name('device.destroy');
+            });
+
         Route::prefix('{masjid_id}')
             ->middleware(['auth:family', 'member.active', 'family.tenant', 'crm'])
             ->whereNumber('masjid_id')
@@ -169,10 +195,10 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
 
                 // Claiming the handset. Without this a service audience
                 // resolves to no devices at all, however many members opted in.
-                // The app calls store() on sign-in and destroy() on sign-out —
-                // see MemberDeviceController for why the second half matters.
+                // The app calls store() on sign-in; releasing it (destroy) is in
+                // the non-`crm` group above — see MemberDeviceController for why
+                // the second half matters.
                 Route::post('/me/device', [MemberDeviceController::class, 'store']);
-                Route::delete('/me/device', [MemberDeviceController::class, 'destroy']);
 
                 /*
                 | "Your monthly giving" — the donor acting on their OWN standing

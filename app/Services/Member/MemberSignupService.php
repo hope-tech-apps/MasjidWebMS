@@ -138,8 +138,85 @@ class MemberSignupService
             return null;
         }
 
-        $candidate = $this->hash($submittedCode);
+        $row = $this->matchLiveCode($email, $this->hash($submittedCode));
 
+        return $row === null ? null : $this->consume($row, $email, $firstName, $lastName);
+    }
+
+    /**
+     * Mail a code that confirms DELETING the account at this address: the first
+     * step of the public /account-deletion page. Always void.
+     *
+     * Unlike `issue()`, it does not look for a contact at all, and it mails every
+     * address, revoked contacts included. The page must answer the same way for
+     * an address with an account and one without, and a send on only one path
+     * would put that answer back into the time the request takes. Deleting takes
+     * a login away and grants nothing, so there is nobody to withhold it from.
+     *
+     * The row goes in `app_signup_codes` with the same TTL, attempt cap and
+     * single use as a sign-in code. What keeps the two apart is the digest: the
+     * purpose is inside the HMAC (see `hash()`), so this code can never sign
+     * anybody in and a sign-in code can never confirm a deletion. A wrong guess
+     * at either door still charges every live code for the address.
+     */
+    public function issueAccountDeletionCode(string $submittedEmail, ?string $ip = null): void
+    {
+        $email = $this->normalise($submittedEmail);
+
+        if ($email === '') {
+            return;
+        }
+
+        $code = $this->generateCode();
+
+        AppSignupCode::create([
+            'email' => $email,
+            'code_hash' => $this->hash($code, FamilyLoginCodeMail::PURPOSE_ACCOUNT_DELETION),
+            'channel' => AppSignupCode::CHANNEL_EMAIL,
+            'expires_at' => now()->addMinutes($this->ttlMinutes()),
+            'requested_ip' => $ip,
+        ]);
+
+        // No recipient name: that would need a contact lookup, and the mail
+        // would then differ between an address with an account and one without.
+        $this->deliver($email, null, $code, FamilyLoginCodeMail::PURPOSE_ACCOUNT_DELETION);
+    }
+
+    /**
+     * Spend a deletion code. True only when this exact code was live for this
+     * address in the bound organisation and this call consumed it.
+     */
+    public function redeemAccountDeletionCode(string $submittedEmail, string $submittedCode): bool
+    {
+        $email = $this->normalise($submittedEmail);
+
+        if ($email === '') {
+            return false;
+        }
+
+        $row = $this->matchLiveCode(
+            $email,
+            $this->hash($submittedCode, FamilyLoginCodeMail::PURPOSE_ACCOUNT_DELETION),
+        );
+
+        if ($row === null) {
+            return false;
+        }
+
+        // The same compare-and-swap `consume()` starts with: a double-submit
+        // spends the code once.
+        return AppSignupCode::query()
+            ->whereKey($row->id)
+            ->whereNull('consumed_at')
+            ->update(['consumed_at' => now()]) === 1;
+    }
+
+    /**
+     * The live code row whose digest matches `$candidate`, or null, charging a
+     * guess to every live code for the address on a miss.
+     */
+    private function matchLiveCode(string $email, string $candidate): ?AppSignupCode
+    {
         // Newest first: somebody who requested twice types the code from the
         // most recent mail. A second request does not kill the first.
         $live = AppSignupCode::query()
@@ -149,11 +226,9 @@ class MemberSignupService
             ->get();
 
         foreach ($live as $row) {
-            if (! hash_equals((string) $row->code_hash, $candidate)) {
-                continue;
+            if (hash_equals((string) $row->code_hash, $candidate)) {
+                return $row;
             }
-
-            return $this->consume($row, $email, $firstName, $lastName);
         }
 
         // A WRONG code charges every live code for this address, not just the
@@ -315,10 +390,18 @@ class MemberSignupService
         );
     }
 
-    /** HMAC over app.key, matching the family realm. There is no stored code. */
-    private function hash(string $code): string
+    /**
+     * HMAC over app.key, matching the family realm. There is no stored code.
+     *
+     * A sign-in code's digest is exactly what it always was, so codes already in
+     * people's inboxes still redeem. Any other purpose is written INTO the MAC,
+     * so one purpose's code never matches another's row.
+     */
+    private function hash(string $code, string $purpose = FamilyLoginCodeMail::PURPOSE_SIGN_IN): string
     {
-        return hash_hmac('sha256', $code, (string) config('app.key'));
+        $message = $purpose === FamilyLoginCodeMail::PURPOSE_SIGN_IN ? $code : $purpose . '|' . $code;
+
+        return hash_hmac('sha256', $message, (string) config('app.key'));
     }
 
     private function ttlMinutes(): int
@@ -343,8 +426,12 @@ class MemberSignupService
      * "unknown". The remaining difference is the revoked-contact path, which
      * returns without sending.
      */
-    private function deliver(string $email, ?Contact $contact, string $code): void
-    {
+    private function deliver(
+        string $email,
+        ?Contact $contact,
+        string $code,
+        string $purpose = FamilyLoginCodeMail::PURPOSE_SIGN_IN,
+    ): void {
         try {
             // Masjid is the tenant itself and carries no BelongsToMasjid scope,
             // so this is a plain lookup by the bound id.
@@ -356,6 +443,7 @@ class MemberSignupService
                 expiresInMinutes: $this->ttlMinutes(),
                 recipientName: $contact?->first_name,
                 orgEmail: $masjid?->email,
+                purpose: $purpose,
             ));
         } catch (Throwable $e) {
             // Never surfaced. A relay outage must look exactly like every other
