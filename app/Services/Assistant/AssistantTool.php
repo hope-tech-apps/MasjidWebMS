@@ -28,6 +28,8 @@ class AssistantTool
      * @param  ?string $permission    spatie permission required, if any.
      * @param  ?string $featureKey    masjid mobile-app feature key required, if any.
      * @param  bool    $writes        True if it mutates data (used for the audit trail).
+     * @param  ?string $module        organisation module (config/capabilities.php, kind
+     *                                `module`) whose data this tool reads or writes, if any.
      */
     public function __construct(
         public string $name,
@@ -37,14 +39,22 @@ class AssistantTool
         public ?string $permission = null,
         public ?string $featureKey = null,
         public bool $writes = false,
+        public ?string $module = null,
     ) {
     }
 
     /**
-     * All three layers, evaluated together:
+     * All four layers, evaluated together:
      *   1. the user is an admin type at all;
-     *   2. the masjid has the underlying feature enabled (when the tool needs one);
-     *   3. the user holds the spatie permission (when the tool declares one).
+     *   2. the organisation has not switched off the tool's module (when it names
+     *      one) — for a SuperAdmin too, so the Assistant cannot write an
+     *      announcement the organisation's own menu says it does not have;
+     *   3. the masjid has the underlying feature enabled (when the tool needs one);
+     *   4. the user holds the spatie permission (when the tool declares one).
+     *
+     * Layer 2 goes through Masjid::moduleIsOff, which is fail-open: a module
+     * key the loaded config does not know (a stale config cache mid-deploy)
+     * reads as ON, so a deploy can never take tools away from every admin.
      *
      * The per-masjid assistant gate (layer 0) and "may this user act on THIS
      * masjid" are enforced upstream by the `assistant` middleware and
@@ -54,6 +64,10 @@ class AssistantTool
     public function isAvailableTo(User $user, Masjid $masjid): bool
     {
         if (! in_array($user->type, ['SuperAdmin', 'MasjidAdmin'], true)) {
+            return false;
+        }
+
+        if ($this->module !== null && $masjid->moduleIsOff($this->module)) {
             return false;
         }
 

@@ -128,7 +128,7 @@ class FormSchoolDaysGateTest extends TestCase
     {
         $form = $this->storedForm($this->biss, [self::cleaning()]);
 
-        $this->biss->forceFill(['capability_overrides' => ['school_calendar' => false]])->save();
+        $this->biss->forceFill(['capability_overrides' => ['school_calendar' => false, 'form_editing' => true]])->save();
         $this->actingAsAdminOf($this->biss);
         $url = $this->formsUrl($this->biss, "/{$form->id}");
 
@@ -216,9 +216,9 @@ class FormSchoolDaysGateTest extends TestCase
             'timezone' => 'America/New_York',
         ]);
 
-        if ($capabilities !== []) {
-            $masjid->forceFill(['capability_overrides' => $capabilities])->save();
-        }
+        // Every org's admins may write forms here (web_pages or form_editing is
+        // required since DECISIONS.md 2026-09-16); this file is about the calendar.
+        $masjid->forceFill(['capability_overrides' => $capabilities + ['form_editing' => true]])->save();
 
         return $masjid;
     }

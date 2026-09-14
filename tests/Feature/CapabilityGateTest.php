@@ -248,17 +248,119 @@ class CapabilityGateTest extends TestCase
                     continue;
                 }
 
-                $key = substr($middleware, strlen('capability:'));
-                $definition = config("capabilities.{$key}");
+                // `capability:a,b` is any-of: every key in it must be real.
+                foreach (explode(',', substr($middleware, strlen('capability:'))) as $key) {
+                    $definition = config("capabilities.{$key}");
 
-                $this->assertIsArray($definition, "Route {$route->uri()} gates on unknown capability '{$key}'.");
-                $this->assertEmpty($definition['column'] ?? null, "Route {$route->uri()} gates a column-backed capability through `capability:`; use its own middleware.");
-                $seen[$key] = true;
+                    $this->assertIsArray($definition, "Route {$route->uri()} gates on unknown capability '{$key}'.");
+                    $this->assertEmpty($definition['column'] ?? null, "Route {$route->uri()} gates a column-backed capability through `capability:`; use its own middleware.");
+                    $seen[$key] = true;
+                }
             }
         }
 
         $this->assertArrayHasKey('web_pages', $seen);
         $this->assertArrayHasKey('jummah_lunch', $seen);
         $this->assertArrayHasKey('school_calendar', $seen);
+        $this->assertArrayHasKey('form_editing', $seen);
+
+        // A module no route carries would be a switch that switches nothing off.
+        foreach (Masjid::MODULE_KEYS as $key) {
+            $this->assertArrayHasKey($key, $seen, "Module '{$key}' is in the catalogue but no route carries capability:{$key}.");
+        }
+    }
+
+    #[Test]
+    public function the_module_keys_in_code_are_the_catalogues_modules_in_order(): void
+    {
+        // Masjid::MODULE_KEYS is what lets a module read fail OPEN on a stale
+        // config cache, so it must never drift from the catalogue.
+        $fromConfig = array_keys(array_filter(
+            config('capabilities', []),
+            fn ($definition) => ($definition['kind'] ?? null) === 'module'
+        ));
+
+        $this->assertSame($fromConfig, Masjid::MODULE_KEYS);
+    }
+
+    #[Test]
+    public function every_entry_is_classified_and_every_non_column_entry_names_every_org_type(): void
+    {
+        $groups = array_keys(config('capability_groups', []));
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            $this->assertContains($definition['kind'] ?? null, ['grant', 'module'], "{$key} has no kind");
+            $this->assertContains($definition['group'] ?? null, $groups, "{$key} names a group config/capability_groups.php does not have");
+            $this->assertNotEmpty($definition['label'] ?? null, "{$key} has no label");
+            $this->assertNotEmpty($definition['description'] ?? null, "{$key} has no description");
+
+            if (! empty($definition['column'])) {
+                $this->assertSame('grant', $definition['kind'], "{$key} is column-backed, so it is a grant");
+
+                continue;
+            }
+
+            // hasCapability() reads `?? false`: a missing org type silently turns
+            // the entry off for that whole vertical.
+            foreach (Masjid::ORG_TYPES as $orgType) {
+                $this->assertArrayHasKey($orgType, $definition['defaults'] ?? [], "{$key} has no default for a {$orgType}");
+            }
+        }
+    }
+
+    #[Test]
+    public function every_module_is_on_for_every_org_type_until_a_super_admin_decides(): void
+    {
+        foreach (Masjid::ORG_TYPES as $orgType) {
+            $org = $this->org($orgType);
+
+            foreach (Masjid::MODULE_KEYS as $key) {
+                $this->assertTrue(config("capabilities.{$key}.defaults.{$orgType}"), "{$key} is not on by default for a {$orgType}");
+                $this->assertTrue($org->hasCapability($key));
+                $this->assertFalse($org->moduleIsOff($key));
+            }
+
+            $this->assertSame([], $org->modules_off);
+            // New, so nobody had it.
+            $this->assertFalse($org->hasCapability('form_editing'));
+        }
+    }
+
+    #[Test]
+    public function a_module_read_fails_open_and_a_grant_read_fails_closed(): void
+    {
+        $masjid = $this->org('masjid');
+        $this->grant($masjid, 'events', false);
+        $masjid = $masjid->fresh();
+
+        $this->assertTrue($masjid->moduleIsOff('events'));
+
+        // A grant is never "switched off" through the module reader, whatever
+        // hasCapability says about it.
+        $this->assertFalse($masjid->hasCapability('web_pages'));
+        $this->assertFalse($masjid->moduleIsOff('web_pages'));
+
+        // A typo is neither a grant nor a switched-off screen.
+        $this->assertFalse($masjid->hasCapability('event'));
+        $this->assertFalse($masjid->moduleIsOff('event'));
+    }
+
+    #[Test]
+    public function a_super_admin_passes_a_switched_off_module_gate(): void
+    {
+        $school = $this->org('school', crm: true);
+
+        foreach (['announcements', 'zakat', 'programs', 'website'] as $key) {
+            $this->grant($school, $key, false);
+        }
+
+        Sanctum::actingAs($this->superAdmin());
+
+        foreach (['announcements', 'zakat-settings', 'offerings', 'pages'] as $path) {
+            $status = $this->getJson("/api/admin/masjids/{$school->id}/{$path}")->getStatusCode();
+
+            $this->assertNotSame(403, $status, "a SuperAdmin was refused /{$path}");
+            $this->assertLessThan(500, $status, "/{$path} errored for a SuperAdmin");
+        }
     }
 }

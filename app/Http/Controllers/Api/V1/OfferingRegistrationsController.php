@@ -778,7 +778,13 @@ class OfferingRegistrationsController extends Controller
             return [0, response()->api(400, 'A masjid must be specified.', null)];
         }
 
-        if (! PublicTenant::crmEnabled($masjidId)) {
+        // Programs is a module a SuperAdmin can switch off per organisation;
+        // switched off, public sign-up closes with the same 404 words, so this
+        // is not a way to read that switch either. checkout() is closed too, on
+        // purpose: money must not move for a program the platform declares shut
+        // (the door-shut-till-open rule in RegistrationCheckoutTest), and a
+        // pending seat's hold lapses on its own.
+        if (! PublicTenant::crmEnabled($masjidId) || ! PublicTenant::hasModule($masjidId, 'programs')) {
             return [0, response()->api(404, $missingMessage, null)];
         }
 

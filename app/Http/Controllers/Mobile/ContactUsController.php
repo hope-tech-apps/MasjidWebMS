@@ -57,6 +57,19 @@ class ContactUsController extends Controller
 
     public function storeMessage(StoreMobileContactMessageRequest $request)
     {
+        // Refused BEFORE the try block, and RETURNED rather than thrown: the
+        // catch (\Exception) below would swallow an HttpResponseException and
+        // answer 500. An organisation that switched Contact Requests off has no
+        // inbox to read this in, so nothing is written and nobody is emailed.
+        // Same status and words as the V1 door. moduleIsOff is fail-open, so a
+        // stale config cache mid-deploy refuses nobody.
+        if (Masjid::find((int) $request->route('masjid_id'))?->moduleIsOff('contact_requests') === true) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This organisation is not taking messages here right now.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
         try {
             // Tenant comes from the ROUTE, never from the body — and the device
             // must belong to it, or to the organisation that published it as a

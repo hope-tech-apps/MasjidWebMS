@@ -329,27 +329,81 @@ being true.
 
 ## Organisation capabilities and team access — the layered model (2026-09-10)
 
-**Layer 1 — what an ORGANISATION has** is `config/capabilities.php`. Two kinds:
-- **Column-backed** (`crm` → `crm_enabled`, `assistant` → `assistant_enabled`): listed so every
-  capability reads from one catalogue; their own middleware (`crm`, `assistant`) and SuperAdmin
-  endpoints are unchanged and stay the only writers.
-- **Override-backed** (`web_pages`, `jummah_lunch`): stored in `masjids.capability_overrides`
-  (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`), enforced by `capability:<key>`
-  (`EnsureOrgCapability`, after `tenant`). Absent key → the catalogue default for the org_type,
-  chosen to reproduce what each vertical reached before the catalogue existed.
-- `Masjid::hasCapability()` is the one reader; an unknown key is never granted. The admin masjid
-  payload carries `capabilities` (via `ADMIN_APPENDS`) for the SPA's `requiresCapability`.
-- **SuperAdmins pass every `capability:` gate** — they are the platform operator and set
-  organisations up. The only writer is `PATCH .../capabilities/{key}` (in-controller 403 for
-  non-super, outside every gate, refuses column-backed and unknown keys with 422).
-- `CapabilityGateTest` lints every `capability:` in the route table against the catalogue. Do not
-  constrain `{capability}` in the route: `FamilyAuthGuardTest` sweeps admin routes with a dummy
-  value and needs auth to answer first.
+**Layer 1 — what an ORGANISATION has** is `config/capabilities.php` (2026-09-16 for modules). Every
+entry has a `kind`, a `group` (`config/capability_groups.php`), a `label` and a `description`.
+
+- **Grants** (`kind => grant`) are opt-in. Read ONLY through `Masjid::hasCapability()`, which
+  **fails closed**: an unknown key, or one the loaded config lacks, is never granted.
+  - Column-backed (`crm` → `crm_enabled`, `assistant` → `assistant_enabled`): listed so every
+    capability reads from one catalogue; their own middleware (`crm`, `assistant`) and SuperAdmin
+    endpoints are unchanged and stay the only writers.
+  - Override-backed (`web_pages`, `jummah_lunch`, `school_calendar`, `form_editing`): stored in
+    `masjids.capability_overrides` (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`). Absent key
+    → the org_type default, chosen to reproduce what each vertical reached before the catalogue.
+- **Modules** (`kind => module`) are screens every organisation already had: **ON for every org
+  type** until a SuperAdmin switches one off for one organisation. `website`, `announcements`,
+  `events`, `about_us`, `gallery`, `push_notifications`, `contact_requests`, `programs`, `zakat`,
+  `broadcasts`, `flyer_studio`, `impact_report`; same overrides column.
+  - **Read them ONLY through `Masjid::moduleIsOff()`, which fails OPEN.** It says "off" only for a
+    key in `Masjid::MODULE_KEYS` that the loaded config also knows as a module. bin/deploy runs
+    the new PHP against the previous config cache until `config:cache`; a fail-closed read in that
+    window refuses every organisation's contact form, program sign-up and announcements, and keeps
+    refusing if the deploy aborts. `ModulesFailOpenTest` reproduces the window.
+  - Every module check uses it: the gate, the Broadcasts channels (compose AND delivery), the
+    Assistant's tools, the admin search, public contact-us and program intake, and the page
+    builder's `module_off_note`. **Side doors follow the organisation with no SuperAdmin bypass**
+    (Broadcasts, the Assistant, public intake) — except the admin header search, which hides
+    switched-off records from the organisation's own admins only, so a SuperAdmin still finds them.
+    Public and mobile READS never follow a module.
+  - `Masjid::MODULE_KEYS` equals the config's module keys, in order (`CapabilityGateTest`), and
+    every non-column entry names all of `Masjid::ORG_TYPES` in `defaults` (`?? false` otherwise).
+
+**The gate.** `capability:<key>` (`EnsureOrgCapability`, after `tenant`). A module key passes
+unless `moduleIsOff`; any other key passes only when `hasCapability`. `capability:a,b` is
+**any-of**: the forms WRITE routes take `capability:web_pages,form_editing`, while form reads,
+responses, staff codes and the public submit stay ungated. **SuperAdmins pass every `capability:`
+gate.** `CapabilityGateTest` lints every key in the route table (split on commas) against the
+catalogue and fails if a module gates no route; `OrganisationModulesTest` pins which prefixes carry
+which module.
+
+**The payload.** `ADMIN_APPENDS` carries `capabilities` — **grants only** — and `modules_off`, the
+switched-off module keys in catalogue order (`[]` for every organisation nobody switched anything
+off for).
+
+**In the SPA, one flag per kind.**
+- `requiresCapability: '<grant>'` hides unless `capabilities[key] === true`. Grants only.
+- `requiresModule: '<module>'` hides only when `modules_off` includes it. **Never put a module key
+  on `requiresCapability`:** its strict `=== true` hides a default-on screen whenever the payload
+  lacks the key, which is every payload from a backend older than the SPA — and the built assets
+  travel separately from the PHP, so the SPA can reach production first.
+- `requiresAnyCapability: [...]` (route meta) passes when any listed grant is `true`.
+- A SuperAdmin's sidebar reflects the ORGANISATION: switched-off items move to "Switched off for
+  {org}" instead of vanishing.
+
+**`website` is not `web_pages`.** `web_pages` means "this organisation's OWN admins may edit the
+site" (off by default). `website` means "this organisation has a website" (on by default). The Web
+Pages routes carry both gates, and the menu item carries both flags; for a SuperAdmin the module
+decides. Burlington's site is run by the owner with `web_pages` off, BISS has no site: one key
+could not tell them apart.
+
+**The writer and the ledger.** The only writer is `PATCH .../capabilities/{key}` (in-controller 403
+for non-super, outside every gate, refuses column-backed and unknown keys with 422).
+`GET .../capabilities` (SuperAdmin only) serves the switch panel. Every flip — `setCapability`,
+`setCrmAccess`, `setAssistantAccess`, `setDirectoryListing` (`directory_listing`), no-ops included
+— writes an append-only `masjid_capability_changes` row inside the save's transaction
+(`App\Support\CapabilityLedger`) plus `Log::warning('Organisation capability changed')`: production
+is LOG_LEVEL=warning. Do not constrain `{capability}` in the route: `FamilyAuthGuardTest` sweeps
+admin routes with a dummy value and needs auth to answer first.
 
 **Layer 2 — what a PERSON in the organisation can do** is the Team screen (`TeamController`,
 `/api/admin/masjids/{id}/team`), outside `crm` and without `permission:`:
 - `admin` (MasjidAdmin) = everything the organisation has; `jummah_lunch` (LunchStaff) = the lunch
   board only; `teacher` is listed but managed on the Teachers screen.
+- Its chips are GRANTS only (a grant with `listed_when_off => false`, like `form_editing`, shows
+  only while on, so a new grant adds no "off" chip anywhere); `screens_off` names switched-off
+  modules. `App\Support\OrganisationAccess` rows (the SuperAdmin's user screen) likewise carry grant
+  `capabilities` and `modules_off`. The SPA sentences stay byte-identical when those lists are
+  empty.
 - It creates only those two, never reads `type`, binds to the BOUND tenant, refuses the owner /
   yourself / teachers on removal, deletes tokens, and retires a login left with no organisation.
 - This REPLACED the per-account `users.can_manage_web_pages` grant (6f5dbd6), which never reached

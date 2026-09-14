@@ -10,6 +10,7 @@ use App\Models\Broadcast;
 use App\Models\Masjid;
 use App\Services\Broadcast\BroadcastComposer;
 use App\Support\Errors;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -129,6 +130,11 @@ class BroadcastsController extends Controller
     /**
      * Refuse up front if a selected channel needs access the caller lacks.
      *
+     * First the organisation's modules: a channel whose
+     * BroadcastChannel::requiresModule() names a switched-off module is refused
+     * outright (the channel drivers repeat the check at delivery, for sends
+     * scheduled before the switch). Then the CRM checks below.
+     *
      * Only the email channel does today (it reads `contacts`). Written as a loop
      * over `readsContacts()` rather than an `if ($channel === EMAIL)` so a future
      * contact-reading channel — SMS is the obvious one — inherits the check
@@ -138,6 +144,28 @@ class BroadcastsController extends Controller
      */
     private function authorizeChannels(StoreBroadcastRequest $request, Masjid $masjid, array $channels): void
     {
+        // A channel that writes into a module the organisation has switched off
+        // is refused FIRST, for everyone — a SuperAdmin included. The composer
+        // must agree with the organisation's own menu: announcements switched
+        // off means no announcements, whichever screen tried to write one.
+        // moduleIsOff is fail-open on a key the loaded config does not know as
+        // a module, so a stale config cache mid-deploy refuses nothing.
+        foreach ($channels as $channel) {
+            $module = $channel->requiresModule();
+
+            if ($module !== null && $masjid->moduleIsOff($module)) {
+                // Thrown as a RESPONSE, not abort(): the JSON exception renderer
+                // replaces an HttpException's message with "Request failed." when
+                // app.debug is off, so this sentence would never reach production.
+                // authorizeChannels runs outside store()'s try/catch.
+                throw new HttpResponseException(response()->json([
+                    'status' => 'error',
+                    'message' => '"' . config("capabilities.{$module}.label", $module) . '" is switched off for this organisation, so the '
+                        . $channel->label() . ' channel is unavailable.',
+                ], Response::HTTP_FORBIDDEN));
+            }
+        }
+
         $needsContacts = array_filter($channels, fn (BroadcastChannel $c) => $c->readsContacts());
 
         // The AUDIENCE can need the directory even when no channel does. A

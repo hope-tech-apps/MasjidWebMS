@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\AdminDashboard;
 
+use App\Enums\SectionType;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Masjids\SetAssistantAccessRequest;
 use App\Http\Requests\Admin\Masjids\SetCapabilityRequest;
@@ -11,12 +12,16 @@ use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
 use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
 use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
+use App\Models\MasjidCapabilityChange;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
+use App\Models\User;
+use App\Support\CapabilityLedger;
 use App\Support\MobileCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidsController extends Controller
@@ -141,9 +146,16 @@ class MasjidsController extends Controller
         }
 
         $masjid = Masjid::findOrFail($masjid_id);
-        $masjid->crm_enabled = $request->boolean('enabled');
-        $masjid->updated_by = Auth::id();
-        $masjid->save();
+        $before = (bool) $masjid->crm_enabled;
+
+        // The save and its ledger row commit together (CapabilityLedger).
+        DB::transaction(function () use ($masjid, $request, $before) {
+            $masjid->crm_enabled = $request->boolean('enabled');
+            $masjid->updated_by = Auth::id();
+            $masjid->save();
+
+            CapabilityLedger::record($masjid, 'crm', $before, (bool) $masjid->crm_enabled, null, Auth::id());
+        });
 
         return response()->json([
             'status' => 'success',
@@ -174,15 +186,22 @@ class MasjidsController extends Controller
         }
 
         $masjid = Masjid::findOrFail($masjid_id);
+        $before = $masjid->isListed();
 
-        if ($request->boolean('listed')) {
-            $masjid->listed_at = $masjid->listed_at ?? now();
-        } else {
-            $masjid->listed_at = null;
-        }
+        DB::transaction(function () use ($masjid, $request, $before) {
+            if ($request->boolean('listed')) {
+                $masjid->listed_at = $masjid->listed_at ?? now();
+            } else {
+                $masjid->listed_at = null;
+            }
 
-        $masjid->updated_by = Auth::id();
-        $masjid->save();
+            $masjid->updated_by = Auth::id();
+            $masjid->save();
+
+            // Not a catalogue key, but a SuperAdmin switch on the same screen, so
+            // it lands in the same ledger.
+            CapabilityLedger::record($masjid, CapabilityLedger::DIRECTORY_LISTING, $before, $masjid->isListed(), null, Auth::id());
+        });
 
         // The directory is cached for a day; without this flush the decision
         // does not reach the apps until the entry expires.
@@ -205,9 +224,15 @@ class MasjidsController extends Controller
         }
 
         $masjid = Masjid::findOrFail($masjid_id);
-        $masjid->assistant_enabled = $request->boolean('enabled');
-        $masjid->updated_by = Auth::id();
-        $masjid->save();
+        $before = (bool) $masjid->assistant_enabled;
+
+        DB::transaction(function () use ($masjid, $request, $before) {
+            $masjid->assistant_enabled = $request->boolean('enabled');
+            $masjid->updated_by = Auth::id();
+            $masjid->save();
+
+            CapabilityLedger::record($masjid, 'assistant', $before, (bool) $masjid->assistant_enabled, null, Auth::id());
+        });
 
         return response()->json([
             'status' => 'success',
@@ -224,6 +249,9 @@ class MasjidsController extends Controller
      * decision is stored explicitly even when it equals the default, so a later
      * change to a catalogue default never silently moves an organisation a
      * SuperAdmin already decided about.
+     *
+     * Grants and modules go through here alike. Every flip, a no-op included,
+     * writes a masjid_capability_changes row in the same transaction.
      */
     public function setCapability(SetCapabilityRequest $request, string $masjid_id, string $capability)
     {
@@ -246,16 +274,166 @@ class MasjidsController extends Controller
 
         $masjid = Masjid::findOrFail($masjid_id);
         $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
-        $overrides[$capability] = $request->boolean('enabled');
+        $before = $masjid->hasCapability($capability);
+        $overrideBefore = array_key_exists($capability, $overrides) ? (bool) $overrides[$capability] : null;
 
-        $masjid->capability_overrides = $overrides;
-        $masjid->updated_by = Auth::id();
-        $masjid->save();
+        DB::transaction(function () use ($masjid, $request, $capability, $overrides, $before, $overrideBefore) {
+            $overrides[$capability] = $request->boolean('enabled');
+
+            $masjid->capability_overrides = $overrides;
+            $masjid->updated_by = Auth::id();
+            $masjid->save();
+
+            CapabilityLedger::record($masjid, $capability, $before, $masjid->hasCapability($capability), $overrideBefore, Auth::id());
+        });
 
         return response()->json([
             'status' => 'success',
             'data' => $masjid->fresh()->append(Masjid::ADMIN_APPENDS),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * SuperAdmin-only: everything the switch panel shows for one organisation.
+     *
+     * Every catalogue entry, grouped (config/capability_groups.php order), with
+     * whether the organisation has it, its org_type default, whether a
+     * SuperAdmin overrode it, which endpoint writes it, and — for the entries a
+     * page section depends on — how many active sections on active pages show
+     * it, so a switch-off is decided with the facts. Plus this organisation's
+     * last 25 flips, newest first.
+     *
+     * `enabled` for a module is `! moduleIsOff()`, the same answer every gate
+     * gives, so the panel can never show "on" for a screen the server refuses.
+     */
+    public function capabilities(string $masjid_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(Response::HTTP_FORBIDDEN, 'Only a super admin can see what an organisation has.');
+        }
+
+        $masjid = Masjid::findOrFail($masjid_id);
+        $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
+        $inUse = $this->sectionsInUse($masjid);
+
+        $groupLabels = config('capability_groups', []);
+        $entries = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $column = $definition['column'] ?? null;
+            $isModule = ($definition['kind'] ?? null) === 'module';
+
+            $entries[$definition['group'] ?? 'tools'][] = [
+                'key' => $key,
+                'label' => $definition['label'] ?? $key,
+                'description' => $definition['description'] ?? '',
+                'kind' => $isModule ? 'module' : 'grant',
+                // crm and assistant keep their own endpoints; everything else is
+                // PATCH .../capabilities/{key}.
+                'writer' => $column ? $key : 'capability',
+                'enabled' => $isModule ? ! $masjid->moduleIsOff($key) : $masjid->hasCapability($key),
+                'default_for_org_type' => $column ? null : (bool) ($definition['defaults'][$masjid->orgType()] ?? false),
+                'overridden' => ! $column && array_key_exists($key, $overrides),
+                'in_use' => $inUse[$key] ?? null,
+            ];
+        }
+
+        $groups = [];
+
+        // Configured groups first, in their order; a group the config does not
+        // name (a stale config cache) still shows, labelled by its key.
+        foreach (array_unique(array_merge(array_keys($groupLabels), array_keys($entries))) as $groupKey) {
+            if (empty($entries[$groupKey])) {
+                continue;
+            }
+
+            $groups[] = [
+                'key' => $groupKey,
+                'label' => $groupLabels[$groupKey] ?? $groupKey,
+                'entries' => $entries[$groupKey],
+            ];
+        }
+
+        $changes = MasjidCapabilityChange::where('masjid_id', $masjid->id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit(25)
+            ->get();
+
+        // withTrashed: a soft-deleted operator still has a name worth showing on
+        // an audit row. Null only when the user row is gone entirely.
+        $actors = User::withTrashed()
+            ->whereIn('id', $changes->pluck('actor_user_id')->filter()->unique()->values()->all())
+            ->pluck('name', 'id');
+
+        $history = $changes->map(fn (MasjidCapabilityChange $change) => [
+            'id' => (int) $change->id,
+            'capability' => $change->capability,
+            'label' => $change->capability === CapabilityLedger::DIRECTORY_LISTING
+                ? 'Directory listing'
+                : config("capabilities.{$change->capability}.label", $change->capability),
+            'enabled_before' => $change->enabled_before,
+            'enabled_after' => $change->enabled_after,
+            'override_before' => $change->override_before,
+            'actor_name' => $change->actor_user_id !== null ? ($actors[$change->actor_user_id] ?? null) : null,
+            'created_at' => $change->created_at?->toIso8601String(),
+        ])->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'org' => [
+                    'id' => (int) $masjid->id,
+                    'name' => $masjid->name,
+                    'org_type' => $masjid->orgType(),
+                ],
+                'groups' => $groups,
+                'history' => $history,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Module key => how many active sections on this organisation's active pages
+     * show it (SectionType::requiresModule). Only keys some section type depends
+     * on appear; the rest read as null on the panel.
+     *
+     * Hand-filtered by masjid_id on BOTH pages and sections: neither model
+     * carries the tenant scope, and a SuperAdmin request binds no tenant.
+     *
+     * @return array<string,int>
+     */
+    private function sectionsInUse(Masjid $masjid): array
+    {
+        $counts = DB::table('page_section')
+            ->join('pages', 'pages.id', '=', 'page_section.page_id')
+            ->join('sections', 'sections.id', '=', 'page_section.section_id')
+            ->where('pages.masjid_id', $masjid->id)
+            ->where('sections.masjid_id', $masjid->id)
+            ->where('pages.is_active', true)
+            ->whereNull('pages.deleted_at')
+            ->where('sections.is_active', true)
+            ->groupBy('sections.section_type')
+            ->selectRaw('sections.section_type as section_type, COUNT(DISTINCT sections.id) as total')
+            ->pluck('total', 'section_type');
+
+        $out = [];
+
+        foreach (SectionType::cases() as $type) {
+            $module = $type->requiresModule();
+
+            if ($module === null) {
+                continue;
+            }
+
+            $out[$module] = ($out[$module] ?? 0) + (int) ($counts[$type->value] ?? 0);
+        }
+
+        return $out;
     }
 
     /**

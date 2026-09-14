@@ -156,4 +156,37 @@ final class PublicTenant
             ->where('crm_enabled', true)
             ->exists();
     }
+
+    /**
+     * True when this id names a live organisation that has NOT switched off
+     * the given module (config/capabilities.php, kind `module`).
+     *
+     * Asked by the public INTAKE that writes into a module — program
+     * registration today — so an organisation whose SuperAdmin switched
+     * Programs off stops taking sign-ups its admins can no longer open. Callers
+     * answer with the same 404 as a missing row, for the no-probing reason
+     * `crmEnabled()` gives.
+     *
+     * Public READS never ask this. A gate decides what is offered, never what
+     * is readable (.claude/rules/school-calendar.md), and the apps fetch some
+     * of these lists jointly, so one refusal would error its neighbours.
+     *
+     * Goes through Masjid::moduleIsOff, which is FAIL-OPEN: a key the loaded
+     * config does not know as a module reads as on. A deploy that runs new PHP
+     * against the previous config cache must not close every organisation's
+     * registration while it lasts.
+     */
+    public static function hasModule(int $masjidId, string $key): bool
+    {
+        if ($masjidId <= 0) {
+            return false;
+        }
+
+        $masjid = Masjid::query()
+            ->whereKey($masjidId)
+            ->whereNull('deleted_at')
+            ->first();
+
+        return $masjid !== null && ! $masjid->moduleIsOff($key);
+    }
 }

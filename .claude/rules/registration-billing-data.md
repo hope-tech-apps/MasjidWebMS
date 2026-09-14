@@ -27,9 +27,14 @@ a column detail open, T-006a fixed the following — later slices (T-006b..f)
 MUST build on these, not re-decide them:
 
 > **Before debugging "the offering 404s / the admin gets 403": check
-> `masjids.crm_enabled`.** It defaults false, provisioning never sets it, and a
-> SuperAdmin-only toggle is the only way to flip it — so a fully-configured
-> school is invisible on both the public and the admin side until somebody does.
+> `masjids.crm_enabled`, then the `programs` module.** The column defaults false;
+> provisioning has set it true since 2026-08-26, but a tenant created any other
+> way (or provisioned with it off) stays dark until a SuperAdmin flips it — so a
+> fully-configured school is invisible on both the public and the admin side
+> until somebody does. Since 2026-09-16 a SuperAdmin can also switch the
+> `programs` module off for one organisation (`capability_overrides`, read
+> through `Masjid::moduleIsOff`), which gives exactly the same public 404 and
+> admin 403.
 > The whole go-live note is in `.claude/rules/verticals.md`
 > ("GO-LIVE: `crm_enabled` is NOT part of provisioning"); it lives there rather
 > than being restated here, because a rule copied into two files is how the two

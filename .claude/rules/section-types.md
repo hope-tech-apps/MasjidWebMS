@@ -28,7 +28,7 @@ the failure mode this rule exists to prevent.
 
 | # | File | What |
 |---|---|---|
-| 1 | `app/Enums/SectionType.php` | the `case`, `label()`, `description()`, `usesExternalData()`, `defaultContent()` |
+| 1 | `app/Enums/SectionType.php` | the `case`, `label()`, `description()`, `usesExternalData()`, `requiresModule()`, `defaultContent()` |
 | 2 | `SectionsController::getImageFieldsForSectionType` | image fields, if any |
 | 3 | `PageSectionsController::getImageFieldsForSectionType` | **the same map again** — both controllers own a copy |
 | 4 | `core/types/data/masjid-related/PageSection.ts` | the `SectionType` union, the content type, the `SectionContent` union |
@@ -39,8 +39,8 @@ the failure mode this rule exists to prevent.
 Validation needs no change: every request allowlists with
 `new Enum(SectionType::class)`, so the enum IS the allowlist.
 
-`label()`, `description()`, `usesExternalData()` and `defaultContent()` are
-**exhaustive `match` with no default arm, on purpose.** Adding a case without
+`label()`, `description()`, `usesExternalData()`, `requiresModule()` and
+`defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
 classifying it is a fatal error at the first call, not a silent wrong default.
 Keep them that way.
 
@@ -109,6 +109,29 @@ If per-vertical offering is ever actually wanted:
   tenant that switches `org_type`, or a section authored before the gate, never
   stops loading. The palette decides what is *offered*; it must never decide
   what is *readable*.
+
+## A type that shows a switchable module says so, from the ORGANISATION
+
+Some types draw data a SuperAdmin can switch off for one organisation
+(`config/capabilities.php`, `kind => module`; DECISIONS 2026-09-16):
+`announcements_list` → announcements, `events` → events, `gallery` → gallery,
+`about_us` and `mission_vision` → about_us (the binder draws both from
+`MasjidAbout`), `contact_form` → contact_requests, `offering` → programs.
+
+- `SectionType::requiresModule()` records it: exhaustive, **no default arm**. A
+  new case must be classified, even as `null`. `moduleOffNote()` holds the one
+  sentence per module.
+- `PageSectionsController@sectionTypes` serves `module_off_note` only when the
+  ORGANISATION in the URL has that module off (`Masjid::moduleIsOff`), **never
+  from the viewer**: a SuperAdmin building BISS's page reads what BISS's own
+  admin would. `SectionFormModal` prints it the way it prints `renderer_note`.
+  Do not write the sentence into a component.
+- **The palette is still not filtered**, for the reasons above. A section
+  authored before a switch-off keeps loading, saving and serving.
+- The SuperAdmin switch panel's `in_use` counts come from the same method, so
+  the count and the note cannot disagree. Per TYPE only: a generic section bound
+  to About Us through `settings.bind` is not seen. `SectionTypeModuleTest` pins
+  the map and the org-not-viewer rule.
 
 ## A section that CHARGES holds a reference, never a figure
 

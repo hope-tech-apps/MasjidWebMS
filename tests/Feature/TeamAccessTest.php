@@ -319,4 +319,33 @@ class TeamAccessTest extends TestCase
         // The list shows why: the archived organisation is there, flagged.
         $this->assertStringContainsString('"archived":true', $this->getJson('/api/admin/users')->assertOk()->getContent());
     }
+
+    #[Test]
+    public function modules_are_not_chips_and_a_switched_off_screen_is_named(): void
+    {
+        Sanctum::actingAs($this->owner);
+
+        $res = $this->getJson("/api/admin/masjids/{$this->masjid->id}/team")->assertOk();
+
+        // Exactly the chips every organisation already had: a module is not a
+        // chip, and a new grant that is off adds none.
+        $this->assertSame(
+            ['web_pages', 'jummah_lunch', 'school_calendar', 'crm', 'assistant'],
+            collect($res->json('data.capabilities'))->pluck('key')->all()
+        );
+        $this->assertSame([], $res->json('data.screens_off'));
+
+        $this->masjid->forceFill(['capability_overrides' => ['form_editing' => true, 'events' => false]])->save();
+
+        $res = $this->getJson("/api/admin/masjids/{$this->masjid->id}/team")->assertOk();
+        $keys = collect($res->json('data.capabilities'))->pluck('key')->all();
+
+        $this->assertContains('form_editing', $keys, 'a grant that is on is a chip');
+
+        foreach (Masjid::MODULE_KEYS as $module) {
+            $this->assertNotContains($module, $keys);
+        }
+
+        $this->assertSame([['key' => 'events', 'label' => 'Events']], $res->json('data.screens_off'));
+    }
 }

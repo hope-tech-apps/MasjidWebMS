@@ -76,6 +76,10 @@ class OfferingIntakeFormDeleteGuardTest extends TestCase
 
         $this->masjid = $this->makeMasjid();
         $this->admin = $this->makeAdminFor($this->masjid);
+
+        // Form writes take web_pages or form_editing (DECISIONS.md 2026-09-16);
+        // this file is about the delete guard, not that gate.
+        $this->masjid->forceFill(['capability_overrides' => ['form_editing' => true]])->save();
     }
 
     #[Test]

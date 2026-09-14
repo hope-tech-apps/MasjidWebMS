@@ -283,7 +283,32 @@ class Masjid extends Model implements HasMedia
      * would also widen the public/mobile API responses — which have no business
      * knowing about verticals in this slice.
      */
-    public const ADMIN_APPENDS = ['vertical', 'capabilities'];
+    public const ADMIN_APPENDS = ['vertical', 'capabilities', 'modules_off'];
+
+    /**
+     * The `kind => module` keys of config/capabilities.php, in catalogue order.
+     *
+     * Held in code as well as in config ON PURPOSE: during a deploy the new PHP
+     * runs against the previous config cache for a while (bin/deploy merges, then
+     * installs and migrates, and only then rebuilds the cache). A module the
+     * loaded config does not know yet must read as ON, and this list is how
+     * moduleIsOff() and EnsureOrgCapability tell "a module the config has not
+     * caught up with" from "a typo". CapabilityGateTest pins it to the config.
+     */
+    public const MODULE_KEYS = [
+        'website',
+        'announcements',
+        'events',
+        'about_us',
+        'gallery',
+        'push_notifications',
+        'contact_requests',
+        'programs',
+        'zakat',
+        'broadcasts',
+        'flyer_studio',
+        'impact_report',
+    ];
 
     /**
      * This tenant's vertical as the admin SPA consumes it: the discriminator
@@ -319,8 +344,13 @@ class Masjid extends Model implements HasMedia
      * nothing moves until someone decides it should. A key that is not in the
      * catalogue is never granted.
      *
-     * `capability_overrides` is deliberately not fillable: its only writer is
-     * MasjidsController::setCapability.
+     * `capability_overrides` is deliberately not fillable. Its application
+     * writer is MasjidsController::setCapability (each flip also lands in
+     * masjid_capability_changes); App\Support\DemoSchoolSeeder writes it
+     * directly for a demo tenant.
+     *
+     * Fail-CLOSED, which is right for grants. Never ask it whether a MODULE is
+     * off — use moduleIsOff(), which fails open.
      */
     public function hasCapability(string $key): bool
     {
@@ -344,19 +374,70 @@ class Masjid extends Model implements HasMedia
     }
 
     /**
-     * Every catalogue capability => whether this organisation has it. Rides the
-     * ADMIN payload only (ADMIN_APPENDS), where the SPA reads it to show the
-     * menu items and routes this organisation has.
+     * Has a SuperAdmin switched this MODULE off for the organisation?
+     *
+     * The one reader for modules, and it FAILS OPEN. It answers true only when
+     * the key is a known module (MODULE_KEYS), the loaded config also knows it
+     * as a module, and the organisation does not have it. Anything else — an
+     * unknown key, a config cache from before the module existed, an entry whose
+     * kind is not `module` — is "not off", because a module was on for everyone
+     * before the catalogue knew about it and a deploy must never take a screen
+     * away. Grants keep hasCapability(), which fails closed.
+     *
+     * Every module check goes through here: the `capability:` gate, the
+     * Broadcasts channels, the Assistant's tools, the admin search, public
+     * intake and the page-builder notes.
+     */
+    public function moduleIsOff(string $key): bool
+    {
+        if (! in_array($key, self::MODULE_KEYS, true)) {
+            return false;
+        }
+
+        $definition = config("capabilities.{$key}");
+
+        if (! is_array($definition) || ($definition['kind'] ?? null) !== 'module') {
+            return false;
+        }
+
+        return ! $this->hasCapability($key);
+    }
+
+    /**
+     * Every catalogue GRANT => whether this organisation has it. Rides the
+     * ADMIN payload only (ADMIN_APPENDS), where the SPA reads it for
+     * `requiresCapability` (strictly `=== true`).
+     *
+     * Modules are left out on purpose and ride `modules_off` instead: a
+     * default-on screen must never be hidden by a payload that lacks its key,
+     * which is exactly what `=== true` would do to an SPA shipped before the
+     * backend.
      */
     public function getCapabilitiesAttribute(): array
     {
         $out = [];
 
-        foreach (array_keys(config('capabilities', [])) as $key) {
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (is_array($definition) && ($definition['kind'] ?? null) === 'module') {
+                continue;
+            }
+
             $out[$key] = $this->hasCapability($key);
         }
 
         return $out;
+    }
+
+    /**
+     * The modules a SuperAdmin has switched off here, in catalogue order. `[]`
+     * for every organisation nobody has switched anything off for — absent
+     * means on, so an old payload without this key hides nothing.
+     *
+     * @return list<string>
+     */
+    public function getModulesOffAttribute(): array
+    {
+        return array_values(array_filter(self::MODULE_KEYS, fn (string $key) => $this->moduleIsOff($key)));
     }
 
     /** Limit a query to one vertical. */

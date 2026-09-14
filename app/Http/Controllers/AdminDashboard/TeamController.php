@@ -97,6 +97,9 @@ class TeamController extends Controller
                 'people' => $people,
                 'capabilities' => $this->capabilityList($masjid),
                 'can_add' => $this->creatableFor($masjid),
+                // Default-on screens a SuperAdmin switched off here. [] for every
+                // organisation nobody switched anything off for.
+                'screens_off' => $this->screensOff($masjid),
             ],
         ], Response::HTTP_OK);
     }
@@ -309,20 +312,45 @@ class TeamController extends Controller
             $level !== self::ACCESS_LUNCH || $masjid->hasCapability('jummah_lunch')));
     }
 
+    /**
+     * The grants, as chips. Modules are not chips: every organisation has them
+     * unless one is switched off, which screensOff() says. A grant marked
+     * `listed_when_off => false` appears only while it is on, so adding a grant
+     * never adds an "off" chip to every organisation's screen.
+     */
     private function capabilityList(Masjid $masjid): array
     {
         $out = [];
 
         foreach (config('capabilities', []) as $key => $definition) {
+            if (($definition['kind'] ?? null) === 'module') {
+                continue;
+            }
+
+            $enabled = $masjid->hasCapability($key);
+
+            if (! $enabled && ($definition['listed_when_off'] ?? true) === false) {
+                continue;
+            }
+
             $out[] = [
                 'key' => $key,
                 'label' => $definition['label'] ?? $key,
                 'description' => $definition['description'] ?? '',
-                'enabled' => $masjid->hasCapability($key),
+                'enabled' => $enabled,
             ];
         }
 
         return $out;
+    }
+
+    /** @return list<array{key:string, label:string}> */
+    private function screensOff(Masjid $masjid): array
+    {
+        return array_map(fn (string $key) => [
+            'key' => $key,
+            'label' => config("capabilities.{$key}.label", $key),
+        ], $masjid->modules_off);
     }
 
     private function serialize(User $user, Masjid $masjid, ?User $viewer): array

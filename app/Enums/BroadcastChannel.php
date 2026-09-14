@@ -100,4 +100,31 @@ enum BroadcastChannel: string
     {
         return $this === self::EMAIL || $this === self::SMS;
     }
+
+    /**
+     * The organisation MODULE this channel writes into (config/capabilities.php,
+     * kind `module`), or null when it writes into nothing a SuperAdmin can
+     * switch off.
+     *
+     * The announcement channel creates an ordinary `announcements` row and push
+     * creates an ordinary `notifications` row, so each is the same data the
+     * Announcements and Notifications screens own. An organisation that has
+     * had one of those switched off must not have it written by the composer
+     * instead: BroadcastsController::authorizeChannels refuses the channel up
+     * front, and the channel driver skips at delivery, which is what catches a
+     * send scheduled BEFORE the switch was flipped.
+     *
+     * An exhaustive match with no default arm, so a sixth channel cannot be
+     * added without someone deciding which module (if any) it belongs to.
+     * Every check goes through Masjid::moduleIsOff, never hasCapability: an
+     * unknown key reads as ON (.claude/rules/broadcasts.md).
+     */
+    public function requiresModule(): ?string
+    {
+        return match ($this) {
+            self::ANNOUNCEMENT => 'announcements',
+            self::PUSH => 'push_notifications',
+            self::SIGNAGE, self::EMAIL, self::SMS => null,
+        };
+    }
 }

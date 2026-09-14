@@ -130,10 +130,17 @@ final class OfferingPublicPayload
      * offerings and registrations endpoint. `PublicTenant::crmEnabled()` carries
      * the whole argument for why the gate belongs on this side.
      *
+     * THE ORGANISATION MUST NOT HAVE SWITCHED PROGRAMS OFF. `programs` is a
+     * module a SuperAdmin switches per organisation (config/capabilities.php);
+     * off, its admins lose the offerings screens, so public sign-up closes too.
+     * `PublicTenant::hasModule()` is fail-open on a key the loaded config does
+     * not know, so a stale config cache mid-deploy closes nobody's programs.
+     *
      * `is_active` is required, so this returns null for an offering another
      * tenant owns, one whose organisation is gone, one whose organisation has no
-     * CRM, one that does not exist, and one that has been switched off — one
-     * indistinguishable miss, and no probing for which offerings live where.
+     * CRM or has Programs switched off, one that does not exist, and one that
+     * has been switched off — one indistinguishable miss, and no probing for
+     * which offerings live where.
      * That predicate is deliberately the SAME one
      * OfferingRegistrationsController::findOffering uses for quote/register: the
      * read and the write agree on what "publicly available" means, so a page can
@@ -141,7 +148,7 @@ final class OfferingPublicPayload
      */
     public static function forSlug(int $masjidId, string $slug): ?array
     {
-        if ($masjidId <= 0 || $slug === '' || ! PublicTenant::crmEnabled($masjidId)) {
+        if ($masjidId <= 0 || $slug === '' || ! PublicTenant::crmEnabled($masjidId) || ! PublicTenant::hasModule($masjidId, 'programs')) {
             return null;
         }
 
@@ -170,7 +177,7 @@ final class OfferingPublicPayload
      */
     public static function forId(int $masjidId, int $offeringId): ?array
     {
-        if ($masjidId <= 0 || $offeringId <= 0 || ! PublicTenant::crmEnabled($masjidId)) {
+        if ($masjidId <= 0 || $offeringId <= 0 || ! PublicTenant::crmEnabled($masjidId) || ! PublicTenant::hasModule($masjidId, 'programs')) {
             return null;
         }
 

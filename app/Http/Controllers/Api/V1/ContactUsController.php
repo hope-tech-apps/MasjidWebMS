@@ -63,6 +63,11 @@ class ContactUsController extends Controller
             // contain, including a nonexistent id.
             $masjidId = $this->resolveTenantId($request);
 
+            // Before ANY write — no device row, no account, no message, no
+            // email to the office — when the organisation has switched Contact
+            // Requests off and so has no inbox to read this in.
+            $this->refuseWhenContactRequestsAreOff($masjidId);
+
             // Scoped to the resolved tenant: a device id is only ever matched
             // against records belonging to the organisation being written to.
             $mobileAppUser = MobileAppUser::where('device_id', $request->input('device_id'))
@@ -155,6 +160,26 @@ class ContactUsController extends Controller
         }
 
         return $masjidId;
+    }
+
+    /**
+     * 403 with a sentence when the organisation has switched the Contact
+     * Requests module off (config/capabilities.php). Its admins no longer see
+     * the inbox, so accepting the message would file it where nobody reads it
+     * and tell the sender it was received. The Mobile controller refuses in the
+     * same words.
+     *
+     * Thrown, like resolveTenantId, because storeMessage rethrows
+     * HttpResponseException. moduleIsOff is fail-open, so a stale config cache
+     * mid-deploy refuses nobody.
+     */
+    private function refuseWhenContactRequestsAreOff(int $masjidId): void
+    {
+        if (Masjid::find($masjidId)?->moduleIsOff('contact_requests') === true) {
+            throw new HttpResponseException(
+                response()->api(403, 'This organisation is not taking messages here right now.', null)
+            );
+        }
     }
 
     /**

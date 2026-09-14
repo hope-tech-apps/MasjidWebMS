@@ -34,8 +34,15 @@ Manara runs three verticals on ONE core: **Masjids · Schools · Community**
 `config/verticals.php` `feature_keys` are the set seeded onto a tenant **at
 provisioning time**. They are NOT a runtime permission check. The
 `mobile_app_features` pivot's `is_available` remains the single source of truth
-for what a tenant actually has, and per-tenant gates (`crm_enabled`,
+for what a tenant's MOBILE APP has, and per-tenant gates (`crm_enabled`,
 `assistant_enabled`) are unchanged.
+
+That pivot governs the app's drawer only. Which ADMIN screens an organisation
+has is `config/capabilities.php` — opt-in grants and default-on modules a
+SuperAdmin switches per organisation (`.claude/rules/auth-permissions.md`).
+The two are separate switches and must not be merged: "Announcements" in the app
+drawer and the Announcements admin screen are different keys in different
+places.
 
 Every key listed in a bundle MUST exist in `mobile_app_features.key`, or
 provisioning silently enables nothing for it. `OrgTypeTest` asserts this.
@@ -53,21 +60,19 @@ day the two diverge, existing-tenant behaviour silently changes. Add a new
 `mobile_app_features` key ⇒ add it to the masjid bundle in the same change.
 `ProvisionOrgTypeTest` pins the set.
 
-### GO-LIVE: `crm_enabled` is NOT part of provisioning, and a school is dark without it
+### GO-LIVE: `crm_enabled` is NOT part of provisioning — no longer true since 2026-08-26, but check it the moment a tenant exists
 
-**Provisioning a school does not switch its CRM on.** This is the one step that
-is invisible from every screen the person doing the provisioning is looking at,
-so it goes here rather than in a runbook nobody opens on the day.
-
-`masjids.crm_enabled` defaults **false** (`2026_07_12_000011_add_crm_enabled_to
-_masjids_table`), and `OnboardingController@provision` never writes it — the
-wizard has no checkbox for it and the vertical bundles do not carry it, because
-it is a per-tenant gate and not a feature key. Verified against the tree: the
-only two writers in the whole codebase are `MasjidsController::setCrmEnabled`
-(**SuperAdmin only**) and `App\Support\DemoSchoolSeeder`. So a real school,
-provisioned correctly through the wizard, with its classrooms, guardians,
-offerings and fee plans all configured, is switched off until a SuperAdmin flips
-this one boolean.
+`masjids.crm_enabled` defaults **false** at the column
+(`2026_07_12_000011_add_crm_enabled_to_masjids_table`). Since 2026-08-26
+`OnboardingController@provision` writes it **true** unless the request sends
+`crm_enabled` false. Three of five production tenants had been created dark
+through the wizard before that. Its other writers are
+`MasjidsController::setCrmAccess` (**SuperAdmin only**, and recorded in
+`masjid_capability_changes`) and `App\Support\DemoSchoolSeeder`. So a tenant
+created any other way (the legacy `POST /api/admin/masjids`), or provisioned
+with the CRM deliberately off, is switched off until a SuperAdmin flips this one
+boolean — with its classrooms, guardians, offerings and fee plans all
+configured.
 
 What the flag being false actually looks like, on both sides at once:
 

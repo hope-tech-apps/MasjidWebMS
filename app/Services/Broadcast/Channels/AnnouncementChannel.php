@@ -46,6 +46,18 @@ class AnnouncementChannel implements BroadcastChannelDriver
 
     public function deliver(Broadcast $broadcast, Masjid $masjid): ChannelResult
     {
+        // Checked again HERE, not only when the broadcast was composed: a send
+        // scheduled before a SuperAdmin switched Announcements off runs through
+        // this method from SendBroadcastJob, long after the compose-time 403
+        // had its chance. A skip, before anything is written.
+        $module = $this->channel()->requiresModule();
+
+        if ($module !== null && $masjid->moduleIsOff($module)) {
+            return ChannelResult::skipped(
+                'Announcements are switched off for this organisation, so nothing was posted to the announcements feed.'
+            );
+        }
+
         // Announcement predates the CRM and carries no BelongsToMasjid trait, so
         // masjid_id is set by hand here — the same way the announcements
         // controller does it (.claude/rules/tenant-scoping.md: do not retrofit

@@ -85,6 +85,37 @@ The check loops over `BroadcastChannel::readsContacts()` rather than testing for
 this was worth doing: it picked up the gate by answering `true` to that one
 predicate, and `BroadcastsController` did not change.
 
+## Channels follow the organisation's MODULES, at compose AND at delivery
+
+Two channels write into data a SuperAdmin can switch off per organisation
+(`config/capabilities.php`, kind `module`; DECISIONS.md 2026-09-16):
+`BroadcastChannel::requiresModule()` answers `announcement` → `announcements`
+and `push` → `push_notifications`, and null for signage, email and SMS. It is an
+exhaustive match with no default arm, so a new channel cannot be added without
+someone deciding which module it writes into.
+
+- **Compose:** `authorizeChannels()` refuses a channel whose module is off with
+  a 403 naming the module's catalogue label, BEFORE the CRM checks and before
+  anything is written. The whole request is refused, same all-or-nothing rule
+  as the contacts gate.
+- **Delivery:** `AnnouncementChannel::deliver` and `PushChannel::deliver` return
+  `skipped` with a sentence, before creating their row, when the module is off.
+  That is what catches a send SCHEDULED before the switch was flipped:
+  `SendBroadcastJob` reaches `deliver()` long after the compose-time check ran.
+  Push skips before the `notifications` row too, because that row IS the in-app
+  inbox entry the Notifications module owns.
+- **No SuperAdmin bypass.** The composer agrees with the organisation's own
+  menu; a SuperAdmin who wants to post an announcement for an organisation that
+  has Announcements off switches it back on first. Do not "fix" this.
+- **Fail-open, always through `Masjid::moduleIsOff()`, never `hasCapability()`.**
+  These checks run in plain PHP, not route middleware, so they go live the
+  moment `git merge` lands while production can still hold the previous config
+  cache. `moduleIsOff` reads a key the loaded config does not know as a module
+  as ON; `hasCapability` would read it as OFF and refuse every organisation's
+  announcements until the Caches step. `ModulesFailOpenTest` pins it.
+- The composer SPA hides a switched-off channel for everyone, so the 403 is the
+  boundary, not the usual experience.
+
 ## Audiences: only what the data supports
 
 - `everyone` — every subscribed device (push), every non-placeholder contact with

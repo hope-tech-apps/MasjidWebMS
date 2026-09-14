@@ -736,3 +736,84 @@ exactly as it was.
   status and a settled row's WhatsApp link, and reopens checkout on an unpaid row.
   Closing it needs the public form page to recover the uuid from submit-time storage.
   Accepted for launch: Burlington's Stripe users are the masjid's own staff.
+
+## 2026-09-16 — Organisation switches: default-on modules beside the opt-in grants, every flip audited
+
+**Decision.** A SuperAdmin can switch a screen off for one organisation. The trigger is
+Burlington Islamic Sunday School (org 18, a school with no website): Web Pages Management,
+Announcements, Events, About Us, Photo Gallery, Notifications, Contact Requests, Programs, Zakat
+Calculator and Jummah Lunch are noise for its office. No existing organisation changes until a
+switch is flipped.
+
+1. **Two kinds in `config/capabilities.php`.** Grants stay opt-in: `web_pages`, `jummah_lunch`,
+   `school_calendar`, `crm`, `assistant`, and the new `form_editing` (off everywhere). Twelve
+   modules are ON for every org type: `website`, `announcements`, `events`, `about_us`, `gallery`,
+   `push_notifications`, `contact_requests`, `programs`, `zakat`, `broadcasts`, `flyer_studio`,
+   `impact_report`. Their labels are the sidebar titles. Storage is the existing
+   `capability_overrides`, with no backfill.
+2. **Absent means on, and a module read fails open.** `Masjid::moduleIsOff()` says "off" only for
+   a key in `Masjid::MODULE_KEYS` that the loaded config also knows as a module. The admin
+   payload's `capabilities` stays grants-only; the new `modules_off` lists what is off. Neither
+   deploy order, nor the stale config cache between `git merge` and `config:cache`, hides a
+   screen or refuses an intake.
+3. **Admin side only.** Every module's admin API carries `capability:<key>`, and SuperAdmins pass.
+   The side doors follow the organisation with NO SuperAdmin bypass: the Broadcasts announcement
+   and push channels (at compose and at delivery) and the Assistant's announcement, event and flyer
+   tools. The admin header search is the one exception: it drops switched-off announcements and
+   About Us for the organisation's own admins, while a SuperAdmin still finds them (the sidebar
+   lists the screen under "Switched off"). Public intake that feeds a switched-off screen refuses rather than
+   silently dropping: contact-us answers 403 with a sentence, and program sign-up answers like a
+   CRM-off tenant. Public and mobile READS never follow a module.
+4. **`website` is not `web_pages`.** `web_pages` means the organisation's own admins may edit the
+   site (off by default). `website` means the organisation has a site (on by default). The Web
+   Pages routes need both. The owner's sidebar now reflects the organisation: Burlington, MEC and
+   Al-Razi keep Web Pages Management in it, while Jummah Lunch and School Calendar move to a
+   "Switched off for {org}" list wherever the organisation lacks them.
+5. **Form editing without the website builder** (owner, 2026-09-16: yes). A standalone editor
+   opens from Form Responses. The forms WRITE API (store, update, destroy) takes `web_pages` OR
+   `form_editing`; reads, responses, staff codes and the public submit stay ungated. There is no
+   delete button, because `FormsController::destroy` does not guard page placements.
+6. **Page builder.** The palette stays global. `SectionType::requiresModule()` (exhaustive, no
+   default arm) and a `module_off_note` computed from the ORGANISATION's switches tell whoever is
+   building the page what a section will not be able to show.
+7. **Every flip is audited.** `masjid_capability_changes` (append-only, no FKs) takes a row for
+   every catalogue, CRM, Assistant and directory-listing flip, no-ops included, inside the save's
+   transaction, plus a `Log::warning`. `GET /api/admin/masjids/{id}/capabilities` (SuperAdmin
+   only) serves the switch panel: groups, defaults, overrides, live-section counts and the last
+   25 flips.
+
+**Alternatives.**
+- **Reuse the app-drawer pivot (`masjid_mobile_app_features`).** Rejected: it governs the mobile
+  app, has a crash history and a cache, and its keys are not admin screens.
+- **A separate module registry with its own column.** Rejected: it needs a generated TypeScript
+  mirror (no PHP on the dev machine), its middleware failed open on unknown keys, and it mapped
+  screens by URL prefix.
+- **Put modules in `capabilities` and let the SPA's `=== true` hide them.** Rejected: the built
+  assets travel separately from the PHP, so the SPA can reach production first, and every
+  default-on screen would vanish until the backend caught up.
+- **One `web_pages` key for both questions.** Rejected: Burlington (owner-run site, `web_pages`
+  off) and BISS (no site) are the same data state.
+- **Split the CRM switch.** Deferred: it moves the family portal and public registration gates.
+- **Tie Zakat to Stripe state (`canAcceptDonations`).** Rejected: the calculator is not a payment.
+- **Filter the page-builder palette by module.** Rejected: it contradicts the global-palette rule,
+  and attach mode bypasses it anyway.
+- **Let the SuperAdmin bypass the side doors.** Rejected: delivery and the organisation's menu
+  must agree. The owner cannot post the Announcements channel for an organisation with
+  Announcements off without switching it on first.
+
+**Rationale.** Default-on modules on the catalogue that already exists reuse one reader, one
+writer, one gate and one lint. Absent-means-on makes shipping inert for every existing
+organisation; only org 18 is expected to hold module overrides after rollout.
+
+**Known limits.**
+- Not switchable yet: Services, Splash, Donation link, Giving, Donation Funds, Properties,
+  Appointment Requests, the prayer tabs, the app-drawer screens, and the CRM's parts (one `crm`
+  switch covers Families, Classrooms, Import Roster and Teachers).
+- A new organisation starts with every module on, so the owner flips each one per organisation.
+- Switching a content module off leaves what is already published visible on the website and in
+  the app, with no editor. `in_use` counts page sections only, not app content.
+- Zakat off does not stop the public calculator, which answers from the last stored price.
+  Programs off 404s shared offering links.
+- A generic section bound to About Us through `settings.bind` gets no `module_off_note`.
+- Rollback: flip the switch back (audited). For code, `git revert` the commits on main and ship;
+  production `bin/deploy` only fast-forwards and refuses `--ref`.

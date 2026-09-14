@@ -272,9 +272,15 @@ class PageSectionsController extends Controller
     /**
      * Get available section types with their default content
      */
-    public function sectionTypes()
+    public function sectionTypes($masjid_id)
     {
         try {
+            // The ORGANISATION's switches, never the viewer's: a SuperAdmin
+            // building a page for an organisation with Events switched off must
+            // read the same note its own admin would. The palette itself is not
+            // filtered (.claude/rules/section-types.md).
+            $masjid = Masjid::find($masjid_id);
+
             $types = collect(SectionType::cases())->map(fn($type) => [
                 'value' => $type->value,
                 'label' => $type->label(),
@@ -288,6 +294,13 @@ class PageSectionsController extends Controller
                 // (SectionType::withoutRenderer).
                 'has_renderer' => $type->hasRenderer(),
                 'renderer_note' => $type->rendererNote(),
+                // Null unless this type shows a module the organisation has
+                // switched off (SectionType::requiresModule).
+                'module_off_note' => $masjid !== null
+                    && $type->requiresModule() !== null
+                    && $masjid->moduleIsOff($type->requiresModule())
+                    ? $type->moduleOffNote()
+                    : null,
                 'default_content' => $type->defaultContent(),
             ]);
 

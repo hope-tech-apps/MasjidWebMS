@@ -13,12 +13,22 @@ use Symfony\Component\HttpFoundation\Response;
  * `capability:<key>` — 403s unless the bound organisation HAS that capability
  * (config/capabilities.php, layer 1 of the access model).
  *
+ * `capability:a,b` means ANY OF: the request passes when the organisation has
+ * at least one of the keys (the forms write routes take `web_pages` or
+ * `form_editing`).
+ *
  * Runs after `tenant`, exactly like `crm` (EnsureCrmEnabled), so the
  * organisation the request acts on is already resolved; it falls back to the
- * route param so the gate never depends on middleware order. A key that is not
- * in the catalogue is never granted — a typo in a route fails closed, and
- * CapabilityGateTest lints every `capability:` in the route table against the
- * catalogue so it cannot ship.
+ * route param so the gate never depends on middleware order.
+ *
+ * The two kinds are read differently, on purpose:
+ *  - a MODULE key (Masjid::MODULE_KEYS) passes unless Masjid::moduleIsOff(),
+ *    which fails OPEN — a config cache from before the module existed must not
+ *    take a default-on screen away mid-deploy;
+ *  - any other key passes only when Masjid::hasCapability(), which fails
+ *    CLOSED — a typo in a route is never a grant, and CapabilityGateTest lints
+ *    every `capability:` in the route table against the catalogue so it cannot
+ *    ship.
  *
  * SuperAdmins pass: they are the platform operator, not an organisation's
  * staff, and they set organisations up (Web Pages was theirs alone before this
@@ -31,7 +41,7 @@ class EnsureOrgCapability
     {
     }
 
-    public function handle(Request $request, Closure $next, string $capability): Response
+    public function handle(Request $request, Closure $next, string ...$capabilities): Response
     {
         $user = $request->user();
 
@@ -42,12 +52,37 @@ class EnsureOrgCapability
         $masjidId = $this->tenant->get() ?? $request->route('masjid_id');
         $masjid = $masjidId !== null ? Masjid::find($masjidId) : null;
 
-        if ($masjid === null || ! $masjid->hasCapability($capability)) {
-            $label = config("capabilities.{$capability}.label", $capability);
+        if ($masjid !== null) {
+            foreach ($capabilities as $capability) {
+                $passes = in_array($capability, Masjid::MODULE_KEYS, true)
+                    ? ! $masjid->moduleIsOff($capability)
+                    : $masjid->hasCapability($capability);
 
-            abort(Response::HTTP_FORBIDDEN, "{$label} is not switched on for this organisation.");
+                if ($passes) {
+                    return $next($request);
+                }
+            }
         }
 
-        return $next($request);
+        // RETURNED, not abort()ed: the JSON exception renderer replaces an
+        // HttpException's message with "Request failed." whenever app.debug is
+        // off, so an abort() sentence reaches the tests (APP_DEBUG=true) and never
+        // production. Same {status, message} envelope that renderer uses.
+        return response()->json([
+            'status' => 'error',
+            'message' => $this->refusal($capabilities),
+        ], Response::HTTP_FORBIDDEN);
+    }
+
+    /** The sentence, in the catalogue's own labels. */
+    private function refusal(array $capabilities): string
+    {
+        $labels = array_map(fn (string $key) => config("capabilities.{$key}.label", $key), $capabilities);
+
+        if (count($capabilities) === 1 && in_array($capabilities[0], Masjid::MODULE_KEYS, true)) {
+            return "{$labels[0]} is switched off for this organisation.";
+        }
+
+        return implode(' or ', $labels) . ' is not switched on for this organisation.';
     }
 }

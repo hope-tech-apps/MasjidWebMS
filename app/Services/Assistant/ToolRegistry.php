@@ -99,6 +99,16 @@ class ToolRegistry
                 'tool' => $name, 'user_id' => $user->id, 'masjid_id' => $masjid->id,
             ]);
 
+            // A switched-off module is not a missing permission, and the model
+            // repeats this sentence to the admin — so it names the real reason.
+            if ($tool->module !== null && $masjid->moduleIsOff($tool->module)) {
+                return [
+                    'ok' => false,
+                    'error' => '"' . config("capabilities.{$tool->module}.label", $tool->module)
+                        . '" is switched off for this organisation, so I cannot do that.',
+                ];
+            }
+
             return ['ok' => false, 'error' => 'You do not have permission to do that.'];
         }
 
@@ -183,6 +193,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'list_announcements',
+            module: 'announcements',
             description: "List this masjid's recent announcements. Use before updating or to check whether something already exists.",
             inputSchema: [
                 'type' => 'object',
@@ -207,6 +218,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'create_announcement',
+            module: 'announcements',
             description: 'Create a new announcement for this masjid. Use for news the congregation should see in the app. If the admin attached an image, it becomes the announcement image automatically — do not ask them to upload it again.',
             inputSchema: [
                 'type' => 'object',
@@ -292,6 +304,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'update_announcement',
+            module: 'announcements',
             description: <<<'TXT'
             Change an existing announcement. Use this INSTEAD of create_announcement whenever the admin is
             correcting, rewording, or improving something that already exists — creating a second copy is
@@ -384,6 +397,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'list_events',
+            module: 'events',
             description: "List this masjid's upcoming events.",
             inputSchema: [
                 'type' => 'object',
@@ -408,6 +422,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'create_event',
+            module: 'events',
             description: 'Create an event for this masjid. If the admin attached a flyer image, read the details off it — but ask before guessing anything ambiguous.',
             inputSchema: [
                 'type' => 'object',
@@ -456,6 +471,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'update_event',
+            module: 'events',
             description: 'Change an existing event. Use this INSTEAD of create_event when the admin is correcting or improving one that already exists. Get the id from list_events. Only send the fields you are changing.',
             inputSchema: [
                 'type' => 'object',
@@ -942,6 +958,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'list_flyer_templates',
+            module: 'flyer_studio',
             description: <<<'TXT'
             List the flyer designs this masjid can use, what each one is for, and every slot it
             needs filled. ALWAYS call this before draft_flyer: the slot names, their length
@@ -1012,6 +1029,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'draft_flyer',
+            module: 'flyer_studio',
             description: <<<'TXT'
             Fill a design's slots with the words the admin gave you and save it as a DRAFT. Call
             list_flyer_templates first; the slot names and limits come from there.
@@ -1148,6 +1166,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'list_flyers',
+            module: 'flyer_studio',
             description: <<<'TXT'
             List this masjid's recent flyers — what has been drafted, what has been rendered, and
             the link to open each one in Flyer Studio. Call this when the admin refers to "the

@@ -160,4 +160,28 @@ class UsersAccessListTest extends TestCase
 
         $this->assertSame('MasjidAdmin', User::findOrFail($this->lunch->id)->type);
     }
+
+    #[Test]
+    public function a_single_user_carries_grants_only_and_the_screens_switched_off_there(): void
+    {
+        Sanctum::actingAs($this->super);
+
+        $orgs = $this->getJson("/api/admin/users/{$this->owner->id}")->assertOk()->json('data.organisations');
+
+        $this->assertSame([], $orgs[0]['modules_off']);
+        $this->assertNotContains('form_editing', $orgs[0]['capabilities']);
+
+        foreach (Masjid::MODULE_KEYS as $module) {
+            $this->assertNotContains($module, $orgs[0]['capabilities']);
+        }
+
+        $this->masjid->forceFill(['capability_overrides' => ['gallery' => false]])->save();
+
+        $orgs = $this->getJson("/api/admin/users/{$this->owner->id}")->assertOk()->json('data.organisations');
+        $this->assertSame([['key' => 'gallery', 'label' => 'Photo Gallery']], $orgs[0]['modules_off']);
+
+        // The list rows carry no capabilities, so no modules either: unchanged.
+        $users = collect($this->getJson('/api/admin/users')->assertOk()->json('data'));
+        $this->assertArrayNotHasKey('modules_off', $users->firstWhere('id', $this->owner->id)['organisations'][0]);
+    }
 }

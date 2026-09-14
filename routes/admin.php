@@ -176,8 +176,12 @@ Route::prefix('admin')->group(function () {
                 });
             });
 
-            // Masjid gallery control
-            Route::prefix('{masjid_id}')->controller(MasjidGalleryController::class)->group(function () {
+            // Masjid gallery control. `capability:<module>` on this and the other
+            // default-on screens below (config/capabilities.php, kind => module):
+            // open to everyone until a SuperAdmin switches the screen off for one
+            // organisation, and SuperAdmins always pass. Admin side only — the
+            // public and mobile reads never follow a module.
+            Route::prefix('{masjid_id}')->middleware('capability:gallery')->controller(MasjidGalleryController::class)->group(function () {
                 Route::get('/gallery', 'index');
                 Route::post('/gallery', 'store');
                 Route::delete('/gallery/{media_id}', 'delete');
@@ -196,7 +200,7 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid announcements
-            Route::prefix('{masjid_id}/announcements')->controller(AnnouncementsController::class)->group((function () {
+            Route::prefix('{masjid_id}/announcements')->middleware('capability:announcements')->controller(AnnouncementsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{annoncement_id}', 'show');
@@ -221,8 +225,9 @@ Route::prefix('admin')->group(function () {
             // away from every masjid that has not bought the CRM. The one
             // channel that DOES read the CRM (email, whose recipients are
             // contacts) is checked inside the controller, up front, and 403s the
-            // whole request rather than half-sending.
-            Route::prefix('{masjid_id}/broadcasts')->controller(BroadcastsController::class)->group(function () {
+            // whole request rather than half-sending. The announcement and push
+            // channels follow their own modules the same way.
+            Route::prefix('{masjid_id}/broadcasts')->middleware('capability:broadcasts')->controller(BroadcastsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{broadcast_id}', 'show');
@@ -239,7 +244,7 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid events
-            Route::prefix('{masjid_id}/events')->controller(EventsController::class)->group((function () {
+            Route::prefix('{masjid_id}/events')->middleware('capability:events')->controller(EventsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{event_id}', 'show');
@@ -273,7 +278,7 @@ Route::prefix('admin')->group(function () {
             }));
 
             // Masjid about
-            Route::prefix('{masjid_id}/about')->controller(MasjidAboutUsController::class)->group((function () {
+            Route::prefix('{masjid_id}/about')->middleware('capability:about_us')->controller(MasjidAboutUsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
@@ -376,8 +381,9 @@ Route::prefix('admin')->group(function () {
             // Get prayer calculation options (methods, madhabs, high latitude rules)
             Route::get('prayer-calculation/options', [PrayerCalculationSettingsController::class, 'getOptions']);
 
-            // Masjid notifications
-            Route::prefix('{masjid_id}/notifications')->controller(NotificationsController::class)->group((function () {
+            // Masjid notifications (sending a push). Scheduled prayer pushes do not
+            // come through here and are not affected by the module.
+            Route::prefix('{masjid_id}/notifications')->middleware('capability:push_notifications')->controller(NotificationsController::class)->group((function () {
                 Route::post('/', 'save');
             }));
 
@@ -410,7 +416,12 @@ Route::prefix('admin')->group(function () {
             // capability (config/capabilities.php); SuperAdmins always pass. This
             // replaces the per-account users.can_manage_web_pages menu grant, which
             // never reached the server. Layer 1 of the access model.
-            Route::middleware('capability:web_pages')->group(function () {
+            //
+            // Two keys, two questions. `web_pages` (a grant, off by default) is
+            // whether this organisation's OWN admins may edit the site. `website`
+            // (a module, on by default) is whether the organisation has a website
+            // at all — switched off for BISS, which has none. Both must pass.
+            Route::middleware(['capability:web_pages', 'capability:website'])->group(function () {
                 // Pages & Sections Management
                 Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
                     Route::get('/', 'index');
@@ -472,10 +483,15 @@ Route::prefix('admin')->group(function () {
                 // (DECISIONS.md 2026-09-15). No acct_ id, and no manage-donations
                 // permission, so the form builder can read it.
                 Route::get('/card-account', [\App\Http\Controllers\AdminDashboard\FormsCardAccountController::class, 'show']);
-                Route::post('/', 'store');
+                // WRITES only, any of two grants: `web_pages` (the builder inside Web
+                // Pages Management, which is where an organisation's admins reached it
+                // before) or `form_editing` (the standalone editor from Form
+                // Responses). Reads, responses, staff codes and the public submit stay
+                // ungated: Form Responses is always on.
+                Route::post('/', 'store')->middleware('capability:web_pages,form_editing');
                 Route::get('/{form_id}', 'show');
-                Route::put('/{form_id}', 'update');
-                Route::delete('/{form_id}', 'destroy');
+                Route::put('/{form_id}', 'update')->middleware('capability:web_pages,form_editing');
+                Route::delete('/{form_id}', 'destroy')->middleware('capability:web_pages,form_editing');
             });
 
             // Form Responses — the "who filled this out" list, with search/filter/sort.
@@ -534,13 +550,14 @@ Route::prefix('admin')->group(function () {
             // like forms and pages, not the CRM money path, so gating them on
             // masjids.crm_enabled would hide the Studio from every masjid that has
             // not bought the CRM. Same reasoning (and same lack of a `permission:`
-            // middleware) as the forms group above.
-            Route::prefix('{masjid_id}/flyer-templates')->controller(FlyerTemplatesController::class)->group(function () {
+            // middleware) as the forms group above. `flyer_studio` covers these two
+            // prefixes only: the Jummah lunch flyer upload stays under jummah_lunch.
+            Route::prefix('{masjid_id}/flyer-templates')->middleware('capability:flyer_studio')->controller(FlyerTemplatesController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::get('/{template_id}', 'show');
             });
 
-            Route::prefix('{masjid_id}/flyers')->group(function () {
+            Route::prefix('{masjid_id}/flyers')->middleware('capability:flyer_studio')->group(function () {
                 Route::controller(FlyersController::class)->group(function () {
                     Route::get('/', 'index');
                     Route::post('/', 'store');
@@ -562,8 +579,8 @@ Route::prefix('admin')->group(function () {
                 });
             });
 
-            // Contact Requests Management
-            Route::prefix('{masjid_id}/contact-requests')->controller(ContactRequestsController::class)->group(function () {
+            // Contact Requests Management (and the reasons below: one module)
+            Route::prefix('{masjid_id}/contact-requests')->middleware('capability:contact_requests')->controller(ContactRequestsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::get('/{message_id}', 'show');
                 Route::post('/{message_id}/reply', 'reply');
@@ -578,7 +595,7 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid contact reasons
-            Route::prefix('{masjid_id}/contact-reasons')->controller(ContactReasonsController::class)->group(function () {
+            Route::prefix('{masjid_id}/contact-reasons')->middleware('capability:contact_requests')->controller(ContactReasonsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{contact_reason_id}', 'show');
@@ -610,6 +627,11 @@ Route::prefix('admin')->group(function () {
             // auth first (FamilyAuthGuardTest sweeps every admin route with a
             // family token), and the controller refuses it with a 422.
             Route::patch('{masjid_id}/capabilities/{capability}', [MasjidsController::class, 'setCapability']);
+            // SuperAdmin-only read behind the switch panel: every catalogue entry
+            // grouped, with its default, whether a SuperAdmin overrode it, how many
+            // live page sections show it, and the last changes. Same in-controller
+            // 403 as the writers above.
+            Route::get('{masjid_id}/capabilities', [MasjidsController::class, 'capabilities']);
             // SuperAdmin-only: charge a child program org's FORM card payments
             // through its parent's Connect account (DECISIONS.md 2026-09-15). The
             // SuperAdmin check is SetFormsCardAccountRequest::authorize(), so a
@@ -1167,6 +1189,7 @@ Route::prefix('admin')->group(function () {
                 // price makes every zakat answer on the screen wrong. It is a
                 // price and a date, never a ruling.
                 Route::prefix('{masjid_id}/zakat-settings')
+                    ->middleware('capability:zakat')
                     ->controller(MasjidZakatSettingController::class)
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view donations');
@@ -1234,7 +1257,10 @@ Route::prefix('admin')->group(function () {
                 // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin
                 // (Permission::count() === 8) unchanged, exactly as the groups
                 // and credentials slices did before this one.
-                Route::prefix('{masjid_id}/offerings')->controller(OfferingsController::class)->group(function () {
+                //
+                // All three prefixes also take `capability:programs` (a module), on
+                // top of `crm`: switching Programs off leaves the member directory.
+                Route::prefix('{masjid_id}/offerings')->middleware('capability:programs')->controller(OfferingsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     // Literal path BEFORE /{offering_id}, or it is captured as
                     // an id — the same ordering routes/admin.php already keeps
@@ -1254,6 +1280,7 @@ Route::prefix('admin')->group(function () {
                 // pay. `update` exists solely to REFUSE with a clear 422 rather
                 // than accept an edit and silently ignore the fields.
                 Route::prefix('{masjid_id}/offerings/{offering_id}/fee-plans')
+                    ->middleware('capability:programs')
                     ->controller(FeePlansController::class)
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view donations');
@@ -1295,6 +1322,7 @@ Route::prefix('admin')->group(function () {
                 // seat changes through promote/cancel and its price through
                 // adjustments, each of which re-checks its own invariant.
                 Route::prefix('{masjid_id}/offerings/{offering_id}/registrations')
+                    ->middleware('capability:programs')
                     ->controller(RegistrationsController::class)
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view contacts');
@@ -1329,7 +1357,7 @@ Route::prefix('admin')->group(function () {
                 // caller without it gets the report with those metrics listed
                 // in `meta.omitted`. Reusing both families rather than minting
                 // `view impact` keeps the pinned Permission::count() === 8.
-                Route::prefix('{masjid_id}/impact')->controller(ImpactMetricsController::class)->group(function () {
+                Route::prefix('{masjid_id}/impact')->middleware('capability:impact_report')->controller(ImpactMetricsController::class)->group(function () {
                     Route::get('/report', 'report')->middleware('permission:view contacts');
                 });
 

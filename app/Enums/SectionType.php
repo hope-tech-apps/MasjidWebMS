@@ -308,6 +308,83 @@ enum SectionType: string
     }
 
     /**
+     * The MODULE (config/capabilities.php, kind => module) whose data this
+     * section shows, or null when it shows only what was typed into it, or data
+     * no switch governs.
+     *
+     * Exhaustive `match` with NO default arm, like usesExternalData(): a new case
+     * must be classified here or the first call is a fatal error.
+     *
+     * It does NOT filter the palette — the palette stays global
+     * (.claude/rules/section-types.md). It feeds `module_off_note` on the
+     * section-types payload, computed from the ORGANISATION's switches, and the
+     * `in_use` counts on the SuperAdmin's switch panel.
+     *
+     * Per type only: a generic section bound to About Us through
+     * `settings.bind` (SectionContentBinder) is not seen here.
+     */
+    public function requiresModule(): ?string
+    {
+        return match ($this) {
+            self::ANNOUNCEMENTS_LIST => 'announcements',
+            self::EVENTS => 'events',
+            self::GALLERY => 'gallery',
+            // SectionContentBinder draws both from the MasjidAbout row, over
+            // whatever was typed into the section.
+            self::ABOUT_US,
+            self::MISSION_VISION => 'about_us',
+            // Its form posts to contact-us, which refuses while Contact Requests
+            // is switched off.
+            self::CONTACT_FORM => 'contact_requests',
+            // OfferingPublicPayload inlines nothing while Programs is switched off.
+            self::OFFERING => 'programs',
+
+            self::PAGE_TITLE,
+            self::PRAYER_TIMES,
+            self::TEXT,
+            self::IMAGE_TEXT_GRID,
+            self::GRID_CARDS,
+            self::STATS,
+            self::CTA,
+            self::IMAGE,
+            self::LINK_LIST,
+            self::CAROUSEL,
+            self::EMBED => null,
+            // Bound to data, but data no switch governs: the donation link and
+            // services are masjid screens with no module, and forms are always on.
+            self::DONATION,
+            self::SERVICES_LIST,
+            self::FORM => null,
+            // Typed into the section. `programs` is curriculum text, not the
+            // Programs module, and `impact_stats` is not the Impact Report.
+            self::STAFF_DIRECTORY,
+            self::PROGRAMS,
+            self::ADMISSIONS_TUITION,
+            self::SERVICES_ELIGIBILITY,
+            self::PROVIDERS_DIRECTORY,
+            self::IMPACT_STATS => null,
+        };
+    }
+
+    /**
+     * What an admin building a page should know about this type when its module
+     * is switched off for the organisation. Served as `module_off_note` only
+     * then; null for a type no module governs.
+     */
+    public function moduleOffNote(): ?string
+    {
+        return match ($this->requiresModule()) {
+            'announcements' => 'Announcements are switched off for this organisation, so its admins cannot add or edit the announcements this section shows.',
+            'events' => 'Events are switched off for this organisation, so its admins cannot add or edit the events this section shows.',
+            'gallery' => 'Photo Gallery is switched off for this organisation, so its admins cannot add or remove the photos this section shows.',
+            'about_us' => 'About Us is switched off for this organisation, so its admins cannot edit the About Us text this section shows.',
+            'contact_requests' => 'Contact Requests is switched off for this organisation, so the form in this section refuses new messages and nobody can read them here.',
+            'programs' => 'Programs is switched off for this organisation, so this section shows nothing and public sign-up is closed.',
+            default => null,
+        };
+    }
+
+    /**
      * Get default content structure for this section type
      */
     public function defaultContent(): array

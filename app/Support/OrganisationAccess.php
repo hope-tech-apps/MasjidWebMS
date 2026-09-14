@@ -32,7 +32,7 @@ final class OrganisationAccess
 
     /**
      * @param  Collection<int, User>  $users
-     * @return array<int, list<array{masjid_id:int, name:string, access:?string, is_owner:bool, capabilities?:list<string>}>>
+     * @return array<int, list<array{masjid_id:int, name:string, access:?string, is_owner:bool, capabilities?:list<string>, modules_off?:list<array{key:string, label:string}>}>>
      *         keyed by user id; a user in no organisation is simply absent
      */
     public static function forUsers(Collection $users, bool $withCapabilities = false): array
@@ -75,10 +75,16 @@ final class OrganisationAccess
             $row['is_owner'] = $row['is_owner'] || $isOwner;
 
             if ($withCapabilities) {
+                // The grants it holds. Modules are on everywhere unless switched
+                // off, so they ride `modules_off` instead of padding this list.
                 $row['capabilities'] = array_values(array_filter(
                     array_keys(config('capabilities', [])),
-                    fn (string $key) => $masjid->hasCapability($key)
+                    fn (string $key) => config("capabilities.{$key}.kind") !== 'module' && $masjid->hasCapability($key)
                 ));
+                $row['modules_off'] = array_map(fn (string $key) => [
+                    'key' => $key,
+                    'label' => config("capabilities.{$key}.label", $key),
+                ], $masjid->modules_off);
             }
 
             $out[$userId][$masjidId] = $row;

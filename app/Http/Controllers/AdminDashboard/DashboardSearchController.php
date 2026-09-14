@@ -43,9 +43,21 @@ class DashboardSearchController extends Controller
             $inputs = $request->validate(['search_for' => 'nullable|string']);
             $results = [];
 
-            $results['masjidAbout'] = $masjid->masjidAbout()->searchLike($inputs['search_for'])->get();
+            // A switched-off module's records are not offered to the
+            // organisation's own admins: the result would link to a screen
+            // their menu hides and their API refuses. The keys stay, empty, so
+            // the header search reads the same shape either way. A SuperAdmin
+            // still finds them (the sidebar lists the screen under "Switched
+            // off"). moduleIsOff is fail-open, so a stale config hides nothing.
+            $hidesSwitchedOff = $request->user()?->type !== 'SuperAdmin';
+
+            $results['masjidAbout'] = $hidesSwitchedOff && $masjid->moduleIsOff('about_us')
+                ? collect()
+                : $masjid->masjidAbout()->searchLike($inputs['search_for'])->get();
             $results['socialMediaLinks'] = $masjid->socialMediaLinks()->searchLike($inputs['search_for'])->get();
-            $results['announcements'] = $masjid->announcements()->searchLike($inputs['search_for'])->get();
+            $results['announcements'] = $hidesSwitchedOff && $masjid->moduleIsOff('announcements')
+                ? collect()
+                : $masjid->announcements()->searchLike($inputs['search_for'])->get();
             $results['services'] = $masjid->services()->searchLike($inputs['search_for'])->get();
 
             foreach($this->APP_DM as $key => $model) {

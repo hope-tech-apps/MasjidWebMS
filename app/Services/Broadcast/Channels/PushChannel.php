@@ -52,6 +52,18 @@ class PushChannel implements BroadcastChannelDriver
 
     public function deliver(Broadcast $broadcast, Masjid $masjid): ChannelResult
     {
+        // Re-checked at delivery for the scheduled send composed before the
+        // switch was flipped (see AnnouncementChannel). Skipped BEFORE the
+        // notification row: that row is the in-app inbox entry, and creating it
+        // is exactly the write a switched-off Notifications module refuses.
+        $module = $this->channel()->requiresModule();
+
+        if ($module !== null && $masjid->moduleIsOff($module)) {
+            return ChannelResult::skipped(
+                'Notifications are switched off for this organisation, so no push was sent and nothing was added to the in-app notifications list.'
+            );
+        }
+
         // Same creation path as AdminDashboard\NotificationsController::save.
         // Notification is pre-CRM (no BelongsToMasjid), so the relation is what
         // stamps masjid_id.
