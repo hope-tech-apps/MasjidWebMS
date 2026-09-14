@@ -67,6 +67,8 @@ class ContactUsController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'This organisation is not taking messages here right now.',
+                // The iOS client decodes every body as Response<T> and needs a `data` key to reach the message.
+                'data' => new \stdClass(),
             ], Response::HTTP_FORBIDDEN);
         }
 

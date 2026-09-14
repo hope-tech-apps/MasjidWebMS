@@ -41,6 +41,8 @@ class DonationsController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'This organisation is not taking donations in the app right now.',
+                // The iOS client decodes every body as Response<T> and needs a `data` key to reach the message.
+                'data' => new \stdClass(),
             ], Response::HTTP_FORBIDDEN);
         }
 

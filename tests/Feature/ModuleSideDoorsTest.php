@@ -452,7 +452,9 @@ class ModuleSideDoorsTest extends TestCase
             $this->contactPayload('app-device')
         )
             ->assertStatus(403)
-            ->assertExactJson(['status' => 'error', 'message' => self::REFUSED_MESSAGE]);
+            ->assertExactJson(['status' => 'error', 'message' => self::REFUSED_MESSAGE, 'data' => []])
+            // An OBJECT, not null or missing: the iOS client decodes Response<T> and needs `data` to reach the message.
+            ->assertSee('"data":{}', false);
 
         $this->assertSame(0, ContactUsMessage::count());
         $this->assertSame(0, ContactUsAccount::count());
@@ -635,7 +637,9 @@ class ModuleSideDoorsTest extends TestCase
         foreach ([false, true] as $recurring) {
             $this->postJson($url, ['fund_id' => $fund->id, 'amount' => 5000, 'recurring' => $recurring])
                 ->assertStatus(403)
-                ->assertExactJson(['status' => 'error', 'message' => self::DONATIONS_REFUSED]);
+                ->assertExactJson(['status' => 'error', 'message' => self::DONATIONS_REFUSED, 'data' => []])
+                // An OBJECT, not null or missing: the iOS client decodes Response<T> and needs `data` to reach the message.
+                ->assertSee('"data":{}', false);
         }
 
         $this->assertDatabaseCount('donations', 0);
