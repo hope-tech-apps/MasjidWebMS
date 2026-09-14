@@ -256,6 +256,15 @@ class Contact extends Model implements AuthenticatableContract
     }
 
     /**
+     * The broadcast-email opt-out mirror column, by name, for code that must
+     * CLASSIFY the contacts table without ever consulting the opt-out (the
+     * account deletion's column lists). EmailUnsubscribeTest keeps every other
+     * file from naming the column itself; reading its value to decide whether to
+     * send stays forbidden everywhere but BroadcastAudienceResolver.
+     */
+    public const EMAIL_OPT_OUT_MIRROR_COLUMN = 'email_opted_out_at';
+
+    /**
      * Does the directory believe this person has unsubscribed from this
      * organisation's broadcast emails?
      *

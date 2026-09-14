@@ -146,9 +146,11 @@ class MemberAccountDeletion
         'created_at',
         'updated_at',
         'deleted_at',
-        // A display mirror of the person's OWN unsubscribe (email_suppressions,
-        // keyed on the address, survives the contact).
-        'email_opted_out_at',
+        // A display mirror of the person's OWN broadcast unsubscribe. The opt-out
+        // itself is keyed on the address and survives the contact. Named through
+        // the Contact model, never spelled out here: this file only classifies
+        // the column and must never consult the opt-out (EmailUnsubscribeTest).
+        \App\Models\Contact::EMAIL_OPT_OUT_MIRROR_COLUMN,
     ];
 
     /**
