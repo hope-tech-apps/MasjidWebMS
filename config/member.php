@@ -59,4 +59,29 @@ return [
         'verifications_per_hour_per_address' => (int) env('MEMBER_SIGNUP_VERIFICATIONS_PER_HOUR_PER_ADDRESS', 10),
         'verifications_per_hour_per_ip' => (int) env('MEMBER_SIGNUP_VERIFICATIONS_PER_HOUR_PER_IP', 40),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | The public account-deletion page (/account-deletion)
+    |--------------------------------------------------------------------------
+    |
+    | Google Play's account-deletion policy asks the page to name the app or
+    | developer as the store listing shows them, and to say how long any data
+    | kept after deletion is retained. The page is otherwise tenant-neutral, so
+    | those facts live here, where the owner can correct them without a deploy.
+    |
+    | `publisher` and `apps` must match the Play listings exactly. `log_retention_days`
+    | is how long server logs (which record that a deletion happened, never the
+    | address) are kept. Leave it null until that period is confirmed: the page
+    | then makes no numeric promise it cannot keep.
+    |
+    */
+
+    'account_deletion' => [
+        'publisher' => env('ACCOUNT_DELETION_PUBLISHER', 'Hope Tech Inc.'),
+        'apps' => ['Burlington Masjid', 'NAFIS Apex Mosque', 'Muslim Education Center'],
+        'log_retention_days' => env('ACCOUNT_DELETION_LOG_RETENTION_DAYS') !== null
+            ? (int) env('ACCOUNT_DELETION_LOG_RETENTION_DAYS')
+            : null,
+    ],
 ];

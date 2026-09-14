@@ -101,6 +101,20 @@ class Contact extends Model implements AuthenticatableContract
     public const MEMBER_TOKEN_ABILITIES = ['member'];
 
     /**
+     * The NAME of a member token whose sign-in proved this contact's `login_email`.
+     *
+     * Every member token MemberSignupService mints from 2026-09-14 carries it: sign-in
+     * now links an address only to a contact whose `login_email` is that address (or
+     * is empty and adopts it), so the proven address and `login_email` are the same.
+     * Tokens minted before that are named `member-token` and cannot say which address
+     * they proved; one could have come through a household `email` while
+     * `login_email` is another parent's. MemberAccountDeletion reads this name to
+     * decide whether deleting may also end the office-granted family login. It
+     * grants nothing, and no route checks it.
+     */
+    public const MEMBER_TOKEN_FOR_LOGIN_EMAIL = 'member-token:login-email';
+
+    /**
      * HOW consent was obtained. A constant set rather than free text: free text
      * produces forty spellings of "website" and cannot answer "show me everyone
      * whose consent came from the admissions form" three years later, which is

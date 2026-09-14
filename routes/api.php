@@ -174,9 +174,14 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         | an empty `data` object (App\Support\MobileErrorEnvelope, hooked in
         | bootstrap/app.php): the iPhone app cannot decode a body without one.
         | What deleting means is App\Services\Member\MemberAccountDeletion.
+        |
+        | `member.token` in BOTH groups: the three gates above ask about the
+        | contact, not the credential, and a parent's contact can also hold a
+        | family-portal token and a child's hand-off token. Only the app's own
+        | `member` token may act here (EnsureMemberToken).
         */
         Route::prefix('{masjid_id}')
-            ->middleware(['auth:family', 'member.active', 'family.tenant'])
+            ->middleware(['auth:family', 'member.active', 'member.token', 'family.tenant'])
             ->whereNumber('masjid_id')
             ->name('mobile.member.me.')
             ->group(function () {
@@ -187,7 +192,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             });
 
         Route::prefix('{masjid_id}')
-            ->middleware(['auth:family', 'member.active', 'family.tenant', 'crm'])
+            ->middleware(['auth:family', 'member.active', 'member.token', 'family.tenant', 'crm'])
             ->whereNumber('masjid_id')
             ->group(function () {
                 Route::get('/interests', [MemberInterestsController::class, 'index']);

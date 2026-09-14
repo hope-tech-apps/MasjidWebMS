@@ -34,6 +34,10 @@ use Illuminate\Support\Facades\Log;
  *  - the login itself is cleared: `verified_at`, `login_enabled_at` and a family
  *    password, if one was set.
  *
+ * One exception, for a family login that may be SOMEBODY ELSE's: when the caller
+ * cannot be shown to have proved `login_email` (see `delete()`), the family login
+ * and its family and hand-off tokens stay, and only the app account goes.
+ *
  * Then ONE of two outcomes:
  *
  *  - ERASED: the contact is hard-deleted, but only when app sign-up created it
@@ -181,11 +185,25 @@ class MemberAccountDeletion
     /**
      * Delete the account of the contact a token authenticated.
      *
-     * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int}
+     * `$provenAddress` is the address the caller proved they read: the page's
+     * emailed code, or the app sign-in a member token came from. Null means
+     * "not known" (a member token minted before sign-in recorded it, see
+     * Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL).
+     *
+     * It decides one thing: whether the office-granted FAMILY login goes too. That
+     * login belongs to whoever reads `login_email`, and `email` is often a
+     * household address another person also reads. So the family login, its
+     * password, its sign-in codes and its family and hand-off tokens are ended
+     * only when the proven address is `login_email`, or when the contact has no
+     * second address that could have been proved instead. Otherwise this removes
+     * the APP account alone (member tokens, handsets, interests, `verified_at`)
+     * and leaves the other person's portal access exactly as the office set it.
+     *
+     * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int, family_login_kept: bool}
      */
-    public function delete(Contact $contact, string $via, ?string $ip = null): array
+    public function delete(Contact $contact, string $via, ?string $ip = null, ?string $provenAddress = null): array
     {
-        $result = DB::transaction(function () use ($contact, $ip): array {
+        $result = DB::transaction(function () use ($contact, $ip, $provenAddress): array {
             // Re-read under a lock: a second tap, or the page and the app at the
             // same moment, must see the first deletion's result, not race it.
             /** @var Contact $contact */
@@ -199,32 +217,60 @@ class MemberAccountDeletion
             // this person a family login.
             $keptBecause = $this->reasonsToKeep($contact);
             $hadFamilyLogin = $contact->login_enabled_at !== null;
-            $address = $contact->login_email !== null ? mb_strtolower(trim($contact->login_email)) : null;
+            $address = $this->normalise($contact->login_email);
+            $officeEmail = $this->normalise($contact->email);
+            $proven = $provenAddress !== null
+                ? $this->normalise($provenAddress)
+                // Unknown: only `login_email` could have been proved when the
+                // contact has no other address to prove.
+                : (($officeEmail === null || $officeEmail === $address) ? $address : null);
+            $endsFamilyLogin = ! $hadFamilyLogin || ($proven !== null && $proven === $address);
 
             // MobileAppUser is not tenant-scoped; the contact id is the filter.
             $devices = MobileAppUser::query()
                 ->where('contact_id', $contact->id)
                 ->update(['contact_id' => null]);
 
-            $tokens = $contact->tokens()->delete();
+            if ($endsFamilyLogin) {
+                $tokens = $contact->tokens()->delete();
+
+                ContactLoginCode::withoutMasjidScope()
+                    ->where('contact_id', $contact->id)
+                    ->delete();
+            } else {
+                // Only the app's own tokens. Abilities are a JSON column, so they
+                // are read rather than matched in SQL, which SQLite and MySQL
+                // spell differently.
+                $memberTokenIds = $contact->tokens()
+                    ->get(['id', 'abilities'])
+                    ->filter(fn ($token) => in_array(Contact::MEMBER_TOKEN_ABILITIES[0], (array) $token->abilities, true))
+                    ->pluck('id')
+                    ->all();
+
+                $tokens = $memberTokenIds === []
+                    ? 0
+                    : $contact->tokens()->whereKey($memberTokenIds)->delete();
+            }
 
             $interests = ContactServiceInterest::withoutMasjidScope()
                 ->where('contact_id', $contact->id)
                 ->delete();
 
-            ContactLoginCode::withoutMasjidScope()
-                ->where('contact_id', $contact->id)
-                ->delete();
+            // App sign-in codes for whichever address could sign straight back in:
+            // the proven one, or both when that is unknown.
+            $codeAddresses = $proven !== null ? [$proven] : array_values(array_unique(array_filter([$address, $officeEmail])));
 
-            if ($address !== null && $address !== '') {
+            if ($codeAddresses !== []) {
                 AppSignupCode::withoutMasjidScope()
                     ->where('masjid_id', $contact->masjid_id)
-                    ->where('email', $address)
+                    ->whereIn('email', $codeAddresses)
                     ->delete();
             }
 
             if ($keptBecause === []) {
                 // Through the model, so Contact's own force-delete hook runs.
+                // Never reached with a family login still on: `login_enabled_at`
+                // is itself a reason to keep.
                 $contact->forceDelete();
 
                 return [
@@ -233,23 +279,26 @@ class MemberAccountDeletion
                     'devices_released' => (int) $devices,
                     'tokens_revoked' => (int) $tokens,
                     'interests_removed' => (int) $interests,
+                    'family_login_kept' => false,
                     'masjid_id' => (int) $contact->masjid_id,
                     'contact_id' => (int) $contact->id,
                 ];
             }
 
-            $contact->forceFill([
-                'verified_at' => null,
-                'login_enabled_at' => null,
-                'password' => null,
-                'password_set_at' => null,
-            ])->save();
+            $contact->forceFill($endsFamilyLogin
+                ? [
+                    'verified_at' => null,
+                    'login_enabled_at' => null,
+                    'password' => null,
+                    'password_set_at' => null,
+                ]
+                : ['verified_at' => null])->save();
 
             // A family login is on the office's access-history panel, so its
             // withdrawal goes there too. `revoked` with no actor: the panel reads
             // an empty actor as "not an operator", which is who did this. No
             // new verb, because the admin screen badges an unknown one "Enabled".
-            if ($hadFamilyLogin) {
+            if ($hadFamilyLogin && $endsFamilyLogin) {
                 ContactLoginEvent::create([
                     'masjid_id' => $contact->masjid_id,
                     'contact_id' => $contact->id,
@@ -268,6 +317,7 @@ class MemberAccountDeletion
                 'devices_released' => (int) $devices,
                 'tokens_revoked' => (int) $tokens,
                 'interests_removed' => (int) $interests,
+                'family_login_kept' => ! $endsFamilyLogin,
                 'masjid_id' => (int) $contact->masjid_id,
                 'contact_id' => (int) $contact->id,
             ];
@@ -285,6 +335,7 @@ class MemberAccountDeletion
             'devices_released' => $result['devices_released'],
             'tokens_revoked' => $result['tokens_revoked'],
             'interests_removed' => $result['interests_removed'],
+            'family_login_kept' => $result['family_login_kept'],
         ]);
 
         unset($result['masjid_id'], $result['contact_id']);
@@ -300,6 +351,14 @@ class MemberAccountDeletion
      * public page's emailed code). An account is a contact whose `login_email`
      * is this address and whose login is on in either realm; a contact the
      * office merely has an `email` for has no account to delete.
+     *
+     * Deliberately NOT also matched on `email`. Sign-in no longer links a
+     * household `email` to a contact whose `login_email` is someone else's
+     * (MemberSignupService::resolveContact), so a member's address is always
+     * their `login_email`. Matching `email` here would let the other reader of a
+     * household mailbox sign that parent out of the app. The one member this
+     * misses holds a token from before that change; it expires within the family
+     * guard's 30 days, and Delete account in the app still works for them.
      *
      * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int}|null
      */
@@ -336,7 +395,19 @@ class MemberAccountDeletion
             return null;
         }
 
-        return $this->delete($contact, $via, $ip);
+        return $this->delete($contact, $via, $ip, $email);
+    }
+
+    /** Lower-cased and trimmed, with an empty address read as none. */
+    private function normalise(?string $address): ?string
+    {
+        if ($address === null) {
+            return null;
+        }
+
+        $address = mb_strtolower(trim($address));
+
+        return $address === '' ? null : $address;
     }
 
     /**

@@ -2,21 +2,30 @@
 
 namespace Tests\Feature;
 
+use App\Enums\BroadcastAudience;
 use App\Mail\FamilyLoginCodeMail;
 use App\Models\AppSignupCode;
 use App\Models\AppointmentRequest;
+use App\Models\Broadcast;
 use App\Models\Contact;
+use App\Models\ContactCredential;
 use App\Models\ContactLoginEvent;
 use App\Models\ContactServiceInterest;
 use App\Models\Donation;
+use App\Models\DonationSubscription;
 use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\Fund;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\Masjid;
+use App\Models\MealOrder;
 use App\Models\MobileAppUser;
+use App\Models\Offering;
+use App\Models\Registrant;
+use App\Models\Registration;
 use App\Models\Service;
+use App\Models\User;
 use App\Services\Member\MemberAccountDeletion;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -148,6 +157,13 @@ class MemberAccountDeletionTest extends TestCase
             'a form response from the same address' => ['form_response', 'form_responses'],
             'an appointment request from the same address' => ['appointment_request', 'appointment_requests'],
             'a family login the office turned on' => ['family_login', 'contacts.login_enabled_at'],
+            // The owner named registration data explicitly (2026-09-14).
+            'a registration they made' => ['registration', 'registrations'],
+            'a place on a registration roster' => ['registrant', 'registrants'],
+            'a monthly gift' => ['donation_subscription', 'donation_subscriptions'],
+            'a lunch order' => ['meal_order', 'meal_orders'],
+            'a credential the office tracks' => ['contact_credential', 'contact_credentials'],
+            'a broadcast staff sent to them by name' => ['broadcast', 'broadcasts.audience_contact_ids'],
         ];
     }
 
@@ -257,6 +273,189 @@ class MemberAccountDeletionTest extends TestCase
             ['Authorization' => 'Bearer ' . $twinsToken],
         )->assertOk();
         $this->asANewRequest();
+    }
+
+    // ------------------------------------------------------ who may call it
+
+    #[Test]
+    public function a_childs_hand_off_token_or_a_family_portal_token_cannot_leave_for_the_parent(): void
+    {
+        // A parent the office gave a family login, who ALSO signed in to the app.
+        $masjid = $this->makeMasjid();
+        $parent = $this->appMember($masjid);
+        $this->plant('family_login', $masjid, $parent);
+        $membership = $this->guardianEdge($masjid, $parent);
+        $this->asANewRequest();
+        $parent->refresh();
+
+        $this->tokenFor($parent);
+        // Minted FROM THE PARENT'S CONTACT for the child holding the phone.
+        $handOff = $parent->createStudentHandoffToken((int) $membership->id)->plainTextToken;
+        $portal = $parent->createFamilyToken()->plainTextToken;
+        $phone = $this->device($masjid, $parent);
+        $this->interest($masjid, $parent);
+
+        foreach (['hand-off' => $handOff, 'family portal' => $portal] as $label => $token) {
+            $delete = $this->deleteAccount($masjid, $token);
+            $delete->assertStatus(403);
+            $this->assertStringContainsString('"data":{}', $delete->getContent(), "{$label} token");
+
+            $this->asANewRequest();
+            $release = $this->deleteJson(
+                "/api/mobile/masjids/{$masjid->id}/me/device",
+                ['device_id' => $phone->device_id],
+                ['Authorization' => 'Bearer ' . $token],
+            );
+            $this->asANewRequest();
+            $release->assertStatus(403);
+            $this->assertStringContainsString('"data":{}', $release->getContent(), "{$label} token");
+        }
+
+        // Nothing of the parent's moved.
+        $kept = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        $this->assertNotNull($kept->verified_at);
+        $this->assertNotNull($kept->login_enabled_at);
+        $this->assertNotNull($kept->getRawOriginal('password'));
+        $this->assertSame(3, $this->tokenCount($parent));
+        $this->assertSame((int) $parent->id, (int) $phone->fresh()->contact_id);
+        $this->assertSame(1, ContactServiceInterest::withoutMasjidScope()->where('contact_id', $parent->id)->count());
+        $this->assertNull($this->deletionLog());
+    }
+
+    #[Test]
+    public function a_family_only_login_and_a_staff_session_are_refused_too(): void
+    {
+        $masjid = $this->makeMasjid();
+
+        // The office turned on a family login; this person never signed in to the app.
+        $parent = $this->appMember($masjid);
+        $this->plant('family_login', $masjid, $parent);
+        Contact::withoutMasjidScope()->whereKey($parent->id)->update(['verified_at' => null]);
+        $this->asANewRequest();
+        $portal = $parent->createFamilyToken()->plainTextToken;
+
+        $familyOnly = $this->deleteAccount($masjid, $portal);
+        $familyOnly->assertStatus(401);
+        $this->assertStringContainsString('"data":{}', $familyOnly->getContent());
+        $this->assertNotNull(Contact::withoutMasjidScope()->findOrFail($parent->id)->login_enabled_at);
+        $this->assertSame(1, $this->tokenCount($parent));
+
+        // A live admin SPA session. Sanctum admits a `web` session before it looks
+        // at any token (FamilyAuthGuardTest), so `member.active` is what refuses it.
+        $staff = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+        $this->asANewRequest();
+        $this->actingAs($staff);
+        $session = $this->deleteJson("/api/mobile/masjids/{$masjid->id}/me");
+        $this->asANewRequest();
+
+        $session->assertStatus(401);
+        $this->assertStringContainsString('"data":{}', $session->getContent());
+        $this->assertNull($this->deletionLog());
+    }
+
+    // ------------------------------------------------------- a household address
+
+    #[Test]
+    public function signing_in_with_a_household_address_does_not_become_the_parent_whose_login_it_is_not(): void
+    {
+        Mail::fake();
+
+        $masjid = $this->makeMasjid();
+        $household = 'household-' . uniqid() . '@test.local';
+        $parent = $this->officeParent($masjid, $household, 'parent-' . uniqid() . '@test.local');
+
+        $this->asANewRequest();
+        $this->postJson("/api/mobile/masjids/{$masjid->id}/auth/request-code", ['email' => $household])
+            ->assertStatus(202);
+        $code = $this->lastCodeSentTo($household);
+
+        $this->asANewRequest();
+        $this->postJson("/api/mobile/masjids/{$masjid->id}/auth/verify-code", [
+            'email' => $household,
+            'code' => $code,
+            'first_name' => 'Other',
+            'last_name' => 'Parent',
+        ])->assertOk()->assertJsonPath('data.created', true);
+        $this->asANewRequest();
+
+        // The parent's contact is untouched, and the reader of the household
+        // mailbox has a contact of their own.
+        $this->assertNull($parent->fresh()->verified_at);
+        $this->assertSame(0, $this->tokenCount($parent));
+
+        $own = Contact::withoutMasjidScope()->where('login_email', $household)->firstOrFail();
+        $this->assertNotSame((int) $parent->id, (int) $own->id);
+        $this->assertSame(
+            Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL,
+            DB::table('personal_access_tokens')->where('tokenable_id', $own->id)
+                ->where('tokenable_type', $own->getMorphClass())->value('name'),
+        );
+    }
+
+    #[Test]
+    public function an_older_session_that_cannot_say_which_address_it_proved_keeps_the_family_login(): void
+    {
+        // The state builds before 2026-09-14 could create: the household `email`
+        // linked to a parent whose `login_email` is their own.
+        $masjid = $this->makeMasjid();
+        $household = 'household-' . uniqid() . '@test.local';
+        $parent = $this->officeParent($masjid, $household, 'parent-' . uniqid() . '@test.local');
+        $parent->forceFill(['verified_at' => now()])->save();
+        $this->asANewRequest();
+
+        $appToken = $this->tokenFor($parent); // the old name: `member-token`
+        $parent->createFamilyToken();
+        $phone = $this->device($masjid, $parent);
+        $this->interest($masjid, $parent);
+
+        $this->deleteAccount($masjid, $appToken)->assertOk();
+
+        $kept = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        // The app account is gone...
+        $this->assertNull($kept->verified_at);
+        $this->assertNull($phone->fresh()->contact_id);
+        $this->assertSame(0, ContactServiceInterest::withoutMasjidScope()->where('contact_id', $parent->id)->count());
+        // ...and the family login the office gave the parent is not.
+        $this->assertNotNull($kept->login_enabled_at);
+        $this->assertNotNull($kept->getRawOriginal('password'));
+        $this->assertSame(
+            ['family-token'],
+            DB::table('personal_access_tokens')->where('tokenable_id', $parent->id)
+                ->where('tokenable_type', $parent->getMorphClass())->pluck('name')->all(),
+        );
+        $this->assertSame(0, ContactLoginEvent::withoutMasjidScope()->where('contact_id', $parent->id)->count());
+
+        $log = $this->deletionLog();
+        $this->assertNotNull($log);
+        $this->assertTrue($log->context['family_login_kept']);
+        $this->assertSame(1, $log->context['tokens_revoked']);
+    }
+
+    #[Test]
+    public function a_session_that_proved_the_login_address_ends_the_family_login_as_the_owner_decided(): void
+    {
+        $masjid = $this->makeMasjid();
+        $parent = $this->officeParent($masjid, 'household-' . uniqid() . '@test.local', 'parent-' . uniqid() . '@test.local');
+        $parent->forceFill(['verified_at' => now()])->save();
+        $this->asANewRequest();
+
+        $appToken = $parent->createMemberToken(Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL)->plainTextToken;
+        $parent->createFamilyToken();
+
+        $this->deleteAccount($masjid, $appToken)->assertOk();
+
+        $kept = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        $this->assertNull($kept->verified_at);
+        $this->assertNull($kept->login_enabled_at);
+        $this->assertNull($kept->getRawOriginal('password'));
+        $this->assertSame(0, $this->tokenCount($parent));
+
+        $log = $this->deletionLog();
+        $this->assertNotNull($log);
+        $this->assertFalse($log->context['family_login_kept']);
     }
 
     #[Test]
@@ -425,6 +624,30 @@ class MemberAccountDeletionTest extends TestCase
         return $contact->refresh();
     }
 
+    /**
+     * A parent the OFFICE created and gave a family login: their own address as
+     * `login_email`, a household address both parents read as `email`.
+     */
+    private function officeParent(Masjid $masjid, string $household, string $own): Contact
+    {
+        $this->asANewRequest();
+
+        $contact = new Contact();
+        $contact->forceFill([
+            'masjid_id' => $masjid->id,
+            'first_name' => 'Office',
+            'last_name' => 'Parent',
+            'email' => $household,
+            'login_email' => $own,
+            'signup_source' => null,
+            'login_enabled_at' => now(),
+            'password' => Hash::make('a-long-family-password'),
+            'password_set_at' => now(),
+        ])->save();
+
+        return $contact->refresh();
+    }
+
     private function plant(string $record, Masjid $masjid, Contact $member): void
     {
         $this->asANewRequest();
@@ -464,9 +687,63 @@ class MemberAccountDeletionTest extends TestCase
                 'password' => Hash::make('a-long-family-password'),
                 'password_set_at' => now(),
             ])->save(),
+            'registration' => Registration::factory()->create([
+                'masjid_id' => $masjid->id,
+                'offering_id' => $this->offering($masjid)->id,
+                'contact_id' => $member->id,
+            ]),
+            'registrant' => Registrant::factory()->create([
+                'masjid_id' => $masjid->id,
+                // Somebody else's registration: the roster row alone must keep them.
+                'registration_id' => Registration::factory()->create([
+                    'masjid_id' => $masjid->id,
+                    'offering_id' => $this->offering($masjid)->id,
+                ])->id,
+                'contact_id' => $member->id,
+            ]),
+            'donation_subscription' => DonationSubscription::withoutMasjidScope()->create([
+                'masjid_id' => $masjid->id,
+                'contact_id' => $member->id,
+                'fund_id' => $this->fund($masjid)->id,
+                'intended_amount' => 5000,
+                'charged_amount' => 5000,
+                'currency' => 'usd',
+                'donor_covers_fees' => false,
+                'is_zakat' => false,
+                'interval' => 'month',
+                'status' => 'active',
+                // As SeedsDonationSubscriptions seeds one.
+                'stripe_subscription_id' => 'sub_' . uniqid(),
+                'stripe_customer_id' => 'cus_' . uniqid(),
+                'idempotency_key' => 'sub_' . uniqid(),
+            ]),
+            'meal_order' => MealOrder::factory()->create([
+                'masjid_id' => $masjid->id,
+                'contact_id' => $member->id,
+            ]),
+            'contact_credential' => ContactCredential::factory()->create([
+                'masjid_id' => $masjid->id,
+                'contact_id' => $member->id,
+            ]),
+            'broadcast' => Broadcast::create([
+                'masjid_id' => $masjid->id,
+                'title' => 'Volunteer briefing',
+                'body' => 'See you after Maghrib.',
+                'audience' => BroadcastAudience::CONTACTS->value,
+                'audience_contact_ids' => [(int) $member->id],
+                'status' => Broadcast::STATUS_PENDING,
+            ]),
         };
 
         $this->asANewRequest();
+    }
+
+    private function offering(Masjid $masjid): Offering
+    {
+        return Offering::factory()->create([
+            'masjid_id' => $masjid->id,
+            'intake_form_id' => Form::factory()->create(['masjid_id' => $masjid->id])->id,
+        ]);
     }
 
     private function fund(Masjid $masjid): Fund
@@ -521,7 +798,16 @@ class MemberAccountDeletionTest extends TestCase
     {
         $this->asANewRequest();
 
-        $service = Service::factory()->create(['masjid_id' => $masjid->id]);
+        // Not Service::factory(): its afterCreating hook adds media from
+        // storage/app/public/images, which is not in the repository, so every
+        // caller would error before asserting anything.
+        $service = Service::create([
+            'masjid_id' => $masjid->id,
+            'title' => 'Halal Kitchen',
+            'summary' => 'Halal Kitchen',
+            'description' => 'Halal Kitchen',
+            'text' => 'Halal Kitchen',
+        ]);
 
         return ContactServiceInterest::withoutMasjidScope()->create([
             'masjid_id' => $masjid->id,

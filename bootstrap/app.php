@@ -132,6 +132,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // `family.active` gates on `login_enabled_at`, which is what keeps a
             // self-registered app member out of a parent's view of a child.
             'member.active' => \App\Http\Middleware\EnsureMemberAccessActive::class,
+            // ...and the member realm's ability check: only a `member` token, so a
+            // child's hand-off token or a family-portal token minted on the same
+            // contact cannot act as the app member (EnsureMemberToken).
+            'member.token' => \App\Http\Middleware\EnsureMemberToken::class,
             'family.tenant' => ResolveFamilyTenant::class,
             // Abilities, finally used: `family.parent` keeps a child's hand-off
             // token off the parent surfaces, and `family.student` pins a

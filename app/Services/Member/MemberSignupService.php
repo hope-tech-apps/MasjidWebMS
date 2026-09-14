@@ -323,7 +323,10 @@ class MemberSignupService
 
             return [
                 'contact' => $contact,
-                'token' => $contact->createMemberToken(),
+                // Named for what this exchange proved: after resolveContact(), the
+                // redeemed address IS this contact's login_email. Account deletion
+                // relies on that (Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL).
+                'token' => $contact->createMemberToken(Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL),
                 'created' => $created,
             ];
         });
@@ -336,6 +339,17 @@ class MemberSignupService
      * credential, whereas `email` is the office's contact data. Either way an
      * address matching more than one contact resolves to null — an identity
      * service must not guess which person a credential belongs to.
+     *
+     * The `email` fallback skips a contact that already HAS a `login_email`
+     * (necessarily a different address, or the first query would have found it).
+     * That column is a person's own credential, and `email` is frequently a
+     * household address both parents read (see the login-columns migration).
+     * Linking the household address would sign its other reader in AS that
+     * parent: their gifts on "Your monthly giving", and a Delete account that
+     * ends the family login the office gave the other parent. Such an address is
+     * treated like any unmatched one, so a new member gives their name and gets a
+     * contact of their own. The invariant this buys: a member token's contact
+     * always has the redeemed address as its `login_email`.
      */
     private function resolveContact(string $email): ?Contact
     {
@@ -355,6 +369,7 @@ class MemberSignupService
 
         $byEmail = Contact::query()
             ->whereNotNull('email')
+            ->whereNull('login_email')
             ->whereRaw('LOWER(email) = ?', [$email])
             ->limit(2)
             ->get();

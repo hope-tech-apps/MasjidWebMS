@@ -78,6 +78,43 @@ class MemberAccountDeletionCoverageTest extends TestCase
         );
     }
 
+    /**
+     * WHICH list a table is in, pinned. The schema walk above only asks that a
+     * column be classified somewhere, so moving `registrations` from office data
+     * to login plumbing would pass it, and the next member to press Delete
+     * account would take a registrant's record with them. Changing either list
+     * must be a decision made in this file too.
+     */
+    #[Test]
+    public function the_office_and_login_lists_are_exactly_these_tables(): void
+    {
+        $this->assertSame([
+            'contact_cards' => ['contact_id'],
+            'contact_credentials' => ['contact_id'],
+            'contact_login_events' => ['contact_id'],
+            'donations' => ['contact_id'],
+            'donation_subscriptions' => ['contact_id'],
+            'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
+            'group_messages' => ['author_contact_id'],
+            'group_thread_reads' => ['contact_id'],
+            'group_threads' => ['created_by_contact_id'],
+            'meal_orders' => ['contact_id'],
+            'registrants' => ['contact_id'],
+            'registrations' => ['contact_id'],
+        ], MemberAccountDeletion::OFFICE_RECORDS);
+
+        $this->assertSame([
+            'contact_login_codes' => ['contact_id'],
+            'contact_service_interests' => ['contact_id'],
+            'mobile_app_users' => ['contact_id'],
+        ], MemberAccountDeletion::LOGIN_RECORDS);
+
+        $this->assertSame([
+            'form_responses' => 'respondent_email',
+            'appointment_requests' => 'email',
+        ], MemberAccountDeletion::OFFICE_RECORDS_BY_ADDRESS);
+    }
+
     #[Test]
     public function every_classified_table_and_column_still_exists(): void
     {

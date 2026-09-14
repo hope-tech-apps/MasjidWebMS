@@ -5,8 +5,10 @@ namespace Tests\Feature;
 use App\Mail\FamilyLoginCodeMail;
 use App\Models\AppSignupCode;
 use App\Models\Contact;
+use App\Models\ContactServiceInterest;
 use App\Models\Masjid;
 use App\Models\MobileAppUser;
+use App\Models\Service;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
@@ -137,6 +139,28 @@ class AccountDeletionPageTest extends TestCase
         $member = $this->appMember($this->listed, 'known-to-office@test.local');
         Contact::withoutMasjidScope()->whereKey($member->id)->update(['phone' => '+17045550123']);
 
+        // What the web door must take away even when the record stays: every
+        // sign-in, the handset and the notification choices.
+        $member->createMemberToken();
+        $phone = MobileAppUser::create([
+            'masjid_id' => $this->listed->id,
+            'contact_id' => $member->id,
+            'device_id' => 'device-' . uniqid('', true),
+            'user_agent' => 'PHPUnit',
+        ]);
+        $service = Service::create([
+            'masjid_id' => $this->listed->id,
+            'title' => 'Halal Kitchen',
+            'summary' => 'Halal Kitchen',
+            'description' => 'Halal Kitchen',
+            'text' => 'Halal Kitchen',
+        ]);
+        ContactServiceInterest::withoutMasjidScope()->create([
+            'masjid_id' => $this->listed->id,
+            'contact_id' => $member->id,
+            'service_id' => $service->id,
+        ]);
+
         $this->requestCode($this->listed, 'known-to-office@test.local')->assertOk();
         $response = $this->confirm($this->listed, 'known-to-office@test.local', $this->lastDeletionCodeFor('known-to-office@test.local'));
 
@@ -147,6 +171,30 @@ class AccountDeletionPageTest extends TestCase
         $kept = Contact::withoutMasjidScope()->findOrFail($member->id);
         $this->assertNull($kept->verified_at);
         $this->assertSame('+17045550123', $kept->phone);
+
+        $this->assertSame(0, DB::table('personal_access_tokens')->where('tokenable_id', $member->id)
+            ->where('tokenable_type', $member->getMorphClass())->count());
+        $this->assertNull($phone->fresh()->contact_id);
+        $this->assertSame(0, ContactServiceInterest::withoutMasjidScope()->where('contact_id', $member->id)->count());
+    }
+
+    #[Test]
+    public function the_page_names_the_apps_and_publisher_and_says_what_is_kept(): void
+    {
+        config([
+            'member.account_deletion.publisher' => 'Example Publisher Inc.',
+            'member.account_deletion.apps' => ['First App', 'Second App'],
+            'member.account_deletion.log_retention_days' => 30,
+        ]);
+
+        $response = $this->get('/account-deletion');
+
+        $response->assertOk();
+        $response->assertSee('First App and Second App');
+        $response->assertSee('published by Example Publisher Inc.');
+        $response->assertSee('What is kept, and for how long');
+        $response->assertSee('for up to 30 days');
+        $response->assertDontSee('only as long as we need them');
     }
 
     #[Test]

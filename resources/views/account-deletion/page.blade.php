@@ -10,7 +10,9 @@
 
      - TENANT-NEUTRAL. No organisation's name, logo or colour frames the page. An
        organisation appears only as an option in the picker (the public app
-       directory) or as the one the visitor chose.
+       directory) or as the one the visitor chose. The one exception is the
+       publisher line under the heading: Google Play asks the page to name the
+       apps and developer exactly as the store listings do (config/member.php).
      - The `code` state depends ONLY on what the visitor typed. It must render
        byte-for-byte the same for an address with an account and one without;
        AccountDeletionPageTest compares the two.
@@ -28,6 +30,20 @@
     $old = $old ?? ['masjid_id' => '', 'email' => ''];
     $codeTtlMinutes = $codeTtlMinutes ?? 10;
     $erased = $erased ?? false;
+    $publisher = (string) config('member.account_deletion.publisher', '');
+    $apps = collect(config('member.account_deletion.apps', []))->filter()->values();
+    $logRetentionDays = config('member.account_deletion.log_retention_days');
+
+    // Play asks how long anything kept after deletion is retained. No number is
+    // promised until config/member.php states one.
+    $retention = 'Records the organisation keeps are held for as long as its own record-keeping requires; '
+        . 'ask the organisation how long that is. A note that a deletion happened (the date, the '
+        . 'organisation and an internal account number, never your email address) is kept in our server logs '
+        . ($logRetentionDays !== null
+            ? 'for up to ' . (int) $logRetentionDays . ' days.'
+            : 'only as long as we need them to run and secure the service.')
+        . ' If the organisation had also given you family-portal access, its access history keeps a note '
+        . 'that the access ended, with the organisation\'s record.';
 
     $title = [
         'start' => 'Delete your app account',
@@ -143,6 +159,22 @@
     <main class="card">
         <h1>{{ $title }}</h1>
 
+        @if ($publisher !== '' || $apps->isNotEmpty())
+            <p class="hint publisher">
+                For accounts in the
+                @if ($apps->isNotEmpty())
+                    {{ $apps->count() > 1 ? $apps->slice(0, -1)->implode(', ') . ' and ' . $apps->last() : $apps->first() }}
+                    apps
+                @else
+                    apps
+                @endif
+                @if ($publisher !== '')
+                    published by {{ $publisher }}
+                @endif
+                on Google Play and the App Store.
+            </p>
+        @endif
+
         @if ($problems->isNotEmpty())
             <div class="problems" role="alert" aria-labelledby="problems-title">
                 <h2 id="problems-title">There is a problem</h2>
@@ -180,6 +212,9 @@
                 </li>
                 <li>You can create a new account later with the same email address.</li>
             </ul>
+
+            <h2>What is kept, and for how long</h2>
+            <p>{{ $retention }}</p>
 
             <form method="POST" action="{{ route('account-deletion.request') }}" novalidate>
                 @csrf
@@ -273,6 +308,7 @@
                     to ask about them.
                 </p>
             @endif
+            <p>{{ $retention }}</p>
             <p>You can create a new account in the app later if you want to.</p>
 
         @elseif ($state === 'nothing')

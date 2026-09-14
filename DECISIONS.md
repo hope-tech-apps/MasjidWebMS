@@ -1036,3 +1036,38 @@ goes: the login, the sessions, the phone's link to them and their notification c
   that organisation (in the page, if it is listed). R0 builds keep the member realm on the home
   organisation.
 - Rollback: `git revert` on main and ship. There is no migration.
+
+## 2026-09-14 · Account deletion, fix round 1: who may delete, and whose family login it ends
+
+**Decision.**
+- The member realm now requires a `member` token (`member.token`, EnsureMemberToken) on both member
+  route groups. It runs after `member.active` and refuses with 403 and `data:{}`. A child's hand-off
+  token or a family-portal token minted on the same contact can no longer delete the parent's account
+  or release their phone.
+- App sign-in no longer links an address to a contact through the office's `email` column when that
+  contact already has a different `login_email`. The reader of a household mailbox gets a contact of
+  their own instead. So a member token's contact always has the redeemed address as its `login_email`.
+- Member tokens are now named `member-token:login-email` (Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL).
+  `MemberAccountDeletion::delete()` takes the proven address. The office-granted family login (its
+  `login_enabled_at`, password, codes, family and hand-off tokens) ends only when that address is
+  `login_email`. The same holds when the contact has no second address that could have been proved.
+  Otherwise only the app account goes: member tokens, handsets, interests and `verified_at`. The log
+  records `family_login_kept`.
+- The public page names the apps and publisher (config `member.account_deletion`) and says what is kept
+  and for how long. It makes no numeric log-retention promise until `ACCOUNT_DELETION_LOG_RETENTION_DAYS`
+  is set.
+
+**Alternatives.**
+- Also match `email` on the web page. Rejected: the other reader of a household mailbox could then
+  sign that parent out of the app. The only member it would help holds a pre-change token, which
+  expires within 30 days and can still delete in the app.
+- Record the proven address in a new token column. Rejected for now: it needs a migration, and the
+  token name carries the one fact needed.
+
+**Known limits.**
+- Needs owner confirmation: the publisher name "Hope Tech Inc." and the log retention period.
+- A pre-change member token on a contact whose `email` differs from its `login_email` keeps the
+  family login when deleted, even if that member really did prove `login_email`. This is the safe
+  direction, and such tokens expire within 30 days.
+- A household-address sign-in now creates a second contact with that `email`. That was already true
+  for a household address two contacts share.

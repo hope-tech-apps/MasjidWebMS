@@ -36,7 +36,16 @@ class MemberAccountController extends Controller
         /** @var Contact $contact */
         $contact = $request->user();
 
-        $this->deletion->delete($contact, MemberAccountDeletion::VIA_APP, $request->ip());
+        // Which address this session proved, when the token can say. A token
+        // minted since sign-in started naming itself proved `login_email`; an
+        // older one cannot say, and the service then treats the family login
+        // as possibly another person's (MemberAccountDeletion::delete).
+        $token = $contact->currentAccessToken();
+        $proven = is_object($token) && ($token->name ?? null) === Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL
+            ? $contact->login_email
+            : null;
+
+        $this->deletion->delete($contact, MemberAccountDeletion::VIA_APP, $request->ip(), $proven);
 
         // An empty `data` object, not an omitted key: the iPhone app decodes
         // every mobile response through one `Response<T>` envelope whose `data`
