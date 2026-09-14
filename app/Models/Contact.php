@@ -109,8 +109,10 @@ class Contact extends Model implements AuthenticatableContract
      * Tokens minted before that are named `member-token` and cannot say which address
      * they proved; one could have come through a household `email` while
      * `login_email` is another parent's. MemberAccountDeletion reads this name to
-     * decide whether deleting may also end the office-granted family login. It
-     * grants nothing, and no route checks it.
+     * know which address was proved, and so which sign-in codes to clear. It does
+     * not change whether deleting ends the family login: for every member token it
+     * does, as the owner decided (DECISIONS.md, 2026-09-14 fix round 2). It grants
+     * nothing, and no route checks it.
      */
     public const MEMBER_TOKEN_FOR_LOGIN_EMAIL = 'member-token:login-email';
 

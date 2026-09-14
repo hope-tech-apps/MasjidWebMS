@@ -34,9 +34,10 @@ use Illuminate\Support\Facades\Log;
  *  - the login itself is cleared: `verified_at`, `login_enabled_at` and a family
  *    password, if one was set.
  *
- * One exception, for a family login that may be SOMEBODY ELSE's: when the caller
- * cannot be shown to have proved `login_email` (see `delete()`), the family login
- * and its family and hand-off tokens stay, and only the app account goes.
+ * One exception, for a family login that is provably SOMEBODY ELSE's: when the
+ * caller proved an address OTHER than `login_email` (see `delete()`), the family
+ * login and its family and hand-off tokens stay, and only the app account goes.
+ * Neither door passes such an address today.
  *
  * Then ONE of two outcomes:
  *
@@ -190,14 +191,20 @@ class MemberAccountDeletion
      * "not known" (a member token minted before sign-in recorded it, see
      * Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL).
      *
-     * It decides one thing: whether the office-granted FAMILY login goes too. That
-     * login belongs to whoever reads `login_email`, and `email` is often a
-     * household address another person also reads. So the family login, its
-     * password, its sign-in codes and its family and hand-off tokens are ended
-     * only when the proven address is `login_email`, or when the contact has no
-     * second address that could have been proved instead. Otherwise this removes
-     * the APP account alone (member tokens, handsets, interests, `verified_at`)
-     * and leaves the other person's portal access exactly as the office set it.
+     * It decides one thing: whether the office-granted FAMILY login goes too. The
+     * owner's rule (2026-09-14) is that it does: its password, its sign-in codes
+     * and every family and hand-off token go with the app account. The one
+     * exception is a caller that proved an address OTHER than `login_email`,
+     * such as a household `email` another person also reads. That login belongs
+     * to whoever reads `login_email`, so only the APP account goes (member
+     * tokens, handsets, interests, `verified_at`) and the other person's portal
+     * access stays exactly as the office set it. Neither door passes such an
+     * address today: the app passes `login_email` or null, and the page matches
+     * `login_email` only.
+     *
+     * Null (unknown) follows the rule as written. Fix round 1 kept the family
+     * login for it, which the owner had not agreed to (DECISIONS.md, 2026-09-14
+     * fix round 2).
      *
      * @return array{outcome: string, kept_because: list<string>, devices_released: int, tokens_revoked: int, interests_removed: int, family_login_kept: bool}
      */
@@ -224,7 +231,11 @@ class MemberAccountDeletion
                 // Unknown: only `login_email` could have been proved when the
                 // contact has no other address to prove.
                 : (($officeEmail === null || $officeEmail === $address) ? $address : null);
-            $endsFamilyLogin = ! $hadFamilyLogin || ($proven !== null && $proven === $address);
+            // The owner's rule ends the family login. Only a caller that PROVED a
+            // different address keeps it; unknown is not that exception.
+            $endsFamilyLogin = ! $hadFamilyLogin
+                || $provenAddress === null
+                || ($proven !== null && $proven === $address);
 
             // MobileAppUser is not tenant-scoped; the contact id is the filter.
             $devices = MobileAppUser::query()

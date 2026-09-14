@@ -37,9 +37,10 @@ class MemberAccountController extends Controller
         $contact = $request->user();
 
         // Which address this session proved, when the token can say. A token
-        // minted since sign-in started naming itself proved `login_email`; an
-        // older one cannot say, and the service then treats the family login
-        // as possibly another person's (MemberAccountDeletion::delete).
+        // minted since sign-in started naming itself proved `login_email`. An
+        // older one cannot say. Either way the family login ends, as the owner
+        // decided; the address only narrows which sign-in codes are cleared
+        // (MemberAccountDeletion::delete).
         $token = $contact->currentAccessToken();
         $proven = is_object($token) && ($token->name ?? null) === Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL
             ? $contact->login_email

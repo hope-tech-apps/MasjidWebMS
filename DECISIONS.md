@@ -1071,3 +1071,63 @@ goes: the login, the sessions, the phone's link to them and their notification c
   direction, and such tokens expire within 30 days.
 - A household-address sign-in now creates a second contact with that `email`. That was already true
   for a household address two contacts share.
+
+## 2026-09-14 · Account deletion, fix round 2: older sessions follow the owner's rule, and what still needs the owner
+
+**Decision.**
+- A member token minted before this deploy is named `member-token`, so it cannot say which address it
+  proved. Deleting through one now ends the family login exactly as the owner decided on 2026-09-14:
+  every token, `login_enabled_at`, the password and the family codes go, and a `revoked` event is
+  written.
+  - This supersedes round 1's known limit "A pre-change member token ... keeps the family login".
+  - Round 1 kept the login to protect another parent who reads a household mailbox. The owner never
+    agreed to that exception, and it contradicted "revoke all family tokens; clear login".
+- The exception now applies only to a caller that proves an address other than `login_email`.
+  - Neither door does that today: the app passes `login_email` or nothing, and the page matches
+    `login_email` only. So every real deletion ends the family login.
+  - The branch stays as a guard for a future door that matches `email`. A service-level test pins it.
+- Round 1's narrowing of `MemberSignupService::resolveContact` stays on this branch, flagged below as
+  needing the owner. A new test pins the ordinary case it must not break: a contact with the office's
+  `email` and no `login_email` still links on sign-in, adopts the address, and gets no duplicate.
+
+**Needs the owner before merge.**
+1. **The legacy exception.**
+   - Put it as: "Members who signed in before this update, and whose office record has a different
+     email, would keep the family portal login for up to 30 days after deleting their app account.
+     Accept?"
+   - If accepted: in `MemberAccountDeletion::delete()`, drop `$provenAddress === null` from
+     `$endsFamilyLogin` (round 1's behaviour, 5034db3). Flip
+     `an_older_session_that_cannot_say_which_address_it_proved_ends_the_family_login_as_the_owner_decided`,
+     and record the answer here.
+2. **The sign-in narrowing.** This supersedes part of 2026-09-08, "an email already on file must LINK
+   to the existing contact".
+   - An address that matches only a contact's `email`, when that contact already has a different
+     `login_email`, now gets a new app contact instead of the link.
+   - The cost: a second contact for that person in the CRM, and "Your monthly giving" does not show
+     gifts recorded on the office contact.
+   - If declined: remove `->whereNull('login_email')` from `resolveContact` and delete
+     `signing_in_with_a_household_address_does_not_become_the_parent_whose_login_it_is_not`. The
+     deletion rule above does not depend on it.
+3. **Page facts for Play.**
+   - The developer name exactly as the Play listing shows it. The config default "Hope Tech Inc." came
+     from the assistant email template; the Stripe account has the same name, but it was not checked
+     against Play.
+   - A server-log retention period.
+
+**S1a deploy notes (in order; none of this has been done).**
+- **CI.** Rsync this branch to /root/manara-ci, excluding bootstrap/cache. Run MemberAccountDeletionTest,
+  AccountDeletionPageTest, MemberAccountDeletionCoverageTest, MemberRecurringGivingTest,
+  AppSignupCodeTenantIsolationTest and ModuleSideDoorsTest, then the full suite. Confirm the box ran
+  this code by file hash, not by exit code.
+- **Staging.** Drive `DELETE /api/mobile/masjids/{home}/me` and `/account-deletion` with the home org's
+  `crm_enabled` on, then off. Confirm `mobile_app_users.contact_id`, the tokens and `login_enabled_at`
+  from the database.
+- **Production .env.** Once the owner answers item 3, set `ACCOUNT_DELETION_PUBLISHER` and
+  `ACCOUNT_DELETION_LOG_RETENTION_DAYS` through the parse-check and auto-rollback edit, never a bare
+  `config:cache`.
+- **Store gate.** Before any R0 submission, link https://masjid.hopetechapps.com/account-deletion from
+  each app's privacy policy and from Play's data-safety deletion field.
+- **Announce with the deploy.**
+  - The sign-in narrowing (item 2), if it stays.
+  - Deleting an app account also ends that person's family portal login.
+  - Office staff can turn the portal login back on.

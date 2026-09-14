@@ -396,10 +396,12 @@ class MemberAccountDeletionTest extends TestCase
     }
 
     #[Test]
-    public function an_older_session_that_cannot_say_which_address_it_proved_keeps_the_family_login(): void
+    public function an_older_session_that_cannot_say_which_address_it_proved_ends_the_family_login_as_the_owner_decided(): void
     {
         // The state builds before 2026-09-14 could create: the household `email`
-        // linked to a parent whose `login_email` is their own.
+        // linked to a parent whose `login_email` is their own. Fix round 1 kept
+        // the family login here, which the owner never agreed to; the owner's
+        // rule as written ("revoke all family tokens; clear login") ends it.
         $masjid = $this->makeMasjid();
         $household = 'household-' . uniqid() . '@test.local';
         $parent = $this->officeParent($masjid, $household, 'parent-' . uniqid() . '@test.local');
@@ -418,7 +420,45 @@ class MemberAccountDeletionTest extends TestCase
         $this->assertNull($kept->verified_at);
         $this->assertNull($phone->fresh()->contact_id);
         $this->assertSame(0, ContactServiceInterest::withoutMasjidScope()->where('contact_id', $parent->id)->count());
-        // ...and the family login the office gave the parent is not.
+        // ...and so is the family login, with the office's history told why.
+        $this->assertNull($kept->login_enabled_at);
+        $this->assertNull($kept->getRawOriginal('password'));
+        $this->assertSame(0, $this->tokenCount($parent));
+        $this->assertSame(1, ContactLoginEvent::withoutMasjidScope()
+            ->where('contact_id', $parent->id)
+            ->where('action', ContactLoginEvent::ACTION_REVOKED)
+            ->count());
+
+        $log = $this->deletionLog();
+        $this->assertNotNull($log);
+        $this->assertFalse($log->context['family_login_kept']);
+        $this->assertSame(2, $log->context['tokens_revoked']);
+    }
+
+    #[Test]
+    public function a_caller_that_proved_a_household_address_leaves_the_other_parents_family_login_alone(): void
+    {
+        // Neither door passes such an address today (the app passes
+        // `login_email` or nothing, and the page matches `login_email` only).
+        // This pins the guard for a future door that proves `email`.
+        $masjid = $this->makeMasjid();
+        $household = 'household-' . uniqid() . '@test.local';
+        $parent = $this->officeParent($masjid, $household, 'parent-' . uniqid() . '@test.local');
+        $parent->forceFill(['verified_at' => now()])->save();
+        $this->asANewRequest();
+
+        $parent->createMemberToken();
+        $parent->createFamilyToken();
+
+        $result = app(MemberAccountDeletion::class)
+            ->delete($parent, MemberAccountDeletion::VIA_WEB, null, strtoupper($household));
+
+        $this->assertSame(MemberAccountDeletion::OUTCOME_LOGIN_REMOVED, $result['outcome']);
+        $this->assertTrue($result['family_login_kept']);
+        $this->assertSame(1, $result['tokens_revoked']);
+
+        $kept = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        $this->assertNull($kept->verified_at);
         $this->assertNotNull($kept->login_enabled_at);
         $this->assertNotNull($kept->getRawOriginal('password'));
         $this->assertSame(
@@ -427,11 +467,52 @@ class MemberAccountDeletionTest extends TestCase
                 ->where('tokenable_type', $parent->getMorphClass())->pluck('name')->all(),
         );
         $this->assertSame(0, ContactLoginEvent::withoutMasjidScope()->where('contact_id', $parent->id)->count());
+    }
 
-        $log = $this->deletionLog();
-        $this->assertNotNull($log);
-        $this->assertTrue($log->context['family_login_kept']);
-        $this->assertSame(1, $log->context['tokens_revoked']);
+    #[Test]
+    public function signing_in_with_the_office_email_of_a_contact_with_no_login_address_still_links_to_that_contact(): void
+    {
+        // The household narrowing must not cost the ordinary case: one person,
+        // the office's `email` on file, no login address yet. Sign-in links to
+        // that contact, adopts the address as its `login_email`, and creates
+        // nobody new, so their gifts stay on the contact they sign in as.
+        Mail::fake();
+
+        $masjid = $this->makeMasjid();
+        $address = 'single-' . uniqid() . '@test.local';
+
+        $office = new Contact();
+        $office->forceFill([
+            'masjid_id' => $masjid->id,
+            'first_name' => 'Office',
+            'last_name' => 'Known',
+            'email' => $address,
+            'login_email' => null,
+            'signup_source' => null,
+        ])->save();
+
+        $this->asANewRequest();
+        $this->postJson("/api/mobile/masjids/{$masjid->id}/auth/request-code", ['email' => $address])
+            ->assertStatus(202);
+        $code = $this->lastCodeSentTo($address);
+
+        $this->asANewRequest();
+        $this->postJson("/api/mobile/masjids/{$masjid->id}/auth/verify-code", [
+            'email' => $address,
+            'code' => $code,
+        ])->assertOk()->assertJsonPath('data.created', false);
+        $this->asANewRequest();
+
+        $linked = Contact::withoutMasjidScope()->findOrFail($office->id);
+        $this->assertSame($address, $linked->login_email);
+        $this->assertNotNull($linked->verified_at);
+        $this->assertSame('Office', $linked->first_name);
+        $this->assertSame(1, Contact::withoutMasjidScope()->whereRaw('LOWER(email) = ?', [$address])->count());
+        $this->assertSame(
+            Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL,
+            DB::table('personal_access_tokens')->where('tokenable_id', $office->id)
+                ->where('tokenable_type', $office->getMorphClass())->value('name'),
+        );
     }
 
     #[Test]
