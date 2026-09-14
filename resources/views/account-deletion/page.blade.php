@@ -323,8 +323,9 @@
 
         @else
             <p>
-                There have been too many attempts for this address or from this connection. Nothing was
-                deleted. Please wait an hour, then <a href="{{ route('account-deletion.show') }}">start again</a>.
+                There have been too many attempts for this address or from this connection.
+                Nothing was deleted.
+                Please wait an hour, then <a href="{{ route('account-deletion.show') }}">start again</a>.
             </p>
         @endif
 
