@@ -2,7 +2,7 @@ import { Admin } from "@/core/types/data/Admin"
 import { Media } from "./Media"
 import { City, Country } from "./Country"
 import { OrgType, Vertical } from "./Vertical"
-import { CapabilityKey } from "./Capability"
+import { CapabilityKey, ModuleKey } from "./Capability"
 
 export type Masjid = {
     id: number;
@@ -52,6 +52,13 @@ export type Masjid = {
      * the ADMIN endpoints append it; a payload without it reads as "has none".
      */
     capabilities?: Partial<Record<CapabilityKey, boolean>>;
+    /**
+     * The default-on modules a SuperAdmin switched OFF for this organisation.
+     * Absent means none: an older backend never sends it, and a screen must
+     * never disappear because the SPA shipped first. Read it through
+     * `moduleIsOff()` (core/access/orgAccess.ts), never inline.
+     */
+    modules_off?: ModuleKey[];
     /**
      * This tenant's vertical and its terminology pack. Optional because only the
      * ADMIN endpoints append it — a payload from anywhere else, or one cached

@@ -228,3 +228,8 @@ export type BackendApiRoute =
     // nothing said so. POST …/offerings/{id}/registrations needs no entry — it
     // is the same path shape as the roster GET, which is already above.
     | `/api/admin/masjids/${string}/contacts?${string}`
+    // What an organisation has, grouped, with its recent changes — the
+    // SuperAdmin's switch panel (MasjidsController::capabilities). The PATCH
+    // that flips one entry is `capabilities/${key}`.
+    | `/api/admin/masjids/${string}/capabilities`
+    | `/api/admin/masjids/${string}/capabilities/${string}`

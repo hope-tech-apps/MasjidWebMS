@@ -5,6 +5,12 @@
         <div id="header_main_container">
             <DashboardHeader />
             <main id="dashboard_main">
+                <!-- A SuperAdmin opened a screen this organisation does not have
+                     (from "Switched off for …" in the sidebar, or a typed URL). -->
+                <div v-if="switchedOffHere" class="alert alert-warning py-2 px-3 small mx-3 mt-3 mb-0" role="status">
+                    <i class="bi bi-dash-circle me-1" aria-hidden="true"></i>
+                    Switched off for {{ masjidStore.masjid?.name }}: its administrators do not see this screen.
+                </div>
                 <RouterView></RouterView>
             </main>
             <DashboardFooter />
@@ -15,11 +21,12 @@
 <script setup lang="ts">
 import DashboardAside from '@/components/dashboard/DashboardAside.vue';
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue';
-import { RouterView, useRouter } from 'vue-router';
-import { onBeforeMount, onMounted, onUpdated, ref } from 'vue';
+import { RouterView, useRoute, useRouter } from 'vue-router';
+import { computed, onBeforeMount, onMounted, onUpdated, ref } from 'vue';
 import DashboardFooter from '@/components/dashboard/DashboardFooter.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { hasGrant, moduleIsOff } from '@/core/access/orgAccess';
 
 // Lifecycle hooks
 onBeforeMount(async () => {
@@ -54,10 +61,28 @@ onUpdated(() => {
 
 // Routing
 const router = useRouter();
+const route = useRoute();
 
 // Stores
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+
+/**
+ * Whether the SuperAdmin is looking at a screen this organisation's administrators
+ * cannot open. Same rules as the sidebar's "Switched off" list (menuItemState): a
+ * module switched off, or a grant the organisation lacks on a screen that names no
+ * module. A screen that names BOTH (Web Pages Management) follows its module, so the
+ * owner editing a site its own admins may not edit gets no notice.
+ */
+const switchedOffHere = computed<boolean>(() => {
+    const masjid = masjidStore.masjid;
+    if (authStore.user?.type !== 'SuperAdmin' || !masjid) return false;
+
+    const meta = route.meta;
+    if (meta.requiresModule) return moduleIsOff(masjid, meta.requiresModule);
+
+    return !!meta.requiresCapability && !hasGrant(masjid, meta.requiresCapability);
+});
 
 // Html refs
 const dashboardLayout = ref<HTMLElement | null>();

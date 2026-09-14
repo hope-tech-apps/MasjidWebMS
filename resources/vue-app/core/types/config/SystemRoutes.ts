@@ -73,6 +73,9 @@ export type MasjidDashboardRoute =
     '/masjid/annual-statements' |
     '/masjid/properties' |
     '/masjid/form-responses' |
+    // A sign-up form edited outside the page builder (FormEditView).
+    '/masjid/forms/new' |
+    `/masjid/forms/${number}/edit` |
     // The funder-facing figures (T-024). Neutral path: every vertical applies
     // for grants, and which figures it shows is decided server-side from the
     // tenant's own vertical.

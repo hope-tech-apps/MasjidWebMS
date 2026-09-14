@@ -7,7 +7,8 @@ const announcementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Announcements'
+            pageTitle: 'Announcements',
+            requiresModule: 'announcements'
         },
         component: () => import("@/views/dashboard/announcements/AnnouncementsView.vue")
     },
@@ -17,7 +18,8 @@ const announcementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Create Announcement'
+            pageTitle: 'Create Announcement',
+            requiresModule: 'announcements'
         },
         component: () => import("@/views/dashboard/announcements/AnnouncementFormView.vue")
     },
@@ -27,7 +29,8 @@ const announcementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Edit Announcement'
+            pageTitle: 'Edit Announcement',
+            requiresModule: 'announcements'
         },
         component: () => import("@/views/dashboard/announcements/AnnouncementFormView.vue")
     },
@@ -37,7 +40,8 @@ const announcementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Announcement Details'
+            pageTitle: 'Announcement Details',
+            requiresModule: 'announcements'
         },
         component: () => import("@/views/dashboard/announcements/AnnouncementDetailsView.vue")
     }

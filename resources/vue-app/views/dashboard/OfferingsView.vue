@@ -364,11 +364,31 @@
                                             Your sign-up forms could not be loaded, so this list is empty —
                                             it does not mean you have none. Close this window and try again.
                                         </div>
+                                        <!--
+                                            The pointer names only the screens this admin can open: Create a form
+                                            needs web_pages or form_editing, Web Pages Management needs the website
+                                            on and web_pages. An admin with neither reads the sentence as it was.
+                                        -->
                                         <div v-else-if="formOptions.length === 0" class="alert alert-info py-2 px-3 mt-2 mb-0 small">
-                                            You do not have a sign-up form yet, and one is required before an
-                                            offering can be created. Build one under
-                                            <strong>Web Pages Management</strong>: open or add a page, add a
-                                            <strong>Form</strong> section, and save. It will appear here.
+                                            <template v-if="formEditingAllowed && webPagesAllowed">
+                                                You do not have a sign-up form yet, and one is required before an
+                                                offering can be created. Build one from
+                                                <strong>Form Responses</strong> with <strong>Create a form</strong>,
+                                                or under <strong>Web Pages Management</strong>: open or add a page,
+                                                add a <strong>Form</strong> section, and save. It will appear here.
+                                            </template>
+                                            <template v-else-if="formEditingAllowed">
+                                                You do not have a sign-up form yet, and one is required before an
+                                                offering can be created. Build one from
+                                                <strong>Form Responses</strong> with <strong>Create a form</strong>,
+                                                and save. It will appear here.
+                                            </template>
+                                            <template v-else>
+                                                You do not have a sign-up form yet, and one is required before an
+                                                offering can be created. Build one under
+                                                <strong>Web Pages Management</strong>: open or add a page, add a
+                                                <strong>Form</strong> section, and save. It will appear here.
+                                            </template>
                                         </div>
 
                                         <div v-else class="form-text">
@@ -488,6 +508,8 @@ import { useOfferingsStore } from '@/stores/masjid/offeringsStore';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
+import { canEditForms, canUseWebPages } from '@/core/access/orgAccess';
 import { useOfferingDisplay } from '@/composables/useOfferingDisplay';
 import { formatMinor } from '@/composables/useMinorUnits';
 import { apiErrorText } from '@/core/services/ApiErrors';
@@ -513,6 +535,11 @@ const offeringsStore = useOfferingsStore();
 const formsStore = useFormsStore();
 const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
+const authStore = useAuthStore();
+
+/** Which screens the empty form-picker help may name (core/access/orgAccess.ts). */
+const formEditingAllowed = computed(() => canEditForms(authStore.user?.type, masjidStore.masjid));
+const webPagesAllowed = computed(() => canUseWebPages(authStore.user?.type, masjidStore.masjid));
 
 // Display helpers
 const {

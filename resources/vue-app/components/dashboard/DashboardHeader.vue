@@ -147,6 +147,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useDashboardSearchStore } from '@/stores/dashboardSearchStore';
 import { DashboardSearchResultData, DashboardSearchResultRecord, GENERAL_DASHBOARD_ROUTES_RESULTS, MASJID_DASHBOARD_ROUTES_RESULTS, SUPER_DASHBOARD_ROUTES_RESULTS } from '@/core/types/data/custom/DashboardSearch';
+import { moduleIsOff } from '@/core/access/orgAccess';
 
 // Lifecycle hooks
 onMounted(() => {
@@ -204,9 +205,9 @@ watch(searchValue, async () => {
                     if (masjidResultsTemp.value)
                         masjidDashboardSearchResults.value = searchStore.mapResultsDataRecords(masjidResultsTemp.value);
                 });
-                frontendSearchResults.value.push(...MASJID_DASHBOARD_ROUTES_RESULTS.filter(obj => {
+                frontendSearchResults.value.push(...withModuleRules(MASJID_DASHBOARD_ROUTES_RESULTS.filter(obj => {
                     return obj.title.toLowerCase().includes(searchValue.value?.toLowerCase() as string);
-                }));
+                })));
                 frontendSearchResults.value.push(...GENERAL_DASHBOARD_ROUTES_RESULTS.filter(obj => {
                     return obj.title.toLowerCase().includes(searchValue.value?.toLowerCase() as string);
                 }));
@@ -227,6 +228,22 @@ watch(searchValue, async () => {
 });
 
 // Functions
+/**
+ * Page links follow the sidebar: a link to a module the organisation has switched
+ * off is dropped for its administrators, and kept for a SuperAdmin with
+ * " (switched off)" on the end. Matched on the authored title first, so typing
+ * "switched" never finds anything.
+ */
+function withModuleRules(records: DashboardSearchResultRecord[]): DashboardSearchResultRecord[] {
+    return records.flatMap(record => {
+        if (!record.requiresModule || !moduleIsOff(masjidStore.masjid, record.requiresModule)) return [record];
+
+        return authStore.user?.type === 'SuperAdmin'
+            ? [{ ...record, title: `${record.title} (switched off)` }]
+            : [];
+    });
+}
+
 function logout() {
     authStore.logout()
         .finally(() => {

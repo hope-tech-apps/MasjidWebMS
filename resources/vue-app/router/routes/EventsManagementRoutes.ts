@@ -7,7 +7,8 @@ const eventsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Events'
+            pageTitle: 'Events',
+            requiresModule: 'events'
         },
         component: () => import("@/views/dashboard/events/EventsView.vue")
     },
@@ -17,7 +18,8 @@ const eventsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Create Event'
+            pageTitle: 'Create Event',
+            requiresModule: 'events'
         },
         component: () => import("@/views/dashboard/events/EventFormView.vue")
     },
@@ -27,7 +29,8 @@ const eventsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Edit Event'
+            pageTitle: 'Edit Event',
+            requiresModule: 'events'
         },
         component: () => import("@/views/dashboard/events/EventFormView.vue")
     },
@@ -37,7 +40,8 @@ const eventsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Event Details'
+            pageTitle: 'Event Details',
+            requiresModule: 'events'
         },
         component: () => import("@/views/dashboard/events/EventDetailsView.vue")
     }

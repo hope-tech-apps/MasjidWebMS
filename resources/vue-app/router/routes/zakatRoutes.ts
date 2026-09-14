@@ -25,7 +25,8 @@ const zakatRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Zakat Calculator'
+            pageTitle: 'Zakat Calculator',
+            requiresModule: 'zakat'
         },
         component: () => import("@/views/dashboard/ZakatCalculatorView.vue")
     }

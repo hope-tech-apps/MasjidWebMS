@@ -18,7 +18,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 <path d="M10.5004 3.4731C10.3893 3.3737 10.2454 3.31875 10.0963 3.31875C9.94721 3.31875 9.80334 3.3737 9.6922 3.4731C9.58457 3.58586 9.52451 3.73575 9.52451 3.89163C9.52451 4.04751 9.58457 4.1974 9.6922 4.31016L10.3272 4.94518L2.85143 16.4908L0.600031 18.7422C0.376831 18.947 0.361914 19.294 0.566717 19.5171C0.577333 19.5287 0.588448 19.5398 0.600031 19.5504L4.8719 23.8223C5.07664 24.0455 5.4236 24.0604 5.64675 23.8556C5.65833 23.845 5.66944 23.8339 5.68006 23.8223L7.9603 21.5709L9.72099 20.4451L12.1744 22.8986C12.3792 23.1218 12.7261 23.1367 12.9493 22.9319C12.9609 22.9213 12.972 22.9102 12.9826 22.8986L17.4277 18.4535C17.5364 18.3469 17.5987 18.2017 17.6009 18.0494C17.6037 17.9692 17.5898 17.8892 17.5599 17.8147C17.5301 17.7401 17.4851 17.6726 17.4277 17.6165L16.0999 16.2887L19.477 14.1239L20.112 14.7589C20.2369 14.8526 20.3889 14.9032 20.545 14.9032C20.6916 14.8991 20.8331 14.8485 20.9491 14.7589C21.0452 14.6406 21.0976 14.4928 21.0976 14.3404C21.0976 14.1879 21.0452 14.0401 20.9491 13.9218L10.5004 3.4731ZM5.27603 22.61L1.81233 19.1463L3.31325 17.6454L6.77695 21.1091L5.27603 22.61ZM16.2155 18.0495L12.5786 21.6575L10.7025 19.7813L15.1187 16.9527L16.2155 18.0495ZM7.67174 20.3586L4.06373 16.7506L11.1643 5.78224L18.6401 13.2869L7.67174 20.3586ZM16.6773 7.02343C16.7909 7.13945 16.9481 7.20232 17.1103 7.19663C17.2626 7.19447 17.4078 7.13222 17.5144 7.02343L20.7761 3.76177C20.8837 3.64901 20.9438 3.49912 20.9438 3.34324C20.9438 3.18736 20.8837 3.03747 20.7761 2.92471C20.5713 2.70151 20.2244 2.68659 20.0012 2.8914C19.9896 2.90201 19.9785 2.91313 19.9679 2.92471L16.6774 6.18637C16.5813 6.30468 16.5288 6.45246 16.5288 6.60489C16.5288 6.75732 16.5812 6.90511 16.6773 7.02343ZM14.83 5.03181H15.0321C15.1501 5.02945 15.2649 4.99269 15.3623 4.92603C15.4597 4.85937 15.5356 4.76572 15.5805 4.65656L17.0237 0.788779C17.0716 0.643077 17.0625 0.484621 16.9983 0.345353C16.934 0.206085 16.8193 0.0963593 16.6773 0.0382943C16.3796 -0.0756817 16.0458 0.0733767 15.9319 0.371107C15.9302 0.375597 15.9285 0.380109 15.9269 0.384642L14.5126 4.28132C14.3936 4.57623 14.5356 4.91175 14.83 5.03181ZM23.547 6.9368C23.4405 6.63625 23.1106 6.47896 22.8101 6.58543C22.8055 6.58703 22.801 6.58868 22.7965 6.5904L18.9287 8.03358C18.6399 8.12463 18.4795 8.43263 18.5705 8.72147C18.5741 8.73285 18.578 8.74407 18.5823 8.75517C18.6191 8.87199 18.692 8.9741 18.7906 9.04674C18.8892 9.11938 19.0083 9.15878 19.1308 9.15925L19.3328 9.10152L23.2006 7.68718C23.3426 7.62917 23.4573 7.51947 23.5216 7.38021C23.5859 7.24095 23.595 7.0825 23.547 6.9368Z" fill="white"/>
                 </svg>`,
         to: '/masjid/announcements',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'announcements'
     },
     {
         title: "Splash",
@@ -43,6 +44,7 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/broadcasts',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'broadcasts'
     },
     {
         title: "Events",
@@ -59,7 +61,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
             <path d="M8.29529 16.7H8.30427" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>`,
         to: '/masjid/events',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'events'
     },
     {
         title: "Services",
@@ -102,7 +105,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </defs>
                 </svg>`,
         to: '/masjid/about',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'about_us'
     },
     {
         title: "Photo Gallery",
@@ -118,7 +122,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </defs>
                 </svg>`,
         to: '/masjid/gallery',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'gallery'
     },
     {
         // Sits with the content tools, not the CRM block — and deliberately
@@ -132,7 +137,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 <path d="M8 16H16" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
                 </svg>`,
         to: '/masjid/flyers',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'flyer_studio'
     },
     {
         title: "Web Pages Management",
@@ -143,10 +149,19 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/pages',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        // An organisation's administrators see it once the organisation HAS
-        // `web_pages` (a SuperAdmin decision). The server's `capability:web_pages`
-        // gate is the boundary; this only keeps the menu honest.
-        requiresCapability: 'web_pages'
+        // Two separate questions, two flags:
+        //   requiresModule 'website'       does this organisation have a website
+        //                                  at all? Off hides the screen from
+        //                                  everyone; a SuperAdmin finds it under
+        //                                  "Switched off for {org}".
+        //   requiresCapability 'web_pages' may its OWN administrators edit it?
+        //                                  Off hides it from them only — the
+        //                                  owner edits Burlington's and Al-Razi's
+        //                                  sites here while their admins do not.
+        // The server's `capability:web_pages` + `capability:website` gates are
+        // the boundary; this only keeps the menu honest.
+        requiresCapability: 'web_pages',
+        requiresModule: 'website'
     },
     {
         // Deliberately open to MasjidAdmin as well as SuperAdmin: a masjid runs its own
@@ -216,7 +231,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>
                 `,
         to: '/masjid/notifications',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'push_notifications'
     },
     {
         title: "Contact Requests",
@@ -225,7 +241,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>
                 `,
         to: '/masjid/contact-requests',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'contact_requests'
     },
     {
         // Whom the directory holds is vertical-specific: congregants for a
@@ -311,8 +328,9 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
     {
         // School years and no-school days, which the attendance register, the
         // teacher and family calendars and a sign-up question's "school days"
-        // choices all read. Shown once the organisation HAS `school_calendar`
-        // (a SuperAdmin sees it regardless); the server's gate is the boundary.
+        // choices all read. Shown once the organisation HAS `school_calendar`;
+        // where it does not, a SuperAdmin finds it under "Switched off for
+        // {org}" instead. The server's gate is the boundary.
         title: "School Calendar",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <rect x="3.5" y="5" width="17" height="15.5" rx="2" stroke="white" stroke-width="1.7"/>
@@ -356,7 +374,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 `,
         to: '/masjid/offerings',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresCrm: true
+        // Both: the storage lives inside the CRM, and `programs` is the
+        // organisation's own switch on top of it.
+        requiresCrm: true,
+        requiresModule: 'programs'
     },
     {
         // The clinic's intake queue.
@@ -402,11 +423,15 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresOrgTypes: ['masjid']
     },
     {
-        // Deliberately NOT gated on the CRM or on a vertical. This is the only
-        // screen that can set the metal price the PUBLIC zakat calculator
-        // answers from; hiding it from a tenant without the CRM would leave that
-        // organisation's endpoint telling visitors "threshold unknown" for ever
-        // with nowhere to fix it. Writing is gated server-side.
+        // Deliberately NOT gated on the CRM, on a vertical or on Stripe. This is
+        // the only screen that can set the metal price the PUBLIC zakat
+        // calculator answers from; hiding it from a tenant without the CRM would
+        // leave that organisation's endpoint telling visitors "threshold
+        // unknown" for ever with nowhere to fix it. Writing is gated server-side.
+        //
+        // The one thing that hides it is the `zakat` module, on for every
+        // organisation until a SuperAdmin switches it off. Switched off, the
+        // public calculator still answers from the last price saved.
         title: "Zakat Calculator",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 3V21" stroke="white" stroke-width="1.6" stroke-linecap="round"/>
@@ -417,7 +442,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>
                 `,
         to: '/masjid/zakat',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresModule: 'zakat'
     },
     {
         // The figures a grant application or a funder report asks for, with the
@@ -442,7 +468,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/impact-report',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresCrm: true
+        requiresCrm: true,
+        requiresModule: 'impact_report'
     },
     {
         title: "Donation Funds",
@@ -464,7 +491,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/jummah-lunch',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         // Masjids have it by default (config/capabilities.php); a SuperAdmin can
-        // switch it for any organisation.
+        // switch it for any organisation. Where it is off, a SuperAdmin finds it
+        // under "Switched off for {org}".
         requiresCapability: 'jummah_lunch'
     },
     {

@@ -31,7 +31,7 @@
             <div class="d-flex flex-column">
                 <label class="form-label fw-semibold">Send to</label>
                 <div class="d-flex flex-column gap-2">
-                    <div v-for="c in CHANNELS" :key="c.value" class="form-check">
+                    <div v-for="c in availableChannels" :key="c.value" class="form-check">
                         <input class="form-check-input" type="checkbox" :id="`ch-${c.value}`" :value="c.value"
                             v-model="form.channels">
                         <label class="form-check-label ms-2" :for="`ch-${c.value}`">
@@ -140,10 +140,12 @@ import { Service } from '@/core/types/data/masjid-related/Service'
 import { UploadedImageInfo } from '@/core/types/elements/ImageInput'
 import { useMasjidStore } from '@/stores/masjidStore'
 import { useBroadcastsStore } from '@/stores/masjid/broadcastsStore'
+import { moduleIsOff } from '@/core/access/orgAccess'
+import { ModuleKey } from '@/core/types/data/Capability'
 import { AxiosError, AxiosResponse } from 'axios'
 import { SweetAlertOptions } from 'sweetalert2'
 import { Form, Field } from 'vee-validate'
-import { computed, onBeforeMount, ref } from 'vue'
+import { computed, onBeforeMount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { object, string, array, number } from 'yup'
 
@@ -151,13 +153,21 @@ const router = useRouter()
 const masjidStore = useMasjidStore()
 const store = useBroadcastsStore()
 
-const CHANNELS = [
-    { value: 'announcement', label: 'Announcements feed', hint: 'Adds a post to the app and website feed. Needs a picture and a date range.' },
-    { value: 'push', label: 'Push notification', hint: 'A notification on people\'s phones.' },
+const CHANNELS: { value: string; label: string; hint: string; module?: ModuleKey }[] = [
+    { value: 'announcement', label: 'Announcements feed', hint: 'Adds a post to the app and website feed. Needs a picture and a date range.', module: 'announcements' },
+    { value: 'push', label: 'Push notification', hint: 'A notification on people\'s phones.', module: 'push_notifications' },
     { value: 'signage', label: 'Lobby screen', hint: 'Puts it on the TV board while it is running.' },
     { value: 'email', label: 'Email', hint: 'Emails contacts. Needs the CRM.' },
     { value: 'sms', label: 'Text message', hint: 'Only reaches contacts who gave written consent, from your registered number.' },
 ]
+
+/**
+ * A channel whose module the organisation has switched off is not offered — to
+ * anyone, SuperAdmins included, because the server refuses it for everyone at
+ * compose AND at delivery (BroadcastChannel::requiresModule). A payload with no
+ * `modules_off` offers every channel, exactly as before.
+ */
+const availableChannels = computed(() => CHANNELS.filter(c => !c.module || !moduleIsOff(masjidStore.masjid, c.module)))
 
 const isLoading = ref(false)
 const imageFile = ref<File | undefined>(undefined)
@@ -176,6 +186,13 @@ const form = ref({
 })
 
 const crmEnabled = computed(() => !!masjidStore.masjid?.crm_enabled)
+
+// The organisation can finish loading after a box was ticked; never send a channel
+// that is no longer on screen.
+watch(availableChannels, (channels) => {
+    const offered = channels.map(c => c.value)
+    form.value.channels = form.value.channels.filter(c => offered.includes(c))
+})
 const hasAnnouncement = computed(() => form.value.channels.includes('announcement'))
 
 /**

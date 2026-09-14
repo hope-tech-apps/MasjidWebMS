@@ -1,8 +1,11 @@
 import { MasjidDashboardRoute, SuperDashboardRoute } from "@/core/types/config/SystemRoutes"
 import { UserType } from "@/core/types/data/User";
-import { CapabilityKey } from "@/core/types/data/Capability";
+import { CapabilityKey, ModuleKey } from "@/core/types/data/Capability";
 import { OrgType, TerminologyKey } from "@/core/types/data/Vertical";
 
+// Visibility is decided in ONE place, menuItemState() in
+// core/access/orgAccess.ts. The sidebar, the SuperAdmin's "Switched off" list
+// and the switch panel's "Sidebar:" lines all read it; do not re-derive it inline.
 export type AsideMenuItem = {
     title: string;
     // When set, the label is built from the tenant's own vocabulary instead of
@@ -14,11 +17,21 @@ export type AsideMenuItem = {
     svg_icon: string;
     to: MasjidDashboardRoute | SuperDashboardRoute;
     allowed_types: UserType[];
-    // When set, the item is shown only if the active organisation HAS this
-    // capability (layer 1 of the access model, config/capabilities.php). A
-    // SuperAdmin always sees it. Menu visibility only: the server's
+    // An opt-in GRANT (config/capabilities.php, kind `grant`): the item is shown
+    // to the organisation's administrators only once the organisation HAS it.
+    // For a SuperAdmin it is listed under "Switched off for {org}" instead —
+    // unless the item also has `requiresModule`, in which case the module
+    // decides for the SuperAdmin. Menu visibility only: the server's
     // `capability:` gate is the boundary.
+    //
+    // NEVER use this for a module key: its strict `=== true` hides the item
+    // whenever the payload is silent, which is every default-on screen.
     requiresCapability?: CapabilityKey;
+    // A default-on MODULE (kind `module`): the item is hidden only when the
+    // organisation's `modules_off` names it — for its administrators hidden,
+    // for a SuperAdmin listed under "Switched off for {org}". A payload with no
+    // `modules_off` hides nothing.
+    requiresModule?: ModuleKey;
     // When true, the item is only shown if the active masjid's crm_enabled is true.
     requiresCrm?: boolean;
     // When true, the item is only shown if the active masjid's assistant_enabled is true.

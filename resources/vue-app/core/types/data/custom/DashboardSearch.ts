@@ -8,6 +8,7 @@ import { Tasbih } from "@/core/types/data/Tasabih";
 import { MasjidDashboardRoute, SuperDashboardRoute } from "../../config/SystemRoutes";
 import { User } from "@/core/types/data/User";
 import { Masjid } from "@/core/types/data/Masjid";
+import { ModuleKey } from "@/core/types/data/Capability";
 
 export type DashboardSearchResultData = {
     masjidAbout?: MasjidAboutUs[];
@@ -26,6 +27,12 @@ export type DashboardSearchResultRecord = {
     url: MasjidDashboardRoute | SuperDashboardRoute;
     title: string;
     data?: MasjidAboutUs | SocialMediaLink | Announcement | Service | Zikr | Hadith | Tasbih | User | Masjid;
+    /**
+     * The default-on module this page belongs to. DashboardHeader drops the link for
+     * an organisation's administrators once the module is switched off, and keeps it
+     * with " (switched off)" for a SuperAdmin — the sidebar's rules. Absent = always on.
+     */
+    requiresModule?: ModuleKey;
 }
 
 export const RESULT_TITLE_MAP = {
@@ -55,7 +62,8 @@ export const MASJID_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/masjid/announcements',
-        title: 'Masjid Announcements - Page'
+        title: 'Masjid Announcements - Page',
+        requiresModule: 'announcements'
     },
     {
         url: '/masjid/services',
@@ -67,11 +75,13 @@ export const MASJID_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/masjid/about',
-        title: 'Masjid About Us - Page'
+        title: 'Masjid About Us - Page',
+        requiresModule: 'about_us'
     },
     {
         url: '/masjid/gallery',
-        title: 'Masjid Photos & Images Gallery - Page'
+        title: 'Masjid Photos & Images Gallery - Page',
+        requiresModule: 'gallery'
     },
     {
         url: '/masjid/iqama',
@@ -79,11 +89,8 @@ export const MASJID_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/masjid/notifications',
-        title: 'Masjid Notifications Management - Page'
-    },
-    {
-        url: '/masjid/mobile-features',
-        title: 'Masjid Mobile App Features Control - Page'
+        title: 'Masjid Notifications Management - Page',
+        requiresModule: 'push_notifications'
     },
     {
         url: '/masjid/mobile-features',

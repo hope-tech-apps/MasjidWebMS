@@ -60,7 +60,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'About Masjid'
+                    pageTitle: 'About Masjid',
+                    requiresModule: 'about_us'
                 },
                 component: () => import("@/views/dashboard/AboutUsView.vue")
             },
@@ -70,7 +71,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Gallery'
+                    pageTitle: 'Gallery',
+                    requiresModule: 'gallery'
                 },
                 component: () => import("@/views/dashboard/PhotoGalleryView.vue")
             },
@@ -83,7 +85,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Flyer Studio'
+                    pageTitle: 'Flyer Studio',
+                    requiresModule: 'flyer_studio'
                 },
                 component: () => import("@/views/dashboard/FlyerStudioView.vue")
             },
@@ -96,7 +99,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Flyer Studio'
+                    pageTitle: 'Flyer Studio',
+                    requiresModule: 'flyer_studio'
                 },
                 component: () => import("@/views/dashboard/FlyerStudioView.vue")
             },
@@ -127,7 +131,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Notifications'
+                    pageTitle: 'Notifications',
+                    requiresModule: 'push_notifications'
                 },
                 component: () => import("@/views/dashboard/NotificationFormView.vue")
             },
@@ -137,7 +142,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Contact Requests'
+                    pageTitle: 'Contact Requests',
+                    requiresModule: 'contact_requests'
                 },
                 component: () => import("@/views/dashboard/ContactRequestsView.vue")
             },
@@ -321,7 +327,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Impact Report',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'impact_report'
                 },
                 component: () => import("@/views/dashboard/ImpactReportView.vue")
             },
@@ -380,6 +387,35 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     pageTitle: 'Form Responses'
                 },
                 component: () => import("@/views/dashboard/FormResponsesView.vue")
+            },
+            {
+                // A sign-up form's questions and fees, edited outside the page
+                // builder: the same self-contained FormBuilder the Form section
+                // mounts, reached from Form Responses. `requiresAnyCapability`
+                // mirrors the server's `capability:web_pages,form_editing` gate on
+                // form writes; a SuperAdmin passes both. No delete here on purpose:
+                // FormsController::destroy does not know which pages a form is
+                // placed on, so a delete would blank a live page.
+                path: 'forms/new',
+                name: 'masjid.formCreate',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    requiresAnyCapability: ['web_pages', 'form_editing'],
+                    pageTitle: 'Create a Form'
+                },
+                component: () => import("@/views/dashboard/forms/FormEditView.vue")
+            },
+            {
+                path: 'forms/:formId/edit',
+                name: 'masjid.formEdit',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    requiresAnyCapability: ['web_pages', 'form_editing'],
+                    pageTitle: 'Edit Form'
+                },
+                component: () => import("@/views/dashboard/forms/FormEditView.vue")
             },
             {
                 path: 'assistant',

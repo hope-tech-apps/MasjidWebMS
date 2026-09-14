@@ -17,7 +17,7 @@
                             : 'To add or remove one, contact Manara.' }}
                     </p>
                     <ul class="list-unstyled d-flex flex-wrap gap-2 m-0">
-                        <li v-for="c in capabilities" :key="c.key"
+                        <li v-for="c in chips" :key="c.key"
                             class="team-chip" :class="c.enabled ? 'team-chip--on' : 'team-chip--off'" :title="c.description">
                             <i :class="c.enabled ? 'bi bi-check-circle-fill' : 'bi bi-dash-circle'" aria-hidden="true"></i>
                             {{ c.label }}
@@ -173,11 +173,20 @@ const hasCrm = computed(() => capabilities.value.some(c => c.key === 'crm' && c.
 
 const enabledLabels = computed(() => capabilities.value.filter(c => c.enabled).map(c => c.label));
 
+// `form_editing` is a grant that reproduces what every organisation already had
+// (forms edited only inside the page builder), so an organisation without it must
+// not grow a new "not switched on" chip. It shows once it is switched on.
+const chips = computed<CapabilityInfo[]>(() => capabilities.value.filter(c => c.key !== 'form_editing' || c.enabled));
+
+// The modules a SuperAdmin switched off here. Empty for every organisation until
+// one is flipped, and then the sentence below stays exactly what it was.
+const screensOff = computed<string>(() => (teamStore.team?.screens_off ?? []).map(s => s.label).join(', '));
+
 const accessOptions = computed(() => canAdd.value.map((value) => value === 'admin'
     ? {
         value,
         title: 'Administrator',
-        help: `Everything ${orgName.value} has${enabledLabels.value.length ? ` — ${enabledLabels.value.join(', ')} —` : ''} plus announcements, events, services and settings.`,
+        help: `Everything ${orgName.value} has${enabledLabels.value.length ? ` — ${enabledLabels.value.join(', ')} —` : ''} plus announcements, events, services and settings.${screensOff.value ? ` Switched off here: ${screensOff.value}.` : ''}`,
     }
     : {
         value,

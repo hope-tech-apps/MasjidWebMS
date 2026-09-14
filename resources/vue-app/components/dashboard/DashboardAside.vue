@@ -24,21 +24,36 @@
 
             <div id="dashboard_aside_menu">
                 <template v-for="menuItem in dashboardAsideStore.asideMenuItems">
-                    <router-link v-if="menuItem.allowed_types.includes(authStore.user?.type as UserType)
-                        && (!menuItem.requiresCapability || authStore.user?.type === 'SuperAdmin'
-                            || masjidStore.masjid?.capabilities?.[menuItem.requiresCapability] === true)
-                        && (!menuItem.requiresCrm || masjidStore.masjid?.crm_enabled)
-                        && (!menuItem.requiresAssistant || masjidStore.masjid?.assistant_enabled)
-                        && (!menuItem.requiresOrgTypes || menuItem.requiresOrgTypes.includes(masjidStore.orgType))"
+                    <router-link v-if="stateOf(menuItem) === 'visible'"
                         :to="menuItem.to" class="dashboard-aside-menu-item">
                         <div class="menu-item-icon">
                             <span v-html="menuItem.svg_icon"></span>
                         </div>
                         <div class="menu-item-text">
-                            {{ menuItemTitle(menuItem) }}
+                            {{ title(menuItem) }}
                         </div>
                     </router-link>
                 </template>
+
+                <!--
+                    SuperAdmin only, and only when there is something in it: the screens
+                    this organisation does not have. The sidebar above is exactly what its
+                    administrators see; these stay one click away so the owner can still
+                    set the organisation up. Collapsed, so it never reads as part of the menu.
+                -->
+                <details v-if="switchedOffItems.length" class="aside-switched-off">
+                    <summary class="aside-switched-off-summary">
+                        Switched off for {{ masjidStore.masjid?.name }} ({{ switchedOffItems.length }})
+                    </summary>
+                    <div class="d-flex flex-column gap-1 mt-2">
+                        <router-link v-for="menuItem in switchedOffItems" :key="menuItem.to" :to="menuItem.to"
+                            class="aside-switched-off-link" @click="closeAsideOnSmallScreens">
+                            <i class="bi bi-dash-circle" aria-hidden="true"></i>
+                            <span>{{ title(menuItem) }}</span>
+                            <span class="visually-hidden">(switched off for this organisation)</span>
+                        </router-link>
+                    </div>
+                </details>
             </div>
 
         </div>
@@ -46,12 +61,12 @@
 </template>
 
 <script setup lang="ts">
+import { menuItemState, menuItemTitle, MenuItemState } from '@/core/access/orgAccess';
 import { AsideMenuItem } from '@/core/types/config/AsideMenuItem';
-import { UserType } from '@/core/types/data/User';
 import { useAuthStore } from '@/stores/authStore';
 import { useDashboardAsideStore } from '@/stores/config/dashboardAsideStore';
 import { useMasjidStore } from '@/stores/masjidStore';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 
 // Lifecycle hooks
@@ -93,16 +108,31 @@ const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
 
 /**
- * A nav label in the tenant's own vocabulary when the item opts in with
- * `title_term`, and the authored `title` otherwise. `term()` carries its own
- * masjid fallback, so this reads correctly before the masjid has loaded too.
+ * Where an item goes for this person and this organisation — the one predicate
+ * the router, the header search and the SuperAdmin's switch panel also read
+ * (core/access/orgAccess.ts). A SuperAdmin no longer sees every item: they see
+ * what the organisation has, and the rest in the "Switched off" list below.
  */
-const menuItemTitle = (menuItem: AsideMenuItem): string => {
-    if (!menuItem.title_term) return menuItem.title;
+const stateOf = (menuItem: AsideMenuItem): MenuItemState =>
+    menuItemState(menuItem, authStore.user?.type, masjidStore.masjid, masjidStore.orgType);
 
-    const term = masjidStore.term(menuItem.title_term);
+/** The label in the tenant's own vocabulary; `term()` falls back to the masjid pack. */
+const title = (menuItem: AsideMenuItem): string => menuItemTitle(menuItem, masjidStore.term);
 
-    return menuItem.title_suffix ? `${term} ${menuItem.title_suffix}` : term;
+// Only once the organisation has loaded: before that every grant reads as
+// missing, and the list would flash items the organisation actually has.
+const switchedOffItems = computed<AsideMenuItem[]>(() => {
+    if (authStore.user?.type !== 'SuperAdmin' || route.meta.dashboardType === 'super' || !masjidStore.masjid) {
+        return [];
+    }
+
+    return dashboardAsideStore.asideMenuItems.filter(menuItem => stateOf(menuItem) === 'switched_off');
+});
+
+// The menu items above get this listener in onMounted; these links can appear
+// after mount (once the organisation loads), so they carry it themselves.
+const closeAsideOnSmallScreens = () => {
+    document.getElementById('dashboard_layout')?.classList.remove('aside-hidden');
 };
 
 // Html refs
@@ -195,6 +225,44 @@ const asideMenuItems = ref<NodeListOf<Element>>();
 #dashboard_aside_menu .router-link-active.dashboard-aside-menu-item {
     /* --cgreen-active (#04C159) left #EBFFF4 label text at 2.30:1. This darker
        same-hue green carries it at 6.40:1 and still reads as the active state. */
+    background-color: #016B31;
+}
+
+/* The SuperAdmin's "Switched off" list. Same label colour as the menu (the
+   contrast figures above hold); set apart by a rule, a smaller size and an
+   outline icon rather than by fading the text, which would fail contrast. */
+#dashboard_aside_menu .aside-switched-off {
+    margin-top: .5rem;
+    padding: .5rem 1rem 0;
+    border-top: 1px solid rgba(235, 255, 244, .35);
+    color: var(--cgreen-light);
+    font-size: .875rem;
+}
+
+#dashboard_aside_menu .aside-switched-off-summary {
+    cursor: pointer;
+    padding: .25rem 0;
+    border-radius: .25rem;
+}
+
+#dashboard_aside_menu .aside-switched-off-summary:focus-visible,
+#dashboard_aside_menu .aside-switched-off-link:focus-visible {
+    outline: 2px solid var(--cgreen-light);
+    outline-offset: 2px;
+}
+
+#dashboard_aside_menu .aside-switched-off-link {
+    color: var(--cgreen-light);
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    padding: .375rem .5rem;
+    border-radius: .5rem;
+    text-decoration: none;
+}
+
+#dashboard_aside_menu .aside-switched-off-link:hover,
+#dashboard_aside_menu .aside-switched-off-link.router-link-active {
     background-color: #016B31;
 }
 

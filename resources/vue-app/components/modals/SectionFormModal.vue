@@ -82,6 +82,18 @@
                                 </span>
                             </p>
                         </div>
+                        <!--
+                            The organisation has switched off the module this type shows the data of. The
+                            server writes the sentence from the ORGANISATION, not from who is viewing, and it
+                            is printed verbatim the way renderer_note is. The palette still offers the type.
+                        -->
+                        <div
+                            v-if="attachTypeInfo?.module_off_note"
+                            class="alert alert-warning mb-3 py-2 px-3 small"
+                        >
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                            {{ attachTypeInfo.module_off_note }}
+                        </div>
 
                         <div class="mb-3">
                             <label class="form-label">Order</label>
@@ -159,6 +171,18 @@
                                 <i class="bi bi-exclamation-triangle-fill me-1"></i>
                                 {{ selectedTypeInfo.renderer_note }}
                             </div>
+                            <!--
+                                The organisation has switched off the module this type shows the data of. The
+                                server writes the sentence from the ORGANISATION, not from who is viewing, and it
+                                is printed verbatim the way renderer_note is. The palette still offers the type.
+                            -->
+                            <div
+                                v-if="selectedTypeInfo?.module_off_note"
+                                class="alert alert-warning mt-2 mb-0 py-2 px-3 small"
+                            >
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                {{ selectedTypeInfo.module_off_note }}
+                            </div>
                         </div>
 
                         <!-- Section Type Badge (for edit mode) -->
@@ -166,6 +190,18 @@
                             <label class="form-label">Section Type</label>
                             <div>
                                 <span class="badge bg-info fs-6">{{ formData.section_type }}</span>
+                            </div>
+                            <!--
+                                The organisation has switched off the module this type shows the data of. The
+                                server writes the sentence from the ORGANISATION, not from who is viewing, and it
+                                is printed verbatim the way renderer_note is. The palette still offers the type.
+                            -->
+                            <div
+                                v-if="selectedTypeInfo?.module_off_note"
+                                class="alert alert-warning mt-2 mb-0 py-2 px-3 small"
+                            >
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                {{ selectedTypeInfo.module_off_note }}
                             </div>
                         </div>
 
@@ -376,6 +412,12 @@ const sectionsLibrary = computed(() => pagesStore.sectionsLibrary);
 const selectedSection = computed(() => {
     if (!selectedSectionId.value) return null;
     return sectionsLibrary.value.find(s => s.id === selectedSectionId.value);
+});
+
+/** The server's record for the type of the library section being attached (its module note). */
+const attachTypeInfo = computed(() => {
+    const type = selectedSection.value?.section_type;
+    return type ? sectionTypes.value.find(t => t.value === type) ?? null : null;
 });
 
 // Editor component mapping

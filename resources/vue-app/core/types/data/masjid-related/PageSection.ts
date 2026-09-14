@@ -298,6 +298,14 @@ export type SectionTypeInfo = {
      * different things is exactly what this replaced.
      */
     renderer_note: string | null;
+    /**
+     * When the ORGANISATION has switched off the module this type shows the data
+     * of (SectionType::requiresModule), the sentence saying so — computed from the
+     * organisation, never from who is viewing, so a SuperAdmin reads what its admins
+     * would. Null otherwise, and absent from an older backend. The palette still
+     * offers the type: it is global by rule (.claude/rules/section-types.md).
+     */
+    module_off_note?: string | null;
     default_content: SectionContent;
 };
 

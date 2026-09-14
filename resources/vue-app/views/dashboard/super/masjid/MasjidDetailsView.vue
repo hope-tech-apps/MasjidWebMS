@@ -131,25 +131,11 @@
             </div>
 
             <!-- Organisation capabilities (SuperAdmin-only; config/capabilities.php).
-                 Layer 1 of the access model: what this organisation HAS. Its
-                 administrators get all of it; the CRM and Assistant switches
-                 above are the two column-backed members of the same catalogue. -->
-            <div v-for="cap in toggleableCapabilities" :key="cap.key" class="d-flex flex-column gap-2 w-100">
-                <span class="fs-5 fw-semibold">
-                    {{ cap.label }}
-                </span>
-                <div class="d-flex align-items-center gap-3 w-100">
-                    <span class="fs-6 fw-semibold text-muted">
-                        {{ cap.help }}
-                    </span>
-                    <div class="form-check form-switch m-0">
-                        <input class="form-check-input bg-danger" type="checkbox"
-                            :aria-label="cap.label"
-                            @click.prevent="toggleCapability(cap.key, !masjid.capabilities?.[cap.key])"
-                            :checked="masjid.capabilities?.[cap.key] ? true : false" />
-                    </div>
-                </div>
-            </div>
+                 Layer 1 of the access model: what this organisation HAS, grants and
+                 default-on modules alike, grouped, with defaults and change history.
+                 The CRM and Assistant switches above stay the only writers of the two
+                 column-backed members of the same catalogue. -->
+            <OrganisationSwitchesPanel :masjid="masjid" @updated="onSwitchesUpdated" />
 
             <!--
                 Form card payments through the parent organisation (SuperAdmin-only;
@@ -553,7 +539,7 @@ import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { Admin } from '@/core/types/data/Admin';
 import { Masjid } from '@/core/types/data/Masjid';
-import { CapabilityKey } from '@/core/types/data/Capability';
+import OrganisationSwitchesPanel from '@/components/super/OrganisationSwitchesPanel.vue';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidsStore } from '@/stores/super/masjidsStore';
@@ -840,14 +826,15 @@ const toggleCrmAccess = (enabled: boolean) => {
 }
 
 /**
- * Organisation capabilities without a column of their own
- * (PATCH .../capabilities/{key} -> masjids.capability_overrides). CRM and the
- * Assistant keep their dedicated switches above.
+ * A switch in OrganisationSwitchesPanel was saved: keep this screen's copy of the
+ * organisation in step with the server's, so the panel's fallback rows (and anything
+ * else here that reads `capabilities`) show what was just saved.
  */
-const toggleableCapabilities: { key: CapabilityKey; label: string; help: string }[] = [
-    { key: 'web_pages', label: 'Website Pages', help: "Let this organisation's admins build and edit their public website (pages and sections)." },
-    { key: 'jummah_lunch', label: 'Friday Lunch Ordering', help: 'Jummah lunch ordering, the order board, and lunch-only volunteer logins.' },
-];
+const onSwitchesUpdated = (saved: { capabilities?: Masjid['capabilities']; modules_off?: Masjid['modules_off'] }) => {
+    if (!masjid.value) return;
+    if (saved.capabilities) masjid.value.capabilities = saved.capabilities;
+    if (saved.modules_off) masjid.value.modules_off = saved.modules_off;
+}
 
 // Enter this organisation's dashboard on its Team & Access screen — the same way
 // the Masjids list enters a dashboard.
@@ -860,40 +847,6 @@ const openTeam = async () => {
         auth.saveDashboardMasjidId(id);
         await router.push('/masjid/team');
     });
-}
-
-const toggleCapability = (key: CapabilityKey, enabled: boolean) => {
-    QSwal.fire("Question", `Are you sure you want to ${enabled ? 'switch on' : 'switch off'} this for the organisation? Its administrators ${enabled ? 'will' : 'will no longer'} see it.`, 'question')
-        .then(async (result) => {
-            if (!result.isConfirmed || !masjid.value?.id) return;
-
-            let swalInstance: SweetAlertOptions = { title: "Info", text: "Nothing", icon: "info" };
-
-            const apiRequestData = new URLSearchParams();
-            apiRequestData.append('enabled', enabled ? "1" : "0");
-
-            await ApiService.patch(`/api/admin/masjids/${masjid.value.id}/capabilities/${key}`, apiRequestData)
-                .then(res => {
-                    if (res.data.status === 'success') {
-                        if (masjid.value) masjid.value.capabilities = res.data.data?.capabilities ?? { ...(masjid.value.capabilities ?? {}), [key]: enabled };
-                        swalInstance.title = "Success";
-                        swalInstance.text = enabled ? "Switched on." : "Switched off.";
-                        swalInstance.icon = "success";
-                    } else {
-                        swalInstance.title = "Sorry";
-                        swalInstance.text = getMessageFromObj(res);
-                        swalInstance.icon = "warning";
-                    }
-                })
-                .catch((e: AxiosError<BackendResponseData>) => {
-                    swalInstance.title = e.message;
-                    swalInstance.text = getMessageFromObj(e);
-                    swalInstance.icon = "error";
-                })
-                .finally(() => {
-                    MSwal.fire(swalInstance);
-                });
-        });
 }
 
 const toggleAssistantAccess = (enabled: boolean) => {

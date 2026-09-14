@@ -37,7 +37,8 @@ const offeringsManagementRoutes: RouteRecordRaw[] = [
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
             pageTitle: 'Programs & Registration',
-            requiresCrm: true
+            requiresCrm: true,
+            requiresModule: 'programs'
         },
         component: () => import("@/views/dashboard/OfferingsView.vue")
     },
@@ -49,7 +50,8 @@ const offeringsManagementRoutes: RouteRecordRaw[] = [
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
             pageTitle: 'Program',
-            requiresCrm: true
+            requiresCrm: true,
+            requiresModule: 'programs'
         },
         component: () => import("@/views/dashboard/OfferingDetailView.vue")
     },
@@ -64,7 +66,8 @@ const offeringsManagementRoutes: RouteRecordRaw[] = [
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
             pageTitle: 'Registration',
-            requiresCrm: true
+            requiresCrm: true,
+            requiresModule: 'programs'
         },
         component: () => import("@/views/dashboard/OfferingRegistrationDetailView.vue")
     }

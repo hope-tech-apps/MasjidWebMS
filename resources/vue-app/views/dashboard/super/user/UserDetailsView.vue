@@ -173,7 +173,9 @@ const changing = ref(false);
 function accessIncludes(org: UserOrganisation): string {
     if (org.access === 'admin') {
         const has = (org.capabilities ?? []).map(k => CAPABILITY_LABELS[k] ?? k);
-        return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus announcements, events, services and settings.`;
+        // Byte-identical to before unless a module is switched off there.
+        const off = (org.modules_off ?? []).map(m => m.label);
+        return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus announcements, events, services and settings.${off.length ? ` Switched off here: ${off.join(', ')}.` : ''}`;
     }
     if (org.access === 'jummah_lunch') return 'Can only run the Friday lunch board: menus, orders and payments.';
     if (org.access === 'teacher') return 'Can only see and manage the classes they lead.';

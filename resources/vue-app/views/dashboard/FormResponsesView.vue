@@ -7,6 +7,29 @@
             @pageChange="pageChange"
         >
             <template #headerButtons>
+                <!--
+                    Form editing outside the page builder (FormEditView). Shown to a SuperAdmin,
+                    or where the organisation has `web_pages` or `form_editing` — the server's
+                    any-of gate on form writes. "Edit" shows even when there is only one form,
+                    because then there is no picker to stand beside.
+                -->
+                <router-link
+                    v-if="formEditingAllowed && selectedFormId"
+                    :to="{ name: 'masjid.formEdit', params: { formId: selectedFormId } }"
+                    class="btn btn-outline-secondary me-2"
+                    title="Change this form's questions, fees and settings"
+                >
+                    <i class="bi bi-pencil-square me-1" aria-hidden="true"></i>
+                    Edit this form
+                </router-link>
+                <router-link
+                    v-if="formEditingAllowed"
+                    :to="{ name: 'masjid.formCreate' }"
+                    class="btn btn-outline-success me-2"
+                >
+                    <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>
+                    Create a form
+                </router-link>
                 <button
                     v-if="paymentEnabled"
                     class="btn btn-outline-secondary me-2"
@@ -41,7 +64,18 @@
                 <div v-else-if="!formOptions.length" class="text-center py-5 text-muted">
                     <i class="bi bi-ui-checks fs-1 d-block mb-3"></i>
                     <p class="mb-0">No forms yet</p>
-                    <p class="small mb-0">Add a form section to a page to start collecting responses.</p>
+                    <template v-if="formEditingAllowed">
+                        <p v-if="webPagesAllowed" class="small mb-3">Create one here, then place it on a page so families can reach it.</p>
+                        <p v-else class="small mb-3">
+                            Create one here. Manara places it on a page for {{ masjidStore.masjid?.name || 'this organisation' }}
+                            so families can reach it.
+                        </p>
+                        <router-link :to="{ name: 'masjid.formCreate' }" class="btn btn-sm btn-success">
+                            <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>
+                            Create a form
+                        </router-link>
+                    </template>
+                    <p v-else class="small mb-0">Add a form section to a page to start collecting responses.</p>
                 </div>
 
                 <template v-else>
@@ -1573,6 +1607,9 @@ import {
 } from '@/core/types/data/masjid-related/Form';
 import { pageUnreachable, useFormResponsesStore } from '@/stores/masjid/formResponsesStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
+import { canEditForms, canUseWebPages } from '@/core/access/orgAccess';
+import { useRoute } from 'vue-router';
 import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
@@ -1581,6 +1618,13 @@ import Swal from 'sweetalert2';
 // Store
 const formResponsesStore = useFormResponsesStore();
 const masjidStore = useMasjidStore();
+const authStore = useAuthStore();
+const route = useRoute();
+
+/** Whether the Create / Edit form buttons are offered (core/access/orgAccess.ts). */
+const formEditingAllowed = computed(() => canEditForms(authStore.user?.type, masjidStore.masjid));
+/** Whether the empty-state help may tell them to place the form on a page themselves. */
+const webPagesAllowed = computed(() => canUseWebPages(authStore.user?.type, masjidStore.masjid));
 
 // The table's fixed columns. These are the denormalised identity/summary columns on the
 // row itself — the schema's own questions are NOT columns here, because list rows carry
@@ -1956,8 +2000,12 @@ const bootstrap = async () => {
         if (options.length) {
             // Assign quietly, then load once below — letting the watcher fire as well
             // would mean two identical requests on every first paint.
+            // The form editor sends the admin back here with ?form={id}, so they land on
+            // the form they just saved rather than on whichever form is first.
+            const wanted = Number(route.query.form);
+            const preselected = options.find(option => option.id === wanted) ?? options[0];
             await quietly(() => {
-                selectedFormId.value = options[0].id;
+                selectedFormId.value = preselected.id;
             });
         }
     } catch (e) {

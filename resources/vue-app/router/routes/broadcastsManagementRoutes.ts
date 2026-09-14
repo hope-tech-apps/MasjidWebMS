@@ -7,7 +7,8 @@ const broadcastsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Broadcasts'
+            pageTitle: 'Broadcasts',
+            requiresModule: 'broadcasts'
         },
         component: () => import("@/views/dashboard/broadcasts/BroadcastsView.vue")
     },
@@ -17,7 +18,8 @@ const broadcastsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Compose Broadcast'
+            pageTitle: 'Compose Broadcast',
+            requiresModule: 'broadcasts'
         },
         component: () => import("@/views/dashboard/broadcasts/BroadcastComposerView.vue")
     }

@@ -5,6 +5,7 @@ import { useDashboardAsideStore } from "@/stores/config/dashboardAsideStore";
 import { MASJID_DASHBOARD_ASIDE_MENU, SUPER_DASHBOARD_ASIDE_MENU } from "@/core/constants/dashboardAsideMenuItems";
 import { useMasjidStore } from "@/stores/masjidStore";
 import { LOCAL_STORAGE_KEYS } from "@/core/constants/appConfigConstants";
+import { hasGrant, moduleIsOff } from "@/core/access/orgAccess";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -75,6 +76,19 @@ router.beforeEach((to, from, next) => {
                             // Organisation capabilities, same shape as the CRM gate: only
                             // hard-block once the payload says the organisation does not
                             // have it. The server's `capability:` gate is the boundary.
+                            next('/auth/401');
+                        } else if (to.meta.requiresAnyCapability && authStore.user.type !== 'SuperAdmin'
+                            && masjidStore.masjid?.capabilities
+                            && !to.meta.requiresAnyCapability.some(key => hasGrant(masjidStore.masjid, key))) {
+                            // Any one of several grants will do (the form editor:
+                            // `web_pages` or `form_editing`). Same load-race rule.
+                            next('/auth/401');
+                        } else if (to.meta.requiresModule && authStore.user.type !== 'SuperAdmin'
+                            && moduleIsOff(masjidStore.masjid, to.meta.requiresModule)) {
+                            // A default-on module blocks only on an explicit
+                            // `modules_off` entry, so a payload still loading (or
+                            // from an older backend) never 401s a screen. A
+                            // SuperAdmin passes and sees DashboardLayout's notice.
                             next('/auth/401');
                         } else if (to.meta.requiresAssistant && masjidStore.masjid && !masjidStore.masjid.assistant_enabled) {
                             // Same shape as the CRM gate: only hard-block once we know the

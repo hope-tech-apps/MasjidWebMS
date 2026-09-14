@@ -7,8 +7,11 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            // The page builder is an organisation capability (config/capabilities.php).
+            // The page builder: the organisation's own admins need the `web_pages`
+            // grant, and nobody (SuperAdmins included) reaches it once the
+            // `website` module is switched off (config/capabilities.php).
             requiresCapability: 'web_pages',
+            requiresModule: 'website',
             pageTitle: 'Pages Management'
         },
         component: () => import("@/views/dashboard/pages/PagesView.vue")
@@ -19,8 +22,11 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            // The page builder is an organisation capability (config/capabilities.php).
+            // The page builder: the organisation's own admins need the `web_pages`
+            // grant, and nobody (SuperAdmins included) reaches it once the
+            // `website` module is switched off (config/capabilities.php).
             requiresCapability: 'web_pages',
+            requiresModule: 'website',
             pageTitle: 'Sections Library'
         },
         component: () => import("@/views/dashboard/sections/SectionsLibraryView.vue")
@@ -31,8 +37,11 @@ const pagesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            // The page builder is an organisation capability (config/capabilities.php).
+            // The page builder: the organisation's own admins need the `web_pages`
+            // grant, and nobody (SuperAdmins included) reaches it once the
+            // `website` module is switched off (config/capabilities.php).
             requiresCapability: 'web_pages',
+            requiresModule: 'website',
             pageTitle: 'Page Sections'
         },
         component: () => import("@/views/dashboard/pages/PageSectionsView.vue")
