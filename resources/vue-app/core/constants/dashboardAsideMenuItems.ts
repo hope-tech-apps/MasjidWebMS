@@ -10,7 +10,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 <path d="M7.5 3.75C6.75832 3.75 6.0333 3.96994 5.41661 4.38199C4.79993 4.79405 4.31928 5.37972 4.03545 6.06494C3.75162 6.75016 3.67736 7.50416 3.82206 8.23159C3.96675 8.95902 4.3239 9.6272 4.84835 10.1517C5.3728 10.6761 6.04098 11.0333 6.76841 11.1779C7.49584 11.3226 8.24984 11.2484 8.93506 10.9646C9.62029 10.6807 10.206 10.2001 10.618 9.58339C11.0301 8.96671 11.25 8.24168 11.25 7.5C11.25 6.50544 10.8549 5.55161 10.1517 4.84835C9.44839 4.14509 8.49456 3.75 7.5 3.75ZM7.5 9.75C7.05499 9.75 6.61998 9.61804 6.24997 9.37081C5.87996 9.12358 5.59157 8.77217 5.42127 8.36104C5.25098 7.94991 5.20642 7.49751 5.29323 7.06105C5.38005 6.62459 5.59434 6.22368 5.90901 5.90901C6.22368 5.59434 6.62459 5.38005 7.06105 5.29323C7.49751 5.20642 7.94991 5.25098 8.36104 5.42127C8.77217 5.59157 9.12358 5.87996 9.37081 6.24997C9.61804 6.61998 9.75 7.05499 9.75 7.5C9.75 8.09674 9.51295 8.66904 9.09099 9.09099C8.66904 9.51295 8.09674 9.75 7.5 9.75ZM16.5 11.25C17.2417 11.25 17.9667 11.0301 18.5834 10.618C19.2001 10.206 19.6807 9.62029 19.9646 8.93506C20.2484 8.24984 20.3226 7.49584 20.1779 6.76841C20.0333 6.04098 19.6761 5.3728 19.1517 4.84835C18.6272 4.3239 17.959 3.96675 17.2316 3.82206C16.5042 3.67736 15.7502 3.75162 15.0649 4.03545C14.3797 4.31928 13.794 4.79993 13.382 5.41661C12.9699 6.0333 12.75 6.75832 12.75 7.5C12.75 8.49456 13.1451 9.44839 13.8484 10.1517C14.5516 10.8549 15.5054 11.25 16.5 11.25ZM16.5 5.25C16.945 5.25 17.38 5.38196 17.75 5.6292C18.12 5.87643 18.4084 6.22783 18.5787 6.63896C18.749 7.0501 18.7936 7.5025 18.7068 7.93895C18.62 8.37541 18.4057 8.77632 18.091 9.09099C17.7763 9.40566 17.3754 9.61995 16.939 9.70677C16.5025 9.79359 16.0501 9.74903 15.639 9.57873C15.2278 9.40843 14.8764 9.12005 14.6292 8.75003C14.382 8.38002 14.25 7.94501 14.25 7.5C14.25 6.90326 14.4871 6.33097 14.909 5.90901C15.331 5.48705 15.9033 5.25 16.5 5.25ZM7.5 12.75C6.75832 12.75 6.0333 12.9699 5.41661 13.382C4.79993 13.794 4.31928 14.3797 4.03545 15.0649C3.75162 15.7502 3.67736 16.5042 3.82206 17.2316C3.96675 17.959 4.3239 18.6272 4.84835 19.1517C5.3728 19.6761 6.04098 20.0333 6.76841 20.1779C7.49584 20.3226 8.24984 20.2484 8.93506 19.9646C9.62029 19.6807 10.206 19.2001 10.618 18.5834C11.0301 17.9667 11.25 17.2417 11.25 16.5C11.25 15.5054 10.8549 14.5516 10.1517 13.8484C9.44839 13.1451 8.49456 12.75 7.5 12.75ZM7.5 18.75C7.05499 18.75 6.61998 18.618 6.24997 18.3708C5.87996 18.1236 5.59157 17.7722 5.42127 17.361C5.25098 16.9499 5.20642 16.4975 5.29323 16.061C5.38005 15.6246 5.59434 15.2237 5.90901 14.909C6.22368 14.5943 6.62459 14.3801 7.06105 14.2932C7.49751 14.2064 7.94991 14.251 8.36104 14.4213C8.77217 14.5916 9.12358 14.88 9.37081 15.25C9.61804 15.62 9.75 16.055 9.75 16.5C9.75 17.0967 9.51295 17.669 9.09099 18.091C8.66904 18.5129 8.09674 18.75 7.5 18.75ZM16.5 12.75C15.7583 12.75 15.0333 12.9699 14.4166 13.382C13.7999 13.794 13.3193 14.3797 13.0355 15.0649C12.7516 15.7502 12.6774 16.5042 12.8221 17.2316C12.9668 17.959 13.3239 18.6272 13.8484 19.1517C14.3728 19.6761 15.041 20.0333 15.7684 20.1779C16.4958 20.3226 17.2498 20.2484 17.9351 19.9646C18.6203 19.6807 19.206 19.2001 19.618 18.5834C20.0301 17.9667 20.25 17.2417 20.25 16.5C20.25 15.5054 19.8549 14.5516 19.1517 13.8484C18.4484 13.1451 17.4946 12.75 16.5 12.75ZM16.5 18.75C16.055 18.75 15.62 18.618 15.25 18.3708C14.88 18.1236 14.5916 17.7722 14.4213 17.361C14.251 16.9499 14.2064 16.4975 14.2932 16.061C14.3801 15.6246 14.5943 15.2237 14.909 14.909C15.2237 14.5943 15.6246 14.3801 16.061 14.2932C16.4975 14.2064 16.9499 14.251 17.361 14.4213C17.7722 14.5916 18.1236 14.88 18.3708 15.25C18.618 15.62 18.75 16.055 18.75 16.5C18.75 17.0967 18.5129 17.669 18.091 18.091C17.669 18.5129 17.0967 18.75 16.5 18.75Z" fill="white"/>
                 </svg>`,
         to: '/masjid/details',
-        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        // No switch of its own: every organisation has a Details screen. Its three
+        // prayer tabs follow the `prayer_times` module (MosqueDetailsTabsView).
+        lever: 'always on; its prayer tabs follow Prayer times above'
     },
     {
         title: "Announcements",
@@ -28,7 +31,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/splash-announcements',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresOrgTypes: ['masjid']
+        // Offered to masjids (Masjid::MODULE_DEFAULTS); a SuperAdmin can switch it
+        // off for one, or on for a school or community organisation (`modules_on`).
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'splash'
     },
     {
         // Deliberately NOT gated on a vertical or on the CRM. Reaching your
@@ -71,7 +77,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/services',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresOrgTypes: ['masjid']
+        // Same shape as Splash. Switched off, only the editing screens close: the
+        // services index stays open for Broadcasts, Friday lunch and About Us.
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'services'
     },
     {
         title: "Donation",
@@ -88,7 +97,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/masjid/donation',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
-        requiresOrgTypes: ['masjid']
+        // The external donation link, its own switch (`donation_link`), separate
+        // from Giving: an organisation can keep its link with no giving screens.
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'donation_link'
     },
     {
         title: "About Us",
@@ -390,6 +402,9 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         // are what actually decide who may read one. Hiding the item is
         // housekeeping; hiding data would be a bug.
         //
+        // `appointment_requests` is the organisation's own switch on top, ON for
+        // every org type; switched off, the public form refuses new requests too.
+        //
         // The title is authored rather than drawn from the terminology pack:
         // "Appointment Requests" names the FEATURE, the way "Class Story" does,
         // and the tenant's own vocabulary appears INSIDE the screen for the
@@ -405,10 +420,20 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/appointment-requests',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['community']
+        requiresOrgTypes: ['community'],
+        requiresModule: 'appointment_requests'
     },
     {
         // The overview sits above the ledger: totals first, individual gifts second.
+        //
+        // Every giving screen (this one, Donation Funds, Donations, Recurring
+        // Donations, Year-End Statements) carries `requiresModule: 'giving'` beside
+        // `requiresCrm` and `requiresOrgTypes: ['masjid']`. Giving is offered to
+        // masjids only (Masjid::MODULE_DEFAULTS): a SuperAdmin can switch it off for
+        // a masjid, or on for a school or community organisation, and menuItemState
+        // then lets these items through for that one organisation (`modules_on`).
+        // Stripe Connect is not part of the switch: while Giving is off it sits on
+        // the Details screen's Online payments tab.
         title: "Giving Dashboard",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M4 20V11" stroke="white" stroke-width="1.9" stroke-linecap="round"/>
@@ -420,7 +445,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/donations/dashboard',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'giving'
     },
     {
         // Deliberately NOT gated on the CRM, on a vertical or on Stripe. This is
@@ -480,7 +506,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/funds',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'giving'
     },
     {
         title: "Jummah Lunch",
@@ -496,7 +523,10 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'jummah_lunch'
     },
     {
+        // The tenant's word for gifts: "Donations" for a masjid or a community
+        // organisation, "Giving" for a school that a SuperAdmin switched Giving on for.
         title: "Donations",
+        title_term: 'giving',
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M11.8 10.9C9.53 10.31 8.8 9.7 8.8 8.75C8.8 7.66 9.81 6.9 11.5 6.9C13.28 6.9 13.94 7.75 14 9H16.21C16.14 7.28 15.09 5.7 13 5.19V3H10V5.16C8.06 5.58 6.5 6.84 6.5 8.77C6.5 11.08 8.41 12.23 11.2 12.9C13.7 13.5 14.2 14.38 14.2 15.31C14.2 16 13.71 17.1 11.5 17.1C9.44 17.1 8.63 16.18 8.52 15H6.32C6.44 17.19 8.08 18.42 10 18.83V21H13V18.85C14.95 18.48 16.5 17.35 16.5 15.3C16.5 12.46 14.07 11.49 11.8 10.9Z" fill="white"/>
                 </svg>
@@ -504,7 +534,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/donations',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'giving'
     },
     {
         title: "Recurring Donations",
@@ -517,7 +548,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/recurring-donations',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'giving'
     },
     {
         title: "Year-End Statements",
@@ -530,7 +562,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/annual-statements',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'giving'
     },
     {
         title: "Properties & Rent",
@@ -542,7 +575,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         to: '/masjid/properties',
         allowed_types: ['SuperAdmin', 'MasjidAdmin'],
         requiresCrm: true,
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        requiresModule: 'properties'
     },
     {
         title: "Manara Assistant",
@@ -578,7 +612,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 </svg>`,
         to: '/hadith',
         allowed_types: ['SuperAdmin'],
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        lever: 'SuperAdmin only: platform library shared by every app; per-organisation visibility is Mobile App Features'
     },
     {
         title: "Adhkar",
@@ -588,7 +623,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 `,
         to: '/azkar',
         allowed_types: ['SuperAdmin'],
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        lever: 'SuperAdmin only: platform library shared by every app; per-organisation visibility is Mobile App Features'
     },
     {
         title: "Tasbih",
@@ -598,7 +634,8 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
                 `,
         to: '/tasabih',
         allowed_types: ['SuperAdmin'],
-        requiresOrgTypes: ['masjid']
+        requiresOrgTypes: ['masjid'],
+        lever: 'SuperAdmin only: platform library shared by every app; per-organisation visibility is Mobile App Features'
     }
 ];
 

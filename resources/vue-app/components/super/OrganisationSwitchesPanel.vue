@@ -31,7 +31,7 @@
                 <button type="button" class="btn btn-sm btn-outline-danger" @click="load">Try again</button>
             </div>
 
-            <div v-for="group in groups" :key="group.key" class="switch-group">
+            <div v-for="group in visibleGroups" :key="group.key" class="switch-group">
                 <h3 class="fs-6 fw-semibold mb-3">{{ group.label }}</h3>
 
                 <ul class="list-unstyled d-flex flex-column gap-3 m-0">
@@ -43,10 +43,20 @@
                                     <span v-if="entry.overridden" class="badge text-bg-light border">Set by a SuperAdmin</span>
                                 </div>
                                 <span :id="`switch-help-${entry.key}`" class="small text-muted">{{ entry.description }}</span>
-                                <span v-if="sidebarTitles(entry.key).length" class="small">
-                                    Sidebar: {{ sidebarTitles(entry.key).join(', ') }}
+                                <!-- What is live for this organisation right now (App\Support\ModuleFacts). -->
+                                <ul v-if="entry.facts?.length" :id="`switch-facts-${entry.key}`" class="small text-muted mb-0 ps-3">
+                                    <li v-for="(fact, index) in entry.facts" :key="index">{{ fact }}</li>
+                                </ul>
+                                <span v-if="sidebarTitles(entry).length" class="small">
+                                    Sidebar: {{ sidebarTitles(entry).join(', ') }}
                                 </span>
-                                <span v-if="entry.default_for_org_type !== null" class="small text-muted">
+                                <span v-if="entry.where" class="small">
+                                    Where: {{ detailsTitle }} › {{ entry.where }}
+                                </span>
+                                <span v-if="notOfferedAndOff(entry)" class="small text-muted">
+                                    Off — not offered to a {{ orgType }} unless you switch it on
+                                </span>
+                                <span v-else-if="entry.default_for_org_type !== null" class="small text-muted">
                                     Default for a {{ orgType }}: {{ entry.default_for_org_type ? 'on' : 'off' }}
                                 </span>
                                 <span v-if="entry.in_use" class="small text-warning-emphasis">
@@ -59,7 +69,7 @@
                                     <input :id="`switch-${entry.key}`" class="form-check-input org-switch" type="checkbox" role="switch"
                                         :checked="entry.enabled" :disabled="busyKey !== null"
                                         :aria-label="`${entry.label} for ${orgName}`"
-                                        :aria-describedby="`switch-help-${entry.key}`"
+                                        :aria-describedby="entry.facts?.length ? `switch-help-${entry.key} switch-facts-${entry.key}` : `switch-help-${entry.key}`"
                                         @click.prevent="flip(entry)" />
                                     <label :for="`switch-${entry.key}`" class="form-check-label small fw-semibold" aria-hidden="true">
                                         <span v-if="busyKey === entry.key" class="spinner-border spinner-border-sm me-1"></span>
@@ -77,6 +87,11 @@
                     </li>
                 </ul>
             </div>
+
+            <!-- Rows left out by rowRenders(): switches for screens this org type has no place for. -->
+            <p v-if="hiddenLabels.length" class="small text-muted mb-0">
+                Switches for screens a {{ orgType }} does not have are not shown: {{ hiddenLabels.join(', ') }}.
+            </p>
 
             <!-- Every flip is audited server-side (masjid_capability_changes). -->
             <details v-if="history.length" class="switch-group">
@@ -131,7 +146,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import { MASJID_DASHBOARD_ASIDE_MENU } from '@/core/constants/dashboardAsideMenuItems';
-import { menuItemTitle } from '@/core/access/orgAccess';
+import { detailsScreenTitle, menuItemTitle } from '@/core/access/orgAccess';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { AsideMenuItem } from '@/core/types/config/AsideMenuItem';
@@ -147,7 +162,7 @@ import {
 import { Masjid } from '@/core/types/data/Masjid';
 import { DEFAULT_ORG_TYPE, MASJID_TERMINOLOGY, OrgType, TerminologyKey } from '@/core/types/data/Vertical';
 import { AxiosError } from 'axios';
-import { SweetAlertOptions } from 'sweetalert2';
+import { SweetAlertIcon, SweetAlertOptions } from 'sweetalert2';
 import { computed, ref, watch } from 'vue';
 
 /**
@@ -170,7 +185,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     /** The saved organisation's grant and module state, for the parent's copy of the masjid. */
-    updated: [saved: { capabilities?: Masjid['capabilities']; modules_off?: Masjid['modules_off'] }];
+    updated: [saved: { capabilities?: Masjid['capabilities']; modules_off?: Masjid['modules_off']; modules_on?: Masjid['modules_on'] }];
 }>();
 
 const payload = ref<OrganisationCapabilities | null>(null);
@@ -192,14 +207,28 @@ const orgType = computed<OrgType>(() => {
 const term = (key: TerminologyKey): string =>
     props.masjid.vertical?.terminology?.[key] || MASJID_TERMINOLOGY[key];
 
+/** "Masjid Details" / "School Details": the sidebar name every pointer to a Details tab uses. */
+const detailsTitle = computed<string>(() => detailsScreenTitle(term));
+
 // The sidebar items this organisation's type can show at all.
 const itemsForType = computed<AsideMenuItem[]>(() => MASJID_DASHBOARD_ASIDE_MENU.filter(item =>
     !item.requiresOrgTypes || item.requiresOrgTypes.includes(orgType.value)));
 
-/** "Sidebar: …" — the items a switch hides, in this organisation's vocabulary. */
-function sidebarTitles(key: string): string[] {
-    return itemsForType.value
-        .filter(item => item.requiresModule === key || item.requiresCapability === key)
+/** A module this org type is not offered, and nobody has switched on here. */
+function notOfferedAndOff(entry: CapabilityEntry): boolean {
+    return entry.kind === 'module' && entry.offered_by_default === false && !entry.enabled;
+}
+
+/**
+ * "Sidebar: …" — the items a switch hides, in this organisation's vocabulary. For a
+ * module this type is not offered, the items it would add once switched on.
+ */
+function sidebarTitles(entry: CapabilityEntry): string[] {
+    const couldSwitchOn = entry.kind === 'module' && entry.offered_by_default === false;
+
+    return MASJID_DASHBOARD_ASIDE_MENU
+        .filter(item => item.requiresModule === entry.key || item.requiresCapability === entry.key)
+        .filter(item => couldSwitchOn || itemsForType.value.includes(item))
         .map(item => menuItemTitle(item, term));
 }
 
@@ -236,6 +265,29 @@ const groups = computed<CapabilityGroup[]>(() => {
     return entries.length ? [{ key: 'grants', label: 'Switched on per organisation', entries }] : [];
 });
 
+/**
+ * Whether a row renders. A module row has to point somewhere this organisation can
+ * see: a sidebar item its type can show, a `where` on the Details screen, or nothing
+ * yet because the module is not offered to its type and this row is how it gets
+ * switched on. Any other module row would switch a screen this organisation has no
+ * place for (Appointment Requests for a masjid), so it is left out and named in one
+ * muted line. So a module needs a sidebar item or a `where` (config/capabilities.php).
+ */
+function rowRenders(entry: CapabilityEntry): boolean {
+    if (entry.kind !== 'module') return true;
+    if (entry.where) return true;
+    if (entry.offered_by_default === false) return true;
+
+    return itemsForType.value.some(item => item.requiresModule === entry.key);
+}
+
+const visibleGroups = computed<CapabilityGroup[]>(() => groups.value
+    .map(group => ({ ...group, entries: group.entries.filter(rowRenders) }))
+    .filter(group => group.entries.length > 0));
+
+const hiddenLabels = computed<string[]>(() => groups.value
+    .flatMap(group => group.entries.filter(entry => !rowRenders(entry)).map(entry => entry.label)));
+
 const history = computed<CapabilityChange[]>(() => payload.value?.history ?? []);
 
 /** CRM and the Assistant read from the masjid, so the switches above are reflected at once. */
@@ -250,6 +302,7 @@ const notSwitchable = computed<{ to: string; title: string; lever: string }[]>((
     .map(item => ({ to: item.to, title: menuItemTitle(item, term), lever: leverFor(item) })));
 
 function leverFor(item: AsideMenuItem): string {
+    if (item.lever) return item.lever;
     if (!item.allowed_types.includes('MasjidAdmin')) return 'app drawer: Mobile App Features';
     if (item.requiresCrm) return 'part of Members, classes & giving (CRM switch above)';
     if (item.requiresAssistant) return 'part of Manara Assistant (switch above)';
@@ -305,27 +358,121 @@ watch(() => props.masjid?.id, () => {
     load();
 }, { immediate: true });
 
+/** The CRM clause for a module that also needs Members, classes & giving. */
+function crmLine(org: string): string {
+    return props.masjid.crm_enabled
+        ? 'It also needs Members, classes & giving, which is on.'
+        : `It also needs Members, classes & giving, which is off for ${org}, so nobody there sees it until that is switched on too.`;
+}
+
+/**
+ * Per module: what else happens when it is switched OFF, beyond the lines every module
+ * gets. Only what the server actually does; the entry's facts carry the live counts.
+ */
+function switchOffLines(entry: CapabilityEntry, org: string): string[] {
+    switch (entry.key) {
+        case 'prayer_times':
+            return [
+                `Manara stops its backup prayer reminders for ${org} to phones that have not opened the app for 5 days, and its daily background refresh.`,
+                'The website, apps and TV keep showing the last saved times.',
+                // iOS arms 6 days ahead and counts on the daily refresh to re-arm an unopened app.
+                'Android phones re-arm their own adhan and iqama alerts every day. An iPhone re-arms them when the app is opened, so one left unopened for about 6 days can stop alerting.',
+                'Iqama times saved while this is off reach iPhones only when the app is next opened.',
+            ];
+        case 'giving':
+            return [
+                // The Online payments tab needs the CRM (the connect routes sit inside it). A type
+                // not offered Giving keeps the tab only while Giving is switched ON for it
+                // (showsOnlinePaymentsTab), so switching it off takes Stripe setup away.
+                ...(!props.masjid.crm_enabled
+                    ? []
+                    : entry.offered_by_default === false
+                        ? [`Stripe setup and the forms card-payment Stop button leave ${org}'s dashboard: a ${orgType.value} has the ${detailsTitle.value} › Online payments tab only while Giving is on. Friday lunch, program fees and form card payments keep charging through the Stripe account already connected.`]
+                        : [`Stripe setup and the forms card-payment Stop button move to ${detailsTitle.value} › Online payments.`]),
+                // Both apps fall back to the donation link on Donate, and say "No donation options are
+                // available right now" when there is none.
+                payload.value?.org.donation_link_set === false
+                    ? `The app stops taking new gifts. ${org} has no donation link set, so an app opening Donate says no donation options are available. To remove the Donate tab too, switch off Donate in Mobile App Features.`
+                    : 'The app stops taking new gifts. An app opening Donate shows your donation link instead. To remove the Donate tab too, switch off Donate in Mobile App Features.',
+                `Nobody at ${org} can send year-end giving statements while this is off (you still can, as SuperAdmin).`,
+                // Open monthly-gift pages refuse the switch-off itself (GivingSwitch::openCheckoutCount),
+                // so only one-time pages can still complete after it.
+                'One-time gift checkout pages opened in the last 24 hours can still complete.',
+            ];
+        case 'splash':
+            return ['A splash already live keeps showing until its end date.'];
+        case 'services':
+            return ['Broadcasts, Friday lunch and About Us keep listing the services already there.'];
+        case 'donation_link':
+            return ['The link already set keeps showing on the website, TV board and app.'];
+        case 'properties':
+            return ['The records stay; nothing public shows them.'];
+        case 'appointment_requests':
+            return ['The website appointment form refuses new requests. Requests already received stay.'];
+        default:
+            return [];
+    }
+}
+
+/** Per module: what switching ON a module this org type is not offered means. */
+function switchOnLines(entry: CapabilityEntry, org: string): string[] {
+    const lines = [
+        `${entry.label} is not offered to a ${orgType.value} unless you switch it on.`,
+        `${org}'s administrators will see it in their sidebar, and its editing API will accept them.`,
+    ];
+
+    if (entry.key === 'giving') {
+        lines.push(
+            crmLine(org),
+            `${org} needs its own Stripe account to take card gifts. Connect it on ${detailsTitle.value} › Online payments.`,
+            `Receipts and year-end statements use wording for a ${orgType.value}: they leave out the sentence about intangible religious benefits.`,
+            `They print the 501(c)(3) sentence only when ${org} has a tax ID saved.`,
+        );
+    }
+    if (entry.key === 'properties') lines.push(crmLine(org));
+
+    return lines;
+}
+
+async function confirmList(title: string, lines: string[], icon: SweetAlertIcon, confirmButtonText: string): Promise<boolean> {
+    const result = await QSwal.fire({
+        title,
+        html: `<ul class="text-start mb-0">${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`,
+        icon,
+        confirmButtonText,
+    });
+    return result.isConfirmed;
+}
+
 /** The confirm dialog. Switching a module OFF says exactly what stops and what stays. */
 async function confirmFlip(entry: CapabilityEntry, enabled: boolean): Promise<boolean> {
     const org = orgName.value;
+    const facts = entry.facts ?? [];
+    const notOffered = entry.kind === 'module' && entry.offered_by_default === false;
 
     if (entry.kind === 'module' && !enabled) {
         const lines = [
             `${org}'s administrators stop seeing ${entry.label}, and its editing API refuses them.`,
-            `You can still open it from “Switched off for ${org}” in your sidebar.`,
+            // A module this type is not offered leaves the sidebar for everyone (menuItemState),
+            // so the Switched-off list is no way back to it. A module with a `where` has no
+            // sidebar item to list at all: its tabs stay on the Details screen, marked Off.
+            notOffered
+                ? `A ${orgType.value} is not offered ${entry.label}, so it leaves your sidebar too; switch it back on here to reach it.`
+                : entry.where
+                    ? `You can still open them, marked Off, on ${detailsTitle.value} › ${entry.where}.`
+                    : `You can still open it from “Switched off for ${org}” in your sidebar.`,
             'What families already see on the website or app stays.',
         ];
         if (entry.in_use && entry.in_use > 0) lines.push(`${sectionCount(entry.in_use)} on live pages show this.`);
         if (entry.key === 'contact_requests') lines.push('Website and app contact forms will refuse new messages.');
         if (entry.key === 'programs') lines.push('Public program sign-up closes.');
+        lines.push(...facts, ...switchOffLines(entry, org));
 
-        const result = await QSwal.fire({
-            title: `Switch off ${entry.label}?`,
-            html: `<ul class="text-start mb-0">${lines.map(line => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`,
-            icon: 'warning',
-            confirmButtonText: 'Yes, switch it off',
-        });
-        return result.isConfirmed;
+        return confirmList(`Switch off ${entry.label}?`, lines, 'warning', 'Yes, switch it off');
+    }
+
+    if (notOffered && enabled) {
+        return confirmList(`Switch on ${entry.label} for ${org}?`, [...switchOnLines(entry, org), ...facts], 'question', 'Yes, switch it on');
     }
 
     const text = entry.kind === 'module'
@@ -342,6 +489,16 @@ async function flip(entry: CapabilityEntry) {
     const enabled = !entry.enabled;
     if (!(await confirmFlip(entry, enabled))) return;
 
+    await sendFlip(entry, enabled);
+}
+
+/**
+ * PATCH one switch. Giving switched off while a monthly gift can still charge, or while a
+ * monthly-gift checkout page is still open, answers 422 with its sentence and changes
+ * nothing (owner, 2026-09-14: block). There is no "switch off anyway": the SuperAdmin
+ * cancels the gift, or waits for the page to expire, and flips again.
+ */
+async function sendFlip(entry: CapabilityEntry, enabled: boolean) {
     busyKey.value = entry.key;
     const org = orgName.value;
     const swalInstance: SweetAlertOptions = { title: 'Info', text: 'Nothing', icon: 'info' };
@@ -357,6 +514,7 @@ async function flip(entry: CapabilityEntry) {
                     capabilities: saved.capabilities
                         ?? (entry.kind === 'grant' ? { ...(props.masjid.capabilities ?? {}), [entry.key]: enabled } : undefined),
                     modules_off: saved.modules_off,
+                    modules_on: saved.modules_on,
                 });
 
                 flipNotice.value = `Re-open ${org}'s dashboard to see its sidebar change.`;
@@ -373,9 +531,15 @@ async function flip(entry: CapabilityEntry) {
             }
         })
         .catch((e: AxiosError<BackendResponseData>) => {
-            swalInstance.title = e.message;
+            // A refusal the server explains reads as its sentence, not as an HTTP status: the
+            // giving switch while monthly gifts can still charge donors, or while checkout
+            // pages are still open, answers 422 with data.capability[0], which
+            // getMessageFromObj flattens. Nothing was changed.
+            const refused = e.response?.status === 422;
+
+            swalInstance.title = refused ? 'Not changed' : e.message;
             swalInstance.text = getMessageFromObj(e);
-            swalInstance.icon = 'error';
+            swalInstance.icon = refused ? 'warning' : 'error';
         })
         .finally(() => {
             busyKey.value = null;

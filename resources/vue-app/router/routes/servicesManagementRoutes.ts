@@ -7,7 +7,8 @@ const servicesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Services'
+            pageTitle: 'Services',
+            requiresModule: 'services'
         },
         component: () => import("@/views/dashboard/services/ServicesView.vue")
     },
@@ -17,7 +18,8 @@ const servicesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Create Service'
+            pageTitle: 'Create Service',
+            requiresModule: 'services'
         },
         component: () => import("@/views/dashboard/services/ServiceFormView.vue")
     },
@@ -27,7 +29,8 @@ const servicesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Edit Service'
+            pageTitle: 'Edit Service',
+            requiresModule: 'services'
         },
         component: () => import("@/views/dashboard/services/ServiceFormView.vue")
     },
@@ -37,7 +40,8 @@ const servicesManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Service Details'
+            pageTitle: 'Service Details',
+            requiresModule: 'services'
         },
         component: () => import("@/views/dashboard/services/ServiceDetailsView.vue")
     },

@@ -260,7 +260,8 @@
                                              (routes/admin.php, connect group); without CRM it never renders. -->
                                         <template v-if="formsCard.parentCrmEnabled">
                                             {{ parentLabel }}'s admins who manage donations can stop it at any time from
-                                            their Giving Dashboard, and a Manara super admin can remove it here.
+                                            their Stripe settings (the Giving Dashboard, or {{ parentDetailsTitle }} › Online
+                                            payments when Giving is switched off), and a Manara super admin can remove it here.
                                         </template>
                                         <template v-else>
                                             {{ parentLabel }} does not use Manara's CRM, so its admins cannot stop it from
@@ -559,6 +560,8 @@ import {
 } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
+import { detailsScreenTitle } from '@/core/access/orgAccess';
+import { MASJID_TERMINOLOGY, Terminology, Vertical } from '@/core/types/data/Vertical';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
@@ -830,10 +833,11 @@ const toggleCrmAccess = (enabled: boolean) => {
  * organisation in step with the server's, so the panel's fallback rows (and anything
  * else here that reads `capabilities`) show what was just saved.
  */
-const onSwitchesUpdated = (saved: { capabilities?: Masjid['capabilities']; modules_off?: Masjid['modules_off'] }) => {
+const onSwitchesUpdated = (saved: { capabilities?: Masjid['capabilities']; modules_off?: Masjid['modules_off']; modules_on?: Masjid['modules_on'] }) => {
     if (!masjid.value) return;
     if (saved.capabilities) masjid.value.capabilities = saved.capabilities;
     if (saved.modules_off) masjid.value.modules_off = saved.modules_off;
+    if (saved.modules_on) masjid.value.modules_on = saved.modules_on;
 }
 
 // Enter this organisation's dashboard on its Team & Access screen — the same way
@@ -931,6 +935,8 @@ type FormsCardPanel = {
     parentCrmEnabled: boolean | null;
     parentChargeReady: boolean | null;
     parentLinked: boolean | null;
+    /** The parent's own words (its vertical pack), for naming its Details screen; null until read. */
+    parentTerminology: Terminology | null;
     /** GET forms/card-account for this organisation, or null when it could not be read. */
     account: FormsCardAccount | null;
     /** The link as the server last described it, or null when not linked. */
@@ -945,12 +951,15 @@ const parentId = computed<number | null>(() => linkFields.value.parent_id ?? nul
 
 const formsCard = ref<FormsCardPanel>({
     loading: false, saving: false, parentName: '',
-    parentCrmEnabled: null, parentChargeReady: null, parentLinked: null,
+    parentCrmEnabled: null, parentChargeReady: null, parentLinked: null, parentTerminology: null,
     account: null, via: null, loadError: ''
 });
 
 /** Names with a neutral stand-in, so no sentence on the screen has a hole in it. */
 const parentLabel = computed(() => formsCard.value.parentName || 'its parent organisation');
+/** The parent's Details screen as its own sidebar names it ("Masjid Details"); the masjid pack until read. */
+const parentDetailsTitle = computed(() => detailsScreenTitle(
+    key => formsCard.value.parentTerminology?.[key] || MASJID_TERMINOLOGY[key]));
 const childLabel = computed(() => masjid.value?.name || 'this organisation');
 
 const formsCardLinked = computed(() => formsCard.value.via !== null);
@@ -1002,6 +1011,7 @@ const loadFormsCard = async (): Promise<void> => {
     formsCard.value.parentCrmEnabled = null;
     formsCard.value.parentChargeReady = null;
     formsCard.value.parentLinked = null;
+    formsCard.value.parentTerminology = null;
 
     const [parentRead, accountRead] = await Promise.allSettled([
         ApiService.get(`/api/admin/masjids/${parent}/`),
@@ -1011,10 +1021,11 @@ const loadFormsCard = async (): Promise<void> => {
     if (parentRead.status === 'fulfilled'
         && parentRead.value.data?.status === 'success'
         && typeof parentRead.value.data?.data?.name === 'string') {
-        const row = parentRead.value.data.data as MasjidFormsCardFields & { name: string; crm_enabled?: boolean | null };
+        const row = parentRead.value.data.data as MasjidFormsCardFields & { name: string; crm_enabled?: boolean | null; vertical?: Vertical };
 
         formsCard.value.parentName = row.name;
         formsCard.value.parentCrmEnabled = row.crm_enabled === true;
+        formsCard.value.parentTerminology = row.vertical?.terminology ?? null;
         // Booleans only: the id itself is never kept (see the note at the top of this section).
         formsCard.value.parentChargeReady = typeof row.stripe_account_id === 'string'
             && row.stripe_account_id.length > 5

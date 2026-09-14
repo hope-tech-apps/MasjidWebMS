@@ -7,10 +7,7 @@
             <main id="dashboard_main">
                 <!-- A SuperAdmin opened a screen this organisation does not have
                      (from "Switched off for …" in the sidebar, or a typed URL). -->
-                <div v-if="switchedOffHere" class="alert alert-warning py-2 px-3 small mx-3 mt-3 mb-0" role="status">
-                    <i class="bi bi-dash-circle me-1" aria-hidden="true"></i>
-                    Switched off for {{ masjidStore.masjid?.name }}: its administrators do not see this screen.
-                </div>
+                <SwitchedOffNotice v-if="switchedOffHere" class="mx-3 mt-3" :org-name="masjidStore.masjid?.name" />
                 <RouterView></RouterView>
             </main>
             <DashboardFooter />
@@ -24,6 +21,7 @@ import DashboardHeader from '@/components/dashboard/DashboardHeader.vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import { computed, onBeforeMount, onMounted, onUpdated, ref } from 'vue';
 import DashboardFooter from '@/components/dashboard/DashboardFooter.vue';
+import SwitchedOffNotice from '@/components/dashboard/SwitchedOffNotice.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { hasGrant, moduleIsOff } from '@/core/access/orgAccess';

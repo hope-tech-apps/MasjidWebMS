@@ -1,3 +1,5 @@
+import { OrgType } from "@/core/types/data/Vertical";
+
 // Organisation capabilities — mirrors config/capabilities.php.
 //
 // Layer 1 of the access model: what an ORGANISATION has. A SuperAdmin decides;
@@ -8,18 +10,23 @@
 //           it), and a key a payload lacks reads as "not had". Menu items and
 //           routes use `requiresCapability` / `requiresAnyCapability`.
 //
-//   module  Default ON for every org type. The payload carries `modules_off`,
-//           the modules a SuperAdmin switched off; a key it does not name — or a
-//           payload with no `modules_off` at all, from an older backend — reads
-//           as ON. Menu items and routes use `requiresModule`, NEVER
-//           `requiresCapability`: that check's strict `=== true` would hide every
-//           default-on screen the moment the SPA shipped ahead of the backend.
+//   module  A screen an organisation has until a SuperAdmin switches it off. Most
+//           are ON for every org type; a few (the masjid-only screens) are
+//           offered to masjids only, and a SuperAdmin can switch one ON for a
+//           school or community organisation (MODULE_DEFAULTS). The payload
+//           carries `modules_off`, the offered modules a SuperAdmin switched off,
+//           and `modules_on`, the not-offered modules a SuperAdmin switched on. A
+//           key `modules_off` does not name — or a payload with no `modules_off`
+//           at all, from an older backend — reads as ON. Menu items and routes
+//           use `requiresModule`, NEVER `requiresCapability`: that check's strict
+//           `=== true` would hide every default-on screen the moment the SPA
+//           shipped ahead of the backend.
 //
 // A SuperAdmin is never gated by a grant or a module on the server; the menu
 // shows them what the organisation has and lists the rest as switched off.
 export type CapabilityKey = 'web_pages' | 'jummah_lunch' | 'crm' | 'assistant' | 'school_calendar' | 'form_editing';
 
-/** The default-on modules, in catalogue order (Masjid::MODULE_KEYS). */
+/** The modules, in catalogue order (Masjid::MODULE_KEYS). CapabilityTsMirrorTest pins it. */
 export const MODULE_KEYS = [
     'website',
     'announcements',
@@ -33,9 +40,49 @@ export const MODULE_KEYS = [
     'broadcasts',
     'flyer_studio',
     'impact_report',
+    'prayer_times',
+    'splash',
+    'services',
+    'donation_link',
+    'giving',
+    'properties',
+    'appointment_requests',
 ] as const;
 
 export type ModuleKey = typeof MODULE_KEYS[number];
+
+/**
+ * Which org types a module is offered to before a SuperAdmin decides — a copy of
+ * Masjid::MODULE_DEFAULTS (and of each entry's `defaults` in
+ * config/capabilities.php), in MODULE_KEYS order, one key per line.
+ * CapabilityTsMirrorTest parses this block, so keep that layout.
+ *
+ * Reference only. Nothing in the SPA decides visibility from it: the payload's
+ * `modules_off` / `modules_on` and the panel's `offered_by_default` are the
+ * server's answer for one organisation, and an older backend that sends none of
+ * them must render exactly today's screens.
+ */
+export const MODULE_DEFAULTS: Record<ModuleKey, Record<OrgType, boolean>> = {
+    website: { masjid: true, school: true, community: true },
+    announcements: { masjid: true, school: true, community: true },
+    events: { masjid: true, school: true, community: true },
+    about_us: { masjid: true, school: true, community: true },
+    gallery: { masjid: true, school: true, community: true },
+    push_notifications: { masjid: true, school: true, community: true },
+    contact_requests: { masjid: true, school: true, community: true },
+    programs: { masjid: true, school: true, community: true },
+    zakat: { masjid: true, school: true, community: true },
+    broadcasts: { masjid: true, school: true, community: true },
+    flyer_studio: { masjid: true, school: true, community: true },
+    impact_report: { masjid: true, school: true, community: true },
+    prayer_times: { masjid: true, school: true, community: true },
+    splash: { masjid: true, school: false, community: false },
+    services: { masjid: true, school: false, community: false },
+    donation_link: { masjid: true, school: false, community: false },
+    giving: { masjid: true, school: false, community: false },
+    properties: { masjid: true, school: false, community: false },
+    appointment_requests: { masjid: true, school: true, community: true },
+};
 
 export type CapabilityInfo = {
     key: CapabilityKey;
@@ -123,6 +170,21 @@ export type CapabilityEntry = {
     overridden: boolean;
     /** Active sections on active pages that show this module's data; null when no section type depends on it. */
     in_use: number | null;
+    /**
+     * Whether this organisation's type is offered the module before a SuperAdmin decides
+     * (Masjid::MODULE_DEFAULTS); a `false` row is how the module gets switched ON for it.
+     * Absent from an older backend, where every module is offered.
+     */
+    offered_by_default?: boolean | null;
+    /**
+     * For a module that lives on tabs of the Details screen rather than a sidebar item: the
+     * tab names without the screen's (prayer_times). The panel prints
+     * "{Details sidebar title} › {where}". A module needs a sidebar item or a `where`, or its
+     * row cannot be placed.
+     */
+    where?: string | null;
+    /** What is live for this organisation right now, as sentences (App\Support\ModuleFacts). */
+    facts?: string[];
 };
 
 export type CapabilityGroup = {
@@ -144,7 +206,12 @@ export type CapabilityChange = {
 };
 
 export type OrganisationCapabilities = {
-    org: { id: number; name: string; org_type: string };
+    /**
+     * `donation_link_set`: whether the apps have a donation link to show on Donate while
+     * Giving is off (they say "No donation options are available right now" without one).
+     * Absent from an older backend.
+     */
+    org: { id: number; name: string; org_type: string; donation_link_set?: boolean };
     groups: CapabilityGroup[];
     history: CapabilityChange[];
 };

@@ -50,7 +50,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Donation'
+                    pageTitle: 'Donation',
+                    requiresModule: 'donation_link'
                 },
                 component: () => import("@/views/dashboard/DonationView.vue")
             },
@@ -111,7 +112,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Iqama Settings'
+                    pageTitle: 'Iqama Settings',
+                    requiresModule: 'prayer_times'
                 },
                 component: () => import("@/views/dashboard/IqamaTimeSettingsView.vue")
             },
@@ -121,7 +123,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 meta: {
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-                    pageTitle: 'Jumaa Settings'
+                    pageTitle: 'Jumaa Settings',
+                    requiresModule: 'prayer_times'
                 },
                 component: () => import("@/views/dashboard/JumaaSettingsView.vue")
             },
@@ -262,7 +265,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Donation Funds',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/FundsView.vue")
             },
@@ -295,7 +299,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Donations',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/DonationsView.vue")
             },
@@ -309,7 +314,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Giving Dashboard',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/DonationsDashboardView.vue")
             },
@@ -341,7 +347,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Fund Detail',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/FundDetailView.vue")
             },
@@ -352,7 +359,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Recurring Donations',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/RecurringDonationsView.vue")
             },
@@ -363,7 +371,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Year-End Statements',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'giving'
                 },
                 component: () => import("@/views/dashboard/AnnualStatementsView.vue")
             },
@@ -374,7 +383,8 @@ const dashboardRoutes: RouteRecordRaw[] = [
                     auth: true,
                     allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
                     pageTitle: 'Properties & Rent',
-                    requiresCrm: true
+                    requiresCrm: true,
+                    requiresModule: 'properties'
                 },
                 component: () => import("@/views/dashboard/PropertiesView.vue")
             },

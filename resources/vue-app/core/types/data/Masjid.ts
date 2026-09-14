@@ -60,6 +60,14 @@ export type Masjid = {
      */
     modules_off?: ModuleKey[];
     /**
+     * The modules NOT offered to this organisation's type (Masjid::MODULE_DEFAULTS:
+     * Splash, Services, Donation link, Giving and Properties for a school or
+     * community organisation) that a SuperAdmin switched ON for it. Absent means
+     * none, exactly as an older backend reads. Read it through `moduleSwitchedOn()`
+     * (core/access/orgAccess.ts), never inline.
+     */
+    modules_on?: ModuleKey[];
+    /**
      * This tenant's vertical and its terminology pack. Optional because only the
      * ADMIN endpoints append it — a payload from anywhere else, or one cached
      * from before it existed, simply has no vertical and reads as a masjid.

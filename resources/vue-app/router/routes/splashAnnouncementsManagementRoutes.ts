@@ -7,7 +7,8 @@ const splashAnnouncementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Splash Announcements'
+            pageTitle: 'Splash Announcements',
+            requiresModule: 'splash'
         },
         component: () => import("@/views/dashboard/splash-announcements/SplashAnnouncementsView.vue")
     },
@@ -17,7 +18,8 @@ const splashAnnouncementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Create Splash Announcement'
+            pageTitle: 'Create Splash Announcement',
+            requiresModule: 'splash'
         },
         component: () => import("@/views/dashboard/splash-announcements/SplashAnnouncementFormView.vue")
     },
@@ -27,7 +29,8 @@ const splashAnnouncementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Edit Splash Announcement'
+            pageTitle: 'Edit Splash Announcement',
+            requiresModule: 'splash'
         },
         component: () => import("@/views/dashboard/splash-announcements/SplashAnnouncementFormView.vue")
     },
@@ -37,7 +40,8 @@ const splashAnnouncementsManagementRoutes: RouteRecordRaw[] = [
         meta: {
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
-            pageTitle: 'Splash Announcement Details'
+            pageTitle: 'Splash Announcement Details',
+            requiresModule: 'splash'
         },
         component: () => import("@/views/dashboard/splash-announcements/SplashAnnouncementDetailsView.vue")
     }

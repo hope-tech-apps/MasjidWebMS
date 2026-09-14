@@ -137,7 +137,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useTwoFactorStore } from '@/stores/twoFactorStore';
 import { CAPABILITY_LABELS, TeamAccess, UserOrganisation } from '@/core/types/data/Capability';
-import { accessBadge, accessLabel } from '@/core/helpers/access';
+import { accessBadge, accessLabel, adminExtrasPhrase } from '@/core/helpers/access';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { computed, onBeforeMount, ref } from 'vue';
@@ -175,7 +175,8 @@ function accessIncludes(org: UserOrganisation): string {
         const has = (org.capabilities ?? []).map(k => CAPABILITY_LABELS[k] ?? k);
         // Byte-identical to before unless a module is switched off there.
         const off = (org.modules_off ?? []).map(m => m.label);
-        return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus announcements, events, services and settings.${off.length ? ` Switched off here: ${off.join(', ')}.` : ''}`;
+        const extras = adminExtrasPhrase((org.modules_off ?? []).map(m => m.key));
+        return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus ${extras}.${off.length ? ` Switched off here: ${off.join(', ')}.` : ''}`;
     }
     if (org.access === 'jummah_lunch') return 'Can only run the Friday lunch board: menus, orders and payments.';
     if (org.access === 'teacher') return 'Can only see and manage the classes they lead.';

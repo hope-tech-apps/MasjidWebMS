@@ -67,11 +67,13 @@ export const MASJID_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/masjid/services',
-        title: 'Masjid Services - Page'
+        title: 'Masjid Services - Page',
+        requiresModule: 'services'
     },
     {
         url: '/masjid/donation',
-        title: 'Masjid Donation Link - Page'
+        title: 'Masjid Donation Link - Page',
+        requiresModule: 'donation_link'
     },
     {
         url: '/masjid/about',
@@ -85,7 +87,8 @@ export const MASJID_DASHBOARD_ROUTES_RESULTS: DashboardSearchResultRecord[] = [
     },
     {
         url: '/masjid/iqama',
-        title: 'Masjid Iqama Time Settings - Page'
+        title: 'Masjid Iqama Time Settings - Page',
+        requiresModule: 'prayer_times'
     },
     {
         url: '/masjid/notifications',

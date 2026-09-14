@@ -147,7 +147,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useDashboardSearchStore } from '@/stores/dashboardSearchStore';
 import { DashboardSearchResultData, DashboardSearchResultRecord, GENERAL_DASHBOARD_ROUTES_RESULTS, MASJID_DASHBOARD_ROUTES_RESULTS, SUPER_DASHBOARD_ROUTES_RESULTS } from '@/core/types/data/custom/DashboardSearch';
-import { moduleIsOff } from '@/core/access/orgAccess';
+import { itemFitsOrgType, moduleIsOff } from '@/core/access/orgAccess';
+import { MASJID_DASHBOARD_ASIDE_MENU } from '@/core/constants/dashboardAsideMenuItems';
 
 // Lifecycle hooks
 onMounted(() => {
@@ -233,10 +234,21 @@ watch(searchValue, async () => {
  * off is dropped for its administrators, and kept for a SuperAdmin with
  * " (switched off)" on the end. Matched on the authored title first, so typing
  * "switched" never finds anything.
+ *
+ * Before that, the sidebar's org-type rule (itemFitsOrgType): a link whose sidebar
+ * item is for other org types, and whose module nobody switched on here, is dropped
+ * for everyone, exactly as the item is. A school's Services and Donation link are
+ * never in `modules_off` (it was not offered them), and their editing APIs refuse
+ * its admins, so the link would open a screen that cannot save.
  */
 function withModuleRules(records: DashboardSearchResultRecord[]): DashboardSearchResultRecord[] {
     return records.flatMap(record => {
-        if (!record.requiresModule || !moduleIsOff(masjidStore.masjid, record.requiresModule)) return [record];
+        if (!record.requiresModule) return [record];
+
+        const item = MASJID_DASHBOARD_ASIDE_MENU.find(entry => entry.to === record.url);
+        if (item && !itemFitsOrgType(item, masjidStore.masjid, masjidStore.orgType)) return [];
+
+        if (!moduleIsOff(masjidStore.masjid, record.requiresModule)) return [record];
 
         return authStore.user?.type === 'SuperAdmin'
             ? [{ ...record, title: `${record.title} (switched off)` }]

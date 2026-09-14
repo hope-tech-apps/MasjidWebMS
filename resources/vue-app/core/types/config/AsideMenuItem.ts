@@ -27,11 +27,17 @@ export type AsideMenuItem = {
     // NEVER use this for a module key: its strict `=== true` hides the item
     // whenever the payload is silent, which is every default-on screen.
     requiresCapability?: CapabilityKey;
-    // A default-on MODULE (kind `module`): the item is hidden only when the
-    // organisation's `modules_off` names it — for its administrators hidden,
-    // for a SuperAdmin listed under "Switched off for {org}". A payload with no
-    // `modules_off` hides nothing.
+    // A MODULE (kind `module`): the item is hidden only when the organisation's
+    // `modules_off` names it — for its administrators hidden, for a SuperAdmin
+    // listed under "Switched off for {org}". A payload with no `modules_off`
+    // hides nothing. For a module offered to masjids only, it also lets the item
+    // past `requiresOrgTypes` once a SuperAdmin switched it ON for another org
+    // type (`modules_on`).
     requiresModule?: ModuleKey;
+    // What decides an item that has no switch, as one phrase for the SuperAdmin's
+    // "Not switchable here" list. Set it only where reading the flags would say
+    // the wrong thing (the Details screen, the SuperAdmin-only library).
+    lever?: string;
     // When true, the item is only shown if the active masjid's crm_enabled is true.
     requiresCrm?: boolean;
     // When true, the item is only shown if the active masjid's assistant_enabled is true.
@@ -46,5 +52,8 @@ export type AsideMenuItem = {
     // relationship `requiresCrm` has with the `crm` middleware. A tenant whose
     // vertical is unknown reads as `masjid` (Vertical.ts), so an item gated to
     // another vertical stays hidden until the payload proves otherwise.
+    //
+    // The one way past it: the item's `requiresModule` is in the organisation's
+    // `modules_on` (a SuperAdmin switched a masjid-only module on for it).
     requiresOrgTypes?: OrgType[];
 }

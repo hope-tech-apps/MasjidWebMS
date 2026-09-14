@@ -146,6 +146,7 @@ import { computed, ref, watch } from 'vue';
 import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { apiErrorText } from '@/core/services/ApiErrors';
+import { adminExtrasPhrase } from '@/core/helpers/access';
 import { CapabilityInfo, TeamAccess, TeamMember } from '@/core/types/data/Capability';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -181,12 +182,13 @@ const chips = computed<CapabilityInfo[]>(() => capabilities.value.filter(c => c.
 // The modules a SuperAdmin switched off here. Empty for every organisation until
 // one is flipped, and then the sentence below stays exactly what it was.
 const screensOff = computed<string>(() => (teamStore.team?.screens_off ?? []).map(s => s.label).join(', '));
+const screensOffKeys = computed<string[]>(() => (teamStore.team?.screens_off ?? []).map(s => s.key));
 
 const accessOptions = computed(() => canAdd.value.map((value) => value === 'admin'
     ? {
         value,
         title: 'Administrator',
-        help: `Everything ${orgName.value} has${enabledLabels.value.length ? ` — ${enabledLabels.value.join(', ')} —` : ''} plus announcements, events, services and settings.${screensOff.value ? ` Switched off here: ${screensOff.value}.` : ''}`,
+        help: `Everything ${orgName.value} has${enabledLabels.value.length ? ` — ${enabledLabels.value.join(', ')} —` : ''} plus ${adminExtrasPhrase(screensOffKeys.value)}.${screensOff.value ? ` Switched off here: ${screensOff.value}.` : ''}`,
     }
     : {
         value,

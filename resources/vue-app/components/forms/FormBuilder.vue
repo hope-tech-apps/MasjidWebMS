@@ -668,8 +668,8 @@
                             </div>
                             <div v-else class="alert alert-warning py-2 small mb-0">
                                 Card payment will be refused<template v-if="cardProblemText">, because {{ cardProblemText }}</template>.
-                                Connect or finish this organisation's Stripe account on the
-                                <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">Giving Dashboard (opens in a new tab)</a><span v-else>Giving Dashboard</span>.
+                                Connect or finish this organisation's Stripe account {{ givingOff ? 'under' : 'on the' }}
+                                <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">{{ connectPlace }} (opens in a new tab)</a><span v-else>{{ connectPlace }}</span>.
                             </div>
                         </template>
                         <div v-else-if="cardAccountState === 'failed'" class="small text-muted">
@@ -1052,6 +1052,8 @@ import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useConnectStore } from '@/stores/masjid/connectStore';
+import { useMasjidStore } from '@/stores/masjidStore';
+import { detailsScreenTitle, moduleIsOff } from '@/core/access/orgAccess';
 import { FormsCardAccount, formsCardProblemIsLink, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverFieldErrors, serverMessage } from '@/core/helpers/serverMessage';
 import { computed, ref, watch } from 'vue';
@@ -2573,9 +2575,21 @@ const cardProblemText = computed(() => formsCardProblemText(cardAccount.value?.p
 const cardHolderName = computed(() => cardAccount.value?.holder?.name || 'another organisation');
 const CARD_ACCOUNT_STATES = ['own', 'linked', 'unavailable'];
 
+const masjidStore = useMasjidStore();
+
+// Where Stripe Connect is. The Giving Dashboard holds it while Giving is on; switched
+// off, that screen is hidden and Connect sits on the Details screen's Online payments
+// tab, named by its sidebar title ("Masjid Details"), never "Settings".
+const givingOff = computed<boolean>(() => moduleIsOff(masjidStore.masjid, 'giving'));
+const connectPlace = computed<string>(() => givingOff.value
+    ? `Online payments on its ${detailsScreenTitle(masjidStore.term)} screen`
+    : 'Giving Dashboard');
+
 const donationsHref = computed<string | null>(() => {
     try {
-        return router.resolve({ name: 'masjid.donationsDashboard' }).href;
+        return givingOff.value
+            ? router.resolve({ name: 'masjid.details', hash: '#online-payments' }).href
+            : router.resolve({ name: 'masjid.donationsDashboard' }).href;
     } catch (e) {
         return null;
     }

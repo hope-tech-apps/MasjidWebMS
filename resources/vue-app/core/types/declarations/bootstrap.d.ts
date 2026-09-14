@@ -51,5 +51,13 @@ declare module 'bootstrap' {
         touch?: boolean;
     }
 
+    export class Tab {
+        constructor(element: HTMLElement);
+        show(): void;
+        dispose(): void;
+        static getInstance(element: HTMLElement): Tab | null;
+        static getOrCreateInstance(element: HTMLElement): Tab;
+    }
+
     // Add other Bootstrap components as needed
 }

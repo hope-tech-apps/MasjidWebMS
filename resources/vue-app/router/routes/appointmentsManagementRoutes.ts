@@ -21,6 +21,12 @@ import { RouteRecordRaw } from "vue-router"
  * with no screen at all. Hiding a menu item is a default; hiding the data is a
  * bug. The real boundary stays where it belongs: `permission:view contacts` plus
  * the CRM gate, server-side.
+ *
+ * `requiresModule: 'appointment_requests'` is the organisation's own switch
+ * (config/capabilities.php), ON for every org type — so the paragraph above still
+ * holds. Switched off, its administrators get a 401 here instead of a screen whose
+ * API answers with the server's `capability:appointment_requests` sentence; a
+ * SuperAdmin passes and sees DashboardLayout's notice.
  */
 const appointmentsManagementRoutes: RouteRecordRaw[] = [
     {
@@ -33,7 +39,8 @@ const appointmentsManagementRoutes: RouteRecordRaw[] = [
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
             pageTitle: 'Appointment Requests',
-            requiresCrm: true
+            requiresCrm: true,
+            requiresModule: 'appointment_requests'
         },
         component: () => import("@/views/dashboard/AppointmentRequestsView.vue")
     },
@@ -45,7 +52,8 @@ const appointmentsManagementRoutes: RouteRecordRaw[] = [
             auth: true,
             allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
             pageTitle: 'Appointment Request',
-            requiresCrm: true
+            requiresCrm: true,
+            requiresModule: 'appointment_requests'
         },
         component: () => import("@/views/dashboard/AppointmentRequestDetailView.vue")
     }
