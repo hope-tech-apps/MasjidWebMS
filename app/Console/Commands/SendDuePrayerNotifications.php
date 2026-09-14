@@ -6,6 +6,7 @@ use App\Models\Masjid;
 use App\Models\MobileAppUser;
 use App\Models\Prayer;
 use App\Services\OnesignalService;
+use App\Support\PrayerPushes;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
@@ -16,9 +17,13 @@ use Illuminate\Support\Facades\Log;
  *
  * Runs every minute (see routes/console.php). For each masjid it finds any
  * adhan / iqama time that has JUST occurred and pushes a reminder — but ONLY to
- * devices that have gone dark (no heartbeat for > STALE_DAYS), i.e. whose local
- * rolling-window notifications have lapsed. Active devices keep their precise
- * local notifications and are never targeted here, so there are no duplicates.
+ * devices that have gone dark (no heartbeat for > PrayerPushes::STALE_DAYS), i.e.
+ * whose local rolling-window notifications have lapsed. Active devices keep their
+ * precise local notifications and are never targeted here, so there are no
+ * duplicates.
+ *
+ * An organisation whose Prayer times module is switched off is skipped entirely
+ * (PrayerPushes::allowedFor, fail-open).
  *
  * Timezone correctness: the stored `prayers_data` adhan values are full UTC
  * datetimes, so every comparison is done on absolute UTC instants. Iqama is
@@ -34,9 +39,6 @@ class SendDuePrayerNotifications extends Command
         {--ignore-staleness : Ignore the dark-device filter; send to all of the masjid (testing)}';
 
     protected $description = 'Push adhan/iqama at prayer time to devices that have gone dark, as a backstop to local notifications.';
-
-    /** Devices silent at least this long get the server backstop. */
-    private const STALE_DAYS = 5;
 
     /** Fire if the prayer instant occurred within this many seconds (covers a late cron run). */
     private const WINDOW_SECONDS = 90;
@@ -76,6 +78,10 @@ class SendDuePrayerNotifications extends Command
         $ignoreStaleness = (bool) $this->option('ignore-staleness');
 
         foreach (Masjid::with('iqamaTimeSettings', 'appPublishing')->get() as $masjid) {
+            if (! PrayerPushes::allowedFor($masjid)) {
+                continue;
+            }
+
             $offsets = $masjid->iqamaTimeSettings;
             if (!$offsets) {
                 continue;
@@ -146,7 +152,7 @@ class SendDuePrayerNotifications extends Command
             // heartbeat-capable build) but not within STALE_DAYS. NULL is
             // excluded on purpose — never risk double-notifying an active device.
             $query->whereNotNull('last_active_at')
-                ->where('last_active_at', '<', $now->copy()->subDays(self::STALE_DAYS));
+                ->where('last_active_at', '<', $now->copy()->subDays(PrayerPushes::STALE_DAYS));
         }
 
         $subscriptionIds = $query->pluck('onesignal_subscription_id')->filter()->values()->toArray();

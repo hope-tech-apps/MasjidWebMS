@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Iqama\SaveIqamaSettingsRequest;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use App\Support\PrayerPushes;
 use Symfony\Component\HttpFoundation\Response;
 
 class IqamaTimeSettingsController extends Controller
@@ -72,21 +73,27 @@ class IqamaTimeSettingsController extends Controller
             // iqama times and re-arm their local notification schedule, so the
             // change reaches users without them reopening the app. Silent push,
             // queued, and fail-soft — must never block or break the save.
-            try {
-                $subscriptionIds = $masjid->mobileAppUsers()
-                    ->whereNotNull('onesignal_subscription_id')
-                    ->pluck('onesignal_subscription_id')
-                    ->filter()
-                    ->values()
-                    ->toArray();
+            //
+            // Not for an organisation whose Prayer times are switched off: only a
+            // SuperAdmin can save here then, and that save must not wake its phones
+            // (App\Support\PrayerPushes).
+            if (PrayerPushes::allowedFor($masjid)) {
+                try {
+                    $subscriptionIds = $masjid->mobileAppUsers()
+                        ->whereNotNull('onesignal_subscription_id')
+                        ->pluck('onesignal_subscription_id')
+                        ->filter()
+                        ->values()
+                        ->toArray();
 
-                if (!empty($subscriptionIds)) {
-                    \App\Jobs\SendPrayerSyncJob::dispatch((int) $masjid_id, $subscriptionIds);
+                    if (!empty($subscriptionIds)) {
+                        \App\Jobs\SendPrayerSyncJob::dispatch((int) $masjid_id, $subscriptionIds);
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning(
+                        'Failed to queue prayer-sync push: ' . $e->getMessage()
+                    );
                 }
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning(
-                    'Failed to queue prayer-sync push: ' . $e->getMessage()
-                );
             }
 
             return response()->json([

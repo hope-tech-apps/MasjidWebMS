@@ -109,7 +109,6 @@
         </tr>
     </table>
 
-@if ($religiousOrg ?? true)
     <p>{{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
         As such, all contributions are tax deductible for federal and state income tax purposes.@if ($taxId)
         Our {{ $jurisdiction }} Federal tax ID number is {{ $taxId }}.@endif</p>
@@ -117,21 +116,6 @@
     <p>No goods or services were provided in exchange for or in connection with this contribution, other
         than intangible religious benefits. You can keep this receipt as written proof of your donation for
         your tax records.</p>
-@else
-{{-- Letterhead::forMasjid sets religiousOrg false for a school or community
-     organisation: no "intangible religious benefits", and 501(c)(3) status only
-     when a tax ID is on file. Directives sit at column 0 and this comment lives
-     in this branch because a Blade comment leaves its newline behind: the masjid
-     bytes stay identical (ReceiptWordingByOrgTypeTest). --}}
-@if ($taxId)
-    <p>{{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
-        As such, all contributions are tax deductible for federal and state income tax purposes.
-        Our {{ $jurisdiction }} Federal tax ID number is {{ $taxId }}.</p>
-
-@endif
-    <p>No goods or services were provided in exchange for or in connection with this contribution. You can
-        keep this receipt as written proof of your donation for your tax records.</p>
-@endif
 
     @if ($reference !== '')
         <p class="ref">Reference: {{ $reference }}</p>

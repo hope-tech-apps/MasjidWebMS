@@ -15,6 +15,7 @@
 
 return [
     'content' => 'Website & app content',
+    'prayer' => 'Prayer times',
     'communication' => 'Communication',
     'registration_money' => 'Members, registration & money',
     'school' => 'School',

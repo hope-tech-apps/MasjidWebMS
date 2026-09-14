@@ -67,18 +67,9 @@
                             </table>
 
                             <p style="margin:24px 0 0; font-size:12px; line-height:1.6; color:#9aa5b1;">
-@if ($religiousOrg ?? true)
                                 No goods or services were provided in exchange for these contributions, other than
                                 intangible religious benefits. Please retain this statement for your tax records.
                                 {{ $masjidName }} is a registered 501(c)(3) organization.
-@else
-{{-- Not a masjid: no religious wording, and no 501(c)(3) claim because this
-     email cannot see a tax ID (the attached letter states it when one is on
-     file). Directives at column 0, comment in this branch: the masjid bytes stay
-     identical (ReceiptWordingByOrgTypeTest). --}}
-                                No goods or services were provided in exchange for these contributions.
-                                Please retain this statement for your tax records.
-@endif
                             </p>
                         </td>
                     </tr>

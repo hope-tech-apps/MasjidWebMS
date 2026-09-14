@@ -340,39 +340,85 @@ entry has a `kind`, a `group` (`config/capability_groups.php`), a `label` and a 
   - Override-backed (`web_pages`, `jummah_lunch`, `school_calendar`, `form_editing`): stored in
     `masjids.capability_overrides` (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`). Absent key
     → the org_type default, chosen to reproduce what each vertical reached before the catalogue.
-- **Modules** (`kind => module`) are screens every organisation already had: **ON for every org
-  type** until a SuperAdmin switches one off for one organisation. `website`, `announcements`,
-  `events`, `about_us`, `gallery`, `push_notifications`, `contact_requests`, `programs`, `zakat`,
-  `broadcasts`, `flyer_studio`, `impact_report`; same overrides column.
-  - **Read them ONLY through `Masjid::moduleIsOff()`, which fails OPEN.** It says "off" only for a
-    key in `Masjid::MODULE_KEYS` that the loaded config also knows as a module. bin/deploy runs
+- **Modules** (`kind => module`) are screens a SuperAdmin switches per organisation; same overrides
+  column. Nineteen, in `Masjid::MODULE_KEYS` order: `website`, `announcements`, `events`,
+  `about_us`, `gallery`, `push_notifications`, `contact_requests`, `programs`, `zakat`,
+  `broadcasts`, `flyer_studio`, `impact_report` (2026-09-16), then `prayer_times`, `splash`,
+  `services`, `donation_link`, `giving`, `properties`, `appointment_requests` (switches wave 2).
+  - **Defaults are per org type** (`Masjid::MODULE_DEFAULTS`, a code copy of each entry's
+    `defaults`). Every module is ON for a masjid. `splash`, `services`, `donation_link`, `giving`
+    and `properties` are NOT OFFERED to a school or community organisation: off there until a
+    SuperAdmin switches one ON. The rest are on for every type. `Masjid::moduleOfferedByDefault()`
+    reads the table.
+  - **Read them ONLY through `Masjid::moduleIsOff()`, which fails OPEN.** An unknown key is never
+    off. For a key the loaded config knows as a module it reads the override, else the config
+    default. For a `MODULE_KEYS` key the loaded config does NOT know (a stale cache) it answers
+    `MODULE_DEFAULTS[key][orgType]` with overrides unread: a masjid keeps every screen, and a
+    school gains no masjid screen. **Never `hasCapability()` on a module key.** bin/deploy runs
     the new PHP against the previous config cache until `config:cache`; a fail-closed read in that
     window refuses every organisation's contact form, program sign-up and announcements, and keeps
     refusing if the deploy aborts. `ModulesFailOpenTest` reproduces the window.
   - Every module check uses it: the gate, the Broadcasts channels (compose AND delivery), the
-    Assistant's tools, the admin search, public contact-us and program intake, and the page
-    builder's `module_off_note`. **Side doors follow the organisation with no SuperAdmin bypass**
-    (Broadcasts, the Assistant, public intake) — except the admin header search, which hides
-    switched-off records from the organisation's own admins only, so a SuperAdmin still finds them.
-    Public and mobile READS never follow a module.
-  - `Masjid::MODULE_KEYS` equals the config's module keys, in order (`CapabilityGateTest`), and
-    every non-column entry names all of `Masjid::ORG_TYPES` in `defaults` (`?? false` otherwise).
+    Assistant's tools, the admin search, public contact-us, program and appointment-request intake,
+    the app's donation checkout (403) and funds list (`[]`) while `giving` is off, Manara's prayer
+    pushes (`App\Support\PrayerPushes::allowedFor`: `prayers:send-due`, `prayers:daily-resync`, the
+    iqama-save sync), and the page builder's `module_off_note`. **Side doors follow the
+    organisation with no SuperAdmin bypass** (Broadcasts, the Assistant, public intake, prayer
+    pushes) — except the admin header search, which hides switched-off announcements, About Us and
+    services from the organisation's own admins only, so a SuperAdmin still finds them.
+    Public and mobile READS never follow a module. **Money already charged never follows one
+    either**: the Stripe webhook, receipts and receipt emails run as for any organisation, and
+    `App\Support\GivingSwitch::noteArrivalIfOff` only logs a warning, once per donation or
+    commitment (`.claude/rules/stripe-payments.md`).
+  - `Masjid::MODULE_KEYS` equals the config's module keys, in order, and `Masjid::MODULE_DEFAULTS`
+    equals their `defaults` (`CapabilityGateTest`); the SPA's copies in `Capability.ts` are pinned
+    by `CapabilityTsMirrorTest`. Every non-column entry names all of `Masjid::ORG_TYPES` in
+    `defaults` (`?? false` otherwise). A module needs a sidebar item (`requiresModule`) or a config
+    `where` (Prayer times: tabs on the Details screen), or the switch panel cannot place its row.
+  - **No override outlives its code.** To remove a module: flip it back ON for every organisation
+    while the code is live (audited), then revert with a data migration in the same commit that
+    strips the key from `capability_overrides` and writes a NULL-actor ledger row per key removed.
+    Before any re-ship, check that no override names the key.
 
 **The gate.** `capability:<key>` (`EnsureOrgCapability`, after `tenant`). A module key passes
-unless `moduleIsOff`; any other key passes only when `hasCapability`. `capability:a,b` is
+unless `moduleIsOff`; any other key passes only when `hasCapability`. A refused module answers 403
+`{status:'error', message}`: "{label} is switched off for this organisation." when the org type is
+offered it, "{label} is not switched on for this organisation." when it is not. `capability:a,b` is
 **any-of**: the forms WRITE routes take `capability:web_pages,form_editing`, while form reads,
 responses, staff codes and the public submit stay ungated. **SuperAdmins pass every `capability:`
 gate.** `CapabilityGateTest` lints every key in the route table (split on commas) against the
 catalogue and fails if a module gates no route; `OrganisationModulesTest` pins which prefixes carry
 which module.
+- `giving` (funds, donations with its export and stats, recurring-donations, annual-statements),
+  `properties` and `appointment_requests` sit INSIDE `crm`, per prefix, so an organisation without
+  the CRM hears the CRM sentence first.
+- `services` gates every services route EXCEPT the index: BroadcastComposerView, jummahLunchStore
+  and AboutUsView read `GET /services` and keep listing what is published while Services is off.
+- Never behind a wave-2 module: Stripe Connect (`connect/*`, the forms-card Stop button), zakat
+  settings, offerings and fee plans, contacts show (a member's giving history), the Impact Report,
+  Mobile App Features, `prayer-calculation/options`.
+- Switching `giving` OFF is refused while `GivingSwitch::liveSubscriptionCount()` > 0 (gifts Stripe
+  can bill, including a cancelled row Stripe says it is still billing): 422
+  `{status:'failed', data:{capability:[sentence]}}`, no ledger row. Monthly-gift checkout pages
+  still open (`openCheckoutCount()`) refuse too, with the same envelope and a sentence that says
+  wait. Neither has an override (owner, Q4: block). Switching ON is never refused. A switch never
+  cancels, pauses or changes a donor's gift.
 
-**The payload.** `ADMIN_APPENDS` carries `capabilities` — **grants only** — and `modules_off`, the
-switched-off module keys in catalogue order (`[]` for every organisation nobody switched anything
-off for).
+**The payload.** `ADMIN_APPENDS` carries `capabilities` — **grants only** — `modules_off`, the
+modules this org type is offered that are switched off, and `modules_on`, the modules it is NOT
+offered that a SuperAdmin switched on. Both are in catalogue order and `[]` for a fresh organisation
+of any type. A not-offered module that is still off rides neither list (nobody took it away), so
+Team `screens_off` and `OrganisationAccess` never fill a school's sentences with masjid screens.
 
 **In the SPA, one flag per kind.**
 - `requiresCapability: '<grant>'` hides unless `capabilities[key] === true`. Grants only.
-- `requiresModule: '<module>'` hides only when `modules_off` includes it. **Never put a module key
+- `requiresModule: '<module>'` hides only when `modules_off` includes it. An item that also carries
+  `requiresOrgTypes` passes the org-type check for another type ONLY when `modules_on` names its
+  module (`menuItemState` step 1: a school given Giving); otherwise it stays hidden for everyone,
+  never "switched off". The header search's page links apply the same step (`itemFitsOrgType`,
+  matched to the sidebar item by `to`), so a school is never offered a link to Services or
+  Donation link. Routes carry no org-type guard, so a typed URL reaches the screen and its
+  API answers with the "not switched on" sentence. **Never put a module key
   on `requiresCapability`:** its strict `=== true` hides a default-on screen whenever the payload
   lacks the key, which is every payload from a backend older than the SPA — and the built assets
   travel separately from the PHP, so the SPA can reach production first.

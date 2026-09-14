@@ -21,7 +21,13 @@ class Letterhead
     /**
      * The letterhead block for a masjid, keyed for a PDF blade.
      *
-     * @return array{logo:?string, masjidName:string, address:string, locale:string, phone:?string, website:?string, taxId:?string, signatory:string}
+     * `religiousOrg` picks the tax wording. Only a religious organisation (a
+     * masjid) may say a donor received "intangible religious benefits"; a school
+     * or community organisation drops that clause and states 501(c)(3) status
+     * only when a tax ID is on file. A missing organisation keeps the masjid
+     * wording every receipt printed before org types existed.
+     *
+     * @return array{logo:?string, masjidName:string, address:string, locale:string, phone:?string, website:?string, taxId:?string, signatory:string, religiousOrg:bool}
      */
     public function forMasjid(?Masjid $masjid): array
     {
@@ -34,7 +40,18 @@ class Letterhead
             'website' => $this->displayWebsite($masjid?->website_link),
             'taxId' => $masjid?->tax_id,
             'signatory' => $masjid?->statement_signatory ?: ($masjid?->name ?? ''),
+            'religiousOrg' => self::religiousOrg($masjid),
         ];
+    }
+
+    /**
+     * Whether receipts from this organisation carry the religious wording. The
+     * receipt mailables take it as a primitive, so their senders call this too
+     * and the email can never disagree with the PDF it carries.
+     */
+    public static function religiousOrg(?Masjid $masjid): bool
+    {
+        return $masjid?->isMasjid() ?? true;
     }
 
     /**

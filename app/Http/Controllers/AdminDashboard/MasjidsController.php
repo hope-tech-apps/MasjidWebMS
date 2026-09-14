@@ -18,7 +18,9 @@ use App\Models\MobileAppFeature;
 use App\Models\PrayerCalculationSetting;
 use App\Models\User;
 use App\Support\CapabilityLedger;
+use App\Support\GivingSwitch;
 use App\Support\MobileCache;
+use App\Support\ModuleFacts;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -273,6 +275,52 @@ class MasjidsController extends Controller
         }
 
         $masjid = Masjid::findOrFail($masjid_id);
+
+        // Giving is refused OFF while a monthly gift Stripe can bill exists
+        // (owner, 2026-09-14: block, not warn). A switch never cancels, pauses
+        // or changes a donor's gift, so the SuperAdmin cancels them first. No
+        // ledger row either way: nothing changed. Switching it ON has no
+        // precondition.
+        //
+        // Checkout pages still open block too, with their own sentence.
+        // Cancelling one on Recurring Donations leaves the page payable
+        // (GivingSwitch), so it says wait, never cancel. There is no override:
+        // a page completed after the flip would start a monthly gift the
+        // organisation's admins cannot see.
+        if ($capability === 'giving' && ! $request->boolean('enabled')) {
+            $live = GivingSwitch::liveSubscriptionCount($masjid);
+
+            if ($live > 0) {
+                $billedAfterCancel = GivingSwitch::billedAfterCancelCount($masjid);
+
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['capability' => [
+                        ($live === 1 ? '1 monthly gift can' : "{$live} monthly gifts can")
+                            . ' still charge donors. Cancel them on Recurring Donations or in Stripe first.'
+                            . ($billedAfterCancel > 0
+                                ? ($billedAfterCancel === 1
+                                    ? ' 1 of them already shows as cancelled here but Stripe is still billing it, so cancel that one in Stripe.'
+                                    : " {$billedAfterCancel} of them already show as cancelled here but Stripe is still billing them, so cancel those in Stripe.")
+                                : ''),
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $open = GivingSwitch::openCheckoutCount($masjid);
+
+            if ($open > 0) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['capability' => [
+                        $open === 1
+                            ? '1 monthly-gift checkout page opened in the last 24 hours can still start a monthly gift. Try again once it expires, 24 hours after it opened.'
+                            : "{$open} monthly-gift checkout pages opened in the last 24 hours can still start a monthly gift. Try again once they expire, 24 hours after each one opened.",
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
         $overrides = is_array($masjid->capability_overrides) ? $masjid->capability_overrides : [];
         $before = $masjid->hasCapability($capability);
         $overrideBefore = array_key_exists($capability, $overrides) ? (bool) $overrides[$capability] : null;
@@ -300,7 +348,10 @@ class MasjidsController extends Controller
      * whether the organisation has it, its org_type default, whether a
      * SuperAdmin overrode it, which endpoint writes it, and — for the entries a
      * page section depends on — how many active sections on active pages show
-     * it, so a switch-off is decided with the facts. Plus this organisation's
+     * it, so a switch-off is decided with the facts. Modules also carry whether
+     * this org type is offered them (`offered_by_default`), the place a module
+     * without a sidebar item lives (`where`) and what keeps moving if it is
+     * switched off (`facts`, App\Support\ModuleFacts). Plus this organisation's
      * last 25 flips, newest first.
      *
      * `enabled` for a module is `! moduleIsOff()`, the same answer every gate
@@ -337,8 +388,26 @@ class MasjidsController extends Controller
                 'writer' => $column ? $key : 'capability',
                 'enabled' => $isModule ? ! $masjid->moduleIsOff($key) : $masjid->hasCapability($key),
                 'default_for_org_type' => $column ? null : (bool) ($definition['defaults'][$masjid->orgType()] ?? false),
+                // Whether this org type has it before anyone decides. For a module
+                // it is Masjid::MODULE_DEFAULTS (pinned equal to the config, so it
+                // matches default_for_org_type); false marks a masjid screen a
+                // SuperAdmin can switch ON here, so the SPA need not copy the
+                // table. For a grant it repeats default_for_org_type (false for
+                // the column-backed ones).
+                'offered_by_default' => $isModule
+                    ? $masjid->moduleOfferedByDefault($key)
+                    : ! $column && (bool) ($definition['defaults'][$masjid->orgType()] ?? false),
                 'overridden' => ! $column && array_key_exists($key, $overrides),
                 'in_use' => $inUse[$key] ?? null,
+                // A module that lives inside another screen (Prayer times: tabs on
+                // the Details screen) names the place; the SPA prints
+                // "{Details menu title} › {where}". Null for everything else.
+                'where' => isset($definition['where']) && is_string($definition['where']) && $definition['where'] !== ''
+                    ? $definition['where']
+                    : null,
+                // What keeps moving if this is switched off (App\Support\ModuleFacts).
+                // A list for every entry; [] where there is nothing to say.
+                'facts' => $isModule ? ModuleFacts::for($masjid, $key) : [],
             ];
         }
 
@@ -390,6 +459,12 @@ class MasjidsController extends Controller
                     'id' => (int) $masjid->id,
                     'name' => $masjid->name,
                     'org_type' => $masjid->orgType(),
+                    // Whether the apps have a donation link to fall back on. Both
+                    // apps show it on Donate while no fund is offered (Giving off),
+                    // and "No donation options are available right now" when it is
+                    // blank, so the Giving confirm picks its sentence from this.
+                    // The same hasOne row the apps read; never follows a module.
+                    'donation_link_set' => filled($masjid->donationLink()->value('link')),
                 ],
                 'groups' => $groups,
                 'history' => $history,

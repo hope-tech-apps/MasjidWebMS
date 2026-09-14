@@ -806,10 +806,11 @@ writer, one gate and one lint. Absent-means-on makes shipping inert for every ex
 organisation; only org 18 is expected to hold module overrides after rollout.
 
 **Known limits.**
-- Not switchable yet: Services, Splash, Donation link, Giving, Donation Funds, Properties,
-  Appointment Requests, the prayer tabs, the app-drawer screens, and the CRM's parts (one `crm`
-  switch covers Families, Classrooms, Import Roster and Teachers).
-- A new organisation starts with every module on, so the owner flips each one per organisation.
+- Not switchable yet: the app-drawer screens and the CRM's parts (one `crm` switch covers
+  Families, Classrooms, Import Roster and Teachers). Services, Splash, Donation link, Giving,
+  Properties, Appointment Requests and the prayer tabs became switches in wave 2 (next entry).
+- A new organisation starts with every module its type is offered switched on, so the owner flips
+  each one per organisation.
 - Switching a content module off leaves what is already published visible on the website and in
   the app, with no editor. `in_use` counts page sections only, not app content.
 - Zakat off does not stop the public calculator, which answers from the last stored price.
@@ -817,3 +818,133 @@ organisation; only org 18 is expected to hold module overrides after rollout.
 - A generic section bound to About Us through `settings.bind` gets no `module_off_note`.
 - Rollback: flip the switch back (audited). For code, `git revert` the commits on main and ship;
   production `bin/deploy` only fast-forwards and refuses `--ref`.
+
+## 2026-09-16 — Organisation switches, wave 2: prayer times, giving and the masjid screens
+
+**Decision.** Seven more screens become modules, on the same catalogue, gate and ledger as wave 1.
+The owner's answers of 2026-09-14 pick every branch. No existing masjid changes until a switch is
+flipped.
+
+1. **Seven modules, appended in this order:**
+   - `prayer_times` (new group `prayer`): the Details screen's Prayer Calculation, Iqama Settings and
+     Jumaa Settings tabs, placed in the panel by a config `where`. One switch; Jumu'ah is not split
+     out (owner Q6).
+   - `splash`, `services`, `donation_link`.
+   - `giving`: the Giving Dashboard with Fund Detail, Donation Funds, Donations, Recurring Donations
+     and Year-End Statements.
+   - `properties`: rent is not a gift.
+   - `appointment_requests`.
+
+   Donation link stays apart from Giving (Q7): MEC and NAFIS have a link and no Stripe.
+2. **Any org type can have them; outside masjids they start off** (Q1). `Masjid::MODULE_DEFAULTS`
+   holds per-type defaults. Every module is on for a masjid. `splash`, `services`, `donation_link`,
+   `giving` and `properties` are off for a school or community organisation until a SuperAdmin
+   switches one on.
+   - `modules_off` keeps its meaning: offered here and switched off.
+   - The new `modules_on` lists not-offered modules a SuperAdmin switched on. The SPA lets a
+     masjid-only menu item through for that one organisation.
+   - The gate says "not switched on", not "switched off", for a module the org type is not offered.
+   - On a stale config, `moduleIsOff` answers the type's default with overrides unread.
+   - There is no protective-override migration. The pre-flight shows schools 14, 16 and 18 hold no
+     rows behind these screens. Their admins lose only typed-URL API access to screens their menu
+     never showed.
+3. **Gates.**
+   - Money and appointment gates sit inside `crm`, per prefix.
+   - Services gates everything except its index. Broadcasts, Friday lunch and About Us read the
+     index and keep working (Q8).
+   - Never gated: Stripe Connect and the forms-card Stop button, zakat settings, offerings and fee
+     plans, contacts show, the Impact Report, Mobile App Features, `prayer-calculation/options`.
+4. **Money already charged is never refused.**
+   - Webhooks, receipts and receipt emails never check a module.
+   - `GivingSwitch::noteArrivalIfOff` logs a warning once per donation or monthly commitment.
+   - While Giving is off, the app's checkout refuses and its funds list is empty (Q2: yes).
+   - Refusing gifts for CRM-off organisations (Q2b) is not part of this change.
+5. **Giving cannot be switched off while a monthly gift can still charge** (Q4: block).
+   - Counted: gifts Stripe has linked that are not cancelled, and a gift marked cancelled here that
+     Stripe says it is still billing (only the Stripe dashboard can stop that one).
+     - Stripe is asked only about a cancelled row with a gift booked after its `canceled_at`. The
+       local timestamps cannot decide it, because a late or replayed invoice webhook also books
+       after a cancel. If Stripe cannot be asked, the row counts.
+     - This check is stricter than the plan, which read only the local status (risk 10). The owner
+       is told.
+   - The panel gets a 422 naming the count, and no ledger row is written.
+   - Monthly-gift checkout pages opened in the last 24 hours block too, with their own 422 that says
+     wait, never cancel: the admin cancel marks an unlinked row cancelled and leaves its page
+     payable, so Stripe would then bill a gift marked cancelled. There is no "switch off anyway";
+     the flip goes through once the pages expire.
+   - The member recurring-giving verbs stay untouched.
+   - A switch never cancels, pauses or changes a gift.
+6. **Stripe Connect moves; it is never switched.** While Giving is off, or at a non-masjid given
+   Giving, the Details screen shows an Online payments tab (CRM required). FormBuilder's pointer
+   follows it and names the Details screen by its sidebar title.
+7. **Manara's prayer pushes follow Prayer times** (Q3: yes). `prayers:send-due`,
+   `prayers:daily-resync` and the iqama-save sync skip a switched-off organisation. The public reads,
+   the TV board and both apps' local schedulers are untouched.
+8. **Appointment Requests is a switch**, with the wave-1 intake refusal on its public form.
+   - Mobile App Features is not a switch: it IS the app-drawer switch.
+   - The Hadith, Adhkar and Tasbih library is not a switch either: platform content behind `super`
+     routes.
+   - Their sidebar hygiene is a separate task (Q10).
+9. **Receipts for a non-masjid.**
+   - PDFs drop "intangible religious benefits" and state 501(c)(3) status only with a tax ID.
+   - The emails cannot see a tax ID, so they state neither.
+   - Masjid output is byte-identical, pinned against the c0f6a72 blades.
+10. **Splash off freezes the editor only.** A live splash runs to its end date (Q9).
+11. **Facts before a flip.** `App\Support\ModuleFacts` prints live counts for Giving, Prayer times
+    and Splash under each switch and in its confirm dialog.
+12. **No override outlives its code.**
+    - To revert: flip the keys back on while the code is live.
+    - The revert commit carries an idempotent migration that strips the keys, with NULL-actor
+      ledger rows.
+    - Before any re-ship, check that no override names a wave-2 key.
+
+**Alternatives.**
+- **Fold Donation link into Giving.** Rejected (Q7).
+- **A separate Jumu'ah switch.** Deferred (Q6).
+- **Warn instead of blocking on live monthly gifts.** Rejected (Q4). Resume and change-amount would
+  then have had to follow Giving.
+- **Keep app checkout open while Giving is off, logging arrivals or refusing only monthly gifts.**
+  Rejected (Q2).
+- **Put Stripe Connect behind Giving.** Rejected: Friday lunch, program fees and form card payments
+  charge through the same account.
+- **Protective `true` overrides for the schools at deploy.** Not needed: they hold no data there.
+
+**Rationale.** The masjid screens were masjid-only in the menu but open to any org's admins by
+typed URL, and money moved through them with no per-organisation off switch. Per-type defaults make
+the menu and the API agree. `modules_on` lets a SuperAdmin hand one school one screen without
+inventing a second catalogue. The money rules come from one principle: Manara refuses to OPEN new
+money for a switched-off organisation, and never refuses money that already moved.
+
+**Known limits.**
+- **Frozen data with no editor:**
+  - fixed iqama times stop at their last end date;
+  - khateeb and khutbah titles go stale;
+  - a live splash runs to `ends_at`;
+  - the donation link and services list keep publishing.
+- **Phones re-arm prayer alerts on their own, unevenly.** Android re-arms daily from its cache. iOS
+  arms 6 days ahead and re-arms on open, or when iOS grants a background refresh, so an iPhone left
+  unopened can stop alerting after about 6 days. Iqama times saved while the switch is off reach
+  iPhones only on the next open. The panel and the catalogue description say so.
+- **Money can still arrive after a flip:** one-time checkout pages opened in the previous 24 hours,
+  a checkout that raced the flip, and delayed bank debits. All are booked, receipted and logged.
+- **Anyone can hold the Giving switch-off.** The app checkout needs no login, so a monthly-gift
+  checkout page opened just before a flip refuses it until 24 hours after that page opened. Opening
+  pages again and again holds it for as long as that goes on. There is no override (Q4: block), and
+  expiring open Checkout Sessions from Manara is not built.
+- **Admins still see gifts** as giving history on a member's record and in Impact Report totals.
+- **Org 1 has 7 `donation_links` rows** behind a `hasOne`, so which one serves depends on
+  database order.
+- **At deploy, school and community admins with the CRM on lose a clean Stripe Connect screen**
+  (Al-Razi 14 and BISS 18 today; Al-Razi's school launch needs Stripe). This is not decided; it
+  needs the owner's call.
+  - It holds whether Giving was never switched on or was switched back off.
+  - B10 shows Online payments at a non-masjid only while Giving is switched on there.
+  - FormBuilder's card-payment pointer still sends them to the Giving Dashboard.
+    - Its Connect panel still works, because the connect routes are not gated.
+    - Its funds and stats calls now answer "Giving is not switched on for this organisation."
+  - Before this change that screen loaded cleanly for them.
+  - The fix on the table: show Online payments for every non-masjid with the CRM on, and point
+    FormBuilder and the SuperAdmin forms-card copy at it.
+- **A SuperAdmin who opens a not-offered screen by typed URL sees no switched-off notice.**
+- **Public checkout, the funds list and the appointment intake still ignore `crm_enabled`** (Q2b is
+  not built).

@@ -116,14 +116,19 @@ Some types draw data a SuperAdmin can switch off for one organisation
 (`config/capabilities.php`, `kind => module`; DECISIONS 2026-09-16):
 `announcements_list` → announcements, `events` → events, `gallery` → gallery,
 `about_us` and `mission_vision` → about_us (the binder draws both from
-`MasjidAbout`), `contact_form` → contact_requests, `offering` → programs.
+`MasjidAbout`), `contact_form` → contact_requests, `offering` → programs, and
+(switches wave 2) `prayer_times` → prayer_times, `donation` → donation_link,
+`services_list` → services. `moduleOffNote()` says "switched off", so it is only
+ever served for a module the organisation's type is offered: a school was never
+offered Services or Donation link, and nobody switched them off.
 
 - `SectionType::requiresModule()` records it: exhaustive, **no default arm**. A
   new case must be classified, even as `null`. `moduleOffNote()` holds the one
   sentence per module.
 - `PageSectionsController@sectionTypes` serves `module_off_note` only when the
-  ORGANISATION in the URL has that module off (`Masjid::moduleIsOff`), **never
-  from the viewer**: a SuperAdmin building BISS's page reads what BISS's own
+  ORGANISATION in the URL is offered that module and has it off
+  (`Masjid::moduleOfferedByDefault` and `Masjid::moduleIsOff`, the `modules_off`
+  rule), **never from the viewer**: a SuperAdmin building BISS's page reads what BISS's own
   admin would. `SectionFormModal` prints it the way it prints `renderer_note`.
   Do not write the sentence into a component.
 - **The palette is still not filtered**, for the reasons above. A section

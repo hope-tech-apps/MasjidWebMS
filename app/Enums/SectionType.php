@@ -338,9 +338,17 @@ enum SectionType: string
             self::CONTACT_FORM => 'contact_requests',
             // OfferingPublicPayload inlines nothing while Programs is switched off.
             self::OFFERING => 'programs',
+            // Drawn from the saved calculation, iqama and Jumu'ah settings.
+            self::PRAYER_TIMES => 'prayer_times',
+            // The DonationLink row (a masjid screen; a school or community
+            // organisation has it once a SuperAdmin switches Donation link on).
+            self::DONATION => 'donation_link',
+            // The published services. Their admin index stays readable while
+            // Services is off (other screens pick from it), but nobody can add or
+            // edit one.
+            self::SERVICES_LIST => 'services',
 
             self::PAGE_TITLE,
-            self::PRAYER_TIMES,
             self::TEXT,
             self::IMAGE_TEXT_GRID,
             self::GRID_CARDS,
@@ -350,10 +358,7 @@ enum SectionType: string
             self::LINK_LIST,
             self::CAROUSEL,
             self::EMBED => null,
-            // Bound to data, but data no switch governs: the donation link and
-            // services are masjid screens with no module, and forms are always on.
-            self::DONATION,
-            self::SERVICES_LIST,
+            // Bound to data, but data no switch governs: forms are always on.
             self::FORM => null,
             // Typed into the section. `programs` is curriculum text, not the
             // Programs module, and `impact_stats` is not the Impact Report.
@@ -380,6 +385,9 @@ enum SectionType: string
             'about_us' => 'About Us is switched off for this organisation, so its admins cannot edit the About Us text this section shows.',
             'contact_requests' => 'Contact Requests is switched off for this organisation, so the form in this section refuses new messages and nobody can read them here.',
             'programs' => 'Programs is switched off for this organisation, so this section shows nothing and public sign-up is closed.',
+            'prayer_times' => 'Prayer times are switched off for this organisation, so its admins cannot change the calculation, iqama or Jumu\'ah times this section shows.',
+            'donation_link' => 'Donation link is switched off for this organisation, so its admins cannot change the link this section shows.',
+            'services' => 'Services are switched off for this organisation, so its admins cannot add or edit the services this section shows.',
             default => null,
         };
     }

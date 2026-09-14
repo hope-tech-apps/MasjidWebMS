@@ -55,7 +55,6 @@
         deepest gratitude to you for your support. We are very grateful for the unrelenting encouragement
         that supporters like you have shown to charity.</p>
 
-@if ($religiousOrg ?? true)
     <p>This is to acknowledge your total contributions of <strong>{{ $currency }} {{ $totalEligible }}</strong>
         ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }}) to {{ $masjidName }} during {{ $year }}.
         {{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
@@ -65,21 +64,6 @@
     <p>No goods or services were provided in exchange for or in connection with these contributions, other
         than intangible religious benefits. You can keep this letter as written proof of your donations for
         your tax records.</p>
-@else
-{{-- Letterhead::forMasjid sets religiousOrg false for a school or community
-     organisation: no "intangible religious benefits", and 501(c)(3) status only
-     when a tax ID is on file. Directives sit at column 0 and this comment lives
-     in this branch because a Blade comment leaves its newline behind: the masjid
-     bytes stay identical (ReceiptWordingByOrgTypeTest). --}}
-    <p>This is to acknowledge your total contributions of <strong>{{ $currency }} {{ $totalEligible }}</strong>
-        ({{ $giftCount }} {{ $giftCount === 1 ? 'donation' : 'donations' }}) to {{ $masjidName }} during {{ $year }}.@if ($taxId)
-        {{ $masjidName }} is a tax-exempt organization under section 501(c)(3) of the Internal Revenue Code.
-        As such, all contributions are tax deductible for federal and state income tax purposes.
-        Our US Federal tax ID number is {{ $taxId }}.@endif</p>
-
-    <p>No goods or services were provided in exchange for or in connection with these contributions. You can
-        keep this letter as written proof of your donations for your tax records.</p>
-@endif
 
     @if (count($gifts))
         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse; font-size:11.5px; margin:6px 0 16px;">

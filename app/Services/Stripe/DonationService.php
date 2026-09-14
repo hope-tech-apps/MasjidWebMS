@@ -976,6 +976,40 @@ class DonationService
         }
     }
 
+    /**
+     * Stripe's own status for this commitment's subscription right now
+     * ('active', 'past_due', 'canceled', ...).
+     *
+     * `null` means "we could not find out": no Stripe subscription yet, no
+     * connected account, or the call failed. Callers must never read it as
+     * stopped. App\Support\GivingSwitch asks this about a row marked cancelled
+     * here that had a gift booked after the cancel, and counts an unknown answer
+     * as still billing, because refusing a switch-off is the safe mistake.
+     */
+    public function stripeStatusOf(DonationSubscription $subscription): ?string
+    {
+        if (! $subscription->stripe_subscription_id) {
+            return null;
+        }
+
+        $account = $this->connectedAccountOf($subscription, false);
+
+        if ($account === '') {
+            return null;
+        }
+
+        try {
+            return $this->retrieveStripeSubscription($subscription->stripe_subscription_id, $account)['status'];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Could not read subscription status from Stripe.', [
+                'subscription_id' => $subscription->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     /** Stripe seam: read a subscription on a connected account. */
     protected function retrieveStripeSubscription(string $stripeSubscriptionId, string $connectedAccountId): array
     {

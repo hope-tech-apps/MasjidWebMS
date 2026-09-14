@@ -11,6 +11,7 @@ use App\Models\Masjid;
 use App\Models\StripeWebhookEvent;
 use App\Services\Crm\DonorContactService;
 use App\Services\Receipts\DonationReceiptPdfService;
+use App\Services\Receipts\Letterhead;
 use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\FormResponsePaymentService;
@@ -18,6 +19,7 @@ use App\Services\Stripe\MealOrderPaymentService;
 use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
+use App\Support\GivingSwitch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -75,6 +77,13 @@ use Symfony\Component\HttpFoundation\Response;
  * FormResponsePaymentService. A form's expired page is not routed (a form holds no
  * seat), so it is acked and ignored exactly as before, and every other event takes
  * the route it took yesterday. Pinned by FormPaymentWebhookTest.
+ *
+ * THE GIVING SWITCH NEVER REFUSES HERE (DECISIONS.md, organisation switches wave 2).
+ * Money that reaches this controller has already moved at Stripe, so a donation for
+ * an organisation whose Giving is switched off is booked, receipted and emailed
+ * exactly like any other. The only addition is a warning, once per donation or
+ * commitment, from App\Support\GivingSwitch::noteArrivalIfOff, called AFTER that
+ * work and unable to throw. Pinned by ModuleSideDoorsTest.
  */
 class StripeWebhookController extends Controller
 {
@@ -441,6 +450,12 @@ class StripeWebhookController extends Controller
             if ($receipt) {
                 $this->deliverReceipt($donation->refresh(), $receipt);
             }
+
+            // Booked and receipted above whatever the switch says; this only notes
+            // it, once per donation (payment_intent.succeeded shares the key).
+            GivingSwitch::noteArrivalIfOff((int) $donation->masjid_id, 'gift', $donation->id, [
+                'amount_minor' => (int) $donation->charged_amount,
+            ]);
         } else {
             $this->donations->recordStripeIds($donation, $ids);
         }
@@ -460,6 +475,13 @@ class StripeWebhookController extends Controller
         }
 
         $this->donorContacts->linkSubscriptionContact($subscription->refresh(), $session);
+
+        // A new monthly commitment that bills every month. Linked above whatever
+        // the switch says; noted once per commitment.
+        GivingSwitch::noteArrivalIfOff((int) $subscription->masjid_id, 'monthly_gift_started', $subscription->id, [
+            'amount_minor' => (int) $subscription->charged_amount,
+            'interval' => $subscription->interval,
+        ]);
     }
 
     /**
@@ -501,6 +523,12 @@ class StripeWebhookController extends Controller
         if ($receipt) {
             $this->deliverReceipt($donation->refresh(), $receipt);
         }
+
+        // A replayed invoice returns the donation it already booked, so keying on
+        // the donation notes each charge once.
+        GivingSwitch::noteArrivalIfOff((int) $donation->masjid_id, 'gift', $donation->id, [
+            'amount_minor' => (int) $donation->charged_amount,
+        ]);
     }
 
     /**
@@ -558,6 +586,9 @@ class StripeWebhookController extends Controller
                 recurring: $donation->type === 'recurring',
                 pdf: $pdf,
                 pdfName: $pdfName,
+                // The same wording decision the attached PDF made, so the email
+                // and the receipt it carries never disagree.
+                religiousOrg: Letterhead::religiousOrg($masjid),
             ));
 
             $donation->forceFill(['receipt_delivered_at' => now()])->save();
@@ -591,6 +622,11 @@ class StripeWebhookController extends Controller
         ]);
 
         $this->receipts->issueFor($donation->refresh());
+
+        // Same key as the checkout event for this donation: noted once.
+        GivingSwitch::noteArrivalIfOff((int) $donation->masjid_id, 'gift', $donation->id, [
+            'amount_minor' => (int) $donation->charged_amount,
+        ]);
     }
 
     /**

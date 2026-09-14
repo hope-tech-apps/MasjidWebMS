@@ -53,6 +53,14 @@ not a state machine — a closed request reopens when the patient calls back.
   groups: minting `view/manage appointments` would change the seeded set that
   `RolePermissionBridgeTest` pins (`Permission::count() === 8`). Notes surface
   ONLY on the admin show endpoint; no public payload carries one.
+- **The switch** (DECISIONS.md 2026-09-16, switches wave 2) is the module
+  `appointment_requests`, on for every org type. The admin prefix carries
+  `capability:appointment_requests` inside `crm`. While it is off, the public form
+  answers 403 "This organisation is not taking appointment requests here right
+  now." and writes nothing. It asks BEFORE the honeypot, so a bot is never told
+  "received", and it RETURNS the response: the controller's catch would swallow a
+  thrown HttpResponseException into a 500. The public intake still ignores
+  `crm_enabled` (pre-existing).
 
 ## Tenancy and deletion
 

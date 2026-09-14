@@ -29,6 +29,21 @@ class DonationsController extends Controller
     {
         $masjid = Masjid::findOrFail($masjid_id);
 
+        // Giving switched off (or never switched on for an organisation type that is
+        // not offered it): no gift, one-time or monthly, is opened. Nothing is
+        // written and Stripe is never called. Asked BEFORE the try below, whose
+        // catch would turn anything thrown into a 500, and returned in the same
+        // envelope as the refusal after it. A stale config mid-deploy reproduces each
+        // organisation type's default (Masjid::moduleIsOff), so no masjid is refused
+        // by it. Money already charged is never refused: the webhook books it
+        // (App\Support\GivingSwitch).
+        if ($masjid->moduleIsOff('giving')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This organisation is not taking donations in the app right now.',
+            ], Response::HTTP_FORBIDDEN);
+        }
+
         // The org must have completed Stripe onboarding before it can be paid.
         if (! $masjid->canAcceptDonations()) {
             return response()->json([

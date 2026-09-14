@@ -450,4 +450,35 @@ class AnnualStatementDeliveryTest extends TestCase
                 && $mail->pdfName === '2025-giving-statement-Amina-Yusuf.pdf';
         });
     }
+
+    #[Test]
+    public function a_school_statement_email_drops_the_masjid_wording_and_a_masjid_statement_keeps_it(): void
+    {
+        // Letterhead::religiousOrg decides the tax wording, and the email must agree
+        // with the letter it carries (ReceiptWordingByOrgTypeTest pins the blades).
+        // A school takes gifts only once a SuperAdmin switches Giving on for it.
+        $school = $this->makeMasjid('Al-Razi School');
+        $school->forceFill(['org_type' => 'school', 'capability_overrides' => ['giving' => true]])->save();
+        $schoolAdmin = $this->makeAdminFor($school);
+        $parent = $this->makeDonor($school, 'Maryam', 'Saleh', 'maryam@example.test');
+        $this->gift($school, $this->makeFund($school), $parent, 15000, self::YEAR . '-04-10');
+
+        Sanctum::actingAs($schoolAdmin);
+        $this->postJson($this->statementsUrl($school) . "/{$parent->id}/send?year=" . self::YEAR)
+            ->assertOk();
+
+        Sanctum::actingAs($this->adminA);
+        $this->postJson($this->statementsUrl($this->masjidA) . "/{$this->amina->id}/send?year=" . self::YEAR)
+            ->assertOk();
+
+        Mail::assertQueued(AnnualStatementMail::class, 2);
+        Mail::assertQueued(
+            AnnualStatementMail::class,
+            fn ($mail) => $mail->hasTo('maryam@example.test') && $mail->religiousOrg === false
+        );
+        Mail::assertQueued(
+            AnnualStatementMail::class,
+            fn ($mail) => $mail->hasTo('amina@example.test') && $mail->religiousOrg === true
+        );
+    }
 }

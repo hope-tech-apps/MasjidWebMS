@@ -295,9 +295,13 @@ class PageSectionsController extends Controller
                 'has_renderer' => $type->hasRenderer(),
                 'renderer_note' => $type->rendererNote(),
                 // Null unless this type shows a module the organisation has
-                // switched off (SectionType::requiresModule).
+                // switched off (SectionType::requiresModule). Only a module its
+                // type is offered, the same rule as `modules_off`: a school was
+                // never offered Donation link or Services, so nobody switched
+                // them off and the note would say otherwise.
                 'module_off_note' => $masjid !== null
                     && $type->requiresModule() !== null
+                    && $masjid->moduleOfferedByDefault($type->requiresModule())
                     && $masjid->moduleIsOff($type->requiresModule())
                     ? $type->moduleOffNote()
                     : null,

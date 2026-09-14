@@ -33,6 +33,9 @@ class SectionTypeModuleTest extends TestCase
         'mission_vision' => 'about_us',
         'contact_form' => 'contact_requests',
         'offering' => 'programs',
+        'prayer_times' => 'prayer_times',
+        'donation' => 'donation_link',
+        'services_list' => 'services',
     ];
 
     protected function setUp(): void
@@ -48,14 +51,14 @@ class SectionTypeModuleTest extends TestCase
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
     }
 
-    private function org(array $overrides): Masjid
+    private function org(array $overrides, string $orgType = 'masjid'): Masjid
     {
         $masjid = Masjid::create([
             'name' => 'Builder Org ' . uniqid(),
             'email' => 'builder' . uniqid() . '@test.local',
             'phone' => '+1' . random_int(1000000000, 9999999999),
             'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
-            'latitude' => 0.0, 'longitude' => 0.0, 'crm_enabled' => true, 'org_type' => 'masjid',
+            'latitude' => 0.0, 'longitude' => 0.0, 'crm_enabled' => true, 'org_type' => $orgType,
         ]);
 
         $masjid->forceFill(['capability_overrides' => $overrides])->save();
@@ -140,5 +143,36 @@ class SectionTypeModuleTest extends TestCase
         foreach ($this->types($allOn) as $value => $entry) {
             $this->assertNull($entry['module_off_note'], "{$value} carries a note at an organisation with everything on");
         }
+    }
+
+    #[Test]
+    public function a_school_is_never_told_a_module_it_was_not_offered_is_switched_off(): void
+    {
+        // A fresh school: Donation link and Services are off because a school is not
+        // offered them, not because anyone switched them off (the modules_off rule).
+        $school = $this->org(['web_pages' => true], 'school');
+        $this->assertTrue($school->moduleIsOff('donation_link'));
+        $this->assertFalse($school->moduleOfferedByDefault('donation_link'));
+        $this->assertTrue($school->moduleIsOff('services'));
+        $this->assertFalse($school->moduleOfferedByDefault('services'));
+
+        Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550000002'])->fresh());
+
+        foreach ($this->types($school) as $value => $entry) {
+            $this->assertNull($entry['module_off_note'], "{$value} tells a fresh school a module is switched off");
+        }
+
+        // A module a school IS offered, switched off, still gets its note there.
+        $school->forceFill(['capability_overrides' => ['web_pages' => true, 'events' => false]])->save();
+        $types = $this->types($school);
+        $this->assertSame(SectionType::EVENTS->moduleOffNote(), $types['events']['module_off_note']);
+        $this->assertNull($types['donation']['module_off_note']);
+        $this->assertNull($types['services_list']['module_off_note']);
+
+        // And a masjid, which is offered both, gets both notes once they are off.
+        $masjid = $this->org(['web_pages' => true, 'donation_link' => false, 'services' => false]);
+        $types = $this->types($masjid);
+        $this->assertSame(SectionType::DONATION->moduleOffNote(), $types['donation']['module_off_note']);
+        $this->assertSame(SectionType::SERVICES_LIST->moduleOffNote(), $types['services_list']['module_off_note']);
     }
 }

@@ -22,14 +22,23 @@
 |              capability reads from one catalogue; their storage, gates and
 |              endpoints are unchanged.
 |
-|   'module'   Default ON for every org type. A screen every organisation had
-|              before this catalogue knew about it, which a SuperAdmin may
-|              switch OFF for one organisation (BISS has no website, so it has
-|              no use for Announcements or Events). Masjid::moduleIsOff() is the
-|              only reader and it FAILS OPEN: a key the loaded config does not
-|              know as a module is ON, so a stale config cache during a deploy
-|              can never take a screen away. Module keys are also listed in
-|              Masjid::MODULE_KEYS, in this file's order.
+|   'module'   A screen an organisation has until a SuperAdmin switches it OFF
+|              for one organisation (BISS has no website, so it has no use for
+|              Announcements or Events). Most modules are offered to every org
+|              type. The masjid screens (Splash, Services, Donation link, Giving,
+|              Properties & Rent) are offered to masjids only, and a SuperAdmin
+|              can switch one ON for a school or community organisation (owner,
+|              2026-09-14). Masjid::moduleIsOff() is the only reader and it FAILS
+|              OPEN: a key the loaded config does not know as a module reads as
+|              its org type's default, never as a decision, so a stale config
+|              cache during a deploy can never take a screen away. Module keys
+|              and their defaults are also held in Masjid::MODULE_KEYS and
+|              Masjid::MODULE_DEFAULTS, in this file's order.
+|
+| A module needs a sidebar item (`requiresModule` in the SPA's
+| dashboardAsideMenuItems.ts) or a `where`, or the switch panel cannot place its
+| row. `where` names a module that lives inside another screen, without the
+| screen noun: the SPA prints "{Details menu title} › {where}".
 |
 | Non-column entries are stored in masjids.capability_overrides and enforced by
 | the `capability:<key>` middleware (EnsureOrgCapability). 'defaults' is what an
@@ -163,7 +172,7 @@ return [
         'kind' => 'module',
         'group' => 'communication',
         'label' => 'Notifications',
-        'description' => 'Send push notifications to people who have the mobile app, including the Push channel in Broadcasts. Does nothing without an app. Scheduled prayer reminders are not affected.',
+        'description' => 'Send push notifications to people who have the mobile app, including the Push channel in Broadcasts. Does nothing without an app. Scheduled prayer reminders follow Prayer times, not this switch.',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
     ],
 
@@ -212,6 +221,71 @@ return [
         'group' => 'tools',
         'label' => 'Impact Report',
         'description' => 'The numbers a grant application or funder report asks for, computed from your own records. Also needs Members, classes & giving.',
+        'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
+    ],
+
+    // ------------------------------------------------------------------
+    // Prayer times and the masjid screens (owner, 2026-09-14). Splash,
+    // Services, Donation link, Giving and Properties & Rent are offered to
+    // masjids only: a school or community organisation has one once a
+    // SuperAdmin switches it on.
+    // ------------------------------------------------------------------
+
+    'prayer_times' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Prayer times',
+        'description' => 'Set how prayer times are calculated, the iqama times and Jumu\'ah. Switched off, the website, apps and TV board keep showing the last saved times. Manara stops its backup reminders to phones that have not opened the app for 5 days, and its daily background refresh. Android phones re-arm their own adhan and iqama alerts every day; an iPhone re-arms them when the app is opened, so one left unopened for about 6 days can stop alerting, and iqama times saved while this is off reach iPhones only when the app is next opened.',
+        // No sidebar item of its own: three tabs on the Details screen.
+        'where' => 'Prayer Calculation, Iqama Settings and Jumaa Settings tabs',
+        'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
+    ],
+
+    'splash' => [
+        'kind' => 'module',
+        'group' => 'content',
+        'label' => 'Splash',
+        'description' => 'The pop-up shown when the website or app opens. Switched off, admins cannot add or change one; a splash already live keeps showing until its end date.',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'services' => [
+        'kind' => 'module',
+        'group' => 'content',
+        'label' => 'Services',
+        'description' => 'Add and edit the services listed on the website and in the app. Switched off, the list already published stays, and Broadcasts, Friday lunch and About Us can still use it.',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'donation_link' => [
+        'kind' => 'module',
+        'group' => 'registration_money',
+        'label' => 'Donation link',
+        'description' => 'The donation web page the website Donate section, the TV board QR code and the app open. Switched off, admins cannot change it; the link already set keeps showing.',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'giving' => [
+        'kind' => 'module',
+        'group' => 'registration_money',
+        'label' => 'Giving',
+        'description' => 'Gifts, funds, monthly giving and year-end statements. Also needs Members, classes & giving. Stripe setup is not part of this switch. Switched off, the giving screens are hidden; a member\'s record still shows their giving history, and the Impact Report still totals gifts for admins who can view donations. The app stops taking new gifts. Gifts already paid are still recorded and receipted.',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'properties' => [
+        'kind' => 'module',
+        'group' => 'registration_money',
+        'label' => 'Properties & Rent',
+        'description' => 'Rental properties and the rent recorded against them. Also needs Members, classes & giving. Rent is typed in by hand and never charged through Stripe.',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'appointment_requests' => [
+        'kind' => 'module',
+        'group' => 'communication',
+        'label' => 'Appointment Requests',
+        'description' => 'The inbox for appointment requests sent from the website form. Also needs Members, classes & giving. Switched off, the form refuses new requests.',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
     ],
 

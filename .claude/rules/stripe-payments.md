@@ -394,6 +394,47 @@ cancelled, for admins and lunch volunteers, on these terms:
   both set, a pair nothing else leaves), since the log reaches only the operator.
   The app never refunds it.
 
+## The Giving switch never touches money that moved (DECISIONS.md 2026-09-16, switches wave 2)
+
+- **Webhooks, receipts and receipt emails never check a module.** A gift for an
+  organisation whose `giving` module is off is booked, receipted and emailed like
+  any other. `App\Support\GivingSwitch::noteArrivalIfOff` then logs
+  `GivingSwitch::ARRIVAL_MESSAGE` at warning level, once per donation (`gift`) or
+  commitment (`monthly_gift_started`) through `Cache::add`, AFTER that work. It
+  never throws: an exception inside the webhook's try becomes a 500 that Stripe
+  retries for days.
+- **Intake follows it.** `Mobile\DonationsController::createCheckoutSession`
+  refuses one-time and monthly checkout with a 403 sentence, before
+  `canAcceptDonations` and before the try. `Mobile\FundsController` answers `[]`
+  without reading or clearing its cache.
+- **Connect onboarding, status and the forms-card Stop button never sit behind
+  `giving`.** While Giving is off, or for a school or community organisation a
+  SuperAdmin switched Giving on for, Connect renders on {term} Details › Online
+  payments (`showsOnlinePaymentsTab`; needs the CRM, because the connect routes
+  sit inside `crm`).
+- **Switching Giving off is refused while any monthly gift can still charge**
+  (`GivingSwitch::liveSubscriptionCount()` above zero): rows with a Stripe
+  subscription id that are not `canceled`, plus a `canceled` row Stripe says it
+  is still billing (only the Stripe dashboard can stop it). Stripe
+  (`DonationService::stripeStatusOf`) is asked only about a cancelled row with a
+  gift booked after its `canceled_at`. Local timestamps never decide it: a late
+  or replayed invoice webhook also books after a cancel. An unknown answer
+  counts. A donor's pause is still `active` locally, so it counts. Unlinked
+  monthly checkout pages opened in the last 24 hours (`openCheckoutCount()`, a
+  Checkout Session id present) refuse too, and say wait, never cancel: the admin
+  cancel does not expire the session, so a cancelled row could still be paid.
+  There is no override (owner: block), so anyone opening app checkout pages can
+  hold the switch until 24 hours after the last one. A switch never cancels,
+  pauses or changes a gift, and the member `/me/recurring-giving` verbs do not
+  follow it.
+- **Receipt wording by org type.** `Letterhead::religiousOrg($masjid)` (true for
+  a masjid, and for a missing organisation) picks the tax wording. Every sender of
+  `DonationReceiptMail` / `AnnualStatementMail` passes `religiousOrg:`, so the
+  email agrees with the PDF it carries. The mailables declare it as a defaulted
+  property, NOT a promoted one, so a payload queued before it existed still
+  unserializes. Masjid output is byte-identical to c0f6a72
+  (`ReceiptWordingByOrgTypeTest` against `tests/fixtures/receipts-c0f6a72`).
+
 ## Tenancy note
 
 `Fund`, `Donation`, `DonationReceipt` use `App\Models\Concerns\BelongsToMasjid`

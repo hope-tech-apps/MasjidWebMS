@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\AnnualStatementMail;
 use App\Models\Masjid;
 use App\Services\Receipts\AnnualStatementService;
+use App\Services\Receipts\Letterhead;
 use App\Services\Receipts\StatementLetterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -168,6 +169,9 @@ class AnnualStatementsController extends Controller
                 byFund: $data['by_fund'],
                 pdf: $pdf,
                 pdfName: $this->letters->filename($donorName, $statement['year']),
+                // The same wording decision the attached letter made (a missing
+                // organisation keeps the masjid wording), so the two never disagree.
+                religiousOrg: Letterhead::religiousOrg($masjid),
             ));
 
             return true;

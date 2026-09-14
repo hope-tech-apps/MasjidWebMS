@@ -143,7 +143,9 @@ class CapabilityGateTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.capabilities.web_pages', false)
             ->assertJsonPath('data.capabilities.jummah_lunch', true)
-            ->assertJsonPath('data.capabilities.crm', true);
+            ->assertJsonPath('data.capabilities.crm', true)
+            ->assertJsonPath('data.modules_off', [])
+            ->assertJsonPath('data.modules_on', []);
     }
 
     #[Test]
@@ -294,6 +296,13 @@ class CapabilityGateTest extends TestCase
             $this->assertNotEmpty($definition['label'] ?? null, "{$key} has no label");
             $this->assertNotEmpty($definition['description'] ?? null, "{$key} has no description");
 
+            // `where` places a module that has no sidebar item of its own; the
+            // panel prints it after the Details menu title, so blank is a bug.
+            if (array_key_exists('where', $definition)) {
+                $this->assertIsString($definition['where'], "{$key}'s where is not a string");
+                $this->assertNotSame('', trim($definition['where']), "{$key} has an empty where");
+            }
+
             if (! empty($definition['column'])) {
                 $this->assertSame('grant', $definition['kind'], "{$key} is column-backed, so it is a grant");
 
@@ -309,18 +318,51 @@ class CapabilityGateTest extends TestCase
     }
 
     #[Test]
-    public function every_module_is_on_for_every_org_type_until_a_super_admin_decides(): void
+    public function the_module_defaults_in_code_are_the_catalogues_and_a_fresh_organisation_has_nothing_off_or_on(): void
     {
+        // Masjid::MODULE_DEFAULTS is what a module read answers from on a stale
+        // config cache, so it must be the catalogue's defaults, key for key and
+        // in order.
+        $fromConfig = [];
+
+        foreach (Masjid::MODULE_KEYS as $key) {
+            foreach (Masjid::ORG_TYPES as $orgType) {
+                $fromConfig[$key][$orgType] = config("capabilities.{$key}.defaults.{$orgType}");
+            }
+        }
+
+        $this->assertSame(Masjid::MODULE_DEFAULTS, $fromConfig);
+
+        // The masjid screens, and nothing else, are held back from schools and
+        // community organisations (owner, 2026-09-14): a SuperAdmin switches one
+        // on per organisation.
+        foreach ([Masjid::ORG_TYPE_SCHOOL, Masjid::ORG_TYPE_COMMUNITY] as $orgType) {
+            $this->assertSame(
+                ['splash', 'services', 'donation_link', 'giving', 'properties'],
+                array_keys(array_filter(Masjid::MODULE_DEFAULTS, fn (array $defaults) => $defaults[$orgType] === false)),
+                "the modules not offered to a {$orgType} changed"
+            );
+        }
+
         foreach (Masjid::ORG_TYPES as $orgType) {
             $org = $this->org($orgType);
 
             foreach (Masjid::MODULE_KEYS as $key) {
-                $this->assertTrue(config("capabilities.{$key}.defaults.{$orgType}"), "{$key} is not on by default for a {$orgType}");
-                $this->assertTrue($org->hasCapability($key));
-                $this->assertFalse($org->moduleIsOff($key));
+                $offered = Masjid::MODULE_DEFAULTS[$key][$orgType];
+
+                // A masjid is offered every module: nothing it had moved.
+                if ($orgType === Masjid::ORG_TYPE_MASJID) {
+                    $this->assertTrue($offered, "{$key} is not offered to a masjid");
+                }
+
+                $this->assertSame($offered, $org->moduleOfferedByDefault($key), "{$key} for a {$orgType}");
+                $this->assertSame($offered, $org->hasCapability($key), "{$key} for a {$orgType}");
+                $this->assertSame(! $offered, $org->moduleIsOff($key), "{$key} for a {$orgType}");
             }
 
-            $this->assertSame([], $org->modules_off);
+            // Nothing switched off, and nothing a SuperAdmin switched on.
+            $this->assertSame([], $org->modules_off, "a fresh {$orgType} has something in modules_off");
+            $this->assertSame([], $org->modules_on, "a fresh {$orgType} has something in modules_on");
             // New, so nobody had it.
             $this->assertFalse($org->hasCapability('form_editing'));
         }
@@ -343,6 +385,7 @@ class CapabilityGateTest extends TestCase
         // A typo is neither a grant nor a switched-off screen.
         $this->assertFalse($masjid->hasCapability('event'));
         $this->assertFalse($masjid->moduleIsOff('event'));
+        $this->assertTrue($masjid->moduleOfferedByDefault('event'));
     }
 
     #[Test]
@@ -350,13 +393,15 @@ class CapabilityGateTest extends TestCase
     {
         $school = $this->org('school', crm: true);
 
-        foreach (['announcements', 'zakat', 'programs', 'website'] as $key) {
+        // Giving and Properties & Rent are not offered to a school at all; the
+        // rest are switched off here.
+        foreach (['announcements', 'zakat', 'programs', 'website', 'prayer_times', 'appointment_requests'] as $key) {
             $this->grant($school, $key, false);
         }
 
         Sanctum::actingAs($this->superAdmin());
 
-        foreach (['announcements', 'zakat-settings', 'offerings', 'pages'] as $path) {
+        foreach (['announcements', 'zakat-settings', 'offerings', 'pages', 'iqama', 'funds', 'properties', 'appointment-requests'] as $path) {
             $status = $this->getJson("/api/admin/masjids/{$school->id}/{$path}")->getStatusCode();
 
             $this->assertNotSame(403, $status, "a SuperAdmin was refused /{$path}");

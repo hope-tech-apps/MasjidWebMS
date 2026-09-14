@@ -22,6 +22,17 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
+    /**
+     * Whether the issuer is a masjid, the only kind of organisation whose
+     * statement cites "intangible religious benefits" or calls itself 501(c)(3)
+     * without a tax ID on hand (Letterhead::religiousOrg). Declared with a
+     * default rather than promoted: this mail is queued, and SerializesModels
+     * restores only the keys a payload carries, so a statement queued before
+     * this existed comes back with the masjid wording instead of an
+     * uninitialized property.
+     */
+    public bool $religiousOrg = true;
+
     public function __construct(
         public string $masjidName,
         public string $donorName,
@@ -33,7 +44,9 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
         public array $byFund,
         public ?string $pdf = null,
         public ?string $pdfName = null,
+        bool $religiousOrg = true,
     ) {
+        $this->religiousOrg = $religiousOrg;
     }
 
     /** Attach the formal letter PDF when one was rendered. */
@@ -70,6 +83,7 @@ class AnnualStatementMail extends Mailable implements ShouldQueue
                 'giftCount' => $this->giftCount,
                 'gifts' => $this->gifts,
                 'byFund' => $this->byFund,
+                'religiousOrg' => $this->religiousOrg,
             ],
         );
     }

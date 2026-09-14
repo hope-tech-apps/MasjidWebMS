@@ -86,6 +86,16 @@ class AppointmentRequestsController extends Controller
                 return response()->api(404, 'Appointment requests are not available.', null);
             }
 
+            // Appointment Requests switched off: the organisation has no inbox to
+            // read this in, so nothing is written. Asked BEFORE the honeypot, so a
+            // bot is not told "received" by an organisation taking no requests.
+            // RETURNED, not thrown: the catch (\Exception) below would swallow an
+            // HttpResponseException into a 500. No PHI reaches the log on this
+            // path. moduleIsOff is fail-open, so a stale config refuses nobody.
+            if (Masjid::find($masjidId)?->moduleIsOff('appointment_requests') === true) {
+                return response()->api(403, 'This organisation is not taking appointment requests here right now.', null);
+            }
+
             // A bot filling every input trips this; a human never sees the
             // field. Report success so a scripted submitter gets no signal to
             // adapt to, while nothing is written.

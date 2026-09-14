@@ -52,7 +52,17 @@ class PublicSiteIgnoresWebPagesTest extends TestCase
             'capability_overrides' => array_fill_keys(Masjid::MODULE_KEYS, false) + ['web_pages' => false, 'form_editing' => false],
         ])->save();
 
-        $this->assertSame(Masjid::MODULE_KEYS, $school->fresh()->modules_off);
+        // Every module is off. `modules_off` names only what a school is offered:
+        // the masjid screens (Giving, Services…) were never switched on here, so
+        // nobody took them away and they ride neither list.
+        $fresh = $school->fresh();
+        $this->assertSame(
+            array_values(array_filter(Masjid::MODULE_KEYS, fn (string $key) => $fresh->moduleOfferedByDefault($key))),
+            $fresh->modules_off
+        );
+        $this->assertContains('website', $fresh->modules_off);
+        $this->assertNotContains('giving', $fresh->modules_off);
+        $this->assertSame([], $fresh->modules_on);
 
         $form = Form::create([
             'masjid_id' => $school->id,

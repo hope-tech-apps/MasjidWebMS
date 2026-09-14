@@ -58,7 +58,12 @@ class DashboardSearchController extends Controller
             $results['announcements'] = $hidesSwitchedOff && $masjid->moduleIsOff('announcements')
                 ? collect()
                 : $masjid->announcements()->searchLike($inputs['search_for'])->get();
-            $results['services'] = $masjid->services()->searchLike($inputs['search_for'])->get();
+            // The services admin index stays open while Services is off (other
+            // screens pick from it), but a search result links to the Services
+            // screen itself, which is hidden and refuses.
+            $results['services'] = $hidesSwitchedOff && $masjid->moduleIsOff('services')
+                ? collect()
+                : $masjid->services()->searchLike($inputs['search_for'])->get();
 
             foreach($this->APP_DM as $key => $model) {
                 $results[$key] = $model::searchLike($inputs['search_for'])->get();

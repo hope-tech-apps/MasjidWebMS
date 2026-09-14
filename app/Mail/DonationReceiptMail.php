@@ -24,6 +24,15 @@ class DonationReceiptMail extends Mailable
 {
     use Queueable, SerializesModels;
 
+    /**
+     * Whether the issuer is a masjid, the only kind of organisation whose receipt
+     * cites "intangible religious benefit" (Letterhead::religiousOrg). Declared
+     * with a default rather than promoted: SerializesModels restores only the
+     * keys a payload carries, so a mail serialized before this existed comes back
+     * with the masjid wording instead of an uninitialized property.
+     */
+    public bool $religiousOrg = true;
+
     public function __construct(
         public string $masjidName,
         public string $donorName,
@@ -37,7 +46,9 @@ class DonationReceiptMail extends Mailable
         public bool $recurring = false,
         public ?string $pdf = null,
         public ?string $pdfName = null,
+        bool $religiousOrg = true,
     ) {
+        $this->religiousOrg = $religiousOrg;
     }
 
     /** Attach the printable receipt PDF when one was rendered. */
@@ -76,6 +87,7 @@ class DonationReceiptMail extends Mailable
                 'eligibleAmount' => $this->eligibleAmount,
                 'reference' => $this->reference,
                 'recurring' => $this->recurring,
+                'religiousOrg' => $this->religiousOrg,
             ],
         );
     }

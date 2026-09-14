@@ -652,6 +652,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'list_iqama_times',
+            module: 'prayer_times',
             description: <<<'TXT'
             Show the masjid's current iqama (jama'ah) times — how they are calculated, and every
             fixed time already scheduled. ALWAYS call this before set_iqama_schedule, so you can
@@ -720,6 +721,7 @@ class ToolRegistry
     {
         return new AssistantTool(
             name: 'set_iqama_schedule',
+            module: 'prayer_times',
             description: <<<'TXT'
             Set fixed iqama (jama'ah) times for date ranges — this is how a masjid publishes its
             monthly prayer schedule. Send every line of the schedule in one call.

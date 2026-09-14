@@ -283,7 +283,7 @@ class Masjid extends Model implements HasMedia
      * would also widen the public/mobile API responses — which have no business
      * knowing about verticals in this slice.
      */
-    public const ADMIN_APPENDS = ['vertical', 'capabilities', 'modules_off'];
+    public const ADMIN_APPENDS = ['vertical', 'capabilities', 'modules_off', 'modules_on'];
 
     /**
      * The `kind => module` keys of config/capabilities.php, in catalogue order.
@@ -291,7 +291,8 @@ class Masjid extends Model implements HasMedia
      * Held in code as well as in config ON PURPOSE: during a deploy the new PHP
      * runs against the previous config cache for a while (bin/deploy merges, then
      * installs and migrates, and only then rebuilds the cache). A module the
-     * loaded config does not know yet must read as ON, and this list is how
+     * loaded config does not know yet must read as its org type's default
+     * (MODULE_DEFAULTS), never as a decision, and this list is how
      * moduleIsOff() and EnsureOrgCapability tell "a module the config has not
      * caught up with" from "a typo". CapabilityGateTest pins it to the config.
      */
@@ -308,6 +309,53 @@ class Masjid extends Model implements HasMedia
         'broadcasts',
         'flyer_studio',
         'impact_report',
+        'prayer_times',
+        'splash',
+        'services',
+        'donation_link',
+        'giving',
+        'properties',
+        'appointment_requests',
+    ];
+
+    /**
+     * Which org types each module is OFFERED to before a SuperAdmin decides: a
+     * code copy of every module's `defaults` in config/capabilities.php, in
+     * MODULE_KEYS order. CapabilityGateTest pins it to the config and
+     * CapabilityTsMirrorTest to the SPA's copy.
+     *
+     * Held in code for the same reason as MODULE_KEYS: while a deploy runs the new
+     * PHP against an older config cache, moduleIsOff() answers from here. A school
+     * then keeps reading Giving as off (it was never offered it) and a masjid keeps
+     * reading it as on.
+     *
+     * Most modules are screens every organisation already had. The masjid screens
+     * (Splash, Services, Donation link, Giving, Properties & Rent) were masjid-only
+     * in the menu, so a school or community organisation has one only once a
+     * SuperAdmin switches it ON (owner, 2026-09-14), which `modules_on` reports.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    public const MODULE_DEFAULTS = [
+        'website' => ['masjid' => true, 'school' => true, 'community' => true],
+        'announcements' => ['masjid' => true, 'school' => true, 'community' => true],
+        'events' => ['masjid' => true, 'school' => true, 'community' => true],
+        'about_us' => ['masjid' => true, 'school' => true, 'community' => true],
+        'gallery' => ['masjid' => true, 'school' => true, 'community' => true],
+        'push_notifications' => ['masjid' => true, 'school' => true, 'community' => true],
+        'contact_requests' => ['masjid' => true, 'school' => true, 'community' => true],
+        'programs' => ['masjid' => true, 'school' => true, 'community' => true],
+        'zakat' => ['masjid' => true, 'school' => true, 'community' => true],
+        'broadcasts' => ['masjid' => true, 'school' => true, 'community' => true],
+        'flyer_studio' => ['masjid' => true, 'school' => true, 'community' => true],
+        'impact_report' => ['masjid' => true, 'school' => true, 'community' => true],
+        'prayer_times' => ['masjid' => true, 'school' => true, 'community' => true],
+        'splash' => ['masjid' => true, 'school' => false, 'community' => false],
+        'services' => ['masjid' => true, 'school' => false, 'community' => false],
+        'donation_link' => ['masjid' => true, 'school' => false, 'community' => false],
+        'giving' => ['masjid' => true, 'school' => false, 'community' => false],
+        'properties' => ['masjid' => true, 'school' => false, 'community' => false],
+        'appointment_requests' => ['masjid' => true, 'school' => true, 'community' => true],
     ];
 
     /**
@@ -374,15 +422,18 @@ class Masjid extends Model implements HasMedia
     }
 
     /**
-     * Has a SuperAdmin switched this MODULE off for the organisation?
+     * Is this MODULE off for the organisation — switched off by a SuperAdmin, or
+     * (for a module its org type is not offered) never switched on?
      *
-     * The one reader for modules, and it FAILS OPEN. It answers true only when
-     * the key is a known module (MODULE_KEYS), the loaded config also knows it
-     * as a module, and the organisation does not have it. Anything else — an
-     * unknown key, a config cache from before the module existed, an entry whose
-     * kind is not `module` — is "not off", because a module was on for everyone
-     * before the catalogue knew about it and a deploy must never take a screen
-     * away. Grants keep hasCapability(), which fails closed.
+     * The one reader for modules, and it FAILS OPEN. An unknown key is never off.
+     * When the loaded config knows the key as a module, the answer is the
+     * organisation's: a SuperAdmin's override, otherwise the catalogue default
+     * for its org type. When it does not — a config cache from before the module
+     * existed, or an entry whose kind is not `module` — the answer is the org
+     * type's default from MODULE_DEFAULTS, overrides unread: a masjid keeps every
+     * screen it had, and a school gains no masjid screen it was never offered. A
+     * deploy must never take a screen away. Grants keep hasCapability(), which
+     * fails closed.
      *
      * Every module check goes through here: the `capability:` gate, the
      * Broadcasts channels, the Assistant's tools, the admin search, public
@@ -397,10 +448,23 @@ class Masjid extends Model implements HasMedia
         $definition = config("capabilities.{$key}");
 
         if (! is_array($definition) || ($definition['kind'] ?? null) !== 'module') {
-            return false;
+            return (self::MODULE_DEFAULTS[$key][$this->orgType()] ?? true) === false;
         }
 
         return ! $this->hasCapability($key);
+    }
+
+    /**
+     * Is this module offered to this organisation's type before anyone decides
+     * (MODULE_DEFAULTS)? False only for the masjid screens at a school or
+     * community organisation; an unknown key reads as offered.
+     *
+     * Decides which list a module rides (`modules_off` or `modules_on`) and which
+     * sentence the `capability:` gate refuses with.
+     */
+    public function moduleOfferedByDefault(string $key): bool
+    {
+        return (bool) (self::MODULE_DEFAULTS[$key][$this->orgType()] ?? true);
     }
 
     /**
@@ -429,15 +493,40 @@ class Masjid extends Model implements HasMedia
     }
 
     /**
-     * The modules a SuperAdmin has switched off here, in catalogue order. `[]`
-     * for every organisation nobody has switched anything off for — absent
-     * means on, so an old payload without this key hides nothing.
+     * The modules this organisation's type is offered that a SuperAdmin has
+     * switched off here, in catalogue order. `[]` for every organisation nobody
+     * has switched anything off for — absent means on, so an old payload without
+     * this key hides nothing.
+     *
+     * A module the type is not offered (Giving at a school) never appears, even
+     * while off: nobody took it away. Team & Access and the user screen read this
+     * list, so their "switched off" sentences never fill with masjid screens.
      *
      * @return list<string>
      */
     public function getModulesOffAttribute(): array
     {
-        return array_values(array_filter(self::MODULE_KEYS, fn (string $key) => $this->moduleIsOff($key)));
+        return array_values(array_filter(
+            self::MODULE_KEYS,
+            fn (string $key) => $this->moduleOfferedByDefault($key) && $this->moduleIsOff($key)
+        ));
+    }
+
+    /**
+     * The modules this organisation's type is NOT offered that a SuperAdmin has
+     * switched on here (Giving at a school), in catalogue order. `[]` for every
+     * organisation nobody switched one on for. The SPA lets a masjid-only menu
+     * item through for another org type only when its module is named here, so
+     * an old payload without this key shows exactly the screens it did.
+     *
+     * @return list<string>
+     */
+    public function getModulesOnAttribute(): array
+    {
+        return array_values(array_filter(
+            self::MODULE_KEYS,
+            fn (string $key) => ! $this->moduleOfferedByDefault($key) && ! $this->moduleIsOff($key)
+        ));
     }
 
     /** Limit a query to one vertical. */

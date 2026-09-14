@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Enums\SectionType;
+use App\Models\DonationLink;
 use App\Models\Masjid;
 use App\Models\MasjidCapabilityChange;
 use App\Models\MasjidUser;
@@ -18,7 +19,8 @@ use Tests\TestCase;
 /**
  * GET /api/admin/masjids/{id}/capabilities — what the SuperAdmin's switch panel
  * reads: every catalogue entry once, grouped, with its writer, default,
- * override and in-use count, plus this organisation's last 25 flips.
+ * override, in-use count, place (`where`), facts and whether the org type is
+ * offered it, plus this organisation's last 25 flips.
  */
 class CapabilitiesEndpointTest extends TestCase
 {
@@ -90,6 +92,26 @@ class CapabilitiesEndpointTest extends TestCase
     }
 
     #[Test]
+    public function the_org_says_whether_the_apps_have_a_donation_link_to_fall_back_on(): void
+    {
+        // Both apps show the link on Donate while no fund is offered, and "No donation
+        // options are available right now" when it is blank; the Giving confirm reads this.
+        $org = $this->org('masjid');
+        Sanctum::actingAs($this->superAdmin());
+
+        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.org.donation_link_set', false);
+
+        $link = DonationLink::create(['masjid_id' => $org->id, 'link' => '   ']);
+        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.org.donation_link_set', false);
+
+        $link->forceFill(['link' => 'https://give.example.org'])->save();
+        $this->getJson($this->url($org))->assertOk()->assertJsonPath('data.org.donation_link_set', true);
+
+        // Another organisation's link is not this one's.
+        $this->getJson($this->url($this->org('masjid')))->assertOk()->assertJsonPath('data.org.donation_link_set', false);
+    }
+
+    #[Test]
     public function only_a_super_admin_can_read_it(): void
     {
         $org = $this->org();
@@ -108,7 +130,7 @@ class CapabilitiesEndpointTest extends TestCase
 
         $data = $this->getJson($this->url($org))->assertOk()->assertJsonPath('status', 'success')->json('data');
 
-        $this->assertSame(['id' => (int) $org->id, 'name' => $org->name, 'org_type' => 'school'], $data['org']);
+        $this->assertSame(['id' => (int) $org->id, 'name' => $org->name, 'org_type' => 'school', 'donation_link_set' => false], $data['org']);
 
         // Groups in config order, each labelled from config.
         $this->assertSame(
@@ -116,6 +138,11 @@ class CapabilitiesEndpointTest extends TestCase
             array_column($data['groups'], 'key')
         );
         $this->assertSame(config('capability_groups.content'), $data['groups'][0]['label']);
+
+        // Prayer times has a card of its own, straight after content.
+        $this->assertSame('prayer', $data['groups'][1]['key']);
+        $this->assertSame('Prayer times', $data['groups'][1]['label']);
+        $this->assertSame(['prayer_times'], array_column($data['groups'][1]['entries'], 'key'));
 
         $keys = collect($data['groups'])->flatMap(fn (array $group) => array_column($group['entries'], 'key'))->all();
         $this->assertSame(count($keys), count(array_unique($keys)), 'an entry appears twice');
@@ -176,26 +203,93 @@ class CapabilitiesEndpointTest extends TestCase
         $this->placed($org, 'contact_form');
         $this->placed($org, 'about_us');
         $this->placed($org, 'mission_vision');
+        $this->placed($org, 'prayer_times');
         $this->placed($org, 'events', pageActive: false);
         $this->placed($org, 'gallery', sectionActive: false);
         $this->placed($org, 'announcements_list')->delete(); // a soft-deleted page
         $this->placed($other, 'contact_form');
         $this->placed($other, 'offering');
+        $this->placed($other, 'donation');
 
         Sanctum::actingAs($this->superAdmin());
         $entries = $this->entries($this->getJson($this->url($org))->assertOk()->json('data'));
 
         $this->assertSame(1, $entries['contact_requests']['in_use']);
         $this->assertSame(2, $entries['about_us']['in_use'], 'about_us and mission_vision both show About Us');
+        $this->assertSame(1, $entries['prayer_times']['in_use']);
         $this->assertSame(0, $entries['events']['in_use']);
         $this->assertSame(0, $entries['gallery']['in_use']);
         $this->assertSame(0, $entries['announcements']['in_use']);
         $this->assertSame(0, $entries['programs']['in_use'], 'another organisation\'s section was counted');
+        $this->assertSame(0, $entries['donation_link']['in_use'], 'another organisation\'s section was counted');
+        $this->assertSame(0, $entries['services']['in_use']);
 
         // Nothing a section depends on.
         $this->assertNull($entries['broadcasts']['in_use']);
+        $this->assertNull($entries['giving']['in_use']);
         $this->assertNull($entries['web_pages']['in_use']);
         $this->assertNull($entries['crm']['in_use']);
+    }
+
+    #[Test]
+    public function where_facts_and_offered_by_default_ride_every_entry(): void
+    {
+        $school = $this->org('school');
+        $masjid = $this->org('masjid');
+        Sanctum::actingAs($this->superAdmin());
+
+        $entries = $this->entries($this->getJson($this->url($school))->assertOk()->json('data'));
+
+        foreach ($entries as $key => $entry) {
+            $this->assertIsArray($entry['facts'], "{$key} has no facts list");
+            $this->assertTrue(array_is_list($entry['facts']), "{$key}'s facts is not a list");
+            $this->assertIsBool($entry['offered_by_default'], "{$key} has no offered_by_default");
+
+            // Only a module that lives inside another screen names a place.
+            if ($key === 'prayer_times') {
+                $this->assertSame(config('capabilities.prayer_times.where'), $entry['where']);
+                $this->assertNotEmpty($entry['where']);
+            } else {
+                $this->assertNull($entry['where'], "{$key} carries a where");
+            }
+
+            // One answer, two fields: never let them disagree for a module.
+            if ($entry['kind'] === 'module') {
+                $this->assertSame($entry['default_for_org_type'], $entry['offered_by_default'], "{$key}: offered_by_default disagrees with default_for_org_type");
+            }
+        }
+
+        // A school is not offered the masjid screens: they read off, nobody
+        // overrode them, and the panel may switch them on.
+        foreach (['splash', 'services', 'donation_link', 'giving', 'properties'] as $key) {
+            $this->assertFalse($entries[$key]['offered_by_default'], "{$key} is offered to a school");
+            $this->assertFalse($entries[$key]['enabled'], "{$key} is on for a fresh school");
+            $this->assertFalse($entries[$key]['overridden']);
+        }
+
+        foreach (['prayer_times', 'appointment_requests', 'events'] as $key) {
+            $this->assertTrue($entries[$key]['offered_by_default'], "{$key} is not offered to a school");
+            $this->assertTrue($entries[$key]['enabled']);
+        }
+
+        $this->assertFalse($entries['crm']['offered_by_default']);
+        $this->assertFalse($entries['jummah_lunch']['offered_by_default']);
+
+        // Facts only where there is something to say.
+        $this->assertNotEmpty($entries['giving']['facts']);
+        $this->assertNotEmpty($entries['prayer_times']['facts']);
+        $this->assertSame(['No live splash'], $entries['splash']['facts']);
+        $this->assertSame([], $entries['events']['facts']);
+        $this->assertSame([], $entries['services']['facts']);
+        $this->assertSame([], $entries['web_pages']['facts']);
+
+        // A masjid is offered all of them, and has them.
+        $entries = $this->entries($this->getJson($this->url($masjid))->assertOk()->json('data'));
+
+        foreach (Masjid::MODULE_KEYS as $key) {
+            $this->assertTrue($entries[$key]['offered_by_default'], "{$key} is not offered to a masjid");
+            $this->assertTrue($entries[$key]['enabled'], "{$key} is off for a fresh masjid");
+        }
     }
 
     #[Test]

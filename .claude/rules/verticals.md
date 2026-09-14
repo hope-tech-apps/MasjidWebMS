@@ -38,11 +38,20 @@ for what a tenant's MOBILE APP has, and per-tenant gates (`crm_enabled`,
 `assistant_enabled`) are unchanged.
 
 That pivot governs the app's drawer only. Which ADMIN screens an organisation
-has is `config/capabilities.php` — opt-in grants and default-on modules a
-SuperAdmin switches per organisation (`.claude/rules/auth-permissions.md`).
+has is `config/capabilities.php` — opt-in grants and modules a SuperAdmin
+switches per organisation (`.claude/rules/auth-permissions.md`).
 The two are separate switches and must not be merged: "Announcements" in the app
 drawer and the Announcements admin screen are different keys in different
 places.
+
+Modules default per org type (`Masjid::MODULE_DEFAULTS`). The masjid screens
+(Splash, Services, Donation link, Giving, Properties & Rent) are off for a
+school or community organisation until a SuperAdmin switches one on, which the
+payload reports in `modules_on`. The Details screen's prayer tabs follow the
+`prayer_times` module through the admin API; what the APP shows stays
+client-side by org_type. A school with Giving on gets non-masjid receipt
+wording (`Letterhead::religiousOrg`), and the Donations menu item reads the
+`giving` term ("Giving" for a school).
 
 Every key listed in a bundle MUST exist in `mobile_app_features.key`, or
 provisioning silently enables nothing for it. `OrgTypeTest` asserts this.

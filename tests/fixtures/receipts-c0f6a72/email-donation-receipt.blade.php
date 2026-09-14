@@ -47,18 +47,8 @@
                             </table>
 
                             <p style="margin:20px 0 0; font-size:12px; line-height:1.6; color:#7b8794;">
-@if ($religiousOrg ?? true)
                                 No goods or services were provided in exchange for this contribution; any benefit received was intangible religious benefit only.
                                 {{ $masjidName }} is a tax-exempt religious organization. Please retain this receipt for your tax records.
-@else
-{{-- Not a masjid: only a religious organisation may cite intangible religious
-     benefits. This email cannot see a tax ID, so it states no tax-exempt status;
-     the attached PDF does when one is on file. The directives sit at column 0
-     and this comment lives in this branch because a Blade comment leaves its
-     newline behind: the masjid bytes stay identical (ReceiptWordingByOrgTypeTest). --}}
-                                No goods or services were provided in exchange for this contribution.
-                                Please retain this receipt for your tax records.
-@endif
                             </p>
                             <p style="margin:12px 0 0; font-size:12px; color:#9aa5b1;">Reference: {{ $reference }}</p>
                         </td>

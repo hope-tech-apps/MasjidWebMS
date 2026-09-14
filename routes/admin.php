@@ -233,8 +233,9 @@ Route::prefix('admin')->group(function () {
                 Route::get('/{broadcast_id}', 'show');
             });
 
-            // Masjid splash announcements (in-app message / splash modal)
-            Route::prefix('{masjid_id}/splash-announcements')->controller(SplashAnnouncementsController::class)->group(function () {
+            // Masjid splash announcements (in-app message / splash modal). A splash
+            // already live keeps showing until its end date when this is off.
+            Route::prefix('{masjid_id}/splash-announcements')->middleware('capability:splash')->controller(SplashAnnouncementsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{splash_id}', 'show');
@@ -261,18 +262,23 @@ Route::prefix('admin')->group(function () {
                 Route::post('/{event_id}/duplicate', 'duplicate');
             }));
 
-            // Masjid services
+            // Masjid services. `capability:services` sits on every route EXCEPT the
+            // index: BroadcastComposerView (service audiences), jummahLunchStore
+            // (the notify-followers picker) and AboutUsView read GET /services, and
+            // they keep listing the services already published while Services is
+            // off. Only the Services screens call show and the writes.
             Route::prefix('{masjid_id}/services')->controller(ServicesController::class)->group((function () {
                 Route::get('/', 'index');
-                Route::post('/', 'store');
-                Route::get('/{service_id}', 'show');
-                Route::post('/{service_id}', 'update');
-                Route::delete('/{service_id}', 'destroy');
-                Route::delete('/{service_id}/trash', 'moveToTrash');
+                Route::post('/', 'store')->middleware('capability:services');
+                Route::get('/{service_id}', 'show')->middleware('capability:services');
+                Route::post('/{service_id}', 'update')->middleware('capability:services');
+                Route::delete('/{service_id}', 'destroy')->middleware('capability:services');
+                Route::delete('/{service_id}/trash', 'moveToTrash')->middleware('capability:services');
             }));
 
-            // Masjid donation link
-            Route::prefix('{masjid_id}/donation-link')->controller(MasjidDonationLinkController::class)->group((function () {
+            // Masjid donation link. Outside `crm`: an external URL, no money passes
+            // through Manara.
+            Route::prefix('{masjid_id}/donation-link')->middleware('capability:donation_link')->controller(MasjidDonationLinkController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
@@ -283,26 +289,30 @@ Route::prefix('admin')->group(function () {
                 Route::post('/', 'save');
             }));
 
-            // Masjid related mobile app features
+            // Masjid related mobile app features. Never gated by a module: it is
+            // itself the per-organisation app-drawer switch.
             Route::prefix('{masjid_id}/features')->controller(MasjidMobileAppFeaturesController::class)->middleware('super')->group(function () {
                 Route::get('/', 'index');
                 Route::put('/{feature_id}', 'update');
             });
 
-            // Masjid iqama time settings
-            Route::prefix('{masjid_id}/iqama')->controller(IqamaTimeSettingsController::class)->group((function () {
+            // Masjid iqama time settings. The three prayer prefixes below follow
+            // Prayer times (`capability:prayer_times`), the Details screen's
+            // Prayer Calculation, Iqama and Jumaa tabs. The public reads
+            // (prayers/settings, /prayers, v1 settings, tv-config) never do.
+            Route::prefix('{masjid_id}/iqama')->middleware('capability:prayer_times')->controller(IqamaTimeSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
 
             // Masjid jumaa time settings
-            Route::prefix('{masjid_id}/jumaa')->controller(JumaaSettingsController::class)->group((function () {
+            Route::prefix('{masjid_id}/jumaa')->middleware('capability:prayer_times')->controller(JumaaSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
 
             // Masjid prayer calculation settings
-            Route::prefix('{masjid_id}/prayer-calculation')->controller(PrayerCalculationSettingsController::class)->group((function () {
+            Route::prefix('{masjid_id}/prayer-calculation')->middleware('capability:prayer_times')->controller(PrayerCalculationSettingsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
@@ -378,11 +388,12 @@ Route::prefix('admin')->group(function () {
                 Route::post('/', 'save');
             }));
 
-            // Get prayer calculation options (methods, madhabs, high latitude rules)
+            // Get prayer calculation options (methods, madhabs, high latitude rules).
+            // Never gated by Prayer times: a static list that names no organisation.
             Route::get('prayer-calculation/options', [PrayerCalculationSettingsController::class, 'getOptions']);
 
             // Masjid notifications (sending a push). Scheduled prayer pushes do not
-            // come through here and are not affected by the module.
+            // come through here: they follow Prayer times, not this module.
             Route::prefix('{masjid_id}/notifications')->middleware('capability:push_notifications')->controller(NotificationsController::class)->group((function () {
                 Route::post('/', 'save');
             }));
@@ -666,7 +677,8 @@ Route::prefix('admin')->group(function () {
             // Gated like the Connect routes (auth:sanctum + admin + tenant bound to
             // the HOLDER + manage donations) but deliberately OUTSIDE `crm`: the
             // link keeps charging whether or not the holder's CRM is switched on,
-            // so withdrawing consent must not depend on that switch either.
+            // so withdrawing consent must not depend on that switch either. Never
+            // gated by Giving, for the same reason.
             Route::delete('{masjid_id}/connect/forms-card-for/{child_id}', [\App\Http\Controllers\AdminDashboard\FormsCardAccountController::class, 'revoke'])
                 ->middleware('permission:manage donations');
 
@@ -688,6 +700,8 @@ Route::prefix('admin')->group(function () {
                 Route::prefix('{masjid_id}/contacts')->controller(ContactsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::post('/', 'store')->middleware('permission:manage contacts');
+                    // Never gated by Giving: a member's record keeps showing their
+                    // giving history while the giving screens are switched off.
                     Route::get('/{contact_id}', 'show')->middleware('permission:view contacts');
                     Route::put('/{contact_id}', 'update')->middleware('permission:manage contacts');
                     Route::delete('/{contact_id}', 'destroy')->middleware('permission:manage contacts');
@@ -1013,7 +1027,9 @@ Route::prefix('admin')->group(function () {
                 // appointments` would change the seeded permission set that
                 // RolesAndPermissionsSeeder and RolePermissionBridgeTest pin.
                 // Splitting them out is a deliberate later step.
-                Route::prefix('{masjid_id}/appointment-requests')->controller(AppointmentRequestsController::class)->group(function () {
+                // Follows Appointment Requests (`capability:appointment_requests`),
+                // inside `crm`, so an organisation without the CRM hears that first.
+                Route::prefix('{masjid_id}/appointment-requests')->middleware('capability:appointment_requests')->controller(AppointmentRequestsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     Route::get('/{appointment_request_id}', 'show')->middleware('permission:view contacts');
                     Route::patch('/{appointment_request_id}/status', 'updateStatus')->middleware('permission:manage contacts');
@@ -1141,6 +1157,8 @@ Route::prefix('admin')->group(function () {
                 // routes/web.php (connect.return / connect.refresh) — the admin's
                 // browser arrives there with no token. `/status` is the authed
                 // JSON view of the same state, for the SPA.
+                // Never gated by Giving: Friday lunch, programs and form card
+                // payments depend on this account too.
                 Route::prefix('{masjid_id}/connect')->controller(StripeConnectController::class)->group(function () {
                     Route::post('/onboarding', 'startOnboarding')->middleware('permission:manage donations');
                     Route::get('/status', 'status')->middleware('permission:manage donations');
@@ -1151,7 +1169,14 @@ Route::prefix('admin')->group(function () {
                 // Donation funds (designations). Viewing is gated by
                 // `view donations` (funds are the read side of the money path);
                 // any mutation requires `manage funds`.
-                Route::prefix('{masjid_id}/funds')->controller(FundsController::class)->group(function () {
+                //
+                // The giving screens below (funds, the dashboard numbers and
+                // export, the ledger, recurring gifts, year-end statements) take
+                // `capability:giving` per prefix, INSIDE `crm`, so an organisation
+                // without the CRM hears the CRM sentence first. Webhooks and
+                // receipts never check it: money already charged is always
+                // recorded.
+                Route::prefix('{masjid_id}/funds')->middleware('capability:giving')->controller(FundsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::post('/', 'store')->middleware('permission:manage funds');
                     Route::get('/{fund_id}', 'show')->middleware('permission:view donations');
@@ -1170,8 +1195,8 @@ Route::prefix('admin')->group(function () {
                 // index (DonationsController::filteredQuery), so what the accountant
                 // downloads is exactly what the admin is looking at.
                 Route::get('{masjid_id}/donations/export', [DonationExportController::class, 'export'])
-                    ->middleware('permission:view donations');
-                Route::prefix('{masjid_id}/donations/stats')->controller(DonationStatsController::class)->group(function () {
+                    ->middleware(['capability:giving', 'permission:view donations']);
+                Route::prefix('{masjid_id}/donations/stats')->middleware('capability:giving')->controller(DonationStatsController::class)->group(function () {
                     Route::get('/summary', 'summary')->middleware('permission:view donations');
                     Route::get('/by-fund', 'byFund')->middleware('permission:view donations');
                 });
@@ -1187,7 +1212,8 @@ Route::prefix('admin')->group(function () {
                 // from. Read with `view donations` because the calculator shows
                 // the figure; written with `manage donations` because a wrong
                 // price makes every zakat answer on the screen wrong. It is a
-                // price and a date, never a ruling.
+                // price and a date, never a ruling. Never gated by Giving: the
+                // calculator is its own module (`zakat`).
                 Route::prefix('{masjid_id}/zakat-settings')
                     ->middleware('capability:zakat')
                     ->controller(MasjidZakatSettingController::class)
@@ -1196,7 +1222,7 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'save')->middleware('permission:manage donations');
                     });
 
-                Route::prefix('{masjid_id}/donations')->controller(DonationsController::class)->group(function () {
+                Route::prefix('{masjid_id}/donations')->middleware('capability:giving')->controller(DonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     // Manual/offline gift entry (cash/check/Zelle/…). Stripe gifts
                     // remain webhook-only; this is the only write path for donations.
@@ -1224,7 +1250,7 @@ Route::prefix('admin')->group(function () {
                 // Recurring donations (standing commitments). Read side is
                 // `view donations`; canceling a gift is a money mutation, so it
                 // requires `manage donations`.
-                Route::prefix('{masjid_id}/recurring-donations')->controller(RecurringDonationsController::class)->group(function () {
+                Route::prefix('{masjid_id}/recurring-donations')->middleware('capability:giving')->controller(RecurringDonationsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{subscription_id}', 'show')->middleware('permission:view donations');
                     Route::post('/{subscription_id}/cancel', 'cancel')->middleware('permission:manage donations');
@@ -1260,6 +1286,7 @@ Route::prefix('admin')->group(function () {
                 //
                 // All three prefixes also take `capability:programs` (a module), on
                 // top of `crm`: switching Programs off leaves the member directory.
+                // Never gated by Giving: a program fee is not a gift.
                 Route::prefix('{masjid_id}/offerings')->middleware('capability:programs')->controller(OfferingsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     // Literal path BEFORE /{offering_id}, or it is captured as
@@ -1357,14 +1384,17 @@ Route::prefix('admin')->group(function () {
                 // caller without it gets the report with those metrics listed
                 // in `meta.omitted`. Reusing both families rather than minting
                 // `view impact` keeps the pinned Permission::count() === 8.
+                // Never gated by Giving: its money totals stay for admins who can
+                // view donations while the giving screens are switched off.
                 Route::prefix('{masjid_id}/impact')->middleware('capability:impact_report')->controller(ImpactMetricsController::class)->group(function () {
                     Route::get('/report', 'report')->middleware('permission:view contacts');
                 });
 
                 // Rental properties + rent payments. A separate component from the
                 // donor CRM (rent is not a gift). Viewing is `view properties`;
-                // any mutation is `manage properties`.
-                Route::prefix('{masjid_id}/properties')->controller(PropertiesController::class)->group(function () {
+                // any mutation is `manage properties`. Follows Properties & Rent
+                // (`capability:properties`), inside `crm`.
+                Route::prefix('{masjid_id}/properties')->middleware('capability:properties')->controller(PropertiesController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view properties');
                     Route::post('/', 'store')->middleware('permission:manage properties');
                     Route::get('/{property_id}', 'show')->middleware('permission:view properties');
@@ -1377,7 +1407,7 @@ Route::prefix('admin')->group(function () {
                 // Year-end (annual) giving statements. Computed on the fly from
                 // receipted donations; the report is read-only, emailing a
                 // statement is `manage donations`.
-                Route::prefix('{masjid_id}/annual-statements')->controller(AnnualStatementsController::class)->group(function () {
+                Route::prefix('{masjid_id}/annual-statements')->middleware('capability:giving')->controller(AnnualStatementsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view donations');
                     Route::get('/{contact_id}', 'show')->middleware('permission:view donations');
                     Route::get('/{contact_id}/pdf', 'downloadPdf')->middleware('permission:view donations');

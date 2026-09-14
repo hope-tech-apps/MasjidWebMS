@@ -12,9 +12,10 @@ use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * Modules: the default-on screens a SuperAdmin can switch off for ONE
- * organisation (config/capabilities.php, kind => module; DECISIONS.md
- * 2026-09-16).
+ * Modules: the screens a SuperAdmin can switch off for ONE organisation
+ * (config/capabilities.php, kind => module; DECISIONS.md 2026-09-16), and the
+ * masjid screens a SuperAdmin can switch ON for a school or community
+ * organisation (owner, 2026-09-14; OrganisationModulesOnForAnyOrgTest).
  *
  * What must hold: nothing moves for an organisation nobody switched anything
  * off for (the admin payload's `capabilities` is still grants only and
@@ -29,7 +30,13 @@ class OrganisationModulesTest extends TestCase
 {
     use RefreshDatabase;
 
-    /** Admin route prefix (after `{masjid_id}/`) => the module that must gate it. */
+    /**
+     * Admin route prefix (after `{masjid_id}/`) => the module that must gate it.
+     *
+     * Not `services`: its index stays open (see
+     * services_gates_every_write_and_show_and_leaves_the_picker_list_open).
+     * `donations` covers donations/export and donations/stats too.
+     */
     private const GATED_PREFIXES = [
         'gallery' => 'gallery',
         'announcements' => 'announcements',
@@ -47,6 +54,17 @@ class OrganisationModulesTest extends TestCase
         'pages' => 'website',
         'sections' => 'website',
         'section-types' => 'website',
+        'splash-announcements' => 'splash',
+        'donation-link' => 'donation_link',
+        'iqama' => 'prayer_times',
+        'jumaa' => 'prayer_times',
+        'prayer-calculation' => 'prayer_times',
+        'funds' => 'giving',
+        'donations' => 'giving',
+        'recurring-donations' => 'giving',
+        'annual-statements' => 'giving',
+        'properties' => 'properties',
+        'appointment-requests' => 'appointment_requests',
     ];
 
     /** One admin read per module screen (push and the website are checked on their own). */
@@ -61,6 +79,22 @@ class OrganisationModulesTest extends TestCase
         'zakat' => 'zakat-settings',
         'programs' => 'offerings',
         'impact_report' => 'impact/report',
+        'prayer_times' => 'iqama',
+        'splash' => 'splash-announcements',
+        'donation_link' => 'donation-link',
+        'giving' => 'donations',
+        'properties' => 'properties',
+        'appointment_requests' => 'appointment-requests',
+    ];
+
+    /** The gates that sit inside `crm`, by prefix. */
+    private const CRM_MODULE_PREFIXES = [
+        'funds' => 'giving',
+        'donations' => 'giving',
+        'recurring-donations' => 'giving',
+        'annual-statements' => 'giving',
+        'properties' => 'properties',
+        'appointment-requests' => 'appointment_requests',
     ];
 
     protected function setUp(): void
@@ -115,6 +149,39 @@ class OrganisationModulesTest extends TestCase
         $masjid->forceFill(['capability_overrides' => array_merge($overrides, $decisions)])->save();
     }
 
+    /** @return list<string> the modules an org type is not offered until a SuperAdmin switches them on */
+    private function notOfferedTo(string $orgType): array
+    {
+        return array_keys(array_filter(Masjid::MODULE_DEFAULTS, fn (array $defaults) => $defaults[$orgType] === false));
+    }
+
+    /** The sentence the gate refuses a module with at this organisation. */
+    private function refusal(Masjid $masjid, string $module): string
+    {
+        $label = config("capabilities.{$module}.label");
+
+        return $masjid->moduleOfferedByDefault($module)
+            ? "{$label} is switched off for this organisation."
+            : "{$label} is not switched on for this organisation.";
+    }
+
+    /** @return iterable<array{0:\Illuminate\Routing\Route, 1:string}> admin routes under {masjid_id}/, with the rest of the uri */
+    private function orgRoutes(): iterable
+    {
+        $base = 'api/admin/masjids/{masjid_id}/';
+
+        foreach (Route::getRoutes()->getRoutes() as $route) {
+            if (str_starts_with($route->uri(), $base)) {
+                yield [$route, substr($route->uri(), strlen($base))];
+            }
+        }
+    }
+
+    private static function under(string $rest, string $prefix): bool
+    {
+        return $rest === $prefix || str_starts_with($rest, $prefix . '/');
+    }
+
     #[Test]
     public function the_capabilities_payload_is_still_grants_only_and_nothing_is_off_for_a_fresh_organisation(): void
     {
@@ -130,6 +197,7 @@ class OrganisationModulesTest extends TestCase
                 "a {$orgType}'s capabilities gained or lost a key"
             );
             $this->assertSame([], $data['modules_off']);
+            $this->assertSame([], $data['modules_on']);
         }
     }
 
@@ -145,6 +213,7 @@ class OrganisationModulesTest extends TestCase
         $data = $this->getJson("/api/admin/masjids/{$masjid->id}")->assertOk()->json('data');
 
         $this->assertSame([], $data['modules_off']);
+        $this->assertSame([], $data['modules_on']);
         $this->assertSame([
             'web_pages' => true,
             'jummah_lunch' => false,
@@ -179,29 +248,21 @@ class OrganisationModulesTest extends TestCase
     #[Test]
     public function every_module_admin_route_carries_its_gate(): void
     {
-        $base = 'api/admin/masjids/{masjid_id}/';
         $checked = [];
 
-        foreach (Route::getRoutes()->getRoutes() as $route) {
-            $uri = $route->uri();
-
-            if (! str_starts_with($uri, $base)) {
-                continue;
-            }
-
-            $rest = substr($uri, strlen($base));
+        foreach ($this->orgRoutes() as [$route, $rest]) {
             $middleware = $route->gatherMiddleware();
 
             foreach (self::GATED_PREFIXES as $prefix => $module) {
-                if ($rest !== $prefix && ! str_starts_with($rest, $prefix . '/')) {
+                if (! self::under($rest, $prefix)) {
                     continue;
                 }
 
-                $this->assertContains("capability:{$module}", $middleware, "{$uri} is not gated on {$module}");
+                $this->assertContains("capability:{$module}", $middleware, "{$route->uri()} is not gated on {$module}");
 
                 // Web Pages needs the org's admins to hold the grant as well.
                 if ($module === 'website') {
-                    $this->assertContains('capability:web_pages', $middleware, "{$uri} lost capability:web_pages");
+                    $this->assertContains('capability:web_pages', $middleware, "{$route->uri()} lost capability:web_pages");
                 }
 
                 $checked[$module] = true;
@@ -225,12 +286,14 @@ class OrganisationModulesTest extends TestCase
         $off = $this->org('school');
         $on = $this->org('school');
         $this->decide($off, array_fill_keys(Masjid::MODULE_KEYS, false) + ['web_pages' => true]);
-        $this->decide($on, ['web_pages' => true]);
+        // The masjid screens are not offered to a school, so "nobody else" is a
+        // school a SuperAdmin switched them on for.
+        $this->decide($on, ['web_pages' => true] + array_fill_keys($this->notOfferedTo('school'), true));
 
         Sanctum::actingAs($this->admin($off));
 
         foreach (self::MODULE_READS as $module => $path) {
-            $sentence = config("capabilities.{$module}.label") . ' is switched off for this organisation.';
+            $sentence = $this->refusal($off, $module);
 
             $response = $this->getJson("/api/admin/masjids/{$off->id}/{$path}")->assertForbidden();
             $this->assertStringContainsString($sentence, $response->getContent(), "{$module} refused without its sentence");
@@ -277,5 +340,162 @@ class OrganisationModulesTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.modules_off', []);
         $this->assertTrue($school->fresh()->capability_overrides['events']);
+    }
+
+    /**
+     * BroadcastComposerView (service audiences), jummahLunchStore (the
+     * notify-followers picker) and AboutUsView read GET /services. They keep
+     * listing the services already published while Services is off, so the
+     * index is the one services route without the gate; only the Services
+     * screens call show and the writes.
+     */
+    #[Test]
+    public function services_gates_every_write_and_show_and_leaves_the_picker_list_open(): void
+    {
+        $gated = [];
+        $index = false;
+
+        foreach ($this->orgRoutes() as [$route, $rest]) {
+            if (! self::under($rest, 'services')) {
+                continue;
+            }
+
+            $middleware = $route->gatherMiddleware();
+            $methods = array_values(array_diff($route->methods(), ['HEAD']));
+
+            if ($rest === 'services' && $methods === ['GET']) {
+                $this->assertNotContains('capability:services', $middleware, 'the services index must stay open');
+                $index = true;
+
+                continue;
+            }
+
+            $this->assertContains('capability:services', $middleware, implode('|', $methods) . " {$route->uri()} is not gated on services");
+            $gated[] = implode('|', $methods) . ' ' . $rest;
+        }
+
+        $this->assertTrue($index, 'no GET services index found; did the prefix move?');
+        $this->assertEqualsCanonicalizing([
+            'POST services',
+            'GET services/{service_id}',
+            'POST services/{service_id}',
+            'DELETE services/{service_id}',
+            'DELETE services/{service_id}/trash',
+        ], $gated);
+
+        // Behaviour: the list answers, the Services screen's own calls refuse.
+        $masjid = $this->org('masjid');
+        $this->decide($masjid, ['services' => false]);
+        Sanctum::actingAs($this->admin($masjid));
+
+        $this->getJson("/api/admin/masjids/{$masjid->id}/services")->assertOk();
+        $this->getJson("/api/admin/masjids/{$masjid->id}/services?page=1")->assertOk();
+
+        $sentence = 'Services is switched off for this organisation.';
+        $this->assertStringContainsString(
+            $sentence,
+            $this->postJson("/api/admin/masjids/{$masjid->id}/services", ['title' => 'Nikah'])->assertForbidden()->getContent()
+        );
+        $this->assertStringContainsString(
+            $sentence,
+            $this->getJson("/api/admin/masjids/{$masjid->id}/services/1")->assertForbidden()->getContent()
+        );
+
+        // A school was never offered Services: its list still answers, and a
+        // write hears that it was not switched on.
+        $school = $this->org('school');
+        Sanctum::actingAs($this->admin($school));
+
+        $this->getJson("/api/admin/masjids/{$school->id}/services")->assertOk();
+        $this->assertStringContainsString(
+            'Services is not switched on for this organisation.',
+            $this->postJson("/api/admin/masjids/{$school->id}/services", ['title' => 'Nikah'])->assertForbidden()->getContent()
+        );
+    }
+
+    #[Test]
+    public function money_and_appointment_gates_sit_inside_crm(): void
+    {
+        // Route order: `crm` runs before the module gate on every one of them.
+        $checked = [];
+
+        foreach ($this->orgRoutes() as [$route, $rest]) {
+            foreach (self::CRM_MODULE_PREFIXES as $prefix => $module) {
+                if (! self::under($rest, $prefix)) {
+                    continue;
+                }
+
+                $middleware = $route->gatherMiddleware();
+                $crm = array_search('crm', $middleware, true);
+                $gate = array_search("capability:{$module}", $middleware, true);
+
+                $this->assertNotFalse($crm, "{$route->uri()} is not inside crm");
+                $this->assertNotFalse($gate, "{$route->uri()} is not gated on {$module}");
+                $this->assertLessThan($gate, $crm, "{$route->uri()} checks {$module} before crm");
+                $checked[$prefix] = true;
+            }
+        }
+
+        foreach (array_keys(self::CRM_MODULE_PREFIXES) as $prefix) {
+            $this->assertArrayHasKey($prefix, $checked, "no route found under {$prefix}; did a prefix move?");
+        }
+
+        // Behaviour: an organisation without the CRM hears about the CRM, not
+        // about a module it also has switched off.
+        $masjid = $this->org('masjid', crm: false);
+        $this->decide($masjid, ['giving' => false, 'properties' => false, 'appointment_requests' => false]);
+        Sanctum::actingAs($this->admin($masjid));
+
+        foreach (['funds', 'donations', 'donations/export', 'donations/stats/summary', 'recurring-donations', 'annual-statements', 'properties', 'appointment-requests'] as $path) {
+            $body = $this->getJson("/api/admin/masjids/{$masjid->id}/{$path}")->assertForbidden()->getContent();
+
+            $this->assertStringNotContainsString('for this organisation.', $body, "/{$path} answered with a module sentence before the CRM one");
+        }
+    }
+
+    #[Test]
+    public function connect_zakat_and_fee_plans_do_not_carry_capability_giving(): void
+    {
+        // Stripe Connect is never behind Giving: Friday lunch, programs and form
+        // card payments depend on it. Zakat prices, programs and their fee plans,
+        // a member's record, the Impact Report and the app drawer are not giving
+        // screens either.
+        $prefixes = ['connect', 'zakat-settings', 'offerings', 'contacts', 'impact', 'features'];
+        $checked = [];
+
+        foreach ($this->orgRoutes() as [$route, $rest]) {
+            foreach ($prefixes as $prefix) {
+                if (! self::under($rest, $prefix)) {
+                    continue;
+                }
+
+                $middleware = $route->gatherMiddleware();
+                $this->assertNotContains('capability:giving', $middleware, "{$route->uri()} is behind Giving");
+                $this->assertNotContains('capability:properties', $middleware, "{$route->uri()} is behind Properties & Rent");
+                $checked[$prefix] = true;
+            }
+        }
+
+        foreach ($prefixes as $prefix) {
+            $this->assertArrayHasKey($prefix, $checked, "no route found under {$prefix}; did a prefix move?");
+        }
+    }
+
+    #[Test]
+    public function prayer_calculation_options_stays_ungated(): void
+    {
+        // A static list of methods and madhabs that names no organisation.
+        $route = collect(Route::getRoutes()->getRoutes())
+            ->first(fn ($route) => str_starts_with($route->uri(), 'api/admin/') && str_ends_with($route->uri(), 'prayer-calculation/options'));
+
+        $this->assertNotNull($route, 'the prayer-calculation options route moved');
+        $this->assertStringNotContainsString('{masjid_id}', $route->uri());
+
+        foreach ($route->gatherMiddleware() as $middleware) {
+            $this->assertFalse(
+                is_string($middleware) && str_starts_with($middleware, 'capability:'),
+                "prayer-calculation/options carries {$middleware}"
+            );
+        }
     }
 }
