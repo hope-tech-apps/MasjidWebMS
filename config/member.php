@@ -78,7 +78,10 @@ return [
     */
 
     'account_deletion' => [
-        'publisher' => env('ACCOUNT_DELETION_PUBLISHER', 'Hope Tech Inc.'),
+        // Empty until the owner confirms the developer name exactly as the store
+        // listings show it; the page then names only the apps. Never a guess on a
+        // public page.
+        'publisher' => env('ACCOUNT_DELETION_PUBLISHER', ''),
         'apps' => ['Burlington Masjid', 'NAFIS Apex Mosque', 'Muslim Education Center'],
         'log_retention_days' => env('ACCOUNT_DELETION_LOG_RETENTION_DAYS') !== null
             ? (int) env('ACCOUNT_DELETION_LOG_RETENTION_DAYS')
