@@ -260,7 +260,7 @@
                                              (routes/admin.php, connect group); without CRM it never renders. -->
                                         <template v-if="formsCard.parentCrmEnabled && parentConnectTitle">
                                             {{ parentLabel }}'s admins who manage donations can stop it at any time from
-                                            {{ parentConnectTitle }}, and a Manara super admin can remove it here.
+                                            {{ formsCard.parentConnectPlace === 'giving_dashboard' ? 'the ' : '' }}{{ parentConnectTitle }}, and a Manara super admin can remove it here.
                                         </template>
                                         <template v-else>
                                             {{ parentLabel }} does not use Manara's CRM, so its admins cannot stop it from
