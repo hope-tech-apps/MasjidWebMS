@@ -229,6 +229,8 @@ import { PageChangeData, PaginationOptions } from '@/core/types/elements/Paginat
 import { Group, GroupKind, GroupPayload } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
+import { LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import Swal from 'sweetalert2';
 
@@ -244,6 +246,7 @@ import Swal from 'sweetalert2';
 // Stores
 const groupsStore = useGroupsStore();
 const masjidStore = useMasjidStore();
+const authStore = useAuthStore();
 
 // State
 const loading = ref(false);
@@ -299,12 +302,18 @@ const exporting = ref(false);
  * would 401. Same shape as the form-responses CSV export.
  */
 const downloadExport = async (): Promise<void> => {
-    const masjidId = localStorage.getItem('MASJID_APP_DASHBOARD_MASJID_ID');
+    // Read the organisation from the STORE, not from localStorage. localStorage is
+    // shared by every tab on this origin, so a second tab switching organisation
+    // rewrites the key under this one — and this export would then hand the user a
+    // CSV of another organisation's students with no sign anything had changed.
+    // The store's value belongs to this tab and to the header the request travels
+    // with, which is the pair that has to agree.
+    const masjidId = authStore.dashboardMasjidId;
     if (!masjidId) return;
 
     exporting.value = true;
     try {
-        const token = localStorage.getItem('MASJID_APP_AUTH_TOKEN');
+        const token = authStore.token ?? localStorage.getItem(LOCAL_STORAGE_KEYS.token);
         const resp = await fetch(
             `/api/admin/masjids/${masjidId}/records/export?dataset=${encodeURIComponent(exportDataset.value)}`,
             { headers: { Authorization: `Bearer ${token}` } }

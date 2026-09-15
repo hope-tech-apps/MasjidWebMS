@@ -670,33 +670,6 @@ class Masjid extends Model implements HasMedia
      */
     protected static function booted(): void
     {
-        // AN OWNER ALWAYS HOLDS A MEMBERSHIP ROW. Structurally, not by remembering.
-        //
-        // `masjids.user_id` and `masjid_user` are two answers to "who administers
-        // this?", and only the row survives the multi-membership gate: with
-        // `tenancy.multi_membership` open, TenantResolver stops consulting
-        // ownership and a grant exists only where a row exists.
-        //
-        // Writing the row at the provisioning CALL SITES is not enough, and the
-        // test suite proved it — running the 29 *TenantIsolationTest files with
-        // the gate open produced 41 failures, every one an admin 403'd out of
-        // THEIR OWN organisation, because factories and seeders set `user_id`
-        // and never went near a controller. Anything that can set `user_id` can
-        // create that lockout, so the guarantee belongs where `user_id` is
-        // written rather than at the handful of places we happened to think of.
-        //
-        // `saved`, so it covers both create and a later re-assignment, and
-        // idempotent (see MasjidUser::ensureOwnerMembership) so the ordinary
-        // save of an unchanged masjid costs one indexed lookup and writes
-        // nothing.
-        static::saved(function (Masjid $masjid) {
-            if ($masjid->user_id === null) {
-                return;
-            }
-
-            MasjidUser::ensureOwnerMembership((int) $masjid->id, (int) $masjid->user_id);
-        });
-
         static::forceDeleted(function (Masjid $masjid) {
             // A child whose FORM card payments were charged through this
             // organisation loses that link too (DECISIONS.md 2026-09-15), in the

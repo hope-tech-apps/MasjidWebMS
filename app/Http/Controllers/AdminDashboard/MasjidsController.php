@@ -532,13 +532,35 @@ class MasjidsController extends Controller
             $payload['user_id'] = $payload['user_id'] ?? null;
             $payload['updated_by'] = Auth::id();
 
-            $masjid->update($payload);
+            // Read BEFORE the update: handing the organisation to somebody else
+            // has to MOVE the membership, not just add one.
+            $previousOwnerId = $masjid->user_id !== null ? (int) $masjid->user_id : null;
 
-            // Re-assigning the owner has to move the membership too, or the new
-            // owner holds none (403 once the gate opens) while the previous one
-            // keeps a row naming an organisation they no longer own.
+            $masjid->update($payload);
             $masjid->refresh();
-            MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
+
+            $newOwnerId = $masjid->user_id !== null ? (int) $masjid->user_id : null;
+
+            if ($previousOwnerId !== null && $previousOwnerId !== $newOwnerId) {
+                // REVOKE THE PREVIOUS OWNER. Before memberships existed, this was
+                // automatic: a MasjidAdmin's grant was derived from
+                // `masjids.user_id`, so reassigning it took their access with it.
+                // Writing a row on the way in without removing the old one turns
+                // "hand this organisation to somebody else" into "give it to two
+                // people", and the person who was handed it has no idea the
+                // previous owner is still reading their donors and their families.
+                //
+                // This also removes a membership somebody was granted
+                // deliberately, if that person happened to be the outgoing owner.
+                // That is the conservative direction — the pre-membership
+                // behaviour, and re-granting is one call — whereas silently
+                // keeping access is not recoverable by noticing.
+                MasjidUser::where('masjid_id', $masjid->id)
+                    ->where('user_id', $previousOwnerId)
+                    ->delete();
+            }
+
+            MasjidUser::ensureOwnerMembership((int) $masjid->id, $newOwnerId);
 
             if ($request->hasFile('logo')) {
                 $masjid->clearMediaCollection('logos');

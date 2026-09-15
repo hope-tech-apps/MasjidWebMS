@@ -224,7 +224,37 @@ final class TenantResolver
     private function grantsFor(User $user): Collection
     {
         if ($this->multiMembershipEnabled()) {
-            return $this->everyLiveMembership($user);
+            // OWNERSHIP STILL COUNTS WITH THE GATE OPEN.
+            //
+            // The design has this branch return persisted rows only, and dropping
+            // the ownership fallback is exactly what makes the flag dangerous:
+            // `masjids.user_id` is set by factories, seeders and two provisioning
+            // controllers that write no `masjid_user` row, so an owner with no row
+            // is 403'd out of their own organisation the moment the flag turns on.
+            // Measured: the 29 *TenantIsolationTest files gave 41 failures that
+            // way, every one an admin refused their own masjid.
+            //
+            // The first fix tried was a `saved` hook on Masjid that wrote the row
+            // for every owner. It worked, and it was wrong: creating a masjid
+            // without creating a membership is a contract the whole suite relies
+            // on, and the implicit write collided with fixtures that write the row
+            // themselves — 67 failures with the gate SHUT, i.e. it broke the
+            // configuration that is actually in production to fix one that is not.
+            //
+            // So ownership is honoured here instead of being manufactured. It is
+            // the same server-side, DB-enforced fact `soleOwnedMembership()`
+            // already binds on the gated path (`masjids.user_id`, unique among
+            // live rows since S0) and it can only ever name the masjid the user
+            // genuinely owns — it widens nobody's reach by one organisation.
+            // Persisted rows win on a tie, so a real row is still preferred to a
+            // synthesised one.
+            $owned = $this->soleOwnedMembership($user)->keyBy('masjid_id');
+
+            return $this->everyLiveMembership($user)
+                ->keyBy('masjid_id')
+                ->union($owned)
+                ->sortKeys()
+                ->values();
         }
 
         $owned = $this->soleOwnedMembership($user);

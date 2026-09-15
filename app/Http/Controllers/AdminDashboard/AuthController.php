@@ -149,7 +149,7 @@ class AuthController extends Controller
             // membership elsewhere still resolves here to the organisation they
             // OWN, even when their default grant is the other one. That is why
             // the SPA must paint its chrome from `memberships[]` plus the echoed
-            // `X-Manara-Tenant` (App\Http\Middleware\EchoResolvedTenant) and
+            // `X-Tenant-Id` (App\Http\Middleware\EchoResolvedTenant) and
             // treat `user.masjid` as a first-paint convenience, never as the
             // answer to "which organisation am I looking at?".
             $masjid = $user->masjid ?: $this->staffMembershipMasjid($user);

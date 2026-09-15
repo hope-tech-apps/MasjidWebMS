@@ -97,7 +97,7 @@ Route::prefix('admin')->group(function () {
     // models consult that context, so existing endpoints are unaffected today.
     //
     // EchoResolvedTenant is listed FIRST so it wraps `admin` and `tenant` and
-    // stamps `X-Manara-Tenant` on the way OUT, including the 401 envelope
+    // stamps `X-Tenant-Id` on the way OUT, including the 401 envelope
     // `admin` RETURNS (a refusal that throws — auth's 401, the tenant's 403 —
     // unwinds past it and is rendered unstamped, which is correct: a refused
     // request resolved no tenant). It is named by class rather than by an alias

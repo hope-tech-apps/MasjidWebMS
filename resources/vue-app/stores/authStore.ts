@@ -10,6 +10,8 @@ import { MSwal } from "@/core/plugins/SweetAlerts2";
 import { getMessageFromObj } from "@/assets/ts/swalMethods";
 import { BackendResponseData } from "@/core/types/config/AxiosCustom";
 import { bumpTenantEpoch, forgetServerTenant, serverTenantId } from "@/core/tenancy/tenantRequests";
+import { grantedMemberships } from "@/core/types/data/Membership";
+import { resetTenantScopedStores } from "@/stores/plugins/tenantStoreReset";
 
 export const useAuthStore = defineStore('authStore', () => {
 
@@ -75,6 +77,25 @@ export const useAuthStore = defineStore('authStore', () => {
         // Opening a new epoch drops those, and forgetting the echo stops the
         // header naming the organisation that just left.
         if (hadOrganisation) {
+            // EMPTY THE STORES TOO, not just the epoch.
+            //
+            // Dropping in-flight responses stops NEW rows arriving; it does
+            // nothing about the rows already sitting in memory. Logout is an
+            // in-tab navigation, so contactsStore, donationsStore and the rest
+            // keep the previous organisation's records until something
+            // overwrites them — and the next person to sign in on this tab is
+            // very often a different administrator on the same office computer.
+            // They would see the last person's families and giving, on their own
+            // dashboard, before their own first fetch resolved.
+            //
+            // Guarded: a throw here must not strand somebody on a page they have
+            // just signed out of.
+            try {
+                resetTenantScopedStores();
+            } catch (e) {
+                console.warn('[tenant] store reset on sign-out failed', e);
+            }
+
             bumpTenantEpoch();
             forgetServerTenant();
         }
@@ -187,6 +208,62 @@ export const useAuthStore = defineStore('authStore', () => {
      */
     const USER_ENDPOINTS = ['/api/admin/user', '/api/teacher/user', '/api/lunch/user'];
 
+    /**
+     * Decide which organisation this page load is bound to, AFTER `/user` answers.
+     *
+     * This used to be one line — `saveDashboardMasjidId(user.masjid.id)` — on the
+     * true premise that a MasjidAdmin, a Teacher and a LunchStaff each belong to
+     * exactly one organisation. With memberships that premise is gone, and the
+     * one line becomes a bug with no error attached to it: `user.masjid` is the
+     * OWNED organisation (the `hasOne` on `masjids.user_id`), so an admin who
+     * switched to a second organisation and then reloaded, or followed a link, or
+     * came back to a restored tab, was silently put back on the first one. The
+     * switcher would read correctly, the header would be wrong, and the screen
+     * would quietly show the other organisation's data.
+     *
+     * So: a stored id the SERVER still grants wins, because it is a choice this
+     * person made. Anything else — no stored id, or one naming an organisation
+     * that is no longer granted (access revoked, another admin's id left behind
+     * in a shared browser) — falls back to the owned organisation, then to the
+     * default membership, then to the only membership there is.
+     *
+     * With `multi_membership` false every principal holds exactly one grant, that
+     * grant is the owned organisation, and every path below lands on the same id
+     * the single line used to write.
+     */
+    function rehydrateOrganisation(): void {
+        const granted = grantedMemberships(user.value?.memberships);
+        const owned = user.value?.masjid?.id ?? null;
+
+        const stored = Number(localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id));
+        const storedIsGranted = Number.isInteger(stored)
+            && stored > 0
+            && granted.some(membership => Number(membership.masjid_id) === stored);
+
+        if (storedIsGranted) {
+            // Keep it, and mirror it into the ref — the value in localStorage is
+            // the only place a switch survives a reload.
+            dashboardMasjidId.value = stored;
+            return;
+        }
+
+        const fallback = owned
+            ?? granted.find(membership => membership.is_default)?.masjid_id
+            ?? granted[0]?.masjid_id
+            ?? null;
+
+        if (fallback !== null && fallback !== undefined) {
+            saveDashboardMasjidId(fallback);
+        } else if (granted.length === 0 && Array.isArray(user.value?.memberships)) {
+            // The server says this principal administers nothing. Leaving a stale
+            // id behind would spend the whole session 403ing behind a header that
+            // looks perfectly reasonable; NoOrganisationNotice handles the rest.
+            forgetDashboardMasjidId();
+        }
+        // Otherwise (no memberships key at all — a backend older than S4) leave
+        // whatever is there alone: that build had no concept of a switch.
+    }
+
     async function fetchAuthUser(): Promise<SystemRoute | void> {
         let lastError: unknown = null;
 
@@ -201,11 +278,8 @@ export const useAuthStore = defineStore('authStore', () => {
                         const expectedMasjidId = localStorage.getItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
                         if (expectedMasjidId)
                             dashboardMasjidId.value = parseInt(expectedMasjidId);
-                    } else if (user.value?.masjid?.id) {
-                        // MasjidAdmin, Teacher and LunchStaff are each bound to
-                        // exactly one organisation; seed the id their shells and
-                        // any masjid-scoped fetch lean on.
-                        saveDashboardMasjidId(user.value.masjid.id);
+                    } else {
+                        rehydrateOrganisation();
                     }
 
                     return;

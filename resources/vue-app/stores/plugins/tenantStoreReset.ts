@@ -62,6 +62,12 @@ const SESSION_STORES = new Set<string>([
     'authStore',
     'twoFactorStore',
     'dashboardAsideStore',
+    // The store PERFORMING the switch cannot be part of what the switch empties.
+    // `resetTenantScopedStores()` is called from the middle of
+    // `tenantSwitchStore.switchTo`, so sweeping it resets `switching` and
+    // `viewGeneration` half-way through — the spinner stops, the remount key goes
+    // backwards, and the steps after it run against state that has been rewound.
+    'tenantSwitchStore',
 ]);
 
 /**
