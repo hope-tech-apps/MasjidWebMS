@@ -297,6 +297,38 @@ class ModuleFactsTest extends TestCase
     }
 
     #[Test]
+    public function only_a_non_masjid_is_told_the_app_prayer_table_is_masjids_only(): void
+    {
+        // The app menu computes the prayer table as isMasjid() AND this module,
+        // so switching it on for a school or community organisation gives them
+        // everything else this switch carries and still no table. The panel says
+        // so first, before the counts that sit under it.
+        foreach (['school', 'community'] as $orgType) {
+            $facts = ModuleFacts::for($this->org(['org_type' => $orgType]), 'prayer_times');
+
+            $this->assertSame('App prayer table: masjids only', $facts[0], "a {$orgType} is not told");
+            // The rest of the list is unchanged, one place further down.
+            $this->assertSame('No prayer settings saved yet', $facts[1]);
+            $this->assertCount(5, $facts);
+        }
+
+        // A masjid's list is byte-identical to what it always was: the org-type
+        // floor never applies to it, so saying it would be noise.
+        $facts = ModuleFacts::for($this->org(), 'prayer_times');
+
+        $this->assertNotContains('App prayer table: masjids only', $facts);
+        $this->assertSame('No prayer settings saved yet', $facts[0]);
+        $this->assertCount(4, $facts);
+
+        // An unrecognised org_type degrades to masjid everywhere (Masjid::orgType),
+        // so it must not pick up a line that says it has no prayer table.
+        $this->assertNotContains(
+            'App prayer table: masjids only',
+            ModuleFacts::for($this->org(['org_type' => 'nonsense']), 'prayer_times')
+        );
+    }
+
+    #[Test]
     public function a_fact_query_that_throws_costs_only_that_modules_facts(): void
     {
         $org = $this->org();

@@ -19,7 +19,12 @@ use Illuminate\Support\Facades\Log;
  * (MasjidsController::capabilities), printed under the switch and repeated in
  * its confirm dialog, so a switch-off is decided with the numbers in front of
  * whoever flips it. Only giving, prayer_times and splash have facts; every
- * other key answers [].
+ * other key answers [], the five app-only worship modules included — their
+ * switch decides one row of the app menu and there is nothing else to count.
+ *
+ * A fact is not always a number: prayer_times names the org-type floor the app
+ * menu applies on top of the switch, so a SuperAdmin flipping it for a school
+ * is not left thinking the app will start showing a prayer table.
  *
  * Every query filters by masjid_id by hand: the panel is a SuperAdmin request,
  * which binds no tenant, so a tenant scope would filter nothing. And a fact is
@@ -96,6 +101,16 @@ final class ModuleFacts
     private static function prayerTimes(Masjid $masjid): array
     {
         $facts = [];
+
+        // The app's prayer table has a second rule this switch cannot lift: the
+        // app menu computes it as isMasjid() AND this module, so switching it ON
+        // for a school or community organisation gives them the reminders, the
+        // refresh and the website times — and still no table in the app. Said
+        // first, because it is the condition the rest of these lines sit under
+        // (owner decision 4, 2026-09-15: the panel must not hide a second rule).
+        if (! $masjid->isMasjid()) {
+            $facts[] = 'App prayer table: masjids only';
+        }
 
         $setting = IqamaTimeSetting::where('masjid_id', $masjid->id)->first();
 
