@@ -171,6 +171,13 @@ class TenantApiSurfaceTest extends TestCase
     #[Test]
     public function an_inert_second_membership_is_not_offered_while_the_gate_is_shut(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" must set that condition, not read it off
+        // the ambient environment: S5 is exercised by running this whole suite
+        // with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely inherited
+        // the default then fails for the one reason that is not a defect.
+        config(['tenancy.multi_membership' => false]);
+
         [$admin, $owned, $other] = $this->adminHoldingTwoMembershipRows();
 
         Sanctum::actingAs($admin);
@@ -257,6 +264,13 @@ class TenantApiSurfaceTest extends TestCase
     #[Test]
     public function granting_a_second_organisation_is_refused_while_the_gate_is_shut(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" must set that condition, not read it off
+        // the ambient environment: S5 is exercised by running this whole suite
+        // with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely inherited
+        // the default then fails for the one reason that is not a defect.
+        config(['tenancy.multi_membership' => false]);
+
         $closed = (new ReflectionClass(MasjidAdminsController::class))->getConstant('MULTI_MEMBERSHIP_CLOSED');
         $this->assertIsString($closed, 'MULTI_MEMBERSHIP_CLOSED must still exist — it is the refusal an operator reads.');
 
@@ -335,6 +349,13 @@ class TenantApiSurfaceTest extends TestCase
     #[Test]
     public function revoking_an_organisation_is_refused_while_the_gate_is_shut(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" must set that condition, not read it off
+        // the ambient environment: S5 is exercised by running this whole suite
+        // with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely inherited
+        // the default then fails for the one reason that is not a defect.
+        config(['tenancy.multi_membership' => false]);
+
         $closed = (new ReflectionClass(MasjidAdminsController::class))->getConstant('MULTI_MEMBERSHIP_CLOSED');
 
         $staff = $this->masjidAdmin();

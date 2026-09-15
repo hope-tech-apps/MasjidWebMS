@@ -210,6 +210,13 @@ class DualMembershipIsolationTest extends TestCase
     #[Test]
     public function with_the_gate_shut_the_second_membership_grants_the_actor_nothing_over_http(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" must set that condition, not read it off
+        // the ambient environment: S5 is exercised by running this whole suite
+        // with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely inherited
+        // the default then fails for the one reason that is not a defect.
+        config(['tenancy.multi_membership' => false]);
+
         Sanctum::actingAs($this->dualActor);
 
         $own = $this->getJson("/api/admin/masjids/{$this->masjidA->id}/contacts")->assertOk();
