@@ -785,6 +785,56 @@ class MultiTenantAdminInvariantsTest extends TestCase
             ->assertHeader(EchoResolvedTenant::TENANT_HEADER, EchoResolvedTenant::UNBOUND);
     }
 
+    /**
+     * The static vocabularies a settings screen needs are NOT organisation data,
+     * and a two-organisation admin must still be able to read them.
+     *
+     * Found on staging with the gate open, in the browser rather than here: an
+     * admin holding MEC and IntelliCor opened Mosque Settings -> Prayer
+     * Calculation and every dropdown was empty. `GET
+     * /api/admin/masjids/prayer-calculation/options` names no masjid, so the
+     * several-grants branch refused it — a 403 on the list of calculation
+     * methods the adhan library supports, which is the same constant list for
+     * every organisation on the platform and reads no tenant table at all.
+     *
+     * The failure mode is what makes this worth a test: nothing said 403. The
+     * tab rendered, the selects were simply empty, and the first person to hit
+     * it would have reported "prayer settings are broken" with no clue that
+     * their SECOND organisation was the cause.
+     */
+    #[Test]
+    public function an_admin_in_two_organisations_can_still_read_the_prayer_calculation_options(): void
+    {
+        $this->openTheMultiMembershipGate();
+
+        $both = $this->masjidAdmin();
+        $this->membership($both, $this->makeMasjid(), ['is_default' => true]);
+        $this->membership($both, $this->makeMasjid());
+
+        Sanctum::actingAs($both);
+
+        $this->getJson('/api/admin/masjids/prayer-calculation/options')
+            ->assertOk()
+            // Unbound is the honest answer: the list belongs to no organisation.
+            ->assertHeader(EchoResolvedTenant::TENANT_HEADER, EchoResolvedTenant::UNBOUND);
+    }
+
+    /**
+     * And the one-organisation admin, who is every admin in production today,
+     * reads exactly the same list — so the entry added to the allowlist widened
+     * nothing for the people already using this screen.
+     */
+    #[Test]
+    public function the_ordinary_single_organisation_admin_reads_the_same_options(): void
+    {
+        $only = $this->masjidAdmin();
+        $this->membership($only, $this->makeMasjid(['user_id' => $only->id]), ['is_default' => true]);
+
+        Sanctum::actingAs($only);
+
+        $this->getJson('/api/admin/masjids/prayer-calculation/options')->assertOk();
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /**
@@ -829,15 +879,19 @@ class MultiTenantAdminInvariantsTest extends TestCase
      * Give $user a membership in $masjid, whatever the fixture already holds.
      *
      * `updateOrCreate`, and any default elsewhere is cleared first, because the
-     * row may ALREADY exist by the time this runs: setting `masjids.user_id` now
-     * writes the owner's membership through a model hook
-     * (`MasjidUser::ensureOwnerMembership`, called from `Masjid::booted()`), so
-     * every factory and seeder produces one and not just the controllers that
-     * remembered to. A plain `create()` would then die on the
-     * `(masjid_id, user_id)` unique index, and a plain `is_default => true` on
-     * the one-default-per-user index — as a QueryException inside a fixture,
-     * which reads like a broken test rather than a fixture that has been
-     * overtaken.
+     * row may ALREADY exist by the time this runs — a controller that provisions
+     * an owner calls `MasjidUser::ensureOwnerMembership`, and several tests here
+     * set up the same pair twice from different directions. A plain `create()`
+     * would then die on the `(masjid_id, user_id)` unique index, and a plain
+     * `is_default => true` on the one-default-per-user index — as a
+     * QueryException inside a fixture, which reads like a broken test rather
+     * than a fixture that has been overtaken.
+     *
+     * (An earlier draft wrote that membership from a `Masjid::saved` hook, so
+     * that every factory produced one. That hook is gone: it broke 67 tests with
+     * the gate SHUT, where "creating a masjid creates no membership" is a
+     * contract this suite leans on. TenantResolver::grantsFor() unions sole
+     * ownership in instead.)
      *
      * The invariant-3 test deliberately does NOT go through here: it is about
      * the database refusing a second default, and a helper that tidies the first

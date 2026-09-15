@@ -125,6 +125,25 @@ final class TenantResolver
         'api/admin/2fa/*',
         'api/admin/masjids',
         'api/admin/masjids/timezones',
+        // The prayer-calculation OPTIONS list — the methods, madhabs and
+        // high-latitude rules the adhan library supports. It is a static
+        // vocabulary that names no organisation and reads no tenant data, and
+        // routes/admin.php says as much at its definition ("Never gated by
+        // Prayer times: a static list that names no organisation").
+        //
+        // Found on staging with the gate OPEN, driving the real SPA: an admin
+        // holding two memberships opened Mosque Settings -> Prayer Calculation
+        // and every dropdown came back empty, because this request names no
+        // masjid and the several-grants branch below refuses what it cannot
+        // disambiguate. A 403 on a constant list is never the right answer, and
+        // the screen it breaks is one both organisations legitimately use.
+        //
+        // A route:list sweep of the whole admin group says this is the ONLY
+        // tenant-guarded admin route that names no masjid, is not already
+        // listed here, and is reachable by a MasjidAdmin — the other 48 are
+        // `super`-gated, and a SuperAdmin never reaches this branch at all
+        // (ResolveMasjidTenant keys on `users.type`).
+        'api/admin/masjids/prayer-calculation/options',
         'api/admin/search',
     ];
 
