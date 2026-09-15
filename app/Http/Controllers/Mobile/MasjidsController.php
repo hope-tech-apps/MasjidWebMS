@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Mobile;
 
 use App\Http\Controllers\Controller;
 use App\Models\Masjid;
+use App\Support\AppOrgs;
 use App\Support\MobileCache;
 use App\Support\MobileMedia;
 use Illuminate\Support\Facades\Cache;
@@ -60,6 +61,11 @@ class MasjidsController extends Controller
      * Unlisted children are omitted — `listed_at` is the deliberate act of
      * publishing an organisation, and a child mid-setup must not appear in a
      * switcher on somebody's phone.
+     *
+     * The list itself is built by App\Support\AppOrgs, which the side menu's
+     * `/menu` also calls: the two payloads are fetched and cached separately,
+     * so the only way they can never disagree about which organisations exist
+     * is to read them from one place.
      */
     public function orgs($masjid_id)
     {
@@ -67,19 +73,12 @@ class MasjidsController extends Controller
             MobileCache::masjidKey((int) $masjid_id, MobileCache::ORGS),
             MobileCache::TTL_MEDIUM,
             function () use ($masjid_id) {
-                $home = Masjid::with('logo')->findOrFail($masjid_id);
+                $home = Masjid::findOrFail($masjid_id);
 
-                $orgs = collect([$home])->concat(
-                    $home->listedChildren()->with('logo')->orderBy('name')->get()
-                );
-
-                return $orgs->map(fn (Masjid $org) => [
-                    'id' => (int) $org->id,
-                    'name' => $org->name,
-                    'org_type' => $org->orgType(),
-                    'is_home' => (int) $org->id === (int) $home->id,
-                    'logo_url' => $org->logo?->original_url,
-                ])->values()->all();
+                return AppOrgs::forHome($home)
+                    ->map(fn (Masjid $org) => AppOrgs::row($org, $home))
+                    ->values()
+                    ->all();
             }
         );
 
