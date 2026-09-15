@@ -146,7 +146,7 @@ import { computed, ref, watch } from 'vue';
 import Swal from 'sweetalert2';
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { apiErrorText } from '@/core/services/ApiErrors';
-import { adminExtrasPhrase } from '@/core/helpers/access';
+import { adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
 import { CapabilityInfo, TeamAccess, TeamMember } from '@/core/types/data/Capability';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -179,10 +179,13 @@ const enabledLabels = computed(() => capabilities.value.filter(c => c.enabled).m
 // not grow a new "not switched on" chip. It shows once it is switched on.
 const chips = computed<CapabilityInfo[]>(() => capabilities.value.filter(c => c.key !== 'form_editing' || c.enabled));
 
-// The modules a SuperAdmin switched off here. Empty for every organisation until
-// one is flipped, and then the sentence below stays exactly what it was.
-const screensOff = computed<string>(() => (teamStore.team?.screens_off ?? []).map(s => s.label).join(', '));
-const screensOffKeys = computed<string[]>(() => (teamStore.team?.screens_off ?? []).map(s => s.key));
+// The ADMIN screens a SuperAdmin switched off here. Empty for every organisation
+// until one is flipped, and then the sentence below stays exactly what it was.
+// adminScreensOff() drops the app-only modules, which are not screens anyone here
+// ever had: they decide one row of the mobile app's menu.
+const screensOffList = computed(() => adminScreensOff(teamStore.team?.screens_off));
+const screensOff = computed<string>(() => screensOffList.value.map(s => s.label).join(', '));
+const screensOffKeys = computed<string[]>(() => screensOffList.value.map(s => s.key));
 
 const accessOptions = computed(() => canAdd.value.map((value) => value === 'admin'
     ? {

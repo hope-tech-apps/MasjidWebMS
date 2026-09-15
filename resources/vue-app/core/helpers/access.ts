@@ -1,7 +1,25 @@
-import { ModuleKey, UserOrganisation } from '@/core/types/data/Capability';
+import { APP_SURFACE_MODULES, ModuleKey, SwitchedOffScreen, UserOrganisation } from '@/core/types/data/Capability';
 
 // Shared wording for the layered access model on the SuperAdmin's user screens.
 // The Team & Access screen (views/dashboard/TeamView.vue) uses the same words.
+
+/**
+ * The switched-off modules a staff sentence may name: the ADMIN screens.
+ *
+ * `modules_off` / `screens_off` are the gate's truth, so they carry every module —
+ * including the app-only ones (APP_SURFACE_MODULES), which have no admin screen at
+ * all and decide one row of the mobile app's menu instead. Naming those in
+ * "Switched off here: …" would tell an administrator that a screen they never had
+ * was taken away from them, and after the app-features cutover writes `quran=false`
+ * for the organisations whose app menu never listed it, that is exactly what both
+ * screens would say. The SuperAdmin's switch panel still shows them: that is where
+ * they are meant to be flipped.
+ */
+export function adminScreensOff(screens: readonly SwitchedOffScreen[] | null | undefined): SwitchedOffScreen[] {
+    const appOnly: readonly string[] = APP_SURFACE_MODULES;
+
+    return (screens ?? []).filter(screen => !appOnly.includes(screen.key));
+}
 
 // What an administrator gets on top of the listed grants. Each noun is a module a
 // SuperAdmin can switch off; settings (the Details screen) is always there.

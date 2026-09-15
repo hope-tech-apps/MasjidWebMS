@@ -137,7 +137,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { useTwoFactorStore } from '@/stores/twoFactorStore';
 import { CAPABILITY_LABELS, TeamAccess, UserOrganisation } from '@/core/types/data/Capability';
-import { accessBadge, accessLabel, adminExtrasPhrase } from '@/core/helpers/access';
+import { accessBadge, accessLabel, adminScreensOff, adminExtrasPhrase } from '@/core/helpers/access';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { computed, onBeforeMount, ref } from 'vue';
@@ -173,9 +173,11 @@ const changing = ref(false);
 function accessIncludes(org: UserOrganisation): string {
     if (org.access === 'admin') {
         const has = (org.capabilities ?? []).map(k => CAPABILITY_LABELS[k] ?? k);
-        // Byte-identical to before unless a module is switched off there.
-        const off = (org.modules_off ?? []).map(m => m.label);
-        const extras = adminExtrasPhrase((org.modules_off ?? []).map(m => m.key));
+        // Byte-identical to before unless an ADMIN screen is switched off there.
+        // The app-only modules are left out: they have no screen here at all.
+        const screensOff = adminScreensOff(org.modules_off);
+        const off = screensOff.map(m => m.label);
+        const extras = adminExtrasPhrase(screensOff.map(m => m.key));
         return `Can use everything ${org.name} has${has.length ? `: ${has.join(', ')}` : ''}, plus ${extras}.${off.length ? ` Switched off here: ${off.join(', ')}.` : ''}`;
     }
     if (org.access === 'jummah_lunch') return 'Can only run the Friday lunch board: menus, orders and payments.';
