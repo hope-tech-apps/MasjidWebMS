@@ -1191,13 +1191,19 @@ class TenancyCanaryTest extends TestCase
 
         $this->assertSame(0, $exit, 'a healthy --all run stopped being clean');
         $this->assertSame('clean', $run['status']);
-        // 33: 31, plus the global /api/mobile/app-config route (the
+        // 34: 31, plus the global /api/mobile/app-config route (the
         // backward-compat splash gate) — a reached endpoint that is exempt from
         // the fail-open check via canary.global_endpoints, not a leak — plus
-        // /api/mobile/masjids/{id}/orgs, the organisation switcher. `orgs` IS
-        // graded and IS tenant-scoped: it answers with one masjid's own family,
-        // so two tenants must never see the same payload.
-        $this->assertSame(33, $run['coverage']['endpoints_reached']);
+        // /api/mobile/masjids/{id}/orgs, the organisation switcher, plus
+        // /api/mobile/masjids/{id}/menu, the app's side menu. Both are
+        // tenant-scoped: each answers with one masjid's own family, so two
+        // tenants must never see the same payload, and neither belongs on
+        // canary.global_endpoints. ProbeCatalog plans them without being told —
+        // their only parameter is {masjid_id} and `mobile` is in
+        // canary.throttle_allowlist — so this number moves whenever a public
+        // per-masjid GET is added or removed, which is the point of asserting
+        // it.
+        $this->assertSame(34, $run['coverage']['endpoints_reached']);
 
         $comparison = $run['coverage']['cross_tenant_comparison'];
 
