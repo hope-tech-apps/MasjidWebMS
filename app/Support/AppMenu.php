@@ -2,8 +2,11 @@
 
 namespace App\Support;
 
+use App\Models\AppMenuSetting;
 use App\Models\Masjid;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * The mobile app's side menu, derived from one organisation's switches.
@@ -43,6 +46,15 @@ use Illuminate\Support\Facades\Log;
  */
 class AppMenu
 {
+    /**
+     * Where the kill switch's answer is remembered. 60 s: short enough that
+     * `app-menu:kill` is felt while the operator is still watching, long enough
+     * that the menu does not query for it on every request in a crowd.
+     */
+    public const KILL_CACHE_KEY = 'mobile.app_menu.kill';
+
+    public const KILL_CACHE_TTL = 60;
+
     /**
      * A verbatim copy of config/app_menu.php's registry keys.
      *
@@ -279,6 +291,38 @@ class AppMenu
         }
 
         return null;
+    }
+
+    /**
+     * Has an operator taken the menu away from every phone?
+     *
+     * Set by `app-menu:kill`, cleared by `app-menu:restore`. While it is set,
+     * /menu answers 404 and both clients fall back to the menu they build from
+     * the legacy /features — which is why the derivation is switch-only, so the
+     * two menus are the same menu.
+     *
+     * FAILS OPEN, deliberately and in every direction: no table (the code is
+     * deployed, the migration has not run), no row, an unreadable cache store,
+     * a database blip — all of it reads as NOT killed. The failure this guards
+     * against is the whole fleet losing its menu because a support table was
+     * briefly unavailable; the failure it accepts is a kill switch that takes a
+     * few seconds longer to bite, which an operator is watching for anyway.
+     */
+    public static function killed(): bool
+    {
+        try {
+            return (bool) Cache::remember(
+                self::KILL_CACHE_KEY,
+                self::KILL_CACHE_TTL,
+                fn () => (bool) AppMenuSetting::query()->orderBy('id')->value('menu_disabled')
+            );
+        } catch (Throwable $e) {
+            Log::warning('app menu kill switch unreadable; treating the menu as live', [
+                'exception' => $e::class,
+            ]);
+
+            return false;
+        }
     }
 
     /**
