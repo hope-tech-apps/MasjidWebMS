@@ -27,11 +27,13 @@
 |              Announcements or Events) — or, for the five `surface` => 'app'
 |              worship modules, an entry the mobile app's menu lists until a
 |              SuperAdmin switches it off. Most modules are offered to every org
-|              type. The masjid screens (Splash, Services, Donation link, Giving,
-|              Properties & Rent) and the worship modules are offered to masjids
-|              only, and a SuperAdmin
-|              can switch one ON for a school or community organisation (owner,
-|              2026-09-14). Masjid::moduleIsOff() is the only reader and it FAILS
+|              type. The masjid screens (Splash, Services, Donation link,
+|              Giving, Properties & Rent) are offered to masjids only (owner,
+|              2026-09-14), and so are the five worship modules, which is the
+|              rule config/verticals.php already applies to those app feature
+|              keys. A SuperAdmin can switch one of them ON for a school or
+|              community organisation. Masjid::moduleIsOff() is the only reader
+|              and it FAILS
 |              OPEN: a key the loaded config does not know as a module reads as
 |              its org type's default, never as a decision, so a stale config
 |              cache during a deploy can never take a screen away. Module keys
