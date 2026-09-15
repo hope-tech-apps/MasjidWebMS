@@ -118,12 +118,17 @@ class MemberSignupService
 
     /**
      * Exchange an address + code for a member token, creating or linking the
-     * contact. Null for every failure, with no reason attached.
+     * contact. Null for every failure, with no reason attached, with one
+     * exception that only a correct code can reach: see NewMemberNameRequired.
      *
      * `$firstName`/`$lastName` are used ONLY when a contact is created. On a
      * link they are discarded — see the class docblock.
      *
      * @return array{contact: Contact, token: NewAccessToken, created: bool}|null
+     *
+     * @throws NewMemberNameRequired when the code matched and was unconsumed, the
+     *   address would create a contact, and a name is blank. The code is NOT
+     *   consumed.
      */
     public function redeem(
         string $submittedEmail,
@@ -252,6 +257,8 @@ class MemberSignupService
      * the gate, and it runs first.
      *
      * @return array{contact: Contact, token: NewAccessToken, created: bool}|null
+     *
+     * @throws NewMemberNameRequired rolled back, so the code survives.
      */
     private function consume(
         AppSignupCode $row,
@@ -284,7 +291,14 @@ class MemberSignupService
                 $last = trim((string) $lastName);
 
                 if ($first === '' || $last === '') {
-                    return null;
+                    // Thrown, not returned: DB::transaction rolls back on the
+                    // way out, undoing the consumed_at the gate just wrote, so
+                    // the member can resend this same code with their name.
+                    // Only a caller whose code matched AND won the gate gets
+                    // here, which is what makes saying so safe. Every earlier
+                    // refusal (wrong, expired, replayed, locked out, a lost
+                    // race) is still the silent null above this line.
+                    throw NewMemberNameRequired::fromBlank($first === '', $last === '');
                 }
 
                 $contact = new Contact();

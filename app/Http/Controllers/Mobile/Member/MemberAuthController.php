@@ -7,6 +7,7 @@ use App\Http\Requests\Member\RequestMemberCodeRequest;
 use App\Http\Requests\Member\VerifyMemberCodeRequest;
 use App\Models\Contact;
 use App\Services\Member\MemberSignupService;
+use App\Services\Member\NewMemberNameRequired;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -25,9 +26,17 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * `verify-code` collapses every failure into one 410: unknown address, no code
  * outstanding, wrong code, expired code, replayed code, a code guessed at too
- * many times, a revoked contact, an address matching two contacts, and a
- * would-be new member who sent no name. A member needs to know only that they
- * must ask for a fresh code.
+ * many times, a revoked contact, and an address matching two contacts. A member
+ * needs to know only that they must ask for a fresh code.
+ *
+ * The one other answer is a 422 for a brand-new member who left a name blank
+ * (NewMemberNameRequired), and only a CORRECT, unconsumed code reaches it. The
+ * service checks the code first, so "this address has no account here yet" is
+ * told only to someone who has just proven the mailbox is theirs. The code is
+ * not consumed, and the same code works once the name is sent. The body is the
+ * BaseFormRequest shape, `{status: "failed", message, data: {field: [message]}}`,
+ * which both apps read field by field. Until 2026-09-15 this was a 410 that also
+ * burned the code, so a new member who typed one name was told to start over.
  *
  * 410 rather than 401 for the same reason the family realm chose it: 401 is
  * what the guard and `member.active` emit once a token exists, and a client
@@ -68,13 +77,21 @@ class MemberAuthController extends Controller
     /** POST /api/mobile/masjids/{masjid_id}/auth/verify-code */
     public function verifyCode(VerifyMemberCodeRequest $request)
     {
-        $result = $this->signups->redeem(
-            (string) $request->input('email'),
-            (string) $request->input('code'),
-            $request->input('first_name'),
-            $request->input('last_name'),
-            $request->ip(),
-        );
+        try {
+            $result = $this->signups->redeem(
+                (string) $request->input('email'),
+                (string) $request->input('code'),
+                $request->input('first_name'),
+                $request->input('last_name'),
+                $request->ip(),
+            );
+        } catch (NewMemberNameRequired $refusal) {
+            return response()->json([
+                'status' => 'failed',
+                'message' => NewMemberNameRequired::MESSAGE,
+                'data' => $refusal->fieldMessages(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         if ($result === null) {
             return response()->json([

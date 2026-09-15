@@ -9,11 +9,12 @@ use Illuminate\Foundation\Http\FormRequest;
  * MemberSignupService needs them when it has to CREATE a contact and ignores
  * them entirely when it links to one the office already has.
  *
- * They are not `required` rules because a rule would make the API answer
- * "would this address create a new person here?" through a 422 — which is the
- * disclosure this whole flow is built to avoid. A caller that omits them and
- * would have created a contact gets the same 410 as a wrong code. The app
- * always sends them, so no real member meets that path.
+ * They are not `required` rules because validation runs BEFORE the code is
+ * checked, so a 422 from here would answer "would this address create a new
+ * person here?" for anybody who types an address, which is the disclosure this
+ * whole flow is built to avoid. MemberSignupService asks for a missing name
+ * itself (NewMemberNameRequired, a 422), only once the code has proven the
+ * caller owns the address, and without consuming the code.
  */
 class VerifyMemberCodeRequest extends FormRequest
 {
