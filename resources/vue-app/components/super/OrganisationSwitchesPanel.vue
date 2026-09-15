@@ -50,7 +50,15 @@
                                 <span v-if="sidebarTitles(entry).length" class="small">
                                     Sidebar: {{ sidebarTitles(entry).join(', ') }}
                                 </span>
-                                <span v-if="entry.where" class="small">
+                                <!--
+                                    A module's placement: the Details tabs it lives on, or — for a
+                                    module with no admin screen at all (surface: 'app') — the mobile
+                                    app's menu, which is the only thing its switch decides.
+                                -->
+                                <span v-if="entry.surface === 'app'" class="small">
+                                    Where: Mobile app menu
+                                </span>
+                                <span v-else-if="entry.where" class="small">
                                     Where: {{ detailsTitle }} › {{ entry.where }}
                                 </span>
                                 <span v-if="notOfferedAndOff(entry)" class="small text-muted">
@@ -267,15 +275,20 @@ const groups = computed<CapabilityGroup[]>(() => {
 
 /**
  * Whether a row renders. A module row has to point somewhere this organisation can
- * see: a sidebar item its type can show, a `where` on the Details screen, or nothing
- * yet because the module is not offered to its type and this row is how it gets
- * switched on. Any other module row would switch a screen this organisation has no
- * place for (Appointment Requests for a masjid), so it is left out and named in one
- * muted line. So a module needs a sidebar item or a `where` (config/capabilities.php).
+ * see: a sidebar item its type can show, a `where` on the Details screen, the mobile
+ * app's menu (`surface: 'app'`), or nothing yet because the module is not offered to
+ * its type and this row is how it gets switched on. Any other module row would switch
+ * a screen this organisation has no place for (Appointment Requests for a masjid), so
+ * it is left out and named in one muted line. So a module needs one of the three
+ * placements in config/capabilities.php.
  */
 function rowRenders(entry: CapabilityEntry): boolean {
     if (entry.kind !== 'module') return true;
     if (entry.where) return true;
+    // An app-only module has nothing in the admin to point at, and its row is the
+    // only place it can be flipped: without this it would be dropped as a screen
+    // this organisation has no place for.
+    if (entry.surface === 'app') return true;
     if (entry.offered_by_default === false) return true;
 
     return itemsForType.value.some(item => item.requiresModule === entry.key);
@@ -454,11 +467,37 @@ async function confirmList(title: string, lines: string[], icon: SweetAlertIcon,
     return result.isConfirmed;
 }
 
-/** The confirm dialog. Switching a module OFF says exactly what stops and what stays. */
+/**
+ * The confirm dialog. Switching a module OFF says exactly what stops and what stays.
+ * An app-only module (`surface: 'app'`) gets its own pair of sentences: it has no
+ * admin screen, so the only thing that moves is one row of the mobile app's menu.
+ */
 async function confirmFlip(entry: CapabilityEntry, enabled: boolean): Promise<boolean> {
     const org = orgName.value;
     const facts = entry.facts ?? [];
     const notOffered = entry.kind === 'module' && entry.offered_by_default === false;
+    // A module with no admin screen at all: it decides one row of the mobile app's
+    // menu and nothing else, so every sentence about sidebars, editing APIs and the
+    // "Switched off for {org}" list would be false here.
+    const appOnly = entry.kind === 'module' && entry.surface === 'app';
+
+    if (appOnly) {
+        return confirmList(
+            enabled ? `Switch on ${entry.label} for ${org}?` : `Switch off ${entry.label}?`,
+            [
+                enabled
+                    ? `The app menu shows ${entry.label} again. Nothing changes in the admin.`
+                    : 'The app menu stops showing it. Nothing changes in the admin.',
+                ...(notOffered && enabled
+                    ? [`${entry.label} is not offered to a ${orgType.value} unless you switch it on.`]
+                    : []),
+                'People with the app see it the next time their menu refreshes.',
+                ...facts,
+            ],
+            enabled ? 'question' : 'warning',
+            enabled ? 'Yes, switch it on' : 'Yes, switch it off'
+        );
+    }
 
     if (entry.kind === 'module' && !enabled) {
         const lines = [
