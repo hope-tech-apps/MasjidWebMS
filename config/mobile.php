@@ -61,8 +61,8 @@ return [
         | Registration (POST /api/mobile/user) and update (PUT). Each NEW
         | device id inserts a `mobile_app_users` row, so this is the bucket an
         | id-inventing script would target. Repeating an id that already exists
-        | inserts nothing: `device_id` is unique, and the controller answers the
-        | failed insert with a 500.
+        | inserts nothing: `device_id` is unique, and the controller returns the
+        | existing row.
         |
         | What a real phone does: both apps register ONCE per install and
         | remember the result (iOS keeps the returned device id; Android sets a
