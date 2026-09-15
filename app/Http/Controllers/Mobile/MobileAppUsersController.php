@@ -17,13 +17,36 @@ class MobileAppUsersController extends Controller
     {
         try {
             $masjid = Masjid::findOrFail($request->input('masjid_id'));
+            $deviceId = (string) $request->input('device_id');
 
-            $user = MobileAppUser::create([
-                'masjid_id' => $masjid->id,
-                'device_id' => $request->input('device_id'),
-                'user_agent' => $request->userAgent(),
-                'last_active_at' => now(),
-            ]);
+            // Registration is idempotent per install. `device_id` is UNIQUE, so an
+            // install that never saw its first reply (a dropped connection, a 429
+            // on the way back) used to hit the index and get a 500 on every later
+            // launch, spending its network's allowance each time. An existing row
+            // is refreshed and returned as it is: its masjid and its member claim
+            // are not re-pointed here (PUT /user does that deliberately).
+            $user = MobileAppUser::where('device_id', $deviceId)->first();
+
+            if ($user === null) {
+                try {
+                    $user = MobileAppUser::create([
+                        'masjid_id' => $masjid->id,
+                        'device_id' => $deviceId,
+                        'user_agent' => $request->userAgent(),
+                        'last_active_at' => now(),
+                    ]);
+                } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                    // Two registrations of the same install raced and the other won.
+                    $user = MobileAppUser::where('device_id', $deviceId)->firstOrFail();
+                }
+            }
+
+            if (! $user->wasRecentlyCreated) {
+                $user->forceFill([
+                    'user_agent' => $request->userAgent(),
+                    'last_active_at' => now(),
+                ])->save();
+            }
 
             return response()->json([
                 'status' => 'success',
