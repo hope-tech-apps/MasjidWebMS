@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Masjid;
+use App\Models\MobileAppFeature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -237,6 +239,49 @@ class WorshipAppModulesTest extends TestCase
         }
 
         $this->assertSame('Qur’an', $entries['quran']['label']);
+    }
+
+    #[Test]
+    public function switching_them_off_changes_nothing_an_installed_app_reads(): void
+    {
+        // The whole point of S1: the switches exist, and until the cutover they
+        // drive nothing a shipped build sees. GET /features is what the live
+        // Burlington iPhone build and Play vc13 call on every launch, and it is
+        // still the pivot's answer — a worship switch must not touch one byte of
+        // it, or every one of those installs changes on the day S1 deploys.
+        $masjid = $this->org('masjid');
+
+        foreach ([['Qur’an', 'quran'], ['Hadith', 'hadith'], ['Qibla', 'qibla']] as [$name, $key]) {
+            $feature = MobileAppFeature::create(['name' => $name, 'key' => $key]);
+            $masjid->features()->attach($feature->id, ['is_available' => 1]);
+        }
+
+        // Acting as the SuperAdmin for BOTH reads, so the flips in between are
+        // the only thing that differs; /features itself needs no token.
+        Sanctum::actingAs($this->superAdmin());
+
+        $before = $this->getJson("/api/mobile/masjids/{$masjid->id}/features")
+            ->assertOk()
+            ->assertJsonCount(3, 'data')
+            ->getContent();
+
+        foreach (self::KEYS as $key) {
+            $this->patch(
+                "/api/admin/masjids/{$masjid->id}/capabilities/{$key}",
+                ['enabled' => '0'],
+                ['Accept' => 'application/json']
+            )->assertOk();
+        }
+
+        $this->assertTrue($masjid->fresh()->moduleIsOff('quran'), 'the switches did not bite');
+
+        // Without this the second read is the cached first one and the assertion
+        // below would pass however badly /features behaved.
+        Cache::flush();
+
+        $after = $this->getJson("/api/mobile/masjids/{$masjid->id}/features")->assertOk()->getContent();
+
+        $this->assertSame($before, $after, 'a worship switch changed what an installed app reads');
     }
 
     #[Test]
