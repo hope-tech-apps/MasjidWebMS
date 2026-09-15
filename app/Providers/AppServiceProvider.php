@@ -21,6 +21,13 @@ use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
+    /**
+     * The sentence every `device` / `device-activity` refusal carries (see
+     * configureRateLimiters). A constant so tests assert the exact words the
+     * app shows.
+     */
+    public const DEVICE_THROTTLE_MESSAGE = 'Too many requests just now. Please wait a few minutes and try again.';
+
     public function register(): void
     {
         // Request-scoped tenant holder shared by ResolveMasjidTenant middleware
@@ -132,7 +139,11 @@ class AppServiceProvider extends ServiceProvider
      *  - "contact" — 10 messages per hour per IP (spam control on the public contact form)
      *  - "family"  — 60 requests per minute per authenticated CONTACT (T-015c)
      *  - "mobile"  — 60 requests per minute per IP (generous, but bounded)
-     *  - "device"  — 10 device registrations per hour per IP (anti-abuse)
+     *  - "device"  — app device registration (POST/PUT /api/mobile/user): per
+     *                PHONE (device id + IP) 10/min and 60/hour, then a per-NETWORK
+     *                ceiling of 600/hour. Numbers in config/mobile.php.
+     *  - "device-activity" — heartbeat + device→masjid lookup: per phone
+     *                20/min and 120/hour, network ceiling 1200/hour.
      *  - "unsubscribe" — 30 per minute per LINK (plus a coarse per-IP flood
      *                    backstop) on the public unsubscribe landing (T-042c)
      */
@@ -652,14 +663,125 @@ class AppServiceProvider extends ServiceProvider
 
         // (the family guard driver is registered at the top of boot())
 
+        /*
+         * The app's device endpoints: register/update (`device`), and the
+         * heartbeat + device→masjid lookup (`device-activity`).
+         *
+         * ## Why this is no longer "10 per hour per IP"
+         *
+         * Every phone behind one public address shares an IP bucket: a masjid's
+         * Wi-Fi after Jummah, a festival crowd on the venue network, carrier NAT.
+         * Ten calls an hour for all of them together meant the eleventh phone to
+         * open the app on that network in an hour was refused, and on 2026-09-15 a
+         * refused FIRST-launch registration was seen stranding a new iPhone on
+         * its splash screen (the iOS splash awaits registration together with its
+         * other payloads). The limiter had become the outage.
+         *
+         * ## The layers, in the order they are checked
+         *
+         * Laravel checks a limiter's limits IN ARRAY ORDER and stops at the first
+         * refusal WITHOUT counting the request against the limits after it. The
+         * order below is therefore load-bearing:
+         *
+         *  1. Per phone, per minute — a burst guard. A client stuck in a retry
+         *     loop is slowed at once instead of burning its hour in a second.
+         *  2. Per phone, per hour.
+         *  3. Per network, per hour — the ceiling that bounds a script rotating
+         *     invented device ids, which the per-phone layers cannot see.
+         *
+         * Because 1 and 2 come first, a runaway phone's REFUSED requests never
+         * reach the network ceiling, so one broken handset cannot use up its
+         * neighbours' allowance.
+         *
+         * "Per phone" is the device id the request carries PLUS the IP. The IP is
+         * part of the key so that someone who learns a device id cannot
+         * exhaust that phone's bucket from elsewhere. A request with no usable
+         * device id falls back to the IP alone; all four endpoints reject those
+         * at validation anyway.
+         *
+         * No per-network per-minute guard is needed here: `throttle:mobile`
+         * (60/min per IP) already wraps the whole /api/mobile group.
+         *
+         * The numbers, and why they are what they are, are in config/mobile.php
+         * and DECISIONS.md (2026-09-15). The refusal body carries an empty
+         * `data` object because the iPhone app decodes every mobile body through
+         * `Response<T>`, whose `data` is non-optional.
+         */
         RateLimiter::for('device', function (Request $request) {
-            return Limit::perHour(10)->by($request->ip())->response(function () {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Too many device registrations from this IP.',
-                ], 429);
-            });
+            return $this->deviceLimits(
+                $request,
+                'device',
+                (int) config('mobile.device.writes_per_minute_per_device', 10),
+                (int) config('mobile.device.writes_per_hour_per_device', 60),
+                (int) config('mobile.device.writes_per_hour_per_ip', 600),
+            );
         });
+
+        RateLimiter::for('device-activity', function (Request $request) {
+            return $this->deviceLimits(
+                $request,
+                'activity',
+                (int) config('mobile.device.activity_per_minute_per_device', 20),
+                (int) config('mobile.device.activity_per_hour_per_device', 120),
+                (int) config('mobile.device.activity_per_hour_per_ip', 1200),
+            );
+        });
+    }
+
+    /**
+     * The three layered limits for one device bucket, in the order that makes a
+     * refused phone stop counting against its network (see `device` above).
+     *
+     * @return array<int, Limit>
+     */
+    private function deviceLimits(Request $request, string $bucket, int $perMinutePerDevice, int $perHourPerDevice, int $perHourPerIp): array
+    {
+        $device = $this->deviceThrottleKey($request);
+        $refusal = $this->tooManyDeviceRequests();
+
+        return [
+            Limit::perMinute(max(1, $perMinutePerDevice))->by("{$bucket}-burst:{$device}")->response($refusal),
+            Limit::perHour(max(1, $perHourPerDevice))->by("{$bucket}-phone:{$device}")->response($refusal),
+            Limit::perHour(max(1, $perHourPerIp))->by("{$bucket}-network:" . $request->ip())->response($refusal),
+        ];
+    }
+
+    /**
+     * Who "one phone" is for the device limiters: the device id the request
+     * carries (JSON body, form body or query string) together with the IP.
+     *
+     * Hashed so an install identifier does not sit in plaintext in the cache.
+     * Non-scalar input (`device_id[]=x`) collapses to "no device id" rather than
+     * throwing: `(string)` on an array raises inside the limiter, i.e. a 500
+     * before validation exists to answer 422. The fallback is the IP alone.
+     */
+    private function deviceThrottleKey(Request $request): string
+    {
+        $submitted = $request->input('device_id');
+        $deviceId = is_scalar($submitted) ? trim((string) $submitted) : '';
+
+        return $deviceId !== ''
+            ? 'id:' . hash('sha256', $request->ip() . '|' . $deviceId)
+            : 'ip:' . $request->ip();
+    }
+
+    /**
+     * The device limiters' 429: the legacy {status, message} envelope plus an
+     * empty `data` object, and Laravel's Retry-After / X-RateLimit headers.
+     *
+     * One sentence for every layer. It names no bucket, because a person
+     * holding the phone cannot act differently on "this network" versus "this
+     * device"; either way, waiting is the answer.
+     */
+    private function tooManyDeviceRequests(): \Closure
+    {
+        return function (Request $request, array $headers) {
+            return response()->json([
+                'status' => 'error',
+                'message' => self::DEVICE_THROTTLE_MESSAGE,
+                'data' => new \stdClass(),
+            ], 429, $headers);
+        };
     }
 
     /**

@@ -289,7 +289,8 @@ return [
 
     /*
     | Named limiters the canary is allowed to spend. Everything else — the
-    | per-hour intake/quote/zakat limiters, `throttle:device` at 10/hour — is
+    | per-hour intake/quote/zakat limiters, `throttle:device` and
+    | `throttle:device-activity` (per-hour, per-phone and per-network) — is
     | skipped rather than consumed, because a canary that eats a scarce bucket
     | on a schedule is an availability bug it introduced itself. `api` and
     | `mobile` are per-minute and are handled by the pacing above.

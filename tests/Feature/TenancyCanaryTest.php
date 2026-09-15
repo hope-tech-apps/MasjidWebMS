@@ -1896,8 +1896,9 @@ class TenancyCanaryTest extends TestCase
         // keeps the canary off it.
         $this->assertNotContains('api/v1/zakat/nisab', $probed);
 
-        // 10/hour per IP. An hourly canary would consume a tenth of a real
-        // device's registration allowance forever.
+        // `throttle:device-activity`: a per-hour budget shared by every phone on
+        // the network the canary runs from. An hourly canary would spend a slice
+        // of it forever.
         $this->assertNotContains('api/mobile/user/masjid', $probed);
     }
 

@@ -149,8 +149,8 @@ use Illuminate\Support\Str;
  * the run is PACED to `budget.max_per_minute` (default 20 — at most a third of
  * the bucket, ever), the `/api/mobile` surface is covered by a rotating slice
  * rather than in full every run, and endpoints behind scarcer named limiters
- * (`throttle:device` at 10/hour, the per-hour intake and quote limiters) are
- * not probed at all. It is also `withoutOverlapping()` in the schedule, so a
+ * (`throttle:device` / `throttle:device-activity`, the per-hour intake and
+ * quote limiters) are not probed at all. It is also `withoutOverlapping()` in the schedule, so a
  * slow run cannot stack a second copy on top of itself and double the load.
  *
  * Measured, over a real socket: a default run is 49 probes in 2m26s. With

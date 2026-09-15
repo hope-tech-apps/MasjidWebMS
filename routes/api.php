@@ -29,19 +29,27 @@ use Illuminate\Support\Facades\Route;
 /*
  * Security: every public mobile/v1 endpoint is rate-limited via the named
  * "mobile" limiter (60/min/IP, configured in AppServiceProvider). The contact
- * form and device registration get tighter limits ("contact", "device") because
- * those write to the database and are the most attractive spam vectors.
+ * form gets a tighter limit ("contact"). The app's device endpoints get layered
+ * per-phone + per-network limits ("device", "device-activity") so a crowd on one
+ * shared network still works (DECISIONS.md 2026-09-15).
  */
 
 Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
 
-    // Identify and save mobile app user device — tighter limit (DB-writing endpoint).
-    Route::prefix('user')->controller(MobileAppUsersController::class)
-        ->middleware('throttle:device')->group(function () {
-        Route::post('/', 'store');
-        Route::put('/', 'update');
-        Route::post('/heartbeat', 'heartbeat');
-        Route::get('/masjid', 'masjidDetails');
+    // Identify and save the mobile app user's device.
+    Route::prefix('user')->controller(MobileAppUsersController::class)->group(function () {
+        // Register / update: INSERTs rows, so the tighter bucket.
+        Route::middleware('throttle:device')->group(function () {
+            Route::post('/', 'store');
+            Route::put('/', 'update');
+        });
+
+        // Heartbeat + device→masjid lookup: create no rows, and they follow
+        // launches rather than installs, so they get their own looser bucket.
+        Route::middleware('throttle:device-activity')->group(function () {
+            Route::post('/heartbeat', 'heartbeat');
+            Route::get('/masjid', 'masjidDetails');
+        });
     });
 
     // Backward-compat: apps already installed call the GLOBAL app-config on

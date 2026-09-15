@@ -33,8 +33,9 @@ use Illuminate\Support\Str;
  *    the canary has no business reading. Collections are where a fail-open
  *    scope shows up as *more rows*, which is the signal.
  *  - **Routes behind a named limiter the canary is not allowed to spend.**
- *    `throttle:device` is 10 per HOUR per IP. A canary that consumes it every
- *    hour has created an outage in the name of watching for one.
+ *    `throttle:device` and `throttle:device-activity` are per-HOUR budgets
+ *    shared by every phone on a network. A canary that consumes one every hour
+ *    has created an outage in the name of watching for one.
  *
  * ## The refusals are REPORTED, and that is new
  *
