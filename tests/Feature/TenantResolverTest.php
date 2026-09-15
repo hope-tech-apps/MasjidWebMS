@@ -412,12 +412,29 @@ class TenantResolverTest extends TestCase
     #[Test]
     public function the_multi_membership_path_is_off_in_the_shipped_configuration(): void
     {
-        $shipped = require config_path('tenancy.php');
+        // Read the DEFAULT out of the file's TEXT rather than by evaluating it.
+        // `require` runs `env()`, so in a deliberately gate-open process this
+        // file "ships" true — the assertion was measuring the ambient
+        // environment while its name said it was measuring what deploys.
+        $source = file_get_contents(config_path('tenancy.php'));
 
-        $this->assertFalse(
-            $shipped['multi_membership'],
-            'config/tenancy.php must ship with the multi-membership path off — it is S5\'s lever, not S3\'s.'
+        $this->assertMatchesRegularExpression(
+            "/'multi_membership'\s*=>\s*env\(\s*'TENANCY_MULTI_MEMBERSHIP'\s*,\s*false\s*\)/",
+            $source,
+            'config/tenancy.php must default the multi-membership path to FALSE — it is S5\'s lever, not S3\'s.'
         );
+
+        // The two below are about the AMBIENT environment, and the one
+        // legitimate way to violate them is a deliberate gate-open run
+        // (`TENANCY_MULTI_MEMBERSHIP=true php artisan test`), which is how S5 is
+        // exercised before the flag is flipped anywhere real.
+        if (env('TENANCY_MULTI_MEMBERSHIP') !== null) {
+            $this->markTestSkipped(
+                'gate deliberately overridden for this run: TENANCY_MULTI_MEMBERSHIP='
+                . var_export(env('TENANCY_MULTI_MEMBERSHIP'), true)
+            );
+        }
+
         $this->assertNull(
             env('TENANCY_MULTI_MEMBERSHIP'),
             'nothing may set TENANCY_MULTI_MEMBERSHIP; production runs on the shipped default.'
@@ -438,6 +455,14 @@ class TenantResolverTest extends TestCase
     #[Test]
     public function with_the_gate_shut_a_second_membership_grants_nothing(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" — or which measures the pre-S5
+        // behaviour — must SET that condition: S5 is exercised by running this
+        // whole suite with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely
+        // inherited the default then fails for the one reason that is not a
+        // defect.
+        config(['tenancy.multi_membership' => false]);
+
         $admin = $this->masjidAdmin();
         $owned = $this->makeMasjid(['user_id' => $admin->id]);
         $other = $this->makeMasjid();

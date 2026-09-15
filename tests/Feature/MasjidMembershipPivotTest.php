@@ -314,6 +314,14 @@ class MasjidMembershipPivotTest extends TestCase
     #[Test]
     public function tenant_resolution_still_binds_the_owned_masjid_and_ignores_memberships(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" — or which measures the pre-S5
+        // behaviour — must SET that condition: S5 is exercised by running this
+        // whole suite with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely
+        // inherited the default then fails for the one reason that is not a
+        // defect.
+        config(['tenancy.multi_membership' => false]);
+
         $admin = $this->masjidAdmin();
         $owned = $this->makeMasjid(['user_id' => $admin->id]);
         $other = $this->makeMasjid();
@@ -336,6 +344,14 @@ class MasjidMembershipPivotTest extends TestCase
     #[Test]
     public function a_membership_in_another_masjid_still_403s_that_masjids_routes(): void
     {
+        // Assert the gate SHUT explicitly rather than inheriting it. A test whose
+        // name says "with the gate shut" — or which measures the pre-S5
+        // behaviour — must SET that condition: S5 is exercised by running this
+        // whole suite with TENANCY_MULTI_MEMBERSHIP=true, and a test that merely
+        // inherited the default then fails for the one reason that is not a
+        // defect.
+        config(['tenancy.multi_membership' => false]);
+
         $admin = $this->masjidAdmin();
         $owned = $this->makeMasjid(['user_id' => $admin->id]);
         $other = $this->makeMasjid();
