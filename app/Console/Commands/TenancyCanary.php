@@ -142,12 +142,12 @@ use Illuminate\Support\Str;
  * WHY IT IS SAFE TO RUN AGAINST PRODUCTION CONTINUOUSLY
  * ==========================================================================
  *
- * **Throttles.** `/api/mobile/*` is limited by `throttle:mobile` at 60 requests
- * per minute PER IP. A canary that fired its whole plan as fast as it could
+ * **Throttles.** `/api/mobile/*` is limited by `throttle:mobile` PER IP (1800
+ * requests a minute by default; 60 until 2026-09-15). A canary that fired its whole plan as fast as it could
  * would hold that entire bucket for the IP it runs from, and if that IP is
  * shared with anything real it has caused the outage it was watching for. So
  * the run is PACED to `budget.max_per_minute` (default 20 — at most a third of
- * the bucket, ever), the `/api/mobile` surface is covered by a rotating slice
+ * even the old 60-a-minute bucket), the `/api/mobile` surface is covered by a rotating slice
  * rather than in full every run, and endpoints behind scarcer named limiters
  * (`throttle:device` / `throttle:device-activity`, the per-hour intake and
  * quote limiters) are not probed at all. It is also `withoutOverlapping()` in the schedule, so a

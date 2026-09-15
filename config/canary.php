@@ -31,8 +31,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | `max_per_minute` is the important one. The public mobile surface is
-    | limited by `throttle:mobile` at 60 requests per minute PER IP
-    | (AppServiceProvider). A canary that fires its whole plan as fast as it can
+    | limited by `throttle:mobile` PER IP (1800 requests a minute by default in
+    | config/mobile.php; 60 until 2026-09-15). A canary that fires its whole plan as fast as it can
     | would burn that bucket from whatever IP it runs on, and if that IP is
     | shared with anything else — a health checker, a CDN origin-pull, the app
     | server itself behind a proxy that does not forward the client address —
@@ -40,8 +40,8 @@ return [
     |
     | So the run is PACED, not bursted: the command derives a per-request delay
     | of 60_000 / max_per_minute milliseconds and sleeps it between probes. At
-    | the default of 20 the canary can never hold more than a third of the
-    | mobile bucket, and a full run takes minutes rather than seconds — which is
+    | the default of 20 the canary can never hold more than a third of even the
+    | old 60-a-minute mobile bucket, and a full run takes minutes rather than seconds — which is
     | fine, because it is scheduled hourly and guarded by withoutOverlapping().
     |
     | `max_requests` and `max_seconds` are hard stops. Hitting either can never

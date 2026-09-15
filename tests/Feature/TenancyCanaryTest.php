@@ -961,10 +961,10 @@ class TenancyCanaryTest extends TestCase
         // And the human report says it on a CLEAN run, which is the only run an
         // operator reads without already being worried.
         //
-        // `--only api/v1` and not a second `--all`: the mobile surface is
-        // limited to 60/min per IP and the run above already spent most of that
-        // bucket, so a second full run would abort on a 429 and be exit 2 — the
-        // canary refusing to push through a limiter, working exactly as
+        // `--only api/v1` and not a second `--all`: a second full run would
+        // spend the mobile surface's per-IP bucket again for nothing asserted
+        // here. When that bucket was 60/min it aborted on a 429 and exited 2 —
+        // the canary refusing to push through a limiter, working exactly as
         // designed, and nothing to do with what is being asserted here.
         // (The substrings must not overlap: the mocked console matches each
         // expectation against every write in declaration order, and the first
@@ -1935,8 +1935,8 @@ class TenancyCanaryTest extends TestCase
     #[Test]
     public function it_paces_itself_rather_than_bursting(): void
     {
-        // The pacing IS the throttle-safety argument — `throttle:mobile` allows
-        // 60/min/IP and the canary must never be able to hold that bucket. With
+        // The pacing IS the throttle-safety argument — `throttle:mobile` is a
+        // per-IP bucket and the canary must never be able to hold it. With
         // max_per_minute at 6 the derived delay is 10s, so five probes cannot
         // finish in under 40 seconds; asserting the shape at a smaller scale
         // keeps the test fast.

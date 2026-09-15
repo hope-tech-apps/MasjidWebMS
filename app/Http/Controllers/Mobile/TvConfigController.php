@@ -67,7 +67,8 @@ use Illuminate\Support\Facades\Cache;
  *
  * Additive: `/signage` is untouched and keeps returning its array of slides.
  * Registered inside the same `mobile` prefix group as its neighbours, so it
- * carries `throttle:mobile` (60/min/IP) like every other public read.
+ * carries `throttle:mobile` (per phone, under a per-IP ceiling) like every
+ * other public read.
  *
  * routes/api.php never runs the tenant middleware, so `TenantContext` is UNBOUND
  * and no global scope applies — as intended for a public route

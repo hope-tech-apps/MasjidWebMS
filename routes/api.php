@@ -28,10 +28,12 @@ use Illuminate\Support\Facades\Route;
 
 /*
  * Security: every public mobile/v1 endpoint is rate-limited via the named
- * "mobile" limiter (60/min/IP, configured in AppServiceProvider). The contact
- * form gets a tighter limit ("contact"). The app's device endpoints get layered
- * per-phone + per-network limits ("device", "device-activity") so a crowd on one
- * shared network still works (DECISIONS.md 2026-09-15).
+ * "mobile" limiter: per phone when the request names its device, under a
+ * per-network ceiling sized for a venue (AppServiceProvider, config/mobile.php).
+ * The contact form ("contact") and donation checkout ("mobile-checkout") get
+ * tighter limits. The app's device endpoints get layered per-phone + per-network
+ * limits ("device", "device-activity"), so a crowd on one shared network still
+ * works (DECISIONS.md 2026-09-15).
  */
 
 Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
@@ -114,7 +116,11 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // one of the masjid's active funds. Runs UNBOUND (no tenant middleware);
         // the controller filters the fund by masjid_id explicitly. The donation
         // is persisted `pending` here and only finalized by the Stripe webhook.
-        Route::post('/{masjid_id}/donations/checkout', [DonationsController::class, 'createCheckoutSession']);
+        // `mobile-checkout` keeps this at 60/min per IP: the group's `mobile`
+        // ceiling was raised for crowds, and every call here creates a Stripe
+        // session and a pending row.
+        Route::post('/{masjid_id}/donations/checkout', [DonationsController::class, 'createCheckoutSession'])
+            ->middleware('throttle:mobile-checkout');
 
         // Public list of active donation funds — the native donate screen offers
         // these as designations before opening hosted checkout.

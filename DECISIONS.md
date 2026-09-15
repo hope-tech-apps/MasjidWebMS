@@ -1183,27 +1183,47 @@ goes: the login, the sessions, the phone's link to them and their notification c
   - Deleting an app account also ends that person's family portal login.
   - Office staff can turn the portal login back on.
 
-## 2026-09-15 · App device limits: per phone and per network, instead of 10 an hour per IP
+## 2026-09-15 · App rate limits: per phone and per network, instead of per IP
 
-**Problem.** Seen on staging during the 2026-09-15 iPhone walk-through. `throttle:device` was
-`Limit::perHour(10)->by($request->ip())`, covering POST and PUT `/api/mobile/user`, the heartbeat and
-`GET /user/masjid`. Every phone behind one public address shares one IP: a masjid's Wi-Fi, a festival
-venue, carrier NAT. Together they got ten calls an hour. The iOS splash awaits registration in the same
-`try await` as its other payloads, so a refused first launch left a new iPhone stuck on the splash screen.
+**Problem.** Seen on staging during the 2026-09-15 iPhone walk-through. Two limiters keyed on the IP alone
+sat in front of a first launch:
+- `throttle:device` was `Limit::perHour(10)->by($request->ip())`, covering POST and PUT `/api/mobile/user`,
+  the heartbeat and `GET /user/masjid`.
+- `throttle:mobile` was `Limit::perMinute(60)->by($request->ip())` around every `/api/mobile` route, and it
+  runs first.
 
-**Decision.** Two limiters. Each returns three `Limit`s, checked in this order:
+Every phone behind one public address shares one IP: a masjid's Wi-Fi, a festival venue, carrier NAT. One
+iOS launch sends about ten requests. It awaits the app-config gate, then registration, the masjid, its
+features and its prayer settings together. A heartbeat follows, then the home screen's iqama settings,
+announcements and events. A refused awaited payload leaves the iPhone on the splash screen. So everyone
+on the network shared ten device calls an hour and about six launches a minute. The `throttle:mobile` 429
+was also `{status, message}` with no `data`, which the iPhone cannot decode.
 
-| Bucket | Routes | Per phone / minute | Per phone / hour | Per network / hour |
+**Decision.** Four limiters. Within each one, the limits are checked left to right:
+
+| Limiter | Routes | Per phone / minute | Per phone / hour | Per network |
 |---|---|---|---|---|
-| `device` | POST, PUT `/api/mobile/user` | 10 | 60 | 600 |
-| `device-activity` | POST `/user/heartbeat`, GET `/user/masjid` | 20 | 120 | 1200 |
+| `mobile` | every `/api/mobile` route (outermost) | 60, only when the request names its device | none | 1800 / minute |
+| `mobile-checkout` | POST `/masjids/{id}/donations/checkout` | none | none | 60 / minute |
+| `device` | POST, PUT `/api/mobile/user` | 10 | 60 | 600 / hour |
+| `device-activity` | POST `/user/heartbeat`, GET `/user/masjid` | 20 | 120 | 1200 / hour |
 
-- **"Per phone"** is the request's `device_id` (body or query) hashed with the IP. With the IP in the key, a
-  leaked device id cannot be used to lock a phone out from somewhere else. A request with no usable
-  `device_id` (missing, empty, or an array) is keyed on the IP alone. All four endpoints reject such
-  requests at validation anyway.
-- **The order matters.** Laravel stops at the first refusing limit without counting the later ones.
-  The per-phone limits come first, so a looping phone's refused calls never count against its network.
+- **"Per phone"** is the request's `device_id` (body or query), or else an `X-Device-Id` header, hashed with
+  the IP. With the IP in the key, a leaked device id cannot be used to lock a phone out from somewhere else.
+  No shipped app sends the header. It is read so a future build can name its phone on read routes.
+- **A request that names no device.** In `device` and `device-activity` it is keyed on the IP alone, and all
+  four endpoints reject it at validation anyway. In `mobile` the per-phone layer is left out entirely, because
+  an IP fallback there would bring back the old shared bucket. Only the network ceiling applies.
+- **The order matters, and only within one limiter.** Laravel stops at the first refusing limit without
+  counting the later ones in the same limiter. Limiters nest, though: `mobile` counts a request before
+  `device` sees it. So:
+  - A phone that names itself and loops costs its network at most 60 requests a minute of the `mobile`
+    ceiling. After that, `mobile`'s per-phone layer refuses it without adding to the network count.
+  - Calls refused by `device` or `device-activity` never reach that limiter's own network ceiling. They
+    have already been counted by `mobile`, within that 60.
+  - Today the apps name their device only on the device and member routes. A phone looping on a read
+    route (masjid, features, prayers) counts straight against the network ceiling. It would have to send
+    1800 a minute, 30 a second, to refuse its neighbours.
 - **Refusal.** 429 with `{status: "error", message, data: {}}` and Laravel's `Retry-After` headers.
   `data` is there because the iPhone decodes every mobile body through `Response<T>`, where `data` is
   non-optional. The message is the same for every layer: "Too many requests just now. Please wait a few
@@ -1212,8 +1232,20 @@ venue, carrier NAT. Together they got ten calls an hour. The iOS splash awaits r
   default, so a config cache that predates the file still applies exactly these numbers.
 
 **Why these numbers.**
+- **The network ceiling on every app route (`mobile`, 1800 a minute).** At about ten requests per launch
+  (above), that is roughly 180 phones opening the app in the same minute on one address: the crowd leaving
+  Jummah, or arriving at the Fall Festival gate. The old limit allowed about six. It is 30 requests a second
+  from one address. It has not been load-tested against the droplet; the launch reads (masjid, features,
+  prayer settings) are served from `Cache::remember`.
+- **Per phone on every app route (`mobile`, 60 a minute).** Six launches' worth. It applies only to
+  requests that name their device.
+- **Donation checkout (`mobile-checkout`, 60 a minute per IP).** Every call writes a pending donation and
+  opens a Stripe session. This is what checkout had under the old group limit, so raising the group
+  ceiling loosens nothing here.
 - **Registration.** Both apps register once per install: iOS stores the returned id, and Android sets a
-  flag and retries only after a failure. A phone therefore needs one or two calls an hour.
+  flag and retries only after a failure. A phone therefore needs one or two calls an hour. Each NEW
+  `device_id` inserts a `mobile_app_users` row. Repeating an id that already exists inserts nothing and
+  returns a 500 (see "Not changed here").
   - 10 per minute stops a retry loop within seconds.
   - 60 per hour is many times real use, so reinstalls and flaky networks are never refused.
   - 600 per hour per network fits 300 people installing at the Fall Festival within the hour, each with
@@ -1224,34 +1256,48 @@ venue, carrier NAT. Together they got ten calls an hour. The iOS splash awaits r
   - Android sends one when the process starts and on subscription changes.
   - Current builds never call `/user/masjid`; it stays in this bucket for older installs.
   - Hence the looser per-phone numbers, and a network ceiling twice the registration one.
-- **No per-network per-minute guard.** `throttle:mobile` (60 a minute per IP) already covers the whole
+- **No per-network per-minute guard in the device limiters.** `mobile` already puts one around the whole
   `/api/mobile` group.
 
 **Alternatives.**
-- **Raise the per-IP number alone.** One looping phone could still use up a whole venue's allowance.
+- **Raise the per-IP number alone.** One looping phone could still use up a whole venue's allowance. This
+  is still partly true for read routes, which carry no device id (see "The order matters").
 - **Key on `device_id` alone.** A script inventing ids would be unlimited, and anyone holding a phone's
   id could exhaust that phone's bucket.
-- **Take the endpoints out of throttling.** Every registration inserts a row.
+- **Key `mobile` on the IP plus the User-Agent.** Phones of one model on one OS version send the same
+  User-Agent, so a crowd would still share buckets, and a script can send any User-Agent it likes.
+- **Take the endpoints out of throttling.** Every new device id inserts a row, so a script inventing ids
+  would be unlimited.
 - **Keep one bucket for all four routes.** Heartbeats scale with launches, so a busy Jummah hour would
   spend the registration allowance.
 
 **Not changed here, and needs the owner.**
-1. **`throttle:mobile` has the same shared-network problem, and it is bigger.** It allows 60 a minute
-   per IP across every `/api/mobile` route. One iOS launch fetches the masjid, features and prayer
-   settings, then the home screen's content. A handful of phones opening the app in the same minute on
-   one Wi-Fi therefore use it up, and a first launch still awaits those payloads. This branch leaves it
-   alone; the tests stay within it.
-2. **There is no TrustProxies configuration, so `$request->ip()` is the connecting address.** That is
+1. **This raises the public app API's abuse limit from 60 to 1800 requests a minute per address.** That is
+   the point of the change, but it is the owner's call before production. That ceiling is also the only
+   thing that stops one handset looping on a read route from refusing its network. The complete fix is for
+   both apps to send `X-Device-Id` on every request, which is an app change on iOS and Android.
+2. **Registering an id that already exists is a 500.** `mobile_app_users.device_id` is unique, and
+   `MobileAppUsersController::store` calls `create()` inside a catch-all. This predates the branch, and
+   the limiters count those calls like any other. It matters for Android, which keeps one stable id and
+   re-registers on each launch until a registration succeeds. If a registration reaches the server but its
+   response is lost, every later launch gets a 500 and the "registered" flag is never set.
+3. **There is no TrustProxies configuration, so `$request->ip()` is the connecting address.** That is
    right only while nothing proxies the API. If `masjid.hopetechapps.com` is ever put behind a proxy
    (Cloudflare's orange cloud, for example), every IP-keyed limiter would pool unrelated users onto the
    proxy's addresses. Confirm before relying on the per-network numbers.
 
 **Deploy notes (none of this has been done).**
 - **CI.** Rsync this branch to `/root/manara-ci`, excluding `bootstrap/cache`. Run
-  `MobileDeviceThrottleTest`, `PublicMasjidDirectoryTest` and `TenancyCanaryTest`, then the full suite.
-  Confirm the box ran this code by file hash.
-- **Staging.** Check `php artisan route:list --path=api/mobile/user -v`: POST and PUT should show
-  `throttle:device`, and heartbeat and masjid should show `throttle:device-activity`. Then register one
-  device eleven times within a minute and confirm the eleventh is a 429 with `"data":{}`.
+  `MobileDeviceThrottleTest`, `PublicMasjidDirectoryTest`, `DonationFlowTest`, `TvConfigEndpointTest` and
+  `TenancyCanaryTest`, then the full suite. Confirm the box ran this code by file hash. None of these has
+  been run for this branch.
+- **Staging.**
+  - Check `php artisan route:list --path=api/mobile -v`. POST and PUT `/user` should show
+    `throttle:device`; heartbeat and `/user/masjid` should show `throttle:device-activity`; the donation
+    checkout should show `throttle:mobile-checkout`.
+  - Send 100 GETs to `/api/mobile/app-config` from one address within a minute. None should be refused;
+    the old limit refused the 61st.
+  - Register one device, then PUT it ten more times within a minute. The last PUT should be a 429 with
+    `"data":{}`.
 - **Production.** Only with the owner's OK, since this loosens an abuse limit. The new config file needs
   no `.env` change, and a refreshed config cache must go through the parse-check path.
