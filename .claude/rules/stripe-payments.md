@@ -315,7 +315,10 @@ donation.
     sides (TrimStrings has already trimmed the input); case and inner spacing must
     match.
   - **Onboarding** refuses a linked org (409 in the controller, `LogicException` in
-    `ensureConnectedAccount`).
+    `ensureConnectedAccount`). Its Online payments tab (every non-masjid with the CRM)
+    shows the link's status from `connect/status.forms_card_via` and no Connect button.
+    Never add a path that lets a linked org grow an account: the resolver checks the
+    link first, so an own account makes its form card payments REFUSED, not re-routed.
 - **One resolver** answers every Forms card question:
   `App\Services\Stripe\FormChargeAccount::for($org)`. A linked org gets the holder's
   account, read LIVE, only while the link equals `parent_id`, the holder is live, not
@@ -408,10 +411,12 @@ cancelled, for admins and lunch volunteers, on these terms:
   `canAcceptDonations` and before the try. `Mobile\FundsController` answers `[]`
   without reading or clearing its cache.
 - **Connect onboarding, status and the forms-card Stop button never sit behind
-  `giving`.** While Giving is off, or for a school or community organisation a
-  SuperAdmin switched Giving on for, Connect renders on {term} Details › Online
-  payments (`showsOnlinePaymentsTab`; needs the CRM, because the connect routes
-  sit inside `crm`).
+  `giving`.** Connect renders on {term} Details › Online payments for every school
+  or community organisation, and for a masjid while its Giving is switched off
+  (`showsOnlinePaymentsTab`; owner, 2026-09-14). It needs the CRM, because the
+  connect routes sit inside `crm`. A masjid with Giving on keeps it on the Giving
+  Dashboard. A pointer to Connect asks `connectPlace` / `connectPlaceTitle`
+  (null without the CRM) and never hard-codes a screen.
 - **Switching Giving off is refused while any monthly gift can still charge**
   (`GivingSwitch::liveSubscriptionCount()` above zero): rows with a Stripe
   subscription id that are not `canceled`, plus a `canceled` row Stripe says it

@@ -101,7 +101,9 @@ export const FORMS_CARD_CONSENT_MAX = 1000;
  */
 const FORMS_CARD_PROBLEM_TEXT: Record<string, string> = {
     organisation_missing: 'this organisation has been archived',
-    has_own_account: 'this organisation has its own Stripe account, so its forms charge on that',
+    // Only ever read back for a LINKED organisation (FormChargeAccount::for refuses a link
+    // whose child has an account of its own), so its forms charge on neither account.
+    has_own_account: 'this organisation also has a Stripe account of its own, which a link to another organisation does not allow',
     same_organisation: 'it is linked to itself',
     not_parent: 'the organisation it is linked to is not its parent organisation',
     holder_missing: 'the organisation it is linked to no longer exists or has been archived',

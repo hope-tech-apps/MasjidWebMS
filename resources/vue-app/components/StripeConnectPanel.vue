@@ -2,8 +2,13 @@
     <!--
         Whole panel disappears on a 403 (no `manage donations`, or the CRM gate
         is off): an admin who cannot act on the Stripe connection should not be
-        shown a broken card about it.
+        shown a broken card about it. Where the panel is the only thing on its
+        tab (Details › Online payments), `explainForbidden` puts one sentence
+        there instead of an empty pane.
     -->
+    <p v-if="forbidden && explainForbidden" class="text-muted small mb-0">
+        Only administrators who manage donations can see or change how this organisation takes online payments.
+    </p>
     <section v-if="!forbidden" class="mb-4">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
             <h6 class="text-muted text-uppercase small mb-0">Payments — Stripe Connect</h6>
@@ -75,12 +80,22 @@
 
                 <!-- 1 — No connected account yet -->
                 <div v-else-if="!connectStatus.stripe_account_id">
-                    <p class="mb-1 fw-semibold">Online giving is not set up</p>
-                    <p class="text-muted small mb-3">
-                        Connect a Stripe account so donors can give by card. Stripe hosts the
-                        payment form and the money settles in your own Stripe account — the
-                        setup takes a few minutes and Stripe walks you through it.
-                    </p>
+                    <template v-if="takesGifts">
+                        <p class="mb-1 fw-semibold">Online giving is not set up</p>
+                        <p class="text-muted small mb-3">
+                            Connect a Stripe account so donors can give by card. Stripe hosts the
+                            payment form and the money settles in your own Stripe account — the
+                            setup takes a few minutes and Stripe walks you through it.
+                        </p>
+                    </template>
+                    <template v-else>
+                        <p class="mb-1 fw-semibold">Online payments are not set up</p>
+                        <p class="text-muted small mb-3">
+                            Connect a Stripe account so this organisation can take card payments online.
+                            Stripe hosts the payment form and the money settles in your own Stripe account — the
+                            setup takes a few minutes and Stripe walks you through it.
+                        </p>
+                    </template>
                     <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding">
                         <span v-if="startingOnboarding" class="spinner-border spinner-border-sm me-1"></span>
                         Connect with Stripe
@@ -95,7 +110,7 @@
                     </p>
                     <p class="text-muted small mb-3">
                         A Stripe account exists, but Stripe still needs details before it can
-                        take donations. Resuming opens a fresh Stripe form where you left off.
+                        {{ takesGifts ? 'take donations' : 'take card payments' }}. Resuming opens a fresh Stripe form where you left off.
                     </p>
                     <button class="btn btn-primary" :disabled="startingOnboarding" @click="beginOnboarding">
                         <span v-if="startingOnboarding" class="spinner-border spinner-border-sm me-1"></span>
@@ -121,13 +136,13 @@
                         </span>
                     </div>
                     <p v-if="!connectStatus.payouts_enabled" class="text-muted small mb-0">
-                        Donations are being accepted, but Stripe has not enabled payouts yet —
+                        {{ takesGifts ? 'Donations' : 'Card payments' }} are being accepted, but Stripe has not enabled payouts yet —
                         this is normal while Stripe reviews a new account, and payouts usually
                         follow within a few days. The money collected is held safely in the
                         Stripe balance until then. Use “Refresh status” to check again.
                     </p>
                     <p v-else class="text-muted small mb-0">
-                        Donations are being accepted and Stripe is paying the balance out.
+                        {{ takesGifts ? 'Donations' : 'Card payments' }} are being accepted and Stripe is paying the balance out.
                     </p>
                 </div>
 
@@ -195,6 +210,8 @@
 import { computed, onBeforeMount, ref } from 'vue';
 import Swal from 'sweetalert2';
 import { useConnectStore, isForbidden, envelopeMessage } from '@/stores/masjid/connectStore';
+import { useMasjidStore } from '@/stores/masjidStore';
+import { moduleIsOff, moduleSwitchedOn } from '@/core/access/orgAccess';
 import { FormsCardOrg, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 
 /**
@@ -209,9 +226,30 @@ import { FormsCardOrg, formsCardProblemText } from '@/core/types/data/masjid-rel
  *   3. charges_enabled                 → connected; payouts_enabled may still lag
  *      (Stripe review), which is stated as normal rather than left to read as broken.
  * forms_card_for adds, under any of them, the organisations charging through this one.
+ *
+ * For a linked organisation state 0 is the whole story: onboarding is refused on the server
+ * (StripeConnectController::startOnboarding 409, StripeConnectService::ensureConnectedAccount
+ * LogicException), and FormChargeAccount::for() never lets an account of its own take its
+ * form card payments while the link is set, so nothing here can move where they land.
  */
 
+withDefaults(defineProps<{
+    /** Say why the panel is empty on a 403 instead of rendering nothing (a tab with nothing else on it). */
+    explainForbidden?: boolean;
+}>(), { explainForbidden: false });
+
 const connectStore = useConnectStore();
+const masjidStore = useMasjidStore();
+
+/**
+ * Whether this organisation takes gifts, so the wording may speak of donations: a masjid
+ * whose Giving is not switched off, or a school or community organisation a SuperAdmin
+ * switched Giving on for. Anywhere else the account takes card payments (forms, program
+ * fees, lunch orders), and "donors can give" would describe a screen it does not have.
+ */
+const takesGifts = computed<boolean>(() => masjidStore.orgType === 'masjid'
+    ? !moduleIsOff(masjidStore.masjid, 'giving')
+    : moduleSwitchedOn(masjidStore.masjid, 'giving'));
 
 // State
 const checking = ref(true);            // very first status check, nothing rendered yet

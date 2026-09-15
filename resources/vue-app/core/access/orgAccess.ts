@@ -74,19 +74,53 @@ export function canUseWebPages(userType: UserType | undefined, masjid: Pick<Masj
  * Whether the Details screen carries an Online payments tab (Stripe Connect).
  *
  * Connect is never behind the giving switch: lunch orders, program fees and form card
- * payments depend on it. While Giving is on for a masjid the Giving Dashboard holds the
- * Connect panel; the tab appears once Giving is switched off, and for a school or
- * community organisation a SuperAdmin switched Giving on for. The connect routes sit
- * inside the `crm` group, so the tab needs the CRM too. A payload with neither list
- * shows no tab, exactly as before.
+ * payments depend on it. A school or community organisation always has the tab, whether
+ * or not a SuperAdmin switched Giving on for it (owner, 2026-09-14: "yes show the online
+ * payments tab for schools too"). A masjid has it only while its Giving is switched off;
+ * while Giving is on, the Giving Dashboard holds the Connect panel. The connect routes sit
+ * inside the `crm` group, so the tab needs the CRM too.
  */
 export function showsOnlinePaymentsTab(
-    masjid: Pick<Masjid, 'crm_enabled' | 'modules_off' | 'modules_on'> | null | undefined,
+    masjid: Pick<Masjid, 'crm_enabled' | 'modules_off'> | null | undefined,
     orgType: OrgType
 ): boolean {
     if (!masjid?.crm_enabled) return false;
 
-    return moduleIsOff(masjid, 'giving') || (orgType !== 'masjid' && moduleSwitchedOn(masjid, 'giving'));
+    return orgType !== 'masjid' || moduleIsOff(masjid, 'giving');
+}
+
+/**
+ * Where this organisation's Stripe Connect panel is, for every pointer that sends an
+ * admin to it:
+ *
+ *   online_payments   the Details screen's Online payments tab (showsOnlinePaymentsTab)
+ *   giving_dashboard  the Giving Dashboard: a masjid with the CRM on and Giving not off
+ *   null              nowhere: without the CRM the connect routes answer 403, so no screen
+ *                     can show the panel
+ */
+export type ConnectPlace = 'online_payments' | 'giving_dashboard' | null;
+
+export function connectPlace(
+    masjid: Pick<Masjid, 'crm_enabled' | 'modules_off'> | null | undefined,
+    orgType: OrgType
+): ConnectPlace {
+    if (!masjid?.crm_enabled) return null;
+
+    return showsOnlinePaymentsTab(masjid, orgType) ? 'online_payments' : 'giving_dashboard';
+}
+
+/**
+ * A ConnectPlace as the sidebar names it: "School Details › Online payments" or "Giving
+ * Dashboard". Null for null. `term` is the organisation's own vocabulary, so a SuperAdmin
+ * screen describing another organisation passes that organisation's words.
+ */
+export function connectPlaceTitle(place: ConnectPlace, term: (key: TerminologyKey) => string): string | null {
+    if (place === 'online_payments') return `${detailsScreenTitle(term)} › Online payments`;
+    if (place !== 'giving_dashboard') return null;
+
+    const item = MASJID_DASHBOARD_ASIDE_MENU.find(entry => entry.to === '/masjid/donations/dashboard');
+
+    return item ? menuItemTitle(item, term) : 'Giving Dashboard';
 }
 
 /**

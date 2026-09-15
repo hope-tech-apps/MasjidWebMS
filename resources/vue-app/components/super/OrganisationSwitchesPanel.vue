@@ -381,13 +381,14 @@ function switchOffLines(entry: CapabilityEntry, org: string): string[] {
             ];
         case 'giving':
             return [
-                // The Online payments tab needs the CRM (the connect routes sit inside it). A type
-                // not offered Giving keeps the tab only while Giving is switched ON for it
-                // (showsOnlinePaymentsTab), so switching it off takes Stripe setup away.
+                // The Online payments tab needs the CRM (the connect routes sit inside it). A school
+                // or community organisation has the tab whether or not Giving is on
+                // (showsOnlinePaymentsTab), so the switch moves nothing there; a masjid's Connect
+                // panel moves from the Giving Dashboard to the tab.
                 ...(!props.masjid.crm_enabled
                     ? []
-                    : entry.offered_by_default === false
-                        ? [`Stripe setup and the forms card-payment Stop button leave ${org}'s dashboard: a ${orgType.value} has the ${detailsTitle.value} › Online payments tab only while Giving is on. Friday lunch, program fees and form card payments keep charging through the Stripe account already connected.`]
+                    : orgType.value !== 'masjid'
+                        ? [`Stripe setup and the forms card-payment Stop button stay on ${detailsTitle.value} › Online payments.`]
                         : [`Stripe setup and the forms card-payment Stop button move to ${detailsTitle.value} › Online payments.`]),
                 // Both apps fall back to the donation link on Donate, and say "No donation options are
                 // available right now" when there is none.
@@ -422,9 +423,18 @@ function switchOnLines(entry: CapabilityEntry, org: string): string[] {
     ];
 
     if (entry.key === 'giving') {
+        // A linked program org (DECISIONS.md 2026-09-15) is refused Stripe setup while the link
+        // is set, so the Online payments pointer would send it to a button it does not have.
+        const linked = (props.masjid as Masjid & { forms_card_via_masjid_id?: number | null })
+            .forms_card_via_masjid_id != null;
+
         lines.push(
             crmLine(org),
-            `${org} needs its own Stripe account to take card gifts. Connect it on ${detailsTitle.value} › Online payments.`,
+            linked
+                ? `${org} cannot take card gifts: its form card payments go through its parent organisation's Stripe account, and Stripe setup is refused while that link is set. A super admin removes the link under Form card payments on this screen first, and its forms then take no card payments until its own account is ready.`
+                : props.masjid.crm_enabled
+                    ? `${org} needs its own Stripe account to take card gifts. Connect it on ${detailsTitle.value} › Online payments.`
+                    : `${org} needs its own Stripe account to take card gifts. Connect it on ${detailsTitle.value} › Online payments once Members, classes & giving is on.`,
             `Receipts and year-end statements use wording for a ${orgType.value}: they leave out the sentence about intangible religious benefits.`,
             `They print the 501(c)(3) sentence only when ${org} has a tax ID saved.`,
         );

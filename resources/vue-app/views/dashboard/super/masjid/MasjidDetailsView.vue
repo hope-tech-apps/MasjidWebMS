@@ -258,10 +258,9 @@
                                         organisation) and {{ parentLabel }} has agreed.
                                         <!-- The holder's Stop button needs the `crm` gate and manage donations
                                              (routes/admin.php, connect group); without CRM it never renders. -->
-                                        <template v-if="formsCard.parentCrmEnabled">
+                                        <template v-if="formsCard.parentCrmEnabled && parentConnectTitle">
                                             {{ parentLabel }}'s admins who manage donations can stop it at any time from
-                                            their Stripe settings (the Giving Dashboard, or {{ parentDetailsTitle }} › Online
-                                            payments when Giving is switched off), and a Manara super admin can remove it here.
+                                            {{ parentConnectTitle }}, and a Manara super admin can remove it here.
                                         </template>
                                         <template v-else>
                                             {{ parentLabel }} does not use Manara's CRM, so its admins cannot stop it from
@@ -560,8 +559,9 @@ import {
 } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverMessage } from '@/core/helpers/serverMessage';
 import { trapTab } from '@/core/helpers/focusTrap';
-import { detailsScreenTitle } from '@/core/access/orgAccess';
-import { MASJID_TERMINOLOGY, Terminology, Vertical } from '@/core/types/data/Vertical';
+import { connectPlace, ConnectPlace, connectPlaceTitle } from '@/core/access/orgAccess';
+import { ModuleKey } from '@/core/types/data/Capability';
+import { DEFAULT_ORG_TYPE, MASJID_TERMINOLOGY, Terminology, Vertical } from '@/core/types/data/Vertical';
 import { AxiosError } from 'axios';
 import { SweetAlertOptions } from 'sweetalert2';
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
@@ -935,8 +935,14 @@ type FormsCardPanel = {
     parentCrmEnabled: boolean | null;
     parentChargeReady: boolean | null;
     parentLinked: boolean | null;
-    /** The parent's own words (its vertical pack), for naming its Details screen; null until read. */
+    /** The parent's own words (its vertical pack), for naming its screens; null until read. */
     parentTerminology: Terminology | null;
+    /**
+     * Where the parent's admins find the Stop button (connectPlace from its own record): its
+     * Details › Online payments tab, or the Giving Dashboard for a masjid with Giving on. Null
+     * until read, and without the CRM.
+     */
+    parentConnectPlace: ConnectPlace;
     /** GET forms/card-account for this organisation, or null when it could not be read. */
     account: FormsCardAccount | null;
     /** The link as the server last described it, or null when not linked. */
@@ -951,14 +957,17 @@ const parentId = computed<number | null>(() => linkFields.value.parent_id ?? nul
 
 const formsCard = ref<FormsCardPanel>({
     loading: false, saving: false, parentName: '',
-    parentCrmEnabled: null, parentChargeReady: null, parentLinked: null, parentTerminology: null,
+    parentCrmEnabled: null, parentChargeReady: null, parentLinked: null, parentTerminology: null, parentConnectPlace: null,
     account: null, via: null, loadError: ''
 });
 
 /** Names with a neutral stand-in, so no sentence on the screen has a hole in it. */
 const parentLabel = computed(() => formsCard.value.parentName || 'its parent organisation');
-/** The parent's Details screen as its own sidebar names it ("Masjid Details"); the masjid pack until read. */
-const parentDetailsTitle = computed(() => detailsScreenTitle(
+/**
+ * The parent's Stripe settings as its own sidebar names them ("Giving Dashboard", "Masjid Details ›
+ * Online payments"); null until read and without the CRM.
+ */
+const parentConnectTitle = computed(() => connectPlaceTitle(formsCard.value.parentConnectPlace,
     key => formsCard.value.parentTerminology?.[key] || MASJID_TERMINOLOGY[key]));
 const childLabel = computed(() => masjid.value?.name || 'this organisation');
 
@@ -1012,6 +1021,7 @@ const loadFormsCard = async (): Promise<void> => {
     formsCard.value.parentChargeReady = null;
     formsCard.value.parentLinked = null;
     formsCard.value.parentTerminology = null;
+    formsCard.value.parentConnectPlace = null;
 
     const [parentRead, accountRead] = await Promise.allSettled([
         ApiService.get(`/api/admin/masjids/${parent}/`),
@@ -1021,11 +1031,17 @@ const loadFormsCard = async (): Promise<void> => {
     if (parentRead.status === 'fulfilled'
         && parentRead.value.data?.status === 'success'
         && typeof parentRead.value.data?.data?.name === 'string') {
-        const row = parentRead.value.data.data as MasjidFormsCardFields & { name: string; crm_enabled?: boolean | null; vertical?: Vertical };
+        const row = parentRead.value.data.data as MasjidFormsCardFields
+            & { name: string; crm_enabled?: boolean | null; vertical?: Vertical; modules_off?: ModuleKey[] | null };
 
         formsCard.value.parentName = row.name;
         formsCard.value.parentCrmEnabled = row.crm_enabled === true;
         formsCard.value.parentTerminology = row.vertical?.terminology ?? null;
+        // The same rule the parent's own dashboard uses, read from the parent's own record.
+        formsCard.value.parentConnectPlace = connectPlace(
+            { crm_enabled: row.crm_enabled === true, modules_off: Array.isArray(row.modules_off) ? row.modules_off : [] },
+            row.vertical?.org_type ?? DEFAULT_ORG_TYPE
+        );
         // Booleans only: the id itself is never kept (see the note at the top of this section).
         formsCard.value.parentChargeReady = typeof row.stripe_account_id === 'string'
             && row.stripe_account_id.length > 5

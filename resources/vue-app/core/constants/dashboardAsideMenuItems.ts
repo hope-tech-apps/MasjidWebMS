@@ -432,8 +432,9 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         // masjids only (Masjid::MODULE_DEFAULTS): a SuperAdmin can switch it off for
         // a masjid, or on for a school or community organisation, and menuItemState
         // then lets these items through for that one organisation (`modules_on`).
-        // Stripe Connect is not part of the switch: while Giving is off it sits on
-        // the Details screen's Online payments tab.
+        // Stripe Connect is not part of the switch: it sits on the Details screen's
+        // Online payments tab while a masjid's Giving is off, and always for a school
+        // or community organisation (showsOnlinePaymentsTab).
         title: "Giving Dashboard",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M4 20V11" stroke="white" stroke-width="1.9" stroke-linecap="round"/>

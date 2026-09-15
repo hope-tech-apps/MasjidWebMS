@@ -56,10 +56,11 @@
                     </button>
                 </li>
                 <!--
-                    Stripe Connect, while the Giving Dashboard that normally holds it is switched
-                    off (or for a school or community organisation given Giving). Connect is never
-                    behind the giving switch: lunch orders, program fees and form card payments
-                    need it. See showsOnlinePaymentsTab().
+                    Stripe Connect: always for a school or community organisation, and for a
+                    masjid while the Giving Dashboard that normally holds it is switched off.
+                    Connect is never behind the giving switch: lunch orders, program fees and
+                    form card payments need it. See showsOnlinePaymentsTab(). A LINKED program
+                    org (forms_card_via) sees the link's status here and no onboarding button.
                 -->
                 <li v-if="showOnlinePayments" class="nav-item" role="presentation">
                     <button class="nav-link" id="online-payments-tab" data-bs-toggle="tab" data-bs-target="#online-payments" type="button" role="tab" aria-controls="online-payments" aria-selected="false">
@@ -95,7 +96,7 @@
                     <ThemeSettingsView />
                 </div>
                 <div v-if="showOnlinePayments" class="tab-pane fade" id="online-payments" role="tabpanel" aria-labelledby="online-payments-tab">
-                    <StripeConnectPanel />
+                    <StripeConnectPanel explain-forbidden />
                 </div>
             </div>
         </div>

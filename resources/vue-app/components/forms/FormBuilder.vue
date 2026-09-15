@@ -668,8 +668,14 @@
                             </div>
                             <div v-else class="alert alert-warning py-2 small mb-0">
                                 Card payment will be refused<template v-if="cardProblemText">, because {{ cardProblemText }}</template>.
-                                Connect or finish this organisation's Stripe account {{ givingOff ? 'under' : 'on the' }}
-                                <a v-if="donationsHref" :href="donationsHref" target="_blank" rel="noopener">{{ connectPlace }} (opens in a new tab)</a><span v-else>{{ connectPlace }}</span>.
+                                <template v-if="connectPlaceName">
+                                    Connect or finish this organisation's Stripe account under
+                                    <a v-if="connectHref" :href="connectHref" target="_blank" rel="noopener">{{ connectPlaceName }} (opens in a new tab)</a><span v-else>{{ connectPlaceName }}</span>.
+                                </template>
+                                <template v-else>
+                                    Stripe setup needs {{ CRM_LABEL }}, which is not switched on for this organisation. Ask your
+                                    Manara contact to switch it on.
+                                </template>
                             </div>
                         </template>
                         <div v-else-if="cardAccountState === 'failed'" class="small text-muted">
@@ -1053,7 +1059,8 @@ import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useConnectStore } from '@/stores/masjid/connectStore';
 import { useMasjidStore } from '@/stores/masjidStore';
-import { detailsScreenTitle, moduleIsOff } from '@/core/access/orgAccess';
+import { connectPlace, ConnectPlace, connectPlaceTitle } from '@/core/access/orgAccess';
+import { CAPABILITY_LABELS } from '@/core/types/data/Capability';
 import { FormsCardAccount, formsCardProblemIsLink, formsCardProblemText } from '@/core/types/data/masjid-related/StripeConnect';
 import { serverFieldErrors, serverMessage } from '@/core/helpers/serverMessage';
 import { computed, ref, watch } from 'vue';
@@ -2577,19 +2584,25 @@ const CARD_ACCOUNT_STATES = ['own', 'linked', 'unavailable'];
 
 const masjidStore = useMasjidStore();
 
-// Where Stripe Connect is. The Giving Dashboard holds it while Giving is on; switched
-// off, that screen is hidden and Connect sits on the Details screen's Online payments
-// tab, named by its sidebar title ("Masjid Details"), never "Settings".
-const givingOff = computed<boolean>(() => moduleIsOff(masjidStore.masjid, 'giving'));
-const connectPlace = computed<string>(() => givingOff.value
-    ? `Online payments on its ${detailsScreenTitle(masjidStore.term)} screen`
-    : 'Giving Dashboard');
+// Where Stripe Connect is (connectPlace, core/access/orgAccess.ts): the Details screen's
+// Online payments tab for every school or community organisation and for a masjid with
+// Giving switched off, the Giving Dashboard for a masjid with Giving on, and nowhere
+// without the CRM (the connect routes sit inside it). Named by sidebar title ("School
+// Details › Online payments"), never "Settings". The link opens a new browser tab, which
+// boots cold: MosqueDetailsTabsView opens #online-payments once the organisation loads.
+const CRM_LABEL = CAPABILITY_LABELS.crm;
+const connectPlaceKey = computed<ConnectPlace>(() => connectPlace(masjidStore.masjid, masjidStore.orgType));
+const connectPlaceName = computed<string | null>(() => connectPlaceTitle(connectPlaceKey.value, masjidStore.term));
 
-const donationsHref = computed<string | null>(() => {
+const connectHref = computed<string | null>(() => {
     try {
-        return givingOff.value
-            ? router.resolve({ name: 'masjid.details', hash: '#online-payments' }).href
-            : router.resolve({ name: 'masjid.donationsDashboard' }).href;
+        if (connectPlaceKey.value === 'online_payments') {
+            return router.resolve({ name: 'masjid.details', hash: '#online-payments' }).href;
+        }
+        if (connectPlaceKey.value === 'giving_dashboard') {
+            return router.resolve({ name: 'masjid.donationsDashboard' }).href;
+        }
+        return null;
     } catch (e) {
         return null;
     }

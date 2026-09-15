@@ -874,9 +874,11 @@ flipped.
      the flip goes through once the pages expire.
    - The member recurring-giving verbs stay untouched.
    - A switch never cancels, pauses or changes a gift.
-6. **Stripe Connect moves; it is never switched.** While Giving is off, or at a non-masjid given
-   Giving, the Details screen shows an Online payments tab (CRM required). FormBuilder's pointer
-   follows it and names the Details screen by its sidebar title.
+6. **Stripe Connect moves; it is never switched.** With the CRM on, the Details screen shows an
+   Online payments tab for every school or community organisation, and for a masjid while its
+   Giving is switched off (`showsOnlinePaymentsTab`; owner, 2026-09-14, see Known limits). Every
+   pointer to Connect (FormBuilder, the SuperAdmin forms-card dialog, the switch panel) asks
+   `connectPlace` and names the place by its sidebar title.
 7. **Manara's prayer pushes follow Prayer times** (Q3: yes). `prayers:send-due`,
    `prayers:daily-resync` and the iqama-save sync skip a switched-off organisation. The public reads,
    the TV board and both apps' local schedulers are untouched.
@@ -934,17 +936,56 @@ money for a switched-off organisation, and never refuses money that already move
 - **Admins still see gifts** as giving history on a member's record and in Impact Report totals.
 - **Org 1 has 7 `donation_links` rows** behind a `hasOne`, so which one serves depends on
   database order.
-- **At deploy, school and community admins with the CRM on lose a clean Stripe Connect screen**
-  (Al-Razi 14 and BISS 18 today; Al-Razi's school launch needs Stripe). This is not decided; it
-  needs the owner's call.
-  - It holds whether Giving was never switched on or was switched back off.
-  - B10 shows Online payments at a non-masjid only while Giving is switched on there.
-  - FormBuilder's card-payment pointer still sends them to the Giving Dashboard.
-    - Its Connect panel still works, because the connect routes are not gated.
-    - Its funds and stats calls now answer "Giving is not switched on for this organisation."
-  - Before this change that screen loaded cleanly for them.
-  - The fix on the table: show Online payments for every non-masjid with the CRM on, and point
-    FormBuilder and the SuperAdmin forms-card copy at it.
+- **RESOLVED 2026-09-14: school and community admins with the CRM on had no clean Stripe Connect
+  screen** (Al-Razi 14 and BISS 18). B10 showed Online payments at a non-masjid only while Giving was
+  switched on there, and FormBuilder's pointer sent everyone else to the Giving Dashboard, whose
+  funds and stats calls answer "Giving is not switched on for this organisation."
+  - **Owner decision (2026-09-14, verbatim):** "yes show the online payments tab for schools too".
+    The question named schools and community organisations, so it applies to every org type that
+    is not masjid.
+  - **The rule now:** the tab renders when `crm_enabled && (org type is not masjid || modules_off
+    includes giving)` (`showsOnlinePaymentsTab`, resources/vue-app/core/access/orgAccess.ts). A
+    masjid is unchanged: the tab only while its Giving is off.
+  - **Pointers:** `connectPlace` answers `online_payments`, `giving_dashboard` (a masjid with Giving
+    on) or null (no CRM, so no screen can show the panel), and `connectPlaceTitle` names it by
+    sidebar title ("School Details › Online payments"), never "Settings". FormBuilder links to it
+    (`#online-payments` opens the tab in a cold new browser tab once the organisation loads), says
+    the CRM is needed when there is no place, and the SuperAdmin forms-card dialog computes the
+    PARENT's place from the parent's own record. On the switch panel, Giving off at a non-masjid
+    says Stripe setup stays where it is.
+  - **The panel's words follow the org.** Where the org takes no gifts (a masjid with Giving off, a
+    non-masjid Giving was not switched on for), StripeConnectPanel says "card payments", not
+    "donors can give". On the tab it explains a 403 (no `manage donations`) instead of an empty
+    pane.
+  - **Linked child orgs (BISS, org 18, linked to Burlington Masjid, org 1).** What the tab shows,
+    from the code at 245777c:
+    - `connect/status` carries `forms_card_via` for a linked org
+      (StripeConnectController.php:99, `FormsCardAccountController::viaSummary`). The panel's state 0
+      wins over every other state: "Card payments for forms go through {holder}", a ready or refused
+      badge, and no Connect or Resume button.
+    - Onboarding is refused for a linked org: 409 in StripeConnectController.php:44-49, and a
+      `LogicException` backstop in StripeConnectService.php:39-41.
+    - `FormChargeAccount::for()` (app/Services/Stripe/FormChargeAccount.php:68-87) checks the link
+      FIRST (:74). A linked org never charges on an account of its own. It charges on the holder's
+      account only while `chainProblem` (:167-202) finds nothing: the child has no account of its
+      own (:173), the link equals `parent_id` (:185), the holder is live, not itself linked, has an
+      `acct_` id and can charge.
+    - If a linked child ever had its own account, card would be REFUSED (`has_own_account`), never
+      sent to the child. The only way there is a race: the onboarding link check (StripeConnectController.php:44) is not locked,
+      and the id is written after Stripe's account create (StripeConnectService.php:49), so a link
+      set in that window is possible. Pages already opened stay pinned to the holder
+      (`form_responses.charge_account_id`).
+    - `masjids_active_stripe_account_unique` (2026_08_20 migration :88, :107, :127-128) is unique
+      on live, non-empty `stripe_account_id`, so the holder's id can never be copied onto the child.
+    - A link is refused while the child has an account (`linkProblem` → `has_own_account`).
+    - **So the tab never invites a linked child to move its form card payments.** No backend field
+      was needed. The `has_own_account` wording was corrected: it is only ever read back for a
+      linked org, and the old text said its forms charge on its own account, which they do not.
+  - **Still open:** an UNLINKED child org (a parent exists, no link yet, or a link revoked) is
+    offered "Connect with Stripe". Connecting makes its forms charge on its own account, and a later
+    link to the parent is refused (`has_own_account`) until a SuperAdmin clears that account. The
+    tab does not warn about this. The offerings hint for `org_cannot_collect`
+    (useOfferingDisplay.ts) still says "the Donations screen", a pointer this change did not touch.
 - **A SuperAdmin who opens a not-offered screen by typed URL sees no switched-off notice.**
 - **Public checkout, the funds list and the appointment intake still ignore `crm_enabled`** (Q2b is
   not built).
