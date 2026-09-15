@@ -9,6 +9,7 @@ import { useMasjidStore } from "@/stores/masjidStore";
 import { MSwal } from "@/core/plugins/SweetAlerts2";
 import { getMessageFromObj } from "@/assets/ts/swalMethods";
 import { BackendResponseData } from "@/core/types/config/AxiosCustom";
+import { bumpTenantEpoch, forgetServerTenant, serverTenantId } from "@/core/tenancy/tenantRequests";
 
 export const useAuthStore = defineStore('authStore', () => {
 
@@ -49,6 +50,15 @@ export const useAuthStore = defineStore('authStore', () => {
     }
 
     function removeAuth() {
+        // Read BEFORE the clears below, and used to decide whether there is an
+        // organisation to leave at all. `removeAuth()` is not only sign-out: a
+        // FAILED sign-in reaches it too, through authenticate(), and cancelling
+        // every in-flight request there would cancel a second sign-in attempt
+        // that is still on the wire — leaving the form spinning forever on a
+        // response that can no longer arrive. Nobody who never got in has an
+        // organisation, so nobody who never got in is cancelled.
+        const hadOrganisation = dashboardMasjidId.value !== null || serverTenantId.value !== null;
+
         localStorage.removeItem(LOCAL_STORAGE_KEYS.token);
         localStorage.removeItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
         isAuthenticated.value = false;
@@ -57,11 +67,35 @@ export const useAuthStore = defineStore('authStore', () => {
         dashboardMasjidId.value = null;
         masjidStore.masjid = null;
         ApiService.setHeader();
+
+        // S5: the same two lines a switch runs, for the same reason. Signing out
+        // does not stop the requests already on the wire, and the next person to
+        // sign in on this tab is frequently the SAME browser and a DIFFERENT
+        // organisation — a response landing after that lands in their session.
+        // Opening a new epoch drops those, and forgetting the echo stops the
+        // header naming the organisation that just left.
+        if (hadOrganisation) {
+            bumpTenantEpoch();
+            forgetServerTenant();
+        }
     }
 
     function saveDashboardMasjidId(id: number | string) {
         dashboardMasjidId.value = id;
         localStorage.setItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id, (id + ''));
+    }
+
+    /**
+     * Drop the remembered organisation WITHOUT ending the session.
+     *
+     * `removeAuth()` also clears it, but that signs the user out; this is for the
+     * boot check that finds a stored id the server no longer grants (S5,
+     * tenantSwitchStore.rehydrateSelection). A stale id that survives a reload is
+     * a tab that spends its session 403ing behind a header that looks fine.
+     */
+    function forgetDashboardMasjidId() {
+        dashboardMasjidId.value = null;
+        localStorage.removeItem(LOCAL_STORAGE_KEYS.dashboard_masjid_id);
     }
 
     /**
@@ -202,6 +236,6 @@ export const useAuthStore = defineStore('authStore', () => {
         user, isAuthenticated, token, dashboardMasjidId,
         twoFactorRequired, twoFactorError,
         login, fetchAuthUser, authenticate, logout, removeAuth, saveDashboardMasjidId,
-        cancelTwoFactorChallenge,
+        forgetDashboardMasjidId, cancelTwoFactorChallenge,
     }
 })

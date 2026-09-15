@@ -14,13 +14,24 @@
                 <!-- First Element - Title & Button -->
                 <div class="d-flex align-items-center justify-content-center gap-2">
                     <div class="fs-4 fw-semibold">
+                        <!--
+                            The organisation the SERVER bound, not the one this
+                            tab asked for (S5 of docs/multi-tenant-admin-design.md).
+                            For every principal the server sends no memberships
+                            for — a SuperAdmin, any backend older than S4 —
+                            `chromeOrgName` IS `masjidStore.masjid?.name`, the
+                            expression that used to be written here.
+                        -->
                         <span v-if="route.meta?.dashboardType !== 'super'">
-                            {{ masjidStore.masjid?.name }}
+                            {{ tenantSwitchStore.chromeOrgName }}
                         </span>
                         <span v-else>
                             Super Dashboard
                         </span>
                     </div>
+
+                    <!-- Nothing at all for an account with one organisation. -->
+                    <OrgSwitcher v-if="route.meta?.dashboardType !== 'super'" />
                     <button id="refresh_button" @click.prevent="reloadPage()" title="reload page"
                         class="btn btn-sm btn-icon btn-success">
                         <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -145,7 +156,9 @@ import { Field } from 'vee-validate';
 import { useAuthStore } from '@/stores/authStore';
 import { useRoute, useRouter } from 'vue-router';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { useDashboardSearchStore } from '@/stores/dashboardSearchStore';
+import OrgSwitcher from '@/components/dashboard/OrgSwitcher.vue';
 import { DashboardSearchResultData, DashboardSearchResultRecord, GENERAL_DASHBOARD_ROUTES_RESULTS, MASJID_DASHBOARD_ROUTES_RESULTS, SUPER_DASHBOARD_ROUTES_RESULTS } from '@/core/types/data/custom/DashboardSearch';
 import { itemFitsOrgType, moduleIsOff } from '@/core/access/orgAccess';
 import { MASJID_DASHBOARD_ASIDE_MENU } from '@/core/constants/dashboardAsideMenuItems';
@@ -174,6 +187,7 @@ const asideToggleButton = ref<HTMLElement | null>();
 // Stores
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+const tenantSwitchStore = useTenantSwitchStore();
 const searchStore = useDashboardSearchStore();
 
 // Custom constants

@@ -5,10 +5,39 @@
         <div id="header_main_container">
             <DashboardHeader />
             <main id="dashboard_main">
+                <!-- The server bound a different organisation than this tab
+                     selected. Above everything, because every number below it
+                     belongs to the organisation the notice names. -->
+                <TenantMismatchNotice v-if="tenantSwitchStore.mismatch" class="mx-3 mt-3"
+                    :server-name="tenantSwitchStore.nameFor(tenantSwitchStore.mismatch.server)"
+                    :selected-name="tenantSwitchStore.nameFor(tenantSwitchStore.mismatch.selected)"
+                    :busy="tenantSwitchStore.switching" @reconcile="reconcileWithServer" />
+
+                <!-- Signed in with nothing to show: no organisation granted, or
+                     several granted and none chosen. Neither is reachable while
+                     the multi-membership gate is shut. -->
+                <NoOrganisationNotice v-if="tenantSwitchStore.hasNoOrganisation" class="mx-3 mt-3" reason="granted" />
+                <NoOrganisationNotice v-else-if="tenantSwitchStore.mustChooseOrganisation" class="mx-3 mt-3"
+                    reason="chosen" />
+
                 <!-- A SuperAdmin opened a screen this organisation does not have
                      (from "Switched off for …" in the sidebar, or a typed URL). -->
                 <SwitchedOffNotice v-if="switchedOffHere" class="mx-3 mt-3" :org-name="masjidStore.masjid?.name" />
-                <RouterView></RouterView>
+
+                <!--
+                    Keyed by the switch counter (S5). Emptying the pinia stores
+                    does not empty a SCREEN: the row a modal is holding, the list
+                    a table copied into a local ref, the id a detail view was
+                    opened with all belong to the component, and a switch that
+                    leaves the route unchanged re-renders none of it. Changing
+                    the key remounts the screen so it starts again in the new
+                    organisation.
+
+                    The counter never moves until a switch completes, so this
+                    renders exactly as an unkeyed RouterView for everyone who
+                    never switches.
+                -->
+                <RouterView :key="tenantSwitchStore.viewGeneration"></RouterView>
             </main>
             <DashboardFooter />
         </div>
@@ -22,8 +51,11 @@ import { RouterView, useRoute, useRouter } from 'vue-router';
 import { computed, onBeforeMount, onMounted, onUpdated, ref } from 'vue';
 import DashboardFooter from '@/components/dashboard/DashboardFooter.vue';
 import SwitchedOffNotice from '@/components/dashboard/SwitchedOffNotice.vue';
+import TenantMismatchNotice from '@/components/dashboard/TenantMismatchNotice.vue';
+import NoOrganisationNotice from '@/components/dashboard/NoOrganisationNotice.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { hasGrant, moduleIsOff } from '@/core/access/orgAccess';
 
 // Lifecycle hooks
@@ -64,6 +96,21 @@ const route = useRoute();
 // Stores
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+const tenantSwitchStore = useTenantSwitchStore();
+
+/**
+ * Put the tab where the server already is.
+ *
+ * Runs the ordinary switch — new epoch, stores emptied, screen remounted —
+ * towards the organisation the server bound, because the only safe way to agree
+ * with it is to go through the same door as any other switch. Doing less (just
+ * moving the selection) would leave the other organisation's rows in the stores,
+ * which is the disagreement the notice is warning about.
+ */
+async function reconcileWithServer(): Promise<void> {
+    const server = tenantSwitchStore.mismatch?.server;
+    if (server) await tenantSwitchStore.switchTo(server);
+}
 
 /**
  * Whether the SuperAdmin is looking at a screen this organisation's administrators

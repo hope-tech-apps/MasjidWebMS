@@ -68,6 +68,22 @@ use Symfony\Component\HttpFoundation\Response;
  * closing it changes no reachable behaviour — it removes the second layer's
  * dependence on the first, which is the same reasoning T-015a applied to the
  * `instanceof User` checks (.claude/rules/auth-permissions.md).
+ *
+ * ------------------------------------------------------------------------------
+ * What runs after this: the answer lives in TenantContext, not in the URL
+ * ------------------------------------------------------------------------------
+ *
+ * Once this middleware has run, the server's answer for the request is
+ * `TenantContext::get()` (the masjid, or null for "not scoped to one
+ * organisation") and `TenantContext::membership()` (which grant admitted it,
+ * null when the binding was route-derived or system-set). S4's per-response
+ * echo must be read from there.
+ *
+ * It must NOT be read back from `{masjid_id}` in the URL. The two agree on
+ * every request except the ones the echo exists for: a refused id never becomes
+ * a binding at all, and an admin route that names no masjid still resolves to a
+ * real tenant. Echoing the route parameter would confirm to the SPA whatever
+ * the SPA just asked for, which is a mirror, not a check.
  */
 class ResolveMasjidTenant
 {
@@ -102,19 +118,12 @@ class ResolveMasjidTenant
             // closed (config/tenancy.php) its verdict is the pre-S3 one for
             // every user who can exist in production: bind the masjid they own,
             // 403 any other id in the URL.
-            $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
-
-            if ($resolution->isDenied()) {
-                abort(403, self::FORBIDDEN_MESSAGE);
-            }
-
-            // A null membership here is the resolver's third verdict — "this
+            //
+            // A null membership from the resolver is its third verdict — "this
             // route is not about one masjid" — not a failure to answer. It
             // cannot arise for a single-membership admin, so nothing about
-            // today's binding changes.
-            if ($resolution->membership() !== null) {
-                $this->tenant->setFromMembership($resolution->membership());
-            }
+            // today's binding changes. See applyVerdict() below.
+            $this->applyVerdict($user, $routeMasjidId, $request);
         } elseif ($user instanceof User && $user->type === 'SuperAdmin') {
             // UNCHANGED. A SuperAdmin holds no memberships (S2's backfill gave
             // them none, deliberately) and is bound from the route instead:
@@ -132,15 +141,7 @@ class ResolveMasjidTenant
             // branch is placed AFTER MasjidAdmin and SuperAdmin deliberately —
             // the order is load-bearing (see the class docblock and
             // SuperAdminExportScopeTest).
-            $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
-
-            if ($resolution->isDenied()) {
-                abort(403, self::FORBIDDEN_MESSAGE);
-            }
-
-            if ($resolution->membership() !== null) {
-                $this->tenant->setFromMembership($resolution->membership());
-            }
+            $this->applyVerdict($user, $routeMasjidId, $request);
         } elseif ($user instanceof User && $user->type === User::TYPE_LUNCH_STAFF) {
             // Lunch staff name NO masjid in the URL — routes/lunch.php binds the
             // tenant from the PRINCIPAL, like the teacher and family realms, not
@@ -149,15 +150,7 @@ class ResolveMasjidTenant
             // membership binds, none or several fails closed. Placed after the
             // three branches above for the same load-bearing ordering reason
             // documented on the class.
-            $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
-
-            if ($resolution->isDenied()) {
-                abort(403, self::FORBIDDEN_MESSAGE);
-            }
-
-            if ($resolution->membership() !== null) {
-                $this->tenant->setFromMembership($resolution->membership());
-            }
+            $this->applyVerdict($user, $routeMasjidId, $request);
         } else {
             // Fail closed. Falling through here would leave the context unbound
             // and hand an unfiltered view of every masjid to a principal that
@@ -166,6 +159,40 @@ class ResolveMasjidTenant
         }
 
         return $next($request);
+    }
+
+    /**
+     * Ask the resolver, then do what it said — for the three membership-derived
+     * realms (MasjidAdmin, Teacher, LunchStaff), which differ in WHY they are
+     * membership-derived and not at all in what they do with the answer.
+     *
+     * It was written out three times, identically. That is how a fourth realm
+     * gets added with the `isDenied()` check forgotten — and a forgotten
+     * `isDenied()` is not a 500, it is a denied request continuing with the
+     * context left UNBOUND, which in a database with no row-level security
+     * means that principal reads every organisation. Once, in one place, so the
+     * fail-closed half cannot be dropped by a copy-paste.
+     *
+     * The branch structure itself is untouched: each realm still has its own
+     * `elseif` in its documented order, because the ORDER is load-bearing (see
+     * the class docblock) even though these three bodies were not.
+     */
+    private function applyVerdict(User $user, ?int $routeMasjidId, Request $request): void
+    {
+        $resolution = $this->resolver->resolve($user, $routeMasjidId, $request->path());
+
+        if ($resolution->isDenied()) {
+            abort(403, self::FORBIDDEN_MESSAGE);
+        }
+
+        // Only `bind` reaches TenantContext. The resolver's third verdict —
+        // unbound, "this route is not about one masjid" — deliberately leaves
+        // the context alone rather than binding anything; it is reachable only
+        // on the gated multi-membership path and only on
+        // TenantResolver::UNSCOPED_ADMIN_ROUTES.
+        if ($resolution->membership() !== null) {
+            $this->tenant->setFromMembership($resolution->membership());
+        }
     }
 
     /**

@@ -131,6 +131,7 @@ import PasswordInput from '@/components/form/PasswordInput.vue';
 import LoadingButton from '@/components/form/LoadingButton.vue';
 import { useAuthStore } from '@/stores/authStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { Form, Field } from 'vee-validate';
 import { nextTick, onBeforeMount, ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -154,6 +155,7 @@ const router = useRouter();
 // Stores
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+const tenantSwitchStore = useTenantSwitchStore();
 
 // Custom constants
 const nexPath = ref<string|void>()
@@ -197,8 +199,18 @@ async function signIn () : Promise<void> {
             }
 
             if (authStore.isAuthenticated) {
-                if(authStore.user?.type === 'MasjidAdmin' && authStore.user.masjid) {
-                    authStore.saveDashboardMasjidId(authStore.user.masjid.id);
+                // `landingMasjidId` is `authStore.user.masjid.id` for every admin
+                // who can sign in today, so this branch is entered on exactly the
+                // condition it always was. The membership fallback is S5's: once
+                // the multi-membership gate opens, an admin can hold a grant in an
+                // organisation they do not OWN, and `user.masjid` — a `hasOne` over
+                // `masjids.user_id` — is null for them. Without the fallback they
+                // would fall past every branch below and land on /auth/401 holding
+                // a valid membership.
+                const landingMasjidId = authStore.user?.masjid?.id ?? tenantSwitchStore.defaultSelection();
+
+                if(authStore.user?.type === 'MasjidAdmin' && landingMasjidId) {
+                    authStore.saveDashboardMasjidId(landingMasjidId);
                     await masjidStore.fetchMasjid()
                         .finally(async () => {
                             router.push("/masjid");

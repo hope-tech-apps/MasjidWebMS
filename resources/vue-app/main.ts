@@ -12,6 +12,7 @@ import ApiService from '@/core/services/ApiService'
 import { useAuthStore } from '@/stores/authStore'
 import { API_CONFIG, LOCAL_STORAGE_KEYS } from '@/core/constants/appConfigConstants'
 import { useMasjidStore } from './stores/masjidStore'
+import { useTenantSwitchStore } from '@/stores/tenantSwitchStore'
 import VueTelInput from 'vue-tel-input';
 import 'vue-tel-input/vue-tel-input.css';
 
@@ -51,7 +52,21 @@ app.use(pinia);
                             authStore.dashboardMasjidId = DASHBOARD_MASJID_ID;
                         }
 
-                        if (DASHBOARD_MASJID_ID)
+                        // S5: the stored organisation is a claim from a previous
+                        // page life, and it outlives the thing that justified it.
+                        // A membership can be revoked, a masjid trashed, an admin
+                        // moved — and none of that clears localStorage. So the id
+                        // is re-validated against the grants the server just
+                        // returned, and dropped when it is no longer one of them.
+                        //
+                        // rehydrateSelection() returns false when there is nothing
+                        // to validate against (no `memberships` in the payload: a
+                        // SuperAdmin, or a backend older than S4), and then the
+                        // original line below runs untouched — which is every
+                        // request in production today.
+                        const tenantSwitchStore = useTenantSwitchStore();
+
+                        if (!tenantSwitchStore.rehydrateSelection(DASHBOARD_MASJID_ID) && DASHBOARD_MASJID_ID)
                             authStore.saveDashboardMasjidId(DASHBOARD_MASJID_ID);
 
                         await masjidStore.fetchMasjid();

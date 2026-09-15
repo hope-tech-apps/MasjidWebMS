@@ -135,8 +135,19 @@ class TeamController extends Controller
                 'masjid_id' => $masjid->id,
                 'user_id' => $user->id,
                 'role' => self::ROLE_FOR_ACCESS[$level],
-                // Safe: a brand-new user holds no other membership.
-                'is_default' => true,
+                // DERIVED, not asserted. This was a hardcoded `true` explained
+                // as "safe: a brand-new user holds no other membership" — true
+                // only for as long as StoreTeamMemberRequest's
+                // `unique:users,email` guarantees every user created here IS
+                // brand new. The database enforces one default per user
+                // (`masjid_user_default_unique`, S2), so the day that rule is
+                // relaxed — or this block is reused for an existing login — the
+                // hardcoded true stops being a merely wrong flag and becomes a
+                // constraint violation: a 500 in an office's face while they add
+                // a colleague, with the user row already written. Reading the
+                // fact costs one indexed query and evaluates to true for every
+                // brand-new user, so today's rows are unchanged.
+                'is_default' => ! $user->memberships()->where('is_default', true)->exists(),
             ]);
         });
 

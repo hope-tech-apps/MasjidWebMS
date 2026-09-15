@@ -16,6 +16,7 @@ use App\Models\IqamaTimeSetting;
 use App\Models\JumaaSetting;
 use App\Models\Masjid;
 use App\Models\MasjidAppPublishing;
+use App\Models\MasjidUser;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MasjidSocialMediaLink;
 use App\Models\MobileAppFeature;
@@ -330,6 +331,17 @@ class OnboardingController extends Controller
 
                     $invitations[] = [$admin, $masjid->name];
                 }
+
+                // Give the owner a membership row as well as `masjids.user_id`.
+                //
+                // Both branches above can set an owner — a `user_id` supplied by
+                // the wizard, or the admin account created just now — and neither
+                // wrote anything to `masjid_user`. That works only while
+                // tenancy.multi_membership is shut, because the resolver still
+                // falls back to ownership. Open the gate and an owner with no row
+                // is 403'd out of the organisation they were just given. See
+                // MasjidUser::ensureOwnerMembership.
+                MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
 
                 return $masjid;
             });

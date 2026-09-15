@@ -12,6 +12,7 @@ use App\Http\Requests\Admin\Masjids\StoreMasjidRequest;
 use App\Http\Requests\Admin\Masjids\UpdateMasjidRequest;
 use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
+use App\Models\MasjidUser;
 use App\Models\MasjidCapabilityChange;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
@@ -55,6 +56,11 @@ class MasjidsController extends Controller
             $payload['created_by'] = Auth::id();
 
             $masjid = Masjid::create($payload);
+
+            // The owner needs a membership row, not just `masjids.user_id` —
+            // see MasjidUser::ensureOwnerMembership for what breaks without it
+            // once tenancy.multi_membership opens.
+            MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
 
             if ($masjid) {
                 // Store logo
@@ -527,6 +533,12 @@ class MasjidsController extends Controller
             $payload['updated_by'] = Auth::id();
 
             $masjid->update($payload);
+
+            // Re-assigning the owner has to move the membership too, or the new
+            // owner holds none (403 once the gate opens) while the previous one
+            // keeps a row naming an organisation they no longer own.
+            $masjid->refresh();
+            MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
 
             if ($request->hasFile('logo')) {
                 $masjid->clearMediaCollection('logos');

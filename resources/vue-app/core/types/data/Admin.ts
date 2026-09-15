@@ -1,5 +1,6 @@
 import { Masjid } from "@/core/types/data/Masjid"
 import { Media } from "@/core/types/data/Media"
+import { Membership } from "@/core/types/data/Membership"
 import { User } from "./User";
 
 export type AdminType = 'SuperAdmin' | 'MasjidAdmin' | 'Teacher';
@@ -22,6 +23,14 @@ export type Admin = {
     updated_at: Date;
     deleted_at: Date;
     masjid: Masjid | null;
+    /**
+     * The organisations this account may act on (S4). OPTIONAL, and it has to
+     * stay optional: `/api/teacher/user` and `/api/lunch/user` answer this same
+     * shape without it, and so does any backend older than S4. Absent means
+     * "this principal switches nothing" — never "this principal has nothing".
+     * Read it through `grantedMemberships()`, never inline.
+     */
+    memberships?: Membership[];
     avatar: Media;
 }
 

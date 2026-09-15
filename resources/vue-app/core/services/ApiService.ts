@@ -2,6 +2,12 @@ import axios, { AxiosResponse } from "axios";
 import { App } from "vue";
 import VueAxios from "vue-axios";
 import { BackendApiRoute } from "../types/config/BackendApiRoutes";
+import {
+    dropSupersededResponse,
+    isFromSupersededEpoch,
+    recordServerTenant,
+    stampTenantEpoch,
+} from "@/core/tenancy/tenantRequests";
 
 // Define custom type for header content-type mapping keys
 type HeaderContentType = "url" | "formdata";
@@ -56,6 +62,47 @@ class ApiService {
             }
             return config;
         });
+
+        // ------------------------------------------------------------------
+        // Organisation switching (S5 of docs/multi-tenant-admin-design.md)
+        //
+        // Only the ADMIN client gets these. The teacher, family and lunch
+        // realms build their own axios instances (axios.create() inherits
+        // defaults, never interceptors) and none of them can switch
+        // organisation, so nothing there changes.
+        //
+        // Both interceptors are pass-throughs until somebody actually switches:
+        // the epoch starts at 0 and nothing is ever stale against it, and the
+        // echo is only read, never required. A backend that predates S4 sends
+        // no echo and this SPA behaves exactly as it did before.
+        // ------------------------------------------------------------------
+        ApiService.VueApp.axios.interceptors.request.use(stampTenantEpoch);
+
+        ApiService.VueApp.axios.interceptors.response.use(
+            (response) => {
+                // Staleness is checked BEFORE the echo is recorded. A response
+                // from the organisation the user just left still names that
+                // organisation, and recording it would put the old name back
+                // into the header moments after the switch.
+                if (isFromSupersededEpoch(response.config)) {
+                    return dropSupersededResponse(`${response.config?.url ?? 'a response'}`);
+                }
+
+                recordServerTenant(response);
+
+                return response;
+            },
+            (error) => {
+                // Includes the abort the switch itself fires: a cancelled
+                // request is not a failure the user needs to hear about, it is
+                // a request about an organisation they are no longer in.
+                if (isFromSupersededEpoch(error?.config)) {
+                    return dropSupersededResponse(`${error?.config?.url ?? 'a failed request'}`);
+                }
+
+                return Promise.reject(error);
+            },
+        );
     }
 
     // Set axios headers

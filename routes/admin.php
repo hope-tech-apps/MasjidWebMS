@@ -79,6 +79,7 @@ use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
 use App\Http\Controllers\AdminDashboard\TwoFactorController;
 use App\Http\Controllers\AdminDashboard\UsersController;
+use App\Http\Middleware\EchoResolvedTenant;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('admin')->group(function () {
@@ -94,7 +95,19 @@ Route::prefix('admin')->group(function () {
     // `tenant` (ResolveMasjidTenant) runs after auth: it binds TenantContext to
     // a MasjidAdmin's masjid and is a no-op for SuperAdmin. Only BelongsToMasjid
     // models consult that context, so existing endpoints are unaffected today.
-    Route::middleware(['auth:sanctum', 'admin', 'tenant'])->group(function () {
+    //
+    // EchoResolvedTenant is listed FIRST so it wraps `admin` and `tenant` and
+    // stamps `X-Manara-Tenant` on the way OUT, including the 401 envelope
+    // `admin` RETURNS (a refusal that throws — auth's 401, the tenant's 403 —
+    // unwinds past it and is rendered unstamped, which is correct: a refused
+    // request resolved no tenant). It is named by class rather than by an alias
+    // because bootstrap/app.php's alias table is not part of this slice, and a
+    // fully-qualified class name is as valid here as an alias. It reads
+    // TenantContext after the request has run and changes no status, no body
+    // and no binding. S4 of docs/multi-tenant-admin-design.md: the SPA must
+    // render the tenant the SERVER resolved, never the one its own store
+    // believes in.
+    Route::middleware([EchoResolvedTenant::class, 'auth:sanctum', 'admin', 'tenant'])->group(function () {
         Route::controller(AuthController::class)->group(function () {
             Route::get('/user', [AuthController::class, 'user']);
             Route::post('/logout', [AuthController::class, 'logout']);
@@ -1444,7 +1457,33 @@ Route::prefix('admin')->group(function () {
         Route::prefix('admins')->middleware('super')->group(function () {
             Route::prefix('masjid')->controller(MasjidAdminsController::class)->group(function () {
                 Route::get('/', 'index');
+                // Registered BEFORE the `{masjid_id}` routes below: a literal
+                // segment declared after a wildcard is matched as an id.
                 Route::get('/available', 'availableAdmins');
+
+                // S4 — the only door that can give an EXISTING login a SECOND
+                // organisation, or take one back. Every other staff-provisioning
+                // path validates `unique:users,email` and so can only create a
+                // brand-new person; that is why multi-organisation access had no
+                // door at all.
+                //
+                // SuperAdmin-only by the `super` above, and refused by the
+                // controller while `tenancy.multi_membership` is false — a
+                // second membership makes a non-owner administrator's binding
+                // AMBIGUOUS, and TenantResolver fails closed on ambiguity, so
+                // granting one with the gate shut 403s them in BOTH
+                // organisations.
+                //
+                // The organisation is named by the ROUTE, never by the body:
+                // ResolveMasjidTenant binds a SuperAdmin from `{masjid_id}`, and
+                // .claude/rules/tenant-scoping.md forbids a tenant arriving in a
+                // body, a query string or a header. `whereNumber` keeps
+                // `/available` above from ever being read as one.
+                Route::post('/{masjid_id}/memberships', 'grantMembership')
+                    ->whereNumber('masjid_id');
+                Route::delete('/{masjid_id}/memberships/{user_id}', 'revokeMembership')
+                    ->whereNumber('masjid_id')
+                    ->whereNumber('user_id');
             });
         });
 

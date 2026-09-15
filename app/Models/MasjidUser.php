@@ -56,6 +56,60 @@ class MasjidUser extends Model
     ];
 
     /**
+     * Make sure a masjid's OWNER also holds a membership row for it.
+     *
+     * `masjids.user_id` and this table are two answers to "who administers this
+     * organisation?", and only one of them survives the multi-membership gate.
+     * While the gate is shut `TenantResolver::soleOwnedMembership()` derives a
+     * grant from `user_id` alone, so an owner works with no row here. The moment
+     * `tenancy.multi_membership` is true that fallback is gone and a grant exists
+     * only where a ROW exists — so an owner without one is 403'd out of their own
+     * organisation, on every screen, with the same message a genuine cross-tenant
+     * refusal produces.
+     *
+     * The invited staff doors (Team, Administrators, Teachers, LunchStaff) have
+     * always written the row as they create the login. The OWNER doors did not:
+     * `OnboardingController@provision` and `MasjidsController@store/update` set
+     * `user_id` and wrote nothing here, so every organisation provisioned since
+     * S2's backfill had an owner the gate would lock out. This method is what
+     * makes "flip the flag" safe rather than a lockout waiting for the next org.
+     *
+     * Idempotent, and careful about `is_default`: the database carries a
+     * one-default-per-user unique index (see `default_key`), so a person who
+     * already defaults somewhere else gets this membership as a NON-default
+     * rather than a constraint violation on somebody else's provisioning run.
+     */
+    public static function ensureOwnerMembership(int $masjidId, ?int $userId): ?self
+    {
+        if ($userId === null) {
+            return null;
+        }
+
+        $existing = static::query()
+            ->where('masjid_id', $masjidId)
+            ->where('user_id', $userId)
+            ->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        $hasDefaultElsewhere = static::query()
+            ->where('user_id', $userId)
+            ->where('is_default', true)
+            ->exists();
+
+        return static::create([
+            'masjid_id' => $masjidId,
+            'user_id' => $userId,
+            // Advisory only — authorization stays on the global `users.type`
+            // bridge (docs/multi-tenant-admin-design.md, "Roles").
+            'role' => 'masjid-admin',
+            'is_default' => ! $hasDefaultElsewhere,
+        ]);
+    }
+
+    /**
      * `default_key` is the MySQL STORED generated column that carries the
      * one-default-per-user unique index (`create_masjid_user_table`). The database
      * derives it from `is_default`/`user_id`, nothing writes it, and it does not

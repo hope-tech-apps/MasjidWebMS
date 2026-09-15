@@ -41,13 +41,11 @@ use InvalidArgumentException;
  *     carries its own provenance: which grant admitted this request, in which
  *     role, and whether it was that user's default. App\Support\TenantResolver
  *     is what produces that row, and it is the only thing that should.
- *   - `set(int)` — a raw id with NO provenance. It remains public because two
- *     callers legitimately have no membership to offer: ResolveMasjidTenant's
- *     SuperAdmin branch (a SuperAdmin is bound from the ROUTE, not from a
- *     grant — they hold no memberships at all) and system/reporting code that
- *     binds a masjid it already resolved server-side (ImpactMetrics::
- *     withTenant). It is `@internal`: a controller or FormRequest must never
- *     call it, because the id it would pass came from the client.
+ *   - `set(int)` — a raw id with NO provenance. It stays public because the
+ *     admin realm is not the only realm: there are five kinds of caller with no
+ *     `masjid_user` row to offer, listed on the method itself. It is
+ *     `@internal`: a controller or FormRequest must never call it with an id
+ *     that arrived from the client.
  */
 class TenantContext
 {
@@ -63,11 +61,52 @@ class TenantContext
     /**
      * Bind the context to a single masjid from a raw id.
      *
-     * @internal Reserved for ResolveMasjidTenant's SuperAdmin (route-derived)
-     * branch and for system/reporting code that resolved the masjid itself.
-     * Request code that binds on behalf of an ADMIN must use
-     * setFromMembership() so the id is one the server verified — see the class
-     * docblock and .claude/rules/tenant-scoping.md.
+     * @internal Request code that binds on behalf of an ADMIN must use
+     * setFromMembership(), so the id is one App\Support\TenantResolver verified
+     * against `masjid_user` — see the class docblock and
+     * .claude/rules/tenant-scoping.md.
+     *
+     * ------------------------------------------------------------------------
+     * Why this is still public, when the design said to make it internal
+     * ------------------------------------------------------------------------
+     *
+     * docs/multi-tenant-admin-design.md ("Binding, fail-closed") asks for
+     * `setFromMembership()` to be the ONLY public entry, so no future
+     * controller can bind an id it merely received. That instruction was
+     * written about the admin realm, and the admin realm is not the only realm
+     * reaching this class. These callers hold a masjid they resolved
+     * server-side and no membership row to name it with — a `masjid_user` grant
+     * would be a fiction for every one of them:
+     *
+     *   1. ResolveMasjidTenant's SuperAdmin branch — bound from the ROUTE. A
+     *      SuperAdmin holds no memberships at all (S2 gave them none on
+     *      purpose), so requiring one would lock them out of every masjid.
+     *   2. ResolveFamilyTenant — the family portal binds the organisation the
+     *      authenticated CONTACT belongs to. A parent is not staff and has no
+     *      pivot row; the grant here is the contact record itself.
+     *   3. ResolveFamilyGuestTenant — binds the `{masjid_id}` in the URL after
+     *      loading that Masjid, for the unauthenticated family surface.
+     *   4. Save/restore round-trips around a temporary re-binding:
+     *      ImpactMetrics::withTenant(), BroadcastDispatcher and
+     *      AccountDeletionController::withTenant() each read get() and hand
+     *      the same int back in a `finally`. They are restoring a binding this
+     *      class produced, not asserting a new grant.
+     *   5. Console/system code that resolved the masjid itself
+     *      (ImportSchoolRoster, ImportCurriculumWeeks) — there is no request
+     *      and no principal to hold a membership.
+     *
+     * So this is `@internal` BY CONVENTION, not by enforcement, and saying so
+     * plainly is worth more than a comment that implies a guarantee the code
+     * does not make. An earlier version of this docblock (and
+     * .claude/rules/tenant-scoping.md, still) claimed "exactly two callers";
+     * there are eleven call sites in the eight files named above, and a reader
+     * who trusted the count would conclude the surface was already closed.
+     *
+     * Narrowing it for real is a separate, non-additive change — a named
+     * entry point per realm (`setFromContact`, `setFromRoute`, `setFromSystem`)
+     * plus the eight files edited in the same commit. Adding one of those names
+     * WITHOUT editing the callers would buy nothing: this method would still be
+     * public, and there would now be two ways to do the same thing.
      */
     public function set(int $masjidId): void
     {
@@ -126,7 +165,24 @@ class TenantContext
         return $this->membership;
     }
 
-    /** The bound masjid_id, or null when unbound. */
+    /**
+     * The bound masjid_id, or null when unbound.
+     *
+     * THIS IS THE ECHO. The design requires every admin response to carry the
+     * server-resolved tenant and the SPA chrome to render THAT rather than its
+     * own store, so that a switch which half-failed shows as the wrong org name
+     * instead of the right name over the wrong rows. This method is the value
+     * to echo, and it is only trustworthy after ResolveMasjidTenant has run:
+     * read it, never `$request->route('masjid_id')`, which is what the caller
+     * asked for rather than what the server granted (they differ on exactly the
+     * requests that matter).
+     *
+     * `null` is a MEANING, not a missing value: "this response is not scoped to
+     * one organisation" — a SuperAdmin's cross-masjid list, or a multi-tenant
+     * admin on an account route. A client that treats null as "unchanged" will
+     * keep painting the previously selected organisation over rows that came
+     * from all of them. Echo the key with a null value; never omit it.
+     */
     public function get(): ?int
     {
         return $this->masjidId;

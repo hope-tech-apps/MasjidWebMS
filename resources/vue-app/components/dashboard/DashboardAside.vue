@@ -17,8 +17,15 @@
                             fill="white" />
                     </svg>
 
-                    <img v-else-if="masjidStore.masjid" :src="masjidStore.masjid?.logo?.original_url" alt="logo"
-                        class="w-100">
+                    <!--
+                        Hidden while the server and this tab disagree about which
+                        organisation is bound (S5). The header already renders the
+                        server's answer; a logo from the other one, right beside
+                        it, would put the contradiction back on screen in the one
+                        element nobody reads as text.
+                    -->
+                    <img v-else-if="masjidStore.masjid && !tenantSwitchStore.mismatch"
+                        :src="masjidStore.masjid?.logo?.original_url" alt="logo" class="w-100">
                 </div>
             </div>
 
@@ -66,6 +73,7 @@ import { AsideMenuItem } from '@/core/types/config/AsideMenuItem';
 import { useAuthStore } from '@/stores/authStore';
 import { useDashboardAsideStore } from '@/stores/config/dashboardAsideStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useTenantSwitchStore } from '@/stores/tenantSwitchStore';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 
@@ -106,6 +114,7 @@ const route = useRoute();
 const dashboardAsideStore = useDashboardAsideStore();
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+const tenantSwitchStore = useTenantSwitchStore();
 
 /**
  * Where an item goes for this person and this organisation — the one predicate
