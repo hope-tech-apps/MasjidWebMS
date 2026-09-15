@@ -416,7 +416,11 @@ cancelled, for admins and lunch volunteers, on these terms:
   (`showsOnlinePaymentsTab`; owner, 2026-09-14). It needs the CRM, because the
   connect routes sit inside `crm`. A masjid with Giving on keeps it on the Giving
   Dashboard. A pointer to Connect asks `connectPlace` / `connectPlaceTitle`
-  (null without the CRM) and never hard-codes a screen.
+  (null without the CRM) and never hard-codes a screen. That includes the offerings
+  hint for `org_cannot_collect` (`registrationStateHint`). A linked org
+  (`forms_card_via_masjid_id` set) is never pointed at onboarding (409): offerings
+  charge only on its own account (`canAcceptDonations`), so its hint says program
+  fees cannot take cards and suggests a free plan.
 - **Switching Giving off is refused while any monthly gift can still charge**
   (`GivingSwitch::liveSubscriptionCount()` above zero): rows with a Stripe
   subscription id that are not `canceled`, plus a `canceled` row Stripe says it

@@ -669,7 +669,7 @@
                             <div v-else class="alert alert-warning py-2 small mb-0">
                                 Card payment will be refused<template v-if="cardProblemText">, because {{ cardProblemText }}</template>.
                                 <template v-if="connectPlaceName">
-                                    Connect or finish this organisation's Stripe account under
+                                    Connect or finish this organisation's Stripe account {{ connectPlaceKey === 'giving_dashboard' ? 'on the' : 'under' }}
                                     <a v-if="connectHref" :href="connectHref" target="_blank" rel="noopener">{{ connectPlaceName }} (opens in a new tab)</a><span v-else>{{ connectPlaceName }}</span>.
                                 </template>
                                 <template v-else>

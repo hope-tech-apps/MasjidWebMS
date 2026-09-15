@@ -984,8 +984,18 @@ money for a switched-off organisation, and never refuses money that already move
   - **Still open:** an UNLINKED child org (a parent exists, no link yet, or a link revoked) is
     offered "Connect with Stripe". Connecting makes its forms charge on its own account, and a later
     link to the parent is refused (`has_own_account`) until a SuperAdmin clears that account. The
-    tab does not warn about this. The offerings hint for `org_cannot_collect`
-    (useOfferingDisplay.ts) still says "the Donations screen", a pointer this change did not touch.
+    tab does not warn about this.
+  - **The offerings hint for `org_cannot_collect` follows the org too (2026-09-14).** It said
+    "Finish Stripe onboarding from the Donations screen", a screen Al-Razi (14) and MAS Youth
+    Charlotte (19) do not have. `registrationStateHint` (useOfferingDisplay.ts) now names
+    `connectPlaceTitle(connectPlace(...))` ("on the Giving Dashboard" or "under School Details ›
+    Online payments"), or says the CRM is needed when there is no place. For a linked org
+    (`forms_card_via_masjid_id` set, BISS 18) it says program fees cannot take cards: offerings ask
+    `Masjid::canAcceptDonations()` (app/Models/Masjid.php:868, OfferingRegistrationState.php:226,
+    OfferingsController.php:346), which reads the org's own account only, and the link covers forms
+    (FormChargeAccount.php:14-15). It suggests a free plan or the Manara contact, never onboarding,
+    which answers 409 for a linked org (StripeConnectController.php:44-49). FormBuilder's card
+    warning keeps "on the Giving Dashboard" for a masjid with Giving on.
 - **A SuperAdmin who opens a not-offered screen by typed URL sees no switched-off notice.**
 - **Public checkout, the funds list and the appointment intake still ignore `crm_enabled`** (Q2b is
   not built).

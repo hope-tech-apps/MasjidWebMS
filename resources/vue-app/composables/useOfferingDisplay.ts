@@ -11,6 +11,10 @@ import {
     RegistrationPaymentStatus,
     RegistrationStatus
 } from '@/core/types/data/masjid-related/Offering';
+import { connectPlace, connectPlaceTitle } from '@/core/access/orgAccess';
+import { CAPABILITY_LABELS } from '@/core/types/data/Capability';
+import { Masjid } from '@/core/types/data/Masjid';
+import { useMasjidStore } from '@/stores/masjidStore';
 
 /**
  * How offerings, fee plans and registrations are SPELLED — shared by the list,
@@ -215,9 +219,54 @@ const REGISTRATION_STATE_HINTS: Record<string, string> = {
     'closed:closed': 'The registration window has passed. Change the closing date to accept sign-ups again.',
     'closed:no_intake_form': 'Its sign-up form has been deleted, so every registration is refused. Point it at a form that still exists.',
     'closed:no_fee_plan': 'It has no active fee plan, so a registration has nothing to sign up FOR — even a free program needs a free plan. Add one under its Fee Plans tab.',
-    'closed:org_cannot_collect': 'Every one of its fee plans charges money, and online payments are not set up for this organisation yet, so a card payment has nowhere to land. Finish Stripe onboarding from the Donations screen — or add a free plan, which registers with no payment at all.',
+    // The fallback only: registrationStateHint words this one from the organisation
+    // (orgCannotCollectHint), because where Stripe is set up depends on it.
+    'closed:org_cannot_collect': 'Every one of its fee plans charges money, and online payments are not set up for this organisation yet, so a card payment has nowhere to land. Finish its Stripe setup, or add a free plan, which registers with no payment at all.',
     closed: 'Not accepting registrations.'
 };
+
+/**
+ * The `org_cannot_collect` hint for the organisation the admin is working in.
+ *
+ * Offerings charge only on the organisation's OWN Stripe account
+ * (`Masjid::canAcceptDonations()`), so the pointer is the Connect place
+ * (`connectPlace` / `connectPlaceTitle`, core/access/orgAccess.ts), never a
+ * hard-coded screen: the Giving Dashboard for a masjid with Giving on, {term}
+ * Details › Online payments for everyone else, nothing without the CRM.
+ *
+ * A LINKED organisation (`forms_card_via_masjid_id`, DECISIONS.md 2026-09-15)
+ * charges FORM card payments through another organisation's account, a link that
+ * covers forms only, and its onboarding answers 409. It is never sent to
+ * onboarding: program fees cannot take cards there.
+ */
+function orgCannotCollectHint(): string {
+    const masjidStore = useMasjidStore();
+    const masjid = masjidStore.masjid as (Masjid & { forms_card_via_masjid_id?: number | null }) | null | undefined;
+    const freePlan = 'add a free plan, which registers with no payment at all';
+
+    if (!masjid) {
+        return REGISTRATION_STATE_HINTS['closed:org_cannot_collect'];
+    }
+
+    if (masjid.forms_card_via_masjid_id !== null && masjid.forms_card_via_masjid_id !== undefined) {
+        return 'Every one of its fee plans charges money, and this organisation cannot take card payments for program fees. '
+            + "Its form card payments go through another organisation's Stripe account, and that link covers forms only. "
+            + `To register families, ${freePlan}, or ask your Manara contact.`;
+    }
+
+    const lead = 'Every one of its fee plans charges money, and online payments are not set up for this organisation yet, so a card payment has nowhere to land.';
+    const place = connectPlace(masjid, masjidStore.orgType);
+    const placeName = connectPlaceTitle(place, masjidStore.term);
+
+    if (placeName) {
+        const preposition = place === 'giving_dashboard' ? 'on the' : 'under';
+
+        return `${lead} Connect or finish this organisation's Stripe account ${preposition} ${placeName}, or ${freePlan}.`;
+    }
+
+    return `${lead} Stripe setup needs ${CAPABILITY_LABELS.crm}, which is not switched on for this organisation. `
+        + `Ask your Manara contact to switch it on, or ${freePlan}.`;
+}
 
 /**
  * `open` / `waitlist` / `closed:<reason>` — the key the three maps above are
@@ -305,7 +354,13 @@ export function useOfferingDisplay() {
     const registrationStateHint = (
         state: OfferingRegistrationState | string | null | undefined,
         reason?: OfferingRegistrationStateReason | string | null
-    ): string => REGISTRATION_STATE_HINTS[registrationStateKey(state, reason)] ?? '';
+    ): string => {
+        const key = registrationStateKey(state, reason);
+
+        return key === 'closed:org_cannot_collect'
+            ? orgCannotCollectHint()
+            : REGISTRATION_STATE_HINTS[key] ?? '';
+    };
 
     /**
      * True when registration is shut for a reason that is a MISCONFIGURATION
