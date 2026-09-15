@@ -24,9 +24,12 @@
 |
 |   'module'   A screen an organisation has until a SuperAdmin switches it OFF
 |              for one organisation (BISS has no website, so it has no use for
-|              Announcements or Events). Most modules are offered to every org
+|              Announcements or Events) — or, for the five `surface` => 'app'
+|              worship modules, an entry the mobile app's menu lists until a
+|              SuperAdmin switches it off. Most modules are offered to every org
 |              type. The masjid screens (Splash, Services, Donation link, Giving,
-|              Properties & Rent) are offered to masjids only, and a SuperAdmin
+|              Properties & Rent) and the worship modules are offered to masjids
+|              only, and a SuperAdmin
 |              can switch one ON for a school or community organisation (owner,
 |              2026-09-14). Masjid::moduleIsOff() is the only reader and it FAILS
 |              OPEN: a key the loaded config does not know as a module reads as
@@ -35,10 +38,20 @@
 |              and their defaults are also held in Masjid::MODULE_KEYS and
 |              Masjid::MODULE_DEFAULTS, in this file's order.
 |
-| A module needs a sidebar item (`requiresModule` in the SPA's
-| dashboardAsideMenuItems.ts) or a `where`, or the switch panel cannot place its
-| row. `where` names a module that lives inside another screen, without the
-| screen noun: the SPA prints "{Details menu title} › {where}".
+| A module needs one of three placements, or the switch panel cannot place its
+| row:
+|
+|   a sidebar item     `requiresModule` in the SPA's dashboardAsideMenuItems.ts.
+|
+|   `where`            The module lives inside another screen; the string names
+|                      the place without the screen noun, and the SPA prints
+|                      "{Details menu title} › {where}" (prayer_times).
+|
+|   `surface` => 'app' The module has no admin screen at all. It decides whether
+|                      the MOBILE APP's menu lists that entry, and the SPA
+|                      prints "Where: Mobile app menu". The five worship
+|                      modules are the only ones, one per legacy Mobile App
+|                      Features id 1-5.
 |
 | Non-column entries are stored in masjids.capability_overrides and enforced by
 | the `capability:<key>` middleware (EnsureOrgCapability). 'defaults' is what an
@@ -47,9 +60,13 @@
 | existed, so shipping it moves nobody. Every non-column entry names all three
 | org types (CapabilityGateTest): a missing one reads as false.
 |
-| A module gates the ADMIN side only: the screen, its editing API and the
-| intake a switched-off screen could no longer read. Public and mobile reads
-| never follow a module — what families already see stays.
+| A module gates the ADMIN side: the screen, its editing API and the intake a
+| switched-off screen could no longer read. A module ALSO decides whether the
+| app menu (GET /api/mobile/masjids/{id}/menu) lists its entry — that is the
+| whole job of a `surface` => 'app' module, and the reason an app-only module is
+| never named in the staff sentences about switched-off screens. Mobile and
+| public DATA endpoints still never follow a module: what families already see
+| on the website, and every screen an app can already open, stays.
 |
 | SuperAdmins are the platform operator, not an organisation's staff: no
 | `capability:` gate ever locks them out (they set organisations up).
@@ -287,6 +304,64 @@ return [
         'label' => 'Appointment Requests',
         'description' => 'The inbox for appointment requests sent from the website form. Also needs Members, classes & giving. Switched off, the form refuses new requests.',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
+    ],
+
+    // ------------------------------------------------------------------
+    // The app-only worship modules (`surface` => 'app'). No admin screen, no
+    // sidebar item, no editing API: each one decides whether the mobile app's
+    // menu lists that entry, one per legacy Mobile App Features id 1-5, so the
+    // app menu names every worship feature separately (owner: the client list
+    // is user-facing features only). Offered to masjids only, which is the rule
+    // config/verticals.php already applies to these keys.
+    //
+    // They ride the `prayer` group rather than a group of their own: an extra
+    // card would be a second place to look for one organisation's worship
+    // switches.
+    // ------------------------------------------------------------------
+
+    'quran' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Qur’an',
+        'description' => 'The Qur’an reader in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.',
+        'surface' => 'app',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'hadith' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Hadith',
+        'description' => 'The hadith collection in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.',
+        'surface' => 'app',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'adhkar' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Adhkar',
+        'description' => 'The morning and evening adhkar in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.',
+        'surface' => 'app',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'qibla' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Qibla',
+        'description' => 'The qibla compass in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.',
+        'surface' => 'app',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
+    ],
+
+    'tasbih' => [
+        'kind' => 'module',
+        'group' => 'prayer',
+        'label' => 'Tasbih',
+        'description' => 'The tasbih counter in the mobile app menu. Switched off, the app menu stops listing it. There is no admin screen, so nothing changes in the admin.',
+        'surface' => 'app',
+        'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 
 ];

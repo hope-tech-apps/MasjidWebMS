@@ -47,9 +47,36 @@ export const MODULE_KEYS = [
     'giving',
     'properties',
     'appointment_requests',
+    'quran',
+    'hadith',
+    'adhkar',
+    'qibla',
+    'tasbih',
 ] as const;
 
 export type ModuleKey = typeof MODULE_KEYS[number];
+
+/**
+ * The modules with no admin screen at all — `surface: 'app'` in
+ * config/capabilities.php. Each one decides whether the MOBILE APP's menu lists
+ * that entry; there is no sidebar item, no editing API and nothing on the admin
+ * side to switch off. CapabilityTsMirrorTest pins this list to the catalogue.
+ *
+ * Two consequences the SPA has to honour:
+ *   - The SuperAdmin's switch panel places their rows from the entry's `surface`
+ *     ("Where: Mobile app menu"), not from a sidebar title.
+ *   - Team & Access and the SuperAdmin's user screens leave them out of
+ *     "Switched off here: …", which names the admin screens an administrator no
+ *     longer reaches. Naming Qur’an there would announce the loss of a screen
+ *     they never had.
+ */
+export const APP_SURFACE_MODULES: readonly ModuleKey[] = [
+    'quran',
+    'hadith',
+    'adhkar',
+    'qibla',
+    'tasbih',
+];
 
 /**
  * Which org types a module is offered to before a SuperAdmin decides — a copy of
@@ -82,6 +109,11 @@ export const MODULE_DEFAULTS: Record<ModuleKey, Record<OrgType, boolean>> = {
     giving: { masjid: true, school: false, community: false },
     properties: { masjid: true, school: false, community: false },
     appointment_requests: { masjid: true, school: true, community: true },
+    quran: { masjid: true, school: false, community: false },
+    hadith: { masjid: true, school: false, community: false },
+    adhkar: { masjid: true, school: false, community: false },
+    qibla: { masjid: true, school: false, community: false },
+    tasbih: { masjid: true, school: false, community: false },
 };
 
 export type CapabilityInfo = {
@@ -179,10 +211,17 @@ export type CapabilityEntry = {
     /**
      * For a module that lives on tabs of the Details screen rather than a sidebar item: the
      * tab names without the screen's (prayer_times). The panel prints
-     * "{Details sidebar title} › {where}". A module needs a sidebar item or a `where`, or its
-     * row cannot be placed.
+     * "{Details sidebar title} › {where}". A module needs one of three placements — a sidebar
+     * item, a `where`, or `surface: 'app'` — or its row cannot be placed.
      */
     where?: string | null;
+    /**
+     * The third placement: `'app'` for a module with no admin screen at all, which
+     * decides whether the mobile app's menu lists its entry. The panel prints
+     * "Where: Mobile app menu" and its switch-off wording says nothing about the
+     * admin. Null for every other entry, and absent from an older backend.
+     */
+    surface?: 'app' | string | null;
     /** What is live for this organisation right now, as sentences (App\Support\ModuleFacts). */
     facts?: string[];
 };

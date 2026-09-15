@@ -266,8 +266,17 @@ class CapabilityGateTest extends TestCase
         $this->assertArrayHasKey('school_calendar', $seen);
         $this->assertArrayHasKey('form_editing', $seen);
 
-        // A module no route carries would be a switch that switches nothing off.
+        // A module no route carries would be a switch that switches nothing off
+        // — unless it is an app-only module (`surface` => 'app'), which has no
+        // admin screen and no editing API by definition: it decides whether the
+        // mobile app's menu lists its entry, and GET /menu is its only reader.
         foreach (Masjid::MODULE_KEYS as $key) {
+            if (config("capabilities.{$key}.surface") === 'app') {
+                $this->assertArrayNotHasKey($key, $seen, "App-only module '{$key}' gates an admin route; it has no admin screen.");
+
+                continue;
+            }
+
             $this->assertArrayHasKey($key, $seen, "Module '{$key}' is in the catalogue but no route carries capability:{$key}.");
         }
     }
@@ -303,6 +312,14 @@ class CapabilityGateTest extends TestCase
                 $this->assertNotSame('', trim($definition['where']), "{$key} has an empty where");
             }
 
+            // `surface` is the third placement, and 'app' is the only value the
+            // panel and GET /menu know. Anything else would place no row at all.
+            if (array_key_exists('surface', $definition)) {
+                $this->assertSame('module', $definition['kind'] ?? null, "{$key} carries a surface but is not a module");
+                $this->assertSame('app', $definition['surface'], "{$key}'s surface is not 'app'");
+                $this->assertArrayNotHasKey('where', $definition, "{$key} carries both a where and a surface");
+            }
+
             if (! empty($definition['column'])) {
                 $this->assertSame('grant', $definition['kind'], "{$key} is column-backed, so it is a grant");
 
@@ -333,12 +350,13 @@ class CapabilityGateTest extends TestCase
 
         $this->assertSame(Masjid::MODULE_DEFAULTS, $fromConfig);
 
-        // The masjid screens, and nothing else, are held back from schools and
-        // community organisations (owner, 2026-09-14): a SuperAdmin switches one
-        // on per organisation.
+        // The masjid screens and the app-only worship modules, and nothing else,
+        // are held back from schools and community organisations (owner,
+        // 2026-09-14; worship keys are masjid-only in config/verticals.php):
+        // a SuperAdmin switches one on per organisation.
         foreach ([Masjid::ORG_TYPE_SCHOOL, Masjid::ORG_TYPE_COMMUNITY] as $orgType) {
             $this->assertSame(
-                ['splash', 'services', 'donation_link', 'giving', 'properties'],
+                ['splash', 'services', 'donation_link', 'giving', 'properties', 'quran', 'hadith', 'adhkar', 'qibla', 'tasbih'],
                 array_keys(array_filter(Masjid::MODULE_DEFAULTS, fn (array $defaults) => $defaults[$orgType] === false)),
                 "the modules not offered to a {$orgType} changed"
             );

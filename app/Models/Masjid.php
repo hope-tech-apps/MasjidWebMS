@@ -316,6 +316,14 @@ class Masjid extends Model implements HasMedia
         'giving',
         'properties',
         'appointment_requests',
+        // The app-only worship modules (`surface` => 'app'): no admin screen,
+        // no sidebar item — each decides whether the mobile app's menu lists
+        // that entry, one per legacy Mobile App Features id 1-5.
+        'quran',
+        'hadith',
+        'adhkar',
+        'qibla',
+        'tasbih',
     ];
 
     /**
@@ -333,6 +341,8 @@ class Masjid extends Model implements HasMedia
      * (Splash, Services, Donation link, Giving, Properties & Rent) were masjid-only
      * in the menu, so a school or community organisation has one only once a
      * SuperAdmin switches it ON (owner, 2026-09-14), which `modules_on` reports.
+     * The five app-only worship modules follow the same rule: config/verticals.php
+     * already seeded those app features to masjids only.
      *
      * @var array<string, array<string, bool>>
      */
@@ -356,6 +366,11 @@ class Masjid extends Model implements HasMedia
         'giving' => ['masjid' => true, 'school' => false, 'community' => false],
         'properties' => ['masjid' => true, 'school' => false, 'community' => false],
         'appointment_requests' => ['masjid' => true, 'school' => true, 'community' => true],
+        'quran' => ['masjid' => true, 'school' => false, 'community' => false],
+        'hadith' => ['masjid' => true, 'school' => false, 'community' => false],
+        'adhkar' => ['masjid' => true, 'school' => false, 'community' => false],
+        'qibla' => ['masjid' => true, 'school' => false, 'community' => false],
+        'tasbih' => ['masjid' => true, 'school' => false, 'community' => false],
     ];
 
     /**

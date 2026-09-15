@@ -16,9 +16,9 @@ use Tests\TestCase;
  * written by hand, so this is the only thing that keeps them honest.
  *
  * The file's layout is part of the contract: `export const MODULE_KEYS = [ ... ]
- * as const;` and `export const MODULE_DEFAULTS: Record<ModuleKey, Record<OrgType,
- * boolean>> = { key: { masjid: true, school: false, community: false }, ... };`,
- * one module per line.
+ * as const;`, `export const MODULE_DEFAULTS: Record<ModuleKey, Record<OrgType,
+ * boolean>> = { key: { masjid: true, school: false, community: false }, ... };`
+ * one module per line, and `export const APP_SURFACE_MODULES ... = [ ... ];`.
  */
 class CapabilityTsMirrorTest extends TestCase
 {
@@ -74,5 +74,30 @@ class CapabilityTsMirrorTest extends TestCase
         // assertSame on arrays compares order too: a row out of MODULE_KEYS order,
         // or one written in a shape the pattern does not read, fails here.
         $this->assertSame(Masjid::MODULE_DEFAULTS, $parsed);
+    }
+
+    #[Test]
+    public function the_spa_app_surface_modules_are_the_catalogues_app_only_modules_in_order(): void
+    {
+        // The SPA uses this list twice: to place a row with "Where: Mobile app
+        // menu", and to keep an app-only module out of the staff sentences about
+        // switched-off SCREENS. A key missing here would tell an administrator
+        // that Qur’an — a screen they never had — was taken away from them; a key
+        // that should not be here would hide a real screen's switch-off notice.
+        $this->assertSame(
+            1,
+            preg_match('/export const APP_SURFACE_MODULES\b[^=]*=\s*\[(.*?)\];/s', $this->source(), $block),
+            'Capability.ts has no `export const APP_SURFACE_MODULES ... = [ ... ];` block'
+        );
+
+        preg_match_all("/'([a-z_]+)'/", $block[1], $keys);
+
+        $fromConfig = array_keys(array_filter(
+            config('capabilities', []),
+            fn ($definition) => is_array($definition) && ($definition['surface'] ?? null) === 'app'
+        ));
+
+        $this->assertSame(['quran', 'hadith', 'adhkar', 'qibla', 'tasbih'], $fromConfig);
+        $this->assertSame($fromConfig, $keys[1]);
     }
 }

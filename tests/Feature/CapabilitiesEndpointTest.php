@@ -19,8 +19,9 @@ use Tests\TestCase;
 /**
  * GET /api/admin/masjids/{id}/capabilities — what the SuperAdmin's switch panel
  * reads: every catalogue entry once, grouped, with its writer, default,
- * override, in-use count, place (`where`), facts and whether the org type is
- * offered it, plus this organisation's last 25 flips.
+ * override, in-use count, place (`where`, or `surface` for a module with no
+ * admin screen at all), facts and whether the org type is offered it, plus this
+ * organisation's last 25 flips.
  */
 class CapabilitiesEndpointTest extends TestCase
 {
@@ -139,10 +140,14 @@ class CapabilitiesEndpointTest extends TestCase
         );
         $this->assertSame(config('capability_groups.content'), $data['groups'][0]['label']);
 
-        // Prayer times has a card of its own, straight after content.
+        // Prayer and worship have a card of their own, straight after content:
+        // prayer times, then the five app-only worship modules in catalogue order.
         $this->assertSame('prayer', $data['groups'][1]['key']);
-        $this->assertSame('Prayer times', $data['groups'][1]['label']);
-        $this->assertSame(['prayer_times'], array_column($data['groups'][1]['entries'], 'key'));
+        $this->assertSame(config('capability_groups.prayer'), $data['groups'][1]['label']);
+        $this->assertSame(
+            ['prayer_times', 'quran', 'hadith', 'adhkar', 'qibla', 'tasbih'],
+            array_column($data['groups'][1]['entries'], 'key')
+        );
 
         $keys = collect($data['groups'])->flatMap(fn (array $group) => array_column($group['entries'], 'key'))->all();
         $this->assertSame(count($keys), count(array_unique($keys)), 'an entry appears twice');
@@ -245,12 +250,23 @@ class CapabilitiesEndpointTest extends TestCase
             $this->assertTrue(array_is_list($entry['facts']), "{$key}'s facts is not a list");
             $this->assertIsBool($entry['offered_by_default'], "{$key} has no offered_by_default");
 
-            // Only a module that lives inside another screen names a place.
+            // Every entry has exactly ONE placement, or the panel cannot put its
+            // row anywhere: a sidebar item (`where` and `surface` both null), a
+            // `where` on the Details screen, or `surface: 'app'` — the app-only
+            // worship modules, which have no admin screen at all.
+            $placements = (int) ($entry['where'] !== null) + (int) ($entry['surface'] !== null);
+            $this->assertLessThanOrEqual(1, $placements, "{$key} carries both a where and a surface");
+
             if ($key === 'prayer_times') {
                 $this->assertSame(config('capabilities.prayer_times.where'), $entry['where']);
                 $this->assertNotEmpty($entry['where']);
+                $this->assertNull($entry['surface']);
+            } elseif (in_array($key, ['quran', 'hadith', 'adhkar', 'qibla', 'tasbih'], true)) {
+                $this->assertSame('app', $entry['surface'], "{$key} is not placed on the app menu");
+                $this->assertNull($entry['where'], "{$key} carries a where");
             } else {
                 $this->assertNull($entry['where'], "{$key} carries a where");
+                $this->assertNull($entry['surface'], "{$key} carries a surface");
             }
 
             // One answer, two fields: never let them disagree for a module.
@@ -259,9 +275,10 @@ class CapabilitiesEndpointTest extends TestCase
             }
         }
 
-        // A school is not offered the masjid screens: they read off, nobody
-        // overrode them, and the panel may switch them on.
-        foreach (['splash', 'services', 'donation_link', 'giving', 'properties'] as $key) {
+        // A school is not offered the masjid screens or the app-only worship
+        // modules: they read off, nobody overrode them, and the panel may switch
+        // them on.
+        foreach (['splash', 'services', 'donation_link', 'giving', 'properties', 'quran', 'hadith', 'adhkar', 'qibla', 'tasbih'] as $key) {
             $this->assertFalse($entries[$key]['offered_by_default'], "{$key} is offered to a school");
             $this->assertFalse($entries[$key]['enabled'], "{$key} is on for a fresh school");
             $this->assertFalse($entries[$key]['overridden']);

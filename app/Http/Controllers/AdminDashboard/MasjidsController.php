@@ -356,9 +356,10 @@ class MasjidsController extends Controller
      * page section depends on — how many active sections on active pages show
      * it, so a switch-off is decided with the facts. Modules also carry whether
      * this org type is offered them (`offered_by_default`), the place a module
-     * without a sidebar item lives (`where`) and what keeps moving if it is
-     * switched off (`facts`, App\Support\ModuleFacts). Plus this organisation's
-     * last 25 flips, newest first.
+     * without a sidebar item lives (`where`, or `surface` for the app-only
+     * worship modules) and what keeps moving if it is switched off (`facts`,
+     * App\Support\ModuleFacts). Plus this organisation's last 25 flips, newest
+     * first.
      *
      * `enabled` for a module is `! moduleIsOff()`, the same answer every gate
      * gives, so the panel can never show "on" for a screen the server refuses.
@@ -410,6 +411,14 @@ class MasjidsController extends Controller
                 // "{Details menu title} › {where}". Null for everything else.
                 'where' => isset($definition['where']) && is_string($definition['where']) && $definition['where'] !== ''
                     ? $definition['where']
+                    : null,
+                // The third placement: a module with no admin screen at all
+                // ('app'), which decides whether the mobile app's menu lists
+                // its entry. The SPA places its row with "Where: Mobile app
+                // menu" and leaves it out of the staff sentences about
+                // switched-off screens. Null for everything else.
+                'surface' => isset($definition['surface']) && is_string($definition['surface']) && $definition['surface'] !== ''
+                    ? $definition['surface']
                     : null,
                 // What keeps moving if this is switched off (App\Support\ModuleFacts).
                 // A list for every entry; [] where there is nothing to say.
