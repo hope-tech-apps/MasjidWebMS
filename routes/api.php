@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Mobile\AnnouncementsController;
+use App\Http\Controllers\Mobile\AppMenuController;
 use App\Http\Controllers\Mobile\AzkarController;
 use App\Http\Controllers\Mobile\ContactReasonsController;
 use App\Http\Controllers\Mobile\ContactUsController;
@@ -72,6 +73,13 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             // published children. See MasjidsController::orgs.
             Route::get('/{masjid_id}/orgs', 'orgs');
         });
+
+        // The app's side menu, derived from this organisation's switches: one
+        // profile per organisation the app may switch into, each with its own
+        // sections, tab bar and theme. Public and unauthenticated like its
+        // neighbours; 404 when the org is unknown or the kill row is set, which
+        // the apps answer by falling back to /features + /orgs.
+        Route::get('/{masjid_id}/menu', [AppMenuController::class, 'show'])->name('mobile.menu');
 
         // Emergency app-version gate. iOS + Android read this on launch to decide
         // whether to force-update, show maintenance, or soft-prompt. Per-masjid

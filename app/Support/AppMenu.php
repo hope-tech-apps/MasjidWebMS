@@ -244,14 +244,18 @@ class AppMenu
                 $legacyIds[] = $item['legacy_feature_id'];
             }
 
+            if (array_key_exists('any_of', $item) && ! is_array($item['any_of'])) {
+                return "item {$key} declares an any_of that is not a list";
+            }
+
             $always = ($item['always'] ?? false) === true;
             $anyOf = $item['any_of'] ?? [];
 
-            if (! $always && (! is_array($anyOf) || $anyOf === [])) {
+            if (! $always && $anyOf === []) {
                 return "item {$key} names no switch and is not always on";
             }
 
-            foreach (is_array($anyOf) ? $anyOf : [] as $moduleKey) {
+            foreach ($anyOf as $moduleKey) {
                 if (! in_array($moduleKey, Masjid::MODULE_KEYS, true)) {
                     return "item {$key} names an unknown module: " . var_export($moduleKey, true);
                 }

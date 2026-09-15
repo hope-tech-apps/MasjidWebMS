@@ -30,6 +30,17 @@ class MobileCache
     public const SPLASH = 'splash';
     /** The organisations an app may switch into: this one plus its listed children. */
     public const ORGS = 'orgs';
+    /**
+     * The app's side menu for this organisation and its listed children — one
+     * derived view of their switches. Stored as ['hash' => …, 'data' => …]: the
+     * hash is the ETag, so it has to survive the cache round trip or every
+     * launch re-downloads a menu that did not change.
+     *
+     * A parent's MENU depends on its CHILDREN's switches, which is why flushing
+     * it walks the family (MobileCache::flushFamily, S1.4) rather than just
+     * forgetting the one organisation that was edited.
+     */
+    public const MENU = 'menu';
 
     public const APP_CONFIG = 'app.config';   // per-masjid emergency app-version gate
     // Signage board payload (tvOS). Written by the unified composer's signage
