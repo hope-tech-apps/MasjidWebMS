@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Masjid;
+use App\Models\User;
 use App\Support\MobileCache;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\MakesMenuOrganisations;
 use Tests\TestCase;
@@ -177,8 +179,20 @@ class AppMenuTenantIsolationTest extends TestCase
         $before = $this->menu($a->id)->assertOk();
         $tagBefore = $before->headers->get('ETag');
 
-        $this->switchOff($b, ['quran', 'gallery', 'donation_link', 'giving']);
-        $this->flushMenu($a->id);
+        Sanctum::actingAs($this->superAdmin());
+
+        foreach (['quran', 'gallery', 'donation_link', 'giving'] as $module) {
+            $this->patchJson("/api/admin/masjids/{$b->id}/capabilities/{$module}", ['enabled' => '0'])
+                ->assertOk();
+        }
+
+        // A's cached menu was not even touched — the family walk goes UP from
+        // the organisation that was edited, and B is not in A's family.
+        $this->assertNotNull(Cache::get(MobileCache::masjidKey($a->id, MobileCache::MENU)));
+
+        // ...and the derivation agrees: rebuilt from scratch, A's body and tag
+        // are the ones it had before anybody touched B.
+        Cache::forget(MobileCache::masjidKey($a->id, MobileCache::MENU));
 
         $after = $this->menu($a->id)->assertOk();
 
@@ -190,18 +204,21 @@ class AppMenuTenantIsolationTest extends TestCase
     public function a_switch_on_a_child_changes_the_parents_menu(): void
     {
         // The parent's payload CONTAINS the child's sections, so the parent's
-        // hash has to move when the child's switches do. The automatic
-        // invalidation that makes this happen without the flush below is
-        // MobileCache::flushFamily (S1.4) — what is pinned here is that the
-        // derivation and the hash see the change at all.
+        // hash has to move when the child's switches do — and it has to move on
+        // the NEXT request, not ten minutes later. The switch is flipped the
+        // way a SuperAdmin flips it, through the admin endpoint, so what is
+        // pinned here is the whole path: the derivation sees the change, the
+        // hash moves, and MobileCache::flushFamily reached the parent's key
+        // from a write to the child.
         $home = $this->listedOrg('Muslim Education Center');
         $child = $this->listedOrg('Intellicor Academy', ['org_type' => 'school']);
         $child->setParent($home);
 
         $before = $this->menu($home->id)->assertOk();
 
-        $this->switchOff($child, ['gallery']);
-        $this->flushMenu($home->id);
+        Sanctum::actingAs($this->superAdmin());
+        $this->patchJson("/api/admin/masjids/{$child->id}/capabilities/gallery", ['enabled' => '0'])
+            ->assertOk();
 
         $after = $this->menu($home->id)->assertOk();
 
@@ -222,8 +239,10 @@ class AppMenuTenantIsolationTest extends TestCase
 
         $this->assertCount(2, $this->menu($home->id)->assertOk()->json('data.profiles'));
 
-        $child->delete();
-        $this->flushMenu($home->id);
+        // Archived through the admin endpoint, so the flush that takes it off
+        // the parent's list is the real one and not the test's.
+        Sanctum::actingAs($this->superAdmin());
+        $this->deleteJson("/api/admin/masjids/{$child->id}/trash")->assertOk();
 
         $this->assertSame(
             [$home->id],
@@ -276,8 +295,11 @@ class AppMenuTenantIsolationTest extends TestCase
         }
     }
 
-    private function flushMenu(int $masjidId): void
+    private function superAdmin(): User
     {
-        Cache::forget(MobileCache::masjidKey($masjidId, MobileCache::MENU));
+        return User::factory()->create([
+            'type' => 'SuperAdmin',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ])->fresh();
     }
 }

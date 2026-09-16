@@ -82,6 +82,10 @@ class MasjidDetailsController extends Controller
             // Masjid metadata flows into multiple mobile endpoints (show, about).
             MobileCache::flushMasjidAll((int) $masjid_id);
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+            // The name and the logo edited above are also printed in the
+            // PARENT's switcher and drawer profile list, which are cached under
+            // the parent's id and not this one's.
+            MobileCache::flushFamily($masjid);
 
             return response()->json([
                 'status' => 'success',
@@ -133,6 +137,7 @@ class MasjidDetailsController extends Controller
 
             MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+            MobileCache::flushFamily($masjid);
 
             return response()->json([
                 'status' => 'success',

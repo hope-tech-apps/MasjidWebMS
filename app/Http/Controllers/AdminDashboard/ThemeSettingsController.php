@@ -44,7 +44,13 @@ class ThemeSettingsController extends Controller
             // The theme is baked into the mobile masjid SHOW payload — invalidate
             // so the apps pick up the new colors on next fetch. (The web /api/v1
             // surface is uncached and needs no flush.)
-            MobileCache::flushMasjid((int) $masjid_id, MobileCache::SHOW);
+            //
+            // The family form, because the primary colour is now ALSO the band
+            // the switcher and the side menu paint for this organisation, and
+            // both of those are cached under the PARENT's id (/orgs, /menu).
+            // Flushing only SHOW would leave a school's old colour behind its
+            // name in its parent's switcher.
+            MobileCache::flushFamily($masjid);
 
             return response()->json([
                 'status' => 'success',

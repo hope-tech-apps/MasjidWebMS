@@ -99,6 +99,11 @@ class MasjidsController extends Controller
             }
 
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+            // A new organisation is created unlisted, so it is not in anybody's
+            // switcher yet — but it may already have a parent, and its own keys
+            // must not be answered from whatever an id reused after a purge
+            // left behind.
+            MobileCache::flushFamily($masjid);
 
             return response()->json([
                 'status' => 'success',
@@ -165,6 +170,11 @@ class MasjidsController extends Controller
             CapabilityLedger::record($masjid, 'crm', $before, (bool) $masjid->crm_enabled, null, Auth::id());
         });
 
+        // CRM is what `account.sign_in_available` in /menu is read from, so
+        // turning the member realm on or off has to reach the drawer's account
+        // block rather than waiting out the entry.
+        MobileCache::flushFamily($masjid);
+
         return response()->json([
             'status' => 'success',
             'data' => $masjid,
@@ -214,6 +224,14 @@ class MasjidsController extends Controller
         // The directory is cached for a day; without this flush the decision
         // does not reach the apps until the entry expires.
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+
+        // And the PARENT's switcher, which is the bug this line fixes: listing
+        // is what puts a child into its parent's /orgs and /menu, and only the
+        // global directory was being flushed. Publishing a school therefore put
+        // it in the app's organisation list at once and in its own parent's
+        // switcher up to ten minutes later — long enough for the person who
+        // pressed the button to conclude it had not worked.
+        MobileCache::flushFamily($masjid);
 
         return response()->json([
             'status' => 'success',
@@ -340,6 +358,12 @@ class MasjidsController extends Controller
 
             CapabilityLedger::record($masjid, $capability, $before, $masjid->hasCapability($capability), $overrideBefore, Auth::id());
         });
+
+        // A switch is what the app menu is DERIVED from, so this flush is the
+        // difference between a SuperAdmin seeing the change on a phone now and
+        // seeing it in ten minutes. The family form because a child's switches
+        // build a profile inside its PARENT's /menu.
+        MobileCache::flushFamily($masjid->fresh());
 
         return response()->json([
             'status' => 'success',
@@ -583,6 +607,9 @@ class MasjidsController extends Controller
 
             MobileCache::flushMasjidAll((int) $masjid_id);
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+            // A name and a logo are printed in the PARENT's switcher and in its
+            // drawer profile list, so renaming a school has to reach both.
+            MobileCache::flushFamily($masjid);
 
             return response()->json([
                 'status' => 'success',
@@ -617,6 +644,10 @@ class MasjidsController extends Controller
 
         MobileCache::flushMasjidAll((int) $masjid_id);
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+        // Archiving a child has to take it OUT of its parent's switcher and
+        // drawer on the next request. The model still carries its parent_id
+        // here, which is what the family walk needs.
+        MobileCache::flushFamily($masjid);
 
         return response()->json([
             'status' => 'success',
@@ -633,6 +664,10 @@ class MasjidsController extends Controller
 
         MobileCache::flushMasjidAll((int) $masjid_id);
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+        // Archiving a child has to take it OUT of its parent's switcher and
+        // drawer on the next request. The model still carries its parent_id
+        // here, which is what the family walk needs.
+        MobileCache::flushFamily($masjid);
 
         return response()->json([
             'status' => 'success',
@@ -668,6 +703,8 @@ class MasjidsController extends Controller
 
         MobileCache::flushMasjidAll((int) $masjid_id);
         MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
+        // ...and restoring one has to put it back.
+        MobileCache::flushFamily($masjid);
 
         return response()->json([
             'status' => 'success',

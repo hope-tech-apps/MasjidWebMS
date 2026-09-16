@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\MobileCache;
 use App\Traits\SearchableTrait;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -727,6 +728,14 @@ class Masjid extends Model implements HasMedia
             Masjid::withTrashed()
                 ->where('parent_id', $masjid->id)
                 ->update(['parent_id' => null]);
+
+            // The organisation is gone from every list it was in. Its own
+            // parent is still serving a switcher and a drawer that name it, and
+            // there is no model left to flush them from later — so it happens
+            // here, from the id the row still carries.
+            if ($masjid->parent_id !== null) {
+                MobileCache::flushFamilyById((int) $masjid->parent_id);
+            }
         });
     }
 
@@ -796,8 +805,20 @@ class Masjid extends Model implements HasMedia
      */
     public function setParent(?Masjid $parent): void
     {
+        // Read BEFORE the save. Re-parenting changes TWO families: the one this
+        // organisation is joining and the one it is leaving, and the old
+        // parent's switcher and drawer keep listing it until its key is
+        // forgotten. After the write there is nothing left to say who that was.
+        $oldParentId = $this->parent_id !== null ? (int) $this->parent_id : null;
+
         if ($parent === null) {
             $this->forceFill(['parent_id' => null])->save();
+
+            MobileCache::flushFamily($this);
+
+            if ($oldParentId !== null) {
+                MobileCache::flushFamilyById($oldParentId);
+            }
 
             return;
         }
@@ -827,6 +848,15 @@ class Masjid extends Model implements HasMedia
         }
 
         $this->forceFill(['parent_id' => $parent->id])->save();
+
+        // The new family (this organisation and every ancestor it just gained)
+        // and then the old one, so neither side is left describing a membership
+        // that has moved.
+        MobileCache::flushFamily($this);
+
+        if ($oldParentId !== null && $oldParentId !== (int) $parent->id) {
+            MobileCache::flushFamilyById($oldParentId);
+        }
     }
 
     public function jumaaSettings() {
