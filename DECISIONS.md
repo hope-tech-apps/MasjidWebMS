@@ -1301,3 +1301,107 @@ was also `{status, message}` with no `data`, which the iPhone cannot decode.
     `"data":{}`.
 - **Production.** Only with the owner's OK, since this loosens an abuse limit. The new config file needs
   no `.env` change, and a refreshed config cache must go through the parse-check path.
+
+## 2026-09-17 — The app's menu comes from the organisation switches (supersedes 2026-09-16's "Mobile App Features is not a switch", DECISIONS.md:886, and narrows "Public and mobile READS never follow a module", DECISIONS.md:766)
+
+**Decision.** `GET /api/mobile/masjids/{id}/menu` derives the mobile app's side menu and tab bar
+from the organisation module switches, one profile per organisation the app may switch into. A
+module therefore now decides TWO things — an admin screen and, where it has one, a row of the app
+menu — where until today it decided only the first.
+
+1. **A module is no longer admin-only.** `Masjid::MODULE_KEYS` gains five app-only modules —
+   `quran`, `hadith`, `adhkar`, `qibla`, `tasbih` — that have no admin screen and no sidebar item at
+   all. They carry `surface => 'app'` in `config/capabilities.php`, which is how the switch panel
+   places a row for something with nowhere to live in the admin. Their only effect is one row of the
+   app menu.
+   - This retires 2026-09-16's line "Mobile App Features is not a switch: it IS the app-drawer
+     switch" (:886). The pivot still serves the legacy `/features` list to every installed build and
+     is still the app-drawer switch for those builds; it stops being the app-drawer switch at S2b,
+     when the cutover moves each row to its module.
+   - It also narrows "Public and mobile READS never follow a module" (:766). `/menu` is a public,
+     unauthenticated mobile read and it follows the switches — that is the entire endpoint. Every
+     other public and mobile read is unchanged, `/features` included.
+2. **Visibility is switch-only, and nothing else.** Never "and the donation link has a URL", never
+   "and Stripe is onboarded". The app's fallback menu is built from the legacy `/features` when
+   `/menu` is unavailable, and it cannot know those things — a kill switch is only worth having if
+   what it falls back to is the same menu. `Masjid::moduleIsOff()` fails OPEN, so a stale config
+   cache during a deploy can only ever SHOW a row.
+   - One documented asymmetry: `/menu` shows Announcements when only Events is on, because the
+     drawer entry opens both. Legacy id 10 means Announcements alone.
+   - No labels, no icons, no per-user data. Labels and icons are the clients'. On 2026-08-28 a
+     server-driven icon list emptied the drawer on every phone.
+3. **Two levers, and they are not the same lever.**
+   - `php artisan app-menu:kill` makes `/menu` answer 404 for every organisation within a minute.
+     Both apps read that as "menu unavailable" and fall back to `/features` + `/orgs`. No `.env`
+     edit and no `config:cache`: an emergency control must not be able to cause a bigger outage
+     than the one it is fixing.
+   - `app_version_settings.navigation` decides which SHELL one organisation's app draws, per
+     platform, without a release. Emitted inside `data.ios` / `data.android` of the per-masjid
+     app-config, OMITTED when null, read from the HOME organisation's row, applied at the next cold
+     launch. Four spellings are accepted — `menu` and `legacy` (the server's vocabulary) and
+     `side_menu` and `tabs_drawer` (what the clients were compiled with) — because both clients map
+     an UNKNOWN value to the NEW shell, so rejecting a spelling the apps would have honoured turns
+     this into a save that reports success and changes nothing.
+4. **What `navigation = legacy` does NOT roll back, verbatim from `config/app_menu.php`:**
+
+   > What `legacy` rolls back, honestly: the menu, the store and the drawer. NOT the Android
+   > single-activity merge, NOT the iOS HomeView de-nesting and NOT the in-place switch — the legacy
+   > shell shares all three. Rolling those back needs a new build, which is what this lever is worth
+   > as a release gate.
+
+   This is stated to the owner, not only recorded here. It changes what the flag is worth: it is a
+   layout lever, not a rollback of the R1 shell.
+5. **The kill row stays SET on production until S2b.** `/menu` then 404s for every device, both
+   client lanes ship internal builds freely on the legacy adapter, and the pre-S2b divergence
+   between `/menu` (switches) and `/features` (pivot) — production already differs on Qur'an for
+   organisations 1 and 13 — cannot reach a tester. Cheaper than gating every build.
+6. **Installed builds do not change.** `GET /features` keeps its body, its row order and its icon
+   fallbacks; the GLOBAL `/app-config` keeps returning `{"status":"success","data":{}}`; `/orgs`
+   gains a theme block and nothing else. `navigation` being omitted while null is what keeps every
+   current per-masjid app-config body byte-identical after the deploy.
+7. **Telemetry, because the retirement needs evidence and there was none.**
+   - `mobile_app_users` gains `app_platform`, `app_version`, `app_build`, filled from the
+     `X-Manara-App` header or the body. AN ABSENT VALUE NEVER NULLS A STORED ONE, so the count of
+     phones still on an old build cannot erase its own evidence. Nothing authorises on them.
+   - `app-telemetry:builds` groups active devices and prints a null build as `pre-R1`.
+   - `CountLegacyFeaturesHit` counts each SERVED `/features` response per organisation per day,
+     split `tagged` (an R1 build falling back) and `untagged` (a build shipped before R1). It runs
+     in `terminate()` inside a catch-all: it can never change or fail that payload.
+     `app:legacy-features-report` writes ONE `Log::warning` a day — warning, because production runs
+     `LOG_LEVEL=warning`.
+   - Zero is a floor, not a proof. A cache flush, a restarted box and a day the report did not run
+     all look identical to silence.
+8. **`app-features:cutover-plan` ships a week before the migration it describes**, read-only, so the
+   owner's clock starts early. It prints per organisation and legacy id the pivot value, the
+   switch-derived value, the override it would write and what switching that module off also means,
+   and raises four findings: an app row off over live content or open intake (blocking), Donate off
+   while Giving still has money attached (blocking), an organisation with no pivot rows (a notice —
+   `[]` today, eleven rows after, the only change an installed build can see), and a worship row off
+   at a masjid (a notice). It checks its own promise: the capability ledger and pivot row counts
+   before and after.
+
+**Alternatives.**
+- **Keep the app drawer on the pivot and leave the switches admin-only.** Two switches for one
+  concept, in two places, is what produced an organisation whose admin screen is on and whose app
+  row is off with nobody able to say which was meant. The cutover plan exists because that has
+  already happened.
+- **Server-driven labels and icons.** Tried, and it is what emptied every drawer on 2026-08-28.
+  Labels also have to be localisable, which a server list cannot do.
+- **Make `navigation` an enum column.** Accepting the two client spellings would then be a
+  migration rather than a validation rule, and the failure that matters here is a lever that saves
+  cleanly and changes nothing.
+- **Gate every client build instead of leaving the kill row set.** More work per build, and it
+  fails open on the build somebody forgets.
+- **Delete `/features` now.** No evidence supports it, which is the reason for the counter.
+
+**Not changed here, and needs the owner.**
+1. **The four cutover conflict classes.** Resolutions go in `config/app_feature_cutover.php` as
+   `org => key => show_in_app | hide_everywhere` and are committed with the S2b migration. The plan
+   refuses nothing by itself; the migration refuses to run while a blocking finding is unresolved.
+2. **`navigation` is a layout lever, not a rollback.** Item 4. Say it out loud before treating it as
+   a release gate.
+
+**Deploy notes (none of this has been done).**
+- The whole of S1 is additive. Three migrations, all nullable or new tables.
+- Set the `/menu` kill row immediately after the S1 deploy and leave it until S2b (item 5).
+- `app:legacy-features-report` needs the system cron already running `schedule:run`.

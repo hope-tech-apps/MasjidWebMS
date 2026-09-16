@@ -406,11 +406,18 @@ entry has a `kind`, a `group` (`config/capability_groups.php`), a `label` and a 
   - Override-backed (`web_pages`, `jummah_lunch`, `school_calendar`, `form_editing`): stored in
     `masjids.capability_overrides` (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`). Absent key
     → the org_type default, chosen to reproduce what each vertical reached before the catalogue.
-- **Modules** (`kind => module`) are screens a SuperAdmin switches per organisation; same overrides
-  column. Nineteen, in `Masjid::MODULE_KEYS` order: `website`, `announcements`, `events`,
-  `about_us`, `gallery`, `push_notifications`, `contact_requests`, `programs`, `zakat`,
-  `broadcasts`, `flyer_studio`, `impact_report` (2026-09-16), then `prayer_times`, `splash`,
-  `services`, `donation_link`, `giving`, `properties`, `appointment_requests` (switches wave 2).
+- **Modules** (`kind => module`) are what a SuperAdmin switches per organisation; same overrides
+  column. **Not "screens" any more** — since 2026-09-17 a module decides an admin screen AND, where
+  it has one, a row of the MOBILE APP's menu, and five of them decide only the app row. Twenty-four,
+  in `Masjid::MODULE_KEYS` order: `website`, `announcements`, `events`, `about_us`, `gallery`,
+  `push_notifications`, `contact_requests`, `programs`, `zakat`, `broadcasts`, `flyer_studio`,
+  `impact_report` (2026-09-16), then `prayer_times`, `splash`, `services`, `donation_link`,
+  `giving`, `properties`, `appointment_requests` (switches wave 2), then the five app-only worship
+  modules `quran`, `hadith`, `adhkar`, `qibla`, `tasbih` (app menu, 2026-09-17).
+  - **The app-only five carry `surface => 'app'`** and have NO admin screen and no sidebar item:
+    their whole effect is one row of `GET /mobile/masjids/{id}/menu`. `surface` is what lets the
+    switch panel place a row for something with nowhere to live in the admin — see the sidebar /
+    `where` rule below, which they are the exception to.
   - **Defaults are per org type** (`Masjid::MODULE_DEFAULTS`, a code copy of each entry's
     `defaults`). Every module is ON for a masjid. `splash`, `services`, `donation_link`, `giving`
     and `properties` are NOT OFFERED to a school or community organisation: off there until a
@@ -432,15 +439,21 @@ entry has a `kind`, a `group` (`config/capability_groups.php`), a `label` and a 
     organisation with no SuperAdmin bypass** (Broadcasts, the Assistant, public intake, prayer
     pushes) — except the admin header search, which hides switched-off announcements, About Us and
     services from the organisation's own admins only, so a SuperAdmin still finds them.
-    Public and mobile READS never follow a module. **Money already charged never follows one
-    either**: the Stripe webhook, receipts and receipt emails run as for any organisation, and
+    Public and mobile READS never follow a module, **with exactly one exception since 2026-09-17**:
+    `GET /mobile/masjids/{id}/menu` IS a switch-derived read — the app's side menu and tab bar are
+    the switches, which is the whole endpoint (`App\Support\AppMenu`). It is switch-ONLY (never "and
+    the link has a URL", never "and Stripe is onboarded"), because the apps fall back to the legacy
+    `/features` when it is unavailable and that fallback cannot know those things. Every other
+    public and mobile read is unchanged, `/features` included. **Money already charged never follows
+    one either**: the Stripe webhook, receipts and receipt emails run as for any organisation, and
     `App\Support\GivingSwitch::noteArrivalIfOff` only logs a warning, once per donation or
     commitment (`.claude/rules/stripe-payments.md`).
   - `Masjid::MODULE_KEYS` equals the config's module keys, in order, and `Masjid::MODULE_DEFAULTS`
     equals their `defaults` (`CapabilityGateTest`); the SPA's copies in `Capability.ts` are pinned
     by `CapabilityTsMirrorTest`. Every non-column entry names all of `Masjid::ORG_TYPES` in
-    `defaults` (`?? false` otherwise). A module needs a sidebar item (`requiresModule`) or a config
-    `where` (Prayer times: tabs on the Details screen), or the switch panel cannot place its row.
+    `defaults` (`?? false` otherwise). A module needs a sidebar item (`requiresModule`), a config
+    `where` (Prayer times: tabs on the Details screen) or a config `surface` (the five worship
+    modules: `app`), or the switch panel cannot place its row.
   - **No override outlives its code.** To remove a module: flip it back ON for every organisation
     while the code is live (audited), then revert with a data migration in the same commit that
     strips the key from `capability_overrides` and writes a NULL-actor ledger row per key removed.

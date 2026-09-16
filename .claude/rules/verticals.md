@@ -37,12 +37,20 @@ provisioning time**. They are NOT a runtime permission check. The
 for what a tenant's MOBILE APP has, and per-tenant gates (`crm_enabled`,
 `assistant_enabled`) are unchanged.
 
-That pivot governs the app's drawer only. Which ADMIN screens an organisation
-has is `config/capabilities.php` — opt-in grants and modules a SuperAdmin
-switches per organisation (`.claude/rules/auth-permissions.md`).
-The two are separate switches and must not be merged: "Announcements" in the app
-drawer and the Announcements admin screen are different keys in different
-places.
+That pivot governs the app's drawer for every INSTALLED build. What an
+organisation has is `config/capabilities.php` — opt-in grants and modules a
+SuperAdmin switches per organisation (`.claude/rules/auth-permissions.md`).
+
+**Since 2026-09-17 a module is no longer admin-only.** `GET
+/mobile/masjids/{id}/menu` derives the R1 apps' side menu and tab bar from the
+switches, and five modules (`quran`, `hadith`, `adhkar`, `qibla`, `tasbih`,
+`surface => 'app'`) decide nothing BUT an app menu row. So the two switches are
+still separate today — "Announcements" in the legacy drawer and the
+Announcements module are different keys in different places — and they stop
+being separate at S2b, when `app-features:cutover-plan`'s resolutions and the
+cutover migration move each legacy row onto its module. Until that migration
+lands, do not write one from the other: the pivot is what installed builds read
+and the switches are what `/menu` reads, and they are allowed to disagree.
 
 Modules default per org type (`Masjid::MODULE_DEFAULTS`). The masjid screens
 (Splash, Services, Donation link, Giving, Properties & Rent) are off for a
@@ -151,6 +159,13 @@ Creating an organisation does NOT publish it — see
 alone. A school or community tenant must never load them. Everything else
 (`about_us`, `announcements`, `contact_us`, `donate`, `gallery`, `services`) is
 org-generic and shared.
+
+The same five are now also MODULES with the same rule
+(`Masjid::MODULE_DEFAULTS`: masjid true, school and community false), so a
+school reaches one only if a SuperAdmin deliberately switches it on — the same
+deliberate act the wizard's checkboxes already allow. Keep the two in step: a
+key added to the masjid bundle and not to the module defaults, or the reverse,
+means the legacy drawer and `/menu` disagree about the same organisation.
 
 When you add a masjid-specific capability, gate it on `isMasjid()` or a feature
 key — never assume the tenant is a masjid.
