@@ -258,6 +258,46 @@ class AppConfigNavigationFlagTest extends TestCase
         $this->assertSame($documented, $accepted);
     }
 
+    #[Test]
+    public function the_screen_only_offers_values_the_server_takes(): void
+    {
+        // There is no SPA test runner, so the PHP suite reads the file — the
+        // same arrangement CapabilityTsMirrorTest uses for the module
+        // catalogue. A select offering a value the rule refuses is a 422 in the
+        // middle of an incident; a select whose non-choice posts something
+        // other than null is a flag nobody can clear.
+        $path = base_path('resources/vue-app/stores/super/appConfigStore.ts');
+        $this->assertFileExists($path);
+
+        $source = (string) file_get_contents($path);
+
+        $this->assertSame(
+            1,
+            preg_match('/export const NAVIGATION_OPTIONS\b[^=]*=\s*\[(.*?)\n\]/s', $source, $block),
+            'appConfigStore.ts has no `export const NAVIGATION_OPTIONS ... = [ ... ]` block'
+        );
+
+        preg_match_all('/value:\s*(null|\'([a-z_]+)\')/', $block[1], $offered);
+
+        $values = array_map(
+            fn (string $raw, string $quoted) => $raw === 'null' ? null : $quoted,
+            $offered[1],
+            $offered[2]
+        );
+
+        // App default first, then the two canonical spellings. The client
+        // aliases are deliberately NOT offered: an admin should be given the
+        // server's vocabulary, and the rule accepts the others for the operator
+        // who arrives with a client document in hand.
+        $this->assertSame([null, 'menu', 'legacy'], $values);
+
+        $accepted = config('app_menu.navigation_aliases');
+
+        foreach (array_filter($values) as $value) {
+            $this->assertArrayHasKey($value, $accepted, "the screen offers '{$value}', which the server refuses");
+        }
+    }
+
     private function superAdmin(): User
     {
         return User::factory()->create([
