@@ -241,6 +241,87 @@ class MemberPasswordSignInTest extends TestCase
         $this->signIn($this->masjid, $member, self::GOOD)->assertOk();
     }
 
+    /**
+     * The body is not the only thing a caller can measure. A refusal that
+     * skips the hash returns in a millisecond and a real comparison takes tens,
+     * which would say "this address has a password here" as clearly as a
+     * different sentence. Every path must do exactly one comparison against a
+     * real digest. Counted at the hasher, and only when the digest is
+     * non-empty, because comparing against '' returns before doing any work.
+     */
+    #[Test]
+    public function every_refusal_and_the_success_do_exactly_one_real_hash_comparison(): void
+    {
+        $member = $this->address();
+        $this->member($this->masjid, $member, password: self::GOOD);
+        $noPassword = $this->address();
+        $this->member($this->masjid, $noPassword);
+        $neverVerified = $this->address();
+        $this->member($this->masjid, $neverVerified, password: self::GOOD, verified: false);
+        $revoked = $this->address();
+        $this->member($this->masjid, $revoked, password: self::GOOD, extra: ['login_revoked_at' => now()]);
+        $officeOnly = $this->address();
+        $this->member($this->masjid, $officeOnly, password: self::GOOD, extra: ['login_email' => null]);
+
+        $counter = new class(app('hash')) implements \Illuminate\Contracts\Hashing\Hasher
+        {
+            public int $realComparisons = 0;
+
+            public function __construct(private \Illuminate\Contracts\Hashing\Hasher $inner)
+            {
+            }
+
+            public function info($hashedValue)
+            {
+                return $this->inner->info($hashedValue);
+            }
+
+            public function make($value, array $options = [])
+            {
+                return $this->inner->make($value, $options);
+            }
+
+            public function check($value, $hashedValue, array $options = [])
+            {
+                if ($hashedValue !== null && $hashedValue !== '') {
+                    $this->realComparisons++;
+                }
+
+                return $this->inner->check($value, $hashedValue, $options);
+            }
+
+            public function needsRehash($hashedValue, array $options = [])
+            {
+                return $this->inner->needsRehash($hashedValue, $options);
+            }
+
+            public function __call($method, $arguments)
+            {
+                return $this->inner->{$method}(...$arguments);
+            }
+        };
+
+        Hash::swap($counter);
+
+        $cases = [
+            'an address nobody holds' => [$this->address(), self::GOOD, 410],
+            'a wrong password' => [$member, self::OTHER, 410],
+            'no password chosen' => [$noPassword, self::GOOD, 410],
+            'never verified' => [$neverVerified, self::GOOD, 410],
+            'revoked' => [$revoked, self::GOOD, 410],
+            'a password on no login address' => [$officeOnly, self::GOOD, 410],
+            'the right password' => [$member, self::GOOD, 200],
+        ];
+
+        foreach ($cases as $label => [$email, $password, $status]) {
+            $counter->realComparisons = 0;
+
+            $this->signIn($this->masjid, $email, $password)->assertStatus($status);
+
+            $this->assertSame(1, $counter->realComparisons, $label);
+        }
+    }
+
     #[Test]
     public function a_member_who_signed_up_with_a_code_alone_cannot_sign_in_with_any_password(): void
     {

@@ -498,7 +498,10 @@ class MemberSignupService
      *    the office's `email` column when a contact has no `login_email`, which
      *    is how a code sign-in links an office record. A password is a
      *    credential for `login_email` only, and a household address both
-     *    parents read must not open it.
+     *    parents read must not open it. The resolver only falls back to
+     *    `email` for a contact whose `login_email` is NULL, so today the
+     *    non-null test decides it and the equality cannot fail; it is kept so
+     *    that a change to the resolver cannot quietly widen this door.
      */
     private function mayUsePassword(Contact $contact, string $email): bool
     {
