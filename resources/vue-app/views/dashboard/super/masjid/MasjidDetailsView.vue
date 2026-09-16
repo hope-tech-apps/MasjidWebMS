@@ -756,9 +756,20 @@ const toggleDirectoryListing = (listed: boolean) => {
                             if (res.data.status === 'success') {
                                 if (masjid.value) masjid.value.listed_at = res.data.data?.listed_at ?? null;
                                 swalInstance.title = "Success";
-                                swalInstance.text = listed
-                                    ? "Organization listed in the app directory."
-                                    : "Organization removed from the app directory.";
+                                // PREFER THE SERVER'S SENTENCE WHEN IT SENDS ONE.
+                                //
+                                // Listing an organisation can have a consequence
+                                // this screen cannot know about: its app opening as
+                                // a single Home tab, because the three gated tabs
+                                // (Announcements, Contact Us, Donate) are all
+                                // switched off. The server says so on the success
+                                // response. Hardcoding the confirmation here threw
+                                // that sentence away, which made the warning exist
+                                // only in tests.
+                                swalInstance.text = res.data.message
+                                    || (listed
+                                        ? "Organization listed in the app directory."
+                                        : "Organization removed from the app directory.");
                                 swalInstance.icon = "success";
                             } else {
                                 swalInstance.title = "Sorry";
