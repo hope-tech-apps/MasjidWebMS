@@ -75,8 +75,14 @@ class AppFeatureCutoverPlanTest extends TestCase
 
         $this->useSqliteInMemory();
 
+        // `name` and `key` only. `is_available` is NOT a column on
+        // mobile_app_features — availability is per organisation and lives on
+        // the pivot, masjid_mobile_app_features, which orgWithPivot() writes
+        // and which the command reads. MobileAppFeature::$fillable lists it
+        // anyway, which is what made passing it here look right; Eloquent then
+        // puts it in the INSERT and SQLite refuses the whole statement.
         foreach (self::CATALOGUE as [$name, $key]) {
-            MobileAppFeature::create(['name' => $name, 'key' => $key, 'is_available' => true]);
+            MobileAppFeature::create(['name' => $name, 'key' => $key]);
         }
     }
 
@@ -246,7 +252,13 @@ class AppFeatureCutoverPlanTest extends TestCase
     public function services_off_over_published_services_is_raised(): void
     {
         $org = $this->orgWithPivot('Muslim Education Center', [9 => false]);
-        Service::create(['masjid_id' => $org->id, 'title' => 'Nikah', 'description' => 'Marriage services']);
+        // `text` is NOT NULL with no default here too, same as announcements.
+        Service::create([
+            'masjid_id' => $org->id,
+            'title' => 'Nikah',
+            'description' => 'Marriage services',
+            'text' => 'Marriage services',
+        ]);
 
         $finding = $this->findingFor($org, 'a', 'services');
 
@@ -360,6 +372,11 @@ class AppFeatureCutoverPlanTest extends TestCase
             'masjid_id' => $org->id,
             'title' => 'Eid prayer',
             'details' => 'Eid prayer at 8am',
+            // `text` is NOT NULL and has no default. It is unused by the
+            // application (see the 2026-07-21 widening migration, which says
+            // so), but the column is still there and still refuses a null, so
+            // a fixture that omits it cannot insert a row at all.
+            'text' => 'Eid prayer at 8am',
             'start_date' => now()->toDateString(),
         ]);
     }
