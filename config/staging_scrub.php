@@ -121,6 +121,7 @@ return [
         // nulling variant outright.
         'form_response_attachments' => 'Private-disk uploads; the respondent\'s own filename is often "Firstname-Lastname-CV.pdf". All five file columns are NOT NULL, so the row cannot be half-nulled.',
         'group_post_attachments' => 'Private-disk classroom photos of children. All five file columns are NOT NULL.',
+        'group_message_attachments' => 'Private-disk photos a teacher sent in a parent conversation — the same kind of file as group_post_attachments, and the same five NOT NULL file columns. Nothing references the table.',
         'group_resources' => 'Private-disk staff/parent handouts; per config/groups.php this tree is not covered by any backup target either. All five file columns are NOT NULL.',
 
         // The parent portal's translation cache. Every row is the ARABIC of

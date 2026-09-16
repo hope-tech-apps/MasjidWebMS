@@ -44,8 +44,9 @@ return [
     | The teacher <-> parent channel: group-wide announcement discussions and
     | participant-scoped private conversations about one member. Like the feed,
     | never a public surface — who may read a thread is decided per request by
-    | App\Support\GroupAudience. Text only: attachments are deliberately out of
-    | this slice (the feed owns media).
+    | App\Support\GroupAudience. Staff messages may carry photos, held to the
+    | `media` block below (same disk, allowlist, size and per-message count as a
+    | story post); a class-wide thread's photos need media consent, like the feed.
     |
     */
 
@@ -57,7 +58,7 @@ return [
          * feed, and for the same reason: these conversations are about
          * children. The model stamps `retained_until = now + this` on create,
          * and the `groups:purge-feed` sweep removes the thread AND its messages
-         * (rows only; no bytes are involved) once it passes.
+         * and their photos (bytes included) once it passes.
          *
          * Set to 0 (or a negative number) to keep threads indefinitely unless a
          * caller sets `retained_until` itself.
@@ -259,8 +260,9 @@ return [
         'max_size_kb' => (int) env('GROUP_MEDIA_MAX_SIZE_KB', 8192),
 
         /*
-         * How many images one post may carry. A bound exists so a single
-         * request cannot be used to fill the droplet's disk.
+         * How many images one post — or one conversation message — may carry.
+         * A bound exists so a single request cannot be used to fill the
+         * droplet's disk.
          */
         'max_per_post' => (int) env('GROUP_MEDIA_MAX_PER_POST', 8),
 

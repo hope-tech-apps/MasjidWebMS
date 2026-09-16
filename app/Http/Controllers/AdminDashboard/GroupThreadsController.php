@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Enums\GroupNotificationEvent;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Groups\GroupPostFormRequest;
 use App\Http\Requests\Admin\Groups\StoreGroupMessageRequest;
 use App\Jobs\SendGroupNotificationJob;
 use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
@@ -16,6 +17,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Support\Errors;
 use App\Support\GroupAudience;
+use App\Support\GroupMessageAttachments;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -41,9 +43,16 @@ use Symfony\Component\HttpFoundation\Response;
  *     a contribution to a conversation, and someone who may not see the
  *     conversation has no place speaking into it.
  *
+ * PHOTOS. A staff message may carry images (GroupMessageAttachment, private
+ * disk). They are listed only for a reader GroupAudience::mayReceiveThreadMedia()
+ * allows, and served only by downloadAttachment(), which asks it again. This
+ * controller is mounted in BOTH staff realms (routes/admin.php and
+ * routes/teacher.php), so every download link is built for the realm the
+ * request arrived through — a teacher login is refused by the admin realm.
+ *
  * Tenant isolation is not hand-rolled: `tenant` middleware binds TenantContext
- * and BelongsToMasjid auto-scopes Group, GroupThread, GroupMessage and
- * GroupThreadRead — a foreign organization's id anywhere in the chain is a MISS
+ * and BelongsToMasjid auto-scopes Group, GroupThread, GroupMessage,
+ * GroupMessageAttachment and GroupThreadRead — a foreign organization's id anywhere in the chain is a MISS
  * (404), never a filtered row. findOrFail stays OUTSIDE every try/catch so the
  * JSON renderer turns it into a clean 404. See .claude/rules/tenant-scoping.md.
  */
@@ -148,8 +157,11 @@ class GroupThreadsController extends Controller
             $aboutContactId = $about->contact_id;
         }
 
+        $uploads = $this->uploads($request);
+        $hasFirstMessage = $request->filled('body') || $uploads !== [];
+
         try {
-            $thread = DB::transaction(function () use ($request, $group, $aboutMembershipId) {
+            $thread = DB::transaction(function () use ($request, $group, $aboutMembershipId, $uploads, $hasFirstMessage) {
                 $thread = GroupThread::create([
                     'group_id' => $group->id,
                     // The AUTHENTICATED account, never a client-supplied name.
@@ -160,11 +172,15 @@ class GroupThreadsController extends Controller
                     'retained_until' => $request->input('retained_until'),
                 ]);
 
-                if ($request->filled('body')) {
-                    $thread->messages()->create([
+                if ($hasFirstMessage) {
+                    $message = $thread->messages()->create([
                         'author_user_id' => $request->user()?->id,
-                        'body' => $request->input('body'),
+                        // A photo-only message stores an empty body; the column
+                        // is NOT NULL and "no text" is what was sent.
+                        'body' => (string) ($request->input('body') ?? ''),
                     ]);
+
+                    GroupMessageAttachments::store($message, $uploads);
 
                     // The opener has read what they just wrote; without this,
                     // their own first message would greet them as "unread".
@@ -178,7 +194,7 @@ class GroupThreadsController extends Controller
             // an empty thread shell notifies no one. A participant thread reaches
             // the ward's guardian(s); a group-wide thread reaches the feed audience
             // (the job decides from aboutContactId). afterCommit + fail-soft.
-            if ($request->filled('body')) {
+            if ($hasFirstMessage) {
                 SendGroupNotificationJob::dispatch(
                     (int) $group->masjid_id,
                     (int) $group->id,
@@ -219,12 +235,17 @@ class GroupThreadsController extends Controller
 
         $this->authorizeThread($request->user(), $group, $thread);
 
+        $mayReceiveMedia = $this->audience->mayReceiveThreadMedia($request->user(), $group, $thread);
+        $viewerId = $request->user()?->id;
+
         $messages = $thread->messages()
-            ->with('author:id,name')
+            ->with(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->paginate($request->query('per_page', 50))
-            ->through(fn (GroupMessage $message) => $this->serializeMessage($message));
+            ->through(fn (GroupMessage $message) => $this->serializeMessage(
+                $message, $request, $masjid_id, $group_id, $mayReceiveMedia, $viewerId
+            ));
 
         $this->markRead($thread, $request->user());
 
@@ -262,13 +283,20 @@ class GroupThreadsController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
+        $uploads = $this->uploads($request);
+
         try {
-            $message = DB::transaction(function () use ($request, $thread) {
+            $message = DB::transaction(function () use ($request, $thread, $uploads) {
                 $message = $thread->messages()->create([
                     // The AUTHENTICATED account, never a client claim.
                     'author_user_id' => $request->user()?->id,
-                    'body' => $request->input('body'),
+                    // A photo-only message stores an empty body (NOT NULL column).
+                    'body' => (string) ($request->input('body') ?? ''),
                 ]);
+
+                // Same transaction, all or nothing: a photo that fails to write
+                // rolls the message back and removes any photo already written.
+                GroupMessageAttachments::store($message, $uploads);
 
                 // You have read what you just wrote.
                 $this->markRead($thread, $request->user());
@@ -290,7 +318,12 @@ class GroupThreadsController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $this->serializeMessage($message->load('author:id,name')),
+                // The sender sees what they just sent, photos included: they
+                // supplied the bytes a moment ago.
+                'data' => $this->serializeMessage(
+                    $message->load(['author:id,name', 'attachments']),
+                    $request, $masjid_id, $group_id, true, $request->user()?->id
+                ),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -298,6 +331,45 @@ class GroupThreadsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * GET .../threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}
+     *
+     * Streams one photo off the PRIVATE disk. Re-resolves the WHOLE chain —
+     * masjid -> group -> thread -> message -> attachment, each found through its
+     * parent — so a foreign id anywhere is a 404, then asks GroupAudience
+     * whether this reader may have the photos in this conversation at all.
+     */
+    public function downloadAttachment(Request $request, $masjid_id, $group_id, $thread_id, $message_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+        $group = Group::findOrFail($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+        $message = $thread->messages()->findOrFail($message_id);
+        $attachment = $message->attachments()->findOrFail($attachment_id);
+
+        if (! $this->audience->mayReceiveThreadMedia($request->user(), $group, $thread)) {
+            abort(403, 'You are not entitled to the photos in this conversation.');
+        }
+
+        if (! $attachment->exists()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This photo is no longer stored on the server.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        return $attachment->storage()->download(
+            $attachment->path,
+            $attachment->original_name,
+            [
+                // Sniffed from the bytes at upload and held to the allowlist.
+                'Content-Type' => $attachment->mime_type,
+                // No proxy may hold one family's photo for the next caller.
+                'Cache-Control' => 'private, no-store, max-age=0',
+            ],
+        );
     }
 
     /**
@@ -476,13 +548,45 @@ class GroupThreadsController extends Controller
         ];
     }
 
-    /** @return array<string,mixed> */
-    private function serializeMessage(GroupMessage $message): array
-    {
+    /**
+     * One message as an entitled staff reader sees it.
+     *
+     * Photos are OMITTED, not merely un-downloadable, for a reader who may not
+     * have them — a filename is itself a disclosure — and `media_withheld` says
+     * so, as the class story does. `is_mine` lets the screen put the reader's
+     * own messages on their side of the conversation.
+     *
+     * @return array<string,mixed>
+     */
+    private function serializeMessage(
+        GroupMessage $message,
+        Request $request,
+        $masjid_id,
+        $group_id,
+        bool $mayReceiveMedia,
+        $viewerId
+    ): array {
+        $attachments = $message->relationLoaded('attachments') ? $message->attachments : collect();
+
         return [
             'id' => $message->id,
             'thread_id' => $message->group_thread_id,
             'body' => $message->body,
+            'attachments' => $mayReceiveMedia
+                ? $attachments->map(fn ($attachment) => $attachment->toAudienceArray() + [
+                    // Back at the authenticated endpoint of the realm this
+                    // request came through; the SPA fetches it with the token.
+                    'download_path' => sprintf(
+                        '/api/%s/masjids/%s/groups/%s/threads/%d/messages/%d/attachments/%d',
+                        $this->realm($request), $masjid_id, $group_id,
+                        $message->group_thread_id, $message->id, $attachment->id
+                    ),
+                ])->values()->all()
+                : [],
+            'media_withheld' => ! $mayReceiveMedia && $attachments->isNotEmpty(),
+            'is_mine' => $message->author_user_id !== null
+                && $viewerId !== null
+                && (int) $message->author_user_id === (int) $viewerId,
             // Since T-015f a message may be written by a PARENT. Both principals
             // resolve through GroupMessage::authorLabel(), and the staff surface
             // is told which — a parent's reply must be visibly a parent's, not an
@@ -516,6 +620,36 @@ class GroupThreadsController extends Controller
             'group_label' => $masjid?->term('groups') ?? 'Groups',
             'thread_scopes' => GroupThread::SCOPES,
             'max_message_length' => (int) config('groups.messaging.max_message_length', 0),
+            'upload_key' => GroupPostFormRequest::UPLOAD_KEY,
+            'accepted_image_types' => (array) config('groups.media.mime_types', []),
+            'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
+            'max_images_per_message' => (int) config('groups.media.max_per_post', 0),
         ];
+    }
+
+    /**
+     * Which staff realm this request came through. The controller is mounted
+     * under both /api/admin and /api/teacher, and a link into the other one
+     * would be refused (the admin realm rejects a Teacher login).
+     */
+    private function realm(Request $request): string
+    {
+        return $request->is('api/teacher/*') ? 'teacher' : 'admin';
+    }
+
+    /**
+     * The uploaded photos, as a plain list.
+     *
+     * @return array<int,\Illuminate\Http\UploadedFile>
+     */
+    private function uploads(Request $request): array
+    {
+        $files = $request->file(GroupPostFormRequest::UPLOAD_KEY);
+
+        if ($files === null) {
+            return [];
+        }
+
+        return array_values(is_array($files) ? $files : [$files]);
     }
 }

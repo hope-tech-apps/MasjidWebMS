@@ -24,10 +24,10 @@ use Illuminate\Support\Facades\Log;
  * A `DELETE FROM group_posts WHERE ...` would be faster and would leave every
  * photograph on disk forever.
  *
- * Threads sweep on the same window. Their messages and read markers go by DB
- * cascade off GroupThread::purge(), which is SAFE for them in a way it is not
- * for posts: a thread message is rows only (attachments are deliberately out of
- * T-005c), so a cascade that fires no model events orphans nothing.
+ * Threads sweep on the same window, also THROUGH THE MODEL: a message can now
+ * carry photos, so GroupThread::purge() removes those (bytes included) in its
+ * `deleting` hook before the DB cascade takes the message and read-marker rows,
+ * which have nothing on disk and need no events of their own.
  *
  * Runs UNBOUND (no tenant on a console request), so the sweep is deliberately
  * explicit about crossing organizations via withoutMasjidScope() rather than
@@ -119,8 +119,9 @@ class PurgeGroupFeed extends Command
                 $messageCount = $thread->messages()->count();
 
                 if (! $dryRun) {
-                    // purge() -> forceDelete(); messages and read markers go by
-                    // DB cascade — rows only, nothing on disk to reach.
+                    // purge() -> forceDelete() -> GroupThread's deleting hook,
+                    // which removes message photos through the model (reaching
+                    // the disk); messages and read markers then go by cascade.
                     $thread->purge();
                 }
 

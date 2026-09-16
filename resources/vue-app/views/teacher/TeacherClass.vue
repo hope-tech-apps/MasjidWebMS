@@ -536,6 +536,10 @@
                                v-model.trim="composeTitle">
                         <textarea class="form-control mb-2" rows="3" placeholder="Share what happened today…"
                                   v-model.trim="composeBody"></textarea>
+                        <TeacherPhotoPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
+                        <p v-if="storyPhotos.length" class="text-muted small mb-2">
+                            Photos are shown only to families who have given photo consent.
+                        </p>
                         <div class="d-flex align-items-center gap-2">
                             <span v-if="postError" class="text-danger small">{{ postError }}</span>
                             <button class="btn btn-sm btn-success ms-auto" :disabled="posting || !composeBody" @click="submitPost">
@@ -559,9 +563,9 @@
                                 {{ post.author?.name || 'You' }} · {{ when(post.created_at) }}
                             </p>
                             <p class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
-                            <div v-if="post.attachments?.length" class="text-muted small">
-                                <i class="bi bi-paperclip"></i>
-                                {{ post.attachments.length }} attachment{{ post.attachments.length === 1 ? '' : 's' }}
+                            <div v-if="post.attachments?.length" class="d-flex flex-wrap gap-2">
+                                <TeacherPhoto v-for="a in post.attachments" :key="a.id"
+                                              :src="a.download_path" :name="a.file_name" />
                             </div>
                         </div>
                     </article>
@@ -602,6 +606,7 @@
                             <textarea v-model="composeForm.body" rows="3" maxlength="5000"
                                       class="form-control form-control-sm mt-2"
                                       placeholder="Your first message…"></textarea>
+                            <TeacherPhotoPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
 
                             <p class="text-muted small mt-2 mb-2">
                                 <template v-if="composeForm.about_membership_id">
@@ -610,12 +615,15 @@
                                 <template v-else>
                                     <i class="bi bi-exclamation-triangle me-1"></i>
                                     Every family in this class will see this conversation.
+                                    <template v-if="composePhotos.length">
+                                        Photos are shown only to families who have given photo consent.
+                                    </template>
                                 </template>
                             </p>
 
                             <div class="d-flex align-items-center gap-2">
                                 <button class="btn btn-sm btn-success"
-                                        :disabled="sendingCompose || !composeForm.subject.trim() || !composeForm.body.trim()"
+                                        :disabled="sendingCompose || !composeForm.subject.trim() || (!composeForm.body.trim() && !composePhotos.length)"
                                         @click="createThread">
                                     {{ sendingCompose ? 'Sending…' : 'Send' }}
                                 </button>
@@ -660,9 +668,17 @@
                             <div class="text-muted small">
                                 {{ m.is_mine ? 'You' : (m.author?.name || 'Guardian') }} · {{ when(m.created_at) }}
                             </div>
-                            <div class="rounded px-3 py-2 d-inline-block text-start"
+                            <div v-if="m.body" class="rounded px-3 py-2 d-inline-block text-start"
                                  :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
                                  style="white-space: pre-wrap;">{{ m.body }}</div>
+                            <div v-if="m.attachments?.length" class="d-flex flex-wrap gap-2 mt-1"
+                                 :class="m.is_mine ? 'justify-content-end' : ''">
+                                <TeacherPhoto v-for="a in m.attachments" :key="a.id"
+                                              :src="a.download_path" :name="a.file_name" />
+                            </div>
+                            <div v-else-if="m.media_withheld" class="text-muted small fst-italic mt-1">
+                                A photo in this message is hidden.
+                            </div>
                         </div>
                     </div>
                     <div class="card-footer bg-white">
@@ -672,11 +688,15 @@
                             <div class="d-flex gap-2 align-items-end">
                                 <textarea v-model="replyBody" class="form-control" rows="2"
                                           placeholder="Write a reply…" @keydown.ctrl.enter="sendReply"></textarea>
-                                <button class="btn btn-success" :disabled="!replyBody.trim() || sendingReply" @click="sendReply">
+                                <button class="btn btn-success" :disabled="(!replyBody.trim() && !replyPhotos.length) || sendingReply" @click="sendReply">
                                     <span v-if="sendingReply" class="spinner-border spinner-border-sm"></span>
                                     <span v-else>Send</span>
                                 </button>
                             </div>
+                            <TeacherPhotoPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
+                            <p v-if="replyPhotos.length && openedThread.scope === 'group'" class="text-muted small mb-0 mt-1">
+                                This conversation is with the whole class. Photos are shown only to families who have given photo consent.
+                            </p>
                         </template>
                     </div>
                 </div>
@@ -1485,6 +1505,8 @@
 import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
+import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
+import TeacherPhotoPicker from '@/views/teacher/TeacherPhotoPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useAuthStore } from '@/stores/authStore';
@@ -2177,6 +2199,7 @@ const composeError = ref('');
 const composeForm = ref<{ about_membership_id: number | null; subject: string; body: string }>({
     about_membership_id: null, subject: '', body: '',
 });
+const composePhotos = ref<File[]>([]);
 
 const startCompose = () => {
     // Defaults to the FIRST student rather than the whole class: the common case
@@ -2185,6 +2208,7 @@ const startCompose = () => {
         about_membership_id: students.value[0]?.membership_id ?? null,
         subject: '', body: '',
     };
+    composePhotos.value = [];
     composeError.value = '';
     composing.value = true;
 };
@@ -2194,20 +2218,26 @@ const createThread = async () => {
     composeError.value = '';
     try {
         const about = composeForm.value.about_membership_id;
-        await TeacherApiService.post(`${base.value}/threads`, {
+        const fields: Record<string, string | number> = {
             subject: composeForm.value.subject,
             // `participant` reaches one child's guardians; `group` reaches every
             // family in the class — the same audience as the class story.
             scope: about ? 'participant' : 'group',
             ...(about ? { about_membership_id: about } : {}),
             body: composeForm.value.body,
-        });
+        };
+
+        if (composePhotos.value.length) {
+            await TeacherApiService.postForm(`${base.value}/threads`, withPhotos(fields, composePhotos.value));
+        } else {
+            await TeacherApiService.post(`${base.value}/threads`, fields);
+        }
+
         composing.value = false;
+        composePhotos.value = [];
         await loadThreads();
     } catch (e: any) {
-        composeError.value = e?.response?.data?.message
-            ?? e?.response?.data?.data?.subject?.[0]
-            ?? 'That message could not be sent.';
+        composeError.value = photoErrorText(e, 'That message could not be sent.');
     } finally {
         sendingCompose.value = false;
     }
@@ -2789,11 +2819,29 @@ const removeHifz = async (entry: any) => {
     }
 };
 
+// ============================================================ PHOTOS
+// Shared by the class story and messages. Photos go as multipart, in the same
+// top-level `images` bag the server reads for both.
+const withPhotos = (fields: Record<string, string | number>, photos: File[]): FormData => {
+    const form = new FormData();
+    Object.entries(fields).forEach(([key, value]) => form.append(key, String(value)));
+    photos.forEach((photo) => form.append('images[]', photo, photo.name));
+    return form;
+};
+
+// nginx answers an oversized request itself, as HTML, so apiErrorText would
+// only have axios's "status code 413" to show.
+const photoErrorText = (e: any, fallback: string): string =>
+    e?.response?.status === 413
+        ? 'Those photos are too large to send together. Try sending fewer at a time.'
+        : apiErrorText(e, fallback);
+
 // ============================================================ STORY
 const posts = ref<any[]>([]);
 const postsLoading = ref(false);
 const composeTitle = ref('');
 const composeBody = ref('');
+const storyPhotos = ref<File[]>([]);
 const posting = ref(false);
 const postError = ref('');
 const removingPost = ref<string | number | null>(null);
@@ -2815,15 +2863,22 @@ const submitPost = async () => {
     posting.value = true;
     postError.value = '';
     try {
-        await TeacherApiService.post(`${base.value}/posts`, {
-            title: composeTitle.value || null,
-            body: composeBody.value,
-        });
+        if (storyPhotos.value.length) {
+            const fields: Record<string, string> = { body: composeBody.value };
+            if (composeTitle.value) fields.title = composeTitle.value;
+            await TeacherApiService.postForm(`${base.value}/posts`, withPhotos(fields, storyPhotos.value));
+        } else {
+            await TeacherApiService.post(`${base.value}/posts`, {
+                title: composeTitle.value || null,
+                body: composeBody.value,
+            });
+        }
         composeTitle.value = '';
         composeBody.value = '';
+        storyPhotos.value = [];
         await loadPosts();
     } catch (e: any) {
-        postError.value = e?.response?.data?.message || 'The post could not be published.';
+        postError.value = photoErrorText(e, 'The post could not be published.');
     } finally {
         posting.value = false;
     }
@@ -2847,6 +2902,7 @@ const threadsLoading = ref(false);
 const openedThread = ref<any>(null);
 const openedMessages = ref<any[]>([]);
 const replyBody = ref('');
+const replyPhotos = ref<File[]>([]);
 const sendingReply = ref(false);
 const replyError = ref('');
 
@@ -2867,6 +2923,7 @@ const openThread = async (thread: any) => {
         const res = await TeacherApiService.get(`${base.value}/threads/${thread.id}`);
         openedThread.value = res.data?.data?.thread ?? thread;
         replyBody.value = '';
+        replyPhotos.value = [];
         replyError.value = '';
         openedMessages.value = rowsOf(res.data?.data?.messages);
     } catch {
@@ -2876,18 +2933,20 @@ const openThread = async (thread: any) => {
 
 const sendReply = async () => {
     const body = replyBody.value.trim();
-    if (!body || !openedThread.value) return;
+    if ((!body && !replyPhotos.value.length) || !openedThread.value) return;
     sendingReply.value = true;
     replyError.value = '';
     try {
-        const res = await TeacherApiService.post(
-            `${base.value}/threads/${openedThread.value.id}/messages`, { body }
-        );
+        const url = `${base.value}/threads/${openedThread.value.id}/messages`;
+        const res = replyPhotos.value.length
+            ? await TeacherApiService.postForm(url, withPhotos({ body }, replyPhotos.value))
+            : await TeacherApiService.post(url, { body });
         openedMessages.value.push(res.data?.data);
         replyBody.value = '';
+        replyPhotos.value = [];
         await loadThreads();
     } catch (e: any) {
-        replyError.value = e?.response?.data?.message || 'Your reply could not be sent.';
+        replyError.value = photoErrorText(e, 'Your reply could not be sent.');
     } finally {
         sendingReply.value = false;
     }

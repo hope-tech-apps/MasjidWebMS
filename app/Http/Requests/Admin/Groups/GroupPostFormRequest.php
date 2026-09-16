@@ -68,15 +68,27 @@ abstract class GroupPostFormRequest extends BaseFormRequest
         ];
     }
 
+    /**
+     * What the images are attached to, for the error text. Conversation
+     * messages reuse these rules (StoreGroupMessageRequest,
+     * StoreGroupThreadRequest) because a photo of a child is the same file
+     * wherever it is sent; only the noun in the sentence differs.
+     */
+    protected function uploadNoun(): string
+    {
+        return 'post';
+    }
+
     public function messages(): array
     {
         $maxKb = (int) config('groups.media.max_size_kb', 8192);
         $maxPerPost = (int) config('groups.media.max_per_post', 8);
+        $noun = $this->uploadNoun();
 
         return [
-            self::UPLOAD_KEY . '.max' => 'A post may carry at most ' . $maxPerPost . ' images.',
+            self::UPLOAD_KEY . '.max' => 'A ' . $noun . ' may carry at most ' . $maxPerPost . ' images.',
             self::UPLOAD_KEY . '.*.file' => 'The upload could not be read as a file.',
-            self::UPLOAD_KEY . '.*.mimetypes' => 'That file type is not accepted; group posts carry images only.',
+            self::UPLOAD_KEY . '.*.mimetypes' => 'That file type is not accepted; a group ' . $noun . ' can carry images only.',
             self::UPLOAD_KEY . '.*.max' => 'That image is larger than the ' . $maxKb . 'KB limit.',
         ];
     }

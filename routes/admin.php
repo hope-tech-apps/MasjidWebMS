@@ -1066,6 +1066,8 @@ Route::prefix('admin')->group(function () {
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::get('/{thread_id}', 'show')->middleware('permission:view contacts');
                         Route::post('/{thread_id}/messages', 'storeMessage')->middleware('permission:manage contacts');
+                        Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment')
+                            ->middleware('permission:view contacts');
                         Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
                         Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');
                         Route::delete('/{thread_id}', 'destroy')->middleware('permission:manage contacts');

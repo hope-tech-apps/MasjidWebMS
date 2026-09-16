@@ -260,9 +260,19 @@
                             <div class="text-muted small">
                                 {{ m.is_mine ? t('msg_you') : (m.author?.name || t('the_school')) }} · {{ when(m.created_at) }}
                             </div>
-                            <div class="rounded px-3 py-2 d-inline-block align-start"
+                            <div v-if="m.body" class="rounded px-3 py-2 d-inline-block align-start"
                                  :class="m.is_mine ? 'bg-success-subtle' : 'bg-light'"
                                  style="white-space: pre-wrap;" dir="auto">{{ txMessageBody(m) }}</div>
+                            <!-- Photos a teacher sent. Fetched with the token, like
+                                 class-story photos; a parent without photo consent
+                                 on a class-wide conversation gets none, and is told. -->
+                            <div v-if="m.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
+                                <FamilyAttachment v-for="a in m.attachments" :key="a.id"
+                                                  :src="messagePhotoUrl(m, a.id)" :name="a.file_name" />
+                            </div>
+                            <p v-else-if="m.media_withheld" class="text-muted small fst-italic mb-0 mt-1">
+                                {{ t('message_media_withheld') }}
+                            </p>
                         </div>
                     </div>
 
@@ -1059,6 +1069,8 @@ const when = (iso: string | null) => {
 
 const attachmentUrl = (postId: number, attachmentId: number) =>
     `${base.value}/posts/${postId}/attachments/${attachmentId}`;
+const messagePhotoUrl = (message: any, attachmentId: number) =>
+    `${base.value}/threads/${message.thread_id}/messages/${message.id}/attachments/${attachmentId}`;
 
 const fail = (e: any) => {
     if (familyStore.handleAuthFailure(e?.response?.status)) {

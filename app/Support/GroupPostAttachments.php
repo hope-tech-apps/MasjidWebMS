@@ -98,8 +98,11 @@ class GroupPostAttachments
      * Path separators and control characters are removed rather than escaped:
      * this value is shown to a reader and used as a DOWNLOAD name, and neither
      * use has any reason to carry a directory or a newline.
+     *
+     * Public because GroupMessageAttachments stores the same kind of file and
+     * must sanitize it the same way, not with a second copy of this.
      */
-    private static function safeOriginalName(UploadedFile $file): string
+    public static function safeOriginalName(UploadedFile $file): string
     {
         $name = (string) $file->getClientOriginalName();
 

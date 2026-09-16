@@ -10,6 +10,7 @@ use App\Models\Contact;
 use App\Models\GroupMessage;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
+use App\Models\Masjid;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
@@ -46,6 +47,12 @@ use Symfony\Component\HttpFoundation\Response;
  * none. Both halves are now real columns — `group_messages.author_contact_id`
  * and `group_thread_reads.contact_id` — so this surface writes exactly two
  * things and no more: a reply, and the reader's own bookmark.
+ *
+ * PHOTOS. A teacher's message may carry photos. A parent receives them on the
+ * same terms as the conversation, plus media consent on a CLASS-WIDE thread
+ * (GroupAudience::mayReceiveThreadMedia()), and downloads them only through
+ * downloadAttachment(), which re-resolves the chain and asks again. A parent's
+ * own reply stays text only — StoreFamilyMessageRequest accepts no files.
  *
  * WHAT A REPLY STILL MAY NOT DO. It cannot start a conversation (a parent
  * opening a thread about their own child would route around the teacher who
@@ -116,12 +123,14 @@ class GroupThreadsController extends FamilyController
             abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this conversation.');
         }
 
+        $mayReceiveMedia = $this->audience->mayReceiveThreadMedia($this->contact(), $group, $thread);
+
         $messages = $thread->messages()
-            ->with(['author:id,name', 'authorContact:id,first_name,last_name'])
+            ->with(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->paginate($this->perPage($request, 50))
-            ->through(fn (GroupMessage $message) => $this->serializeMessage($message));
+            ->through(fn (GroupMessage $message) => $this->serializeMessage($message, $mayReceiveMedia));
 
         // Opening a conversation is reading it. The bookmark is the READER'S
         // own and nobody else's — it records that this parent has seen it, and
@@ -136,6 +145,44 @@ class GroupThreadsController extends FamilyController
             ],
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * GET .../threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}
+     *
+     * One photo, as bytes behind the bearer token — never a signed or cached
+     * URL, so access ends the moment standing or consent does. The whole chain
+     * is re-resolved link by link (a foreign id anywhere is a 404), and the
+     * decision is asked again here, at the point the bytes leave.
+     */
+    public function downloadAttachment($masjid_id, $group_id, $thread_id, $message_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+
+        $group = $this->group($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+        $message = $thread->messages()->findOrFail($message_id);
+        $attachment = $message->attachments()->findOrFail($attachment_id);
+
+        if (! $this->audience->mayReceiveThreadMedia($this->contact(), $group, $thread)) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to the photos in this conversation.');
+        }
+
+        if (! $attachment->exists()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This photo is no longer stored on the server.',
+            ], Response::HTTP_NOT_FOUND);
+        }
+
+        return $attachment->storage()->download(
+            $attachment->path,
+            $attachment->original_name,
+            [
+                'Content-Type' => $attachment->mime_type,
+                'Cache-Control' => 'private, no-store, max-age=0',
+            ],
+        );
     }
 
     // ------------------------------------------------------------- internals
@@ -277,8 +324,10 @@ class GroupThreadsController extends FamilyController
 
         return response()->json([
             'status' => 'success',
+            // A parent's reply carries no photos, so there is nothing to withhold.
             'data' => $this->serializeMessage(
-                $message->load(['author:id,name', 'authorContact:id,first_name,last_name'])
+                $message->load(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments']),
+                true
             ),
         ], Response::HTTP_CREATED);
     }
@@ -357,12 +406,22 @@ class GroupThreadsController extends FamilyController
     /**
      * @return array<string,mixed>
      */
-    private function serializeMessage(GroupMessage $message): array
+    private function serializeMessage(GroupMessage $message, bool $mayReceiveMedia): array
     {
+        $attachments = $message->relationLoaded('attachments') ? $message->attachments : collect();
+
         return [
             'id' => (int) $message->id,
             'thread_id' => (int) $message->group_thread_id,
             'body' => $message->body,
+            // Omitted entirely for a parent who may not have them — a filename
+            // is itself a disclosure — and `media_withheld` says so honestly.
+            // No URL: the portal builds the download path from the ids, as it
+            // does for class-story photos.
+            'attachments' => $mayReceiveMedia
+                ? $attachments->map(fn ($attachment) => $attachment->toAudienceArray())->values()->all()
+                : [],
+            'media_withheld' => ! $mayReceiveMedia && $attachments->isNotEmpty(),
             // A name, not an id. `users.id` is an internal staff identifier and
             // a parent has nothing to do with it; the teacher's name is what the
             // conversation is with. Since T-015f the author may be a parent, so

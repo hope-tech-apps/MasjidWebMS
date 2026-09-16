@@ -94,8 +94,9 @@ class Group extends Model
     /**
      * Force-deleting a group must reach the disk (T-005b).
      *
-     * `group_posts` and `group_post_attachments` cascade off `groups` at the DB
-     * level, and a DB cascade fires NO model events — so without this hook a
+     * `group_posts`, `group_post_attachments`, `group_threads` and the photos
+     * sent in them cascade off `groups` at the DB level, and a DB cascade fires
+     * NO model events — so without this hook a
      * hard-deleted group would leave every classroom photograph it ever carried
      * on disk forever, unreferenced and unpurgeable. See
      * .claude/rules/private-uploads.md.
@@ -119,6 +120,11 @@ class Group extends Model
             // unreferenced and unpurgeable — the exact failure the paragraph
             // above describes for post images.
             $group->resources()->get()->each->delete();
+
+            // Photos sent in conversations, likewise: purge() on each thread
+            // runs GroupThread's hook, which removes them through the model
+            // before the cascade off `groups` takes the rows.
+            $group->threads()->withTrashed()->get()->each->purge();
         });
     }
 

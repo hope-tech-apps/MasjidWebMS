@@ -2,28 +2,42 @@
 
 namespace App\Http\Requests\Admin\Groups;
 
-use App\Http\Requests\BaseFormRequest;
-
 /**
- * Post one message into a group thread (T-005c).
+ * Post one message into a group thread (T-005c) — text, photos, or both.
  *
- * Body text only, with the same configured ceiling as a feed post
- * (config/groups.php `messaging.max_message_length`): a thread message is a
- * note to a parent or a teacher, not a document store. Attachments are
- * deliberately absent from this slice — the feed owns media, and a thread file
- * would need the whole private-disk pipeline, not a smaller copy of it.
+ * The text keeps the configured ceiling (config/groups.php
+ * `messaging.max_message_length`). Photos ride in the same top-level `images`
+ * bag as the class story and are held to the same allowlist and size ceiling
+ * (`config('groups.media')`, sniffed from the bytes) — which is why this extends
+ * GroupPostFormRequest rather than restating the rules: one definition of what
+ * a photo of a child may be, wherever it is sent. A message needs one or the
+ * other; an empty message is refused.
  *
- * WHO may post is not decided here: the route requires `manage contacts`, and
+ * WHO may post is not decided here: the admin route requires
+ * `manage contacts` (the teacher route, `teacher.leads`), and
  * GroupThreadsController additionally requires that the caller may READ the
  * thread (App\Support\GroupAudience) — a conversation is only writable by
  * people who are in it.
  */
-class StoreGroupMessageRequest extends BaseFormRequest
+class StoreGroupMessageRequest extends GroupPostFormRequest
 {
     public function rules(): array
     {
-        return [
-            'body' => 'required|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
-        ];
+        return array_merge([
+            'body' => 'nullable|required_without:' . self::UPLOAD_KEY
+                . '|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
+        ], $this->imageRules());
+    }
+
+    protected function uploadNoun(): string
+    {
+        return 'message';
+    }
+
+    public function messages(): array
+    {
+        return array_merge(parent::messages(), [
+            'body.required_without' => 'Write a message or attach a photo.',
+        ]);
     }
 }

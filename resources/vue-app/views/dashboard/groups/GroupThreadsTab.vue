@@ -99,7 +99,14 @@
                             <div class="small text-muted">
                                 {{ message.author?.name || 'Unknown' }} &middot; {{ formatDateTime(message.created_at) }}
                             </div>
-                            <div class="message-body">{{ message.body }}</div>
+                            <div v-if="message.body" class="message-body">{{ message.body }}</div>
+                            <div v-if="message.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
+                                <GroupMessagePhoto v-for="a in message.attachments" :key="a.id"
+                                                   :src="a.download_path" :name="a.file_name" />
+                            </div>
+                            <div v-else-if="message.media_withheld" class="small text-muted fst-italic mt-1">
+                                A photo in this message is hidden from you.
+                            </div>
                         </div>
                     </div>
 
@@ -193,6 +200,7 @@
 import { ref, computed, onBeforeMount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
+import GroupMessagePhoto from './GroupMessagePhoto.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { GroupMessage, GroupThread, GroupThreadPayload } from '@/core/types/data/masjid-related/GroupThread';

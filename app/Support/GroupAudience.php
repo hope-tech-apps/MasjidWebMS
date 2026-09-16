@@ -397,6 +397,29 @@ class GroupAudience
     }
 
     /**
+     * May this user receive the PHOTOS sent in `$thread`?
+     *
+     * Anyone who may read the conversation, with one addition for a CLASS-WIDE
+     * thread: that is a broadcast to every family, exactly like the class story,
+     * so its photos need the same media consent the story's photos need. A
+     * participant thread is a conversation with the named child's own family,
+     * and consent is not consulted there for the reason mayReceiveThread()
+     * gives. One decision, used by every realm's serializer and download.
+     */
+    public function mayReceiveThreadMedia(?Authenticatable $principal, Group $group, GroupThread $thread): bool
+    {
+        if (! $this->mayReceiveThread($principal, $group, $thread)) {
+            return false;
+        }
+
+        if ($thread->isGroupWide()) {
+            return $this->mayReceive($principal, $group, self::DISCLOSURE_MEDIA);
+        }
+
+        return true;
+    }
+
+    /**
      * The threads of `$group` this user may read, as a constrained query —
      * or null when the caller has no standing in the group at all.
      *

@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\Admin\Groups;
 
-use App\Http\Requests\BaseFormRequest;
 use App\Models\GroupThread;
 use Illuminate\Validation\Rule;
 
@@ -22,9 +21,11 @@ use Illuminate\Validation\Rule;
  * re-implementing the tenant filter in an `exists:` rule would duplicate the
  * guardrail (.claude/rules/tenant-scoping.md).
  *
- * `body` optionally carries the thread's first message, written in the same
- * transaction — a conversation usually opens with something to say, but an
- * empty thread is legal (an office preparing a channel before term starts).
+ * `body` and `images` optionally carry the thread's first message, written in
+ * the same transaction — a conversation usually opens with something to say,
+ * but an empty thread is legal (an office preparing a channel before term
+ * starts). The photos are held to the class story's rules; see
+ * GroupPostFormRequest, which this extends for exactly that.
  *
  * `retained_until` mirrors StoreGroupPostRequest: optional, because the model
  * stamps the configured window when it is absent; after_or_equal:today because
@@ -33,11 +34,11 @@ use Illuminate\Validation\Rule;
  * masjid_id is NOT accepted and never will be — the BelongsToMasjid creating
  * hook stamps it from the bound tenant.
  */
-class StoreGroupThreadRequest extends BaseFormRequest
+class StoreGroupThreadRequest extends GroupPostFormRequest
 {
     public function rules(): array
     {
-        return [
+        return array_merge([
             'subject' => 'required|string|max:255',
             'scope' => ['required', Rule::in(GroupThread::SCOPES)],
             'about_membership_id' => [
@@ -47,16 +48,21 @@ class StoreGroupThreadRequest extends BaseFormRequest
             ],
             'body' => 'nullable|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
             'retained_until' => 'nullable|date|after_or_equal:today',
-        ];
+        ], $this->imageRules());
+    }
+
+    protected function uploadNoun(): string
+    {
+        return 'message';
     }
 
     public function messages(): array
     {
-        return [
+        return array_merge(parent::messages(), [
             'about_membership_id.required_if' =>
                 'A participant-scoped thread must name the membership of the member it concerns.',
             'about_membership_id.prohibited_unless' =>
                 'Only a participant-scoped thread may name a member it concerns.',
-        ];
+        ]);
     }
 }

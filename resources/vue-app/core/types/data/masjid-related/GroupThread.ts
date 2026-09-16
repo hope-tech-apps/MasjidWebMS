@@ -41,11 +41,26 @@ export type GroupThread = {
     updated_at: string | null;
 };
 
+/** A photo sent with a message. Fetched through `download_path` with the token. */
+export type GroupMessageAttachment = {
+    id: number;
+    file_name: string;
+    mime_type: string;
+    size_bytes: number;
+    download_path: string;
+};
+
 export type GroupMessage = {
     id: number;
     thread_id: number;
+    /** Empty when the message is photos only. */
     body: string;
-    author: { id: number; name: string } | null;
+    author: { id?: number; name: string } | null;
+    author_is_parent?: boolean;
+    /** Omitted (empty) for a reader who may not have them; see media_withheld. */
+    attachments?: GroupMessageAttachment[];
+    media_withheld?: boolean;
+    is_mine?: boolean;
     created_at: string | null;
 };
 

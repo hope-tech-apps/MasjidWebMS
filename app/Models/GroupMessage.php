@@ -6,14 +6,16 @@ use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * GroupMessage — one message inside a group thread (PLAN T-005c).
  *
- * Body text only; the feed owns media and thread attachments are deferred
- * entirely. WHO may write one is "whoever may READ the thread, holding the
- * roster permission" — decided by App\Support\GroupAudience plus the
- * `permission:manage contacts` route gate, never here.
+ * Text, and — since staff can send photos in a conversation — optional images
+ * in `attachments()` (GroupMessageAttachment, on the private disk). WHO may
+ * write one is "whoever may READ the thread, holding the roster permission" —
+ * decided by App\Support\GroupAudience plus the `permission:manage contacts`
+ * route gate (or `teacher.leads`), never here.
  *
  * THE AUTHOR IS A STAFF USER OR A GUARDIAN CONTACT — never both, sometimes
  * neither (see booted()).
@@ -79,11 +81,24 @@ class GroupMessage extends Model
                 );
             }
         });
+
+        // A message deleted THROUGH THE MODEL takes its photos' bytes with it.
+        // Messages usually go by the DB cascade off their thread instead, which
+        // fires no events — GroupThread's force-delete hook covers that path.
+        static::deleting(function (self $message): void {
+            $message->attachments()->get()->each->delete();
+        });
     }
 
     public function thread(): BelongsTo
     {
         return $this->belongsTo(GroupThread::class, 'group_thread_id');
+    }
+
+    /** Photos sent with this message. Bytes on the private disk; see the model. */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(GroupMessageAttachment::class);
     }
 
     /** The admin account that wrote it; null once that account is deleted. */

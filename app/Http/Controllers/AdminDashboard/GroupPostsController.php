@@ -308,8 +308,14 @@ class GroupPostsController extends Controller
                 // The only link that exists for one of these: back at the
                 // authenticated endpoint, which the SPA fetches with the bearer
                 // token. A plain <a href> would 401 — and that is the point.
+                //
+                // For the realm the request came through. This controller is
+                // also mounted under /api/teacher, and the admin realm refuses
+                // a Teacher login — a hardcoded /api/admin link gave every
+                // teacher a photo they could not open.
                 'download_path' => sprintf(
-                    '/api/admin/masjids/%s/groups/%s/posts/%d/attachments/%d',
+                    '/api/%s/masjids/%s/groups/%s/posts/%d/attachments/%d',
+                    request()->is('api/teacher/*') ? 'teacher' : 'admin',
                     $masjid_id, $group_id, $post->id, $attachment->id
                 ),
             ])->values()->all()

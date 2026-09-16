@@ -225,7 +225,12 @@ Route::prefix('teacher')
                         // can already post to — so it grants no new reach.
                         Route::post('/threads', [GroupThreadsController::class, 'store']);
                         Route::get('/threads/{thread_id}', [GroupThreadsController::class, 'show']);
+                        // storeMessage (and store, above) accept photos as well as
+                        // text — the same private-disk pipeline as the class
+                        // story. The download is a GET, so the counted write list
+                        // does not change.
                         Route::post('/threads/{thread_id}/messages', [GroupThreadsController::class, 'storeMessage']);
+                        Route::get('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}', [GroupThreadsController::class, 'downloadAttachment']);
 
                         // Student avatar OVERRIDE — group-scoped (solves the
                         // ContactAvatarController {contact_id} reverse-lookup: the

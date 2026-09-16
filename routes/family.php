@@ -240,6 +240,9 @@ Route::prefix('family')
                 ->group(function () {
                     Route::get('/', 'index');
                     Route::get('/{thread_id}', 'show');
+                    // A photo a teacher sent. A GET, so the realm's counted
+                    // writes are unchanged; the controller asks consent again.
+                    Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment');
 
                     // A parent OPENS a conversation. The SECOND write this realm
                     // has, and deliberately narrower than the staff one: scope is

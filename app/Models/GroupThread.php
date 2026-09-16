@@ -89,6 +89,24 @@ class GroupThread extends Model
                 $thread->retained_until = now()->addDays($days)->toDateString();
             }
         });
+
+        // A force delete must reach the disk. Messages and their attachment rows
+        // go by DB cascade, which fires no model events, so the photos are
+        // removed THROUGH THE MODEL first — each attachment's own `deleting`
+        // hook deletes its file. Only on a FORCE delete: the ordinary destroy
+        // path soft-deletes on purpose (the mis-click guard), and that must not
+        // destroy the photos a family was sent. Bytes go when retention says so.
+        static::deleting(function (self $thread): void {
+            if (! $thread->isForceDeleting()) {
+                return;
+            }
+
+            GroupMessageAttachment::withoutMasjidScope()
+                ->whereIn('group_message_id', $thread->messages()->select('id'))
+                ->get()
+                ->each
+                ->delete();
+        });
     }
 
     /**
@@ -164,14 +182,11 @@ class GroupThread extends Model
     }
 
     /**
-     * Destroy this thread for good, messages and read markers with it.
+     * Destroy this thread for good, messages, photos and read markers with it.
      *
-     * forceDelete() is enough HERE, unlike GroupPost::purge(): the DB cascade
-     * onto group_messages and group_thread_reads fires no model events, but no
-     * model events are needed — messages carry no bytes on disk (attachments
-     * are deliberately out of this slice), so cascading rows orphans nothing.
-     * If thread attachments ever arrive, this method is where the model-driven
-     * teardown goes, exactly as GroupPost does it.
+     * Through forceDelete() so the `deleting` hook above runs: it removes every
+     * message photo through the model (reaching the disk) before the DB cascade
+     * takes the message and read-marker rows, which need no events of their own.
      */
     public function purge(): void
     {
