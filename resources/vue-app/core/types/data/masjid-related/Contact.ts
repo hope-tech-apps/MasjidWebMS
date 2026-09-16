@@ -193,10 +193,12 @@ export type FamilyLoginEvent = {
      * `login_email` is ever cleared, and `address_claimed` is its other half —
      * written on the member who TOOK the address, because the released half sits
      * on a record that is routinely soft-deleted and therefore on no screen at
-     * all. See ContactLoginEvent::ACTIONS; the column is a plain string
-     * precisely so verbs can be added without a migration.
+     * all. `password_set` / `password_cleared` record a password chosen or
+     * removed; an operator's name on `password_cleared` means moving the login
+     * to another address ended it. See ContactLoginEvent::ACTIONS; the column
+     * is a plain string precisely so verbs can be added without a migration.
      */
-    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed';
+    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed' | 'password_set' | 'password_cleared';
     login_email: string | null;
     actor_name: string;
     actor_email: string | null;

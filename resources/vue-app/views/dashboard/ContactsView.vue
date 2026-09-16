@@ -678,8 +678,9 @@
                                 <p class="text-muted small">
                                     This lets <strong>{{ selectedContact.first_name }} {{ selectedContact.last_name }}</strong>
                                     sign in and see the records of the children they are listed as a guardian for —
-                                    and only those children. They receive a one-time code at this address each time
-                                    they sign in; there is no password.
+                                    and only those children. They sign in with a one-time code sent to this address,
+                                    and may choose a password of their own after that. Nobody at the office can see or
+                                    set it.
                                 </p>
 
                                 <label class="form-label">Sign-in email <span class="text-danger">*</span></label>
@@ -694,6 +695,20 @@
                                     Deliberately separate from the contact email on their record, which is often
                                     imported and shared by a whole household. Use an address that belongs to this
                                     parent alone — two members cannot share one sign-in address.
+                                </div>
+
+                                <!--
+                                    A different address ends what the old one
+                                    proved (FamilyAccessService::write): every
+                                    session, and the password, in the portal
+                                    and the app alike. Said before the click,
+                                    because the member finds out at their next
+                                    sign-in.
+                                -->
+                                <div v-if="familyLoginChangesAddress" class="alert alert-warning mt-3 mb-0 py-2 small">
+                                    Changing the address signs this member out and removes any password they chose,
+                                    in the parent portal and the app. They sign in again with a code sent to the new
+                                    address.
                                 </div>
 
                                 <div v-if="familyLoginError" class="alert alert-danger mt-3 mb-0 py-2 small">
@@ -1217,6 +1232,14 @@ const familyLoginLoading = ref(false);
 const familyLoginSaving = ref(false);
 const showFamilyLoginModal = ref(false);
 const familyLoginEmail = ref('');
+
+/** The address being saved differs from the one this member signs in with now. */
+const familyLoginChangesAddress = computed(() => {
+    const current = (familyLogin.value?.login_email || '').trim().toLowerCase();
+    const typed = familyLoginEmail.value.trim().toLowerCase();
+
+    return current !== '' && typed !== '' && typed !== current;
+});
 const familyLoginError = ref('');
 // Set by the SERVER's refusal (`reassignable`), never by reading the message:
 // only one of the five refusals `enable()` can produce has a way through, and
@@ -1268,7 +1291,7 @@ const loadFamilyLogin = async (contactId: number | string) => {
 };
 
 /**
- * The access history's five verbs. `merged`, `address_released` and
+ * The access history's seven verbs. `merged`, `address_released` and
  * `address_claimed` are not grants and must not be badged as one — the previous
  * binary rendering printed "Enabled" over every row that was not a revocation,
  * which on a carried trail meant labelling a merge as somebody handing out
@@ -1282,6 +1305,10 @@ const eventLabel = (action: FamilyLoginEvent['action']): string => {
         case 'merged': return 'Merged in';
         case 'address_released': return 'Address released';
         case 'address_claimed': return 'Address taken over';
+        // Written since 2026-09-08 and badged "Enabled" until 2026-09-16, when
+        // moving a login to another address started clearing the password.
+        case 'password_set': return 'Password set';
+        case 'password_cleared': return 'Password removed';
         default: return 'Enabled';
     }
 };
@@ -1292,6 +1319,8 @@ const eventBadgeClass = (action: FamilyLoginEvent['action']): string => {
         case 'merged': return 'bg-info-subtle text-info';
         case 'address_released': return 'bg-warning-subtle text-warning';
         case 'address_claimed': return 'bg-warning-subtle text-warning';
+        case 'password_set': return 'bg-secondary-subtle text-secondary';
+        case 'password_cleared': return 'bg-secondary-subtle text-secondary';
         default: return 'bg-success-subtle text-success';
     }
 };
