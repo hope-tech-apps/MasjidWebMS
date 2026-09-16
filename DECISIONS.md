@@ -1403,5 +1403,17 @@ menu — where until today it decided only the first.
 
 **Deploy notes (none of this has been done).**
 - The whole of S1 is additive. Three migrations, all nullable or new tables.
-- Set the `/menu` kill row immediately after the S1 deploy and leave it until S2b (item 5).
+- **The `/menu` kill row is a NUMBERED DEPLOY STEP, not a thing to remember** (item 5). `AppMenu::killed()`
+  reads "no row" as NOT killed and the migration seeds nothing, so a deploy that does not run this ships
+  `/menu` LIVE — the opposite of the decision. Immediately after `bin/deploy`, and before telling anyone
+  the stage is up:
+
+  ```
+  php artisan app-menu:kill --reason="S1: the menu stays dark until S2b" --by="<name>"
+  curl -s -o /dev/null -w '%{http_code}\n' https://masjid.hopetechapps.com/api/mobile/masjids/13/menu   # expect 404
+  ```
+
+  The second line is the step. The first can succeed against a box whose cache still says live for up to
+  60 seconds (`AppMenu::KILL_CACHE_TTL`), so the command's exit status is not the proof — the endpoint is.
+  `s1-prod-postcheck.sh` asserts the 404 for the same reason.
 - `app:legacy-features-report` needs the system cron already running `schedule:run`.
