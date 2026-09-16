@@ -182,4 +182,128 @@ class InstalledBuildsContractTest extends TestCase
         $this->assertArrayNotHasKey('tabs', $orgs);
         $this->assertArrayNotHasKey('home', $orgs);
     }
+
+    // ------------------------------------------ registration cannot be refused
+
+    /**
+     * The shapes a shipped build could plausibly already be sending in a body
+     * key named after one of the three new telemetry columns — an integer build
+     * number, a value with a space, a platform nobody ships, a string past the
+     * column width. None of them is a reason to refuse a launch.
+     *
+     * @return array<string, array{array<string, mixed>}>
+     */
+    public static function unusableTelemetryBodies(): array
+    {
+        return [
+            'an integer build number' => [['app_version' => 44]],
+            'an integer build' => [['app_build' => 44]],
+            'a boolean' => [['app_version' => true]],
+            'an array' => [['app_version' => ['1.0']]],
+            'a version with a space' => [['app_version' => '2.5 (44)']],
+            'a platform nobody ships' => [['app_platform' => 'tvos']],
+            'a platform in the wrong case' => [['app_platform' => 'iOS']],
+            'past the column width' => [['app_version' => str_repeat('9', 300)]],
+            'all three at once' => [[
+                'app_platform' => 'windows',
+                'app_version' => 44,
+                'app_build' => str_repeat('x', 64),
+            ]],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unusableTelemetryBodies')]
+    #[Test]
+    public function a_first_launch_is_never_refused_over_a_telemetry_field(array $extra): void
+    {
+        // THE launch-critical verb. A refused registration is a new handset
+        // stranded on its splash screen, and the refusal is well-formed so
+        // there is no server-side symptom to find it by.
+        //
+        // The two registration verbs used to carry `string|max:|in:` rules for
+        // these three fields. Nothing establishes that no shipped build already
+        // sends a body key spelled `app_version` — it would have been ignored
+        // until now — and `"app_version": 44` under a `string` rule is a 422.
+        // The rules were removed; AppClientHeader::resolve() is the only gate
+        // and it DROPS what it cannot use.
+        $org = $this->listedOrg('Muslim Education Center');
+
+        $deviceId = 'contract-launch-' . md5(serialize($extra));
+
+        $this->postJson('/api/mobile/user', [
+            'masjid_id' => $org->id,
+            'device_id' => $deviceId,
+        ] + $extra)->assertSuccessful();
+
+        $user = MobileAppUser::where('device_id', $deviceId)->firstOrFail();
+
+        // Dropped, not written and not truncated — the column must never see a
+        // value it cannot hold (MySQL 1406; SQLite would take it silently).
+        foreach (['app_platform' => 10, 'app_version' => 20, 'app_build' => 20] as $column => $width) {
+            if (! array_key_exists($column, $extra)) {
+                continue;
+            }
+
+            $stored = $user->{$column};
+
+            $this->assertNull($stored, "{$column} must be dropped, never coerced or truncated");
+            $this->assertLessThanOrEqual($width, strlen((string) $stored));
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unusableTelemetryBodies')]
+    #[Test]
+    public function re_pointing_an_install_is_never_refused_over_a_telemetry_field(array $extra): void
+    {
+        // The same rule on PUT /user, which runs on every organisation switch.
+        $org = $this->listedOrg('Muslim Education Center');
+        $other = $this->listedOrg('Al-Razi School', ['org_type' => 'school']);
+
+        MobileAppUser::create([
+            'device_id' => 'contract-repoint-1',
+            'masjid_id' => $org->id,
+            'user_agent' => 'Manara/2.5 (iPhone; build 44)',
+        ]);
+
+        $this->putJson('/api/mobile/user', [
+            'masjid_id' => $other->id,
+            'device_id' => 'contract-repoint-1',
+        ] + $extra)->assertSuccessful();
+    }
+
+    #[Test]
+    public function a_usable_telemetry_body_is_still_recorded(): void
+    {
+        // Removing the rules must not have removed the reading. This is the
+        // evidence S3b turns on.
+        $org = $this->listedOrg('Muslim Education Center');
+
+        $this->postJson('/api/mobile/user', [
+            'masjid_id' => $org->id,
+            'device_id' => 'contract-telemetry-ok',
+            'app_platform' => 'ios',
+            'app_version' => '1.0',
+            'app_build' => '47',
+        ])->assertSuccessful();
+
+        $user = MobileAppUser::where('device_id', 'contract-telemetry-ok')->firstOrFail();
+
+        $this->assertSame('ios', $user->app_platform);
+        $this->assertSame('1.0', $user->app_version);
+        $this->assertSame('47', $user->app_build);
+    }
+
+    #[Test]
+    public function registration_still_refuses_what_it_actually_needs(): void
+    {
+        // The other half: dropping the telemetry rules must not have dropped
+        // the two the handler cannot work without.
+        $this->postJson('/api/mobile/user', ['device_id' => 'contract-missing-org'])
+            ->assertStatus(422);
+
+        $org = $this->listedOrg('Muslim Education Center');
+
+        $this->postJson('/api/mobile/user', ['masjid_id' => $org->id])
+            ->assertStatus(422);
+    }
 }

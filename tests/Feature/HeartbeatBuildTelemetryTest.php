@@ -111,20 +111,55 @@ class HeartbeatBuildTelemetryTest extends TestCase
         )), 'plain columns: nothing looks a device up by its build');
     }
 
-    /** The validation caps must be the column widths, not a number near them. */
+    /**
+     * The caps this class enforces must BE the column widths, not numbers near
+     * them, and they are now the only thing standing between a hostile body and
+     * a varchar — no verb validates these three fields any more.
+     */
     #[Test]
-    public function the_request_rules_cap_each_field_at_its_column_width(): void
+    public function the_enforced_caps_are_the_column_widths(): void
     {
-        $rules = AppClientHeader::rules();
+        // The same three numbers the migration declares, asserted one test
+        // above against the Blueprint. If a later migration widens a column,
+        // both tests have to be edited together — which is the point.
+        $this->assertSame(
+            ['app_platform' => 10, 'app_version' => 20, 'app_build' => 20],
+            AppClientHeader::limits()
+        );
+    }
 
-        $this->assertStringContainsString('max:10', $rules['app_platform']);
-        $this->assertStringContainsString('in:ios,android', $rules['app_platform']);
-        $this->assertStringContainsString('max:20', $rules['app_version']);
-        $this->assertStringContainsString('max:20', $rules['app_build']);
+    /**
+     * No device verb may refuse a request over these three fields.
+     *
+     * Asserted against the FormRequests themselves rather than by firing
+     * requests, so it fails the moment somebody adds a rule back, whatever
+     * shape of value would have tripped it. The behavioural half —
+     * registration and re-point surviving every unusable body — is in
+     * InstalledBuildsContractTest.
+     */
+    #[Test]
+    public function no_device_verb_validates_the_telemetry_fields(): void
+    {
+        $requests = [
+            \App\Http\Requests\Mobile\Users\StoreMobileAppUserRequest::class,
+            \App\Http\Requests\Mobile\Users\UpdateMobileAppUserRequest::class,
+        ];
 
-        foreach ($rules as $field => $rule) {
-            $this->assertStringContainsString('sometimes', $rule, "{$field} must be optional");
-            $this->assertStringContainsString('nullable', $rule, "{$field} must tolerate a null");
+        foreach ($requests as $class) {
+            $rules = (new $class)->rules();
+
+            foreach (array_keys(AppClientHeader::limits()) as $field) {
+                $this->assertArrayNotHasKey(
+                    $field,
+                    $rules,
+                    "{$class} must not be able to 422 over {$field}: a telemetry field nobody "
+                    . 'authorises on must never stop a phone from registering'
+                );
+            }
+
+            // ...and it still requires the two the handler cannot work without.
+            $this->assertArrayHasKey('masjid_id', $rules, $class);
+            $this->assertArrayHasKey('device_id', $rules, $class);
         }
     }
 

@@ -111,29 +111,21 @@ final class AppClientHeader
     }
 
     /**
-     * The validation rules for the same three fields sent in a request BODY.
+     * The column widths this class enforces, for a test to assert against the
+     * schema rather than against a number typed twice.
      *
-     * Shared by both device-registration requests so one file decides what the
-     * columns will accept. `sometimes|nullable`, because every build shipped
-     * before R1 omits them and a required field would refuse every installed
-     * app on the store today.
+     * There are deliberately NO validation rules here any more. There were —
+     * the two device-registration requests carried `string|max:|in:` for these
+     * three fields — and they were removed: resolve() below is already the
+     * floor that keeps an unusable value out of a column, so the rules bought
+     * nothing but the ability to REFUSE a request over a counter. See
+     * StoreMobileAppUserRequest.
      *
-     * `max:10` / `max:20` are the COLUMN widths, restated. SQLite enforces no
-     * VARCHAR length, so without these a 300-character `app_version` passes the
-     * whole suite and raises MySQL 1406 on the production box — the failure the
-     * `sqlite-hides-mysql-column-limits` note exists for. The header path
-     * cannot exceed them (the pattern is capped); the body path needs saying.
-     *
-     * @return array<string, string>
+     * @return array<string, int>
      */
-    public static function rules(): array
+    public static function limits(): array
     {
-        return [
-            'app_platform' => 'sometimes|nullable|string|max:' . self::LIMITS['app_platform']
-                . '|in:' . implode(',', self::PLATFORMS),
-            'app_version' => 'sometimes|nullable|string|max:' . self::LIMITS['app_version'],
-            'app_build' => 'sometimes|nullable|string|max:' . self::LIMITS['app_build'],
-        ];
+        return self::LIMITS;
     }
 
     /**
@@ -161,12 +153,17 @@ final class AppClientHeader
      * two. Neither is trusted for anything but counting.
      *
      * A body value that breaks the platform list or the column width is DROPPED
-     * here, not refused and not truncated. rules() refuses it at the door on the
-     * two registration verbs, where a 422 is a clear signal and the caller can
-     * retry; the heartbeat carries no such rule on purpose (a refused heartbeat
-     * is a live phone the prayer backstop double-notifies), so this method has
-     * to be the floor that keeps an oversized string out of a varchar(20) on
-     * MySQL. SQLite would have taken it silently.
+     * here, not refused and not truncated. This is the ONLY gate on all three
+     * verbs — registration, re-point and heartbeat — and it is the floor that
+     * keeps an oversized string out of a varchar(20) on MySQL, which SQLite
+     * would have taken silently (memory: sqlite-hides-mysql-column-limits).
+     *
+     * No verb validates these fields, on purpose. Every one of the three is a
+     * call a phone has to complete to work at all: a refused registration is a
+     * new handset stuck on its splash screen, a refused re-point is a member
+     * who cannot switch organisation, a refused heartbeat is a live phone the
+     * prayer backstop treats as dark and double-notifies. A telemetry field
+     * nobody authorises on must not be able to cause any of those.
      *
      * @return array<string, string> a subset of app_platform/app_version/app_build
      */
