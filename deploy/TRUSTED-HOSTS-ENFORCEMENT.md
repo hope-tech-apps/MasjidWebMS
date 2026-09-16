@@ -35,6 +35,21 @@ three are already correct and only the third is missing.
 the app purely because the masjid vhost is `default_server`. **Enforcing without
 adding it makes every request to that hostname a 400.**
 
+This is no longer a prediction. The branch was deployed to staging on 2026-09-15
+in report-only mode, and the middleware logged the staging twin of exactly this
+gap on an ordinary sign-in request:
+
+```
+staging.WARNING: Request carried a Host header this deployment does not serve.
+{"host":"manara-staging.hopetechapps.com",
+ "allowed":["masjid-staging.hopetechapps.com","portal-staging.hopetechapps.com"],
+ "enforced":false,"path":"auth/sign-in"}
+```
+
+The box serves three hostnames; the assembled list knew two. That single line is
+the entire argument for why observing mode exists — it found the gap in minutes,
+on a real request, without refusing anybody.
+
 ### Staging — 157.230.212.38
 
 Same shape, same gap: `APP_URL=https://masjid-staging.hopetechapps.com` and
@@ -109,12 +124,59 @@ TRUSTED_HOSTS_ENFORCE=true
 curl -s -o /dev/null -w '%{http_code}\n' https://masjid.hopetechapps.com/up          # 200
 curl -s -o /dev/null -w '%{http_code}\n' https://manara.hopetechapps.com/            # 200
 curl -s -o /dev/null -w '%{http_code}\n' https://portal.alrazischool.org/portal      # 200
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' \
-     https://masjid.hopetechapps.com/account-deletion                                 # 400
 ```
+
+### The forged-Host check must go STRAIGHT TO THE ORIGIN
+
+This is the step most likely to lie to you, and it lied on staging first.
+
+```
+# WRONG on any PROXIED hostname — Cloudflare answers this itself
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' \
+     https://masjid-staging.hopetechapps.com/account-deletion       # 403 from the EDGE
+
+# RIGHT — bypass the edge, ask the origin directly
+curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' \
+     https://<origin-ip>/account-deletion                            # 400 from the APP
+```
+
+A proxied hostname never lets a forged Host reach PHP: Cloudflare refuses it at
+the edge with a **403** carrying `server: cloudflare` and none of this app's
+headers. That looks like success and is not — it would pass identically against
+an application with no middleware at all, which is the same class of vacuous
+check as asserting on a `Host:` header the test client discarded.
+
+Tell the two apart by the status code and the headers: **403 + `server:
+cloudflare`** is the edge, **400** with this app's usual headers is the
+middleware. `-k` is needed because the origin's certificate is for a hostname you
+are deliberately not using.
+
+Production's `masjid.hopetechapps.com` is a **DNS-only** A record, so the public
+form of this command does reach the origin there — but do not rely on that
+distinction from memory. Go to the IP on both boxes and the check means the same
+thing on each.
 
 Rollback is one line — `TRUSTED_HOSTS_ENFORCE=false` plus `config:cache` — and it
 needs no deploy, because the flag is config and not code.
+
+### Already done on staging, 2026-09-15, in report-only mode
+
+Deployed at `263968a` and verified against the origin directly:
+
+- All three staging hostnames answered **200** — nothing refused, as designed.
+- Forged Host: **200**, form action on `masjid-staging.hopetechapps.com`, and
+  **zero** occurrences of the forged host anywhere in the body.
+- **Exactly one** log line naming the forged host.
+- The placeholder payloads that actually exercise the change — `services/1` (44
+  URL fields) and `services/5` (32) — entirely on the staging host with zero
+  nulls. `announcements/1` and `services/13` carry nulls in `preview_url` only,
+  never `original_url`, identical before and after: pre-existing, not this change.
+  (`original_url` is the field the Flutter clients force-unwrap; it is null
+  nowhere.)
+- `/features` was unchanged at 33/33 — and proves nothing here, because every
+  feature has icon media so the placeholder path is unreachable in that payload.
+
+What remains unverified on a box is enforcement itself, which is steps 1-3 above.
 
 **Staging first, and a full day there, before production.** Nothing in this
 repository reaches production without being on staging, and this change's whole
