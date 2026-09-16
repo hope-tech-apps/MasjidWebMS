@@ -9,6 +9,26 @@ no edit to the author's worktree, no deploy, no suite, no staging, no device.
 
 **78 findings survived verification: 6 must-fix, 52 should-fix, 20 nits.**
 
+---
+
+> ## Read this before quoting anything below
+>
+> **The build that is actually on people's phones is not in this repository, and was not
+> on the machine this review ran on.** No commit in the iOS repo carries build 44, the
+> version live on the App Store; every statement here about what the installed app does was
+> read out of build 43 or 45. One commit in that two-week window — `d8d8ee9`, the NAFIS
+> white-label — changes the answer, because it replaced a hard-coded
+> `/mobile/masjids/1/features` with the per-target id.
+>
+> So the client-side conclusions are **leads for the device-evidence plan, not settled
+> facts**. Treat them as the strongest guesses available from source that may not be the
+> source that shipped. Bracket build 44's upload date from App Store Connect against those
+> commit dates and tag the commit, and this caveat goes away.
+>
+> A second limit, smaller but the same kind: there is no PHP on the machine this ran on, so
+> **nothing here was executed.** Every finding is source reading plus read-only production
+> data. The attacks are reasoned, not fired.
+
 Raw material: `s2a-review.json`, `s2a-surviving.json`.
 
 ---
@@ -50,7 +70,7 @@ Fix: a fifth class — pivot ON while the switch is OFF — blocking when an exp
 override is being reversed (a human decided that), a notice when it is only a type
 default.
 
-### 3. `R1` — the fallback returns empty as a success
+### 3. `R1` — empty is served as a success, and this half IS shipped code
 
 The never-5xx chain only advances when a step *throws*. `fromPivot()` returning `[]` does
 not throw. So for any organisation with no pivot rows — org 17 today, and **every newly
@@ -59,6 +79,19 @@ failure in the derived step yields `{"status":"success","data":[]}`, HTTP 200, c
 ten minutes. A blank drawer that looks healthy to every layer above it.
 
 Fix: treat an empty pivot result as a miss and fall through.
+
+**Shipped versus specified, because the two halves of this finding are not the same kind
+of thing.** The *serving* half is live code: `Mobile/MasjidMobileAppFeaturesController::index`
+on `main` has **no try/catch at all** — one `Cache::remember`, a `findOrFail`, and an
+organisation with no feature rows serialises to `[]` with HTTP 200. Org 17 is doing exactly
+that on production today. It is benign today, because `[]` is the honest answer for an
+organisation nobody has configured; the controller simply **cannot distinguish "nothing is
+configured" from "the load failed"**, and after S2b deletes the provisioning writes, every
+newly provisioned organisation lands in the state where those two look identical.
+
+The *fallback chain* half is specification: `app-features:drill` does not exist, and
+`features.lastgood` has no writer and no reader anywhere in the repo — only a docblock and
+a test that populates the key itself.
 
 ### 4. `C-1` (critic) — the build on the phones is not in the repo
 
@@ -88,6 +121,11 @@ to the same fixture.
 
 The innermost fallback's `Cache::get` is not inside a `try`.
 
+**This is a specification defect, not a code defect.** The chain it describes is not
+implemented; anyone going to look for it will not find it. Fix it in §7.4 before
+`LegacyFeatures` is written against the current wording, which is the cheapest moment it
+will ever be fixable.
+
 ---
 
 ## The should-fix worth reading first
@@ -111,6 +149,23 @@ The innermost fallback's `Cache::get` is not inside a `try`.
   renders an empty table rather than a 404, and three sidebar levers still point at it.
 - **`SEQ-M1`** — `migrate:rollback` un-derives `/features` but leaves every capability
   override the cutover wrote, so BISS stays reversed after a rollback.
+
+## Org 17 is where everyone looks away
+
+Three separate misses tonight, on the same organisation, by three people:
+
+1. The acceptance criterion pinned it as "no change" when it is the **only** organisation
+   whose row set is guaranteed to change — the rehearsal would have failed it with a
+   misleading complaint about row order.
+2. The fix for that turned the pin into a blanket waiver, until `expected_row_ids` was
+   added to name a destination.
+3. My own production capture — the one this review rests on — **did not include it**, and
+   would have been committed without it.
+
+The pattern is worth naming because it will recur: the sandbox is the organisation people
+skip *because* it is a sandbox, and it is simultaneously the only one exercising the
+interesting path. Everything in S2 that says "for every organisation" should be checked
+against org 17 specifically, by someone who has been told why.
 
 ## What this review could not do
 
