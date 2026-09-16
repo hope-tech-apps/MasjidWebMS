@@ -1,0 +1,121 @@
+{
+  "_comment": [
+    "THE ACCEPTANCE CRITERION FOR THE S2 CUTOVER, IN ONE FILE.",
+    "",
+    "The rehearsal script reads this; Abdullah's server tests pin the same file.",
+    "One source of truth, so the command and the rehearsal cannot drift apart.",
+    "",
+    "`flips` lists the legacy feature ids whose `pivot.is_available` is LICENSED",
+    "to change from 1 to 0 in GET /api/mobile/masjids/{id}/features after the",
+    "cutover. An empty list means the payload must be wholly identical.",
+    "",
+    "`decision` records WHERE each expectation comes from: `owner` means a person",
+    "chose it and it may be revisited; `rule` means it falls out of the literal",
+    "id-to-key mapping and changing it would mean changing the mapping.",
+    "",
+    "`expect_shape_change` releases the row-set assertion for the ONE org whose",
+    "row set is meant to change. Nothing else is released.",
+    "",
+    "HOW IT IS ENFORCED (compare_features.py): the licensed flips are patched back",
+    "out of the AFTER payload and the two documents must then be WHOLLY EQUAL, so",
+    "`expected_row_ids` pins what a shape-change org's row set must BECOME, so the",
+    "release is against a stated destination rather than a waiver of all checking.",
+    "every unlicensed change surfaces by construction rather than by a reviewer",
+    "having thought of it. Proven by audit-criterion.py, which mutates a real",
+    "capture twelve ways and checks each one is caught.",
+    "",
+    "id -> key: 1 quran, 2 hadith, 3 adhkar, 4 qibla, 5 tasbih, 6 donation_link,",
+    "7 about_us, 8 gallery, 9 services, 10 announcements, 11 contact_requests."
+  ],
+  "owner_decisions_taken": "2026-09-15, extended 2026-09-16 (dead Donate rows)",
+  "orgs": {
+    "1": {
+      "name": "Burlington Masjid",
+      "flips": [],
+      "decision": "rule",
+      "why": "literal mapping; every row already agrees. Has Stripe Connect live and 10 active funds."
+    },
+    "2": {
+      "name": "test2",
+      "flips": [],
+      "decision": "rule",
+      "why": "literal mapping"
+    },
+    "5": {
+      "name": "NAFIS Apex Mosque",
+      "flips": [],
+      "decision": "rule",
+      "why": "literal mapping"
+    },
+    "13": {
+      "name": "Muslim Education Center",
+      "flips": [],
+      "decision": "rule",
+      "why": "Qur'an (id 1) is pivot OFF while the masjid worship module defaults ON, so the cutover writes an explicit quran=false. The MEC app does not show Qur'an today and must not start. Whether MEC wants it is a product question for after S2 - one visible, reversible switch, not something to smuggle into a migration. Donate stays: MEC has a real donation link."
+    },
+    "14": {
+      "name": "Al-Razi School",
+      "flips": [
+        6
+      ],
+      "decision": "owner",
+      "why": "OWNER 2026-09-16: turn the Donate row off. Al-Razi has no Stripe account, no active funds and no donation link, so the row leads to 'No donation options are available right now.' Leading people to an empty state is worse than not offering it, and it is one switch back the day they have a link."
+    },
+    "16": {
+      "name": "Intellicor International Academy",
+      "flips": [
+        6
+      ],
+      "decision": "owner",
+      "why": "OWNER 2026-09-16: turn the Donate row off, same reasoning as 14 - no Stripe, no funds, no link. NOTE this narrows the plan's stated known effect, which said preserving Intellicor's pivot writes BOTH services=true and donation_link=true; services still follows the literal rule, donation_link no longer does."
+    },
+    "17": {
+      "name": "ZZ QA Sandbox",
+      "flips": [],
+      "decision": "rule",
+      "expect_shape_change": true,
+      "expected_row_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "why": "The only org with zero pivot rows, on staging and production alike: it serves [] today and eleven rows after the cutover. It is therefore the one org whose ROW SET changes, which `flips` cannot express - an earlier version of this file said 'no change' and would have failed the rehearsal with a misleading 'row order changed'. Unlisted, no installed app, so no real-world victim. The eleven resolved values are not pinned here yet because config/app_feature_cutover.php does not exist; bind them when it does. Its destination row set is pinned in `expected_row_ids` so the shape-change release is not a blanket waiver: it must land on exactly these eleven ids in this order."
+    },
+    "18": {
+      "name": "Burlington Islamic Sunday School",
+      "flips": [
+        6,
+        7,
+        8,
+        10,
+        11
+      ],
+      "decision": "owner",
+      "why": "OWNER: the switches win. about_us, gallery, announcements and contact_requests are explicit false overrides from the wave-1 switch work, kept off rather than written back on; the public contact intake stays shut. 2026-09-16 the owner added donation_link for the same reason as 14 and 16 - BISS has no Stripe, no funds and no link, so its Donate row opened an empty state. Five flips, not four. A user-visible app change, chosen with both consequences on the table."
+    },
+    "19": {
+      "name": "MAS Youth Charlotte",
+      "flips": [
+        9
+      ],
+      "decision": "owner",
+      "why": "OWNER: Donate stays, Services goes. donation_link stays ON because MAS Youth has a real donation link (masyouthclt.com) - it is the one org of the four where the Donate row leads somewhere. Worship stays off, already true."
+    }
+  },
+  "invariants_that_hold_for_every_org": [
+    "HTTP 200. Never 5xx, at any step of the fallback chain.",
+    "Row order and row names unchanged (Play vc13 positions tiles by index and routes by name).",
+    "pivot.is_available serialises as an INTEGER, never a boolean - Android's FeaturesResponse declares it Int, and Python's True == 1 means a bool passes naive equality while failing to decode on the device. Checked explicitly, not by comparison.",
+    "icon.original_url non-null on every row - a null force-unwraps in the Flutter drawer and blanks the grid (the 2026-08-28 incident).",
+    "The top-level envelope (keys and `status`) unchanged.",
+    "The diff is taken only AFTER the cache flush is observed. A comparison made before flushFamily lands compares a cached pre-cutover payload with itself: it matches and proves nothing."
+  ]
+}
