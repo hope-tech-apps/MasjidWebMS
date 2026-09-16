@@ -16,6 +16,14 @@
      - The `code` state depends ONLY on what the visitor typed. It must render
        byte-for-byte the same for an address with an account and one without;
        AccountDeletionPageTest compares the two.
+     - EVERY LINK AND FORM ACTION ON THIS PAGE IS ON THE CONFIGURED HOST, built
+       with App\Support\SiteUrl, never `route()`. `route()` resolves against the
+       INCOMING request's Host header, nginx here is `default_server` so any Host
+       reaches the app, and the result was a form on our own certificate posting
+       to a host the caller chose — on the one page where a person types an email
+       address and then a mailed code. Measured against production on
+       2026-09-15: `curl -H 'Host: evil.example' .../account-deletion` returned
+       `action="https://evil.example/account-deletion"`.
      - Accessible without scripts: every control has a visible label, hints and
        errors are tied to their control with aria-describedby, an error summary
        leads the page and links to each field, and focus is always visible.
@@ -216,7 +224,7 @@
             <h2>What is kept, and for how long</h2>
             <p>{{ $retention }}</p>
 
-            <form method="POST" action="{{ route('account-deletion.request') }}" novalidate>
+            <form method="POST" action="{{ \App\Support\SiteUrl::route('account-deletion.request') }}" novalidate>
                 @csrf
 
                 <div class="field">
@@ -258,10 +266,10 @@
             </p>
             <p>
                 If nothing arrives within a few minutes, check your spam folder, or
-                <a href="{{ route('account-deletion.show') }}">start again</a> with a different address.
+                <a href="{{ \App\Support\SiteUrl::route('account-deletion.show') }}">start again</a> with a different address.
             </p>
 
-            <form method="POST" action="{{ route('account-deletion.confirm') }}" novalidate>
+            <form method="POST" action="{{ \App\Support\SiteUrl::route('account-deletion.confirm') }}" novalidate>
                 @csrf
                 <input type="hidden" name="masjid_id" value="{{ $org->id }}">
                 <input type="hidden" name="email" value="{{ $email }}">
@@ -318,14 +326,14 @@
             </p>
             <p>
                 If you sign in to the app with a different address, or to another organisation's app,
-                <a href="{{ route('account-deletion.show') }}">start again</a>.
+                <a href="{{ \App\Support\SiteUrl::route('account-deletion.show') }}">start again</a>.
             </p>
 
         @else
             <p>
                 There have been too many attempts for this address or from this connection.
                 Nothing was deleted.
-                Please wait an hour, then <a href="{{ route('account-deletion.show') }}">start again</a>.
+                Please wait an hour, then <a href="{{ \App\Support\SiteUrl::route('account-deletion.show') }}">start again</a>.
             </p>
         @endif
 
