@@ -214,6 +214,112 @@ ok "VITE_APP_URL is unset"
 
 cd "$REPO_ROOT"
 
+# --------------------------------------------------------------------------
+# THE BUNDLE AND THE PHP MUST AGREE ABOUT THE FRONTEND
+# --------------------------------------------------------------------------
+# This script builds the SPA from the working tree it lives in, and separately
+# tells the server to check out `origin/<ref>`. Nothing made those agree.
+#
+# On a PHP-only change it does not matter, which is exactly why it survived: the
+# gap is invisible on every deploy where it is harmless. On a frontend change it
+# is silent and total — the server gets the ref's PHP with this tree's bundle,
+# the deploy reports success, every API assertion passes, and the screen the
+# change was written to fix is untouched.
+#
+# THE CONDITION IS NOT SHA EQUALITY. The first version of this guard refused
+# whenever the tree and the ref differed, and Abdullah showed it would have
+# refused a correct deploy: shipping a PHP-only fix from a feature worktree, with
+# zero frontend inputs differing, produced a byte-identical bundle. Refusing
+# there blocks most of how this team actually works, and a guard that fires on
+# correct behaviour is one people learn to route around — at which point the
+# workaround is the habit and it is in place when the difference is real.
+#
+# So the check is the real question: do the BUILD INPUTS differ between this
+# tree and the ref? If they do not, the bundle this tree produces is the bundle
+# the ref would produce, whatever the shas say.
+#
+# NOTE on `resources/`, traced rather than assumed (Abdullah, 2026-09-16).
+# `vite.config.js:11` takes exactly two entry points — `resources/js/app.js` and
+# `resources/css/app.css` — so the build graph is whatever those two reach.
+#
+#   resources/views      NOT in the graph. 23 Blade files, and nothing under
+#                        js/ vue-app/ css/ sass/ imports from them; the only
+#                        references are comments. `EnvironmentRibbon.vue` says it
+#                        outright: its env values come from
+#                        `vue-app-index.blade.php` at RUNTIME, from the server's
+#                        own checkout, and are "NOT read from import.meta.env".
+#                        A Blade-only difference genuinely cannot change the
+#                        bundle, so refusing on one is conservative, not correct.
+#
+#   resources/flyer-templates   Evidence contradicts itself. `Flyer.ts:5` says
+#                        the templates are "bundled into this app at build time",
+#                        but the only real consumer found is
+#                        `FlyerTemplatesController.php:32` reading the directory
+#                        SERVER-side, and every `Flyer.ts` hit is a comment rather
+#                        than an import. One of the two is stale and nobody has
+#                        traced which.
+#
+# Both stay in the list anyway. A conservative refusal on files that almost never
+# change is a far better trade than a hole, and narrowing on reasoning rather
+# than on a guard that actually fired is the mistake this whole night has been
+# made of. When it refuses something correct, drop `resources/views` and keep the
+# rest — one line, and by then you will have the evidence.
+FRONTEND_INPUTS="resources/ package.json package-lock.json vite.config.js postcss.config.js tailwind.config.js"
+
+# Checked even on a dry run. A dry run exists to say what would happen, and
+# "it would refuse" is the single most useful thing it can report.
+if true; then
+    git -C "$REPO_ROOT" fetch -q origin "$REF" 2>/dev/null || true
+    TARGET_SHA="$(git -C "$REPO_ROOT" rev-parse --verify -q "origin/${REF}" \
+        || git -C "$REPO_ROOT" rev-parse --verify -q "$REF" || true)"
+    LOCAL_SHA="$(git -C "$REPO_ROOT" rev-parse --verify -q HEAD || true)"
+
+    [ -n "$TARGET_SHA" ] || die "cannot resolve '${REF}' to a commit — is it pushed?"
+
+    # 1. Uncommitted build inputs ship regardless of the ref, because they are in
+    #    no commit at all. This is the hole one step further back from the one
+    #    above, and it cannot be reasoned away by comparing commits.
+    # shellcheck disable=SC2086
+    if ! git -C "$REPO_ROOT" diff --quiet -- $FRONTEND_INPUTS 2>/dev/null; then
+        # shellcheck disable=SC2086
+        die "uncommitted changes to build inputs in ${REPO_ROOT}:
+
+$(git -C "$REPO_ROOT" diff --name-only -- $FRONTEND_INPUTS | sed 's/^/       /')
+
+     These would be built into the bundle and are in no commit, so nothing on
+     the server will ever match them. Commit or stash, then ship."
+    fi
+
+    # 2. The real condition: can this tree build the ref's frontend?
+    # shellcheck disable=SC2086
+    if ! git -C "$REPO_ROOT" diff --quiet "$LOCAL_SHA" "$TARGET_SHA" -- $FRONTEND_INPUTS 2>/dev/null; then
+        # shellcheck disable=SC2086
+        die "this tree cannot build ${REF}'s frontend.
+
+     deploying : ${REF} -> ${TARGET_SHA}
+     this tree : ${LOCAL_SHA}
+     tree path : ${REPO_ROOT}
+
+     Build inputs that differ:
+
+$(git -C "$REPO_ROOT" diff --name-only "$LOCAL_SHA" "$TARGET_SHA" -- $FRONTEND_INPUTS | sed 's/^/       /')
+
+     The SPA is built HERE and the PHP is checked out THERE. Shipping now would
+     put this tree's bundle on the server with ${REF}'s PHP, and the frontend
+     changes listed above would be missing while the deploy reported success.
+
+     Run this from a worktree checked out at ${TARGET_SHA}."
+    fi
+
+    if [ "$LOCAL_SHA" = "$TARGET_SHA" ]; then
+        ok "tree is at ${TARGET_SHA:0:8}, the commit being deployed"
+    else
+        # Said out loud rather than passed over in silence: the shas differ and
+        # this deploy is still correct, and the reason is on the record.
+        ok "tree ${LOCAL_SHA:0:8} != ref ${TARGET_SHA:0:8}, but frontend inputs are identical — the bundle this tree builds is the bundle ${REF} would build"
+    fi
+fi
+
 say "Building the SPA (npm run build)"
 BUILD_LOG="$REPO_ROOT/artifacts/vue_build_ship_${ENV_NAME}_$(date +%Y%m%d-%H%M%S).log"
 if [ "$DRY_RUN" -eq 1 ]; then
