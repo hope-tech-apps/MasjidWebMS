@@ -5,6 +5,8 @@ paths:
   - "app/Support/GroupPostAttachments.php"
   - "app/Models/FormResponseAttachment.php"
   - "app/Models/GroupPostAttachment.php"
+  - "app/Models/GroupMessageAttachment.php"
+  - "app/Support/GroupMessageAttachments.php"
   - "config/forms.php"
   - "config/flyer.php"
   - "config/groups.php"
@@ -14,11 +16,13 @@ paths:
 Some files this platform accepts are **not content**. A janazah photo being worked
 on, a résumé on a Schools careers form, a document attached to an admissions
 request, a photograph of a child on a classroom feed — these must not be readable
-by anyone who guesses a URL. There are now three implementations of the same
+by anyone who guesses a URL. There are several implementations of the same
 arrangement (`FlyerCutoutController`; form attachments via
 `FormResponsesController::downloadAttachment`; group media via
-`App\Support\GroupPostAttachments` + `GroupPostsController::downloadAttachment`),
-and any fourth one must match them rather than invent a fourth shape.
+`App\Support\GroupPostAttachments` + `GroupPostsController::downloadAttachment`,
+and its conversation twin `App\Support\GroupMessageAttachments` +
+`GroupThreadsController::downloadAttachment`), and any new one must match them
+rather than invent another shape.
 
 ## The arrangement
 

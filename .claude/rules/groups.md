@@ -4,6 +4,7 @@ paths:
   - "app/Models/GroupMembership.php"
   - "app/Models/GroupPost.php"
   - "app/Models/GroupPostAttachment.php"
+  - "app/Models/GroupMessageAttachment.php"
   - "app/Http/Controllers/AdminDashboard/GroupsController.php"
   - "app/Http/Controllers/AdminDashboard/GroupMembershipsController.php"
   - "app/Http/Controllers/AdminDashboard/GroupPostsController.php"
@@ -15,6 +16,7 @@ paths:
   - "app/Models/GroupThreadRead.php"
   - "app/Support/GroupAudience.php"
   - "app/Support/GroupPostAttachments.php"
+  - "app/Support/GroupMessageAttachments.php"
   - "app/Console/Commands/PurgeGroupFeed.php"
   - "config/groups.php"
   - "database/migrations/*_create_groups_table.php"
@@ -542,17 +544,29 @@ members/guardians channel. What a follow-on slice must not re-decide:
   (leaders-only), and a participant thread whose target membership was removed
   from the roster (`about_membership_id` nulls on delete) is readable by
   leaders only — the record survives, the audience shrinks.
-- **Text only, rows only.** Attachments are deliberately deferred; the feed
-  owns media. That is why `GroupThread::purge()` may rely on the DB cascade
-  (nothing on disk to orphan) where `GroupPost::purge()` must not. Retention
-  is the same pattern (`retained_until` from `config('groups.messaging')`),
-  swept by the SAME `groups:purge-feed` command.
+- **Staff messages may carry photos (2026-09-16).** `group_message_attachments`
+  is the feed's arrangement again — same private disk, allowlist, size and
+  per-message count (`config('groups.media')`), written by
+  `GroupMessageAttachments`, served only by each realm's
+  `downloadAttachment`. Who may have them is ONE decision,
+  `GroupAudience::mayReceiveThreadMedia()`: the thread's readers, plus MEDIA
+  consent on a group-wide thread (a broadcast, like the feed). A participant
+  thread's photos need no consent, for the reason above. A reader who may not
+  have them gets no attachment list and `media_withheld: true`. Parents'
+  replies stay text only.
+- **Teardown goes through the model.** Photos put bytes under a thread, so the
+  DB cascade is no longer enough: `GroupThread`'s force-delete hook removes the
+  photos through the model first, and `Group::booted` purges threads the same
+  way. A SOFT delete keeps them. Retention is the same pattern
+  (`retained_until` from `config('groups.messaging')`), swept by the SAME
+  `groups:purge-feed` command.
 - **Unread is a bookmark, not a receipt**: one `last_read_at` per
   (thread, user) in `group_thread_reads`, moved on view/write. It is never an
   authorization record.
 
 Proven by `tests/Feature/GroupMessagingTest.php` +
-`tests/Feature/GroupMessagingTenantIsolationTest.php`.
+`tests/Feature/GroupMessagingTenantIsolationTest.php` +
+`tests/Feature/GroupMessagePhotosTest.php`.
 
 ## Behaviour / recognition — the Classroom module (T-013)
 

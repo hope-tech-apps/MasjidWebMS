@@ -87,6 +87,10 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // an empty array — exactly as the others do.
         'isLeaderOf',
         'leaderGroupIdsFor',
+        // The seventeenth, added for photos in conversations: whether a reader
+        // may have a thread's photos. It builds on mayReceiveThread() and
+        // refuses an unrecognized principal the same way.
+        'mayReceiveThreadMedia',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -277,7 +281,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(16, $seen);
+        $this->assertCount(17, $seen);
     }
 
     #[Test]
@@ -300,6 +304,12 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         );
         $this->assertFalse(
             $this->audience->mayReceiveThread($this->foreign, $this->group, $this->participantThread)
+        );
+        $this->assertFalse(
+            $this->audience->mayReceiveThreadMedia($this->foreign, $this->group, $this->groupThread)
+        );
+        $this->assertFalse(
+            $this->audience->mayReceiveThreadMedia($this->foreign, $this->group, $this->participantThread)
         );
 
         $this->assertFalse(
