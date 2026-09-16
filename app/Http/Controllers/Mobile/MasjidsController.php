@@ -66,6 +66,14 @@ class MasjidsController extends Controller
      * `/menu` also calls: the two payloads are fetched and cached separately,
      * so the only way they can never disagree about which organisations exist
      * is to read them from one place.
+     *
+     * Each row carries a `theme` after its five original keys (S1.3) — the
+     * switch overlay paints the target organisation's band before any `/menu`
+     * for it exists, and on a cold first launch this is the only theme the
+     * client has. The five keys the installed builds decode are untouched; a
+     * row cached under the previous shape simply has no `theme` until its
+     * ten-minute TTL turns over, which reads to both clients as "no theme",
+     * exactly as an organisation with no brand colour does.
      */
     public function orgs($masjid_id)
     {

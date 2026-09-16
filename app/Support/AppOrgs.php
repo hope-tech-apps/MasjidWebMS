@@ -55,9 +55,22 @@ class AppOrgs
     /**
      * One row of `GET /masjids/{id}/orgs`.
      *
-     * These five keys, in this order, with these values, are what the installed
-     * iPhone store build and Play vc13 decode. They do not change. Anything
-     * additive goes AFTER them.
+     * The first five keys, in this order, with these values, are what the
+     * installed iPhone store build and Play vc13 decode. They do not change.
+     * Anything additive goes AFTER them — `theme` is the first and, in the S1
+     * deploy, the only such addition, and it is the ONE intended production
+     * payload diff of that deploy (plan v3 §2.2).
+     *
+     * Why the switcher needs a theme at all: the switch overlay paints the
+     * TARGET organisation's brand band before any `/menu` for it has been
+     * fetched, and on a first launch with no cached menu `/orgs` is the only
+     * theme the client has. Without it the overlay either flashes the home
+     * org's colour behind the wrong name or paints a name onto a band it
+     * cannot be read against.
+     *
+     * Installed decoders ignore the key: iOS `Org.swift` lists explicit
+     * CodingKeys, Android `OrgsResponse.kt` is Gson. Neither is asked to
+     * change to keep working.
      *
      * @return array<string, mixed>
      */
@@ -69,6 +82,47 @@ class AppOrgs
             'org_type' => $org->orgType(),
             'is_home' => (int) $org->id === (int) $home->id,
             'logo_url' => $org->logo?->original_url,
+            'theme' => self::theme($org),
+        ];
+    }
+
+    /**
+     * The four theme keys for one organisation, or null when it has no usable
+     * brand colour.
+     *
+     * ONE builder, called by BOTH payloads — `/orgs` rows here and `/menu`
+     * profiles in AppMenu::profile(). The contrast decision (which text colour
+     * reads on the band, whether the brand colour may be used for text on a
+     * white surface, whether the band is readable only at large sizes) is the
+     * kind of thing that gets "fixed" in one place and forgotten in the other,
+     * and then the same organisation's name is white in the switcher and black
+     * in the drawer on the same phone.
+     *
+     * All four keys or none. A client handed `primary` without `on_primary`
+     * would be back to deriving contrast on the phone, which is exactly the
+     * per-platform divergence WcagColor exists to end.
+     *
+     * Note that the rest of the row is NOT shared with a `/menu` profile even
+     * though the first six keys currently match: `/menu`'s body is hashed into
+     * an ETag, so a future `/orgs`-only key riding in on a shared builder would
+     * silently change every phone's menu tag and re-download a menu that did
+     * not change. Only the piece that must agree is shared.
+     *
+     * @return array{primary: string, on_primary: string, primary_on_surface: string, band_text_large_only: bool}|null
+     */
+    public static function theme(Masjid $org): ?array
+    {
+        $primary = WcagColor::normalize($org->themeSettings?->primary_color);
+
+        if ($primary === null) {
+            return null;
+        }
+
+        return [
+            'primary' => $primary,
+            'on_primary' => WcagColor::onPrimary($primary),
+            'primary_on_surface' => WcagColor::primaryOnSurface($primary),
+            'band_text_large_only' => WcagColor::bandTextLargeOnly($primary),
         ];
     }
 }

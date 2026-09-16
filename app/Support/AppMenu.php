@@ -513,7 +513,10 @@ class AppMenu
             'org_type' => $org->orgType(),
             'is_home' => (int) $org->id === (int) $home->id,
             'logo_url' => $org->logo?->original_url,
-            'theme' => self::theme($org),
+            // The same builder `/orgs` rows use, on purpose: a member sees the
+            // switcher's band and the drawer's band within one second of each
+            // other. See AppOrgs::theme().
+            'theme' => AppOrgs::theme($org),
             'home' => [
                 // The org-type floor never lifts: a school with prayer_times
                 // switched on still shows no prayer table, because it has no
@@ -523,29 +526,6 @@ class AppMenu
             ],
             'tabs' => self::tabs($org),
             'sections' => self::sections($org),
-        ];
-    }
-
-    /**
-     * The four theme keys, or null when this organisation has no usable brand
-     * colour. All four or none — a client that got `primary` without
-     * `on_primary` would be back to deriving contrast on the phone.
-     *
-     * @return array{primary: string, on_primary: string, primary_on_surface: string, band_text_large_only: bool}|null
-     */
-    private static function theme(Masjid $org): ?array
-    {
-        $primary = WcagColor::normalize($org->themeSettings?->primary_color);
-
-        if ($primary === null) {
-            return null;
-        }
-
-        return [
-            'primary' => $primary,
-            'on_primary' => WcagColor::onPrimary($primary),
-            'primary_on_surface' => WcagColor::primaryOnSurface($primary),
-            'band_text_large_only' => WcagColor::bandTextLargeOnly($primary),
         ];
     }
 

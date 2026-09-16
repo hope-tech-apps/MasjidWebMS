@@ -266,9 +266,13 @@ class AppMenuTenantIsolationTest extends TestCase
 
         $this->assertSame($menuIds, array_column($orgsRows, 'id'));
 
-        // And /orgs still answers exactly what the installed builds decode.
+        // And /orgs still leads with exactly what the installed builds decode,
+        // in their order, with `theme` appended and nothing else (S1.3). That
+        // the five legacy keys keep their VALUES under every theme state is
+        // OrgsThemeAdditiveTest's job; what is pinned here is that the two
+        // lists built from one query still describe the same organisations.
         foreach ($orgsRows as $row) {
-            $this->assertSame(['id', 'name', 'org_type', 'is_home', 'logo_url'], array_keys($row));
+            $this->assertSame(['id', 'name', 'org_type', 'is_home', 'logo_url', 'theme'], array_keys($row));
         }
     }
 
