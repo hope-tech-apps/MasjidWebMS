@@ -63,8 +63,10 @@ use Symfony\Component\HttpFoundation\Response;
  * name and a `password`; "Forgot password?" is the same two calls with only the
  * `password`. The mailbox is proven before either writes anything. On an
  * address that already has an account, the password replaces the old one, in
- * the parent portal too, and every other session ends (owner decision,
- * 2026-09-16).
+ * the parent portal too, and every other session ends. Provenance: the one
+ * shared password is the owner's choice (2026-09-16); ending the other sessions
+ * comes from the 2026-09-16 sign-in contract, which reused
+ * FamilyPasswordService::set(), and is not something the owner stated.
  */
 class MemberAuthController extends Controller
 {

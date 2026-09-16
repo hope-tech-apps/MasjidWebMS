@@ -336,7 +336,8 @@ exactly as the family realm shares `family-verify`). Still no `/register`.
   verify-code 410 byte for byte — and `hashOrBurn()` makes every path one hash.
 - **One password per contact, both realms.** Setting it from the app replaces a
   portal password and ends every other token the contact holds, family and hand-off
-  included (owner, 2026-09-16). It never writes `login_enabled_at`.
+  included. The shared password is the owner's choice (2026-09-16); ending the other
+  tokens is the sign-in contract's. It never writes `login_enabled_at`.
 - **A password and `verified_at` belong to the `login_email` they were proven under.**
   `FamilyAccessService::enable()` clears both (`WHAT_AN_ADDRESS_PROVED`) when the address
   changes, and on the holder it releases an address from (with the holder's tokens),

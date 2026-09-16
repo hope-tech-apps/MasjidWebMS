@@ -1435,7 +1435,13 @@ email once with a code; "Forgot password?" emails a code.
    `verified_at` and a password, and have the submitted address as its `login_email`.
 3. **One password per person.** `contacts.password` is shared with the parent portal. Setting it
    from the app replaces the portal password and ends every other session the contact holds,
-   family and hand-off tokens included. Approved by the owner. It never sets `login_enabled_at`.
+   family and hand-off tokens included. It never sets `login_enabled_at`.
+   **Provenance, stated because the two halves differ.** The shared password is the owner's: the
+   option he chose read "One password per person, shared with the parent portal, since both use
+   the same contact record." Ending the other sessions is NOT something he stated — it comes from
+   the 2026-09-16 sign-in contract, which routes the write through `FamilyPasswordService::set()`.
+   It was described to him afterwards, with the note that a parent who creates an app account is
+   signed out of the portal, and he did not object; that is not the same as deciding it.
 4. **A password belongs to the address it was chosen under.** Not setting `login_enabled_at` was
    not enough on its own. The app can link an office guardian through a household `email` and let
    whoever reads that mailbox choose a password. When the office then enabled the portal at the
@@ -1459,7 +1465,8 @@ email once with a code; "Forgot password?" emails a code.
 **Alternatives.**
 - **A `/register` endpoint.** Rejected for the reason it was rejected on 2026-09-08: it would say
   whether an address already has an account here.
-- **Separate app and portal passwords.** Rejected by the owner: one person, one password.
+- **Separate app and portal passwords.** Not offered as a separate choice; the option the owner
+  chose specified one password shared with the parent portal.
 - **Refuse "Create an account" for an address that has an account.** Rejected: saying so is the
   oracle. The app tells people who already have an account (portal included) to use Sign in or
   Forgot password.

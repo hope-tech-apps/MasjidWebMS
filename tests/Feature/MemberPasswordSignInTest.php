@@ -46,8 +46,9 @@ use Tests\TestCase;
  *    REFUSED REDEEM. A short password is refused before the code is read; a
  *    blank name keeps the code and sets no password.
  *  - ONE PASSWORD PER PERSON. Setting it from the app replaces a parent-portal
- *    password and ends that person's other sessions, family ones included
- *    (owner decision, 2026-09-16). It never turns a portal login on.
+ *    password and ends that person's other sessions, family ones included.
+ *    The shared password is the owner's choice (2026-09-16); ending the other
+ *    sessions is the sign-in contract's. It never turns a portal login on.
  */
 class MemberPasswordSignInTest extends TestCase
 {
@@ -641,10 +642,11 @@ class MemberPasswordSignInTest extends TestCase
     // ---------------------------------------- one password, both realms
 
     /**
-     * Owner decision, 2026-09-16: one password per person. A parent who uses
-     * "Create an account" or "Forgot password?" in the app replaces the portal
-     * password, and every other session the contact holds ends, family and
-     * hand-off tokens included.
+     * One password per person is the owner's choice (2026-09-16). A parent who
+     * uses "Create an account" or "Forgot password?" in the app therefore
+     * replaces the portal password. Every other session the contact holds then
+     * ends, family and hand-off tokens included — that half comes from the
+     * sign-in contract reusing FamilyPasswordService::set(), not from the owner.
      */
     #[Test]
     public function setting_a_password_from_the_app_overwrites_a_portal_password_and_ends_every_other_session(): void

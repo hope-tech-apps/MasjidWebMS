@@ -39,8 +39,10 @@ use Throwable;
  * refused redeem sets nothing. Both flows prove the mailbox first, so neither
  * says anything about an address to somebody who merely typed it. On a known
  * address the password REPLACES whatever that person had, in the app and the
- * parent portal alike, and ends their other sessions (owner decision,
- * 2026-09-16: one password per person).
+ * parent portal alike, and ends their other sessions. The shared password is
+ * the owner's choice (2026-09-16: "one password per person, shared with the
+ * parent portal"); ending the other sessions is the sign-in contract's, via
+ * FamilyPasswordService::set(), not a decision the owner stated.
  *
  * `attemptPassword()` is the third door: address + password, no code. It
  * resolves the contact through the same `resolveContact()` and
