@@ -647,7 +647,7 @@
                                         <span v-if="thread.unread" class="badge bg-success ms-1">New</span>
                                     </div>
                                     <div class="text-muted small">
-                                        <span v-if="thread.about">About {{ thread.about.name || name(thread.about) }} · </span>
+                                        <span v-if="thread.about">About {{ thread.about.name || name(thread.about.contact ?? thread.about) }} · </span>
                                         {{ thread.message_count }} message{{ thread.message_count === 1 ? '' : 's' }}
                                     </div>
                                 </div>
