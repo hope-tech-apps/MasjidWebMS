@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Mobile\Users;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\AppClientHeader;
 
 class UpdateMobileAppUserRequest extends BaseFormRequest
 {
@@ -11,6 +12,7 @@ class UpdateMobileAppUserRequest extends BaseFormRequest
         return [
             'masjid_id' => 'required|exists:masjids,id',
             'device_id' => 'required|exists:mobile_app_users,device_id',
+            ...AppClientHeader::rules(),
         ];
     }
 }

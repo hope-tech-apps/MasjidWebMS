@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Mobile\Users;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\AppClientHeader;
 
 class StoreMobileAppUserRequest extends BaseFormRequest
 {
@@ -11,6 +12,7 @@ class StoreMobileAppUserRequest extends BaseFormRequest
         return [
             'masjid_id' => 'required|exists:masjids,id',
             'device_id' => 'required|string',
+            ...AppClientHeader::rules(),
         ];
     }
 }

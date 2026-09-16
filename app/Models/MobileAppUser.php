@@ -6,7 +6,25 @@ use Illuminate\Database\Eloquent\Model;
 
 class MobileAppUser extends Model
 {
-    protected $fillable = ['masjid_id', 'contact_id', 'device_id', 'onesignal_subscription_id', 'user_agent', 'last_active_at'];
+    /**
+     * `app_platform`, `app_version` and `app_build` are what the handset says
+     * it is running, from the `X-Manara-App` header or the request body
+     * (App\Support\AppClientHeader). They are telemetry, never authorisation:
+     * nothing gates on them, because a client sends them and a client can send
+     * anything. NULL means "a build that predates the header", which is exactly
+     * the reading `app-telemetry:builds` prints as `pre-R1`.
+     */
+    protected $fillable = [
+        'masjid_id',
+        'contact_id',
+        'device_id',
+        'onesignal_subscription_id',
+        'user_agent',
+        'app_platform',
+        'app_version',
+        'app_build',
+        'last_active_at',
+    ];
 
     protected $casts = [
         'last_active_at' => 'datetime',
