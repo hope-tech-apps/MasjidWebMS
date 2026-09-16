@@ -195,7 +195,21 @@ class AppMenuTenantIsolationTest extends TestCase
 
         Cache::forget(MobileCache::masjidKey($home->id, MobileCache::MENU));
 
-        $elsewhere = $this->menu($home->id, ['Host' => 'manara-deletion.example'])->assertOk();
+        // An ABSOLUTE url, not a `Host` header. Laravel's test client hands the
+        // uri to Symfony's Request::create, which parses it and then OVERWRITES
+        // server HTTP_HOST from what it parsed — so a `Host` header passed
+        // alongside a relative path is silently discarded and the request goes
+        // to localhost like any other. A test written that way passes against
+        // the very code it is meant to catch. Verified by reverting the fix:
+        // with the header form it still passed; with this form it fails.
+        $elsewhere = $this->getJson("http://manara-deletion.example/api/mobile/masjids/{$home->id}/menu")
+            ->assertOk();
+
+        $this->assertSame(
+            'manara-deletion.example',
+            request()->getHost(),
+            'the request must actually have arrived on the other host'
+        );
 
         $this->assertSame(
             $plain->getContent(),

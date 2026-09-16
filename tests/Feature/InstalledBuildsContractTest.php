@@ -237,17 +237,25 @@ class InstalledBuildsContractTest extends TestCase
 
         $user = MobileAppUser::where('device_id', $deviceId)->firstOrFail();
 
-        // Dropped, not written and not truncated — the column must never see a
-        // value it cannot hold (MySQL 1406; SQLite would take it silently).
+        // ...and whatever it accepted is something the column can hold. The
+        // rule is NOT "everything unusual is dropped": `2.5 (44)` is eight
+        // characters and this is a counter, not an authorisation — a reading
+        // you are allowed to get a lie to. The rule is that nothing is
+        // TRUNCATED or COERCED into a column, because MySQL raises 1406 on a
+        // string past a varchar and SQLite would take it silently.
         foreach (['app_platform' => 10, 'app_version' => 20, 'app_build' => 20] as $column => $width) {
-            if (! array_key_exists($column, $extra)) {
+            $stored = $user->{$column};
+
+            if ($stored === null) {
                 continue;
             }
 
-            $stored = $user->{$column};
+            $this->assertIsString($stored, $column);
+            $this->assertLessThanOrEqual($width, mb_strlen($stored), "{$column} must fit its column");
 
-            $this->assertNull($stored, "{$column} must be dropped, never coerced or truncated");
-            $this->assertLessThanOrEqual($width, strlen((string) $stored));
+            if ($column === 'app_platform') {
+                $this->assertContains($stored, ['ios', 'android'], 'a platform nobody ships must not be recorded');
+            }
         }
     }
 

@@ -67,8 +67,8 @@ class LegacyFeaturesTelemetryTest extends TestCase
         $this->getJson($this->featuresUrl($this->org))->assertOk();
         $this->getJson($this->featuresUrl($this->org))->assertOk();
 
-        $this->assertSame(2, $this->count($this->org, 'untagged'));
-        $this->assertSame(0, $this->count($this->org, 'tagged'));
+        $this->assertSame(2, $this->countedHits($this->org, 'untagged'));
+        $this->assertSame(0, $this->countedHits($this->org, 'tagged'));
     }
 
     #[Test]
@@ -76,8 +76,8 @@ class LegacyFeaturesTelemetryTest extends TestCase
     {
         $this->getJson($this->featuresUrl($this->org), [AppClientHeader::HEADER => 'ios/1.0/47'])->assertOk();
 
-        $this->assertSame(1, $this->count($this->org, 'tagged'));
-        $this->assertSame(0, $this->count($this->org, 'untagged'));
+        $this->assertSame(1, $this->countedHits($this->org, 'tagged'));
+        $this->assertSame(0, $this->countedHits($this->org, 'untagged'));
     }
 
     /**
@@ -92,8 +92,8 @@ class LegacyFeaturesTelemetryTest extends TestCase
             $this->getJson($this->featuresUrl($this->org), [AppClientHeader::HEADER => $value])->assertOk();
         }
 
-        $this->assertSame(4, $this->count($this->org, 'untagged'));
-        $this->assertSame(0, $this->count($this->org, 'tagged'));
+        $this->assertSame(4, $this->countedHits($this->org, 'untagged'));
+        $this->assertSame(0, $this->countedHits($this->org, 'tagged'));
     }
 
     #[Test]
@@ -105,8 +105,8 @@ class LegacyFeaturesTelemetryTest extends TestCase
         $this->getJson($this->featuresUrl($other))->assertOk();
         $this->getJson($this->featuresUrl($other))->assertOk();
 
-        $this->assertSame(1, $this->count($this->org, 'untagged'));
-        $this->assertSame(2, $this->count($other, 'untagged'));
+        $this->assertSame(1, $this->countedHits($this->org, 'untagged'));
+        $this->assertSame(2, $this->countedHits($other, 'untagged'));
     }
 
     #[Test]
@@ -124,7 +124,7 @@ class LegacyFeaturesTelemetryTest extends TestCase
         $this->assertSame(1, (int) Cache::get(
             CountLegacyFeaturesHit::key($yesterday, $this->org->id, 'untagged'), 0
         ));
-        $this->assertSame(2, $this->count($this->org, 'untagged'));
+        $this->assertSame(2, $this->countedHits($this->org, 'untagged'));
     }
 
     /**
@@ -335,7 +335,12 @@ class LegacyFeaturesTelemetryTest extends TestCase
         return "/api/mobile/masjids/{$org->id}/features";
     }
 
-    private function count(Masjid $org, string $bucket): int
+    /**
+     * Not `count()`: PHPUnit\Framework\TestCase::count() is FINAL, so declaring
+     * one here is a fatal error at class-load time — the whole file fails to
+     * load, and with it every suite in the same run.
+     */
+    private function countedHits(Masjid $org, string $bucket): int
     {
         return (int) Cache::get(
             CountLegacyFeaturesHit::key(now()->toDateString(), $org->id, $bucket),

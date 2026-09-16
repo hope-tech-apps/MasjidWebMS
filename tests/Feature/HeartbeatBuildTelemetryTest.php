@@ -375,27 +375,35 @@ class HeartbeatBuildTelemetryTest extends TestCase
     }
 
     /**
-     * Registration is the other half of that trade: it DOES refuse, because a
-     * 422 there is loud, recoverable by a retry, and the body is entirely the
-     * app's own. Refusing nowhere would leave no signal at all that a client
-     * was sending something the column cannot hold.
+     * Registration gets the SAME trade as the heartbeat, and this test used to
+     * assert the opposite.
+     *
+     * It asserted that registration 422s on an over-width `app_version` or an
+     * unknown platform, on the reasoning that a 422 there is loud, recoverable
+     * by a retry, and the body is the app's own. That reasoning does not
+     * survive the question "recoverable by whom": the client that would be
+     * refused is one already shipped to the store, it cannot be changed, and a
+     * refused FIRST-launch registration was measured stranding a new iPhone on
+     * its splash screen. Nothing establishes that no installed build already
+     * sends a body key spelled `app_version`.
+     *
+     * So no device verb refuses over these fields now. The signal the 422 was
+     * meant to give is not lost — `app-telemetry:builds` prints a device with
+     * no recorded build as `pre-R1`, which is where an unusable value shows up.
      */
     #[Test]
-    public function registration_refuses_a_value_the_column_could_not_hold(): void
+    public function registration_records_what_it_can_and_refuses_nothing(): void
     {
         $this->postJson('/api/mobile/user', [
             'masjid_id' => $this->org->id,
             'device_id' => 'device-h',
             'app_version' => str_repeat('9', 21),
-        ])->assertStatus(422);
-
-        $this->postJson('/api/mobile/user', [
-            'masjid_id' => $this->org->id,
-            'device_id' => 'device-h',
             'app_platform' => 'windows',
-        ])->assertStatus(422);
+        ])->assertSuccessful();
 
-        $this->assertNull(MobileAppUser::where('device_id', 'device-h')->first());
+        // The phone is registered — that is the whole point — and neither
+        // unusable value reached a column.
+        $this->assertDeviceRuns('device-h', null, null, null);
     }
 
     // -------------------------------------------------- app-telemetry:builds

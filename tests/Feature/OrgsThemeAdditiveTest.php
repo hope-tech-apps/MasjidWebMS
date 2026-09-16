@@ -227,13 +227,8 @@ class OrgsThemeAdditiveTest extends TestCase
         // carrying one.
         $home = $this->listedOrg('Muslim Education Center');
 
-        $this->assertNotSame(
-            'orgs',
-            MobileCache::ORGS,
-            'the /orgs shape changed in S1, so its cache key must not be the one the old code wrote'
-        );
-
-        // A pre-S1 entry, verbatim: the five keys and no theme.
+        // A pre-S1 entry, verbatim: the five keys and no theme, written under
+        // the LITERAL key the old code used.
         Cache::put(MobileCache::masjidKey($home->id, 'orgs'), [[
             'id' => $home->id,
             'name' => $home->name,
@@ -242,10 +237,18 @@ class OrgsThemeAdditiveTest extends TestCase
             'logo_url' => null,
         ]], 600);
 
+        // The behavioural assertion first, so this test fails on what a phone
+        // would actually see rather than on the spelling of a constant.
         $row = $this->orgs($home->id)[0];
 
         $this->assertArrayHasKey('theme', $row, 'the stale entry must be unreachable, not served');
         $this->assertSame(['id', 'name', 'org_type', 'is_home', 'logo_url', 'theme'], array_keys($row));
+
+        $this->assertNotSame(
+            'orgs',
+            MobileCache::ORGS,
+            'the /orgs shape changed in S1, so its cache key must not be the one the old code wrote'
+        );
     }
 
     /** A home with two published children, the shape a switcher actually draws. */
