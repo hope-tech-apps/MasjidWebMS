@@ -416,13 +416,28 @@ class AppFeatureCutoverPlanTest extends TestCase
      */
     private function snapshot(): array
     {
-        return [
-            'masjid_mobile_app_features' => DB::table('masjid_mobile_app_features')->orderBy('id')->get()->toArray(),
-            'mobile_app_features' => DB::table('mobile_app_features')->orderBy('id')->get()->toArray(),
-            'masjid_capability_changes' => DB::table('masjid_capability_changes')->orderBy('id')->get()->toArray(),
-            'masjids' => DB::table('masjids')->orderBy('id')->get()->toArray(),
-            'donation_links' => DB::table('donation_links')->orderBy('id')->get()->toArray(),
-            'announcements' => DB::table('announcements')->orderBy('id')->get()->toArray(),
+        $tables = [
+            'masjid_mobile_app_features',
+            'mobile_app_features',
+            'masjid_capability_changes',
+            'masjids',
+            'donation_links',
+            'announcements',
         ];
+
+        $snapshot = [];
+
+        foreach ($tables as $table) {
+            // Rows as plain arrays, not stdClass: two reads of an unchanged
+            // table return different OBJECTS, so a strict comparison of the
+            // objects would fail whether or not anything was written.
+            $snapshot[$table] = DB::table($table)
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($row) => (array) $row)
+                ->all();
+        }
+
+        return $snapshot;
     }
 }

@@ -14,6 +14,7 @@ use App\Models\Service;
 use App\Support\AppMenu;
 use App\Support\GivingSwitch;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 
 /**
  * What the app-features cutover WOULD do, printed, with nothing written.
@@ -549,7 +550,11 @@ class AppFeaturesCutoverPlan extends Command
                 continue;
             }
 
-            $this->line("<comment>#{$orgPlan['masjid_id']} {$orgPlan['name']}</comment> ({$orgPlan['org_type']})");
+            // Escaped: an organisation whose name contains `<` would otherwise
+            // be read as a formatter tag and abort the run.
+            $name = OutputFormatter::escape($orgPlan['name']);
+
+            $this->line("<comment>#{$orgPlan['masjid_id']} {$name}</comment> ({$orgPlan['org_type']})");
 
             if (! $orgPlan['has_pivot_rows']) {
                 $this->line('  No app-feature rows at all.');
