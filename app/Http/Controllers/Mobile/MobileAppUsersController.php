@@ -57,7 +57,7 @@ class MobileAppUsersController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $user
+                'data' => $this->devicePayload($user)
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -90,7 +90,7 @@ class MobileAppUsersController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => $user
+                'data' => $this->devicePayload($user)
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
             return response()->json([
@@ -171,5 +171,43 @@ class MobileAppUsersController extends Controller
                 'message' => \App\Support\Errors::publicMessage($e)
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * What a device row looks like on the wire.
+     *
+     * Hand-built, not the model. `mobile_app_users` also carries `contact_id`
+     * — which member is signed in on this handset — and that member's push
+     * identity in `onesignal_subscription_id`. These endpoints are
+     * UNAUTHENTICATED and `device_id` is only ever checked for existence, so
+     * returning the model handed both to anyone who knew or guessed an id, and
+     * would hand over every column added to the table from here on. `store`
+     * makes it worse than it looks: registering an id that already exists
+     * returns the EXISTING row, so the leak needs no write of one's own. The
+     * member realm hand-builds its contact payload for the same reason
+     * (MemberAuthController::verify). Found by review, 2026-09-15 (PF-4).
+     *
+     * The keys are exactly the ones the shipped apps decode. Two of them are
+     * non-optional in builds already on phones and MUST keep appearing:
+     *   `id`         iOS `DeviceId.id` (Int); Android `DeviceRegistrationData.id` (Int)
+     *   `device_id`  iOS `DeviceId.deviceId` (String); Android `…deviceId`
+     *                (String, non-null on `master`, which Play vc13 came from)
+     * The other four are optional on both platforms, and kept because both
+     * still decode them. Dropped, and read by neither app on any branch:
+     * `contact_id`, `onesignal_subscription_id`, `last_active_at`.
+     *
+     * Dates go out through the model's own serializer, so the strings are the
+     * ones those builds have always received.
+     */
+    private function devicePayload(MobileAppUser $user): array
+    {
+        return [
+            'id' => (int) $user->id,
+            'device_id' => (string) $user->device_id,
+            'masjid_id' => $user->masjid_id === null ? null : (int) $user->masjid_id,
+            'user_agent' => $user->user_agent,
+            'created_at' => $user->created_at?->toJSON(),
+            'updated_at' => $user->updated_at?->toJSON(),
+        ];
     }
 }
