@@ -290,4 +290,98 @@ class AppMenuCacheAndEtagTest extends TestCase
         $this->assertNotSame($first->getContent(), $after->getContent());
         $this->assertNotContains('quran', $this->itemKeys($after->json('data.profiles.0')));
     }
+
+    // ------------------------------------------- the tag covers the WHOLE body
+
+    #[Test]
+    public function the_tag_is_a_hash_of_everything_else_in_the_body(): void
+    {
+        // The one assertion that cannot go stale. AppMenu::payload() used to
+        // build an array to hash and then re-list the same keys by hand in what
+        // it returned, so the two could drift: a field returned but NOT hashed
+        // would change while the tag stood still, and every phone holding the
+        // old tag would be answered 304 and keep the stale value FOREVER.
+        //
+        // Enumerating the keys here would drift the same way. Recomputing the
+        // hash over the served body instead means any future key is covered by
+        // this test the moment it is added, or this test fails.
+        $home = $this->listedOrg('Muslim Education Center', ['crm_enabled' => true]);
+        $this->brand($home, '#01B151');
+        $child = $this->listedOrg('Al-Razi School', ['org_type' => 'school']);
+        $child->forceFill(['parent_id' => $home->id])->save();
+        MobileCache::flushFamilyById((int) $child->id);
+
+        $response = $this->menu($home->id)->assertOk();
+        $body = $response->json('data');
+
+        $this->assertNotEmpty($body['account']);
+        $this->assertCount(2, $body['profiles'], 'a body with something in every branch');
+
+        $served = $body['hash'];
+        unset($body['hash']);
+
+        $this->assertSame(
+            sha1(json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)),
+            $served,
+            'every key the body serves must be inside the hash that becomes its ETag'
+        );
+        $this->assertSame('"' . $served . '"', $response->headers->get('ETag'));
+    }
+
+    #[Test]
+    public function turning_the_member_realm_off_moves_the_tag(): void
+    {
+        // `account.sign_in_available` lives in the hash or it does not. If it
+        // does not: a SuperAdmin turns the member realm off, the entry
+        // rebuilds with sign_in_available false, the tag is unchanged, and
+        // every phone that already holds it is answered 304 and keeps drawing a
+        // Sign in row that leads nowhere — permanently, and invisibly from the
+        // server.
+        $home = $this->listedOrg('Muslim Education Center', ['crm_enabled' => true]);
+
+        $before = $this->menu($home->id)->assertOk();
+        $this->assertTrue($before->json('data.account.sign_in_available'));
+
+        $home->forceFill(['crm_enabled' => false])->save();
+        MobileCache::flushFamily($home->fresh());
+
+        $after = $this->menu($home->id)->assertOk();
+
+        $this->assertFalse($after->json('data.account.sign_in_available'));
+        $this->assertNotSame(
+            $before->headers->get('ETag'),
+            $after->headers->get('ETag'),
+            'the account block must be inside the hash'
+        );
+
+        // ...and the old tag no longer satisfies a conditional request.
+        $this->menu($home->id, ['If-None-Match' => $before->headers->get('ETag')])
+            ->assertOk()
+            ->assertJsonPath('data.account.sign_in_available', false);
+    }
+
+    #[Test]
+    public function a_new_brand_colour_moves_the_tag(): void
+    {
+        // Same shape for `profiles[].theme`. A brand colour that changes
+        // without moving the tag is a band that never repaints on any device
+        // that already fetched the menu.
+        $home = $this->listedOrg('Burlington Masjid');
+        $this->brand($home, '#01B151');
+
+        $before = $this->menu($home->id)->assertOk();
+        $this->assertSame('#01B151', $before->json('data.profiles.0.theme.primary'));
+
+        $this->brand($home, '#2B66C2');
+        MobileCache::flushFamily($home->fresh());
+
+        $after = $this->menu($home->id)->assertOk();
+
+        $this->assertSame('#2B66C2', $after->json('data.profiles.0.theme.primary'));
+        $this->assertNotSame(
+            $before->headers->get('ETag'),
+            $after->headers->get('ETag'),
+            'the theme must be inside the hash'
+        );
+    }
 }

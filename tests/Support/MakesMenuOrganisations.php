@@ -107,10 +107,14 @@ trait MakesMenuOrganisations
     /** Give an organisation a brand colour, so its profile carries a theme. */
     protected function brand(Masjid $org, ?string $primary): Masjid
     {
-        ThemeSetting::create([
-            'masjid_id' => $org->id,
-            'primary_color' => $primary,
-        ]);
+        // updateOrCreate, not create: an organisation has ONE theme row, and a
+        // test that re-brands it (the "a new brand colour moves the tag" case)
+        // must change the colour rather than add a second row whose effect
+        // depends on which one the relation happens to pick.
+        ThemeSetting::updateOrCreate(
+            ['masjid_id' => $org->id],
+            ['primary_color' => $primary],
+        );
 
         return $org->fresh();
     }

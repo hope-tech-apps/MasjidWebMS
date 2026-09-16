@@ -517,13 +517,18 @@ class AppMenu
         // that pins a broken body in every phone's cache.
         $hash = sha1(json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
 
-        return [
-            'schema_version' => $data['schema_version'],
-            'hash' => $hash,
-            'home_id' => $data['home_id'],
-            'account' => $data['account'],
-            'profiles' => $data['profiles'],
-        ];
+        // The returned body is $data with `hash` spliced in after
+        // `schema_version` — derived, never re-listed. Re-typing the keys here
+        // let the two drift: a field added to the return but not to $data would
+        // be served and NOT hashed, so it could change while the ETag stood
+        // still and every phone holding the old tag would be answered 304 and
+        // keep the stale value for good. Turning the member realm off, or
+        // changing a brand colour, would be exactly that kind of silent
+        // permanent failure. Splicing makes the drift unrepresentable.
+        return array_merge(
+            ['schema_version' => $data['schema_version'], 'hash' => $hash],
+            $data
+        );
     }
 
     /**
