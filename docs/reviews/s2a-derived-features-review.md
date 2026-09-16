@@ -130,9 +130,19 @@ will ever be fixable.
 
 ## The should-fix worth reading first
 
-- **`R4` / `MB-1`** — the repo's catalogue spells feature 1's key ASCII `quran`; production
-  serves `qur’an`. Two records of the same catalogue disagreeing on the one byte the Play
-  build matches on.
+- **`R4` / `MB-1`, with the cause found afterwards** — the repo's catalogue spells feature
+  1's key ASCII `quran`; production serves `qur’an`. **The divergence is a migration that
+  silently missed.** `2025_12_09_203251_add_key_to_mobile_app_features_table` backfills
+  `key` by matching on `name`, and its table is keyed `'Qur\'an'` — an ASCII apostrophe.
+  Production's name is `Qur’an` (U+2019), so that row never matched, fell through to the
+  "generate one from the name" branch, and got `qur’an`. Every other row matched and is
+  ASCII. Nothing has broken because
+  `MasjidMobileAppFeaturesController::normaliseKey` strips non-alphanumerics before the
+  icon lookup, so `qur’an` and `quran` both resolve — one normaliser is the only thing
+  standing between the two records. Anything that compares `$feature->key === 'quran'`
+  passes in a test seeded from the repo's intent and fails on production. **The derived
+  path must emit the STORED key, `qur’an`, not the repo's spelling**, or the payload
+  changes byte-for-byte on the one feature the Play build matches by name.
 - **`BI-5` / `cw-1` / `OB-2` / `M2`** — `show_in_app` and `hide_everywhere` write the
   identical thing, so an owner's "keep it" silently becomes "delete it".
 - **`cw-2` / `SEQ-1`** — the resolutions live in `config/`, which the migration reads
@@ -213,6 +223,13 @@ composite:
    until S3a, write `features.lastgood` **only** from `LegacyFeatures::fromPivot()`, never
    from the derived path. The pivot is the contract's own reference source and lives until
    S3a, so the cutover cannot poison the safety net it is supposed to fall back on.
+
+**A caution about convergence, since this review leans on it twice.** Three lenses agreed
+that `lastgood` was a thirty-day landmine no flush could clear, and all three were wrong:
+the convergence meant something real was there, not that the diagnosis was right. Five
+lenses agreed on the ON-direction blindness and were right. Agreement between independent
+readers is a signal to look, not a verdict — the thing that separated the two cases was
+somebody opening the file.
 
 **And a client-side asymmetry worth pinning in the device plan** (from the rehearsal
 session): the same transient `[]` is a **one-tab app on iPhone and a full bar on Android**.
