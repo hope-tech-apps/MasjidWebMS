@@ -217,8 +217,61 @@ class MasjidsController extends Controller
 
         return response()->json([
             'status' => 'success',
+            'message' => $this->listingTabWarning($masjid),
             'data' => $masjid,
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Say it HERE, at the moment somebody makes an organisation visible.
+     *
+     * Listing is what puts an organisation into a parent's app: it appears in
+     * the profile switcher, and the phone then draws that organisation's bottom
+     * tabs from its own switches. `MainTabView.swift` gates exactly three of the
+     * four tabs — Announcements (legacy id 10), Contact Us (11) and Donate (6) —
+     * and Home is the only one always present. So an organisation whose switches
+     * leave all three off opens, for anybody who selects it, as a single Home
+     * tab with the tab bar collapsed around it.
+     *
+     * BISS (18) is in exactly that state after the S2 cutover resolutions, and
+     * nothing would have said so: the decision that triggers it is a listing
+     * toggle taken months later by somebody who is not reading a cutover
+     * runbook. A note in the plan is not present at the moment it matters; this
+     * is.
+     *
+     * It WARNS and does not refuse. A one-tab profile is a legitimate thing to
+     * publish — a small organisation with no announcements, no contact intake
+     * and nowhere to give is exactly that — and refusing would make a
+     * SuperAdmin fight the platform to do something reasonable. The warning
+     * rides the success response, so the screen can show it without the write
+     * having failed.
+     *
+     * Derived from the SWITCHES, not the legacy pivot, because the switches are
+     * what will still exist after S2b retires the pivot, and because this is a
+     * statement about what the app will draw rather than about what it drew
+     * before the cutover ran.
+     */
+    private function listingTabWarning(Masjid $masjid): string
+    {
+        if (! $masjid->isListed()) {
+            return 'Directory listing updated.';
+        }
+
+        $gatedTabs = [
+            'Announcements' => $masjid->hasCapability('announcements') || $masjid->hasCapability('events'),
+            'Contact Us' => $masjid->hasCapability('contact_requests'),
+            'Donate' => $masjid->hasCapability('donation_link') || $masjid->hasCapability('giving'),
+        ];
+
+        $off = array_keys(array_filter($gatedTabs, static fn (bool $on): bool => ! $on));
+
+        if (count($off) !== count($gatedTabs)) {
+            return 'Directory listing updated.';
+        }
+
+        return 'Listed. Note: ' . $masjid->name . ' has Announcements, Contact Us and Donate all switched off, '
+            . 'so it opens in the app as a single Home tab. That is allowed — turn any of those switches on if it '
+            . 'was not intended.';
     }
 
     /**
