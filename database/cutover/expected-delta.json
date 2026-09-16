@@ -29,7 +29,18 @@
     "`expect_shape_change` has no before-image, so it is checked for its row set,",
     "integer-ness and icons only — names, keys and timestamps on its new rows are",
     "NOT verified. Binding its eleven resolved values when",
-    "config/app_feature_cutover.php lands is what closes that gap."
+    "config/app_feature_cutover.php lands is what closes that gap.",
+    "",
+    "`decision_taken_twice` marks an entry the owner approved, then approved AGAIN after",
+    "the consequence was re-described correctly. An approval obtained against a wrong",
+    "description is not an approval; these three were re-put and held.",
+    "",
+    "A NOTE ON BUNDLES vs DEFAULTS, because the two are easy to conflate: `services` is",
+    "in ALL THREE vertical bundles in config/verticals.php, so it is not a masjid-only",
+    "module. What governs the school-side flips is the CAPABILITY default in",
+    "config/capabilities.php - `services` and `donation_link` both default to",
+    "masjid true / school false / community false. A bundle says what a tenant is seeded",
+    "with; a default says what a switch reads when nobody has set it. Different things."
   ],
   "owner_decisions_taken": "2026-09-15, extended 2026-09-16 (dead Donate rows)",
   "orgs": {
@@ -60,18 +71,22 @@
     "14": {
       "name": "Al-Razi School",
       "flips": [
-        6
+        6,
+        9
       ],
       "decision": "owner",
-      "why": "OWNER 2026-09-16: turn the Donate row off. Al-Razi has no Stripe account, no active funds and no donation link, so the row leads to 'No donation options are available right now.' Leading people to an empty state is worse than not offering it, and it is one switch back the day they have a link."
+      "decision_taken_twice": true,
+      "why": "OWNER 2026-09-16: turn the Donate row off. Al-Razi has no Stripe account, no active funds and no donation link, so the row leads to 'No donation options are available right now.' Leading people to an empty state is worse than not offering it, and it is one switch back the day they have a link. REAFFIRMED 2026-09-16 against the CORRECTED description. The decision was first taken when id 6 was described as a menu row leaving the app. It is not: on iPhone `MainTabView.swift:39` gates a bottom TAB on this id, so turning it off removes a tab and the tab bar re-lays out around it on a shipped build with no release. Abdullah put that shape to the owner explicitly, with reversal and BISS-only both on the table, and the answer was 'Off for all three, as decided.' A reader finding this entry should know somebody knowingly removed a tab from a live iPhone app - a rule did not sweep it up. SERVICES (id 9) OFF - owner, 2026-09-16. Measured first: all four orgs (14, 16, 18, 19) have ZERO service rows on production, so this switches off a module with nothing behind it. Not a separate judgement: it follows the same principle as the Donate call the owner took the same day, and it resolves an inconsistency where 19 had Services turned off by decision while 14, 16 and 18 kept it on only because no resolution had been written. The deciding point: `services` and `donation_link` carry IDENTICAL capability defaults (masjid true, school false, community false), so switching both off at these orgs RESTORES the vertical default. It is not taking something away from a school - it is ending an inheritance the school was never meant to have."
     },
     "16": {
       "name": "Intellicor International Academy",
       "flips": [
-        6
+        6,
+        9
       ],
       "decision": "owner",
-      "why": "OWNER 2026-09-16: turn the Donate row off, same reasoning as 14 - no Stripe, no funds, no link. NOTE this narrows the plan's stated known effect, which said preserving Intellicor's pivot writes BOTH services=true and donation_link=true; services still follows the literal rule, donation_link no longer does."
+      "decision_taken_twice": true,
+      "why": "OWNER 2026-09-16: turn the Donate row off, same reasoning as 14 - no Stripe, no funds, no link. NOTE this narrows the plan's stated known effect, which said preserving Intellicor's pivot writes BOTH services=true and donation_link=true; services still follows the literal rule, donation_link no longer does. REAFFIRMED 2026-09-16 against the CORRECTED description. The decision was first taken when id 6 was described as a menu row leaving the app. It is not: on iPhone `MainTabView.swift:39` gates a bottom TAB on this id, so turning it off removes a tab and the tab bar re-lays out around it on a shipped build with no release. Abdullah put that shape to the owner explicitly, with reversal and BISS-only both on the table, and the answer was 'Off for all three, as decided.' A reader finding this entry should know somebody knowingly removed a tab from a live iPhone app - a rule did not sweep it up. SERVICES (id 9) OFF - owner, 2026-09-16. Measured first: all four orgs (14, 16, 18, 19) have ZERO service rows on production, so this switches off a module with nothing behind it. Not a separate judgement: it follows the same principle as the Donate call the owner took the same day, and it resolves an inconsistency where 19 had Services turned off by decision while 14, 16 and 18 kept it on only because no resolution had been written. The deciding point: `services` and `donation_link` carry IDENTICAL capability defaults (masjid true, school false, community false), so switching both off at these orgs RESTORES the vertical default. It is not taking something away from a school - it is ending an inheritance the school was never meant to have."
     },
     "17": {
       "name": "ZZ QA Sandbox",
@@ -99,11 +114,13 @@
         6,
         7,
         8,
+        9,
         10,
         11
       ],
       "decision": "owner",
-      "why": "OWNER: the switches win. about_us, gallery, announcements and contact_requests are explicit false overrides from the wave-1 switch work, kept off rather than written back on; the public contact intake stays shut. 2026-09-16 the owner added donation_link for the same reason as 14 and 16 - BISS has no Stripe, no funds and no link, so its Donate row opened an empty state. Five flips, not four. A user-visible app change, chosen with both consequences on the table."
+      "decision_taken_twice": true,
+      "why": "OWNER: the switches win. about_us, gallery, announcements and contact_requests are explicit false overrides from the wave-1 switch work, kept off rather than written back on; the public contact intake stays shut. 2026-09-16 the owner added donation_link for the same reason as 14 and 16 - BISS has no Stripe, no funds and no link, so its Donate row opened an empty state. Five flips, not four. A user-visible app change, chosen with both consequences on the table. REAFFIRMED 2026-09-16 against the CORRECTED description. The decision was first taken when id 6 was described as a menu row leaving the app. It is not: on iPhone `MainTabView.swift:39` gates a bottom TAB on this id, so turning it off removes a tab and the tab bar re-lays out around it on a shipped build with no release. Abdullah put that shape to the owner explicitly, with reversal and BISS-only both on the table, and the answer was 'Off for all three, as decided.' A reader finding this entry should know somebody knowingly removed a tab from a live iPhone app - a rule did not sweep it up. SERVICES (id 9) OFF - owner, 2026-09-16. Measured first: all four orgs (14, 16, 18, 19) have ZERO service rows on production, so this switches off a module with nothing behind it. Not a separate judgement: it follows the same principle as the Donate call the owner took the same day, and it resolves an inconsistency where 19 had Services turned off by decision while 14, 16 and 18 kept it on only because no resolution had been written. The deciding point: `services` and `donation_link` carry IDENTICAL capability defaults (masjid true, school false, community false), so switching both off at these orgs RESTORES the vertical default. It is not taking something away from a school - it is ending an inheritance the school was never meant to have."
     },
     "19": {
       "name": "MAS Youth Charlotte",
@@ -111,7 +128,7 @@
         9
       ],
       "decision": "owner",
-      "why": "OWNER: Donate stays, Services goes. donation_link stays ON because MAS Youth has a real donation link (masyouthclt.com) - it is the one org of the four where the Donate row leads somewhere. Worship stays off, already true."
+      "why": "OWNER: Donate stays, Services goes. donation_link stays ON because MAS Youth has a real donation link (masyouthclt.com) - it is the one org of the four where the Donate row leads somewhere. Worship stays off, already true. 2026-09-16 the owner extended this Services decision to 14, 16 and 18, which were in the identical zero-services state, so the four now agree."
     }
   },
   "invariants_that_hold_for_every_org": [
