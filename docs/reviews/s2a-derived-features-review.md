@@ -119,3 +119,49 @@ read-only production data, and the attacks are reasoned rather than fired. Combi
 `C-1` — the shipped iOS binary's source is not identifiable in the repo — the client-side
 conclusions are the softest part of the review and should be treated as leads for the
 device evidence plan rather than as settled facts.
+
+---
+
+## Addendum: R1 composed with `features.lastgood`
+
+Asked after the review closed, by the session that owns the rehearsal: *can a transient
+`[]` poison the thirty-day last-good cache?* The review answers it, and the answer is
+worse than either finding alone.
+
+**First, what is actually shipped.** `lastgood` appears in exactly two places at HEAD — a
+docblock sentence in `MobileCache.php` and a test pinning that `flushFamily` leaves it
+alone. **Nothing writes it, nothing reads it.** The thirty-day cache, the four-step chain
+and the `Cache::remember` closure are all §7.4 *specification*, not code. Three lenses
+described the landmine as live; they were describing the plan.
+
+**Second, the composite.** As specified, the closure writes lastgood from whatever
+`rows()` returned, and the only thing that makes a payload "good" is that it did not
+throw. `R1` is precisely a path that returns `[]` **without throwing**. So a single
+transient failure on an organisation with no pivot rows would be recorded as the last
+known-good answer — and the fallback built to survive a bad day becomes the mechanism
+that extends it.
+
+**Third, the correction the critic makes to all three lenses.** The put is *inside* the
+closure, so it fires on every cache miss — at least every ten minutes under any traffic —
+and only when the build succeeded. A wrong body is therefore overwritten by the next
+successful build, and `down()` deleting the marker means the next miss rewrites lastgood
+from the pivot. The "permanent floor that no flush can clear" framing is wrong for any
+organisation with traffic, and an organisation without traffic never reads lastgood
+either.
+
+**So the fix is not a flush lever.** Two changes, each cheap, and together they close the
+composite:
+
+1. `R1`'s: treat an empty pivot result as a **miss**, not a success, so the chain falls
+   through instead of serving a blank drawer with HTTP 200.
+2. `SEQ-M2`(a), which the critic endorses as the only proposal that survives the above:
+   until S3a, write `features.lastgood` **only** from `LegacyFeatures::fromPivot()`, never
+   from the derived path. The pivot is the contract's own reference source and lives until
+   S3a, so the cutover cannot poison the safety net it is supposed to fall back on.
+
+**And a client-side asymmetry worth pinning in the device plan** (from the rehearsal
+session): the same transient `[]` is a **one-tab app on iPhone and a full bar on Android**.
+iOS gates each tab individually, so an empty list collapses to Home alone; Android's
+`visibleTabs` reads empty as "not configured yet" and returns the whole bar. One server
+fault, visibly broken on one platform and invisible on the other — and the invisible one
+is the more dangerous, because nobody reports it.
