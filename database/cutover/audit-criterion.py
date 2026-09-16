@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Break a real payload six ways and check the criterion screams.
+"""Break a real payload seventeen ways and check the criterion screams.
 
 Abdul-Rahman's challenge: nobody is asking whether the instrument can SEE the
 promise being broken. Reading the comparator cannot answer that — only
@@ -47,13 +47,15 @@ results.append(mutate("icon URL host changed",
     lambda d: rows(d)[2]["icon"].update(
         original_url="https://cdn.example.net/hijacked/icon.svg")))
 
-# 4. An org GAINING rows it did not have ([] -> eleven)
-results.append(mutate("org gains rows ([] -> 11)",
-    lambda d: None, expect_shape=False) if False else
-    (lambda: (print("  " + ("DETECTED" if compare({"status":"success","data":[]},
-                                                  BEFORE, [], False) else "*** MISSED ***").ljust(15)
-                    + " org gains rows ([] -> 11)"),
-              bool(compare({"status":"success","data":[]}, BEFORE, [], False)))[1])())
+# 4. An org GAINING rows it did not have ([] -> eleven). Written as a plain
+#    comparison rather than through mutate(), because the BEFORE side is the
+#    empty document, not a mutation of the capture. Kept in the same shape as
+#    its neighbours: one call, one verdict, no nested lambda.
+_gain = compare({"status": "success", "data": []}, BEFORE, [], expect_shape_change=False)
+print(f"  {('DETECTED' if _gain else '*** MISSED ***'):<15} org gains rows ([] -> 11)")
+if _gain:
+    print(f"                  -> {_gain[0][:96]}")
+results.append(bool(_gain))
 
 # 5. is_available changed on an UNLICENSED row
 results.append(mutate("is_available flipped on an unlicensed id",
@@ -106,6 +108,35 @@ _p = _c(before_empty, short, [], expect_shape_change=True, expected_row_ids=cano
 print(f"  {('DETECTED' if _p else '*** MISSED ***'):<15} shape-change org lands on the WRONG row set")
 if _p: print(f"                  -> {_p[0][:96]}")
 results.append(bool(_p))
+
+# 9. REGRESSION for finding 1 (Abdul-Rahman, 2026-09-16): a top-level envelope
+#    key whose VALUE changed, other than `status`. The old code compared only
+#    the `data` arrays plus an envelope KEY-SET check, so this passed clean.
+#    Tested precisely: a key present in BOTH documents whose VALUE differs.
+#    (Adding a key was already caught by the key-set check; the gap was a
+#    changed value on an existing non-`status` key. Production's envelope is
+#    only {status, data} today, which is why this was latent.)
+_env_b = copy.deepcopy(BEFORE); _env_b["meta"] = {"page": 1}
+_env_a = copy.deepcopy(BEFORE); _env_a["meta"] = {"page": 2}
+_env = compare(_env_b, _env_a, [])
+print(f"  {('DETECTED' if _env else '*** MISSED ***'):<15} envelope field VALUE changed (same keys)")
+if _env:
+    print(f"                  -> {_env[0][:96]}")
+results.append(bool(_env))
+
+# 10. REGRESSION for finding 3: a licensed id that moved 0 -> 1, the opposite
+#     of what `flips` licenses. The old code absorbed any change on a licensed
+#     id and patched it back, licensing the reverse of the documented rule.
+def _reverse_flip(d):
+    rows(d)[6]["pivot"]["is_available"] = 1        # id 7, after
+BEFORE_ZERO = copy.deepcopy(BEFORE)
+BEFORE_ZERO["data"][6]["pivot"]["is_available"] = 0  # id 7 starts OFF
+_after = copy.deepcopy(BEFORE_ZERO); _reverse_flip(_after)
+_rev = compare(BEFORE_ZERO, _after, [7])
+print(f"  {('DETECTED' if _rev else '*** MISSED ***'):<15} licensed id moved 0 -> 1 (wrong direction)")
+if _rev:
+    print(f"                  -> {_rev[0][:96]}")
+results.append(bool(_rev))
 
 # CONTROL: an untouched payload must NOT be flagged, or every result above is noise
 clean = compare(BEFORE, copy.deepcopy(BEFORE), [])

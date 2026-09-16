@@ -100,10 +100,24 @@ def compare(before_doc, after_doc, expected_flips, expect_shape_change=False,
             problems.append(f"id {r.get('id')}: icon.original_url is null or empty")
 
     if expect_shape_change:
-        return problems  # no before-image to compare against
+        # STATED WEAKNESS, not an oversight: with no before-image there is
+        # nothing to demand equality against, so a shape-change org is checked
+        # for its row set, integer-ness and icons ONLY. Names, keys, timestamps
+        # and per-row envelope on its new rows are NOT verified. That makes the
+        # criterion weaker for this one org than for the other eight, and a
+        # reader should not have to infer it. Binding org 17's eleven resolved
+        # values when config/app_feature_cutover.php lands is what closes it.
+        return problems
 
     # 5. Patch the licensed change back out, then demand whole-document equality.
-    patched = json.loads(json.dumps(after))  # deep copy, no aliasing
+    #    The comparison is on the whole DOCUMENT, not just `data`: an earlier
+    #    version compared the row arrays and checked the envelope only by key set
+    #    and `status` value, so a top-level key whose VALUE changed passed clean.
+    #    Production's envelope is only {status, data} so nothing was exposed, but
+    #    a docstring promising more than the code delivers is the failure this
+    #    file's own design note warns about.
+    patched_doc = json.loads(json.dumps(after_doc))  # deep copy, no aliasing
+    patched = patched_doc.get("data") or []
     by_id = {r.get("id"): r for r in patched}
     actually_flipped = []
     for rb, ra in zip(before, after):
@@ -112,6 +126,14 @@ def compare(before_doc, after_doc, expected_flips, expect_shape_change=False,
         pa = (ra.get("pivot") or {}).get("is_available")
         if pb != pa:
             actually_flipped.append(rid)
+            # Direction is part of the licence. `flips` means "1 -> 0"; a
+            # licensed id that went the other way would otherwise be absorbed
+            # silently, licensing the opposite of what the file says. No entry
+            # today has a licensed id whose before-value is 0, so this is
+            # latent — which is precisely when to close it.
+            if rid in expected_flips and not (pb == 1 and pa == 0):
+                problems.append(
+                    f"id {rid}: licensed for 1 -> 0 but went {pb!r} -> {pa!r}")
         if rid in expected_flips and rid in by_id and by_id[rid].get("pivot"):
             by_id[rid]["pivot"]["is_available"] = pb
 
@@ -124,7 +146,15 @@ def compare(before_doc, after_doc, expected_flips, expect_shape_change=False,
             f"expected is_available to change on {missing} and it did not "
             f"— a cutover that did nothing would otherwise pass")
 
-    if patched != before:
+    if patched_doc != before_doc:
+        if set(patched_doc) != set(before_doc):
+            problems.append(
+                f"envelope keys changed: {sorted(before_doc)} -> {sorted(patched_doc)}")
+        for k in sorted(set(before_doc) | set(patched_doc)):
+            if k != "data" and before_doc.get(k) != patched_doc.get(k):
+                problems.append(
+                    f"envelope field {k!r} changed "
+                    f"{before_doc.get(k)!r} -> {patched_doc.get(k)!r}")
         for rb, rp in zip(before, patched):
             for k in sorted(set(rb) | set(rp)):
                 if rb.get(k) != rp.get(k):
