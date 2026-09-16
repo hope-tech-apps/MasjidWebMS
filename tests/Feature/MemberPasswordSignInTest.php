@@ -6,7 +6,10 @@ use App\Mail\FamilyLoginCodeMail;
 use App\Models\AppSignupCode;
 use App\Models\Contact;
 use App\Models\ContactLoginEvent;
+use App\Models\Group;
+use App\Models\GroupMembership;
 use App\Models\Masjid;
+use App\Models\User;
 use App\Services\Member\MemberAccountDeletion;
 use App\Services\Member\NewMemberNameRequired;
 use App\Support\TenantContext;
@@ -18,6 +21,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use Laravel\Sanctum\PersonalAccessToken;
+use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -789,6 +793,264 @@ class MemberPasswordSignInTest extends TestCase
         $this->assertNull($contact->fresh()->login_enabled_at);
     }
 
+    // --------------------- a password belongs to the address it was chosen for
+
+    /**
+     * The review's reproduction (R1). The app links an office guardian known
+     * only by a household address, and whoever reads that mailbox chooses a
+     * password. The office then enables the parent portal at the parent's own
+     * address. Before the fix, that password opened BOTH doors at the new
+     * address, which nobody had proved, and its member token could delete the
+     * portal login.
+     */
+    #[Test]
+    public function a_password_chosen_through_a_household_address_does_not_follow_the_login_to_another(): void
+    {
+        $household = $this->address();
+        $personal = $this->address();
+
+        $parent = $this->member($this->masjid, $household, verified: false, extra: [
+            'login_email' => null,
+            'signup_source' => null,
+        ]);
+        $this->makeGuardian($parent);
+
+        $code = $this->requestCode($this->masjid, $household);
+        $codeToken = $this->verify($this->masjid, $household, $code, ['password' => self::GOOD])
+            ->assertOk()
+            ->assertJsonPath('data.contact.id', (int) $parent->id)
+            ->json('data.token');
+        $passwordToken = $this->signIn($this->masjid, $household, self::GOOD)->assertOk()->json('data.token');
+
+        $admin = $this->officeAdmin();
+        $this->asOffice($admin);
+        $this->postJson($this->familyLoginUrl($parent), ['login_email' => $personal])->assertOk();
+
+        $fresh = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        $this->assertSame($personal, $fresh->login_email);
+        $this->assertNotNull($fresh->login_enabled_at);
+        $this->assertFalse($fresh->hasFamilyPassword());
+        $this->assertNull($fresh->getRawOriginal('password'));
+        $this->assertNull($fresh->verified_at, 'Nobody proved the new address to the app.');
+        $this->assertSame(0, $fresh->tokens()->count());
+
+        // Neither password door opens the new address with that password...
+        $this->asANewRequest();
+        $portal = $this->postJson("/api/family/masjids/{$this->masjid->id}/auth/password", [
+            'email' => $personal,
+            'password' => self::GOOD,
+        ]);
+        $portal->assertStatus(410);
+        $this->assertSame(self::GONE, $this->signIn($this->masjid, $personal, self::GOOD)->getContent());
+
+        // ...nor the household one, which is no longer this contact's address.
+        $this->assertSame(self::GONE, $this->signIn($this->masjid, $household, self::GOOD)->getContent());
+
+        // The sessions opened through the household address are over.
+        foreach ([$codeToken, $passwordToken] as $dead) {
+            $this->asANewRequest();
+            $this->withToken($dead)
+                ->getJson("/api/mobile/masjids/{$this->masjid->id}/interests")
+                ->assertStatus(401);
+        }
+        $this->flushHeaders();
+
+        // The access history says what ended, under the address the password
+        // belonged to, and which operator's act ended it.
+        $events = ContactLoginEvent::withoutMasjidScope()
+            ->where('contact_id', $parent->id)
+            ->orderBy('id')
+            ->get();
+        $this->assertSame(
+            [ContactLoginEvent::ACTION_PASSWORD_CLEARED, ContactLoginEvent::ACTION_ENABLED],
+            $events->pluck('action')->all(),
+        );
+        $this->assertSame($household, $events[0]->login_email);
+        $this->assertSame((int) $admin->id, (int) $events[0]->actor_user_id);
+        $this->assertSame($personal, $events[1]->login_email);
+
+        // The household reader no longer reaches this contact: a code at that
+        // address is a new member, who is asked for a name.
+        $code = $this->requestCode($this->masjid, $household);
+        $this->verify($this->masjid, $household, $code, ['password' => self::OTHER])->assertStatus(422);
+        $this->assertFalse(Contact::withoutMasjidScope()->findOrFail($parent->id)->hasFamilyPassword());
+
+        // The parent proves their own address and is back in both doors.
+        $code = $this->requestCode($this->masjid, $personal);
+        $this->verify($this->masjid, $personal, $code, ['password' => self::OTHER])
+            ->assertOk()
+            ->assertJsonPath('data.contact.id', (int) $parent->id);
+        $this->signIn($this->masjid, $personal, self::OTHER)->assertOk();
+        $this->asANewRequest();
+        $this->postJson("/api/family/masjids/{$this->masjid->id}/auth/password", [
+            'email' => $personal,
+            'password' => self::OTHER,
+        ])->assertOk();
+    }
+
+    /** Re-typing the address the app already proved changes nothing. */
+    #[Test]
+    public function enabling_the_portal_at_the_address_the_app_proved_keeps_the_password_and_the_session(): void
+    {
+        $household = $this->address();
+        $parent = $this->member($this->masjid, $household, verified: false, extra: [
+            'login_email' => null,
+            'signup_source' => null,
+        ]);
+        $this->makeGuardian($parent);
+
+        $code = $this->requestCode($this->masjid, $household);
+        $token = $this->verify($this->masjid, $household, $code, ['password' => self::GOOD])
+            ->assertOk()
+            ->json('data.token');
+
+        $this->asOffice($this->officeAdmin());
+        $this->postJson($this->familyLoginUrl($parent), ['login_email' => $household])->assertOk();
+
+        $fresh = Contact::withoutMasjidScope()->findOrFail($parent->id);
+        $this->assertTrue($fresh->hasFamilyPassword());
+        $this->assertNotNull($fresh->verified_at);
+        $this->assertSame(
+            [ContactLoginEvent::ACTION_ENABLED],
+            ContactLoginEvent::withoutMasjidScope()->where('contact_id', $parent->id)->pluck('action')->all(),
+        );
+
+        $this->asANewRequest();
+        $this->withToken($token)
+            ->getJson("/api/mobile/masjids/{$this->masjid->id}/interests")
+            ->assertOk();
+        $this->flushHeaders();
+
+        $this->signIn($this->masjid, $household, self::GOOD)->assertOk();
+        $this->asANewRequest();
+        $this->postJson("/api/family/masjids/{$this->masjid->id}/auth/password", [
+            'email' => $household,
+            'password' => self::GOOD,
+        ])->assertOk();
+    }
+
+    /**
+     * An app member the office never enabled still holds `login_email`, so the
+     * office can take the address for a guardian (with the confirmation). The
+     * member's password, `verified_at` and sessions go with the address.
+     */
+    #[Test]
+    public function giving_an_app_members_address_to_someone_else_takes_their_password_and_sessions_with_it(): void
+    {
+        $email = $this->address();
+        $code = $this->requestCode($this->masjid, $email);
+        $holderToken = $this->verify($this->masjid, $email, $code, [
+            'first_name' => 'Amina',
+            'last_name' => 'Yusuf',
+            'password' => self::GOOD,
+        ])->assertOk()->json('data.token');
+        $holder = $this->contactAt($this->masjid, $email);
+
+        $guardian = $this->member($this->masjid, $this->address(), verified: false, extra: [
+            'login_email' => null,
+            'signup_source' => null,
+        ]);
+        $this->makeGuardian($guardian);
+
+        $admin = $this->officeAdmin();
+        $this->asOffice($admin);
+        $this->postJson($this->familyLoginUrl($guardian), ['login_email' => $email])
+            ->assertStatus(422)
+            ->assertJsonPath('reassignable', true);
+
+        $this->asOffice($admin);
+        $this->postJson($this->familyLoginUrl($guardian), [
+            'login_email' => $email,
+            'reassign_address' => true,
+        ])->assertOk();
+
+        $released = Contact::withoutMasjidScope()->findOrFail($holder->id);
+        $this->assertNull($released->login_email);
+        $this->assertFalse($released->hasFamilyPassword());
+        $this->assertNull($released->getRawOriginal('password'));
+        $this->assertNull($released->verified_at);
+        $this->assertSame(0, $released->tokens()->count());
+
+        $this->asANewRequest();
+        $this->withToken($holderToken)
+            ->getJson("/api/mobile/masjids/{$this->masjid->id}/interests")
+            ->assertStatus(401);
+        $this->flushHeaders();
+
+        // The address is the guardian's now, and the member's password opens
+        // it at neither door.
+        $this->assertSame(self::GONE, $this->signIn($this->masjid, $email, self::GOOD)->getContent());
+        $this->asANewRequest();
+        $this->postJson("/api/family/masjids/{$this->masjid->id}/auth/password", [
+            'email' => $email,
+            'password' => self::GOOD,
+        ])->assertStatus(410);
+
+        $events = ContactLoginEvent::withoutMasjidScope()
+            ->where('contact_id', $holder->id)
+            ->orderBy('id')
+            ->get();
+        $this->assertSame(
+            [ContactLoginEvent::ACTION_PASSWORD_CLEARED, ContactLoginEvent::ACTION_ADDRESS_RELEASED],
+            $events->pluck('action')->all(),
+        );
+        $this->assertSame($email, $events[0]->login_email);
+        $this->assertSame((int) $admin->id, (int) $events[0]->actor_user_id);
+    }
+
+    /**
+     * A contact with no login address can still carry a password from before
+     * the release path cleared one. A code sign-in that gives it an address
+     * must not turn that password into this address's password.
+     */
+    #[Test]
+    public function a_code_sign_in_that_gives_a_contact_its_address_drops_a_password_left_from_another(): void
+    {
+        $email = $this->address();
+        $contact = $this->member($this->masjid, $email, password: self::OTHER, extra: [
+            'login_email' => null,
+            'signup_source' => null,
+        ]);
+
+        $code = $this->requestCode($this->masjid, $email);
+        $this->verify($this->masjid, $email, $code)
+            ->assertOk()
+            ->assertJsonPath('data.contact.id', (int) $contact->id);
+
+        $fresh = Contact::withoutMasjidScope()->findOrFail($contact->id);
+        $this->assertSame($email, $fresh->login_email);
+        $this->assertFalse($fresh->hasFamilyPassword());
+        $this->assertNull($fresh->getRawOriginal('password'));
+
+        $this->assertSame(self::GONE, $this->signIn($this->masjid, $email, self::OTHER)->getContent());
+
+        // No family login, so no row that would keep this contact on deletion.
+        $this->assertSame(0, ContactLoginEvent::withoutMasjidScope()->where('contact_id', $contact->id)->count());
+
+        // With a password in the same request, that password is the one set.
+        $code = $this->requestCode($this->masjid, $email);
+        $this->verify($this->masjid, $email, $code, ['password' => self::GOOD])->assertOk();
+        $this->signIn($this->masjid, $email, self::GOOD)->assertOk();
+    }
+
+    #[Test]
+    public function a_leftover_password_is_replaced_not_cleared_when_the_adopting_sign_in_brings_one(): void
+    {
+        $email = $this->address();
+        $contact = $this->member($this->masjid, $email, password: self::OTHER, extra: [
+            'login_email' => null,
+            'signup_source' => null,
+        ]);
+
+        $code = $this->requestCode($this->masjid, $email);
+        $this->verify($this->masjid, $email, $code, ['password' => self::GOOD])
+            ->assertOk()
+            ->assertJsonPath('data.contact.id', (int) $contact->id);
+
+        $this->assertSame(self::GONE, $this->signIn($this->masjid, $email, self::OTHER)->getContent());
+        $this->signIn($this->masjid, $email, self::GOOD)->assertOk();
+    }
+
     // ---------------------------------------------- leaving still erases
 
     /**
@@ -1005,6 +1267,75 @@ class MemberPasswordSignInTest extends TestCase
         ], $extra))->save();
 
         return $contact->refresh();
+    }
+
+    /**
+     * This organisation's admin, who can enable a family login. The roles are
+     * seeded first so the admin is bridged to `masjid-admin` on save, as in
+     * FamilyLoginEnablementTest. Call once per test.
+     */
+    private function officeAdmin(): User
+    {
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
+        $admin = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+        ]);
+
+        $this->masjid->user_id = $admin->id;
+        $this->masjid->save();
+
+        return $admin;
+    }
+
+    private function asOffice(User $admin): void
+    {
+        $this->asANewRequest();
+        $this->flushHeaders();
+        Sanctum::actingAs($admin);
+    }
+
+    private function familyLoginUrl(Contact $contact): string
+    {
+        return "/api/admin/masjids/{$this->masjid->id}/contacts/{$contact->id}/family-login";
+    }
+
+    /**
+     * Make `$contact` the confirmed guardian of a new ward, which a family login
+     * requires (FamilyAccessService::ineligibilityReason).
+     */
+    private function makeGuardian(Contact $contact): void
+    {
+        $name = 'Class ' . uniqid();
+
+        $group = Group::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'name' => $name,
+            'slug' => \Illuminate\Support\Str::slug($name),
+            'kind' => 'class',
+        ]);
+
+        $ward = Contact::factory()->create(['masjid_id' => $this->masjid->id]);
+
+        GroupMembership::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $ward->id,
+            'role' => GroupMembership::ROLE_MEMBER,
+            'joined_at' => now(),
+        ]);
+
+        GroupMembership::withoutMasjidScope()->create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $group->id,
+            'contact_id' => $contact->id,
+            'role' => GroupMembership::ROLE_GUARDIAN,
+            'guardian_of_contact_id' => $ward->id,
+            'joined_at' => now(),
+        ]);
+
+        $this->assertTrue(app(\App\Services\Family\FamilyAccessService::class)->mayHoldAFamilyLogin($contact));
     }
 
     private function contactAt(Masjid $masjid, string $email): Contact

@@ -77,7 +77,12 @@ use Throwable;
  * The one thing a link does take from the request is a `password`, because it
  * is not a fact about the person the office recorded: it is the credential of
  * whoever reads the mailbox, and they have just proved they do. That is the
- * same authority the code itself grants, so it opens nothing the code did not.
+ * same authority the code itself grants, so it opens nothing the code did not
+ * — for as long as the contact keeps this address. When the office later
+ * enables the parent portal at a different address, or gives this address to
+ * someone else, FamilyAccessService clears the password and `verified_at`, so
+ * a password chosen through a household address never opens the portal (or
+ * the app) at the parent's own one.
  *
  * An address matching two contacts is ambiguous and refused outright, exactly
  * as FamilyLoginService refuses it — guessing which person a credential belongs
@@ -411,11 +416,24 @@ class MemberSignupService
                 // Adopt login_email only when the match came from the office's
                 // `email` column and no login address is set yet, so the
                 // contact has a stable identity for the next sign-in.
-                if ($contact->login_email === null) {
+                $adopted = $contact->login_email === null;
+
+                if ($adopted) {
                     $updates['login_email'] = $email;
                 }
 
                 $contact->forceFill($updates)->save();
+
+                // A password on a contact with no login address was chosen
+                // under an address it no longer has (FamilyAccessService
+                // clears it when an address is released, so only an older row
+                // can carry one). Adopting this address must not make it this
+                // address's password: nobody proved this mailbox when it was
+                // chosen. A request that brings its own password replaces it
+                // below instead.
+                if ($adopted && $password === null) {
+                    $this->passwords->clear($contact, $ip);
+                }
             }
 
             // Create-account and forgot-password. Only a proven mailbox gets
@@ -492,6 +510,9 @@ class MemberSignupService
      *    contact that never did holds no member access (`member.active` would
      *    refuse the token on every route anyway); a parent-portal password on
      *    such a contact is used here only after "Forgot password?" proves it.
+     *    It speaks for the CURRENT `login_email` only because FamilyAccessService
+     *    clears it, with the password, whenever the office moves the login to
+     *    another address or releases the address to someone else.
      *  - a password was chosen (`hasFamilyPassword()`, the one password both
      *    realms share).
      *  - the password belongs to THIS address. `resolveContact()` also matches

@@ -51,9 +51,19 @@ use Laravel\Sanctum\NewAccessToken;
  * parent and an app member has one contact and therefore one password, and
  * setting it through either door replaces it for both and ends every other
  * session the contact holds, family and hand-off tokens included. The owner
- * approved that on 2026-09-16. The password never widens access: the portal
+ * approved that on 2026-09-16. Setting it never turns anything on: the portal
  * still gates on `login_enabled_at`, which only the office sets, and the app
  * on `verified_at`.
+ *
+ * A password is a credential for the `login_email` it was chosen under, and
+ * for no other address. That is only true because it does not outlive the
+ * address: FamilyAccessService clears it (and `verified_at`) whenever the
+ * office moves a login to a different address or gives the address to someone
+ * else, and MemberSignupService clears a leftover one when a code sign-in
+ * gives an address-less contact an address. Without that, the app could set a
+ * password through a household address, the office could then enable the
+ * portal at the parent's own address, and the household password would open
+ * the portal there.
  *
  * ---------------------------------------------------------------------------
  * NEITHER DOOR IS AN ORACLE, and this one had to work harder for it
@@ -134,17 +144,7 @@ class FamilyPasswordService
                 ->when($currentTokenId !== '', fn ($q) => $q->whereKeyNot($currentTokenId))
                 ->delete();
 
-            // The access-history trail belongs to the FAMILY login the office
-            // turned on (see the contact_login_events migration). A contact
-            // with one gets the row, which is every caller from the portal,
-            // since `family.active` requires it. An app member with no family
-            // login does not: their password is their own sign-in and nothing
-            // the office granted. The row would also be an office record to
-            // MemberAccountDeletion, and it would stop an account the app
-            // created from ever being erased when its owner deletes it.
-            if ($contact->login_enabled_at !== null) {
-                $this->record($contact, ContactLoginEvent::ACTION_PASSWORD_SET, $ip);
-            }
+            $this->recordForAFamilyLogin($contact, ContactLoginEvent::ACTION_PASSWORD_SET, $ip);
         });
     }
 
@@ -155,6 +155,10 @@ class FamilyPasswordService
      * terms. It exists because "I chose a password and now I want it gone" must
      * not require an email to the office — the whole point is that the office is
      * not in this loop.
+     *
+     * Its second caller is MemberSignupService, when a code sign-in gives a
+     * contact a login address and the contact still carries a password chosen
+     * under an address it no longer has.
      */
     public function clear(Contact $contact, ?string $ip = null): void
     {
@@ -168,7 +172,7 @@ class FamilyPasswordService
                 'password_set_at' => null,
             ])->save();
 
-            $this->record($contact, ContactLoginEvent::ACTION_PASSWORD_CLEARED, $ip);
+            $this->recordForAFamilyLogin($contact, ContactLoginEvent::ACTION_PASSWORD_CLEARED, $ip);
         });
     }
 
@@ -239,6 +243,24 @@ class FamilyPasswordService
     private function decoy(): string
     {
         return self::$decoy ??= Hash::make(Str::random(40));
+    }
+
+    /**
+     * Append the act only for a contact the office gave a family login.
+     *
+     * The access-history trail belongs to the FAMILY login the office turned on
+     * (see the contact_login_events migration). A contact with one gets the
+     * row, which is every caller from the portal, since `family.active`
+     * requires it. An app member with no family login does not: their password
+     * is their own sign-in and nothing the office granted. The row would also
+     * be an office record to MemberAccountDeletion, and it would stop an account
+     * the app created from ever being erased when its owner deletes it.
+     */
+    private function recordForAFamilyLogin(Contact $contact, string $action, ?string $ip): void
+    {
+        if ($contact->login_enabled_at !== null) {
+            $this->record($contact, $action, $ip);
+        }
     }
 
     /**

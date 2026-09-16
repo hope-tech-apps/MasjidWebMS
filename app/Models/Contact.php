@@ -158,7 +158,12 @@ class Contact extends Model implements AuthenticatableContract
      *     `enable()` sets `login_email` + `login_enabled_at` and clears
      *     `login_revoked_at`; `revoke()` sets `login_revoked_at`. Both append to
      *     `contact_login_events` and both are reachable only through
-     *     `ContactFamilyLoginController`, behind `manage contacts`.
+     *     `ContactFamilyLoginController`, behind `manage contacts`. When
+     *     `enable()` moves a login to a different address, or takes the address
+     *     off another member, it also CLEARS that contact's `password`,
+     *     `password_set_at` and `verified_at` (a password belongs to the address
+     *     it was chosen under) and appends `password_cleared`. It never sets
+     *     a password.
      *   - `App\Services\Family\FamilyLoginService::consume()` — `last_login_at`,
      *     which is operator visibility only and authorizes nothing.
      *   - `App\Services\Family\FamilyPasswordService` — `password` /
@@ -171,7 +176,9 @@ class Contact extends Model implements AuthenticatableContract
      *     or (since 2026-09-16) for the contact whose mailbox a sign-in code
      *     just proved, when `App\Services\Member\MemberSignupService` redeems a
      *     code that carries a password. It appends `password_set` only for a
-     *     contact that has a family login.
+     *     contact that has a family login. `clear()` has a second caller too:
+     *     MemberSignupService, when a code sign-in gives an address-less
+     *     contact an address while it still carries an old password.
      *   - `App\Services\Member\MemberAccountDeletion` — CLEARS `login_enabled_at`,
      *     `verified_at` and `password` / `password_set_at` when a member deletes
      *     their own account (or hard-deletes the contact, when app sign-up

@@ -293,10 +293,38 @@ class FamilyAccessService
     }
 
     /**
+     * What a contact holds only because somebody proved `login_email`, cleared
+     * whenever `login_email` changes hands.
+     *
+     * A password is a credential for the address it was chosen under: the app's
+     * create-account and forgot-password set it for whoever redeemed a code at
+     * that address, and the portal sets it for whoever holds a token from it.
+     * `verified_at` says the app saw that address proven. Neither says anything
+     * about a different address. Left in place, an office re-addressing a login
+     * (a separation, a handover, a typo that reached a stranger) would open the
+     * NEW address, in the portal and the app, to a password somebody chose
+     * through the OLD one. Measured before this existed: the app linked a
+     * household address, its reader chose a password, the office enabled the
+     * portal at the parent's own address, and that password answered 200 at
+     * both password doors for an address nobody had proved.
+     *
+     * @var array<string, null>
+     */
+    private const WHAT_AN_ADDRESS_PROVED = [
+        'password' => null,
+        'password_set_at' => null,
+        'verified_at' => null,
+    ];
+
+    /**
      * The write half of `enable()`, as one transaction.
      *
      * Split out so the QueryException translation above wraps a call rather than
      * a closure, and so the rollback is complete before the refusal is thrown.
+     *
+     * A change of address also clears the password and `verified_at`
+     * (WHAT_AN_ADDRESS_PROVED) and writes `password_cleared` when there was a
+     * password. Re-typing the same address clears nothing.
      */
     private function write(
         Contact $contact,
@@ -316,16 +344,23 @@ class FamilyAccessService
                 $this->releaseAddressFrom($holder, $contact, $actor, $ip);
             }
 
+            // A NEW ADDRESS STARTS WITH NOTHING ANOTHER MAILBOX PROVED. Null
+            // counts as another address: a contact with no `login_email` and a
+            // password is one whose address was released, and that password
+            // belongs to no address at all.
+            $readdressed = $previousEmail !== $email;
+            $endsPassword = $readdressed && $contact->hasFamilyPassword();
+
             // forceFill because the four login_* columns are deliberately not
             // fillable. This is one of exactly two places that writes them.
-            $contact->forceFill([
+            $contact->forceFill(array_merge([
                 'login_email' => $email,
                 'login_enabled_at' => Carbon::now(),
                 // Re-enabling CLEARS the revocation. Leaving it set would make
                 // `familyLoginIsActive()` false forever and produce a login that
                 // reads as enabled in the UI and refuses every request.
                 'login_revoked_at' => null,
-            ])->save();
+            ], $readdressed ? self::WHAT_AN_ADDRESS_PROVED : []))->save();
 
             // A CHANGE of address ends the sessions established under the old
             // one. The usual reason to re-address a login is that the previous
@@ -338,6 +373,12 @@ class FamilyAccessService
             // same address to no effect must not silently sign a parent out.
             if ($previousEmail !== null && $previousEmail !== $email) {
                 $contact->tokens()->delete();
+            }
+
+            // On the record under the address the password was chosen for, and
+            // before the grant, so the panel reads in the order it happened.
+            if ($endsPassword) {
+                $this->record($contact, ContactLoginEvent::ACTION_PASSWORD_CLEARED, $previousEmail, $actor, $ip);
             }
 
             $this->record($contact, ContactLoginEvent::ACTION_ENABLED, $email, $actor, $ip);
@@ -626,6 +667,9 @@ class FamilyAccessService
      * when an operator gives it to somebody else, and never as a side effect of
      * anything.
      *
+     * The holder's password, `verified_at` and tokens go with the address, and
+     * a password that existed is written down as `password_cleared`.
+     *
      * `login_enabled_at` and `login_revoked_at` are untouched — they are the
      * record of the grant and of when it ended, and this is neither. What the
      * cleared column used to stand in for ("which mailbox opened this child's
@@ -673,7 +717,20 @@ class FamilyAccessService
             $this->record($holder, ContactLoginEvent::ACTION_REVOKED, $released, $actor, $ip);
         }
 
-        $holder->forceFill(['login_email' => null])->save();
+        // The address goes, and so does everything it proved (see
+        // WHAT_AN_ADDRESS_PROVED). So do the holder's sessions: an app member's
+        // token is named for `login_email`, and after this line that address
+        // is somebody else's. The holder can be an app member the office never
+        // enabled, whose `familyLoginIsActive()` was false all along, so the
+        // revoke above does not reach them.
+        $hadPassword = $holder->hasFamilyPassword();
+
+        $holder->forceFill(array_merge(['login_email' => null], self::WHAT_AN_ADDRESS_PROVED))->save();
+        $holder->tokens()->delete();
+
+        if ($hadPassword) {
+            $this->record($holder, ContactLoginEvent::ACTION_PASSWORD_CLEARED, $released, $actor, $ip);
+        }
 
         $this->record($holder, ContactLoginEvent::ACTION_ADDRESS_RELEASED, $released, $actor, $ip);
 

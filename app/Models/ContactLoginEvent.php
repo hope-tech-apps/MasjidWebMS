@@ -118,7 +118,15 @@ class ContactLoginEvent extends Model
      */
     public const ACTION_PASSWORD_SET = 'password_set';
 
-    /** The family removed their password, returning to sign-in codes only. */
+    /**
+     * A password stopped existing, leaving sign-in codes only.
+     *
+     * Either the family removed it themselves (FamilyPasswordService::clear, no
+     * actor, like `password_set`), or an operator moved the login to a different
+     * address or gave the address to another member (FamilyAccessService), which
+     * ends the password chosen under the old address. That second kind names the
+     * operator, and its `login_email` is the address the password belonged to.
+     */
     public const ACTION_PASSWORD_CLEARED = 'password_cleared';
 
     /**
@@ -143,7 +151,8 @@ class ContactLoginEvent extends Model
      * Everything is fillable because nothing here is reachable from a request
      * body: rows are written in exactly three places, from values each derives
      * from the authenticated actor and the contact it just changed:
-     * App\Services\Family\FamilyAccessService::record,
+     * App\Services\Family\FamilyAccessService::record (including
+     * `password_cleared` when an operator re-addresses or releases a login),
      * App\Services\Family\FamilyPasswordService::record (`password_set` and
      * `password_cleared`, no actor), and
      * App\Services\Member\MemberAccountDeletion, which writes one `revoked` row
