@@ -4,7 +4,9 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Arabic\MarkDrillRequest;
+use App\Http\Requests\Admin\Arabic\SaveDailyNoteRequest;
 use App\Http\Requests\Admin\Arabic\SetClassStageRequest;
+use App\Models\ArabicDailyNote;
 use App\Models\ArabicLetterProgress;
 use App\Models\Group;
 use App\Models\GroupMembership;
@@ -12,6 +14,7 @@ use App\Support\Arabic\ArabicCurriculum;
 use App\Support\Letters\CurriculumRegistry;
 use App\Support\Letters\LetterTracker;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -115,6 +118,17 @@ class ArabicLettersController extends Controller
 
         $row->group_id = $group->id;
         $row->moveTo((string) $request->validated('status'), Auth::id());
+
+        // Only when the key is PRESENT. An absent `note` means the client did
+        // not speak about it — every client written before this field existed
+        // sends no note, and treating that as "clear it" would erase a teacher's
+        // words the first time an older screen marked a drill. A present null or
+        // empty string IS a deliberate clear, which a teacher must be able to do.
+        if ($request->exists('note')) {
+            $note = $request->validated('note');
+            $row->note = ($note === null || trim((string) $note) === '') ? null : trim((string) $note);
+        }
+
         $row->save();
 
         return response()->json([
@@ -159,6 +173,109 @@ class ArabicLettersController extends Controller
             'message' => 'This class is now working on '
                 .ArabicCurriculum::STAGE_LABELS[$group->arabicStage()].'.',
             'data' => $tracker->classOverview($group->fresh(), $students),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Every daily Arabic note written about one child, newest first.
+     *
+     * Read-only, and scoped the same way `mark` is: the group is resolved from
+     * the route and the membership from the group, so a membership id belonging
+     * to another class resolves to a 404 rather than to somebody else's child.
+     */
+    public function dailyNotes(Request $request, $masjid_id, $group_id, $membership_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
+
+        $notes = ArabicDailyNote::where('group_membership_id', $membership->id)
+            ->with('markedBy:id,name')
+            ->orderByDesc('session_date')
+            ->get()
+            ->map(fn (ArabicDailyNote $n) => [
+                'id' => $n->id,
+                'session_date' => $n->session_date?->toDateString(),
+                'note' => $n->note,
+                'marked_by' => $n->markedBy?->name,
+                'updated_at' => $n->updated_at?->toIso8601String(),
+            ]);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $notes,
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Write (or correct) the note for one child on one day.
+     *
+     * An UPSERT on (student, day), which the unique index enforces. A teacher
+     * writing twice about the same day is correcting themselves, not recording
+     * two days — without the upsert the second save is a duplicate and the
+     * screen shows whichever row the database happened to return first.
+     *
+     * `marked_by_user_id` is re-stamped on every write, so the name on the note
+     * is whoever last touched it rather than whoever opened the day. That is the
+     * honest answer to "who says this", and it matches how a drill mark behaves.
+     */
+    public function saveDailyNote(SaveDailyNoteRequest $request, $masjid_id, $group_id, $membership_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
+
+        // whereDate(), NOT firstOrNew() on a raw date string. `session_date` is
+        // cast to `date`, so the INSERT stores midnight while a firstOrNew()
+        // lookup compares the string as given — the row never matches, and the
+        // second save collides with the unique index instead of editing. This
+        // module has been bitten by exactly that twice before; the register
+        // escaped it only by passing a Carbon on both sides. Pinned by
+        // `the_daily_note_is_an_upsert_so_a_second_save_corrects_rather_than_duplicates`.
+        $on = Carbon::parse((string) $request->validated('session_date'))->startOfDay();
+
+        $note = ArabicDailyNote::where('group_membership_id', $membership->id)
+            ->whereDate('session_date', $on->toDateString())
+            ->first() ?? new ArabicDailyNote([
+                'group_membership_id' => $membership->id,
+            ]);
+
+        $note->session_date = $on;
+        $note->group_id = $group->id;
+        $note->note = trim((string) $request->validated('note'));
+        $note->marked_by_user_id = Auth::id();
+        $note->save();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'id' => $note->id,
+                'session_date' => $note->session_date?->toDateString(),
+                'note' => $note->note,
+                'marked_by' => Auth::user()?->name,
+                'updated_at' => $note->updated_at?->toIso8601String(),
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Remove a day's note.
+     *
+     * A hard delete, not a soft one, and not an empty string. "Nobody wrote
+     * about this day" is the absence of a row — the same rule the register and
+     * the gradebook hold in this module, where blank is never a status and never
+     * a zero. A soft-deleted note would leave the day looking written-about to
+     * anything that forgets the scope.
+     */
+    public function deleteDailyNote(Request $request, $masjid_id, $group_id, $membership_id, $note_id)
+    {
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
+
+        $note = ArabicDailyNote::where('group_membership_id', $membership->id)->findOrFail($note_id);
+        $note->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['id' => (int) $note_id],
         ], Response::HTTP_OK);
     }
 }

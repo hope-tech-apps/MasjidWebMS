@@ -26,6 +26,14 @@ class MarkDrillRequest extends BaseFormRequest
             // qāʿidah. The allowlist is what stops a typo minting a third
             // alphabet in a plain varchar column.
             'alphabet' => ['nullable', 'string', Rule::in(CurriculumRegistry::ALPHABETS)],
+
+            // What the teacher wants to say about this child on this drill.
+            // Optional, and an ABSENT key is not the same as an empty one: a
+            // client that never sends the field must not wipe a note somebody
+            // typed, so the controller only writes when the key is present.
+            // `nullable` rather than `sometimes` alone, because clearing a note
+            // deliberately is a thing a teacher must be able to do.
+            'note' => ['sometimes', 'nullable', 'string', 'max:' . (int) config('groups.arabic.max_note_length', 1000)],
         ];
     }
 }

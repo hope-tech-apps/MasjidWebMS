@@ -168,6 +168,44 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Arabic letters — the qāʿidah tracker (teacher notes, 2026-09-16)
+    |--------------------------------------------------------------------------
+    |
+    | Two places a teacher may write about a child's Arabic, and they answer
+    | different questions. The per-drill note sits on the progress row and is
+    | about ONE letter or shape. The daily note is about a DAY and belongs to no
+    | drill — it is the "how did she do today" a teacher would otherwise say at
+    | pickup and nobody would record.
+    |
+    | Both are bounded at the request boundary for the same reason the hifz note
+    | is: a note is a sentence of context, not a report card, and anything longer
+    | belongs in a conversation with the guardian that the messaging threads
+    | already carry.
+    |
+    */
+
+    'arabic' => [
+
+        /*
+         * Ceiling on the teacher's note attached to ONE drill, enforced at the
+         * request boundary. Mirrors `hifz.max_note_length` deliberately: the two
+         * fields are the same kind of writing about the same child by the same
+         * person, and a teacher should not discover that one screen accepts more
+         * words than the other.
+         */
+        'max_note_length' => (int) env('GROUP_ARABIC_MAX_NOTE_LENGTH', 1000),
+
+        /*
+         * Ceiling on the DAILY note. Longer than the per-drill note on purpose:
+         * one sentence per letter is context, whereas a day's summary covers
+         * everything the child did in the lesson and is the only free-text
+         * record of it.
+         */
+        'max_daily_note_length' => (int) env('GROUP_ARABIC_MAX_DAILY_NOTE_LENGTH', 2000),
+    ],
+
     'hifz' => [
 
         /*

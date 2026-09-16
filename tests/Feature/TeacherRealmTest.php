@@ -104,7 +104,7 @@ class TeacherRealmTest extends TestCase
     #[Test]
     public function the_teacher_realm_exposes_exactly_these_writes(): void
     {
-        // Counting the write verbs, family-realm style: adding a twenty-fifth —
+        // Counting the write verbs, family-realm style: adding a twenty-seventh —
         // a roster mutation, a donation, a thread lifecycle verb — has to be a
         // DELIBERATE edit here, not a silent widening of what a teacher can do.
         //
@@ -169,6 +169,29 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar/override',
+
+            // The daily Arabic note (2026-09-16, owner's request). TWO new
+            // verbs, added deliberately, and worth saying what they are not:
+            //
+            // They are a record ABOUT a child written by the person who teaches
+            // her — the same category as attendance, hifz and the gradebook —
+            // so the roster line still holds. Nothing here says who belongs in
+            // the room.
+            //
+            // The same feature also added notes to hifz entries and to
+            // individual letter drills, and NEITHER appears in this list,
+            // because neither needed a new verb: the hifz note rides
+            // `POST .../hifz`, which already accepted it, and the per-drill note
+            // rides `PUT .../letters`. A feature that adds three places to write
+            // and only two verbs is the shape to aim for — the authority a
+            // teacher holds grew by one object, not by three.
+            //
+            // DELETE is here because clearing a day's note has to mean the row
+            // is gone. An empty note would leave a record asserting a teacher
+            // wrote nothing about that day, which is a different and untrue
+            // claim from nobody having written at all.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/arabic-notes',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/arabic-notes/{note_id}',
 
             // Report cards and progress reports (2026-09-08). Still records
             // ABOUT a child, written by the person who teaches them, so the line

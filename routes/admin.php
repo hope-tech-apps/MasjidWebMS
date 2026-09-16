@@ -971,6 +971,9 @@ Route::prefix('admin')->group(function () {
                         Route::put('/letters/stage', 'setStage')->middleware('permission:manage contacts');
                         Route::get('/members/{membership_id}/letters', 'show')->middleware('permission:view contacts');
                         Route::put('/members/{membership_id}/letters', 'mark')->middleware('permission:manage contacts');
+                        Route::get('/members/{membership_id}/arabic-notes', 'dailyNotes')->middleware('permission:view contacts');
+                        Route::put('/members/{membership_id}/arabic-notes', 'saveDailyNote')->middleware('permission:manage contacts');
+                        Route::delete('/members/{membership_id}/arabic-notes/{note_id}', 'deleteDailyNote')->middleware('permission:manage contacts');
                     });
 
                 // Guardian consent, recorded against ONE guardian edge — the

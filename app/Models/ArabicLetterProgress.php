@@ -41,6 +41,7 @@ class ArabicLetterProgress extends Model
         'alphabet',
         'drill_id',
         'status',
+        'note',
         'mastered_at',
     ];
 

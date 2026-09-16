@@ -120,6 +120,16 @@ Route::prefix('teacher')
                         Route::get('/members/{membership_id}/letters', [ArabicLettersController::class, 'show']);
                         Route::put('/members/{membership_id}/letters', [ArabicLettersController::class, 'mark']);
 
+                        // The daily Arabic note: one child, one day, the
+                        // teacher's own words. Per-student by the owner's
+                        // decision (2026-09-16), and the ONLY new write this
+                        // feature adds to the realm — the per-drill note and the
+                        // hifz note both ride endpoints a teacher already has,
+                        // so neither widens what a teacher may do.
+                        Route::get('/members/{membership_id}/arabic-notes', [ArabicLettersController::class, 'dailyNotes']);
+                        Route::put('/members/{membership_id}/arabic-notes', [ArabicLettersController::class, 'saveDailyNote']);
+                        Route::delete('/members/{membership_id}/arabic-notes/{note_id}', [ArabicLettersController::class, 'deleteDailyNote']);
+
                         // Behaviour points (reused; GroupAudience grants leader standing).
                         Route::get('/awards', [BehaviorAwardsController::class, 'index']);
                         Route::post('/awards', [BehaviorAwardsController::class, 'store']);

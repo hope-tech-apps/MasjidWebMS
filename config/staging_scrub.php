@@ -456,6 +456,18 @@ return [
         'behavior_awards' => [
             'note' => 'free_text',
         ],
+        // The two teacher-note columns added 2026-09-16. `free_text`, exactly as
+        // every sibling note in this module is handled: these are sentences a
+        // teacher wrote about a NAMED child's Arabic — "reverses sīn and shīn
+        // when tired" is about that child and nobody else. Replaced rather than
+        // nulled so the screens stay exercisable on staging, and because
+        // `arabic_daily_notes.note` is NOT NULL and could not be nulled anyway.
+        'arabic_daily_notes' => [
+            'note' => 'free_text',
+        ],
+        'arabic_letter_progress' => [
+            'note' => 'free_text',
+        ],
         'attendance_records' => [
             'note' => 'free_text', // absence reasons quote family circumstances
         ],
