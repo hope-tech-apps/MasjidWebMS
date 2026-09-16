@@ -29,8 +29,30 @@ class MobileCache
     public const PRAYERS_SETTINGS = 'prayers_settings';
     public const CONTACT_REASONS = 'contact_reasons';
     public const SPLASH = 'splash';
-    /** The organisations an app may switch into: this one plus its listed children. */
-    public const ORGS = 'orgs';
+    /**
+     * The organisations an app may switch into: this one plus its listed
+     * children.
+     *
+     * `orgs.v2` and not `orgs`, because S1 CHANGED THE SHAPE of these rows —
+     * each one gained `theme`. bin/deploy runs migrate and re-caches config and
+     * routes; it does not run `cache:clear`, and this store is the database, so
+     * entries written by the pre-S1 code survive the deploy and would be served
+     * as five-key rows with `theme` missing entirely for up to ten minutes
+     * after it. The contract says `theme` is null, never absent, and a client
+     * that took that at its word — an iOS `Org` with a non-optional `theme` —
+     * would fail to decode the whole array and show an EMPTY organisation
+     * switcher during exactly the window the team is watching the deploy. It
+     * would read as "the deploy broke the switcher", and no server test could
+     * reproduce it: every test starts with a cold cache.
+     *
+     * Renaming the key retires every old entry at the instant the new code goes
+     * live, with no deploy step to remember and nothing to flush. The old
+     * `orgs` entries are then unreachable and expire on their own TTL.
+     *
+     * A future change to this row's shape should bump it again rather than add
+     * a deploy step.
+     */
+    public const ORGS = 'orgs.v2';
     /**
      * The app's side menu for this organisation and its listed children — one
      * derived view of their switches. Stored as ['hash' => …, 'data' => …]: the

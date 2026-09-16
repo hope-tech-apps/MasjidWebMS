@@ -207,6 +207,47 @@ class OrgsThemeAdditiveTest extends TestCase
         $this->assertSame('#0B5FA5', $this->orgs($home->id)[0]['theme']['primary']);
     }
 
+    #[Test]
+    public function a_pre_s1_cache_entry_can_never_answer_the_new_shape(): void
+    {
+        // The one failure in this slice no other test can reach, because every
+        // test starts with a cold cache and production will not.
+        //
+        // bin/deploy runs migrate and re-caches config and routes; it does NOT
+        // run cache:clear, and this store is the database. So at the instant S1
+        // goes live there are live `orgs` entries written by the OLD code, and
+        // if the new code read the same key it would serve them — five-key rows
+        // with `theme` missing ENTIRELY, for up to ten minutes, to every phone.
+        // "null, never absent" invites a client to declare the field
+        // non-optional, and such a client fails to decode the whole array and
+        // shows an EMPTY organisation switcher during exactly the window the
+        // team is watching the deploy.
+        //
+        // The key carries a version for that reason. This test is what keeps it
+        // carrying one.
+        $home = $this->listedOrg('Muslim Education Center');
+
+        $this->assertNotSame(
+            'orgs',
+            MobileCache::ORGS,
+            'the /orgs shape changed in S1, so its cache key must not be the one the old code wrote'
+        );
+
+        // A pre-S1 entry, verbatim: the five keys and no theme.
+        Cache::put(MobileCache::masjidKey($home->id, 'orgs'), [[
+            'id' => $home->id,
+            'name' => $home->name,
+            'org_type' => 'masjid',
+            'is_home' => true,
+            'logo_url' => null,
+        ]], 600);
+
+        $row = $this->orgs($home->id)[0];
+
+        $this->assertArrayHasKey('theme', $row, 'the stale entry must be unreachable, not served');
+        $this->assertSame(['id', 'name', 'org_type', 'is_home', 'logo_url', 'theme'], array_keys($row));
+    }
+
     /** A home with two published children, the shape a switcher actually draws. */
     private function family(string $prefix): array
     {
