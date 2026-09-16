@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Mobile\Member;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Member\MemberPasswordSignInRequest;
 use App\Http\Requests\Member\RequestMemberCodeRequest;
 use App\Http\Requests\Member\VerifyMemberCodeRequest;
 use App\Models\Contact;
@@ -16,7 +17,7 @@ use Symfony\Component\HttpFoundation\Response;
  * controller's central property:
  *
  * ---------------------------------------------------------------------------
- * NEITHER RESPONSE IS AN ORACLE
+ * NO RESPONSE IS AN ORACLE
  * ---------------------------------------------------------------------------
  * `request-code` answers 202 with one fixed body for every well-formed address
  * — one nobody has ever used, one belonging to a congregant the office has had
@@ -28,6 +29,14 @@ use Symfony\Component\HttpFoundation\Response;
  * outstanding, wrong code, expired code, replayed code, a code guessed at too
  * many times, a revoked contact, and an address matching two contacts. A member
  * needs to know only that they must ask for a fresh code.
+ *
+ * `password` (2026-09-16) signs in with an address and a password. Every
+ * failure is the SAME 410, byte for byte, as `verify-code`'s: unknown address,
+ * wrong password, no password chosen, a contact that never proved the address
+ * to the app, a revoked contact, and an address matching two contacts. Both
+ * doors answer through `refuse()`, so the bodies cannot drift apart. The app
+ * shows its own sentence for it; the body's words are about codes because they
+ * must not differ.
  *
  * The one other answer is a 422 for a brand-new member who left a name blank
  * (NewMemberNameRequired), and only a CORRECT, unconsumed code reaches it. The
@@ -43,9 +52,19 @@ use Symfony\Component\HttpFoundation\Response;
  * cannot tell "your session died" from "that sign-in attempt failed" if both
  * are 401.
  *
- * There is deliberately NO register endpoint. Sign-up and sign-in are the same
- * two calls, because a separate registration route could not avoid answering
- * whether an address is already known to this organisation.
+ * A 422 also comes from the request rules, before any code is looked at: a
+ * malformed address, or a `password` shorter than the parent portal's minimum.
+ * Those depend only on what was typed. Both 422s have one shape,
+ * `{status: "failed", message, data: {field: [message]}}`.
+ *
+ * There is deliberately NO register endpoint, because a separate registration
+ * route could not avoid answering whether an address is already known to this
+ * organisation. "Create an account" is `request-code` then `verify-code` with a
+ * name and a `password`; "Forgot password?" is the same two calls with only the
+ * `password`. The mailbox is proven before either writes anything. On an
+ * address that already has an account, the password replaces the old one, in
+ * the parent portal too, and every other session ends (owner decision,
+ * 2026-09-16).
  */
 class MemberAuthController extends Controller
 {
@@ -77,6 +96,13 @@ class MemberAuthController extends Controller
     /** POST /api/mobile/masjids/{masjid_id}/auth/verify-code */
     public function verifyCode(VerifyMemberCodeRequest $request)
     {
+        // Null when absent or empty: a code sign-in without a password leaves
+        // the contact's password exactly as it was. Not `filled()`: that reads a
+        // whitespace-only value as absent, and a password the rules accepted
+        // would then be dropped while the response said the sign-in worked.
+        $password = $request->input('password');
+        $password = is_string($password) && $password !== '' ? $password : null;
+
         try {
             $result = $this->signups->redeem(
                 (string) $request->input('email'),
@@ -84,6 +110,7 @@ class MemberAuthController extends Controller
                 $request->input('first_name'),
                 $request->input('last_name'),
                 $request->ip(),
+                $password,
             );
         } catch (NewMemberNameRequired $refusal) {
             return response()->json([
@@ -93,17 +120,48 @@ class MemberAuthController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        if ($result === null) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'That code is no longer usable. Please request a new one.',
-                // Present on the refusal too. The iPhone app decodes error bodies
-                // through the same `Response<T>` envelope, so a 410 without it
-                // showed a generic failure instead of this sentence.
-                'data' => new \stdClass(),
-            ], Response::HTTP_GONE);
-        }
+        return $result === null ? $this->refuse() : $this->session($result);
+    }
 
+    /**
+     * POST /api/mobile/masjids/{masjid_id}/auth/password — the same 200 as
+     * `verify-code`, or the same 410.
+     */
+    public function signInWithPassword(MemberPasswordSignInRequest $request)
+    {
+        $result = $this->signups->attemptPassword(
+            (string) $request->input('email'),
+            (string) $request->input('password'),
+            $request->ip(),
+        );
+
+        return $result === null ? $this->refuse() : $this->session($result);
+    }
+
+    /**
+     * The one refusal, for every failure at both credential doors. Shared so
+     * the password door cannot say anything the code door does not.
+     */
+    private function refuse()
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'That code is no longer usable. Please request a new one.',
+            // Present on the refusal too. The iPhone app decodes error bodies
+            // through the same `Response<T>` envelope, so a 410 without it
+            // showed a generic failure instead of this sentence.
+            'data' => new \stdClass(),
+        ], Response::HTTP_GONE);
+    }
+
+    /**
+     * The one success body, for both doors: the same token kind and the same
+     * contact projection.
+     *
+     * @param  array{contact: Contact, token: \Laravel\Sanctum\NewAccessToken, created: bool}  $result
+     */
+    private function session(array $result)
+    {
         /** @var Contact $contact */
         $contact = $result['contact'];
 

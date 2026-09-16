@@ -154,7 +154,7 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         | App member identity — self-serve sign-up and sign-in
         |--------------------------------------------------------------------
         |
-        | The two UNAUTHENTICATED member endpoints. A caller with no token is
+        | The three UNAUTHENTICATED member endpoints. A caller with no token is
         | exactly who they are for, so they cannot sit behind a guard; what they
         | carry instead is `family.guest`, which binds TenantContext from the
         | {masjid_id} in the URL or 404s.
@@ -169,7 +169,9 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         | says it is: the per-address throttle bucket is keyed on (int) masjid,
         | so "1", "01" and "1abc" must not be three different doors.
         |
-        | There is deliberately no /register — see MemberAuthController.
+        | There is deliberately no /register. Creating an account is
+        | request-code, then verify-code with a name and a password; see
+        | MemberAuthController.
         */
         Route::prefix('{masjid_id}/auth')
             ->controller(MemberAuthController::class)
@@ -178,6 +180,12 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
             ->group(function () {
                 Route::post('/request-code', 'requestCode')->middleware('throttle:member-login');
                 Route::post('/verify-code', 'verifyCode')->middleware('throttle:member-verify');
+
+                // Address + password. `throttle:member-verify` is verify-code's
+                // own bucket, on purpose, exactly as the family realm shares
+                // `family-verify` between its two doors: separate allowances
+                // would give a guesser twice the tries per hour at one address.
+                Route::post('/password', 'signInWithPassword')->middleware('throttle:member-verify');
             });
 
         /*

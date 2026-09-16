@@ -31,8 +31,9 @@ use Illuminate\Support\Facades\Log;
  *  - their service interests are deleted, so no service broadcast routes to them;
  *  - outstanding sign-in codes for the address are deleted, so a code requested a
  *    minute ago cannot sign straight back in;
- *  - the login itself is cleared: `verified_at`, `login_enabled_at` and a family
- *    password, if one was set.
+ *  - the login itself is cleared: `verified_at`, `login_enabled_at` and the
+ *    password, if one was set (one password, shared by the app and the parent
+ *    portal).
  *
  * One exception, for a family login that is provably SOMEBODY ELSE's: when the
  * caller proved an address OTHER than `login_email` (see `delete()`), the family
@@ -91,8 +92,10 @@ class MemberAccountDeletion
         'contact_cards' => ['contact_id'],
         'contact_credentials' => ['contact_id'],
         // Written by staff acts on a family login (enable, revoke, merge,
-        // address moves) and by a family setting a password. Erasing the contact
-        // would strip the subject from the office's access history.
+        // address moves) and by a person with a family login setting a
+        // password. Erasing the contact would strip the subject from the
+        // office's access history. An app member with no family login writes
+        // no row here when they choose a password (FamilyPasswordService::set).
         'contact_login_events' => ['contact_id'],
         'donations' => ['contact_id'],
         'donation_subscriptions' => ['contact_id'],
@@ -151,6 +154,16 @@ class MemberAccountDeletion
         // the Contact model, never spelled out here: this file only classifies
         // the column and must never consult the opt-out (EmailUnsubscribeTest).
         \App\Models\Contact::EMAIL_OPT_OUT_MIRROR_COLUMN,
+        // Since 2026-09-16 "Create an account" in the app sets a password, so
+        // nearly every account the app creates has one. Until then only a
+        // parent with an office-granted family login could, and these two sat
+        // in OFFICE_COLUMNS. Moving them loses no evidence: a family login
+        // leaves `login_enabled_at` (or `login_revoked_at`) and an `enabled`
+        // row in `contact_login_events`, and each of those still keeps the
+        // contact. Left in OFFICE_COLUMNS, they would keep every new account,
+        // and deleting one would never erase it.
+        'password',
+        'password_set_at',
     ];
 
     /**
@@ -169,8 +182,6 @@ class MemberAccountDeletion
         'sms_opted_out_at',
         'login_enabled_at',
         'login_revoked_at',
-        'password',
-        'password_set_at',
         // A child's own avatar is chosen inside the family portal, which only a
         // staff-granted login reaches; the staff override is staff's.
         'avatar_character',

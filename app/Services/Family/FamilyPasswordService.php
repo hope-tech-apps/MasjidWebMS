@@ -23,17 +23,37 @@ use Laravel\Sanctum\NewAccessToken;
  * This is the constraint the original "no passwords for contacts" decision was
  * protecting, and it survives intact:
  *
- *   - `set()` takes the contact from the CALLER'S OWN TOKEN. There is no admin
- *     path, no staff override, and no `$contact` parameter an operator-facing
- *     controller could supply. A school secretary cannot set, read, or reset a
- *     parent's password, because no code path exists that would let them.
+ *   - `set()` has exactly two callers, and each takes the contact from
+ *     something only the person holds. FamilyPasswordController passes the
+ *     contact of the CALLER'S OWN TOKEN. MemberSignupService (the app's
+ *     create-account and forgot-password door, 2026-09-16) passes the contact
+ *     whose mailbox a sign-in code has just proved, inside the transaction that
+ *     burns that code. There is no admin path, no staff override, and no
+ *     operator-facing controller that supplies a contact. A school secretary
+ *     cannot set, read, or reset a parent's password, because no code path
+ *     exists that would let them.
  *   - No password is ever mailed, logged, queued or returned. The plaintext
  *     lives for the duration of one request and is hashed before anything else
  *     happens to it.
  *   - There is no reset desk, which was the other half of the original
- *     objection. A parent who forgets their password requests a sign-in code —
+ *     objection. A person who forgets their password requests a sign-in code —
  *     the mailbox is still the root credential, and the password is a
- *     convenience layered on top of it, never a replacement for it.
+ *     convenience layered on top of it, never a replacement for it. The app's
+ *     "Forgot password?" is exactly that: a code and a new password, sent to
+ *     `verify-code` together.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE PASSWORD PER PERSON, SHARED BY BOTH REALMS
+ * ---------------------------------------------------------------------------
+ *
+ * `contacts.password` is read by this service (the parent portal) and by
+ * MemberSignupService::attemptPassword() (the app). A person who is both a
+ * parent and an app member has one contact and therefore one password, and
+ * setting it through either door replaces it for both and ends every other
+ * session the contact holds, family and hand-off tokens included. The owner
+ * approved that on 2026-09-16. The password never widens access: the portal
+ * still gates on `login_enabled_at`, which only the office sets, and the app
+ * on `verified_at`.
  *
  * ---------------------------------------------------------------------------
  * NEITHER DOOR IS AN ORACLE, and this one had to work harder for it
@@ -84,7 +104,10 @@ class FamilyPasswordService
      * Choose (or change) the password for a contact the caller has ALREADY
      * authenticated as.
      *
-     * `$contact` comes from the request's token — see FamilyPasswordController.
+     * `$contact` comes from the request's token (FamilyPasswordController), or
+     * from a sign-in code the caller just redeemed (MemberSignupService, which
+     * passes no current token, so every existing session ends and only the
+     * token it mints afterwards is live).
      * Passing it in rather than resolving an address here is what makes it
      * structurally impossible for this method to change somebody else's
      * credential: there is no address to get wrong.
@@ -111,7 +134,17 @@ class FamilyPasswordService
                 ->when($currentTokenId !== '', fn ($q) => $q->whereKeyNot($currentTokenId))
                 ->delete();
 
-            $this->record($contact, ContactLoginEvent::ACTION_PASSWORD_SET, $ip);
+            // The access-history trail belongs to the FAMILY login the office
+            // turned on (see the contact_login_events migration). A contact
+            // with one gets the row, which is every caller from the portal,
+            // since `family.active` requires it. An app member with no family
+            // login does not: their password is their own sign-in and nothing
+            // the office granted. The row would also be an office record to
+            // MemberAccountDeletion, and it would stop an account the app
+            // created from ever being erased when its owner deletes it.
+            if ($contact->login_enabled_at !== null) {
+                $this->record($contact, ContactLoginEvent::ACTION_PASSWORD_SET, $ip);
+            }
         });
     }
 
@@ -170,6 +203,12 @@ class FamilyPasswordService
     /**
      * Verify the password, ALWAYS paying for exactly one hash comparison.
      *
+     * Public because the app's password door (MemberSignupService::
+     * attemptPassword) must pay the same constant cost, and one decoy in one
+     * place is what keeps the two doors costing the same. A caller passes null
+     * for every contact it has already refused, never a contact it means to
+     * refuse afterwards.
+     *
      * Three inputs reach this method and only one may succeed, but all three
      * must cost the same:
      *
@@ -185,7 +224,7 @@ class FamilyPasswordService
      * `hasFamilyPassword()` just means we never RELY on the timing of that
      * refusal.
      */
-    private function hashOrBurn(?Contact $contact, string $submitted): bool
+    public function hashOrBurn(?Contact $contact, string $submitted): bool
     {
         if ($contact === null || ! $contact->hasFamilyPassword()) {
             Hash::check($submitted, $this->decoy());

@@ -8,10 +8,11 @@ use Illuminate\Validation\Rules\Password;
 /**
  * PUT /api/family/masjids/{masjid_id}/password.
  *
- * The door where a password is CHOSEN, and therefore the only place strength is
- * enforced. The caller is already authenticated — this route sits behind
- * `auth:family` + `family.parent` — so there is nothing to disclose and a
- * specific, helpful 422 is the right answer.
+ * A door where a password is CHOSEN, and therefore where strength is enforced.
+ * The rule itself is `strength()` below, which the app's create-account and
+ * forgot-password door uses too. The caller is already authenticated — this
+ * route sits behind `auth:family` + `family.parent` — so there is nothing to
+ * disclose and a specific, helpful 422 is the right answer.
  *
  * ---------------------------------------------------------------------------
  * WHY NO `current_password`
@@ -48,19 +49,13 @@ class SetFamilyPasswordRequest extends BaseFormRequest
      */
     public function rules(): array
     {
-        $rule = Password::min((int) config('family.password.min_length', 12));
-
-        if (config('family.password.check_breaches', true)) {
-            $rule = $rule->uncompromised();
-        }
-
         return [
             'password' => [
                 'required',
                 'string',
                 'max:255',
                 'confirmed',
-                $rule,
+                self::strength(),
             ],
         ];
     }
@@ -70,10 +65,52 @@ class SetFamilyPasswordRequest extends BaseFormRequest
      */
     public function messages(): array
     {
-        return [
-            'password.min' => 'Please choose a password of at least 12 characters. A short phrase you will remember works well.',
+        return self::strengthMessages() + [
             'password.confirmed' => 'The two passwords did not match.',
+        ];
+    }
+
+    /**
+     * THE password policy, for every door where a contact CHOOSES one.
+     *
+     * There are two such doors since 2026-09-16: this one (a parent inside the
+     * portal) and the app's `verify-code` with a `password`
+     * (App\Http\Requests\Member\VerifyMemberCodeRequest), which is how a member
+     * creates an account or resets a forgotten password. Both write the SAME
+     * column, `contacts.password`, which both realms read, so they must refuse
+     * exactly the same passwords. A second copy of this rule is a second place
+     * for the two to drift apart, and the person would then meet a password one
+     * screen accepted and the other would never have allowed.
+     *
+     * Never apply it where a password is PRESENTED (see PasswordSignInRequest).
+     */
+    public static function strength(): Password
+    {
+        $rule = Password::min(self::minLength());
+
+        if (config('family.password.check_breaches', true)) {
+            $rule = $rule->uncompromised();
+        }
+
+        return $rule;
+    }
+
+    /**
+     * The sentences for a refused choice, keyed on the `password` field both
+     * doors use.
+     *
+     * @return array<string, string>
+     */
+    public static function strengthMessages(): array
+    {
+        return [
+            'password.min' => 'Please choose a password of at least ' . self::minLength() . ' characters. A short phrase you will remember works well.',
             'password.uncompromised' => 'That password has appeared in a public data breach. Please choose a different one.',
         ];
+    }
+
+    private static function minLength(): int
+    {
+        return (int) config('family.password.min_length', 12);
     }
 }

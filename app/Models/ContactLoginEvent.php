@@ -104,6 +104,11 @@ class ContactLoginEvent extends Model
     /**
      * The family CHOSE a password for themselves, or changed the one they had.
      *
+     * Since 2026-09-16 the app's create-account and forgot-password can write it
+     * too, for a contact that has a family login: the password is one per
+     * person, so the portal's history must show it changed. A contact with no
+     * family login gets no row (FamilyPasswordService::set).
+     *
      * The first verb on this trail with no operator behind it, and that is the
      * fact worth recording: `actor_user_id`, `actor_name` and `actor_email` are
      * all NULL because no staff user was involved and none CAN be — see
@@ -136,9 +141,11 @@ class ContactLoginEvent extends Model
 
     /**
      * Everything is fillable because nothing here is reachable from a request
-     * body: rows are written in exactly two places, from values each derives
+     * body: rows are written in exactly three places, from values each derives
      * from the authenticated actor and the contact it just changed:
-     * App\Services\Family\FamilyAccessService::record, and
+     * App\Services\Family\FamilyAccessService::record,
+     * App\Services\Family\FamilyPasswordService::record (`password_set` and
+     * `password_cleared`, no actor), and
      * App\Services\Member\MemberAccountDeletion, which writes one `revoked` row
      * with no actor when a member deleting their account ends a family login.
      * No controller passes a payload to `create()` on this model.

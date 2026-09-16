@@ -167,7 +167,11 @@ class Contact extends Model implements AuthenticatableContract
      *     strongest possible sense, and leaving it out of $fillable means no
      *     request body — not a CRM update, not a roster import — can set a
      *     family's credential as a side effect of editing something else. The
-     *     service writes it only for the contact the caller's OWN token names.
+     *     service writes it only for the contact the caller's OWN token names,
+     *     or (since 2026-09-16) for the contact whose mailbox a sign-in code
+     *     just proved, when `App\Services\Member\MemberSignupService` redeems a
+     *     code that carries a password. It appends `password_set` only for a
+     *     contact that has a family login.
      *   - `App\Services\Member\MemberAccountDeletion` — CLEARS `login_enabled_at`,
      *     `verified_at` and `password` / `password_set_at` when a member deletes
      *     their own account (or hard-deletes the contact, when app sign-up
@@ -608,12 +612,15 @@ class Contact extends Model implements AuthenticatableContract
      *      codes T-015d adds."
      *
      * Both of those reasons were about the OFFICE ISSUING credentials, and both
-     * still hold. Nothing sets a password except the parent who owns it, while
-     * already holding a token they got from their own mailbox; no password is
-     * ever mailed; and there is still no reset desk — a parent who forgets
-     * theirs signs in with a code, exactly as before. What changed is that a
-     * parent who has already proved control of their mailbox may now choose not
-     * to return to it every time. See FamilyPasswordService.
+     * still hold. Nothing sets a password except the person who owns it, while
+     * already holding a token they got from their own mailbox, or while
+     * redeeming a code sent to it (the app's create-account and forgot-password,
+     * 2026-09-16); no password is ever mailed; and there is still no reset
+     * desk — a person who forgets theirs proves the mailbox again. What changed
+     * is that a person who has already proved control of their mailbox may now
+     * choose not to return to it every time. See FamilyPasswordService.
+     *
+     * ONE password per contact, read by both the parent portal and the app.
      *
      * ---------------------------------------------------------------------
      * The fail-closed choice is PRESERVED, not dropped
@@ -637,7 +644,10 @@ class Contact extends Model implements AuthenticatableContract
     }
 
     /**
-     * Has this parent chosen a password? Never reads the hash.
+     * Has this person chosen a password? Never reads the hash.
+     *
+     * Named for the realm that introduced it; since 2026-09-16 the same column
+     * is the app member's password too (MemberSignupService::attemptPassword).
      *
      * `password_set_at` is the flag on purpose — a screen that wants to say
      * "you have a password" must not have to touch the credential to find out,

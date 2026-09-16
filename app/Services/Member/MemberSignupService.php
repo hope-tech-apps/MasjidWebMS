@@ -6,6 +6,7 @@ use App\Mail\FamilyLoginCodeMail;
 use App\Models\AppSignupCode;
 use App\Models\Contact;
 use App\Models\Masjid;
+use App\Services\Family\FamilyPasswordService;
 use App\Support\TenantContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -24,12 +25,26 @@ use Throwable;
  * containing it.
  *
  * ---------------------------------------------------------------------------
- * SIGN-UP AND SIGN-IN ARE THE SAME TWO ENDPOINTS
+ * THERE IS NO "REGISTER" — CREATING AN ACCOUNT IS A CODE WITH A PASSWORD
  * ---------------------------------------------------------------------------
- * There is no separate "register". A member submits an address and gets a code;
- * redeeming it either matches an existing contact or creates one. A distinct
- * registration endpoint could not avoid answering "is this address already
- * known here?", and for a congregation that question is about who attends.
+ * A member submits an address and gets a code; redeeming it either matches an
+ * existing contact or creates one. A distinct registration endpoint could not
+ * avoid answering "is this address already known here?", and for a
+ * congregation that question is about who attends.
+ *
+ * Since 2026-09-16 the redeem may carry a `password`, and that one addition is
+ * both "Create an account" (a new address: name, password, code) and "Forgot
+ * password?" (a known one: password, code). The password is written in the
+ * transaction that burns the code, through FamilyPasswordService::set(), so a
+ * refused redeem sets nothing. Both flows prove the mailbox first, so neither
+ * says anything about an address to somebody who merely typed it. On a known
+ * address the password REPLACES whatever that person had, in the app and the
+ * parent portal alike, and ends their other sessions (owner decision,
+ * 2026-09-16: one password per person).
+ *
+ * `attemptPassword()` is the third door: address + password, no code. It
+ * resolves the contact through the same `resolveContact()` and
+ * `mayHoldMemberAccess()` as the code door, and every failure is the same null.
  *
  * ---------------------------------------------------------------------------
  * ISSUING A CODE CREATES NO CONTACT
@@ -59,6 +74,11 @@ use Throwable;
  * is discarded on a link. Otherwise anyone who could receive mail at a known
  * congregant's address could rename that congregant in the office's own CRM.
  *
+ * The one thing a link does take from the request is a `password`, because it
+ * is not a fact about the person the office recorded: it is the credential of
+ * whoever reads the mailbox, and they have just proved they do. That is the
+ * same authority the code itself grants, so it opens nothing the code did not.
+ *
  * An address matching two contacts is ambiguous and refused outright, exactly
  * as FamilyLoginService refuses it — guessing which person a credential belongs
  * to is the one thing an identity service must never do.
@@ -75,8 +95,10 @@ use Throwable;
  */
 class MemberSignupService
 {
-    public function __construct(private TenantContext $tenant)
-    {
+    public function __construct(
+        private TenantContext $tenant,
+        private FamilyPasswordService $passwords,
+    ) {
     }
 
     /**
@@ -124,11 +146,17 @@ class MemberSignupService
      * `$firstName`/`$lastName` are used ONLY when a contact is created. On a
      * link they are discarded — see the class docblock.
      *
+     * `$password`, when not null, becomes the contact's password — new or
+     * linked alike — in the same transaction, before the token is minted. Its
+     * strength is the caller's to check first (VerifyMemberCodeRequest applies
+     * SetFamilyPasswordRequest::strength()); by the time it reaches here, a
+     * refusal about it would come after the code was spent.
+     *
      * @return array{contact: Contact, token: NewAccessToken, created: bool}|null
      *
      * @throws NewMemberNameRequired when the code matched and was unconsumed, the
      *   address would create a contact, and a name is blank. The code is NOT
-     *   consumed.
+     *   consumed and no password is set.
      */
     public function redeem(
         string $submittedEmail,
@@ -136,6 +164,7 @@ class MemberSignupService
         ?string $firstName = null,
         ?string $lastName = null,
         ?string $ip = null,
+        #[\SensitiveParameter] ?string $password = null,
     ): ?array {
         $email = $this->normalise($submittedEmail);
 
@@ -145,7 +174,58 @@ class MemberSignupService
 
         $row = $this->matchLiveCode($email, $this->hash($submittedCode));
 
-        return $row === null ? null : $this->consume($row, $email, $firstName, $lastName);
+        return $row === null ? null : $this->consume($row, $email, $firstName, $lastName, $password, $ip);
+    }
+
+    /**
+     * Exchange an address + password for a member token, or null.
+     *
+     * Null for EVERY failure, and the controller answers all of them with the
+     * one `verify-code` 410: an unknown address, a wrong password, no password
+     * chosen, a contact that never proved the address here (`verified_at`), a
+     * revoked or deleted contact, an address matching two contacts, and a
+     * password that belongs to a different address than the one submitted.
+     * Confirming that an address has an account here is a disclosure about who
+     * attends, and at a school, about a child.
+     *
+     * Every one of those costs one hash comparison (FamilyPasswordService::
+     * hashOrBurn), so the time taken does not separate them either.
+     *
+     * The token is the same kind `redeem()` mints, named for the same fact: the
+     * contact's `login_email` is the address submitted, which the check below
+     * makes true rather than assumed.
+     *
+     * @return array{contact: Contact, token: NewAccessToken, created: bool}|null
+     */
+    public function attemptPassword(
+        string $submittedEmail,
+        #[\SensitiveParameter] string $submittedPassword,
+        ?string $ip = null,
+    ): ?array {
+        $email = $this->normalise($submittedEmail);
+
+        // The SAME resolver and gate as the code door: bound tenant,
+        // case-insensitive, two rows are no row, revoked and trashed refused.
+        $contact = $email === '' ? null : $this->resolveContact($email);
+
+        if ($contact !== null && ! $this->mayUsePassword($contact, $email)) {
+            $contact = null;
+        }
+
+        // Refused contacts are passed as null, so they are compared against the
+        // decoy and cost what a real comparison costs.
+        if (! $this->passwords->hashOrBurn($contact, $submittedPassword)) {
+            return null;
+        }
+
+        /** @var Contact $contact */
+        $contact->forceFill(['last_login_at' => now()])->save();
+
+        return [
+            'contact' => $contact,
+            'token' => $contact->createMemberToken(Contact::MEMBER_TOKEN_FOR_LOGIN_EMAIL),
+            'created' => false,
+        ];
     }
 
     /**
@@ -265,8 +345,10 @@ class MemberSignupService
         string $email,
         ?string $firstName,
         ?string $lastName,
+        #[\SensitiveParameter] ?string $password,
+        ?string $ip,
     ): ?array {
-        return DB::transaction(function () use ($row, $email, $firstName, $lastName): ?array {
+        return DB::transaction(function () use ($row, $email, $firstName, $lastName, $password, $ip): ?array {
             $affected = AppSignupCode::query()
                 ->whereKey($row->id)
                 ->whereNull('consumed_at')
@@ -322,7 +404,8 @@ class MemberSignupService
                 // A LINK. Nothing from the request is copied onto a contact the
                 // office already owns — not the name, not the email. The only
                 // writes are the two facts this exchange actually established:
-                // that the address is theirs, and that they just used it.
+                // that the address is theirs, and that they just used it (and,
+                // below, a password the mailbox's owner chose for themselves).
                 $updates = ['verified_at' => now(), 'last_login_at' => now()];
 
                 // Adopt login_email only when the match came from the office's
@@ -333,6 +416,15 @@ class MemberSignupService
                 }
 
                 $contact->forceFill($updates)->save();
+            }
+
+            // Create-account and forgot-password. Only a proven mailbox gets
+            // here, after the name check, so a refused redeem sets nothing.
+            // `set()` with no current token ends EVERY session the contact
+            // holds (member, family and hand-off), which is what a reset is
+            // for; the token minted below is the only live one afterwards.
+            if ($password !== null) {
+                $this->passwords->set($contact, $password, '', $ip);
             }
 
             return [
@@ -389,6 +481,32 @@ class MemberSignupService
             ->get();
 
         return $byEmail->count() === 1 ? $byEmail->first() : null;
+    }
+
+    /**
+     * May this contact sign in to the app with a password, for this address?
+     *
+     * The code door's gate, plus what a password cannot prove on its own:
+     *
+     *  - `verified_at`: the person has proved this mailbox to the app before. A
+     *    contact that never did holds no member access (`member.active` would
+     *    refuse the token on every route anyway); a parent-portal password on
+     *    such a contact is used here only after "Forgot password?" proves it.
+     *  - a password was chosen (`hasFamilyPassword()`, the one password both
+     *    realms share).
+     *  - the password belongs to THIS address. `resolveContact()` also matches
+     *    the office's `email` column when a contact has no `login_email`, which
+     *    is how a code sign-in links an office record. A password is a
+     *    credential for `login_email` only, and a household address both
+     *    parents read must not open it.
+     */
+    private function mayUsePassword(Contact $contact, string $email): bool
+    {
+        return $this->mayHoldMemberAccess($contact)
+            && $contact->verified_at !== null
+            && $contact->hasFamilyPassword()
+            && $contact->login_email !== null
+            && $this->normalise($contact->login_email) === $email;
     }
 
     /**
