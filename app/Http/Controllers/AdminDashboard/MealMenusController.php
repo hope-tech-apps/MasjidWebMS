@@ -10,6 +10,7 @@ use App\Models\MealOrder;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOpeningNotifier;
 use App\Support\MasjidTime;
+use App\Support\SiteUrl;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -102,6 +103,17 @@ class MealMenusController extends Controller
      * menu has no id yet, so the flyer is uploaded first and its URL saved with
      * the menu (new or existing). Stored on the public disk under lunch-flyers/;
      * the returned absolute URL is what goes into meal_menus.flyer_image_url.
+     *
+     * THE URL IS BUILT ON THE CONFIGURED HOST, not the request's, and this is
+     * the worst instance of that class in the application rather than the
+     * showiest: `url()` here resolves against whatever Host the ADMIN's browser
+     * sent, and the string is then WRITTEN TO A COLUMN and served from it
+     * forever — `meal_menus.flyer_image_url`, read by the public ordering page
+     * (Api\V1\JummahLunchOrdersController). Everywhere else a request-shaped URL
+     * expires with a ten-minute cache entry; here it is durable. This deploy
+     * answers to three hostnames, so an admin who opened the SPA on
+     * manara.hopetechapps.com instead of masjid.hopetechapps.com permanently
+     * pinned a customer-facing image to the other one. See App\Support\SiteUrl.
      */
     public function uploadFlyer(Request $request, $masjid_id)
     {
@@ -116,7 +128,7 @@ class MealMenusController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'data' => ['url' => url('storage/' . $path)],
+                'data' => ['url' => SiteUrl::to('storage/' . $path)],
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([

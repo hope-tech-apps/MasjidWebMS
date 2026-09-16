@@ -32,10 +32,51 @@ This directory holds PHPUnit / Pest tests for the Laravel API. Conventions are c
 php artisan test --filter="Feature\\\\Splash"
 ```
 
+## A `Host:` header on a relative URI is silently discarded
+
+This one voids a whole security suite without a single red test, and two people
+hit it independently on 2026-09-15 from opposite directions.
+
+```php
+$this->withHeader('Host', 'evil.example')->getJson('/api/mobile/...');  // WRONG
+$this->getJson('https://evil.example/api/mobile/...');                  // right
+```
+
+`MakesHttpRequests::prepareUrlForRequest()` rewrites a relative path through
+`url()`, and Symfony's `Request::create()` then **overwrites `HTTP_HOST` from the
+URI it was handed**. So the header is thrown away and the request arrives on
+localhost like any other. Every assertion of the form "the forged host does not
+appear in the payload" then passes against completely unfixed code, because no
+forged host was ever delivered.
+
+Two habits make it safe:
+
+- **Put the host in the URI**, never in a header.
+- **Assert the host the request ARRIVED on**, inside the same case:
+  `$this->assertSame('evil.example', app('request')->getHost())`. The URI form is
+  what delivers the host today; this is what proves it was still the host when
+  the payload was built, and it is what would catch a future middleware that
+  normalises the host back.
+
+`HostHeaderUrlIntegrityTest` also carries a deliberate **control** —
+`the_test_harness_really_does_forge_the_host` asserts that one surface (the SPA
+shell, whose `asset()` calls deliberately still follow the request) **does** echo
+the forged host back. If the harness ever stops forging, that case goes red and
+says so, instead of every other case quietly passing.
+
+Both were found the same way, and it is the only way worth trusting: **revert the
+fix and watch the test fail.** A security test that has never been seen red has
+not been tested. See `.claude/rules/generated-urls.md`.
+
 ## Running the suite on the droplet (there is no PHP on the dev Mac)
 
 Tests run against an **isolated rsync'd copy** under `/tmp`, never the live app
-directory. Two traps, both of which look like "I broke 48 tests":
+directory. **Copy from an existing CI tree (`/root/ci-*`, `/root/biss-ci-*`), not
+from the live app directory** — production is installed `composer --no-dev`, so it
+has no PHPUnit and `php artisan test` answers *Command "test" is not defined*.
+Copy to a private path; `/root/manara-ci` is rsync'd over by several sessions.
+
+Then two traps, both of which look like "I broke 48 tests":
 
 - **`rm -f bootstrap/cache/*.php` after EVERY rsync, not just the first.** The
   repo carries a checked-out `bootstrap/cache/packages.php` that predates

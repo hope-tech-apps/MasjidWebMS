@@ -129,7 +129,7 @@
                 </p>
                 <p class="address">{{ $address }}</p>
 
-                <form method="POST" action="{{ route('unsubscribe.store', ['masjid_id' => $masjidId, 'token' => $token]) }}">
+                <form method="POST" action="{{ \App\Support\SiteUrl::route('unsubscribe.store', ['masjid_id' => $masjidId, 'token' => $token]) }}">
                     <button type="submit" class="primary">Unsubscribe me</button>
                 </form>
 
@@ -140,7 +140,7 @@
                     Nothing changed just now.
                 </p>
 
-                <form method="POST" action="{{ route('unsubscribe.resubscribe', ['masjid_id' => $masjidId, 'token' => $resubscribeToken]) }}">
+                <form method="POST" action="{{ \App\Support\SiteUrl::route('unsubscribe.resubscribe', ['masjid_id' => $masjidId, 'token' => $resubscribeToken]) }}">
                     <button type="submit" class="quiet">Start receiving them again</button>
                 </form>
 
@@ -151,7 +151,7 @@
                     immediately &mdash; there is nothing else you need to do.
                 </p>
 
-                <form method="POST" action="{{ route('unsubscribe.resubscribe', ['masjid_id' => $masjidId, 'token' => $resubscribeToken]) }}">
+                <form method="POST" action="{{ \App\Support\SiteUrl::route('unsubscribe.resubscribe', ['masjid_id' => $masjidId, 'token' => $resubscribeToken]) }}">
                     <button type="submit" class="quiet">Changed your mind? Start them again</button>
                 </form>
 

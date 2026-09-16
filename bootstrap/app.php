@@ -12,6 +12,7 @@ use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\SuperAdminMiddleware;
 use App\Http\Middleware\LunchStaffMiddleware;
 use App\Http\Middleware\TeacherMiddleware;
+use App\Http\Middleware\TrustedHosts;
 use App\Http\Middleware\UserAdminMiddleware;
 use App\Support\Errors;
 use Illuminate\Auth\AuthenticationException;
@@ -70,6 +71,20 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // FIRST, ahead of everything: refuse — or, until TRUSTED_HOSTS_ENFORCE
+        // is set, record — a Host header this deployment does not answer to.
+        //
+        // It has to be first because the damage is done by anything downstream
+        // that reads the header: `url()`/`asset()`/`route()` resolve against it,
+        // and the public payloads then store the result in a cache keyed by
+        // organisation id with no host in it, so one forged request decides what
+        // every later caller is served. Prepended rather than appended for that
+        // reason — an unknown Host must not reach a controller, a cache write or
+        // a rendered form action. See App\Http\Middleware\TrustedHosts, and
+        // App\Support\SiteUrl for the half of the fix that holds even when
+        // this middleware admits the request.
+        $middleware->prepend(TrustedHosts::class);
+
         // Security headers on every response (web + api).
         $middleware->append(SecurityHeaders::class);
 

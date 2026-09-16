@@ -32,6 +32,38 @@ use Illuminate\Support\Facades\Storage;
  * This is a floor, not a feature: it turns a blank screen into a placeholder.
  * The right icon still comes from the real media; run `media:verify` +
  * `app:features-ensure-icons` to restore that.
+ *
+ * ==========================================================================
+ * EVERY URL HERE IS BUILT ON THE CONFIGURED HOST
+ * ==========================================================================
+ *
+ * These three strings are placed into payloads that are then CACHED, under keys
+ * holding an organisation id and no host (App\Support\MobileCache), and served
+ * to every later caller for the TTL. They were built with `url()`, which
+ * resolves against the INCOMING request's Host header — so the first caller to
+ * warm an entry decided the image and icon addresses handed to every phone on
+ * that organisation, and this box's nginx is `default_server`, so that caller
+ * chooses the host freely.
+ *
+ * Exactly five cached keys embed them, and they are worth naming because they
+ * are the flush list if an entry is ever found poisoned:
+ *
+ *     mobile.masjid.{id}.announcements   image
+ *     mobile.masjid.{id}.services        icon AND image
+ *     mobile.masjid.{id}.features        icon
+ *     mobile.masjid.{id}.about           about_image, mission_icon, vision_icon
+ *     mobile.masjid.{id}.donation_link   image
+ *
+ * `show`, `gallery`, `orgs` and the global `mobile.masjids.list` are NOT on that
+ * list: they carry real media only, whose `original_url` comes from the public
+ * disk's configured `url` (env('APP_URL').'/storage'), which never reads the
+ * request.
+ *
+ * The placeholder path is the reachable one — it fires wherever an announcement
+ * or service has no image row, which on production today is most of them.
+ *
+ * So: App\Support\SiteUrl, not `url()`. The rule, stated once there: no field
+ * of a cached public payload may be a function of the request.
  */
 class MobileMedia
 {
@@ -42,7 +74,7 @@ class MobileMedia
      */
     public static function imagePlaceholderUrl(): string
     {
-        return url('mobile-assets/placeholder.png');
+        return SiteUrl::to('mobile-assets/placeholder.png');
     }
 
     /**
@@ -54,10 +86,10 @@ class MobileMedia
     public static function iconPlaceholderUrl(?string $iconFile = null): string
     {
         if ($iconFile !== null && Storage::disk('public')->exists('icons/'.$iconFile)) {
-            return url('storage/icons/'.$iconFile);
+            return SiteUrl::to('storage/icons/'.$iconFile);
         }
 
-        return url('mobile-assets/placeholder.svg');
+        return SiteUrl::to('mobile-assets/placeholder.svg');
     }
 
     /**

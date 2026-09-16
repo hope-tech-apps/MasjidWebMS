@@ -4,12 +4,12 @@ namespace App\Services\Broadcast;
 
 use App\Models\Contact;
 use App\Models\EmailSuppression;
+use App\Support\SiteUrl;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\URL;
 
 /**
  * Every read and write of the broadcast-email opt-out goes through here
@@ -174,6 +174,27 @@ class EmailSuppressionService
      * serialized job that mints its own URL mints it from whatever host the
      * worker happens to think it is on.
      *
+     * AND BUILT ON THE CONFIGURED HOST, which is the other half of that same
+     * worry and was the half left open. These were `URL::route()`, which
+     * resolves against the INCOMING request's Host header — and the send path is
+     * SYNCHRONOUS for anything not scheduled into the future:
+     * BroadcastsController -> BroadcastComposer::send() -> dispatcher->dispatch()
+     * all happen inside the admin's HTTP request. So the admin's Host decided
+     * the address in every recipient's `List-Unsubscribe`.
+     *
+     * This is the longest-lived instance of the class in the application. A
+     * cache entry expires in ten minutes and a column can be rewritten; an email
+     * is in somebody's inbox permanently, and `List-Unsubscribe` is POSTED
+     * AUTOMATICALLY by Gmail and Yahoo without the recipient doing anything.
+     * A wrong host there is a silent failure at best — the person believes they
+     * unsubscribed and keeps receiving mail — and an automatic POST to a host
+     * somebody else chose at worst. It also breaks with no attacker at all: this
+     * deploy answers to several hostnames, so mail sent from one of them carries
+     * links that stop working the day that hostname does, long after the mail
+     * was delivered.
+     *
+     * See App\Support\SiteUrl and .claude/rules/generated-urls.md.
+     *
      * @return array{page: string, one_click: string}
      */
     public function urls(int $masjidId, ?string $email, ?int $broadcastId = null): array
@@ -181,8 +202,8 @@ class EmailSuppressionService
         $token = $this->token($masjidId, $email, $broadcastId, self::PURPOSE_UNSUBSCRIBE);
 
         return [
-            'page' => URL::route('unsubscribe.show', ['masjid_id' => $masjidId, 'token' => $token]),
-            'one_click' => URL::route('unsubscribe.store', ['masjid_id' => $masjidId, 'token' => $token]),
+            'page' => SiteUrl::route('unsubscribe.show', ['masjid_id' => $masjidId, 'token' => $token]),
+            'one_click' => SiteUrl::route('unsubscribe.store', ['masjid_id' => $masjidId, 'token' => $token]),
         ];
     }
 
