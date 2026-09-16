@@ -25,6 +25,7 @@ use App\Support\ModuleFacts;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 
 class MasjidsController extends Controller
@@ -227,52 +228,83 @@ class MasjidsController extends Controller
      *
      * Listing is what puts an organisation into a parent's app: it appears in
      * the profile switcher, and the phone then draws that organisation's bottom
-     * tabs from its own switches. `MainTabView.swift` gates exactly three of the
-     * four tabs — Announcements (legacy id 10), Contact Us (11) and Donate (6) —
-     * and Home is the only one always present. So an organisation whose switches
-     * leave all three off opens, for anybody who selects it, as a single Home
-     * tab with the tab bar collapsed around it.
+     * tabs from its own row in `/features`. BOTH clients gate the same three
+     * tabs on the same three legacy ids — iOS in `MainTabView.swift`, Android in
+     * `BottomBar.kt::visibleTabs` — Announcements (10), Contact Us (11) and
+     * Donate (6). Home is never gated. So an organisation with all three off
+     * opens, for anybody who selects it, as a single Home tab.
      *
-     * BISS (18) is in exactly that state after the S2 cutover resolutions, and
-     * nothing would have said so: the decision that triggers it is a listing
-     * toggle taken months later by somebody who is not reading a cutover
-     * runbook. A note in the plan is not present at the moment it matters; this
-     * is.
+     * BISS (18) reaches that state through the S2 cutover resolutions, and
+     * nothing would have said so: the decision that makes it visible is a
+     * listing toggle taken months later by somebody who is not reading a
+     * cutover runbook. A note in the plan is not present at the moment it
+     * matters; this is.
+     *
+     * READ WHAT THE CLIENT READS, which changes under this feature's feet.
+     * The apps gate on `/features`, and `/features` serves the PIVOT until the
+     * S2 cutover retires it, the switches afterwards. Deriving from the
+     * switches alone would have made this sentence FALSE for exactly the
+     * organisation it was written for: BISS's pivot has ids 6, 10 and 11
+     * available today, so its app draws four tabs right now, while its switches
+     * already say otherwise. So: pivot while the pivot exists, switches once it
+     * is gone, and the sentence is true in both eras.
+     *
+     * The switch-side mapping is the cutover's, not the menu's (server plan,
+     * A2): id 10 is `announcements` and NEVER `events`; id 6 is `donation_link`
+     * and NEVER `giving`. `AppMenu` ORs the pairs for the side-MENU entry, but
+     * a tab is a different gate, and ORing here would stay silent on a genuine
+     * collapse.
      *
      * It WARNS and does not refuse. A one-tab profile is a legitimate thing to
      * publish — a small organisation with no announcements, no contact intake
      * and nowhere to give is exactly that — and refusing would make a
-     * SuperAdmin fight the platform to do something reasonable. The warning
-     * rides the success response, so the screen can show it without the write
-     * having failed.
+     * SuperAdmin fight the platform to do something reasonable. The defect is
+     * publishing one by accident.
      *
-     * Derived from the SWITCHES, not the legacy pivot, because the switches are
-     * what will still exist after S2b retires the pivot, and because this is a
-     * statement about what the app will draw rather than about what it drew
-     * before the cutover ran.
+     * Returns NULL when there is nothing to say, so the screen keeps its own
+     * specific confirmation ("Organization listed in the app directory.") for
+     * the ordinary case instead of being flattened into a generic line.
      */
-    private function listingTabWarning(Masjid $masjid): string
+    private function listingTabWarning(Masjid $masjid): ?string
     {
         if (! $masjid->isListed()) {
-            return 'Directory listing updated.';
+            return null;
         }
 
-        $gatedTabs = [
-            'Announcements' => $masjid->hasCapability('announcements') || $masjid->hasCapability('events'),
-            'Contact Us' => $masjid->hasCapability('contact_requests'),
-            'Donate' => $masjid->hasCapability('donation_link') || $masjid->hasCapability('giving'),
-        ];
+        // Legacy ids the two apps gate their tabs on.
+        $gatedIds = [10 => 'Announcements', 11 => 'Contact Us', 6 => 'Donate'];
 
-        $off = array_keys(array_filter($gatedTabs, static fn (bool $on): bool => ! $on));
+        if (Schema::hasTable('masjid_mobile_app_features')) {
+            $available = DB::table('masjid_mobile_app_features')
+                ->where('masjid_id', $masjid->id)
+                ->where('is_available', 1)
+                ->pluck('feature_id')
+                ->all();
 
-        if (count($off) !== count($gatedTabs)) {
-            return 'Directory listing updated.';
+            // No pivot rows at all is "not configured", not "everything off" —
+            // and Android's empty-features branch deliberately shows the full
+            // bar in that case. Saying nothing is correct.
+            if (DB::table('masjid_mobile_app_features')->where('masjid_id', $masjid->id)->doesntExist()) {
+                return null;
+            }
+
+            $anyTabOn = array_intersect(array_keys($gatedIds), array_map('intval', $available)) !== [];
+        } else {
+            // Post-S2b: the pivot is gone and the switches are the answer.
+            $anyTabOn = $masjid->hasCapability('announcements')
+                || $masjid->hasCapability('contact_requests')
+                || $masjid->hasCapability('donation_link');
+        }
+
+        if ($anyTabOn) {
+            return null;
         }
 
         return 'Listed. Note: ' . $masjid->name . ' has Announcements, Contact Us and Donate all switched off, '
-            . 'so it opens in the app as a single Home tab. That is allowed — turn any of those switches on if it '
+            . 'so its app opens as a single Home tab. That is allowed — turn any of those switches on if it '
             . 'was not intended.';
     }
+
 
     /**
      * SuperAdmin-only toggle for the Masjid Assistant (per-masjid feature gate).
