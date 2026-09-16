@@ -266,7 +266,37 @@ class AppMenuEndpointTest extends TestCase
         $account = $this->menu($masjid->id)->assertOk()->json('data.account');
 
         $this->assertSame(['sign_in_available', 'deletion_page_url'], array_keys($account));
-        $this->assertSame(url('/account-deletion'), $account['deletion_page_url']);
+
+        // A LITERAL, built from config, not from a helper recomputed in this
+        // process. `assertSame(url('/account-deletion'), …)` was the assertion
+        // here and it proved nothing: url() reads the request's Host, so the
+        // expectation moved with the value and the test passed for every
+        // possible host — including a poisoned one.
+        config(['app.url' => 'https://masjid.hopetechapps.com']);
+
+        $this->assertSame(
+            'https://masjid.hopetechapps.com/account-deletion',
+            $this->menu($this->listedOrg('Another Masjid')->id)
+                ->assertOk()
+                ->json('data.account.deletion_page_url')
+        );
+    }
+
+    #[Test]
+    public function the_deletion_page_survives_a_trailing_slash_in_the_configured_url(): void
+    {
+        // APP_URL is written by hand in a .env on a box, and a trailing slash
+        // is the ordinary typo. `https://host//account-deletion` is a URL both
+        // apps would open and most servers would answer, so this would not fail
+        // loudly — it would just be the address every phone is handed.
+        config(['app.url' => 'https://masjid.hopetechapps.com/']);
+
+        $this->assertSame(
+            'https://masjid.hopetechapps.com/account-deletion',
+            $this->menu($this->listedOrg('Slash Masjid')->id)
+                ->assertOk()
+                ->json('data.account.deletion_page_url')
+        );
     }
 
     #[Test]

@@ -63,6 +63,31 @@ class AppMenuController extends Controller
         // Soft-deleted organisations are excluded by the global scope: a
         // trashed org has no menu, and its children are not somebody else's to
         // switch into.
+        //
+        // `listed_at` is deliberately NOT consulted here, and the asymmetry
+        // with AppOrgs::forHome() is the point rather than an oversight. The
+        // two questions are different:
+        //
+        //   forHome()  "which organisations may this app OFFER as somewhere to
+        //              switch into?" — publishing is the act that answers yes,
+        //              so a child mid-setup is filtered out.
+        //   here       "what is the menu for the organisation this app WAS
+        //              BUILT FOR?" — its id is compiled into the binary.
+        //
+        // An app is built, installed and tested against its home id for days
+        // before a SuperAdmin publishes the organisation; staging org 17 is
+        // unlisted today and has live app members signing in. Gating this on
+        // `listed()` would mean an unpublished org's own app opens to a drawer
+        // it cannot build, which is the worst moment for it. Every other
+        // single-organisation mobile endpoint agrees — /show, /orgs, /features
+        // and the rest all resolve by id with no listed gate; only the
+        // DIRECTORY (MasjidsController::index) uses Masjid::listed(), because a
+        // directory is a list of organisations offered to strangers.
+        //
+        // What that publishes for an unlisted org is its public identity plus
+        // its module inventory, to anyone who guesses the id. That is the
+        // accepted cost, pinned by
+        // AppMenuTenantIsolationTest::an_unlisted_organisation_still_answers_for_its_own_app.
         $home = Masjid::find($masjid_id);
 
         if ($home === null) {

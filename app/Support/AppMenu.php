@@ -460,6 +460,14 @@ class AppMenu
      * it covers home_id too and one organisation's tag can never satisfy
      * another's conditional request.
      *
+     * EVERY VALUE HERE IS A FUNCTION OF THE ORGANISATION, NEVER OF THE REQUEST.
+     * This body is cached under a key that names only the org id and is handed
+     * to every phone that asks for the next ten minutes, and its sha1 becomes
+     * an ETag those phones pin. Anything that varies by caller — a host, a
+     * locale, a signed-in member — would be decided by whoever happened to warm
+     * the entry and then held there by the tag. That is why the deletion page
+     * is built from `config('app.url')` below and not from the request.
+     *
      * @return array<string, mixed>
      */
     public static function payload(Masjid $home): array
@@ -481,7 +489,25 @@ class AppMenu
                 'sign_in_available' => (bool) $home->crm_enabled,
                 // The live public page (S1a). It replaces the string both apps
                 // compiled in, so the address can move without a release.
-                'deletion_page_url' => url('/account-deletion'),
+                //
+                // config('app.url') and NOT url(): url() resolves against the
+                // INCOMING REQUEST'S Host header, and this value is cached for
+                // ten minutes under a key with no host in it and hashed into
+                // the ETag. This origin answers on several hostnames and on any
+                // Host at all — it is nginx's default_server on :80 and :443,
+                // it serves the portal vhosts from the same document root, and
+                // there is no TrustHosts middleware — so url() here means the
+                // first caller to warm an org's entry picks the delete-account
+                // address every phone is handed until it expires. [R2] has both
+                // clients PREFER this string over their compiled constant, so a
+                // wrong one is not a broken link, it is a member tapping Delete
+                // account and landing on somebody else's page that then asks
+                // for an email address and a code.
+                //
+                // Every other absolute public URL in this application is built
+                // the same way (FormNotifier, ContactUsNotifier,
+                // ConnectOnboardingLandingController, SecurityHeaders).
+                'deletion_page_url' => rtrim((string) config('app.url'), '/') . '/account-deletion',
             ],
             'profiles' => $profiles,
         ];
