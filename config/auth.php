@@ -216,18 +216,7 @@ return [
         'users' => [
             'provider' => 'users',
             'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
-            // 72 hours, not the framework's 60 minutes. The same token backs the
-            // "set your password" invite a new administrator is emailed, and an
-            // hour is far too short for that: three rounds of invites to MEC and
-            // IntelliCor staff (2026-09-15) all expired unopened, by people who
-            // read email a few times a day. Raising it also revives any link sent
-            // in the last 72 hours without sending anything, because validity is
-            // computed from the stored created_at on every check.
-            //
-            // Do NOT get a longer life by writing a future created_at instead:
-            // `throttle` below is measured from the same column, so that would
-            // block the person's own "Forgot password" for the whole period.
-            'expire' => 60 * 72,
+            'expire' => 60,
             'throttle' => 60,
         ],
     ],
