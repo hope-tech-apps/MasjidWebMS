@@ -1435,12 +1435,23 @@ email once with a code; "Forgot password?" emails a code.
    `verified_at` and a password, and have the submitted address as its `login_email`.
 3. **One password per person.** `contacts.password` is shared with the parent portal. Setting it
    from the app replaces the portal password and ends every other session the contact holds,
-   family and hand-off tokens included. Approved by the owner. It never sets `login_enabled_at`,
-   so an app account never opens the portal.
-4. **The rule is the portal's:** twelve characters (`family.password.min_length`) and the breach
+   family and hand-off tokens included. Approved by the owner. It never sets `login_enabled_at`.
+4. **A password belongs to the address it was chosen under.** Not setting `login_enabled_at` was
+   not enough on its own. The app can link an office guardian through a household `email` and let
+   whoever reads that mailbox choose a password. When the office then enabled the portal at the
+   parent's own address, the address changed but the password and `verified_at` stayed, and that
+   password opened both password doors at an address nobody had proved (review finding R1,
+   reproduced on the droplet). So `FamilyAccessService` now clears `password`, `password_set_at`
+   and `verified_at` whenever it moves a login to a different address, and on the holder when it
+   gives an address to someone else (with their tokens), and writes `password_cleared` naming the
+   operator. Re-typing the same address clears nothing. A code sign-in that gives an address-less
+   contact an address drops any password left on it. The admin modal warns before a change of
+   address, and the access history labels `password_set` / `password_cleared` (they read
+   "Enabled" before).
+5. **The rule is the portal's:** twelve characters (`family.password.min_length`) and the breach
    check, from one method (`SetFamilyPasswordRequest::strength()`). It is checked before the code
    is read, so a short password spends nothing.
-5. **Deleting an account still erases what the app created.** `password` and `password_set_at`
+6. **Deleting an account still erases what the app created.** `password` and `password_set_at`
    moved from office columns to sign-up columns, and `password_set` is written to the access
    history only for a contact with a family login. Otherwise every account created with a password
    would be kept on deletion.
@@ -1458,6 +1469,8 @@ email once with a code; "Forgot password?" emails a code.
 **Known limits.**
 - A parent who has only ever used the portal must use "Forgot password?" once before the app's
   password sign-in works, because the app requires `verified_at`.
+- A parent whose sign-in address the office changes loses their password and must sign in with a
+  code at the new address (and choose a password again). That is the price of item 4.
 - The refusal's words are about codes ("That code is no longer usable"), because the two doors must
   not differ. The apps show their own sentence for a 410 at the password door.
 - The sign-in 429 has no `data` key, as before. The iPhone app cannot decode it.

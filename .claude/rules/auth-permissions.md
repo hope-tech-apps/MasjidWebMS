@@ -337,6 +337,13 @@ exactly as the family realm shares `family-verify`). Still no `/register`.
 - **One password per contact, both realms.** Setting it from the app replaces a
   portal password and ends every other token the contact holds, family and hand-off
   included (owner, 2026-09-16). It never writes `login_enabled_at`.
+- **A password and `verified_at` belong to the `login_email` they were proven under.**
+  `FamilyAccessService::enable()` clears both (`WHAT_AN_ADDRESS_PROVED`) when the address
+  changes, and on the holder it releases an address from (with the holder's tokens),
+  writing `password_cleared` with the operator. `MemberSignupService::consume()` drops a
+  password left on a contact it gives an address to. Any new writer of `login_email`
+  must do the same, or a password chosen through one mailbox opens another
+  (review R1: a household address's password opened the portal at the parent's own).
 - **`password_set` goes on `contact_login_events` only when the contact has a family
   login**, and `password` / `password_set_at` are `MemberAccountDeletion::SIGNUP_COLUMNS`.
   Either one the other way round and no account created with a password is ever erased
