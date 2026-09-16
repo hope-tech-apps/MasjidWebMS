@@ -312,6 +312,41 @@ Pinned by `tests/Feature/MemberAccountDeletionTest.php`,
 `tests/Feature/AccountDeletionPageTest.php` and
 `tests/Feature/MemberAccountDeletionCoverageTest.php`.
 
+## How an app member signs in with a PASSWORD (2026-09-16)
+
+Three unauthenticated member doors, all under `/api/mobile/masjids/{masjid_id}/auth`
+with `family.guest` + `crm` + `whereNumber`: `request-code` (`throttle:member-login`),
+`verify-code` and `password` (both `throttle:member-verify`, ONE bucket per address,
+exactly as the family realm shares `family-verify`). Still no `/register`.
+
+- **Create account and forgot password are `verify-code` with a `password`.** With a
+  correct code, `MemberSignupService::consume()` calls `FamilyPasswordService::set()`
+  inside the transaction that burns the code, after the name check and before the
+  token is minted. Never write a second hashing path.
+- **The rule is `SetFamilyPasswordRequest::strength()`, checked in the request,
+  before the code is read.** It depends only on what was typed, so its 422 is no
+  oracle, and a refusal after the code is spent would cost the member their code.
+  Never apply it at a door where a password is PRESENTED. `required_if(present)` is
+  there because Laravel skips non-implicit rules for an all-spaces value and
+  `TrimStrings` leaves password fields alone.
+- **`password` is `attemptPassword()`: the same `resolveContact()` +
+  `mayHoldMemberAccess()`, plus `verified_at`, a password, and `login_email` equal to
+  the submitted address** (the resolver's office-`email` fallback must not open a
+  password). Every failure is null, the controller answers `refuse()` — the
+  verify-code 410 byte for byte — and `hashOrBurn()` makes every path one hash.
+- **One password per contact, both realms.** Setting it from the app replaces a
+  portal password and ends every other token the contact holds, family and hand-off
+  included (owner, 2026-09-16). It never writes `login_enabled_at`.
+- **`password_set` goes on `contact_login_events` only when the contact has a family
+  login**, and `password` / `password_set_at` are `MemberAccountDeletion::SIGNUP_COLUMNS`.
+  Either one the other way round and no account created with a password is ever erased
+  when its owner deletes it.
+- Both 422s from `verify-code` and `password` are `{status: "failed", message, data:
+  {field: [message]}}` (`MemberSignInFormRequest`). `request-code` is unchanged. The
+  sign-in 429 still has no `data` key.
+
+Pinned by `tests/Feature/MemberPasswordSignInTest.php`.
+
 ## `users.type` is the source of truth — spatie roles are a bridge
 
 - The legacy `users.type` enum (`SuperAdmin` / `MasjidAdmin` / `User`) still

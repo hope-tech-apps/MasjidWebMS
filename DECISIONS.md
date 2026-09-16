@@ -1417,3 +1417,47 @@ menu — where until today it decided only the first.
   60 seconds (`AppMenu::KILL_CACHE_TTL`), so the command's exit status is not the proof — the endpoint is.
   `s1-prod-postcheck.sh` asserts the 404 for the same reason.
 - `app:legacy-features-report` needs the system cron already running `schedule:run`.
+
+## 2026-09-16 — App members sign in with an email and password; one password per person
+
+**Decision.** The owner (2026-09-16, reviewing the MEC app): "It should have a simple email
+password sign in. Or create account button for that flow." His answers: sign in with email and
+password; "Create an account" asks for first name, last name, email and password and confirms the
+email once with a code; "Forgot password?" emails a code.
+
+1. **No register endpoint, still.** "Create an account" is `request-code`, then `verify-code` with
+   the name and a `password`. "Forgot password?" is the same two calls with only the `password`.
+   The password is written in the transaction that burns the code, through
+   `FamilyPasswordService::set()`.
+2. **`POST /api/mobile/masjids/{id}/auth/password`** signs in. Success is the `verify-code` 200.
+   Every failure is the `verify-code` 410, byte for byte, and costs one hash comparison. The
+   contact must resolve through the code door's resolver, be allowed member access, have
+   `verified_at` and a password, and have the submitted address as its `login_email`.
+3. **One password per person.** `contacts.password` is shared with the parent portal. Setting it
+   from the app replaces the portal password and ends every other session the contact holds,
+   family and hand-off tokens included. Approved by the owner. It never sets `login_enabled_at`,
+   so an app account never opens the portal.
+4. **The rule is the portal's:** twelve characters (`family.password.min_length`) and the breach
+   check, from one method (`SetFamilyPasswordRequest::strength()`). It is checked before the code
+   is read, so a short password spends nothing.
+5. **Deleting an account still erases what the app created.** `password` and `password_set_at`
+   moved from office columns to sign-up columns, and `password_set` is written to the access
+   history only for a contact with a family login. Otherwise every account created with a password
+   would be kept on deletion.
+
+**Alternatives.**
+- **A `/register` endpoint.** Rejected for the reason it was rejected on 2026-09-08: it would say
+  whether an address already has an account here.
+- **Separate app and portal passwords.** Rejected by the owner: one person, one password.
+- **Refuse "Create an account" for an address that has an account.** Rejected: saying so is the
+  oracle. The app tells people who already have an account (portal included) to use Sign in or
+  Forgot password.
+- **Record `password_set` for every contact.** Rejected: that row is an office record to
+  `MemberAccountDeletion`, and the portal's access history is about a login the office granted.
+
+**Known limits.**
+- A parent who has only ever used the portal must use "Forgot password?" once before the app's
+  password sign-in works, because the app requires `verified_at`.
+- The refusal's words are about codes ("That code is no longer usable"), because the two doors must
+  not differ. The apps show their own sentence for a 410 at the password door.
+- The sign-in 429 has no `data` key, as before. The iPhone app cannot decode it.
