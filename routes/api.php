@@ -134,9 +134,20 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // these as designations before opening hosted checkout.
         Route::get('/{masjid_id}/funds', [\App\Http\Controllers\Mobile\FundsController::class, 'index']);
 
-        Route::prefix('{masjid_id}/features')->controller(MasjidMobileAppFeaturesController::class)->group(function () {
-            Route::get('/', 'index');
-        });
+        // The LEGACY feature list, which every installed build still reads and
+        // which S3b removes. `CountLegacyFeaturesHit` counts each served
+        // response per organisation per day, split by whether the caller sent
+        // an `X-Manara-App` header — i.e. whether it is an R1 build falling
+        // back, or a build shipped before R1 that has nowhere else to go. It
+        // runs in terminate(), after the response, inside a catch-all: the
+        // counting can never change or fail this payload. Read it with
+        // `php artisan app:legacy-features-report`.
+        Route::prefix('{masjid_id}/features')
+            ->middleware(\App\Http\Middleware\CountLegacyFeaturesHit::class)
+            ->controller(MasjidMobileAppFeaturesController::class)
+            ->group(function () {
+                Route::get('/', 'index');
+            });
 
         /*
         |--------------------------------------------------------------------
