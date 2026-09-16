@@ -473,11 +473,14 @@
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Quality</label>
                                     <select class="form-select form-select-sm" v-model="hifzForm.quality">
-                                        <option value="excellent">Excellent</option>
-                                        <option value="good">Good</option>
-                                        <option value="fair">Fair</option>
-                                        <option value="needs_work">Needs work</option>
+                                        <option v-for="q in hifzQualities" :key="q" :value="q">{{ qualityLabel(q) }}</option>
                                     </select>
+                                </div>
+                                <div class="col-12 col-sm">
+                                    <label class="form-label small text-muted mb-1">Note <span class="text-muted">(optional)</span></label>
+                                    <input type="text" class="form-control form-control-sm"
+                                           v-model="hifzForm.note" :maxlength="hifzNoteMax"
+                                           placeholder="e.g. struggled with the waqf on ayah 12" />
                                 </div>
                                 <div class="col-auto">
                                     <button class="btn btn-sm btn-success" :disabled="recordingHifz || !hifzValid" @click="recordHifz">
@@ -2633,12 +2636,63 @@ const recordingHifz = ref(false);
 // entry the hardest to type. A recitation that genuinely spans two surahs is two
 // entries, which is also how it is heard.
 const surahs = ref<{ number: number; name: string; ayahs: number }[]>([]);
+/**
+ * What the server says about hifz: the qualities it will accept, the note
+ * ceiling it enforces. Populated by `loadHifz` from the `meta` block the
+ * endpoint has always returned.
+ */
+const hifzMeta = ref<any>(null);
+
+/**
+ * The qualities the API will actually accept, taken from the server.
+ *
+ * WHY THIS IS BOUND RATHER THAN LISTED. Until 2026-09-16 this screen hardcoded
+ * four <option> tags, and one of them — `needs_work` — was a value that exists
+ * nowhere in the backend. `StoreHifzEntryRequest` validates against
+ * `HifzEntry::QUALITIES`, so a teacher choosing it got a 422 and lost the
+ * recording; `repeat`, the outcome that actually changes what happens next for
+ * that child, was unreachable from this screen entirely. Live 2.5 weeks.
+ *
+ * Correcting the one string would have fixed the instance and left the
+ * mechanism: the next quality added or renamed backend-side would break this
+ * screen again with nothing to complain. `GroupHifzTab.vue` — the admin screen
+ * over the same data — already binds the list from the server, so this is that
+ * proven pattern rather than a new idea. The literal below is a FALLBACK for a
+ * first paint before any student is chosen, not the source of truth.
+ */
+const hifzQualities = computed<string[]>(
+    () => hifzMeta.value?.qualities ?? ['excellent', 'good', 'fair', 'repeat']);
+
+/** The ceiling the request boundary enforces, so the input cannot invite a 422. */
+const hifzNoteMax = computed<number>(() => Number(hifzMeta.value?.max_note_length) || 1000);
+
+/**
+ * Teacher-facing wording. `repeat` is the server's word and reads as an
+ * instruction rather than an assessment, so the label a teacher already knows is
+ * kept. Anything the map does not know falls back to the raw value capitalised,
+ * so a quality added backend-side appears with a serviceable label instead of
+ * not appearing at all.
+ */
+const QUALITY_LABELS: Record<string, string> = {
+    excellent: 'Excellent',
+    good: 'Good',
+    fair: 'Fair',
+    repeat: 'Needs work',
+};
+const qualityLabel = (q: string) => QUALITY_LABELS[q] ?? (q.charAt(0).toUpperCase() + q.slice(1));
+
 const hifzForm = ref({
     kind: 'sabak',
     surah: null as number | null,
     from_ayah: null as number | null,
     to_ayah: null as number | null,
     quality: 'good',
+    // The API has accepted this since the hifz module shipped and no screen
+    // ever offered it, so the field has been carrying provenance nobody could
+    // read: a bulk office backfill of 25 surahs for one child on 2026-09-16
+    // wrote its explanation here and a teacher looking at that record saw 25
+    // excellent recitations with no sign that nobody heard them.
+    note: '',
 });
 
 /** Āyāt in the chosen surah — the ceiling both inputs are bounded by. */
@@ -2672,6 +2726,10 @@ const loadHifz = async () => {
     try {
         const res = await TeacherApiService.get(`${base.value}/members/${hifzMembership.value}/hifz`);
         hifz.value = rowsOf(res.data?.data);
+        // The endpoint has always sent this and this screen has always discarded
+        // it, which is the whole reason the quality dropdown drifted out of sync
+        // with the backend and offered a value the API rejects.
+        hifzMeta.value = res.data?.meta ?? null;
     } catch {
         hifzError.value = 'The recitation log could not be loaded.';
     } finally {
@@ -2696,10 +2754,21 @@ const recordHifz = async () => {
             quality: hifzForm.value.quality,
             major_mistakes: 0,
             minor_mistakes: 0,
+            // Omitted entirely when blank rather than sent as an empty string:
+            // the column means "nobody wrote here", and '' would assert that a
+            // teacher wrote nothing, which is a different claim.
+            ...(hifzForm.value.note.trim() ? { note: hifzForm.value.note.trim() } : {}),
         });
         // The surah is KEPT: the next entry for this child is usually the next
         // few āyāt of the same one.
         hifzForm.value.from_ayah = hifzForm.value.to_ayah = null;
+        // The NOTE is cleared, unlike the surah. A note is about the portion
+        // just recorded; carrying it forward would silently attach one child's
+        // "struggled with the waqf" to the next portion, or to the next child
+        // if the teacher switches student without noticing the field is still
+        // filled. Keeping the surah saves typing; keeping the note fabricates a
+        // record.
+        hifzForm.value.note = '';
         await loadHifz();
     } catch (e: any) {
         hifzError.value = e?.response?.data?.message || 'That recitation could not be recorded.';
