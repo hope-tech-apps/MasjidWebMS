@@ -162,6 +162,107 @@ class TeacherArabicAndHifzNotesTest extends TestCase
     }
 
     #[Test]
+    public function a_drill_note_is_readable_again_and_not_only_writable(): void
+    {
+        // The first cut of this feature stored the note and returned it from
+        // nowhere. Every write answered 200, the row was correct, and the
+        // teacher's next visit showed an empty box — so the only way to find
+        // out what she had written about a child was to read the database.
+        // Writes that cannot be read back are this module's recurring failure,
+        // and they always answer 200 while they do it.
+        $url = "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/letters";
+        $drill = $this->firstDrillId();
+
+        $written = $this->putJson($url, [
+            'drill_id' => $drill,
+            'status' => 'learning',
+            'note' => 'Confuses ṣād with sīn when she is tired.',
+        ])->assertOk();
+
+        $this->assertSame(
+            'Confuses ṣād with sīn when she is tired.',
+            $this->drillNote($written->json('data'), $drill),
+            'the response to the write that stored the note must carry it back'
+        );
+
+        // And on a FRESH read, which is the visit that actually mattered.
+        $reread = $this->getJson($url)->assertOk();
+
+        $this->assertSame(
+            'Confuses ṣād with sīn when she is tired.',
+            $this->drillNote($reread->json('data'), $drill),
+            'reopening the child must show what the teacher wrote about this drill'
+        );
+
+        // A drill nobody wrote about carries the key, explicitly null. An absent
+        // key and a null one read the same in PHP and very differently in a
+        // screen that decides whether to show an empty editor.
+        $untouched = collect(data_get($reread->json('data'), 'letters.*.drills.*'))
+            ->first(fn (array $d) => $d['id'] !== $drill);
+
+        $this->assertArrayHasKey('note', $untouched);
+        $this->assertNull($untouched['note']);
+    }
+
+    #[Test]
+    public function the_tracker_every_realm_reads_carries_the_note_including_the_familys(): void
+    {
+        // WHAT THIS DOES AND DOES NOT SAY.
+        //
+        // `LetterTracker::forStudent` is the one assembler behind the teacher
+        // screen, the admin console AND `Family\ArabicLettersController`, so
+        // adding the note to it puts the note on the family ENDPOINT. That is
+        // deliberate and it matches the hifz note, which
+        // `Family\HifzEntriesController` includes on the stated ground that "a
+        // record a parent cannot read the detail of is not a record they have
+        // been given". Two notes about the same child, written by the same
+        // teacher in the same week, should not have two different audiences, and
+        // if that is ever revisited it must be revisited for both — which is
+        // what a failing test here forces somebody to do.
+        //
+        // It does NOT mean a parent sees the note in the app today.
+        // `FamilyClass.vue` renders letter CHIPS and never drills, so there is
+        // nowhere in that screen for a per-drill note to appear. This pins the
+        // record, not the rendering.
+        $this->putJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/letters",
+            ['drill_id' => $this->firstDrillId(), 'status' => 'learning', 'note' => 'Needs the shape drilled at home.']
+        )->assertOk();
+
+        $this->assertSame(
+            'Needs the shape drilled at home.',
+            data_get(
+                \App\Support\Letters\LetterTracker::for('arabic')
+                    ->forStudent($this->mine->fresh(), $this->student->fresh()),
+                'letters.0.drills.0.note'
+            ),
+            'the tracker every realm reads must carry the note'
+        );
+    }
+
+    #[Test]
+    public function the_screen_is_told_the_note_limits_rather_than_inventing_them(): void
+    {
+        // `TeacherClass.vue` hardcoded the hifz quality list and one of its four
+        // values existed nowhere in PHP; `repeat` was unreachable for two and a
+        // half weeks and nothing failed loudly. A maxlength the screen invents
+        // fails the same quiet way — higher than the validator's, it becomes a
+        // 422 the teacher reads as the app losing what she typed.
+        $meta = $this->getJson(
+            "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/letters"
+        )->assertOk()->json('meta');
+
+        $this->assertSame(
+            (int) config('groups.arabic.max_note_length'),
+            $meta['max_note_length']
+        );
+        $this->assertSame(
+            (int) config('groups.arabic.max_daily_note_length'),
+            $meta['max_daily_note_length']
+        );
+    }
+
+    #[Test]
     public function the_daily_note_is_an_upsert_so_a_second_save_corrects_rather_than_duplicates(): void
     {
         $url = "/api/teacher/masjids/{$this->school->id}/groups/{$this->mine->id}/members/{$this->student->id}/arabic-notes";
@@ -241,6 +342,18 @@ class TeacherArabicAndHifzNotesTest extends TestCase
     }
 
     /** The first drill the class's current stage actually contains. */
+    /** One drill's note out of a tracker payload, by drill id. */
+    private function drillNote(array $payload, string $drillId): ?string
+    {
+        foreach (data_get($payload, 'letters.*.drills.*') as $drill) {
+            if (($drill['id'] ?? null) === $drillId) {
+                return $drill['note'] ?? null;
+            }
+        }
+
+        $this->fail("drill {$drillId} is not in the tracker payload at all");
+    }
+
     private function firstDrillId(): string
     {
         $payload = $this->getJson(

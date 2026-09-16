@@ -72,6 +72,7 @@ class ArabicLettersController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $tracker->forStudent($group, $membership),
+            'meta' => $this->meta(),
         ], Response::HTTP_OK);
     }
 
@@ -134,6 +135,7 @@ class ArabicLettersController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $tracker->forStudent($group, $membership->load('contact')),
+            'meta' => $this->meta(),
         ], Response::HTTP_OK);
     }
 
@@ -203,6 +205,7 @@ class ArabicLettersController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $notes,
+            'meta' => $this->meta(),
         ], Response::HTTP_OK);
     }
 
@@ -277,5 +280,35 @@ class ArabicLettersController extends Controller
             'status' => 'success',
             'data' => ['id' => (int) $note_id],
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * What the SERVER says the limits are, so the screen does not carry its own
+     * copy of them.
+     *
+     * This is not ceremony. `TeacherClass.vue` hardcoded the hifz quality list
+     * for two and a half weeks, one of its four values existed nowhere in PHP,
+     * and the single outcome that changes what happens next for a child —
+     * `repeat` — was unreachable from the teacher's screen the whole time.
+     * Nothing failed loudly; the option simply was not there. A note length is a
+     * smaller thing to get wrong than a missing outcome, but it fails the same
+     * quiet way: a `maxlength` the screen invented, higher than the validator's,
+     * turns into a 422 the teacher reads as the app losing what she typed.
+     *
+     * Only what the screen actually reads. The statuses are deliberately NOT
+     * here: the screen needs their LABELS and their cycle order, which are its
+     * own business, and shipping a list nothing consumes is how a payload grows
+     * a field that quietly stops matching. The drift that list would have
+     * guarded against is pinned by `TeacherLetterStatusFallbackTest` instead,
+     * which reads the screen.
+     *
+     * @return array<string,mixed>
+     */
+    private function meta(): array
+    {
+        return [
+            'max_note_length' => (int) config('groups.arabic.max_note_length', 1000),
+            'max_daily_note_length' => (int) config('groups.arabic.max_daily_note_length', 2000),
+        ];
     }
 }

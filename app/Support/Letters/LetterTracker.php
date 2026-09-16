@@ -101,6 +101,22 @@ class LetterTracker
                 $drills[] = $described + [
                     'status' => $status,
                     'mastered_at' => optional($rows[$drillId]->mastered_at ?? null)->toIso8601String(),
+                    // The teacher's note about THIS drill, read back by every
+                    // surface that can show it. Without this key the note was
+                    // write-only: `mark` stored it and nothing ever returned
+                    // it, so a teacher typed a sentence about a child and the
+                    // next screen she opened showed an empty box. A field that
+                    // accepts writing and cannot be read is worse than no
+                    // field, because it looks like it worked.
+                    //
+                    // The parent sees it, deliberately and consistently with
+                    // the hifz note, which `Family\HifzEntriesController`
+                    // includes on the stated ground that "a record a parent
+                    // cannot read the detail of is not a record they have been
+                    // given". Two sibling notes about the same child, written
+                    // by the same teacher in the same week, must not have two
+                    // different audiences.
+                    'note' => $rows[$drillId]->note ?? null,
                 ];
 
                 $total++;

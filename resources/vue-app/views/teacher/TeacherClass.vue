@@ -279,21 +279,176 @@
                                     </div>
                                 </div>
 
+                                <!-- The row was one big button, which is why the
+                                     note lives beside it and not inside it: a
+                                     button cannot contain a button, and anything
+                                     inside the tap target would mean reaching
+                                     for the note and advancing a child's status
+                                     by accident. Marking and writing are
+                                     different acts and stay different targets. -->
                                 <div class="list-group" :dir="lettersDir">
-                                    <button v-for="d in letter.drills" :key="d.id" type="button"
-                                            class="list-group-item list-group-item-action d-flex align-items-center gap-3"
-                                            :class="`drill--${d.status}`" :disabled="marking === d.id"
-                                            @click="advance(d)">
-                                        <span class="drill__glyph">{{ d.text }}</span>
-                                        <span class="flex-grow-1 small" dir="ltr" style="text-align:start;">
-                                            {{ d.label }}
-                                            <span v-if="d.sound" class="text-muted">· sounds like “{{ d.sound }}”</span>
-                                        </span>
-                                        <span class="badge" :class="badgeClass(d.status)">{{ statusLabel(d.status) }}</span>
-                                    </button>
+                                    <div v-for="d in letter.drills" :key="d.id"
+                                         class="list-group-item p-0" :class="`drill--${d.status}`">
+                                        <div class="d-flex align-items-center">
+                                            <button type="button"
+                                                    class="btn btn-link text-reset text-decoration-none flex-grow-1 d-flex align-items-center gap-3 px-3 py-2"
+                                                    :disabled="marking === d.id" @click="advance(d)">
+                                                <span class="drill__glyph">{{ d.text }}</span>
+                                                <span class="flex-grow-1 small" dir="ltr" style="text-align:start;">
+                                                    {{ d.label }}
+                                                    <span v-if="d.sound" class="text-muted">· sounds like “{{ d.sound }}”</span>
+                                                </span>
+                                                <span class="badge" :class="badgeClass(d.status)">{{ statusLabel(d.status) }}</span>
+                                            </button>
+                                            <button type="button" class="btn btn-link px-3 py-2"
+                                                    :class="d.note ? 'text-success' : 'text-muted'"
+                                                    :aria-expanded="openDrillNote === d.id"
+                                                    :title="d.note ? 'Edit the note on this drill' : 'Write a note about this drill'"
+                                                    @click="toggleDrillNote(d)">
+                                                <i class="bi" :class="d.note ? 'bi-chat-left-text-fill' : 'bi-chat-left-text'"></i>
+                                                <span class="visually-hidden">Note on {{ d.label }}</span>
+                                            </button>
+                                        </div>
+
+                                        <!-- Shown whenever there IS one, not only
+                                             while editing. The note existed for a
+                                             day as a field that accepted writing
+                                             and displayed nothing; a teacher had
+                                             no way to see what she had already
+                                             said about this child. -->
+                                        <div v-if="d.note && openDrillNote !== d.id"
+                                             class="px-3 pb-2 small text-muted fst-italic"
+                                             dir="ltr" style="text-align:start;">
+                                            {{ d.note }}
+                                        </div>
+
+                                        <div v-if="openDrillNote === d.id" class="px-3 pb-3" dir="ltr" style="text-align:start;">
+                                            <textarea class="form-control form-control-sm" rows="2"
+                                                      v-model="drillNoteDraft" :maxlength="arabicNoteMax"
+                                                      :disabled="savingDrillNote"
+                                                      placeholder="e.g. confuses this with sīn when she is tired"></textarea>
+                                            <div class="d-flex align-items-center gap-2 mt-2">
+                                                <button class="btn btn-sm btn-success" :disabled="savingDrillNote" @click="saveDrillNote(d)">
+                                                    <span v-if="savingDrillNote" class="spinner-border spinner-border-sm"></span>
+                                                    <span v-else>Save note</span>
+                                                </button>
+                                                <button class="btn btn-sm btn-link text-muted" :disabled="savingDrillNote"
+                                                        @click="openDrillNote = null">Cancel</button>
+                                                <!-- Clearing is deliberate and says so. An
+                                                     empty box saved by accident would erase a
+                                                     sentence about a child without a word. -->
+                                                <button v-if="d.note" class="btn btn-sm btn-link text-danger ms-auto"
+                                                        :disabled="savingDrillNote" @click="clearDrillNote(d)">Remove note</button>
+                                            </div>
+                                            <p v-if="drillNoteError" class="text-danger small mt-2 mb-0">{{ drillNoteError }}</p>
+                                            <div class="form-text">{{ drillNoteDraft.length }} / {{ arabicNoteMax }}</div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <p v-if="letterError" class="text-danger small mt-2 mb-0">{{ letterError }}</p>
-                                <p class="text-muted small mt-2 mb-0">Tap to move: Not started → Learning → Mastered.</p>
+                                <p class="text-muted small mt-2 mb-0">Tap a drill to move it: Not started → Learning → Mastered. The speech bubble writes a note about that drill.</p>
+                            </div>
+                        </div>
+
+                        <!-- ------------------------------------- DAILY NOTE --
+                             How the child did TODAY, which belongs to no single
+                             letter. It sits under the tiles rather than in a tab
+                             of its own because it is written at the end of the
+                             same sitting the marks are made in, and a teacher
+                             who has to go and find it writes it once and then
+                             never again.
+
+                             One child, one day — the owner's decision. It
+                             carries no status: the ask was for notes on
+                             progress, not a grade for it.
+
+                             ARABIC ONLY, and shown only on that track. The
+                             column, the endpoint and the owner's request are all
+                             about the qāʿidah; the same panel over the English
+                             tiles would offer to file a note about A–Z work into
+                             a record headed "Arabic", and nothing downstream
+                             could tell the two apart afterwards. -->
+                        <div v-if="lettersAlphabet === 'arabic'" class="card border-0 shadow-sm mt-3">
+                            <div class="card-body">
+                                <div class="d-flex flex-wrap align-items-baseline justify-content-between gap-2 mb-2">
+                                    <h6 class="mb-0">Daily Arabic note</h6>
+                                    <span class="text-muted small">About the lesson, not about one letter.</span>
+                                </div>
+
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-12 col-sm-auto">
+                                        <label class="form-label small text-muted mb-1">Day</label>
+                                        <!-- Bounded at today, as the endpoint is: a
+                                             note about a lesson that has not happened
+                                             is a mis-keyed year every time, and it
+                                             would sit at the top of the child's
+                                             history until somebody noticed. -->
+                                        <input type="date" class="form-control form-control-sm"
+                                               v-model="dailyNoteDate" :max="today" :disabled="savingDailyNote" />
+                                    </div>
+                                    <div class="col-12 col-sm">
+                                        <label class="form-label small text-muted mb-1">
+                                            {{ dailyNoteExisting ? 'Correcting what was written for this day' : 'Note' }}
+                                        </label>
+                                        <textarea class="form-control form-control-sm" rows="2"
+                                                  v-model="dailyNoteDraft" :maxlength="arabicDailyNoteMax"
+                                                  :disabled="savingDailyNote"
+                                                  placeholder="e.g. read the first line unaided, tired by the end"></textarea>
+                                    </div>
+                                    <div class="col-auto">
+                                        <button class="btn btn-sm btn-success"
+                                                :disabled="savingDailyNote || !dailyNoteDraft.trim()"
+                                                @click="saveDailyNote">
+                                            <span v-if="savingDailyNote" class="spinner-border spinner-border-sm"></span>
+                                            <span v-else>{{ dailyNoteExisting ? 'Update' : 'Save' }}</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- The teacher is TOLD she is about to correct a day
+                                     rather than add one. The endpoint upserts, so
+                                     without this a second note about Thursday
+                                     silently replaces the first and nothing on the
+                                     screen ever said so. -->
+                                <p v-if="dailyNoteExisting" class="form-text mb-0">
+                                    This day already has a note, shown above. Saving replaces it.
+                                </p>
+                                <p v-if="dailyNoteError" class="text-danger small mt-2 mb-0">{{ dailyNoteError }}</p>
+
+                                <hr class="my-3" />
+
+                                <div v-if="dailyNotesLoading" class="text-center py-2">
+                                    <span class="spinner-border spinner-border-sm text-success"></span>
+                                </div>
+                                <div v-else-if="dailyNotesFailed" class="text-muted small">
+                                    {{ dailyNotesFailed }} This is not the same as there being none —
+                                    reopen the student to try again.
+                                </div>
+                                <div v-else-if="!dailyNotes.length" class="text-muted small">
+                                    No daily notes for this student yet.
+                                </div>
+                                <div v-else class="list-group list-group-flush">
+                                    <div v-for="n in dailyNotes" :key="n.id"
+                                         class="list-group-item px-0 d-flex align-items-start gap-3">
+                                        <div class="flex-grow-1">
+                                            <div class="small fw-semibold">{{ longDate(n.session_date) }}</div>
+                                            <div class="small" style="white-space: pre-wrap;">{{ n.note }}</div>
+                                            <div v-if="n.marked_by" class="text-muted small">— {{ n.marked_by }}</div>
+                                        </div>
+                                        <button class="btn btn-sm btn-link text-muted px-1"
+                                                :disabled="savingDailyNote" title="Edit this day"
+                                                @click="editDailyNote(n)">
+                                            <i class="bi bi-pencil"></i>
+                                            <span class="visually-hidden">Edit the note for {{ longDate(n.session_date) }}</span>
+                                        </button>
+                                        <button class="btn btn-sm btn-link text-danger px-1"
+                                                :disabled="deletingDailyNote === n.id" title="Remove this day's note"
+                                                @click="deleteDailyNote(n)">
+                                            <i class="bi bi-trash"></i>
+                                            <span class="visually-hidden">Remove the note for {{ longDate(n.session_date) }}</span>
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </template>
@@ -2442,16 +2597,34 @@ const openLetters = async (s: any) => {
     letterError.value = '';
     tracker.value = null;
     trackerLoading.value = true;
+
+    // Every note surface is cleared before the next child's is read. A draft
+    // left in the box would be saved against whoever is opened next, which is
+    // the one mistake in this screen that writes one child's record onto
+    // another's.
+    openDrillNote.value = null;
+    drillNoteDraft.value = '';
+    drillNoteError.value = '';
+    dailyNotes.value = [];
+    dailyNotesFailed.value = '';
+    dailyNoteDraft.value = '';
+    dailyNoteDate.value = todayIso;
+    dailyNoteError.value = '';
+
     try {
         const res = await TeacherApiService.get(
             `${base.value}/members/${s.membership_id}/letters?alphabet=${lettersAlphabet.value}`
         );
         tracker.value = res.data?.data ?? null;
+        lettersMeta.value = res.data?.meta ?? lettersMeta.value;
     } catch {
         tracker.value = null;
     } finally {
         trackerLoading.value = false;
     }
+
+    // The daily note is the qāʿidah's, so it is only fetched on that track.
+    if (lettersAlphabet.value === 'arabic') await loadDailyNotes();
 };
 
 /**
@@ -2470,6 +2643,8 @@ const switchAlphabet = async (next: string) => {
     letterError.value = '';
     stageNote.value = '';
     tracker.value = null;
+    openDrillNote.value = null;
+    drillNoteDraft.value = '';
 
     if (selected.value) await openLetters(selected.value);
 };
@@ -2513,6 +2688,211 @@ const setStage = async (stage: string) => {
         stageNote.value = 'The class stage could not be changed.';
     } finally {
         savingStage.value = false;
+    }
+};
+
+// ---------------------------------------------- the teacher's own words
+//
+// Three surfaces were asked for and two of them are here: a note on one drill,
+// and a note on one day. (The hifz note is on its own tab.) Both limits come off
+// the endpoint's `meta` rather than being written here, because this screen
+// hardcoded the hifz quality list for two and a half weeks, one of its four
+// values existed nowhere in PHP, and `repeat` — the one outcome that changes
+// what happens next for a child — could not be chosen at all. Nothing failed
+// loudly. A maxlength invented here fails the same quiet way: set above the
+// validator's and it becomes a 422 the teacher reads as the app eating what she
+// typed.
+const lettersMeta = ref<any>(null);
+const arabicNoteMax = computed<number>(() => Number(lettersMeta.value?.max_note_length) || 1000);
+const arabicDailyNoteMax = computed<number>(() => Number(lettersMeta.value?.max_daily_note_length) || 2000);
+
+const openDrillNote = ref<string | null>(null);
+const drillNoteDraft = ref('');
+const savingDrillNote = ref(false);
+// Its own error, shown INSIDE the editor. `letterError` sits under the whole
+// drill list, which is where a failed TAP belongs; a failed note reported there
+// is a red line several rows away from the box the teacher is still looking at.
+const drillNoteError = ref('');
+
+/** Open the editor on a drill, seeded with whatever is already written there. */
+const toggleDrillNote = (drill: any) => {
+    if (openDrillNote.value === drill.id) {
+        openDrillNote.value = null;
+        return;
+    }
+    openDrillNote.value = drill.id;
+    drillNoteDraft.value = drill.note ?? '';
+    drillNoteError.value = '';
+};
+
+/**
+ * Write the note WITHOUT moving the child.
+ *
+ * The drill's current status is sent back unchanged. The endpoint is the same
+ * upsert the tile tap uses, and it requires a status — so omitting it is not an
+ * option and guessing one would advance a child because a teacher wrote a
+ * sentence. `mastered_at` is only ever set when it is null, so re-sending
+ * `mastered` cannot move the date she finished.
+ */
+const saveDrillNote = async (drill: any, note?: string) => {
+    if (!selected.value) return;
+    savingDrillNote.value = true;
+    drillNoteError.value = '';
+    try {
+        const res = await TeacherApiService.put(
+            `${base.value}/members/${selected.value.membership_id}/letters`,
+            {
+                drill_id: drill.id,
+                status: drill.status,
+                alphabet: lettersAlphabet.value,
+                note: note ?? drillNoteDraft.value,
+            }
+        );
+        tracker.value = res.data?.data ?? tracker.value;
+        lettersMeta.value = res.data?.meta ?? lettersMeta.value;
+        openDrillNote.value = null;
+    } catch (e: any) {
+        // The editor stays OPEN and the draft stays in it. A teacher who has
+        // just typed three sentences about a child and hit a dead connection
+        // must not lose them to a closing panel.
+        // apiErrorText, not `data.message`: the likeliest refusal here is the
+        // length rule, and that arrives as a validation BAG (`data.note[]`)
+        // with no top-level message at all — read naively it renders as blank
+        // and the save looks like it silently did nothing.
+        drillNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
+    } finally {
+        savingDrillNote.value = false;
+    }
+};
+
+/**
+ * Remove a note deliberately.
+ *
+ * A PRESENT empty value is what the endpoint reads as a clear; an ABSENT key
+ * means "I am not speaking about the note" and leaves it alone. That is the
+ * whole reason the two are distinguished server-side, and this button is the
+ * only thing in the screen that sends the first one.
+ */
+const clearDrillNote = async (drill: any) => {
+    await saveDrillNote(drill, '');
+};
+
+// ---------------------------------------------------- the daily Arabic note
+const dailyNotes = ref<any[]>([]);
+const dailyNotesLoading = ref(false);
+// Holds the REASON, not a flag: an empty string is a healthy list. The
+// message belongs beside the list it is explaining, not in the save error
+// above it, or a teacher reads one failure twice and looks for two problems.
+const dailyNotesFailed = ref('');
+const dailyNoteDate = ref<string>(todayIso);
+const dailyNoteDraft = ref('');
+const dailyNoteError = ref('');
+const savingDailyNote = ref(false);
+const deletingDailyNote = ref<number | null>(null);
+const today = todayIso;
+
+/** The note already filed for the day the teacher is looking at, if there is one. */
+const dailyNoteExisting = computed(
+    () => dailyNotes.value.find((n: any) => (n.session_date ?? '').slice(0, 10) === dailyNoteDate.value) ?? null
+);
+
+/**
+ * A stored day, read LITERALLY.
+ *
+ * `new Date('2026-09-16')` is UTC midnight and renders as the 15th for every
+ * reader west of UTC. This module has already shown a parent the wrong day that
+ * way once (`leftDay` below carries the same note), and a note about the wrong
+ * lesson is worse than no note.
+ */
+const longDate = (iso: string | null): string => {
+    if (!iso) return '';
+    const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return iso;
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+        weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+    });
+};
+
+const loadDailyNotes = async () => {
+    if (!selected.value) return;
+    dailyNotesLoading.value = true;
+    dailyNotesFailed.value = '';
+    dailyNoteError.value = '';
+    try {
+        const res = await TeacherApiService.get(
+            `${base.value}/members/${selected.value.membership_id}/arabic-notes`
+        );
+        dailyNotes.value = rowsOf(res.data?.data);
+        lettersMeta.value = res.data?.meta ?? lettersMeta.value;
+    } catch (e: any) {
+        // NOT a silent empty list. "No daily notes for this student yet" and
+        // "we could not ask" are different sentences, and this module has
+        // already been bitten by a screen that rendered a failed read as a
+        // confident zero. A teacher who is told the child has no notes when in
+        // fact the request failed will write the day again.
+        dailyNotes.value = [];
+        dailyNotesFailed.value = apiErrorText(e, 'They could not be loaded.');
+    } finally {
+        dailyNotesLoading.value = false;
+    }
+};
+
+/**
+ * Seed the box from the day being looked at.
+ *
+ * The endpoint UPSERTS on (student, day). Without this, a teacher who picks a
+ * date that already has a note types into an empty box and silently replaces
+ * what somebody wrote — the save says 200 and the old words are simply gone.
+ * Showing them is what turns an overwrite into a correction.
+ */
+watch([dailyNoteDate, dailyNotes], () => {
+    dailyNoteDraft.value = dailyNoteExisting.value?.note ?? '';
+});
+
+const saveDailyNote = async () => {
+    if (!selected.value || !dailyNoteDraft.value.trim()) return;
+    savingDailyNote.value = true;
+    dailyNoteError.value = '';
+    try {
+        await TeacherApiService.put(
+            `${base.value}/members/${selected.value.membership_id}/arabic-notes`,
+            { session_date: dailyNoteDate.value, note: dailyNoteDraft.value }
+        );
+        // Re-read rather than splice the response in: the list is ordered by day
+        // and an edited day moves within it, so building the new list here is a
+        // second place that can disagree with the server about what is filed.
+        await loadDailyNotes();
+    } catch (e: any) {
+        dailyNoteError.value = apiErrorText(e, 'That note did not save. Check your connection and try again.');
+    } finally {
+        savingDailyNote.value = false;
+    }
+};
+
+/** Bring a filed day back into the editor, which is also how it is corrected. */
+const editDailyNote = (n: any) => {
+    dailyNoteDate.value = (n.session_date ?? '').slice(0, 10);
+    dailyNoteDraft.value = n.note ?? '';
+    dailyNoteError.value = '';
+};
+
+const deleteDailyNote = async (n: any) => {
+    if (!selected.value) return;
+    // Deleting a teacher's words about a child is not undoable and the row is
+    // gone rather than blanked, so it is asked about first.
+    if (!window.confirm(`Remove the note for ${longDate(n.session_date)}? This cannot be undone.`)) return;
+
+    deletingDailyNote.value = n.id;
+    dailyNoteError.value = '';
+    try {
+        await TeacherApiService.delete(
+            `${base.value}/members/${selected.value.membership_id}/arabic-notes/${n.id}`
+        );
+        await loadDailyNotes();
+    } catch (e: any) {
+        dailyNoteError.value = apiErrorText(e, 'That note could not be removed.');
+    } finally {
+        deletingDailyNote.value = null;
     }
 };
 
