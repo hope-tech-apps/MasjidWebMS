@@ -85,4 +85,51 @@ return [
         'contact' => ['legacy_feature_id' => 11, 'any_of' => ['contact_requests']],
     ],
 
+    /*
+    |----------------------------------------------------------------------
+    | `navigation` — the per-organisation, per-platform shell lever
+    |----------------------------------------------------------------------
+    |
+    | Documentation, not a registry. AppMenu::registry() reads only the five
+    | keys above and ignores everything else in this file, so nothing below
+    | can change what a menu contains.
+    |
+    | `app_version_settings.navigation` decides which shell an R1 app draws.
+    | It is emitted inside `data.ios` / `data.android` of
+    | `GET /mobile/masjids/{id}/app-config`, omitted when null, read from the
+    | HOME organisation's row, and applied at the next COLD LAUNCH only.
+    |
+    | Four spellings are accepted. The first pair is canonical — what the
+    | server documents and what an admin should be offered. The second pair is
+    | the vocabulary the clients were compiled with, accepted because both
+    | clients map an UNKNOWN value to the NEW shell: rejecting a spelling the
+    | apps would have honoured turns this lever into a save that reports
+    | success and changes nothing, which is the exact failure it exists to
+    | undo.
+    |
+    |   value          shell            note
+    |   -----------    -------------    ---------------------------------------
+    |   menu           new              canonical; hybrid tabs + side menu
+    |   side_menu      new              client alias for the same thing
+    |   legacy         old              canonical; the layout the build shipped
+    |   tabs_drawer    old              client alias for the same thing
+    |   (null/absent)  client default   the compiled default, which is `menu`
+    |
+    | Both clients parse tolerantly: anything they do not recognise is the new
+    | shell, so a typo can never strand an app on a blank screen.
+    |
+    | What `legacy` rolls back, honestly: the menu, the store and the drawer.
+    | NOT the Android single-activity merge, NOT the iOS HomeView de-nesting
+    | and NOT the in-place switch — the legacy shell shares all three. Rolling
+    | those back needs a new build, which is what this lever is worth as a
+    | release gate.
+    |
+    */
+    'navigation_aliases' => [
+        'menu' => 'menu',
+        'side_menu' => 'menu',
+        'legacy' => 'legacy',
+        'tabs_drawer' => 'legacy',
+    ],
+
 ];

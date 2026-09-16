@@ -58,6 +58,19 @@
                         <textarea v-model="platform.maintenance_message" class="dashboard-input" rows="2"></textarea>
                     </div>
 
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Navigation</label>
+                        <select v-model="platform.navigation" class="dashboard-input">
+                            <option v-for="option in navigationOptions" :key="option.label" :value="option.value">
+                                {{ option.label }}
+                            </option>
+                        </select>
+                        <div class="text-muted small mt-1">
+                            {{ navigationHint(platform.navigation) }}
+                            Applies on the member's next cold launch of the {{ platform.platform }} app.
+                        </div>
+                    </div>
+
                     <div class="d-flex flex-column flex-md-row gap-3 mb-3">
                         <div class="w-100 w-md-50">
                             <label class="form-label small fw-semibold">Latest Version (soft prompt)</label>
@@ -82,7 +95,7 @@
 <script setup lang="ts">
 import LoadingButton from '@/components/form/LoadingButton.vue'
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
-import { useAppConfigStore, AppVersionSetting } from '@/stores/super/appConfigStore'
+import { useAppConfigStore, AppVersionSetting, NAVIGATION_OPTIONS } from '@/stores/super/appConfigStore'
 import { useMasjidsStore } from '@/stores/super/masjidsStore'
 import { computed, onBeforeMount, ref, watch } from 'vue'
 
@@ -94,6 +107,13 @@ const selectedMasjidId = ref<number | undefined>(undefined)
 const platforms = ref<AppVersionSetting[]>([])
 
 const masjids = computed(() => masjidsStore.masjids)
+
+const navigationOptions = NAVIGATION_OPTIONS
+
+/** The sentence under the select, so the choice is described, not just named. */
+function navigationHint(value: string | null): string {
+    return NAVIGATION_OPTIONS.find((o) => o.value === value)?.hint ?? ''
+}
 
 /** A blank editable row so a masjid with no saved config can still be created. */
 function defaultRow(platform: string): AppVersionSetting {
@@ -108,6 +128,7 @@ function defaultRow(platform: string): AppVersionSetting {
         store_url: '',
         maintenance_mode: false,
         maintenance_message: '',
+        navigation: null,
     }
 }
 
@@ -153,6 +174,10 @@ async function onSave(platform: AppVersionSetting) {
             store_url: platform.store_url ?? '',
             maintenance_mode: platform.maintenance_mode,
             maintenance_message: platform.maintenance_message ?? '',
+            // null, not '' — App default has to reach the server as a null so
+            // the key is dropped from the payload rather than sent as an empty
+            // string the validator would have to guess at.
+            navigation: platform.navigation || null,
         })
         await MSwal.fire('Saved', `${platform.platform} config updated. Takes effect on next app launch.`, 'success')
     } catch (e) {

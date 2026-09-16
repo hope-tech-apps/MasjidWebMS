@@ -33,9 +33,13 @@ class AppConfigController extends Controller
         try {
             $setting = AppVersionSetting::updateOrCreate(
                 ['masjid_id' => $masjid_id, 'platform' => $platform],
+                // This list is explicit, so a validated field that is missing
+                // from it is silently dropped and the save still answers 200.
+                // `navigation` is here for that reason and no other.
                 $request->safe()->only([
                     'minimum_version', 'minimum_build', 'force_update', 'update_message',
                     'latest_version', 'store_url', 'maintenance_mode', 'maintenance_message',
+                    'navigation',
                 ])
             );
 

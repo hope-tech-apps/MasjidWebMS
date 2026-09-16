@@ -21,6 +21,11 @@ class AppVersionSetting extends Model
         'store_url',
         'maintenance_mode',
         'maintenance_message',
+        // Which shell the app draws: `menu` (the R1 side menu + tab bar) or
+        // `legacy` (the layout the build shipped with). Null means the
+        // client's compiled default and is NOT emitted. The clients also
+        // understand `side_menu` and `tabs_drawer`; see config/app_menu.php.
+        'navigation',
     ];
 
     protected $casts = [

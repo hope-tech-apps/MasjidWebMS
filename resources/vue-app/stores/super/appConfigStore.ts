@@ -15,7 +15,27 @@ export interface AppVersionSetting {
     store_url: string | null
     maintenance_mode: boolean
     maintenance_message: string | null
+    /**
+     * Which shell the app draws. `null` means the app's own compiled default.
+     * The server also accepts the clients' own spellings (`side_menu`,
+     * `tabs_drawer`); this screen offers the canonical pair.
+     */
+    navigation: string | null
 }
+
+/**
+ * What the Navigation select offers.
+ *
+ * `null` is a real choice, not an empty state — it hands the decision back to
+ * the app, and the server then omits the key entirely rather than sending a
+ * null, which is what keeps an untouched organisation's app-config body
+ * identical to what every installed build already receives.
+ */
+export const NAVIGATION_OPTIONS: { value: string | null; label: string; hint: string }[] = [
+    { value: null, label: 'App default', hint: 'The app decides — the new menu on R1 builds.' },
+    { value: 'menu', label: 'New menu', hint: 'Tab bar plus the side menu.' },
+    { value: 'legacy', label: 'Previous layout', hint: 'The layout the installed build shipped with.' },
+]
 
 /**
  * Super-admin store for the emergency app-version gate. This is the lever:

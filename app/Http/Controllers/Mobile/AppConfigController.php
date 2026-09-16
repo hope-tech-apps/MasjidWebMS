@@ -30,7 +30,7 @@ class AppConfigController extends Controller
                     ->get()
                     ->keyBy('platform')
                     ->map(function ($row) {
-                        return [
+                        $block = [
                             'minimum_version' => $row->minimum_version,
                             'minimum_build' => $row->minimum_build,
                             'force_update' => $row->force_update,
@@ -40,6 +40,31 @@ class AppConfigController extends Controller
                             'maintenance_mode' => $row->maintenance_mode,
                             'maintenance_message' => $row->maintenance_message,
                         ];
+
+                        // Which shell the app draws (S1.3). Two rules, both
+                        // load-bearing:
+                        //
+                        // INSIDE the platform block, never a sibling of
+                        // `ios`/`android` under `data`. iOS decodes `data` as
+                        // [String: AppConfig] with non-optional fields, so a
+                        // stray sibling key fails the WHOLE decode and takes
+                        // force-update and maintenance mode down with it — on
+                        // every iPhone, on launch. Inside a block it is an
+                        // unknown key, which Swift's Decodable and Gson both
+                        // ignore.
+                        //
+                        // OMITTED when null, rather than sent as null. Null is
+                        // "the client's compiled default", which is what the
+                        // absent key already means; omitting it keeps every
+                        // current per-masjid app-config body byte-identical
+                        // after the S1 deploy, so the one payload diff in
+                        // production stays /orgs alone and a fingerprint check
+                        // can actually mean something.
+                        if ($row->navigation !== null) {
+                            $block['navigation'] = $row->navigation;
+                        }
+
+                        return $block;
                     });
             }
         );
