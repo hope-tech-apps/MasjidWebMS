@@ -138,8 +138,9 @@ Route::prefix('mobile')->middleware('throttle:mobile')->group(function () {
         // which S3b removes. `CountLegacyFeaturesHit` counts each served
         // response per organisation per day, split by whether the caller sent
         // an `X-Manara-App` header — i.e. whether it is an R1 build falling
-        // back, or a build shipped before R1 that has nowhere else to go. It
-        // runs in terminate(), after the response, inside a catch-all: the
+        // back, or a build shipped before R1 that has nowhere else to go. Our
+        // own canary's probes (`X-Canary`) are not counted. It runs in
+        // terminate(), after the response, inside a catch-all: the
         // counting can never change or fail this payload. Read it with
         // `php artisan app:legacy-features-report`.
         Route::prefix('{masjid_id}/features')

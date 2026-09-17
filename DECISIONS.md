@@ -1369,6 +1369,11 @@ menu — where until today it decided only the first.
      in `terminate()` inside a catch-all: it can never change or fail that payload.
      `app:legacy-features-report` writes ONE `Log::warning` a day — warning, because production runs
      `LOG_LEVEL=warning`.
+   - **Amended 2026-09-17: our own canary is not counted.** `tenancy:canary` probes `/features` as
+     organisation 1 about six times a day with no `X-Manara-App`, so every probe was an untagged hit
+     on the organisation S3b is gated on. The middleware now skips any request carrying `X-Canary`
+     (`App\Support\Canary\CanaryHeader`, the same constant the canary sends). Reports for days
+     before that reached production overstate organisation 1's untagged count by the canary's hits.
    - Zero is a floor, not a proof. A cache flush, a restarted box and a day the report did not run
      all look identical to silence.
 8. **`app-features:cutover-plan` ships a week before the migration it describes**, read-only, so the

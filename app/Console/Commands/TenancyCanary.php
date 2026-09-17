@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Masjid;
+use App\Support\Canary\CanaryHeader;
 use App\Support\Canary\DarkLaunchSwitch;
 use App\Support\Canary\HttpTransport;
 use App\Support\Canary\KernelTransport;
@@ -188,7 +189,9 @@ use Illuminate\Support\Str;
  * hour. Same for an `X-RateLimit-Remaining` that drops into single digits.
  *
  * **Log noise.** Probes carry `X-Canary: tenancy` and their own User-Agent so
- * an access log can filter them out. The run itself leaves exactly one log line
+ * an access log can filter them out. The legacy `/features` counter
+ * (CountLegacyFeaturesHit) filters on the same header, so the canary is not
+ * counted as a phone. The run itself leaves exactly one log line
  * — info when clean, warning when partial, error (with the findings) for a leak
  * or an incomplete run — because `schedule:run` discards stdout and a canary
  * nobody can prove ran is a canary that can stop running unnoticed. No
@@ -1708,8 +1711,10 @@ class TenancyCanary extends Command
             'Accept' => 'application/json',
             'User-Agent' => 'ManaraTenancyCanary/1',
             // So an access log can drop these in one filter rather than having
-            // the canary look like traffic.
-            'X-Canary' => 'tenancy',
+            // the canary look like traffic. CountLegacyFeaturesHit skips any
+            // request carrying it, so the probe of /features is not counted as
+            // a pre-R1 phone on organisation 1.
+            CanaryHeader::NAME => CanaryHeader::TENANCY,
         ];
 
         if ($masjidId !== null) {

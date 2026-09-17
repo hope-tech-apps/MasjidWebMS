@@ -5,14 +5,17 @@ namespace Tests\Feature;
 use App\Http\Middleware\CountLegacyFeaturesHit;
 use App\Models\Masjid;
 use App\Support\AppClientHeader;
+use App\Support\Canary\CanaryHeader;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\MakesMenuOrganisations;
@@ -150,6 +153,140 @@ class LegacyFeaturesTelemetryTest extends TestCase
         $this->assertSame(0, (int) Cache::get(
             CountLegacyFeaturesHit::key(now()->toDateString(), 999999, 'tagged'), 0
         ));
+    }
+
+    // ------------------------------------------------ our own canary is not a phone
+
+    /**
+     * `tenancy:canary` probes this endpoint as organisation 1 on about six runs
+     * a day, with no `X-Manara-App`. Counted, each probe is an untagged hit on
+     * the organisation S3b is gated on, and that organisation never reaches
+     * zero. The header is written out literally here: it is what goes over
+     * the wire.
+     *
+     * Seeded to a non-zero count, so "unchanged" is a real number staying put
+     * rather than an empty key staying empty. The plain request at the end
+     * proves the same request without the header still counts.
+     */
+    #[Test]
+    public function a_canary_probe_leaves_the_counter_unchanged(): void
+    {
+        $today = now()->toDateString();
+        $this->seedCount($today, $this->org, 'untagged', 5);
+
+        $this->getJson($this->featuresUrl($this->org), [
+            'X-Canary' => 'tenancy',
+            'User-Agent' => 'ManaraTenancyCanary/1',
+        ])->assertOk();
+
+        $this->assertSame(5, $this->countedHits($this->org, 'untagged'));
+        $this->assertSame(0, $this->countedHits($this->org, 'tagged'));
+
+        $this->getJson($this->featuresUrl($this->org))->assertOk();
+
+        $this->assertSame(6, $this->countedHits($this->org, 'untagged'));
+    }
+
+    /**
+     * The canary is skipped before the bucket is chosen. A probe that also
+     * named a build is still a probe, and must not count as an R1 build
+     * falling back.
+     */
+    #[Test]
+    public function a_canary_probe_that_names_a_build_is_not_counted_either(): void
+    {
+        $this->getJson($this->featuresUrl($this->org), [
+            'X-Canary' => 'tenancy',
+            AppClientHeader::HEADER => 'ios/1.0/47',
+        ])->assertOk();
+
+        $this->assertSame(0, $this->countedHits($this->org, 'tagged'));
+        $this->assertSame(0, $this->countedHits($this->org, 'untagged'));
+    }
+
+    /**
+     * Any non-empty value marks a probe, so a second canary with its own value
+     * is excluded too. An empty header is not a marker, and that request still
+     * counts.
+     */
+    #[Test]
+    public function any_canary_value_is_skipped_but_an_empty_one_is_not(): void
+    {
+        $this->getJson($this->featuresUrl($this->org), ['X-Canary' => 'menu'])->assertOk();
+
+        $this->assertSame(0, $this->countedHits($this->org, 'untagged'));
+
+        $this->getJson($this->featuresUrl($this->org), ['X-Canary' => ''])->assertOk();
+
+        $this->assertSame(1, $this->countedHits($this->org, 'untagged'));
+    }
+
+    /**
+     * The headers the canary ACTUALLY sends, replayed against the endpoint.
+     * This fails if TenancyCanary::headers() stops sending the marker, or
+     * HttpTransport stops forwarding it.
+     *
+     * Not run through the canary's `kernel` transport, although that is the
+     * default under test. KernelTransport::send() calls $kernel->handle() and
+     * never $kernel->terminate(), so CountLegacyFeaturesHit::terminate() does
+     * not run at all. A test built on it would pass with the filter deleted.
+     * Instead the canary runs on the `http` transport against a faked client.
+     * The requests it records are then replayed through the test client, which
+     * does terminate.
+     */
+    #[Test]
+    public function the_probes_the_canary_actually_sends_are_not_counted(): void
+    {
+        $other = $this->listedOrg('Al-Razi School');
+
+        Http::fake(['*' => Http::response([], 200)]);
+
+        Artisan::call('tenancy:canary', [
+            '--transport' => 'http',
+            '--base-url' => 'http://canary.invalid',
+            '--tenants' => "{$this->org->id},{$other->id}",
+            '--only' => '{masjid_id}/features',
+            '--delay' => 0,
+            '--json' => true,
+        ]);
+
+        $probes = collect(Http::recorded())
+            ->map(fn (array $pair) => $pair[0])
+            ->filter(fn (ClientRequest $request) => preg_match(
+                '#/api/mobile/masjids/\d+/features$#',
+                (string) parse_url($request->url(), PHP_URL_PATH)
+            ) === 1)
+            ->values();
+
+        $this->assertNotEmpty(
+            $probes,
+            'the canary sent no /features probe, so this test proves nothing: '.Artisan::output()
+        );
+
+        foreach ($probes as $probe) {
+            $path = (string) parse_url($probe->url(), PHP_URL_PATH);
+            $org = Masjid::findOrFail((int) preg_replace('#^.*/masjids/(\d+)/features$#', '$1', $path));
+
+            // Host would point the test request at canary.invalid.
+            $headers = collect($probe->headers())
+                ->except(['Host', 'Content-Length'])
+                ->map(fn (array $values) => implode(', ', $values))
+                ->all();
+
+            $this->assertSame(CanaryHeader::TENANCY, $headers[CanaryHeader::NAME] ?? null);
+
+            $before = $this->countedHits($org, 'untagged');
+
+            $this->getJson($path, $headers)->assertOk();
+
+            $this->assertSame($before, $this->countedHits($org, 'untagged'), "the canary's probe of {$path} was counted");
+            $this->assertSame(0, $this->countedHits($org, 'tagged'));
+
+            // Control: the same path without the marker still counts.
+            $this->getJson($path, collect($headers)->except(CanaryHeader::NAME)->all())->assertOk();
+
+            $this->assertSame($before + 1, $this->countedHits($org, 'untagged'));
+        }
     }
 
     // ------------------------------------- the counter cannot harm the payload

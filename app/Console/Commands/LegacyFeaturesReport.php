@@ -41,6 +41,12 @@ use Illuminate\Support\Facades\Log;
  *             set, EVERY R1 build is tagged here and that is correct, not a
  *             regression. Compare against `php artisan app-telemetry:builds`.
  *
+ * Our own `tenancy:canary` probes are not in either bucket: the middleware
+ * skips any request carrying `X-Canary`. Until that filter reached production,
+ * the canary added about six untagged hits a day to organisation 1. A report
+ * for a day before then, or for the day it shipped, reads organisation 1 too
+ * high by that much. Those keys expire within three days.
+ *
  * Zero of both for an organisation is not proof of nothing: a cache flush, a
  * restarted box with an in-memory store, or a day this command did not run all
  * look identical to silence. The counters are a floor on the traffic, never a

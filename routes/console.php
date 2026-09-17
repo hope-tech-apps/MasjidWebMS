@@ -109,9 +109,10 @@ Schedule::command('family:prune-login-codes')->dailyAt('03:25')->withoutOverlapp
 |
 | `App\Http\Middleware\CountLegacyFeaturesHit` counts every served
 | `GET /mobile/masjids/{id}/features` into a cache key per organisation per
-| day, split by whether the caller identified its build. Cache keys are not
-| enumerable and nobody opens a cache to browse one, so without this the counts
-| exist and answer nothing.
+| day, split by whether the caller identified its build. `tenancy:canary`'s own
+| probes carry `X-Canary` and are not counted. Cache keys are not enumerable
+| and nobody opens a cache to browse one, so without this the counts exist and
+| answer nothing.
 |
 | The question they answer is whether the endpoint can be deleted (plan v3,
 | S3b). Deleting it while Burlington's store build still calls it empties the

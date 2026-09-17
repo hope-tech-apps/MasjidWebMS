@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Support\AppClientHeader;
+use App\Support\Canary\CanaryHeader;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -62,6 +63,14 @@ use Symfony\Component\HttpFoundation\Response;
  * reading the legacy list — counting them would put junk organisation ids in
  * the report and let one looping scanner look like a stranded congregation.
  *
+ * Not our own canary either. `tenancy:canary` probes this endpoint as
+ * organisation 1 on about six runs a day, with `X-Canary: tenancy` and no
+ * `X-Manara-App`. Before this filter each of those probes counted as an
+ * untagged hit on organisation 1, which is the exact number S3b is gated on.
+ * Organisation 1 could never reach zero, however many phones had updated. A
+ * request carrying App\Support\Canary\CanaryHeader is skipped before the bucket
+ * is chosen, so a probe that also sent `X-Manara-App` is not counted either.
+ *
  * `Cache::add(key, 0, 3 days)` then `Cache::increment(key)`: add() is the
  * atomic "create if absent" every store implements, so two concurrent first
  * hits cannot both seed and lose one. Three days is long enough for the daily
@@ -85,6 +94,11 @@ class CountLegacyFeaturesHit
     {
         try {
             if (! $response->isSuccessful()) {
+                return;
+            }
+
+            // Our own probe, not a phone.
+            if (CanaryHeader::isPresent($request)) {
                 return;
             }
 
