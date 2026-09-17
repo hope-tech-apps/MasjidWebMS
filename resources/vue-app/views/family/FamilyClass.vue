@@ -404,7 +404,44 @@
                                         {{ l.glyph }}
                                     </span>
                                 </div>
+
+                                <!-- What the teacher wrote about particular
+                                     letters. Only drills that HAVE a note; the
+                                     letter is named beside each, because the
+                                     chips above show letters and a note on its
+                                     own does not say which one it is about. -->
+                                <template v-if="drillNotes(track).length">
+                                    <div class="small fw-semibold mt-2">{{ t('arabic_letter_notes') }}</div>
+                                    <ul class="list-unstyled small mb-0">
+                                        <li v-for="n in drillNotes(track)" :key="n.drill.id" class="mt-1">
+                                            <span :dir="track.direction" class="fw-semibold">{{ n.letter.glyph }}</span>
+                                            <span class="text-muted" dir="ltr"> {{ n.drill.label }}</span>
+                                            <div class="fst-italic" dir="auto">
+                                                {{ txDrillNote(child, track, n.drill) }}
+                                            </div>
+                                        </li>
+                                    </ul>
+                                </template>
                             </div>
+                        </template>
+
+                        <!-- The teacher's notes on the day's Arabic lesson. Its
+                             own block, not inside a track: the note is about the
+                             qāʿidah lesson and the teacher writes it on the Arabic
+                             track only. Hidden while unknown, stated when the
+                             request failed, silent when there are simply none —
+                             "nothing recorded" is already said above. -->
+                        <template v-if="arabicDayNotes[child.membership_id] === null">
+                            <p class="text-muted small mb-3">{{ t('notes_unavailable') }}</p>
+                        </template>
+                        <template v-else-if="arabicDayNotes[child.membership_id]?.length">
+                            <div class="small fw-semibold">{{ t('arabic_daily_notes') }}</div>
+                            <ul class="list-unstyled small mb-3">
+                                <li v-for="n in arabicDayNotes[child.membership_id]" :key="n.id" class="mt-1">
+                                    <span class="text-muted">{{ day(n.session_date) }}</span>
+                                    <div style="white-space: pre-wrap;" dir="auto">{{ txArabicDay(n) }}</div>
+                                </li>
+                            </ul>
                         </template>
                         <p v-else class="text-muted small mb-3">{{ t('nothing_recorded') }}</p>
 
@@ -416,6 +453,12 @@
                             <li v-for="h in records[child.membership_id].hifz" :key="h.id" class="small">
                                 <span class="text-capitalize">{{ h.kind }}</span>: {{ ayah(h.from) }} {{ rangeArrow }} {{ ayah(h.to) }}
                                 <span class="text-muted">· {{ h.quality }} · {{ when(h.recited_at) }}</span>
+                                <!-- The teacher's note. The payload has always
+                                     carried it — the controller says why — and
+                                     this list simply never drew it, so a parent
+                                     was told the record was theirs and shown
+                                     everything except what the teacher said. -->
+                                <div v-if="h.note" class="text-muted fst-italic" dir="auto">{{ txHifzNote(h) }}</div>
                             </li>
                         </ul>
                     </div>
@@ -867,6 +910,23 @@ const letters = ref<Record<string, any[]>>({});
 const letterTracks = (child: any): any[] => letters.value[child.membership_id] ?? [];
 
 /**
+ * What the teacher wrote about the child's Arabic, per child: `undefined` while
+ * loading, `null` when the request failed, an array (possibly empty) otherwise.
+ */
+const arabicDayNotes = ref<Record<string, any[] | null>>({});
+
+/**
+ * Every drill on a track that carries a note, flattened with the letter it
+ * belongs to — the chips above show letters, not drills, so a note needs its
+ * letter named beside it to be read at all.
+ */
+const drillNotes = (track: any): any[] =>
+    (track?.letters ?? []).flatMap((l: any) =>
+        (l.drills ?? [])
+            .filter((d: any) => typeof d.note === 'string' && d.note.trim() !== '')
+            .map((d: any) => ({ letter: l, drill: d })));
+
+/**
  * Has anybody marked anything on this track?
  *
  * The endpoint answers with a WHOLE alphabet either way: `LetterTracker` builds
@@ -1080,6 +1140,20 @@ const when = (iso: string | null) => {
     return new Date(iso).toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+/**
+ * A stored DAY (`2026-09-16`), read literally. `when()` parses with `new Date`,
+ * which treats a bare date as UTC midnight and shows every parent west of UTC
+ * the day before — a note would sit under the wrong lesson.
+ */
+const day = (ymd: string | null) => {
+    if (!ymd) return '';
+    const [y, m, d] = ymd.slice(0, 10).split('-').map(Number);
+    if (!y || !m || !d) return ymd;
+    return new Date(y, m - 1, d).toLocaleDateString(locale.value, {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    });
+};
+
 const attachmentUrl = (postId: number, attachmentId: number) =>
     `${base.value}/posts/${postId}/attachments/${attachmentId}`;
 const messagePhotoUrl = (message: any, attachmentId: number) =>
@@ -1221,6 +1295,20 @@ const loadChildRecords = async () => {
             // way the class teaches, so this is where a school that does not
             // use a track stops being shown an empty one — see trackHasWork().
             letters.value[child.membership_id] = tracks.filter((track) => track && trackHasWork(track));
+
+            // The teacher's daily Arabic notes. Its own try: a failure here must
+            // not blank the letters above, and it must not read as "no notes"
+            // either — that is a sentence about the child that we would be
+            // inventing. `null` means we could not ask; `[]` means there are none.
+            try {
+                const n = await FamilyApiService.get(
+                    `${base.value}/members/${child.membership_id}/arabic-notes`
+                );
+                arabicDayNotes.value[child.membership_id] = rowsOf(n.data?.data);
+            } catch (e) {
+                if (fail(e)) return;
+                arabicDayNotes.value[child.membership_id] = null;
+            }
         } catch (e) {
             if (fail(e)) return;
             records.value[child.membership_id] = { awards: [], hifz: [] };
@@ -1551,6 +1639,18 @@ const KEY = {
      */
     markNote: (membershipId: number | string, score: any, i: number) =>
         `grade:${membershipId}:${score.assignment?.id ?? 'x'}:${i}:note`,
+    /** A recitation has its own id, so it names itself. */
+    hifzNote: (entry: any) => `hifz:${entry.id}:note`,
+    /**
+     * A teacher's note on one DRILL for one CHILD on one ALPHABET. A drill id is
+     * the same for every child in the class (`ba` is `ba`), so without the
+     * membership id two siblings' notes on the same letter would share a key —
+     * the `markNote` problem above, arriving by a different payload.
+     */
+    drillNote: (membershipId: number | string, alphabet: string, drillId: string) =>
+        `letter:${membershipId}:${alphabet}:${drillId}:note`,
+    /** A daily note is a row with its own id. */
+    arabicDay: (note: any) => `arabic-day:${note.id}:note`,
 };
 
 const {
@@ -1644,6 +1744,21 @@ const translatableItems = computed<TranslatableItem[]>(() => {
                 add(KEY.awardSkill(award), award.skill_label);
                 add(KEY.awardNote(award), award.note);
             }
+            for (const entry of record?.hifz ?? []) {
+                add(KEY.hifzNote(entry), entry.note);
+            }
+        }
+        for (const [membershipId, tracks] of Object.entries(letters.value)) {
+            for (const track of tracks ?? []) {
+                for (const { drill } of drillNotes(track)) {
+                    add(KEY.drillNote(membershipId, track.alphabet, drill.id), drill.note);
+                }
+            }
+        }
+        for (const notes of Object.values(arabicDayNotes.value)) {
+            for (const note of notes ?? []) {
+                add(KEY.arabicDay(note), note.note);
+            }
         }
     }
 
@@ -1717,6 +1832,10 @@ const txMessageBody = (message: any) => tx(KEY.messageBody(message), message.bod
 const txHandout = (handout: any, field: 'title' | 'description') => tx(KEY.handout(handout, field), handout[field]);
 const txAwardSkill = (award: any) => tx(KEY.awardSkill(award), award.skill_label);
 const txAwardNote = (award: any) => tx(KEY.awardNote(award), award.note);
+const txHifzNote = (entry: any) => tx(KEY.hifzNote(entry), entry.note);
+const txDrillNote = (child: any, track: any, drill: any) =>
+    tx(KEY.drillNote(child.membership_id, track.alphabet, drill.id), drill.note);
+const txArabicDay = (note: any) => tx(KEY.arabicDay(note), note.note);
 const txGroupDescription = () => tx(KEY.groupDescription(), group.value?.description);
 const txCardComment = (card: any) => tx(KEY.cardComment(card), card.teacher_comment);
 const txSubjectMark = (card: any, subject: number, mark: number, row: any) =>

@@ -308,6 +308,9 @@ Route::prefix('family')
                 Route::get('/awards/summary', [BehaviorAwardsController::class, 'summary']);
                 Route::get('/hifz', [HifzEntriesController::class, 'forMember']);
                 Route::get('/letters', [ArabicLettersController::class, 'forMember']);
+                // The teacher's daily Arabic notes on this child (owner, 2026-09-17).
+                // Same controller, same ward-edge gate, and a GET — no write added.
+                Route::get('/arabic-notes', [ArabicLettersController::class, 'dailyNotes']);
                 Route::get('/hifz/progress', [HifzEntriesController::class, 'progress']);
             });
         });

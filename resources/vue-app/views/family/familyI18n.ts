@@ -240,6 +240,14 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         stage_tanween: "Tanween",
         stage_madd: "Long Vowels",
         section_quran: "Qur'an",
+        // Headings over what a teacher WROTE about the child's Arabic. The
+        // headings are ours; the notes under them are the teacher's words and
+        // go through the content-translation door like every other note.
+        arabic_letter_notes: "Teacher's notes on letters",
+        arabic_daily_notes: "Teacher's notes on Arabic lessons",
+        // Not "nothing recorded": a request that failed says so, because a
+        // parent told there are no notes when there are would not ask.
+        notes_unavailable: "These notes could not be loaded right now.",
         count_of: "of",
         letter_not_started: "not started",
         letter_learning: "learning",
@@ -463,6 +471,9 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         stage_tanween: "التنوين",
         stage_madd: "المدود",
         section_quran: "القرآن",
+        arabic_letter_notes: "ملاحظات المعلّم على الحروف",
+        arabic_daily_notes: "ملاحظات المعلّم على دروس العربية",
+        notes_unavailable: "تعذّر تحميل هذه الملاحظات الآن.",
         count_of: "من",
         letter_not_started: "لم يبدأ",
         letter_learning: "قيد التعلّم",
