@@ -6,22 +6,68 @@ produced total outages: a bad `.env` plus `config:cache` makes every request 500
 and the error blames `APP_KEY` rather than the file. It needs the owner's yes and
 its own window with someone watching — not a ride-along on another deploy.
 
+## Where this stands (2026-09-17)
+
+The owner's decision, verbatim: **"Ship log-only + full list."** Fix the URL
+poisoning now; LOG unknown hosts without blocking them; enforce only later,
+after a week of clean logs, as a **separate** decision. And: "Document the
+tenant host map" — that is `docs/tenant-host-map.md`, which is where the host
+list below comes from and where the evidence for each host is recorded.
+
+### The production setting to apply with this release
+
+```
+TRUSTED_HOSTS=manara.hopetechapps.com
+```
+
+and **nothing else** — `TRUSTED_HOSTS_ENFORCE` stays absent (absent means
+`false`, which is the shipped default and is pinned by
+`TrustedHostsLogOnlyTest::the_shipped_default_is_log_only`). Production's `.env`
+has no `TRUSTED_HOSTS*` key today (read 2026-09-17), so this is one added line.
+
+Why that one name and no other: the middleware already admits `APP_URL`'s host
+(`masjid.hopetechapps.com`) and every `PORTAL_HOSTS` key
+(`portal.alrazischool.org`). `manara.hopetechapps.com` is the only other name
+proven to reach this app — a proxied A record served purely by nginx's
+`default_server` — and it is named in no setting. Every other Manara hostname
+(Burlington, BISS, the `*.manara` tenant sites, MEC's `mec-web.pages.dev`,
+Al-Razi's own site, the parent guide) is answered by Cloudflare Pages or a
+Worker and reaches Laravel only as `masjid.hopetechapps.com`. Do **not** add the
+droplet's IP addresses or any of the foreign hostnames the log will show.
+
+Applying it is optional for the release itself — the release is safe without
+it, because nothing is refused — but until it is set, `manara.hopetechapps.com`
+writes one warning an hour and hides among the junk the log is meant to be read
+for. Staging's equivalent is `TRUSTED_HOSTS=manara-staging.hopetechapps.com`
+(now in `deploy/staging/env.staging.example`).
+
 ## What already shipped, and needs none of this
 
-`App\Support\SiteUrl` pins the cached payloads, the account-deletion and
-unsubscribe form actions, and the lunch flyer URL to `config('app.url')`. That
-half is unconditional and has no blast radius: it removes the request from the
-URL, it cannot refuse anybody, and it is already proven by 19 tests.
+`App\Support\SiteUrl` pins every URL that outlives its request to
+`config('app.url')`: the five cached mobile payloads that carry media
+placeholders, the app menu's `deletion_page_url`, the account-deletion and
+unsubscribe form actions, the emailed unsubscribe links, the stored lunch flyer
+URL, the provisioning runner's `callback_url`, and the Stripe onboarding
+return/refresh URLs. That half is unconditional and has no blast radius: it
+removes the request from the URL and cannot refuse anybody.
+`tests/Feature/HostHeaderUrlIntegrityTest.php` drives each of them with a forged
+Host.
 
 `App\Http\Middleware\TrustedHosts` ships **observing**. It logs an unknown Host
-at `warning` and passes the request through. Everything below is about the second
-step — making it refuse.
+at `warning` — production's `LOG_LEVEL`, so the line is kept; a quieter level
+would be discarded before it reached the file — and passes the request through.
+A cache failure while rate-limiting the line does not fail the request.
+`tests/Feature/TrustedHostsLogOnlyTest.php` pins all three: the default, the
+level (through a real file channel), and the cache failure. Everything below is
+about the second step — making it refuse.
 
 ## The hosts each box actually serves
 
-Read from the boxes on 2026-09-15. The middleware assembles its list from
-`APP_URL`'s host + every `PORTAL_HOSTS` key + `TRUSTED_HOSTS`, so two of the
-three are already correct and only the third is missing.
+Read from the boxes on 2026-09-15 and re-derived in full on 2026-09-17 — the
+complete map, including every hostname that does NOT reach Laravel and why, is
+`docs/tenant-host-map.md`. The middleware assembles its list from `APP_URL`'s
+host + every `PORTAL_HOSTS` key + `TRUSTED_HOSTS`, so two of the three are
+already correct and only the third is missing.
 
 ### Production — 159.65.239.51
 
@@ -74,6 +120,25 @@ IP — DigitalOcean's own checks, an uptime service, a load balancer health prob
 sends a Host nobody wrote down. That is precisely what the observing mode is for,
 and it is why step 2 below is "read the log", not "wait a bit".
 
+## The log will never be empty — so "zero warnings" is the wrong test
+
+nginx's error log (the only nginx log that records the Host header) shows
+**58 distinct Host values** reaching the production origin in the 14 days to
+2026-09-17. Four are ours (`masjid.hopetechapps.com`, `portal.alrazischool.org`,
+`manara.hopetechapps.com`, the last only because nobody has listed it). The rest
+are the droplet's two IP addresses — with and without `:443`, some 20,000 lines
+of dotfile scans — and about fifty **third-party hostnames whose DNS still points
+at our reserved IP** (`promocao.energisaprev.com.br`, `*.idplugger.com`, …).
+
+Every one of those will be logged, once an hour each: expect in the order of a
+thousand lines a day. A week of **zero** warnings will not happen with this
+traffic, and waiting for it would postpone enforcement forever. The criterion
+that means what the owner meant is:
+
+> **Seven consecutive days in which no warning names a hostname in a zone we
+> own**, and no warning shows a request we recognise (a monitor, a webhook, a
+> partner) arriving by IP.
+
 ## The order, and why it is this order
 
 Each step is separately reversible, and no step depends on a later one.
@@ -84,6 +149,9 @@ Each step is separately reversible, and no step depends on a later one.
 TRUSTED_HOSTS=manara.hopetechapps.com          # production
 TRUSTED_HOSTS=manara-staging.hopetechapps.com  # staging
 ```
+
+(Production: this is the same line as "The production setting to apply with
+this release" above — if it went on with the release, step 1 is already done.)
 
 Write it **through the inode** — `cat >` or an editor, never `mv` a new file over
 it as root. Moving a file over `.env` replaces the inode with one owned by root
@@ -96,21 +164,42 @@ site, and if something else goes wrong it is trivially attributable.
 
 **2. Leave it observing, and read the log.**
 
+Production logs to `storage/logs/laravel.log` (`LOG_STACK=single`) and the file
+is rotated daily into `laravel.log.N.gz`, so read it with `zgrep`, which takes
+the rotated files and the live one alike:
+
 ```
-grep -c "Host header this deployment does not serve" storage/logs/laravel.log
-grep    "Host header this deployment does not serve" storage/logs/laravel.log | tail -40
+cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+M="Host header this deployment does not serve"
+
+# every host reported, most frequent first
+zgrep -h "$M" storage/logs/laravel.log* | grep -o '"host":"[^"]*"' | sort | uniq -c | sort -rn
+
+# THE GATE: warnings naming a hostname in a zone we own. Must print nothing
+# for seven consecutive days before step 3.
+zgrep -h "$M" storage/logs/laravel.log* \
+  | grep -oE '"host":"([a-z0-9-]+\.)*(hopetechapps\.com|alrazischool\.org|burlingtonmasjid\.com|al-aqsaclinic\.org|joinwird\.com|tapcraft\.tech|mizanfintech\.app|aiinnovation\.dev)"' \
+  | sort | uniq -c
+
+# requests by IP literal: look at the path and client IP, not the count
+zgrep -h "$M" storage/logs/laravel.log* | grep -E '"host":"[0-9.]+"' | grep -oE '"path":"[^"]*","method":"[A-Z]+","ip":"[^"]*"' | sort | uniq -c | sort -rn | head -30
 ```
 
 Each line carries the host, the path, the method and the IP. Repeats of the same
 host are rate-limited to one line an hour, so the count is hosts-over-time, not
 requests. Read for **at least a full day** so a daily monitor or a nightly job
-gets a chance to appear.
+gets a chance to appear, and for **seven days** before enforcing.
 
-Two outcomes:
+Three outcomes:
 
-- Only junk — scanner noise, raw IPs, random domains. Proceed.
-- A hostname you recognise. **Stop and add it to `TRUSTED_HOSTS` first**, then
-  restart the clock. This is the step doing its job; it is not a delay.
+- Only junk — scanner noise, raw IPs probing dotfiles, the foreign domains in
+  `docs/tenant-host-map.md` §1. That is the expected steady state. Proceed.
+- A hostname in one of our zones. **Stop and add it to `TRUSTED_HOSTS` first**
+  (and a row to `docs/tenant-host-map.md`), then restart the clock. This is the
+  step doing its job; it is not a delay.
+- An IP-literal request you recognise — `/up` or an API path from a fixed
+  client IP every few minutes is the tell of a monitor. Point that monitor at a
+  hostname before enforcing; do not add IP addresses to the list.
 
 **3. Only then, enforce.**
 
