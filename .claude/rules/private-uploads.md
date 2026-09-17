@@ -59,6 +59,14 @@ extension and never the `Content-Type` header. A tenant editing its own form sch
 must not be able to widen what this server accepts, so the ceiling is never read
 from the schema.
 
+Photos of people are also prepared **in the browser** before they are sent:
+`core/helpers/preparePhoto.ts` redraws each one as a JPEG of at most 2048px, which
+drops its metadata (GPS location included) and keeps several photos under nginx's
+25MB request limit. Every SPA screen that uploads class photos goes through it —
+the teacher story and messages pickers and the admin Class Story tab. It is an
+improvement on the way out, never the gate: a file it cannot decode is sent as is,
+and the server's sniffed-type and size rules still decide.
+
 ## Deleting must reach the disk
 
 A DB-level `ON DELETE CASCADE` fires no model events. If the parent row's deletion

@@ -28,12 +28,15 @@
                                 @change="onFilesChosen"
                             >
                         </label>
-                        <span v-if="chosenFiles.length" class="small text-muted">
+                        <span v-if="preparingPhotos" class="small text-muted">
+                            <span class="spinner-border spinner-border-sm me-1"></span> Preparing photos…
+                        </span>
+                        <span v-else-if="chosenFiles.length" class="small text-muted">
                             {{ chosenFiles.length }} selected
-                            <button type="button" class="btn btn-link btn-sm p-0 ms-1" @click="chosenFiles = []">clear</button>
+                            <button type="button" class="btn btn-link btn-sm p-0 ms-1" @click="clearChosenFiles">clear</button>
                         </span>
                         <span v-if="uploadHint" class="small text-muted ms-auto">{{ uploadHint }}</span>
-                        <button type="submit" class="btn btn-sm btn-success ms-auto" :disabled="posting || !composeBody">
+                        <button type="submit" class="btn btn-sm btn-success ms-auto" :disabled="posting || preparingPhotos || !composeBody">
                             <span v-if="posting" class="spinner-border spinner-border-sm me-1"></span>
                             Post
                         </button>
@@ -131,6 +134,7 @@ import { PageChangeData, PaginationOptions } from '@/core/types/elements/Paginat
 import { GroupPost } from '@/core/types/data/masjid-related/GroupPost';
 import { useGroupFeedStore } from '@/stores/masjid/groupFeedStore';
 import { apiErrorText, isForbidden } from '@/core/services/ApiErrors';
+import { preparePhoto } from '@/core/helpers/preparePhoto';
 import Swal from 'sweetalert2';
 
 /**
@@ -160,6 +164,9 @@ const loadError = ref('');
 const composeTitle = ref('');
 const composeBody = ref('');
 const chosenFiles = ref<File[]>([]);
+const preparingPhotos = ref(false);
+/** Bumped on every pick and every clear; see onFilesChosen. */
+let pickCount = 0;
 /** Object URLs keyed by attachment id, revoked on page change / unmount. */
 const imageUrls = ref<Record<number, string>>({});
 
@@ -247,15 +254,39 @@ const pageChange = async (data: PageChangeData) => {
     await loadPosts(data.toPage);
 };
 
-const onFilesChosen = (event: Event) => {
+/**
+ * Keep each chosen photo only after it has been shrunk and stripped of its
+ * metadata, exactly as the teacher screen does (see preparePhoto). Sent as
+ * picked, an admin's phone photo carries its GPS location to every family in
+ * the class, and a few camera originals together exceed the 25MB request limit.
+ *
+ * A newer pick, or "clear", made while photos are still being prepared wins:
+ * the older result is dropped rather than put back.
+ */
+const onFilesChosen = async (event: Event) => {
     const input = event.target as HTMLInputElement;
-    chosenFiles.value = Array.from(input.files ?? []);
+    const picked = Array.from(input.files ?? []);
     // Reset so re-picking the same file still fires a change event.
     input.value = '';
+
+    const pick = ++pickCount;
+    preparingPhotos.value = true;
+    try {
+        const prepared = await Promise.all(picked.map(preparePhoto));
+        if (pick === pickCount) chosenFiles.value = prepared;
+    } finally {
+        if (pick === pickCount) preparingPhotos.value = false;
+    }
+};
+
+const clearChosenFiles = () => {
+    pickCount++;
+    preparingPhotos.value = false;
+    chosenFiles.value = [];
 };
 
 const submitPost = async () => {
-    if (!composeBody.value) return;
+    if (!composeBody.value || preparingPhotos.value) return;
     posting.value = true;
     try {
         await feedStore.createPost(
