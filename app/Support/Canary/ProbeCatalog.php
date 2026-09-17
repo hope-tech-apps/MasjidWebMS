@@ -9,6 +9,11 @@ use Illuminate\Support\Str;
 /**
  * Decides what the canary probes, by READING THE ROUTER — not a list.
  *
+ * ...and ONE narrowing that depends on state: an endpoint declared in
+ * `canary.dark_launches` whose switch the command found set on this run. This
+ * class never reads that state; it is handed the answer and stays a function of
+ * router, config and that map.
+ *
  * ## Why discovery and not a hand-written list
  *
  * `.claude/rules/tenant-scoping.md` has required a cross-tenant Feature test
@@ -36,6 +41,13 @@ use Illuminate\Support\Str;
  *    `throttle:device` and `throttle:device-activity` are per-HOUR budgets
  *    shared by every phone on a network. A canary that consumes one every hour
  *    has created an outage in the name of watching for one.
+ *  - **An endpoint dark on purpose, only while it is dark**
+ *    (`canary.dark_launches`). While the app menu's kill row is set,
+ *    AppMenuController answers EVERY organisation the same 404 with `data: {}`
+ *    before it reads anything, so there is nothing on it to watch for tenancy.
+ *    It goes into `declined()` with a reason that says it comes back, and into
+ *    `withheld()` so the command can confirm it is still dark. It is planned
+ *    again, with no edit, on the first run after the switch clears.
  *
  * ## The refusals are REPORTED, and that is new
  *
@@ -55,10 +67,14 @@ use Illuminate\Support\Str;
  * So `declined()` returns them, by uri, with the reason, and the command names
  * them on every run at every verdict level. It is REPORTING and not probing,
  * and it deliberately does not degrade the run: these are standing structural
- * facts about the route table rather than events in a run, and a canary that
- * goes amber every night for something no operator can act on tonight is the
- * failure this whole design is a reaction to. `TenancyCanary::plan()` carries
- * the argument for why the `{id}` routes are still not probed.
+ * facts about the route table rather than events in a run (all but one kind: a
+ * dark-launch refusal is STATE, set by an operator. It is reported the same way
+ * because it is equally not actionable tonight, it is the only refusal
+ * re-checked on every run (TenancyCanary::confirmDarkLaunches()), and the only
+ * one that lifts itself), and a canary that goes amber every night for
+ * something no operator can act on tonight is the failure this whole design is
+ * a reaction to. `TenancyCanary::plan()` carries the argument for why the
+ * `{id}` routes are still not probed.
  *
  * The docblock above used to argue the parameter exclusion on the grounds that
  * "collections are where a fail-open scope shows up as more rows". That is true
@@ -99,6 +115,11 @@ use Illuminate\Support\Str;
  * property of the route table, not an event in a run, so like `declined()` it
  * degrades nothing: it exists so that `clean` cannot be read as a claim about
  * the application when it is a claim about 31 routes out of 364.
+ *
+ * `planned`, `never_probed` and `public_get_refused` also move by one while a
+ * dark-launch switch is set; `public_get_dark` says by how much. `never_probed`
+ * means "not checked for tenancy", and a withheld endpoint's single confirming
+ * probe checks no tenancy.
  */
 final class ProbeCatalog
 {
@@ -119,15 +140,21 @@ final class ProbeCatalog
     /** @var array<string,string> */
     private array $declined = [];
 
+    /** @var array<string,array{uri:string,global:bool,params:array<int,string>}> */
+    private array $withheld = [];
+
     /** @var array<string,mixed> */
     private array $census = [];
 
     /**
      * @param  array<string,mixed>  $config  the `canary` config array
+     * @param  array<string,string>  $dark  uri => reason, for each canary.dark_launches declaration whose switch the
+     *                                      COMMAND found set on this run. This class never reads that state itself.
      */
     public function __construct(
         private readonly Router $router,
         private readonly array $config,
+        private readonly array $dark = [],
     ) {
     }
 
@@ -152,6 +179,9 @@ final class ProbeCatalog
      * measurement that made this necessary, and for why writes and authenticated
      * routes are refused without being listed here.
      *
+     * Includes the endpoints withheld as dark on purpose (see withheld()), with
+     * the reason the command composed.
+     *
      * @return array<string,string> uri => reason(s)
      */
     public function declined(): array
@@ -159,6 +189,21 @@ final class ProbeCatalog
         $this->scan();
 
         return $this->declined;
+    }
+
+    /**
+     * Endpoints the catalogue would have planned and is WITHHOLDING because they
+     * are dark on purpose on this run. Always a subset of declined(), so the
+     * planned and refused lists stay complements. The command sends each one
+     * confirming probe.
+     *
+     * @return array<int,array{uri:string,global:bool,params:array<int,string>}>
+     */
+    public function withheld(): array
+    {
+        $this->scan();
+
+        return array_values($this->withheld);
     }
 
     /**
@@ -189,6 +234,9 @@ final class ProbeCatalog
      * reason one level up: a route counted as "outside the prefixes" by a second
      * walk with its own copy of `hasPrefix` is a route that can be planned and
      * counted as unwatched at once, or neither.
+     *
+     * The withheld list is a subset of the refused one, decided in the same pass
+     * after every standing predicate.
      */
     private function scan(): void
     {
@@ -202,6 +250,7 @@ final class ProbeCatalog
 
         $found = [];
         $declined = [];
+        $withheld = [];
 
         // Counted per ROUTE, not per uri: `POST api/mobile/user` and
         // `PUT api/mobile/user` are two routes on one uri, and two things
@@ -288,18 +337,33 @@ final class ProbeCatalog
                 continue;
             }
 
-            $found[$uri] = [
+            $entry = [
                 'uri' => $uri,
                 'global' => in_array($uri, $globals, true),
                 'params' => $params,
             ];
+
+            // Dark on purpose, on THIS run. The command read the switch; this
+            // class only applies the answer. Checked AFTER every standing
+            // predicate, so a route refused for a standing reason is never
+            // reported as merely dark, and never gets a confirming probe.
+            if (isset($this->dark[$uri])) {
+                $declined[$uri] = (string) $this->dark[$uri];
+                $withheld[$uri] = $entry;
+
+                continue;
+            }
+
+            $found[$uri] = $entry;
         }
 
         ksort($found);
         ksort($declined);
+        ksort($withheld);
 
         $this->planned = $found;
         $this->declined = $declined;
+        $this->withheld = $withheld;
 
         sort($writeVerbs);
         sort($credentialed);
@@ -318,6 +382,10 @@ final class ProbeCatalog
             // `coverage.routes_not_planned`; the count is here so the four
             // numbers can be read as one sentence.
             'public_get_refused' => count($declined),
+            // How many of those are refused only because they are dark on
+            // purpose on this run. The one census number that moves without a
+            // route changing.
+            'public_get_dark' => count($withheld),
             // Named individually because there are twelve of them, they are on
             // the surface the verdict claims, and several are READS that happen
             // to be shaped as writes.

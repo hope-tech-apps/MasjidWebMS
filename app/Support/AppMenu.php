@@ -311,6 +311,9 @@ class AppMenu
      * against is the whole fleet losing its menu because a support table was
      * briefly unavailable; the failure it accepts is a kill switch that takes a
      * few seconds longer to bite, which an operator is watching for anyway.
+     *
+     * The query is killSwitchRow(), shared with tenancy:canary, which reads it
+     * uncached (config/canary.php `dark_launches`).
      */
     public static function killed(): bool
     {
@@ -318,7 +321,7 @@ class AppMenu
             return (bool) Cache::remember(
                 self::KILL_CACHE_KEY,
                 self::KILL_CACHE_TTL,
-                fn () => (bool) AppMenuSetting::query()->orderBy('id')->value('menu_disabled')
+                fn () => (bool) self::killSwitchRow()?->menu_disabled
             );
         } catch (Throwable $e) {
             Log::warning('app menu kill switch unreadable; treating the menu as live', [
@@ -327,6 +330,23 @@ class AppMenu
 
             return false;
         }
+    }
+
+    /**
+     * The kill row as it stands: ONE SELECT, no cache, no failure handling. It
+     * THROWS when the table cannot be read.
+     *
+     * killed() is the endpoint's reader and wraps this in its 60 s cache and its
+     * fail-open. This exists for a reader that must not write: tenancy:canary,
+     * through App\Support\Canary\AppMenuKillSwitch. Cache::remember upserts a
+     * row into `cache` on the database store, so the canary may not use
+     * killed(). Both readers go through this one query, so they cannot read
+     * different rows.
+     */
+    public static function killSwitchRow(): ?AppMenuSetting
+    {
+        return AppMenuSetting::query()->orderBy('id')
+            ->first(['id', 'menu_disabled', 'reason', 'updated_by', 'updated_at']);
     }
 
     /**

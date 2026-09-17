@@ -33,6 +33,11 @@ use Throwable;
  *        row: "menu unavailable"
  *   503  building the payload threw: "menu unavailable"
  *
+ * While the kill row is set, tenancy:canary leaves this endpoint out of its
+ * plan (config/canary.php `dark_launches`, `answers => 404`) and checks the 404
+ * with one probe per run. Change the kill-row status here and that declaration
+ * together.
+ *
  * Both clients treat 404 and 503 the same way — prefer a cached good menu,
  * otherwise fall back to the legacy /features + /orgs adapter — so this
  * endpoint is deliberately NOT part of the launch-critical chain. That

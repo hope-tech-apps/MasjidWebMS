@@ -27,6 +27,13 @@ final class Probe
     public const VARIANT_GLOBAL = 'global-endpoint';
 
     /**
+     * ONE request to an endpoint declared dark on purpose (`canary.dark_launches`)
+     * whose switch is set: does it still answer as dark? Not a tenancy probe: no
+     * check reads it; TenancyCanary::confirmDarkLaunches() does.
+     */
+    public const VARIANT_DARK_CONFIRM = 'dark-launch-confirm';
+
+    /**
      * @param  string  $endpoint  the route URI TEMPLATE, e.g. api/mobile/masjids/{masjid_id}/events
      * @param  string  $path  the concrete path with parameters filled in
      * @param  array<string,scalar>  $query

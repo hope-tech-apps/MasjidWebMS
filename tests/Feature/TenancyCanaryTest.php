@@ -5,14 +5,19 @@ namespace Tests\Feature;
 use App\Http\Resources\Api\V1\AnnouncementResource;
 use App\Http\Resources\Api\V1\ServiceResource;
 use App\Models\Announcement;
+use App\Models\AppMenuSetting;
 use App\Models\Masjid;
 use App\Models\Page;
 use App\Models\Service;
 use App\Console\Commands\TenancyCanary;
+use App\Support\AppMenu;
+use App\Support\Canary\AppMenuKillSwitch;
 use Illuminate\Database\Eloquent\Relations\HasOneOrMany;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +26,9 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Tests\Support\Canary\FlippableDarkSwitch;
+use Tests\Support\Canary\NotADarkSwitch;
+use Tests\Support\Canary\ThrowingDarkSwitch;
 use Tests\TestCase;
 
 /**
@@ -44,6 +52,14 @@ class TenancyCanaryTest extends TestCase
 {
     use RefreshDatabase;
 
+    /** The app side menu: dark on purpose on production since S1. */
+    private const MENU = 'api/mobile/masjids/{masjid_id}/menu';
+
+    // The graded surface stays covered (so today's result is `partial`, not
+    // `incomplete`); one mobile endpoint means no rotation and no clock. NOT a
+    // bare `menu`: that also matches api/v1/pages/menu.
+    private const MENU_RUN = ['--only' => 'api/v1,{masjid_id}/menu', '--max-requests' => 500];
+
     private Masjid $masjidA;
 
     private Masjid $masjidB;
@@ -54,6 +70,11 @@ class TenancyCanaryTest extends TestCase
     protected function tearDown(): void
     {
         $this->stopLoopbackOrigin();
+
+        // Static state on the switch doubles: one test's switch must never be
+        // the next test's.
+        FlippableDarkSwitch::reset();
+        NotADarkSwitch::$called = false;
 
         parent::tearDown();
     }
@@ -978,6 +999,604 @@ class TenancyCanaryTest extends TestCase
     }
 
     // ================================================================
+    // A dark launch is declared, confirmed, and comes back by itself
+    // ================================================================
+
+    #[Test]
+    public function a_dark_launched_menu_made_every_run_that_probed_it_partial_until_it_was_declared(): void
+    {
+        // MEASURED ON PRODUCTION, from 2026-09-16 06:49 UTC. S1 shipped the app
+        // menu dark on purpose — the kill row is set until S2b — and every
+        // scheduled run whose rotating slice held /menu (slice 2 of 4, every
+        // four hours) reported:
+        //
+        //     exit=3  partial  52/52 probes  15/16 endpoints reached  0 findings
+        //     endpoints_not_reached: menu — NOT REACHED — valid-tenant probe(s) answered 404
+        //
+        // and schedule:run logged each one at ERROR. For an endpoint that, on
+        // purpose, serves no organisation anything.
+        //
+        // Both halves in ONE test, because the claim is a comparison: the same
+        // platform, the same kill row, without the declaration and with it.
+        $declared = config('canary.dark_launches');
+
+        $this->assertArrayHasKey(self::MENU, $declared);
+        $this->assertSame(AppMenuKillSwitch::class, $declared[self::MENU]['switch']);
+
+        $this->killMenu();
+
+        // The switch the canary trusts is the one the endpoint obeys.
+        $this->getJson('/api/mobile/masjids/'.$this->masjidA->id.'/menu')->assertNotFound();
+
+        // BEFORE — production today: no declaration.
+        config(['canary.dark_launches' => []]);
+
+        [$exit, $before] = $this->runCanary(self::MENU_RUN);
+
+        $this->assertSame(3, $exit);
+        $this->assertSame('partial', $before['status']);
+        $this->assertSame(['unreached_endpoints'], $before['degraded_by']);
+        $this->assertSame(
+            'NOT REACHED — valid-tenant probe(s) answered 404; no 2xx, so nothing below was observed',
+            $before['coverage']['endpoints_not_reached'][self::MENU]
+        );
+        $this->assertArrayHasKey(self::MENU, $before['blind_spots']);
+        $this->assertSame(9, $before['coverage']['endpoints_planned']);
+        $this->assertSame(8, $before['coverage']['endpoints_reached']);
+        $this->assertSame(38, $before['probes']['planned']);
+        $this->assertSame([], $before['findings']);
+        $this->assertSame([], $before['errors']);
+        $this->assertArrayNotHasKey(self::MENU, $before['coverage']['routes_not_planned']);
+        $this->assertSame([], $before['coverage']['dark_launches']);
+
+        // AFTER — the declaration this change ships, and nothing else.
+        config(['canary.dark_launches' => $declared]);
+
+        [$exit, $run] = $this->runCanary(self::MENU_RUN);
+
+        $this->assertSame(0, $exit, 'a menu dark on purpose is still charged to the run as unreachable');
+        $this->assertSame('clean', $run['status']);
+        $this->assertSame([], $run['degraded_by']);
+        $this->assertSame([], $run['blind_spots']);
+        $this->assertSame([], $run['errors']);
+        $this->assertSame(8, $run['coverage']['endpoints_planned']);
+        $this->assertSame(8, $run['coverage']['endpoints_reached']);
+        // 36 for /api/v1, plus the one confirming probe.
+        $this->assertSame(37, $run['probes']['planned']);
+        $this->assertSame(37, $run['probes']['sent']);
+
+        // Not a tenancy observation: no check row may read the confirming probe.
+        $this->assertNotContains(self::MENU, array_column($run['checks'], 'endpoint'));
+
+        // Named, with a reason that says it comes back and how.
+        $reason = $run['coverage']['routes_not_planned'][self::MENU];
+
+        $this->assertStringContainsString('dark on purpose', $reason);
+        $this->assertStringContainsString('canary.dark_launches', $reason);
+        $this->assertStringContainsString('app-menu:restore', $reason);
+
+        $launch = $run['coverage']['dark_launches'][self::MENU];
+
+        $this->assertSame('dark', $launch['state']);
+        $this->assertSame(AppMenuKillSwitch::class, $launch['switch']);
+        $this->assertSame(404, $launch['answers']);
+        // Who pulled the lever and why, in the scheduled log line.
+        $this->assertStringContainsString('S1: the menu stays dark until S2b', $launch['evidence']);
+        $this->assertStringContainsString('canary-test', $launch['evidence']);
+        // ...and that the endpoint really is still dark.
+        $this->assertStringStartsWith('confirmed', $launch['detail']);
+        $this->assertStringContainsString(
+            '/api/mobile/masjids/'.$run['tenants'][0].'/menu was answered 404',
+            $launch['detail']
+        );
+
+        // The census moves by exactly the one endpoint, and says why.
+        $this->assertSame(0, $before['coverage']['route_table']['public_get_dark']);
+        $this->assertSame(1, $run['coverage']['route_table']['public_get_dark']);
+        $this->assertSame(
+            $before['coverage']['route_table']['planned'] - 1,
+            $run['coverage']['route_table']['planned']
+        );
+        $this->assertSame(
+            $before['coverage']['route_table']['public_get_refused'] + 1,
+            $run['coverage']['route_table']['public_get_refused']
+        );
+
+        // The human report says "for now", never "never".
+        $this->artisan('tenancy:canary', self::MENU_RUN + ['--delay' => 0])
+            ->expectsOutputToContain('dark on purpose: api/mobile/masjids/{masjid_id}/menu')
+            ->expectsOutputToContain('confirmed dark by one probe this run')
+            ->doesntExpectOutputToContain('never planned: api/mobile/masjids/{masjid_id}/menu')
+            ->assertExitCode(0);
+    }
+
+    #[Test]
+    public function a_dark_launched_menu_is_probed_again_the_run_after_its_switch_clears(): void
+    {
+        // The property a static `canary.skip` entry would NOT have: on launch
+        // day the menu becomes a public, tenant-scoped endpoint serving every
+        // organisation its own drawer, and it must be watched for tenancy from
+        // the first run after `app-menu:restore` — with no config edit, because
+        // nobody will remember to make one.
+        $this->killMenu();
+
+        [, $dark] = $this->runCanary(self::MENU_RUN);
+
+        $this->assertSame('dark', $dark['coverage']['dark_launches'][self::MENU]['state']);
+
+        Artisan::call('app-menu:restore', ['--by' => 'canary-test']);
+
+        [$exit, $live] = $this->runCanary(self::MENU_RUN);
+
+        $this->assertSame(0, $exit, 'the restored menu did not come back into the plan cleanly');
+        $this->assertSame('clean', $live['status']);
+        $this->assertSame(9, $live['coverage']['endpoints_planned']);
+        $this->assertSame(9, $live['coverage']['endpoints_reached']);
+        $this->assertSame(38, $live['probes']['planned']);
+
+        // Also pins handle()'s reset: the second run in this process must not
+        // inherit the first run's `dark`.
+        $launch = $live['coverage']['dark_launches'][self::MENU];
+
+        $this->assertSame('live', $launch['state']);
+        $this->assertNull($launch['evidence']);
+        $this->assertSame('switch clear — probed in full on this run', $launch['detail']);
+        $this->assertArrayNotHasKey(self::MENU, $live['coverage']['routes_not_planned']);
+        $this->assertArrayNotHasKey(self::MENU, $live['blind_spots']);
+
+        // Probed IN FULL: reached, and put through the tenancy checks.
+        $menuChecks = collect($live['checks'])->where('endpoint', self::MENU);
+
+        $this->assertSame('pass', $menuChecks->firstWhere('check', 'origin-answered')['outcome'] ?? null);
+        $this->assertContains('tenants-get-different-answers', $menuChecks->pluck('check')->all());
+
+        $this->assertSame(0, $live['coverage']['route_table']['public_get_dark']);
+        $this->assertSame(
+            $dark['coverage']['route_table']['planned'] + 1,
+            $live['coverage']['route_table']['planned']
+        );
+    }
+
+    #[Test]
+    public function a_dark_launch_hides_only_its_own_endpoint(): void
+    {
+        // The declaration must not become a way to excuse a SECOND endpoint
+        // going dark. The same `--all` run, with the menu declared dark and one
+        // real unreachable endpoint beside it, is exactly as partial as it was
+        // before this change existed — and names only the real one.
+        $this->killMenu();
+        $this->registerOptionalRecord404('api/mobile/__canary_optional/tv-config');
+
+        [$exit, $run] = $this->runCanary(['--all' => true, '--max-requests' => 900]);
+
+        $this->assertSame(3, $exit);
+        $this->assertSame('partial', $run['status']);
+        $this->assertSame(['unreached_endpoints'], $run['degraded_by']);
+        $this->assertSame(['api/mobile/__canary_optional/tv-config'], array_keys($run['blind_spots']));
+
+        $launch = $run['coverage']['dark_launches'][self::MENU];
+
+        $this->assertSame('dark', $launch['state']);
+        $this->assertStringStartsWith('confirmed', $launch['detail']);
+
+        // 33 real endpoints while the menu is dark, plus the fixture.
+        $this->assertSame(34, $run['coverage']['endpoints_planned']);
+        $this->assertSame(33, $run['coverage']['endpoints_reached']);
+    }
+
+    #[Test]
+    public function a_dark_launch_that_answers_as_if_live_is_contradicted_and_probed_in_full(): void
+    {
+        // The dangerous half of any skip: the switch says dark, and the endpoint
+        // is SERVING. Out of the plan, it would be answering the internet with
+        // nothing checking it for tenancy. The confirming probe exists so that
+        // this cannot hide: it is exit 3 with its own reason, a 5xx is a
+        // finding, and the endpoint is then probed IN FULL in the same run.
+        $serving = 'api/mobile/masjids/{masjid_id}/__canary_dl_serving';
+
+        Route::get($serving, fn ($masjid_id) => response()->json(['status' => 'success', 'data' => []]));
+
+        FlippableDarkSwitch::$because = 'fixture: declared dark';
+
+        config(['canary.dark_launches' => [$serving => $this->darkEntry(FlippableDarkSwitch::class)]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1,__canary_dl_serving', '--max-requests' => 500]);
+
+        $this->assertSame(3, $exit, 'a dark launch serving 200 was skipped silently');
+        $this->assertSame('partial', $run['status']);
+        $this->assertSame(['dark_launch_contradicted'], $run['degraded_by']);
+        $this->assertSame([], $run['findings']);
+        $this->assertSame([], $run['blind_spots']);
+
+        $launch = $run['coverage']['dark_launches'][$serving];
+
+        $this->assertSame('contradicted', $launch['state']);
+        $this->assertStringContainsString('was answered 200, not the declared 404', $launch['detail']);
+        $this->assertStringContainsString('probed in full on this run instead', $launch['detail']);
+
+        // Probed in full, in this run: planned, reached, and through the checks
+        // — so it is no longer listed as never planned.
+        $this->assertArrayNotHasKey($serving, $run['coverage']['routes_not_planned']);
+        $this->assertSame(9, $run['coverage']['endpoints_planned']);
+        $this->assertSame(9, $run['coverage']['endpoints_reached']);
+        $this->assertSame(
+            'pass',
+            collect($run['checks'])->where('endpoint', $serving)->firstWhere('check', 'origin-answered')['outcome'] ?? null
+        );
+        // 36 for /api/v1, the one confirming probe, then its two tenant probes.
+        $this->assertSame(39, $run['probes']['sent']);
+        // Read once per run, not once per probe.
+        $this->assertSame(1, FlippableDarkSwitch::$calls);
+
+        // ...and the same declaration on an endpoint that FAULTS is a page.
+        $faulting = 'api/mobile/masjids/{masjid_id}/__canary_dl_faulting';
+
+        Route::get($faulting, fn ($masjid_id) => response()->json(['status' => 'failed'], 500));
+
+        config(['canary.dark_launches' => [$faulting => $this->darkEntry(FlippableDarkSwitch::class)]]);
+
+        [$faultExit, $fault] = $this->runCanary(['--only' => 'api/v1,__canary_dl_faulting', '--max-requests' => 500]);
+
+        $this->assertSame(1, $faultExit, 'a dark launch answering 500 did not page');
+        $this->assertSame('leak', $fault['status']);
+        $this->assertNotNull(
+            collect($fault['findings'])->where('kind', 'server_fault')->firstWhere('endpoint', $faulting),
+            'the 500 on a declared-dark endpoint was not raised as a server_fault'
+        );
+        $this->assertSame('contradicted', $fault['coverage']['dark_launches'][$faulting]['state']);
+        $this->assertContains($faulting, array_column($fault['checks'], 'endpoint'));
+    }
+
+    #[Test]
+    public function a_leak_on_a_dark_launch_that_answers_anyway_still_pages(): void
+    {
+        // Why the contradicted endpoint is probed in full rather than merely
+        // reported. With only the confirming probe, a switch saying "dark" over
+        // an endpoint that is actually serving another organisation's rows
+        // capped the verdict at `partial` — a ticket for a cross-tenant read.
+        $leaky = 'api/mobile/masjids/{masjid_id}/__canary_dl_leaky';
+        $other = $this->masjidB->id;
+
+        Route::get($leaky, fn ($masjid_id) => response()->json([
+            'status' => 'success',
+            'data' => [['id' => 1, 'masjid_id' => $other]],
+        ]));
+
+        FlippableDarkSwitch::$because = 'fixture: declared dark';
+
+        config(['canary.dark_launches' => [$leaky => $this->darkEntry(FlippableDarkSwitch::class)]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1,__canary_dl_leaky', '--max-requests' => 500]);
+
+        $this->assertSame(1, $exit, 'a cross-tenant read on a declared-dark endpoint did not page');
+        $this->assertSame('leak', $run['status']);
+        $this->assertSame('contradicted', $run['coverage']['dark_launches'][$leaky]['state']);
+        $this->assertContains('dark_launch_contradicted', $run['degraded_by']);
+
+        $finding = collect($run['findings'])
+            ->where('kind', 'foreign_tenant_in_body')
+            ->firstWhere('endpoint', $leaky);
+
+        $this->assertNotNull($finding, 'the foreign masjid_id on the contradicted endpoint was not reported');
+        $this->assertSame('critical', $finding['severity']);
+    }
+
+    #[Test]
+    public function a_dark_declaration_on_a_route_refused_for_a_standing_reason_changes_nothing(): void
+    {
+        // `prayers` WRITES on a GET and is in `canary.skip`. A dark declaration
+        // on it must not turn that refusal into "dark on purpose" — which says
+        // it comes back — and must never earn it a confirming probe.
+        $prayers = 'api/mobile/masjids/{masjid_id}/prayers';
+
+        $this->assertContains($prayers, config('canary.skip'));
+
+        FlippableDarkSwitch::$because = 'fixture: declared dark';
+
+        config(['canary.dark_launches' => [$prayers => $this->darkEntry(FlippableDarkSwitch::class)]]);
+
+        [, $run] = $this->runCanary(['--only' => 'api/v1,{masjid_id}/prayers', '--max-requests' => 500]);
+
+        $launch = $run['coverage']['dark_launches'][$prayers];
+
+        $this->assertSame('refused', $launch['state']);
+        $this->assertArrayHasKey($prayers, $run['coverage']['routes_not_planned']);
+        $this->assertStringNotContainsString('dark on purpose', $run['coverage']['routes_not_planned'][$prayers]);
+        $this->assertNotContains($prayers, array_column($run['checks'], 'endpoint'));
+        $this->assertSame(0, $run['coverage']['route_table']['public_get_dark']);
+
+        // 36 for /api/v1 and two for prayers/settings. No confirming probe.
+        $this->assertSame(38, $run['probes']['sent']);
+        $this->assertArrayNotHasKey($prayers, $run['coverage']['endpoints_not_reached']);
+    }
+
+    #[Test]
+    public function a_dark_declaration_that_fails_vetting_is_never_asked_and_is_probed(): void
+    {
+        // Every field a declaration needs is checked BEFORE its switch is
+        // called. A declaration that calls a 2xx "dark", or a 429, or gives no
+        // reason or no way back, is not trusted: the switch is not asked, and
+        // the endpoint is probed as live.
+        $base = 'api/mobile/masjids/{masjid_id}/__canary_dl_vet_';
+        $entries = [
+            $base.'ok200' => ['answers' => 200] + $this->darkEntry(FlippableDarkSwitch::class),
+            $base.'throttle' => ['answers' => 429] + $this->darkEntry(FlippableDarkSwitch::class),
+            $base.'string' => ['answers' => '404'] + $this->darkEntry(FlippableDarkSwitch::class),
+            $base.'noreason' => ['reason' => '  '] + $this->darkEntry(FlippableDarkSwitch::class),
+            $base.'noclear' => ['clears_with' => ''] + $this->darkEntry(FlippableDarkSwitch::class),
+            $base.'notarray' => FlippableDarkSwitch::class,
+        ];
+
+        foreach (array_keys($entries) as $uri) {
+            $this->registerOptionalRecord404($uri);
+        }
+
+        FlippableDarkSwitch::$because = 'fixture: would say dark';
+
+        config(['canary.dark_launches' => $entries]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1,__canary_dl_vet_', '--max-requests' => 500]);
+
+        $this->assertSame(3, $exit);
+        $this->assertSame(['unreached_endpoints'], $run['degraded_by']);
+        $this->assertSame(0, FlippableDarkSwitch::$calls, 'a switch was asked on a declaration that failed vetting');
+        $this->assertSame(0, $run['coverage']['route_table']['public_get_dark']);
+
+        foreach (array_keys($entries) as $uri) {
+            $this->assertSame('misdeclared', $run['coverage']['dark_launches'][$uri]['state'], "{$uri} was not refused as misdeclared");
+            $this->assertArrayHasKey($uri, $run['coverage']['endpoints_not_reached'], "{$uri} was not probed as live");
+        }
+
+        $this->assertStringContainsString('not 429', $run['coverage']['dark_launches'][$base.'throttle']['detail']);
+        $this->assertStringContainsString('no `reason`', $run['coverage']['dark_launches'][$base.'noreason']['detail']);
+        $this->assertStringContainsString('no `clears_with`', $run['coverage']['dark_launches'][$base.'noclear']['detail']);
+    }
+
+    #[Test]
+    public function the_scheduled_slice_that_held_the_menu_is_no_longer_partial(): void
+    {
+        // The production run exactly: no --only, no --all, the /api/mobile
+        // surface rotating by the clock. Before the declaration, the one window
+        // holding /menu named it NOT REACHED; with it, no window does, and every
+        // window names it dark and confirms it.
+        $this->killMenu();
+        $declared = config('canary.dark_launches');
+
+        // Four consecutive hours, starting on the next multiple of four, cover
+        // every window of a 25- or 26-endpoint surface at a slice of 8. Ahead of
+        // now and within eight hours, so the fixtures' yesterday-to-tomorrow
+        // announcements stay current.
+        $firstHour = (intdiv(intdiv(Carbon::now()->getTimestamp(), 3600), 4) + 1) * 4;
+
+        $windows = function () use ($firstHour): array {
+            $seen = [];
+
+            foreach (range(0, 3) as $hour) {
+                $this->travelTo(Carbon::createFromTimestampUTC(($firstHour + $hour) * 3600));
+
+                [$exit, $run] = $this->runCanary(['--max-requests' => 500]);
+
+                $seen[$hour] = [$exit, $run];
+            }
+
+            $this->travelBack();
+
+            return $seen;
+        };
+
+        config(['canary.dark_launches' => []]);
+
+        $undeclared = collect($windows())->filter(
+            fn (array $w) => array_key_exists(self::MENU, $w[1]['coverage']['endpoints_not_reached'])
+        );
+
+        $this->assertCount(1, $undeclared, 'exactly one window should hold the dark menu when it is not declared');
+        $this->assertSame(3, $undeclared->first()[0]);
+        $this->assertContains('unreached_endpoints', $undeclared->first()[1]['degraded_by']);
+
+        config(['canary.dark_launches' => $declared]);
+
+        foreach ($windows() as $hour => [$exit, $run]) {
+            $this->assertArrayNotHasKey(self::MENU, $run['coverage']['endpoints_not_reached'], "hour {$hour}");
+            $this->assertNotContains('unreached_endpoints', $run['degraded_by'], "hour {$hour}");
+            $this->assertSame('dark', $run['coverage']['dark_launches'][self::MENU]['state'], "hour {$hour}");
+            $this->assertStringStartsWith('confirmed', $run['coverage']['dark_launches'][self::MENU]['detail'], "hour {$hour}");
+            $this->assertNotContains(self::MENU, array_column($run['checks'], 'endpoint'), "hour {$hour}");
+        }
+    }
+
+    #[Test]
+    public function the_confirming_probe_is_the_first_thing_a_truncated_run_loses(): void
+    {
+        // Sent AFTER the plan on purpose: a tenancy observation is worth more
+        // than a confirmation that something serves nothing.
+        $this->killMenu();
+
+        [, $run] = $this->runCanary(['--only' => 'api/v1,{masjid_id}/menu', '--max-requests' => 36]);
+
+        $this->assertSame(36, $run['probes']['sent']);
+        $this->assertSame(8, $run['coverage']['endpoints_reached']);
+        $this->assertContains('truncated_request_budget', $run['degraded_by']);
+        $this->assertStringStartsWith(
+            'NOT CONFIRMED — the run ended before its confirming probe was sent',
+            $run['coverage']['dark_launches'][self::MENU]['detail']
+        );
+    }
+
+    #[Test]
+    public function a_dark_launch_switch_it_cannot_trust_is_probed_as_live(): void
+    {
+        // Every way a declaration can be wrong has to fail TOWARD probing. A
+        // doubt that became a skip is the silent erosion this canary exists to
+        // prevent; a doubt that becomes a probe is, at worst, a NOT REACHED
+        // somebody reads.
+        $throws = 'api/mobile/masjids/{masjid_id}/__canary_dl_throws';
+        $impostor = 'api/mobile/masjids/{masjid_id}/__canary_dl_impostor';
+        $noClass = 'api/mobile/masjids/{masjid_id}/__canary_dl_noclass';
+        $gone = 'api/mobile/__canary_dl_gone';
+
+        foreach ([$throws, $impostor, $noClass] as $uri) {
+            $this->registerOptionalRecord404($uri);
+        }
+
+        FlippableDarkSwitch::$because = 'fixture: dark';
+
+        config(['canary.dark_launches' => [
+            // The table is not there yet.
+            $throws => $this->darkEntry(ThrowingDarkSwitch::class),
+            // A method with the right name, on a class that never agreed to the contract.
+            $impostor => $this->darkEntry(NotADarkSwitch::class),
+            // A typo.
+            $noClass => $this->darkEntry('App\\Support\\Canary\\NoSuchSwitch'),
+            // The graded surface, where absence is never normal. Would say dark.
+            'api/v1/announcements' => $this->darkEntry(FlippableDarkSwitch::class),
+            // A route that no longer exists. Would say dark.
+            $gone => $this->darkEntry(FlippableDarkSwitch::class),
+        ]]);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1,__canary_dl_', '--max-requests' => 500]);
+
+        $this->assertSame(3, $exit);
+        $this->assertSame('partial', $run['status']);
+        $this->assertSame(['unreached_endpoints'], $run['degraded_by']);
+
+        foreach ([$throws, $impostor, $noClass] as $uri) {
+            $this->assertArrayHasKey($uri, $run['coverage']['endpoints_not_reached'],
+                "{$uri} was not probed as live");
+            $this->assertArrayNotHasKey($uri, $run['coverage']['routes_not_planned'],
+                "{$uri} was skipped on a declaration the canary could not trust");
+        }
+
+        $launches = $run['coverage']['dark_launches'];
+
+        $this->assertSame('unreadable', $launches[$throws]['state']);
+        $this->assertStringContainsString('RuntimeException', $launches[$throws]['detail']);
+        $this->assertStringNotContainsString('SQLSTATE', $launches[$throws]['detail'],
+            'an exception message carrying SQL reached the log line');
+
+        $this->assertSame('misdeclared', $launches[$impostor]['state']);
+        $this->assertStringContainsString('does not implement', $launches[$impostor]['detail']);
+
+        $this->assertSame('misdeclared', $launches[$noClass]['state']);
+        $this->assertStringContainsString('names no class', $launches[$noClass]['detail']);
+
+        $this->assertSame('misdeclared', $launches['api/v1/announcements']['state']);
+        $this->assertStringContainsString('core_prefixes', $launches['api/v1/announcements']['detail']);
+
+        $this->assertSame('no_public_get_route', $launches[$gone]['state']);
+
+        // The graded endpoint was probed in full, as if nothing had been declared.
+        $this->assertArrayNotHasKey('api/v1/announcements', $run['coverage']['endpoints_not_reached']);
+        $this->assertContains('api/v1/announcements', array_column($run['checks'], 'endpoint'));
+
+        // Nothing config merely names is ever called.
+        $this->assertFalse(NotADarkSwitch::$called, 'the canary called a class that does not implement DarkLaunchSwitch');
+        // Only $gone's switch was asked; the core_prefixes entry was refused before the call.
+        $this->assertSame(1, FlippableDarkSwitch::$calls);
+
+        $this->assertTrue(
+            collect($run['notes'])->contains(
+                static fn (string $note) => str_contains($note, '__canary_dl_throws') && str_contains($note, 'unreadable')
+            ),
+            'an unreadable switch was not named in the notes'
+        );
+    }
+
+    #[Test]
+    public function asking_only_for_the_dark_menu_says_why_nothing_was_checked(): void
+    {
+        // An operator chasing the menu alone, while it is dark. The plan is
+        // empty, and "discovery is broken" would send them looking for a
+        // routing fault that does not exist.
+        $this->killMenu();
+
+        [$exit, $run] = $this->runCanary(['--only' => '{masjid_id}/menu']);
+
+        $this->assertSame(2, $exit);
+        $this->assertSame('incomplete', $run['status']);
+
+        $errors = implode(' ', $run['errors']);
+
+        $this->assertStringContainsString('dark on purpose', $errors);
+        $this->assertStringNotContainsString('discovery is broken', $errors);
+
+        $launch = $run['coverage']['dark_launches'][self::MENU];
+
+        $this->assertSame('dark', $launch['state']);
+        $this->assertStringStartsWith('NOT CONFIRMED', $launch['detail']);
+        $this->assertSame(0, $run['probes']['sent']);
+    }
+
+    #[Test]
+    public function a_full_run_writes_nothing_while_the_menu_is_dark(): void
+    {
+        // The canary reads the kill switch on every run, and must not touch the
+        // row itself, down to its timestamp, nor any other table. (That the READ
+        // writes no cache row is pinned in CanaryDarkLaunchSwitchTest on the
+        // database store: phpunit's `array` store is invisible to row counts,
+        // and the confirming probe's own request warms the endpoint's cache
+        // entry exactly as a phone does.)
+        $this->killMenu();
+        $this->seedMedia();
+
+        $row = AppMenuSetting::query()->first()->getAttributes();
+        $before = $this->rowCounts();
+
+        [, $run] = $this->runCanary(['--all' => true, '--max-requests' => 500]);
+
+        $this->assertSame('dark', $run['coverage']['dark_launches'][self::MENU]['state']);
+        $this->assertStringStartsWith('confirmed', $run['coverage']['dark_launches'][self::MENU]['detail']);
+
+        $this->assertSame($before, $this->rowCounts(), 'the canary mutated the database while the menu was dark');
+        $this->assertSame($row, AppMenuSetting::query()->first()->getAttributes(), 'the canary rewrote the kill row');
+    }
+
+    #[Test]
+    public function a_clean_run_with_the_menu_dark_logs_at_info(): void
+    {
+        // The alert path that matters for a SCHEDULED run is the log level. The
+        // production symptom was a `warning` from the canary plus schedule:run's
+        // ERROR for exit 3; a dark menu must leave exactly one `info` line.
+        //
+        // The row is written directly rather than through `app-menu:kill`,
+        // because that command logs its own warning and Log is mocked here.
+        AppMenuSetting::create([
+            'menu_disabled' => true,
+            'reason' => 'S1: the menu stays dark until S2b',
+            'updated_by' => 'canary-test',
+        ]);
+        Cache::forget(AppMenu::KILL_CACHE_KEY);
+
+        $channel = \Mockery::mock();
+        $channel->shouldIgnoreMissing();
+
+        Log::shouldReceive('channel')->andReturn($channel);
+
+        // The APPLICATION logs too while it answers the probes in-process
+        // (api/v1/settings reports a tenant-less request). Unexpected, that
+        // call throws inside the kernel transport and reads as a dead socket —
+        // a `transport_error` that makes this run partial for a reason that has
+        // nothing to do with the menu. Only the canary's channel is under test.
+        Log::getFacadeRoot()->shouldIgnoreMissing();
+
+        // stdout is discarded on a schedule, so this line is the ONLY place a
+        // scheduled run says the menu was skipped, and why.
+        $channel->shouldReceive('info')->once()
+            ->with('tenancy:canary clean', \Mockery::on(static fn ($summary) => is_array($summary)
+                && ($summary['coverage']['dark_launches'][self::MENU]['state'] ?? null) === 'dark'
+                && str_contains((string) ($summary['coverage']['dark_launches'][self::MENU]['evidence'] ?? ''), 'canary-test')
+                && str_contains((string) ($summary['coverage']['routes_not_planned'][self::MENU] ?? ''), 'dark on purpose')));
+        $channel->shouldReceive('warning')->never();
+        $channel->shouldReceive('error')->never();
+
+        [$exit, $run] = $this->runCanary(self::MENU_RUN);
+
+        $this->assertSame([], $run['degraded_by']);
+        $this->assertSame([], $run['errors']);
+        $this->assertSame(0, $exit);
+    }
+
+    // ================================================================
     // ...and a detector that went blind is not a watched endpoint
     // ================================================================
 
@@ -1202,8 +1821,10 @@ class TenancyCanaryTest extends TestCase
         // their only parameter is {masjid_id} and `mobile` is in
         // canary.throttle_allowlist — so this number moves whenever a public
         // per-masjid GET is added or removed, which is the point of asserting
-        // it.
+        // it. 34 while the menu is LIVE: this database has no kill row. The
+        // dark state (33) is pinned by a_dark_launch_hides_only_its_own_endpoint.
         $this->assertSame(34, $run['coverage']['endpoints_reached']);
+        $this->assertSame('live', $run['coverage']['dark_launches'][self::MENU]['state']);
 
         $comparison = $run['coverage']['cross_tenant_comparison'];
 
@@ -1674,6 +2295,12 @@ class TenancyCanaryTest extends TestCase
 
         Log::shouldReceive('channel')->andReturn($channel);
 
+        // Let the application's own log calls through (see
+        // a_clean_run_with_the_menu_dark_logs_at_info). Without this, the
+        // run was ALSO degraded by `transport_error` on api/v1/settings — still
+        // exit 3, so this test passed for a reason it was not about.
+        Log::getFacadeRoot()->shouldIgnoreMissing();
+
         $channel->shouldReceive('warning')->once()
             ->with('tenancy:canary partial', \Mockery::type('array'));
         $channel->shouldReceive('error')->never();
@@ -1681,8 +2308,9 @@ class TenancyCanaryTest extends TestCase
 
         $this->registerOptionalRecord404('api/v1/__canary_optional/donation-link');
 
-        [$exit] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
 
+        $this->assertSame(['unreached_endpoints'], $run['degraded_by']);
         $this->assertSame(3, $exit);
     }
 
@@ -2233,6 +2861,28 @@ class TenancyCanaryTest extends TestCase
     private function registerOptionalRecord404(string $uri): void
     {
         Route::get($uri, fn () => response()->api(404, 'Not found.', null));
+    }
+
+    /**
+     * Pull the app-menu lever the way production is set today.
+     *
+     * Call it BEFORE runCanary(), never between an Artisan::call() and the
+     * Artisan::output() that reads it: this is an Artisan::call() too, and it
+     * replaces that output.
+     */
+    private function killMenu(): void
+    {
+        Artisan::call('app-menu:kill', ['--reason' => 'S1: the menu stays dark until S2b', '--by' => 'canary-test']);
+    }
+
+    /**
+     * A well-formed `canary.dark_launches` entry for a fixture switch.
+     *
+     * @return array{switch:string,answers:int,reason:string,clears_with:string}
+     */
+    private function darkEntry(string $switch): array
+    {
+        return ['switch' => $switch, 'answers' => 404, 'reason' => 'fixture', 'clears_with' => 'nothing'];
     }
 
     /**

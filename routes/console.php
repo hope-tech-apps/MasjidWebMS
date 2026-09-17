@@ -148,19 +148,21 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 | watches for is introduced by a DEPLOY, not by traffic, and the last two
 | instances were live for weeks and months respectively — the difference
 | between finding one in five minutes and finding it in an hour is noise
-| against that. Meanwhile /api/mobile is limited to 60 requests per minute per
-| IP; a canary firing every five minutes takes a standing bite out of that
-| bucket from whatever address it runs on, twelve times an hour, forever. The
-| command already paces itself to a third of the bucket and rotates the mobile
-| surface, and hourly keeps the whole arrangement to roughly one probe every
-| three seconds for two or three minutes an hour.
+| against that. Meanwhile /api/mobile is limited by `throttle:mobile` (1800 a
+| minute; 60 until 2026-09-15) per IP; a canary firing every five minutes takes
+| a standing bite out of that bucket from whatever address it runs on, twelve
+| times an hour, forever. The command already paces itself to a third of the
+| bucket and rotates the mobile surface, and hourly keeps the whole arrangement
+| to roughly one probe every three seconds for two or three minutes an hour.
 |
 | Deploys are the other half of the cadence and do not belong in a cron: the
 | deploy script should run `php artisan tenancy:canary --all --json` after the
 | release is live and fail the deploy on a non-zero exit. That is when a new
 | hole actually appears; this schedule is the backstop for the one that appears
 | some other way — a config change, a cache rule, a route added by a migration
-| of somebody else's making.
+| of somebody else's making. (Nothing runs that gate yet. Until
+| `canary.dark_launches` existed, `--all` on production would have exited 3 for
+| as long as the app menu was dark on purpose.)
 |
 | :47 so it never shares a minute with the quarter-hourly checkout reaper
 | (:00/:15/:30/:45), the 03:10 group sweep, the 03:25 code prune or the 07:00
@@ -180,7 +182,9 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 | It is FOUR codes, not two:
 |
 |   0  clean       every planned endpoint reached, and the cross-tenant
-|                  comparison worked on a majority of the graded surface
+|                  comparison worked on a majority of the graded surface (an
+|                  endpoint dark on purpose is out of the plan and answered its
+|                  confirming probe as declared)
 |   1  leak        a finding — page
 |   2  incomplete  the run is not evidence about this platform (nothing
 |                  reached, nothing verified, refused service, truncated past
@@ -188,12 +192,16 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 |   3  partial     the run IS evidence, about most of the platform, and it
 |                  names what it could not see: an endpoint it never reached,
 |                  or one it reached and could not compare two organisations
-|                  on — ticket, not page
+|                  on, or an endpoint declared dark answered as if it were
+|                  live — ticket, not page
 |
-| For a SCHEDULED run the exit code is not the path that exists today, because
-| schedule:run discards stdout and nothing here inspects the status. The LOG
-| LINE is: exactly one per run, and its LEVEL carries the same four states, so
-| an alerting rule can route on it without anyone editing this file —
+| For a SCHEDULED run the exit code is not the path to route on, because
+| schedule:run discards stdout. schedule:run does inspect the status: any
+| non-zero exit is reported as an exception ('Scheduled command [...] failed
+| with exit code [N]') at error level, beside the canary's own line. Route on
+| the canary's line, not on that one. The canary's LOG LINE is: exactly one per
+| run, and its LEVEL carries the same four states, so an alerting rule can
+| route on it without anyone editing this file —
 |
 |   info     clean
 |   warning  partial          (pinned by TenancyCanaryTest::
@@ -233,6 +241,13 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 |   truncated_time_budget      ) the detail, and the coverage floor decides
 |                              ) whether it was deep enough to be exit 2 instead
 |   transport_error            a dead socket on at least one probe
+|   dark_launch_contradicted   an endpoint in canary.dark_launches, withheld
+|                              because its switch said dark, answered its
+|                              confirming probe with something other than its
+|                              declared status. The endpoint is then probed in
+|                              full in the same run, so a leak on it still pages;
+|                              this reason says the switch and the endpoint
+|                              disagree (or the switch flipped mid-run)
 |   comparison_floor           most of the graded surface it REACHED could not be
 |                              compared between two organisations — the leak
 |                              detector is largely asleep
@@ -249,7 +264,11 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 | organisations content, or point `--tenants=` at two that have some);
 | `row_ownership_unplaced` wants one line of CONFIG, and the payload names the
 | endpoint, the bucket and the ids. The first four are about the platform or the
-| run. Empty on every status other than `partial`.
+| run. `dark_launch_contradicted` is about a switch, and wants whoever owns it;
+| `coverage.dark_launches` names the endpoint and what it answered. Normally
+| empty on every status other than `partial` — the exception is a run that is
+| also a `leak`, which keeps the reasons it was degraded by (a contradicted dark
+| launch answering 5xx is always one).
 |
 | WHY `row_ownership_unplaced` EXISTS, AND WHY IT IS GRADED AT ZERO
 |
@@ -315,11 +334,12 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 | the green verdict: "This run probed 31 of 364 routes in this application."
 |
 | It degrades nothing, for the same reason `routes_not_planned` does not: it is
-| byte-identical on every run until somebody adds a route, and an alarm that
-| fires every night for a condition no operator can act on tonight is the failure
-| this whole design is a reaction to. What it IS good for is a diff, and now the
-| diff is honest — it moves for a POST, for an authenticated route, and for a new
-| prefix, which are the three ways the old field could not.
+| byte-identical on every run until somebody adds a route or a
+| `canary.dark_launches` switch flips, and an alarm that fires every night for a
+| condition no operator can act on tonight is the failure this whole design is a
+| reaction to. What it IS good for is a diff, and now the diff is honest — it
+| moves for a POST, for an authenticated route, and for a new prefix, which are
+| the three ways the old field could not.
 |
 | AND WHAT NO COVERAGE CAN COVER — `coverage.detector_limits`
 |

@@ -13,6 +13,11 @@ return [
     | probes traverse the real proxy, TLS terminator and cache, which is where
     | a header can be rewritten or stripped without any code changing.
     |
+    | Two things are read from THIS application's database rather than from the
+    | probed origin: which organisations to compare, and whether a
+    | `dark_launches` switch is set. A dark launch is still confirmed by a probe
+    | of the origin, so "declared dark, serving there" is exit 3.
+    |
     | In the test suite the base URL is irrelevant: the `kernel` transport
     | dispatches through the test application in-process and never opens a
     | socket. See App\Support\Canary\KernelTransport.
@@ -50,8 +55,9 @@ return [
     | decided by what the truncation actually COST: a cut that still left a
     | majority of the graded surface reached is `partial` (exit 3, and the
     | truncation named); a cut deep enough to lose that majority is `incomplete`
-    | (exit 2). Measured on this branch against a `--all` plan of 31 endpoints /
-    | 76 probes: `--max-requests=3` reaches 1 of 31 endpoints and is incomplete;
+    | (exit 2). Measured on this branch (against the 2026-08-12 table) against a
+    | `--all` plan of 31 endpoints / 76 probes: `--max-requests=3` reaches 1 of
+    | 31 endpoints and is incomplete;
     | `--max-requests=60` reaches 23 of 31 with all of /api/v1 seen and is
     | partial. Both report the truncation; they differ in how loudly.
     |
@@ -68,15 +74,20 @@ return [
     | to anything. A two-tier rule would be faster and harder to reason about at
     | 3am.
     |
-    | Measured arithmetic at these defaults, re-derived 2026-08-12 against the
-    | current route table:
+    | Arithmetic at these defaults, re-derived 2026-09-16 from the route table
+    | (read, not measured). The 8 /api/v1 endpoints are always 36 probes; 26
+    | /api/mobile endpoints are planned, 8 per window, 4 windows; a global
+    | endpoint is probed once and a tenant one twice.
     |
-    |   scheduled run (rotating slice)   16 endpoints, 47-52 probes — the 8
-    |                                    /api/v1 endpoints are always 36 of
-    |                                    them; this hour's 8 mobile endpoints
-    |                                    are 8-16 more, since a global endpoint
-    |                                    is probed once and a tenant one twice
-    |   deploy gate (`--all`)            31 endpoints, 76 probes
+    |   scheduled run, endpoints/probes   window 0  window 1  window 2  window 3
+    |     menu live                        16/46     16/50     16/52     10/39
+    |     menu dark (kill row set)         16/47     16/51     16/53      9/38
+    |   deploy gate (`--all`)              34 endpoints / 79 probes live,
+    |                                      33 / 78 while the menu is dark
+    |
+    | While the app menu is dark (`dark_launches` below) the +1 in each window is
+    | its one confirming probe, the menu is in no window, tv-config moves from
+    | window 3 into window 2, and window 3 holds tasabih alone.
     |
     | The slice makes the scheduled number hour-dependent; `--all` is fixed.
     | Pacing at 20/minute puts the scheduled run at roughly 2m30s and `--all` at
@@ -88,9 +99,9 @@ return [
     | ceiling the normal plan grazes turns every new endpoint into an hourly
     | "incomplete" alert. An alarm that cries wolf gets silenced, which is the
     | same outcome as not having built this. At 90 the headroom over `--all` is
-    | 14 probes ≈ 7 more tenant-in-path endpoints; raise it in the same commit
-    | that adds the eighth, or the deploy gate starts truncating instead of
-    | certifying.
+    | 11 probes live and 12 while the menu is dark ≈ 5 more tenant-in-path
+    | endpoints; raise it in the same commit that adds the sixth, or the deploy
+    | gate starts truncating instead of certifying.
     |
     */
 
@@ -196,7 +207,9 @@ return [
     |
     | The lists below only narrow that: they say which discovered endpoints are
     | NOT tenant-scoped (so a tenant-less 200 from them is correct, not a leak)
-    | and which to leave alone entirely.
+    | and which to leave alone entirely. Every list below is static except
+    | `dark_launches`, which narrows only while a switch it names is set, and
+    | says so on every run.
     |
     */
 
@@ -248,6 +261,11 @@ return [
     |     `--all` run reaches 31 of 31 endpoints with `blind_spots` empty. So
     |     absence is NOT normal on `/api/mobile`; the expected number of
     |     unreachable endpoints there is zero, exactly as on `/api/v1`.
+    |
+    |     (Since S1 one endpoint does 404 for an organisation that exists, on
+    |     purpose: the app menu while its kill row is set. It is declared in
+    |     `dark_launches`, not excused by a threshold, and the expected number
+    |     stays zero.)
     |
     |     The practical effect of the error was benign — fewer spurious ambers
     |     than the doc predicted — but the sentence is load-bearing in the wrong
@@ -439,13 +457,69 @@ return [
     |   in the route table says so.
     |
     | Anything added here stops being watched, so each entry carries the reason
-    | it earned its place. If an endpoint is excluded because it writes, the
-    | right long-term fix is for it to stop writing on a GET — not to grow this
-    | list.
+    | it earned its place, in a comment (this list prints one fixed sentence for
+    | all of them; `dark_launches` carries its reason as data because it is
+    | printed). If an endpoint is excluded because it writes, the right
+    | long-term fix is for it to stop writing on a GET — not to grow this list.
     */
 
     'skip' => [
         'api/mobile/masjids/{masjid_id}/prayers',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dark ON PURPOSE — out of the plan only while a switch says so
+    |--------------------------------------------------------------------------
+    |
+    | `uri => [switch, answers, reason, clears_with]`. `switch` is a class
+    | implementing App\Support\Canary\DarkLaunchSwitch. A class-string, not a
+    | closure or a method pair: config is cached in production, and a canary
+    | must never call a method config merely names (the deleteAllMedia
+    | incident, TenancyCanary::attributableRelationsNotConfigured).
+    |
+    | Each run reads every switch ONCE, before planning. While a switch returns
+    | evidence, its endpoint:
+    |  - is left out of the plan and named in `coverage.routes_not_planned` with
+    |    this reason;
+    |  - is named in `coverage.dark_launches` and in the report as "dark on
+    |    purpose";
+    |  - gets ONE confirming probe. Any answer but `answers` is
+    |    `dark_launch_contradicted` (exit 3), a 5xx is also a finding, and the
+    |    endpoint is then probed IN FULL in the same run — a switch that says
+    |    dark over an endpoint that answers can never cap a leak there at exit 3.
+    | The first run after the switch clears plans it again, with no edit here.
+    |
+    | Anything the canary cannot trust means PROBED AS LIVE: a missing field, a
+    | class that does not implement the interface (it is not called), a uri
+    | under `core_prefixes` (absence is never normal there), a switch that
+    | throws, or a uri with no route. If the endpoint really is dark, the run
+    | names it NOT REACHED.
+    |
+    | Rule for adding an entry: only for a switch under which the endpoint gives
+    | EVERY organisation the same refusal and no data. Read the controller. A
+    | flag that hides UI while the endpoint still serves rows does not qualify,
+    | and a permanent exclusion belongs in `skip`.
+    |
+    |  - menu  AppMenuController::show() checks AppMenu::killed() before it
+    |          looks the organisation up (only the `?schema` guard, which the
+    |          canary never sends, comes first) and answers 404 `data: {}` to
+    |          every organisation.
+    |          S1 shipped it dark on purpose until S2b (DECISIONS.md, 61391d8).
+    |          Until this entry existed, every scheduled run whose slice held it
+    |          exited 3 (from 2026-09-16 06:49 UTC), and an `--all` deploy gate
+    |          would have too. It stays declared after S2b: an emergency
+    |          `app-menu:kill` serves nothing to anyone, so there is nothing to
+    |          watch, and every run names who pulled the lever and why.
+    */
+
+    'dark_launches' => [
+        'api/mobile/masjids/{masjid_id}/menu' => [
+            'switch' => \App\Support\Canary\AppMenuKillSwitch::class,
+            'answers' => 404,
+            'reason' => 'the app side menu (Mobile\AppMenuController::show) checks the platform-wide app-menu kill row before it reads anything, and while the row is set answers every organisation the same 404 with an empty `data` object — no organisation\'s rows, so nothing to watch for tenancy. The row is set by `app-menu:kill`: S1 shipped with it set until S2b, and after that only an emergency sets it; the switch evidence says who set it and why.',
+            'clears_with' => 'php artisan app-menu:restore',
+        ],
     ],
 
     /*

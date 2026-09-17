@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Masjid;
+use App\Support\Canary\DarkLaunchSwitch;
 use App\Support\Canary\HttpTransport;
 use App\Support\Canary\KernelTransport;
 use App\Support\Canary\Probe;
@@ -41,14 +42,22 @@ use Illuminate\Support\Str;
  *     route table says so, so it is named in `config/canary.php` with its
  *     reason and pinned by a test. Assume there are others and check before
  *     adding a prefix to `canary.prefixes`.
- *   - makes three kinds of database query of its own, all SELECT, all once per
- *     RUN rather than once per probe: which organisations exist, which of them
- *     hold the most public content (`resolveTenants`), and who owns the record
- *     ids the API just handed back (`resolveOwnership`, one indexed `WHERE id
- *     IN (…)` per attributable table, bounded by OWNERSHIP_MAX_IDS). The third
- *     is what lets the canary say whose rows these are on a surface that
- *     strips `masjid_id` from every response. Nothing else here touches the
- *     database directly, and nothing here writes.
+ *   - makes four kinds of database query of its own, all SELECT, all once per
+ *     RUN rather than once per probe: (1) which organisations exist, (2) which
+ *     of them hold the most public content (`resolveTenants`), (3) who owns the
+ *     record ids the API just handed back (`resolveOwnership`, one indexed
+ *     `WHERE id IN (…)` per attributable table, bounded by OWNERSHIP_MAX_IDS),
+ *     and (4) whether each endpoint declared in `canary.dark_launches` is dark
+ *     right now. That is one darkBecause() call per declaration per run, which
+ *     for the app menu is one `SELECT id, menu_disabled, reason, updated_by,
+ *     updated_at FROM app_menu_settings ORDER BY id LIMIT 1`
+ *     (AppMenu::killSwitchRow()). It is read straight from the table and
+ *     deliberately NOT through AppMenu::killed(): killed()'s Cache::remember
+ *     writes a cache entry — a row in `cache` on the database store,
+ *     production's default — from whatever process calls it. The third is
+ *     what lets the canary say whose rows these are on a surface that strips
+ *     `masjid_id` from every response. Nothing else here touches the database
+ *     directly, and nothing here writes.
  *   - never sends a credential, so it can only ever see what an anonymous
  *     caller on the internet already sees. A canary that authenticated could
  *     prove more and would itself become a secret worth stealing.
@@ -57,6 +66,9 @@ use Illuminate\Support\Str;
  * `Cache::remember` will warm their cache entry (a read from the client's point
  * of view, harmless and mildly useful), and a probe that finds a 500 causes the
  * application to log that 500. The second is deliberate — see "log noise".
+ * The one confirming probe a dark endpoint gets on every run (plan()) is such a
+ * probe: /menu warms `mobile.app_menu.kill` exactly as a phone's request does.
+ * The canary's own read of that switch does not.
  *
  * ==========================================================================
  * WHAT IT PROBES, AND WHY EACH PROBE EXISTS
@@ -135,8 +147,10 @@ use Illuminate\Support\Str;
  * endpoint pinned to a DORMANT organisation answers everyone with an empty
  * list, and an empty list has no owner).
  *
- * The endpoint list is DISCOVERED from the router every run — see ProbeCatalog
- * for why a hand-written list is the failure mode this command exists to fix.
+ * The endpoint list is DISCOVERED from the router every run, and narrowed, on
+ * each run, by whichever `canary.dark_launches` switch is set at that moment
+ * (plan()) — see ProbeCatalog for why a hand-written list is the failure mode
+ * this command exists to fix.
  *
  * ==========================================================================
  * WHY IT IS SAFE TO RUN AGAINST PRODUCTION CONTINUOUSLY
@@ -175,11 +189,13 @@ use Illuminate\Support\Str;
  *
  * **Log noise.** Probes carry `X-Canary: tenancy` and their own User-Agent so
  * an access log can filter them out. The run itself leaves exactly one log line
- * — info when clean, error with the findings when not — because `schedule:run`
- * discards stdout and a canary nobody can prove ran is a canary that can stop
- * running unnoticed. The one noise source it will not suppress is a real 500:
- * an endpoint that faults on a tenant-less request logs 24 lines a day until
- * somebody fixes it, which is the correct amount of pressure.
+ * — info when clean, warning when partial, error (with the findings) for a leak
+ * or an incomplete run — because `schedule:run` discards stdout and a canary
+ * nobody can prove ran is a canary that can stop running unnoticed. No
+ * dark-launch switch logs, so it is still one line. The one noise source it
+ * will not suppress is a real 500: an endpoint that faults on a tenant-less
+ * request logs 24 lines a day until somebody fixes it, which is the correct
+ * amount of pressure.
  *
  * ==========================================================================
  * THE OUTCOME MODEL — WHAT A GREEN RUN IS ALLOWED TO MEAN
@@ -245,7 +261,8 @@ use Illuminate\Support\Str;
  *               the part it could not see. Quieter — a distinct exit code and a
  *               `warning` log line rather than an `error` one.
  *   clean       every planned endpoint reached, every planned probe sent, at
- *               least one check satisfied.
+ *               least one check satisfied (an endpoint dark on purpose is not
+ *               planned; its one confirming probe must answer as declared).
  *
  * ==========================================================================
  * THE COVERAGE FLOOR, AND WHY IT IS THIS AND NOT 80%
@@ -398,8 +415,9 @@ use Illuminate\Support\Str;
  *
  *   0  clean — every planned endpoint was reached, every planned probe was
  *      sent, at least one check actually observed the application and was
- *      satisfied, and the cross-tenant comparison worked on a majority of the
- *      graded surface
+ *      satisfied, the cross-tenant comparison worked on a majority of the
+ *      graded surface, and every endpoint declared dark answered its
+ *      confirming probe as dark
  *   1  finding — something the schedule should page on
  *   2  incomplete — the run is not evidence about this platform: it reached
  *      nothing, verified nothing, lost the majority of the graded surface, was
@@ -407,8 +425,10 @@ use Illuminate\Support\Str;
  *      check" must alert, or the canary can be silenced by making it fail.
  *   3  partial — the run reached and verified this platform, found nothing, and
  *      could not see part of what it planned to: an endpoint it never reached,
- *      one it reached and could not compare two organisations on, or a run in
- *      which not one graded endpoint carried a row it could trace to an owner.
+ *      one it reached and could not compare two organisations on, a run in
+ *      which not one graded endpoint carried a row it could trace to an owner,
+ *      or an endpoint declared dark (`canary.dark_launches`) whose confirming
+ *      probe answered as if it were live (`dark_launch_contradicted`).
  *      `degraded_by` in the payload and in the log summary names which, because
  *      all of them are exit 3 and `warning` by contract and an alert rule should
  *      not have to re-derive the difference from the coverage arithmetic — a
@@ -439,11 +459,15 @@ use Illuminate\Support\Str;
  * public GET routes `ProbeCatalog` REFUSED, which appear in none of the fields
  * above because they were never in the plan. `endpoints_reached: 31/31` is a
  * ratio over the plan, and the plan is not the route table. It changes no
- * verdict — it is identical on every run until somebody adds a public GET — but
- * `clean` may never again sit beside `blind_spots: []` while six public reads,
- * one of them the offering surface with its seats and its PRICES, go
- * unlooked-at. plan() carries the argument for naming them and still not
- * probing them.
+ * verdict — it is identical on every run until somebody adds a public GET or a
+ * `canary.dark_launches` switch flips — but `clean` may never again sit beside
+ * `blind_spots: []` while six public reads, one of them the offering surface
+ * with its seats and its PRICES, go unlooked-at. plan() carries the argument
+ * for naming them and still not probing them.
+ *
+ * A dark endpoint is listed here, with a reason saying it comes back, for
+ * exactly as long as its switch holds; `coverage.dark_launches` carries its
+ * state and the probe that confirmed it.
  */
 class TenancyCanary extends Command
 {
@@ -551,14 +575,18 @@ class TenancyCanary extends Command
 
     /**
      * Public GET routes `ProbeCatalog` REFUSED to plan, and why — a `{slug}`, an
-     * `{id}`, a limiter this canary may not spend, the `canary.skip` list.
+     * `{id}`, a limiter this canary may not spend, the `canary.skip` list, and,
+     * only while its switch holds, an endpoint dark on purpose.
      *
      * Deliberately NOT part of `blindSpots` and deliberately not a reason to
      * degrade. `blindSpots` means "an endpoint this run was going to look at and
      * could not", every entry of which is an event with a remedy; this is a
-     * standing property of the route table that is identical on every run, and
+     * standing property of the route table that is identical on every run
+     * (except the dark entries, which follow an operator's switch), and
      * charging it to the verdict would put a permanent amber on a correct
-     * platform — the cry-wolf failure, reached from a third direction.
+     * platform — the cry-wolf failure, reached from a third direction. A dark
+     * endpoint that stops answering as dark IS charged to the run; see
+     * confirmDarkLaunches().
      *
      * What it must do is be VISIBLE. Measured on 2026-08-13: a total swap with
      * no masjid filter on an `{id}` route left `--all` at `exit=0 clean
@@ -589,12 +617,61 @@ class TenancyCanary extends Command
      * READS shaped as writes (`offerings/{slug}/quote`, `zakat/calculate`).
      *
      * Like `routesNotPlanned` it degrades nothing — it is byte-identical on
-     * every run until somebody adds a route. It exists so that `clean` cannot be
-     * read as a claim about the application when it is a claim about 31 routes.
+     * every run until somebody adds a route or flips a dark-launch switch —
+     * `planned`, `never_probed`, `public_get_refused` and `public_get_dark` each
+     * move by one when the app menu's kill row is set or cleared. It exists so
+     * that `clean` cannot be read as a claim about the application when it is a
+     * claim about 31 routes.
      *
      * @var array<string,mixed>
      */
     private array $routeTable = [];
+
+    /**
+     * Every `canary.dark_launches` declaration this run read, and what became of
+     * it. Keyed by uri and narrowed by `--only`, like $routesNotPlanned. Emitted
+     * as `coverage.dark_launches`, so the scheduled log line carries it at every
+     * level. `notes` are not in that line.
+     *
+     * state:
+     *   dark                 the switch is set; out of the plan; `detail` says
+     *                        what the confirming probe got
+     *   contradicted         the switch is set and the confirming probe answered
+     *                        something other than `answers`. This is the ONLY
+     *                        state that changes the verdict: degraded_by
+     *                        `dark_launch_contradicted`, plus a `server_fault`
+     *                        finding on a 5xx — and the endpoint is then probed
+     *                        IN FULL in the same run, so its own checks (and any
+     *                        leak on it) count as they would for any endpoint
+     *   live                 the switch is clear; planned like any other endpoint
+     *   unreadable           the switch threw; treated as live and probed
+     *   misdeclared          the entry failed vetting; the switch was NOT called;
+     *                        treated as live and probed
+     *   refused              the catalogue refuses the route for a standing
+     *                        reason; the declaration changes nothing
+     *   no_public_get_route  stale or mistyped uri
+     *
+     * @var array<string,array{state:string,switch:string,answers:int|null,reason:string,clears_with:string,evidence:string|null,detail:string}>
+     */
+    private array $darkLaunches = [];
+
+    /**
+     * One confirming probe per withheld endpoint. Sent AFTER the plan, so a
+     * truncated run loses these first.
+     *
+     * @var array<string,array{global:bool,probes:array<int,Probe>}>
+     */
+    private array $darkPlan = [];
+
+    /**
+     * The FULL probe set each withheld endpoint would have had, built at plan
+     * time and sent only if its confirming probe contradicts the switch. A dark
+     * endpoint caught answering must not spend the run unwatched: it is probed
+     * and checked for tenancy like any other, in the same run. See handle().
+     *
+     * @var array<string,array{global:bool,probes:array<int,Probe>}>
+     */
+    private array $darkFull = [];
 
     /** Endpoints that were probed and never answered 2xx to a valid tenant. */
     /** @var array<string,string> */
@@ -755,6 +832,9 @@ class TenancyCanary extends Command
         $this->notProbed = [];
         $this->routesNotPlanned = [];
         $this->routeTable = [];
+        $this->darkLaunches = [];
+        $this->darkPlan = [];
+        $this->darkFull = [];
         $this->unreached = [];
         $this->blindSpots = [];
         $this->blindDetectors = [];
@@ -807,12 +887,47 @@ class TenancyCanary extends Command
 
         if ($plan === []) {
             $this->blocked = true;
-            $this->errors[] = 'The router exposed no probeable public GET endpoint — discovery is broken, not the API.';
+            $this->errors[] = $this->darkPlan === []
+                ? 'The router exposed no probeable public GET endpoint — discovery is broken, not the API.'
+                : 'Every endpoint this run was narrowed to is dark on purpose ('.implode(', ', array_keys($this->darkPlan)).
+                  ') — see coverage.dark_launches. Nothing here was checked for tenancy, so this run is not evidence; '.
+                  'add api/v1 to --only for a verdict.';
 
             return $this->report($startedAt, $started, $baseUrl, $transport->name(), $tenants, 0, 0);
         }
 
-        [$results, $sent, $planned] = $this->runProbes($plan, $transport, $config, $started);
+        // Plan first, confirming probes last. The keys are disjoint: the
+        // catalogue withheld these uris.
+        [$results, $sent, $planned] = $this->runProbes($plan + $this->darkPlan, $transport, $config, $started);
+
+        $contradicted = $this->confirmDarkLaunches(array_intersect_key($results, $this->darkPlan));
+
+        // A confirming probe is not a tenancy observation. resolveOwnership()
+        // and every check must never read one.
+        $results = array_diff_key($results, $this->darkPlan);
+
+        // A dark endpoint caught ANSWERING is not left unwatched for the rest of
+        // the run: its full probe set goes out now, against the same request
+        // budget and pacing, and it is evaluated exactly like a planned
+        // endpoint. Without this the switch saying "dark" would cap the worst
+        // verdict for a serving endpoint at `partial`; with it, a cross-tenant
+        // read there still pages. Not attempted after the run was refused
+        // service — pushing on after a 429 is the one thing this command must
+        // never do.
+        $reprobe = array_intersect_key($this->darkFull, array_flip($contradicted));
+
+        if ($reprobe !== [] && ! $this->blocked) {
+            foreach (array_keys($reprobe) as $uri) {
+                unset($this->routesNotPlanned[$uri]);
+            }
+
+            $plan += $reprobe;
+
+            [$more, $sent, $morePlanned] = $this->runProbes($reprobe, $transport, $config, $started, $sent);
+
+            $results += $more;
+            $planned += $morePlanned;
+        }
 
         $this->evaluate($plan, $results, $config, count($tenants));
         $this->assessCoverage($plan, $config);
@@ -823,8 +938,8 @@ class TenancyCanary extends Command
     // ---------------------------------------------------------------- tenants
 
     /**
-     * The organisations to compare — the only part of the run that reads the
-     * database directly.
+     * The organisations to compare — one of the four places this command reads
+     * the database directly (see the class docblock).
      *
      * A console run binds no tenant, and `Masjid` is the tenant rather than a
      * tenant-scoped model, so no global scope applies. Soft-deleted rows are
@@ -1044,15 +1159,76 @@ class TenancyCanary extends Command
      * offering surface reachable first, or the expensive half of the work
      * watches the endpoints that were already watched.
      *
+     * ==========================================================================
+     * AN ENDPOINT THAT IS OUT OF THE PLAN ONLY FOR NOW — canary.dark_launches
+     * ==========================================================================
+     *
+     * MEASURED ON PRODUCTION. From 2026-09-16 06:49 UTC, every scheduled run
+     * whose rotating slice held `/api/mobile/masjids/{masjid_id}/menu` exited 3
+     * `partial`, and schedule:run logged each one at ERROR. That is slice 2 of 4
+     * (02:47, 06:47, 10:47, 14:47, 18:47, 22:47). Each such run:
+     *
+     *     52/52 probes  15/16 endpoints reached  0 findings
+     *     endpoints_not_reached: menu — NOT REACHED — valid-tenant probe(s) answered 404
+     *
+     * S1 shipped the menu dark on purpose (DECISIONS.md, commit 61391d8). While
+     * the kill row is set, AppMenuController::show() answers every organisation
+     * the same 404 with `data: {}` before it reads anything.
+     *
+     * WHY A SKIP AND NOT A 2xx. No request input gets past the kill switch. A
+     * canary bypass header would serve the dark menu to anyone who sent it.
+     *
+     * WHY NOT `canary.skip`. A static skip would stop watching a public,
+     * tenant-scoped endpoint on launch day, silently — the erosion exit 3 exists
+     * to prevent. So the declaration names a DarkLaunchSwitch. The switch is
+     * read once, here, before the catalogue (readDarkLaunches()), and the answer
+     * is passed in. The catalogue applies it inside its single pass, so the
+     * planned and refused lists and the census stay complements. Filtering after
+     * the catalogue would leave the census counting the menu as planned.
+     *
+     * FAILURE DIRECTION. A malformed entry, an entry on core_prefixes, a switch
+     * that throws, or a stale uri are all treated as LIVE: probed, and named NOT
+     * REACHED if really dark. A doubt never becomes a skip.
+     *
+     * THE CONFIRMING PROBE. A withheld endpoint gets ONE confirming probe as
+     * tenants[0], after the plan. Any answer other than the declared status is
+     * `dark_launch_contradicted` (exit 3), or a server_fault finding on a 5xx
+     * (confirmDarkLaunches()). The confirming probe adds no check row. A
+     * contradicted endpoint is then probed IN FULL in the same run (handle()),
+     * against the same budget and pacing, and evaluated like any planned
+     * endpoint — so "the switch says dark but the endpoint is serving" can
+     * neither hide nor cap a cross-tenant read there at `partial`.
+     *
+     * TIMING. The switch is read at plan time and the confirming probe goes out
+     * at the end of the run, up to ~2.5 min later. A kill inside that window
+     * makes one run partial (planned, then 404). A restore inside it makes one
+     * run contradicted. Both clear on the next run.
+     *
+     * ORIGIN. The switch is read from THIS application's database, the same
+     * assumption as resolveTenants() and resolveOwnership(). With
+     * CANARY_BASE_URL pointing at another deployment, the confirming probe still
+     * catches the dangerous half.
+     *
      * @param  array<string,mixed>  $config
      * @param  array<int,int>  $tenants
      * @return array<string,array{global:bool,probes:array<int,Probe>}>
      */
     private function plan(array $config, array $tenants): array
     {
-        $catalog = new ProbeCatalog($this->laravel->make('router'), $config);
+        $this->darkLaunches = $this->readDarkLaunches($config);
+
+        $dark = [];
+
+        foreach ($this->darkLaunches as $uri => $launch) {
+            if ($launch['state'] === 'dark') {
+                $dark[$uri] = $this->darkReason($launch);
+            }
+        }
+
+        $catalog = new ProbeCatalog($this->laravel->make('router'), $config, $dark);
         $endpoints = $catalog->endpoints();
         $declined = $catalog->declined();
+        $withheld = $catalog->withheld();
 
         // Taken before `--only` narrows anything, and deliberately NOT narrowed
         // by it. `--only` says which endpoints this run is about; it does not
@@ -1060,6 +1236,10 @@ class TenancyCanary extends Command
         // operator narrowed the run would be a coverage claim that improves by
         // looking at less.
         $this->routeTable = $catalog->census();
+
+        // Where each declaration landed, read BEFORE `--only` narrows anything.
+        $cataloguePlanned = array_column($endpoints, 'uri');
+        $catalogueWithheld = array_column($withheld, 'uri');
 
         $only = array_filter(array_map('trim', explode(',', (string) ($this->option('only') ?? ''))));
 
@@ -1089,6 +1269,13 @@ class TenancyCanary extends Command
                 static fn (string $uri) => $matches($uri),
                 ARRAY_FILTER_USE_KEY
             );
+
+            $withheld = array_values(array_filter($withheld, static fn (array $e) => $matches($e['uri'])));
+            $this->darkLaunches = array_filter(
+                $this->darkLaunches,
+                static fn (string $uri) => $matches($uri),
+                ARRAY_FILTER_USE_KEY
+            );
         }
 
         $this->routesNotPlanned = $declined;
@@ -1111,6 +1298,32 @@ class TenancyCanary extends Command
             }
         }
 
+        foreach ($withheld as $endpoint) {
+            $full = $endpoint['global']
+                ? $this->globalProbes($endpoint, $tenants, $perPage)
+                : $this->tenantProbes($endpoint, $tenants, $perPage);
+
+            if ($full === []) {
+                continue;   // nothing to send; settleDarkLaunches() reports it NOT CONFIRMED
+            }
+
+            // Kept whole in case the confirming probe contradicts the switch.
+            $this->darkFull[$endpoint['uri']] = ['global' => $endpoint['global'], 'probes' => $full];
+
+            $seed = $full[0];   // tenants[0], valid-tenant
+
+            $this->darkPlan[$endpoint['uri']] = ['global' => $endpoint['global'], 'probes' => [new Probe(
+                endpoint: $seed->endpoint,
+                path: $seed->path,
+                query: $seed->query,
+                headers: $seed->headers,
+                variant: Probe::VARIANT_DARK_CONFIRM,
+                tenantId: $seed->tenantId,
+            )]];
+        }
+
+        $this->settleDarkLaunches($plan, $cataloguePlanned, $catalogueWithheld, $catalog->declined());
+
         return $plan;
     }
 
@@ -1122,6 +1335,15 @@ class TenancyCanary extends Command
      * ceil(n/slice) hours; against a hole that lived for months, a few hours of
      * detection latency costs nothing, and the alternative — every mobile
      * endpoint every run — is the thing that eats `throttle:mobile`.
+     *
+     * n is the endpoints planned on THIS run. A dark endpoint is in no window
+     * while its switch holds; it gets a confirming probe on every run instead.
+     * Setting or clearing the app-menu kill row therefore moves later mobile
+     * endpoints by one place. On this route table that is 26 planned mobile
+     * endpoints live and 25 dark, 4 windows either way, with tv-config moving
+     * between windows 2 and 3. Crossing a multiple of the slice also changes the
+     * window count. Every planned endpoint is still covered every
+     * ceil(n/slice) hours.
      *
      * @param  array<int,array{uri:string,global:bool,params:array<int,string>}>  $mobile
      * @param  array<string,mixed>  $config
@@ -1136,11 +1358,265 @@ class TenancyCanary extends Command
         }
 
         $windows = (int) ceil(count($mobile) / $slice);
-        $window = ((int) floor(time() / 3600)) % $windows;
+        // The framework clock rather than time(): identical in production, and
+        // a test can travel to the hour that reproduces a scheduled run.
+        $window = ((int) floor(Carbon::now()->getTimestamp() / 3600)) % $windows;
 
         $this->notes[] = "/api/mobile probed as rotating slice {$window} of {$windows} (--all for the full surface).";
 
         return array_slice($mobile, $window * $slice, $slice);
+    }
+
+    /**
+     * canary.dark_launches, read ONCE per run, before the catalogue. At most one
+     * darkBecause() call per declaration, and only after darkLaunchProblem() has
+     * passed it. For the app menu that is one
+     * `SELECT … FROM app_menu_settings ORDER BY id LIMIT 1`. Every failure means
+     * LIVE, so the endpoint is probed.
+     *
+     * @param  array<string,mixed>  $config
+     * @return array<string,array{state:string,switch:string,answers:int|null,reason:string,clears_with:string,evidence:string|null,detail:string}>
+     */
+    private function readDarkLaunches(array $config): array
+    {
+        $core = (array) ($config['core_prefixes'] ?? []);
+        $read = [];
+
+        foreach ((array) ($config['dark_launches'] ?? []) as $uri => $entry) {
+            $uri = (string) $uri;
+            $fields = is_array($entry) ? $entry : [];
+            $switch = $fields['switch'] ?? null;
+
+            $launch = [
+                'state' => 'live',
+                'switch' => is_string($switch) ? $switch : get_debug_type($switch),
+                'answers' => is_int($fields['answers'] ?? null) ? $fields['answers'] : null,
+                'reason' => is_string($fields['reason'] ?? null) ? trim($fields['reason']) : '',
+                'clears_with' => is_string($fields['clears_with'] ?? null) ? trim($fields['clears_with']) : '',
+                'evidence' => null,
+                'detail' => '',
+            ];
+
+            $problem = $this->darkLaunchProblem($uri, $entry, $core);
+
+            if ($problem !== null) {
+                $launch['state'] = 'misdeclared';
+                $launch['detail'] = $problem;
+                $read[$uri] = $launch;
+
+                continue;
+            }
+
+            try {
+                /** @var class-string<DarkLaunchSwitch> $switch */
+                $evidence = $switch::darkBecause();
+            } catch (\Throwable $e) {
+                // The class only, as AppMenu::killed() logs it: a QueryException
+                // message carries SQL, and this lands in a log line.
+                $launch['state'] = 'unreadable';
+                $launch['detail'] = 'the switch threw '.$e::class;
+                $read[$uri] = $launch;
+
+                continue;
+            }
+
+            $evidence = is_string($evidence) ? trim($evidence) : '';
+
+            if ($evidence !== '') {
+                $launch['state'] = 'dark';
+                $launch['evidence'] = mb_substr($evidence, 0, 300);
+            }
+
+            $read[$uri] = $launch;
+        }
+
+        ksort($read);
+
+        return $read;
+    }
+
+    /**
+     * Why this declaration may not be used, or null. Every check runs BEFORE
+     * anything is called.
+     *
+     * `class_exists()` is false for an interface, so DarkLaunchSwitch itself is
+     * rejected as naming no class.
+     *
+     * @param  array<int,string>  $core
+     */
+    private function darkLaunchProblem(string $uri, mixed $entry, array $core): ?string
+    {
+        if ($uri === '' || ! is_array($entry)) {
+            return 'not a `uri => [switch, answers, reason, clears_with]` entry';
+        }
+
+        if ($this->hasPrefix($uri, $core)) {
+            return 'on the graded surface (canary.core_prefixes), where absence is never normal — nothing there may be declared dark';
+        }
+
+        if (! is_string($entry['reason'] ?? null) || trim($entry['reason']) === '') {
+            return 'carries no `reason`';
+        }
+
+        if (! is_string($entry['clears_with'] ?? null) || trim($entry['clears_with']) === '') {
+            return 'carries no `clears_with` — nobody reading the run could tell how it comes back';
+        }
+
+        $answers = $entry['answers'] ?? null;
+
+        if (! is_int($answers) || $answers < 400 || $answers > 499 || $answers === 429) {
+            return '`answers` must be the 4xx the endpoint gives while dark, and not 429';
+        }
+
+        $switch = $entry['switch'] ?? null;
+
+        if (! is_string($switch) || $switch === '' || ! class_exists($switch)) {
+            return '`switch` names no class';
+        }
+
+        if (! is_a($switch, DarkLaunchSwitch::class, true)) {
+            return '`switch` does not implement '.DarkLaunchSwitch::class.', and this command calls nothing else';
+        }
+
+        return null;
+    }
+
+    /** @param array{switch:string,reason:string,clears_with:string,evidence:string|null} $launch */
+    private function darkReason(array $launch): string
+    {
+        return 'dark on purpose, declared in canary.dark_launches — '.$launch['reason'].
+            ' Right now: '.$launch['evidence'].'. Out of the plan only while '.class_basename($launch['switch']).
+            ' says so; the first run after `'.$launch['clears_with'].'` plans it again, with no edit. '.
+            'Each run sends it one confirming probe instead — coverage.dark_launches says what it answered.';
+    }
+
+    /**
+     * Where each declaration landed on this run, in words, and a note for the
+     * three states that mean the declaration is doing nothing.
+     *
+     * @param  array<string,array{global:bool,probes:array<int,Probe>}>  $plan
+     * @param  array<int,string>  $cataloguePlanned
+     * @param  array<int,string>  $catalogueWithheld
+     * @param  array<string,string>  $catalogueDeclined
+     */
+    private function settleDarkLaunches(array $plan, array $cataloguePlanned, array $catalogueWithheld, array $catalogueDeclined): void
+    {
+        foreach ($this->darkLaunches as $uri => $launch) {
+            $uri = (string) $uri;
+
+            if (in_array($uri, $catalogueWithheld, true)) {
+                $this->darkLaunches[$uri]['detail'] = 'NOT CONFIRMED — no confirming probe was sent on this run';
+
+                continue;
+            }
+
+            $where = match (true) {
+                isset($plan[$uri]) => 'probed in full on this run',
+                in_array($uri, $cataloguePlanned, true) => 'planned, and probed in full on the run whose /api/mobile slice holds it',
+                array_key_exists($uri, $catalogueDeclined) => 'refused by the catalogue for a standing reason anyway (coverage.routes_not_planned)',
+                default => 'but no public GET route under canary.prefixes has this uri',
+            };
+
+            $state = $launch['state'];
+
+            if (in_array($state, ['dark', 'live'], true) && ! in_array($uri, $cataloguePlanned, true)) {
+                $state = array_key_exists($uri, $catalogueDeclined) ? 'refused' : 'no_public_get_route';
+            }
+
+            $ifDark = isset($plan[$uri])
+                ? ' If it really is dark, this run names it NOT REACHED.'
+                : ' If it really is dark, the run that probes it names it NOT REACHED.';
+
+            $detail = match ($state) {
+                'live' => 'switch clear — '.$where,
+                'refused' => 'the catalogue refuses this route for a standing reason (coverage.routes_not_planned), so the declaration changes nothing',
+                'no_public_get_route' => 'no public GET route under canary.prefixes has this uri — a stale or mistyped declaration, applied to nothing',
+                'unreadable' => $launch['detail'].' — treated as LIVE, '.$where.'.'.$ifDark,
+                'misdeclared' => $launch['detail'].' — the switch was not called; treated as LIVE, '.$where.'.'.$ifDark,
+                default => $launch['detail'],
+            };
+
+            $this->darkLaunches[$uri]['state'] = $state;
+            $this->darkLaunches[$uri]['detail'] = $detail;
+
+            if (in_array($state, ['unreadable', 'misdeclared', 'no_public_get_route'], true)) {
+                $this->notes[] = "canary.dark_launches[{$uri}]: {$state} — {$detail}";
+            }
+        }
+    }
+
+    /**
+     * Did each withheld endpoint still answer as dark?
+     *
+     * Adds NO check row: a `pass` would count toward the "nothing was verified"
+     * rule and could keep a run out of `incomplete`. A contradiction is charged
+     * to the run (degraded_by `dark_launch_contradicted`) and, on a 5xx, raised
+     * as the same `server_fault` checkServerFaults() would have raised. It is not
+     * added to blind_spots, which names PLANNED endpoints.
+     *
+     * A 429 and a transport error on the confirming probe are already charged to
+     * the run by runProbes(), so they add nothing here.
+     *
+     * Returns the contradicted uris. handle() probes each of them IN FULL in the
+     * same run, so a switch that says dark over an endpoint that is answering
+     * cannot turn a cross-tenant read there into a mere `partial`.
+     *
+     * @param  array<string,array<int,ProbeResult>>  $darkResults
+     * @return array<int,string>
+     */
+    private function confirmDarkLaunches(array $darkResults): array
+    {
+        $contradicted = [];
+
+        foreach (array_keys($this->darkPlan) as $uri) {
+            $result = $darkResults[$uri][0] ?? null;
+            $declared = $this->darkLaunches[$uri]['answers'];
+
+            if ($result === null) {
+                $this->darkLaunches[$uri]['detail'] = 'NOT CONFIRMED — the run ended before its confirming probe was sent (the run says why)';
+
+                continue;
+            }
+
+            if ($result->isThrottled() || ! $result->isAnswered()) {
+                $this->darkLaunches[$uri]['detail'] = 'NOT CONFIRMED — the confirming probe got '.
+                    ($result->isThrottled() ? '429, and the run stopped there' : 'no response ('.$result->transportError.')');
+
+                continue;
+            }
+
+            $asked = 'GET /'.ltrim($result->probe->path, '/');
+
+            if ($result->status === $declared) {
+                $this->darkLaunches[$uri]['detail'] = "confirmed — {$asked} was answered {$result->status}, the declared dark answer. ".
+                    'Not checked for tenancy while dark: it serves no organisation anything.';
+
+                continue;
+            }
+
+            $this->darkLaunches[$uri]['state'] = 'contradicted';
+            $this->darkLaunches[$uri]['detail'] = "CONTRADICTED — {$asked} was answered {$result->status}, not the declared {$declared}, ".
+                'while the switch said dark, so it was probed in full on this run instead (its checks are in this report). '.
+                'If the switch was flipped while this run was going, the next run agrees with itself and this clears. '.
+                'If not, the endpoint no longer answers the way its declaration says: correct the declaration, or the '.
+                'switch, before trusting it to withhold anything.';
+
+            $contradicted[] = $uri;
+
+            if ($result->isServerError()) {
+                $this->addFinding(
+                    kind: 'server_fault',
+                    severity: self::SEVERITY_HIGH,
+                    probe: $result->probe,
+                    summary: "{$uri} answers {$result->status} for a valid tenant while declared dark.",
+                    evidence: ['status' => $result->status, 'variant' => $result->probe->variant],
+                );
+            }
+
+            $this->degrade('dark_launch_contradicted');
+        }
+
+        return $contradicted;
     }
 
     /**
@@ -1246,11 +1722,16 @@ class TenancyCanary extends Command
     // -------------------------------------------------------------- execution
 
     /**
+     * `$sentSoFar` continues an earlier call in the same run (the full probe
+     * set of a contradicted dark launch): the request budget and the pacing are
+     * the RUN's, never reset by a second call. The returned count is the run's
+     * total; the planned count is this call's.
+     *
      * @param  array<string,array{global:bool,probes:array<int,Probe>}>  $plan
      * @param  array<string,mixed>  $config
      * @return array{0: array<string,array<int,ProbeResult>>, 1: int, 2: int}
      */
-    private function runProbes(array $plan, ProbeTransport $transport, array $config, float $started): array
+    private function runProbes(array $plan, ProbeTransport $transport, array $config, float $started, int $sentSoFar = 0): array
     {
         $maxRequests = (int) ($this->option('max-requests') ?: ($config['budget']['max_requests'] ?? 60));
         $maxSeconds = (int) ($config['budget']['max_seconds'] ?? 300);
@@ -1262,8 +1743,8 @@ class TenancyCanary extends Command
 
         $planned = array_sum(array_map(static fn ($e) => count($e['probes']), $plan));
         $results = [];
-        $sent = 0;
-        $first = true;
+        $sent = $sentSoFar;
+        $first = $sentSoFar === 0;
 
         foreach ($plan as $uri => $entry) {
             $results[$uri] = [];
@@ -1278,7 +1759,10 @@ class TenancyCanary extends Command
                 // truncation itself is still reported, always.
                 if ($sent >= $maxRequests) {
                     $this->degrade('truncated_request_budget');
-                    $this->errors[] = "Request budget exhausted after {$sent} probes ({$planned} planned) — run truncated.";
+                    $this->errors[] = $sentSoFar === 0
+                        ? "Request budget exhausted after {$sent} probes ({$planned} planned) — run truncated."
+                        : "Request budget exhausted after {$sent} probes, while probing a contradicted dark launch in full ".
+                          "({$planned} probes planned for it) — run truncated.";
 
                     return [$results, $sent, $planned];
                 }
@@ -3185,6 +3669,13 @@ class TenancyCanary extends Command
         // tenancy — and would only speak for "most of /api/mobile is gone",
         // which every other monitor sees too. Exit 3 is a ticket, not a page;
         // that is the proportionate price for an endpoint that went dark.
+        //
+        // One endpoint does 404 for an organisation that exists, on purpose:
+        // the app menu while `app-menu:kill` is set (S1 shipped it dark until
+        // S2b). It never reaches this line, because `canary.dark_launches`
+        // takes it out of the plan and confirmDarkLaunches() confirms it
+        // separately. Answer the next one the same way, never with a threshold
+        // here.
         if ($this->unreached !== []) {
             $this->degrade('unreached_endpoints');
         }
@@ -3885,6 +4376,10 @@ class TenancyCanary extends Command
                 array_keys($this->routesNotPlanned),
                 fn (string $uri) => $this->hasPrefix($uri, (array) config('canary.core_prefixes', []))
             )),
+            // Declared dark launches and what happened to each on this run.
+            // Carried whole into the log line. Only `contradicted` changes the
+            // verdict.
+            'dark_launches' => $this->darkLaunches,
             // ...and the boundary OUTSIDE that boundary. `routes_not_planned` is
             // eight URIs and reads like the edge of the map; it is eight of 333
             // routes no run will ever probe, because `ProbeCatalog::scan()`
@@ -4146,7 +4641,8 @@ class TenancyCanary extends Command
 
             $this->line('route table: '.$table['planned'].'/'.$table['routes_total'].
                 ' route(s) probed — <fg=yellow>'.$table['never_probed'].' watched by nothing</>: '.
-                $table['public_get_refused'].' public GET refused, '.
+                $table['public_get_refused'].' public GET refused'.
+                (($table['public_get_dark'] ?? 0) > 0 ? ' ('.$table['public_get_dark'].' of them dark on purpose, for now)' : '').', '.
                 count($table['write_verb_routes']).' behind a write verb, '.
                 array_sum($table['outside_probed_prefixes']).' outside '.
                 implode('/', $table['probed_prefixes']));
@@ -4179,8 +4675,34 @@ class TenancyCanary extends Command
         // clean run for the same reason as the two lists below it, and it is the
         // one an operator has never been shown before: `endpoints reached: 31/31`
         // is a ratio over the plan, and the plan is not the route table.
+        $darkLaunches = (array) ($coverage['dark_launches'] ?? []);
+        $withheldNow = array_filter($darkLaunches, static fn (array $d) => in_array($d['state'], ['dark', 'contradicted'], true));
+
         foreach (($coverage['routes_not_planned'] ?? []) as $uri => $reason) {
+            if (isset($withheldNow[$uri])) {
+                continue;   // printed below with a label that does not say "never"
+            }
+
             $this->line("  <fg=yellow>never planned:</> {$uri} — {$reason}");
+        }
+
+        // Out of the plan for NOW, which is a different sentence from "never".
+        // Printed at every verdict level, with who set the switch and how it
+        // comes back, because a skip nobody can see the end of is how a watch
+        // quietly stops.
+        foreach ($darkLaunches as $uri => $d) {
+            if ($d['state'] === 'dark') {
+                $this->line("  <fg=yellow>dark on purpose:</> {$uri} — {$d['detail']} Declared because: {$d['reason']} ".
+                    "Switch says: {$d['evidence']}. Comes back with `{$d['clears_with']}`.");
+            } elseif ($d['state'] === 'contradicted') {
+                $this->line("  <fg=red>dark launch contradicted:</> {$uri} — {$d['detail']}");
+            } elseif ($d['state'] === 'live') {
+                // The healthy state once the switch clears. Printed, so the
+                // declaration stays visible, but not in the warning colour.
+                $this->line("  dark-launch declaration: {$uri} — live: {$d['detail']}");
+            } else {
+                $this->line("  <fg=yellow>dark-launch declaration:</> {$uri} — {$d['state']}: {$d['detail']}");
+            }
         }
 
         // Seen, and not compared — the endpoints that answered and still told
@@ -4261,7 +4783,15 @@ class TenancyCanary extends Command
                         'not have shown up there.');
                 }
 
-                $unplanned = count($payload['coverage']['routes_not_planned'] ?? []);
+                // The dark ones are out of the plan for now, not forever, so
+                // they are taken out of the "never" count and said separately
+                // below — or the sentence "on this run or on any other" lies.
+                $darkNow = count(array_filter(
+                    (array) ($payload['coverage']['dark_launches'] ?? []),
+                    static fn (array $d) => $d['state'] === 'dark'
+                ));
+
+                $unplanned = count($payload['coverage']['routes_not_planned'] ?? []) - $darkNow;
 
                 if ($unplanned > 0) {
                     // The claim's outermost boundary, and the one a reader of
@@ -4272,6 +4802,15 @@ class TenancyCanary extends Command
                         ($payload['coverage']['routes_not_planned_on_graded_surface'] ?? 0).
                         ' of them on the graded surface. They are named above; nothing in this run looked at '.
                         'them, on this run or on any other.');
+                }
+
+                if ($darkNow > 0) {
+                    // On a clean run every dark entry was confirmed: a
+                    // truncation or a transport error degrades the run, and a
+                    // 429 blocks it.
+                    $this->line('  <fg=yellow>'.$darkNow.' endpoint(s) dark on purpose</> — out of the plan while their switch holds, '.
+                        'each confirmed dark by one probe this run, and planned again automatically on the first run after the '.
+                        'switch clears. Named above; not a refusal, and not permanent.');
                 }
 
                 $table = $payload['coverage']['route_table'] ?? [];
@@ -4349,6 +4888,14 @@ class TenancyCanary extends Command
                     $this->line('  <fg=yellow>Not one graded endpoint carried a row this run could trace '.
                         'to an owner</> — the positive assertion is dark, so an endpoint serving each '.
                         'organisation another organisation\'s rows would read as clean.');
+                }
+
+                if (in_array('dark_launch_contradicted', $payload['degraded_by'], true)) {
+                    // The fourth way, and not a coverage sentence at all: the
+                    // switch that justified skipping an endpoint no longer
+                    // controls it.
+                    $this->line('  <fg=yellow>An endpoint declared dark on purpose answered as if it were live</> — its switch no longer '.
+                        'controls it, and it served this run without a tenancy check. Named above.');
                 }
 
                 if ($blind > 0) {

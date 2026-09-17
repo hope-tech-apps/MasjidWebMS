@@ -7,10 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 /**
  * The single row behind the app-menu kill switch.
  *
- * Read through App\Support\AppMenu::killed(), which caches it for 60 s and
- * treats ANY read failure as "not killed" — the endpoint must keep answering
- * when this table does not exist yet, which is every moment between deploying
- * the code and running the migration.
+ * Read by the endpoint through App\Support\AppMenu::killed(), which caches it
+ * for 60 s and treats ANY read failure as "not killed". The endpoint must keep
+ * answering when this table does not exist yet, which is every moment between
+ * deploying the code and running the migration. Read uncached by
+ * tenancy:canary through AppMenu::killSwitchRow()
+ * (App\Support\Canary\AppMenuKillSwitch), which must not write.
  *
  * Written only by `app-menu:kill` and `app-menu:restore`. There is no admin
  * screen for it (plan v3, OQ-21).
