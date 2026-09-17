@@ -17,6 +17,26 @@ per server.
 > builds and rsyncs the SPA and then runs `sudo bin/deploy` on the box. See
 > `.claude/rules/environments.md`.
 
+## Root access — never change permissions on `/root`
+
+Production has one way in: root, with a key. There is no sudo user.
+
+**Never `chmod` or `chown` `/root`, `/root/.ssh`, or anything in them.** sshd refuses a key login when any of those is writable by group or others. On 2026-09-17 a `chmod 777 /root` locked every session out for about half an hour. The DigitalOcean API tooling and the control panel's Web Console were locked out too, because both log in over SSH. To test something as `www-data`, use a directory that `www-data` already owns, such as one made with `mktemp -d` under `/tmp`.
+
+If it happens anyway, only the account owner can fix it:
+
+1. **Check you are on production** before typing anything.
+   - The stale droplet `masjid-backend-service` (480119186) has a console that looks the same, and the first fix on 2026-09-17 ran there.
+   - `hostname -I` on production includes `10.116.0.4`; the stale droplet shows `10.116.0.2`.
+2. **Use the Recovery Console**, which does not go through SSH. It needs a root password, and root has none by default.
+3. **If you reset the root password,** the reset reboots the droplet (about a minute down) and leaves root's password expired.
+   - While it is expired, cron refuses root's jobs. The `schedule:run` line above missed 03:12–03:18 that night.
+   - Change the password at the first console login.
+4. **Afterwards:**
+   - run `passwd -l root` to go back to key-only;
+   - `exit` the console session;
+   - check that `/root` is `700` and `authorized_keys` holds only the expected keys.
+
 ## Queue worker — `masjid-queue.service`
 
 The app uses `QUEUE_CONNECTION=database` and dispatches `SendMasjidNotificationJob`
