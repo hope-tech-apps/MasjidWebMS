@@ -106,8 +106,10 @@ class FamilyPasswordService
      */
     private static ?string $decoy = null;
 
-    public function __construct(private FamilyLoginService $logins)
-    {
+    public function __construct(
+        private FamilyLoginService $logins,
+        private PasswordSetNotice $notice,
+    ) {
     }
 
     /**
@@ -129,6 +131,12 @@ class FamilyPasswordService
      * a shared family device. The caller's own token survives because signing a
      * parent out of the screen they just used to secure their account teaches
      * them that securing it broke something.
+     *
+     * THE ACCOUNT'S ADDRESS IS TOLD (owner, 2026-09-17: "Yes, send it"). One
+     * PasswordSetNoticeMail goes to the contact's `login_email` once the
+     * OUTERMOST transaction commits, which for the app's doors is the one that
+     * burns the code. A rollback sends nothing, and a failure to send never
+     * undoes the password. See PasswordSetNotice.
      */
     public function set(Contact $contact, string $plain, string $currentTokenId = '', ?string $ip = null): void
     {
@@ -145,6 +153,10 @@ class FamilyPasswordService
                 ->delete();
 
             $this->recordForAFamilyLogin($contact, ContactLoginEvent::ACTION_PASSWORD_SET, $ip);
+
+            // Last, so nothing above can fail after it is registered. It is a
+            // callback on this transaction, not a send.
+            $this->notice->afterCommit($contact);
         });
     }
 
@@ -159,6 +171,15 @@ class FamilyPasswordService
      * Its second caller is MemberSignupService, when a code sign-in gives a
      * contact a login address and the contact still carries a password chosen
      * under an address it no longer has.
+     *
+     * SENDS NO EMAIL, deliberately (DECISIONS.md 2026-09-17). Removing a
+     * password takes a way in away and grants nothing; the mailbox stays the
+     * way back. And the second caller runs as an address is ADOPTED: a notice
+     * there would go to the new address and tell its reader that this record
+     * had a password under some other address, which on a household address is
+     * a disclosure about another person. A notice for the portal's own "Remove
+     * it" button, if ever wanted, belongs in FamilyPasswordController::destroy,
+     * never in here.
      */
     public function clear(Contact $contact, ?string $ip = null): void
     {

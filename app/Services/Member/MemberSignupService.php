@@ -443,6 +443,9 @@ class MemberSignupService
             // `set()` with no current token ends EVERY session the contact
             // holds (member, family and hand-off), which is what a reset is
             // for; the token minted below is the only live one afterwards.
+            // Its "Your password was set" email waits for THIS transaction to
+            // commit (PasswordSetNotice), so it goes out only once the code is
+            // spent for good, and never if anything below throws.
             if ($password !== null) {
                 $this->passwords->set($contact, $password, '', $ip);
             }
