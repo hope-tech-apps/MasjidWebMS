@@ -1486,3 +1486,76 @@ email once with a code; "Forgot password?" emails a code.
 - The refusal's words are about codes ("That code is no longer usable"), because the two doors must
   not differ. The apps show their own sentence for a 410 at the password door.
 - The sign-in 429 has no `data` key, as before. The iPhone app cannot decode it.
+
+## 2026-09-17 — "Your password was set": one email to the login address whenever a contact's password is set
+
+**Decision.** Every time a contact's password is written, one short email goes to that contact's
+`login_email`. The owner chose this on 2026-09-17, in the coordinator's interview
+(`/tmp/manara-plans/ship-plan-2026-09-17.md`): the option **"Yes, send it"**, which read "One short
+email to the account's address after any password is set."
+
+1. **Scope: contacts only.** The one password per contact that `FamilyPasswordService::set()`
+   writes, reached from three doors: the app's create-account and forgot-password (`verify-code`
+   with a `password`) and the family portal's own set-password (`PUT .../password`). Staff
+   passwords are out of scope.
+2. **One sender, after the commit.** `set()` registers `PasswordSetNotice::afterCommit()` as the last
+   step of its transaction. `DB::afterCommit()` waits for the OUTERMOST transaction, which on the app
+   doors is the one that burns the code, and Laravel drops the callback when that transaction rolls
+   back. So nothing is sent for a refused `verify-code` (wrong, spent or replayed code, a revoked
+   contact), a 422 (the request rules, a blank name), or a rolled-back write. The address and the
+   time are read inside the transaction.
+3. **Nothing in it opens anything.** No password, code, token or link. It says which organisation,
+   which address, when (in the organisation's timezone, with the zone named, UTC if it has none),
+   and what to do if it was not you. That last sentence names only the ways back that exist for this
+   person: "Forgot password?" in the app only when they have proved the address to the app
+   (`verified_at`), and "sign in to the family portal with an emailed code and choose Change my
+   password" only when the office has a live family login for them. Then "contact {organisation}".
+   Not every organisation has an app or a portal, so naming one they lack would be a made-up claim.
+   The subject is the same for everyone ("Your password was set") and does not name the
+   organisation, like the sign-in code's. It says "set", not "changed": that is true for a first
+   password too, and it does not say whether a password existed before. On an address the app has
+   just linked, an earlier password may have been chosen under someone else's address. From name is
+   the organisation, the address is `MAIL_FROM_ADDRESS`, and replies go to the organisation's email
+   when it is valid, as for the sign-in code. There is a plain-text part as well as the HTML.
+4. **Sent inline, not queued.** It holds no secret, so the reason is not `FamilyLoginCodeMail`'s.
+   The reasons: it is a security notice, and a queued one waits on the `database` worker, so a
+   worker that is down or behind delivers it hours late (`TwoFactorResetMail` is unqueued for the
+   same reason); a failed queued mail stays in `failed_jobs` with the family's address and first
+   name; and the cost is one mail API call (prod uses `MAIL_MAILER=resend`) on a request that has
+   already paid for a bcrypt hash. The price is no retry.
+5. **A failed send never fails the change.** The send is wrapped. On failure the password stays set,
+   the response is the same success, and `Log::warning('password set notice delivery failed')`
+   records the contact id, the organisation id and the exception class. Warning, because production
+   runs `LOG_LEVEL=warning`. No address and no exception message, because a transport error can
+   quote the recipient.
+6. **Removing a password sends nothing.** `FamilyPasswordService::clear()` has two callers. The
+   portal's "Remove it" needs a signed-in session, and removing a password grants nothing: sign-in
+   codes still go only to the mailbox. The other caller is a code sign-in in the app that gives an
+   office contact its login address and drops a password left from another address. An email there
+   would go to the newly adopted address and tell its reader the record had a password under some
+   other address. On a household address that is a disclosure about another person, the R1
+   population from 2026-09-16. The office clearing a password when it moves a login
+   (`FamilyAccessService`) does not go through `clear()`, sends nothing, and is recorded in the
+   access history with the operator's name.
+
+**Alternatives.**
+- **Queue it like most mail.** Rejected for the reasons in item 4.
+- **Send it from the controllers.** Rejected: two senders for one fact, and the app's controller
+  cannot see the transaction commit. `set()` is the only writer, so it is the only sender.
+- **"Your password was changed" when one existed.** Rejected for the reason in item 3.
+- **Also notify on removal.** Rejected for the reasons in item 6. If the owner wants the portal's
+  "Remove it" to send an email, that belongs in `FamilyPasswordController::destroy`, never in
+  `clear()`.
+
+**Known limits.**
+- No retry. If the mail provider is down at that moment, this notice is lost and a warning is
+  logged.
+- A successful `verify-code` with a password now also waits on one mail API call. Only a correct
+  code gets there, so the extra time says nothing to someone without the code. Laravel builds the
+  Resend client as a Guzzle client with no options, so no request timeout is set. The sign-in code
+  mail on `request-code` has the same exposure.
+- English only, like the sign-in code mail, although the portal has an Arabic mode.
+- Nobody can use this to flood an inbox: every app send needs a code from that same inbox, and the
+  portal door needs a signed-in session behind `throttle:family`.
+
+Pinned by `tests/Feature/PasswordSetNoticeTest.php`.

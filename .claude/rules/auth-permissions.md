@@ -144,9 +144,11 @@ never `permission:`.
   `contact_login_codes.code_hash` is `hash_hmac('sha256', $code, APP_KEY)`,
   compared with `hash_equals`. Keyed, NOT a bare sha256: a bare digest of a
   6-digit code is reversible by anyone holding the table, so "hashed at rest"
-  would be decoration. `FamilyLoginCodeMail` is the **one Mailable in this app
-  that is not `ShouldQueue`** — `QUEUE_CONNECTION=database`, so queueing would
-  spool the plaintext into `jobs.payload` and, on failure, into `failed_jobs`.
+  would be decoration. `FamilyLoginCodeMail` is **not `ShouldQueue` and must
+  never be** — `QUEUE_CONNECTION=database`, so queueing would spool the
+  plaintext into `jobs.payload` and, on failure, into `failed_jobs`. (It is not
+  the only unqueued mailable: `TwoFactorResetMail` and `PasswordSetNoticeMail`
+  are security notices sent inline so they do not wait on a worker.)
 - **Neither endpoint may become a directory.** `request-code` answers a fixed
   202 for every well-formed address — live parent, revoked, never-enabled,
   soft-deleted, or nobody — and `FamilyLoginService::issue()` returns `void` so
@@ -354,6 +356,33 @@ exactly as the family realm shares `family-verify`). Still no `/register`.
   sign-in 429 still has no `data` key.
 
 Pinned by `tests/Feature/MemberPasswordSignInTest.php`.
+
+## Setting a contact's password emails the login address (2026-09-17)
+
+Owner, 2026-09-17: **"Yes, send it"** — "One short email to the account's address after any
+password is set." Contacts only (app members and family-portal parents); not staff. See
+DECISIONS.md 2026-09-17.
+
+- **`FamilyPasswordService::set()` is the only sender**, because it is the only writer. Its last
+  step registers `PasswordSetNotice::afterCommit()`, which sends `PasswordSetNoticeMail` to the
+  `login_email` once the OUTERMOST transaction commits. On the app doors that is the transaction
+  that burns the code. A rollback drops the callback. Never send it from a controller, and never
+  call `PasswordSetNotice` outside the transaction that wrote the password: outside a transaction
+  `DB::afterCommit()` sends immediately.
+- **No password, code, token or link in it**, and no model in its payload (scalars only). The
+  "if it was not you" sentence names the app only when `verified_at` is set, and the family portal
+  only when `familyLoginIsActive()`. Do not add org-specific claims to it.
+- **Inline, not `ShouldQueue`**: a security notice must not wait on the worker, and a failed queued
+  mail would keep the address in `failed_jobs`. A failed send is caught and logged at `warning`
+  with ids and the exception class (no address, no exception message). It must never fail the
+  password change or turn its response into an error.
+- **`clear()` sends nothing.** Its second caller adopts an address, and an email there would tell
+  the new address's reader that the record had a password under another address. A notice for the
+  portal's "Remove it" would go in `FamilyPasswordController::destroy`, not in `clear()`.
+- A new door that sets a contact's password must go through `set()`. Then it gets the notice
+  without extra code, and `PasswordSetNoticeTest` shows the pattern for pinning it.
+
+Pinned by `tests/Feature/PasswordSetNoticeTest.php`.
 
 ## `users.type` is the source of truth — spatie roles are a bridge
 
