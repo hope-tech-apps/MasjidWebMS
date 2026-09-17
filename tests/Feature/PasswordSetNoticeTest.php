@@ -472,6 +472,12 @@ class PasswordSetNoticeTest extends TestCase
             'Zoë' => 'Zoë',
             'Mohd.' => 'Mohd.',
             'Abd. Rahman' => 'Abd. Rahman',
+            // Combining marks directly after a letter: Arabic vowel marks, a
+            // decomposed "Zoë", a dot below, Devanagari vowel signs.
+            'مُحَمَّد' => 'مُحَمَّد',
+            "Zoe\u{0308}" => "Zoe\u{0308}",
+            "H\u{0323}asan" => "H\u{0323}asan",
+            'प्रिया' => 'प्रिया',
         ];
 
         foreach ($kept as $name => $printed) {
@@ -500,6 +506,34 @@ class PasswordSetNoticeTest extends TestCase
             'ｅｖｉｌ．ｅｘａｍｐｌｅ', // full-width letters and dot
             str_repeat('a', MailGreeting::MAX_NAME_LENGTH + 1),
             '-Amina',
+            // A zero-width mark after each dot (review finding G1). Each of
+            // these printed before, and the reader saw the address.
+            "www.\u{034F}evil.\u{034F}example",   // combining grapheme joiner
+            "evil.\u{034F}example",
+            "paypal.\u{FE0F}com",                 // variation selector-16
+            "paypal.\u{FE00}com",                 // variation selector-1
+            "paypal.\u{E0100}com",                // variation selector-17
+            "paypal.\u{180B}com",                 // Mongolian free variation selector
+            "paypal.\u{180F}com",
+            "paypal.\u{17B4}com",                 // Khmer inherent vowel (invisible)
+            "paypal.\u{0301}com",                 // a visible mark: no mark after a full stop
+            "paypal.\u{0301}\u{0301}com",
+            // Invisible letters and marks anywhere, even with no full stop.
+            "Ami\u{034F}na",
+            "Amina\u{FE0F}",
+            "Ami\u{3164}na",                      // Hangul filler, a letter that shows nothing
+            "\u{3164}",
+            "\u{115F}Amina",
+            "Ami\u{FFA0}na",
+            "Amina\u{00AD}",                      // soft hyphen
+            // Letters and marks that look like a full stop.
+            "paypal\u{A4F8}com",                  // Lisu tone letter
+            "paypal\u{1D16D}com",                 // combining augmentation dot
+            // A mark after the space or the punctuation, never after a letter.
+            "Amina \u{0301}Rahman",
+            "Abd.\u{0301} Rahman",
+            "Amina-\u{0301}",
+            "\u{0301}Amina",
         ];
 
         foreach ($dropped as $name) {
@@ -518,6 +552,54 @@ class PasswordSetNoticeTest extends TestCase
         $code = new FamilyLoginCodeMail(orgName: 'Masjid An-Nur', code: '000000', expiresInMinutes: 10, recipientName: 'evil.example');
         $this->assertNull($code->recipientName);
         $this->assertSame('Amina', (new FamilyLoginCodeMail(orgName: 'X', code: '000000', expiresInMinutes: 10, recipientName: 'Amina'))->recipientName);
+    }
+
+    #[Test]
+    public function no_invisible_letter_or_mark_and_no_full_stop_lookalike_is_ever_printed(): void
+    {
+        // Checked against ICU's own Unicode data rather than MailGreeting's
+        // list, so a character the list misses, now or in a later Unicode
+        // version, fails here. IntlChar and Spoofchecker come with ext-intl,
+        // which composer.json does not require; without it this test skips.
+        if (! class_exists(\IntlChar::class) || ! class_exists(\Spoofchecker::class)) {
+            $this->markTestSkipped('ext-intl is not loaded; this check needs ICU data.');
+        }
+
+        $spoof = new \Spoofchecker();
+        $checked = ['invisible' => 0, 'looks like a full stop' => 0];
+
+        for ($cp = 0; $cp <= 0x10FFFF; $cp++) {
+            if ($cp >= 0xD800 && $cp <= 0xDFFF) {
+                continue;
+            }
+            $char = \IntlChar::chr($cp);
+            if ($char === null || preg_match('/^[\p{L}\p{M}]$/u', $char) !== 1) {
+                continue; // anything else already fails the shape check
+            }
+
+            if (\IntlChar::hasBinaryProperty($cp, \IntlChar::PROPERTY_DEFAULT_IGNORABLE_CODE_POINT)) {
+                $kind = 'invisible';
+            } elseif ($spoof->areConfusable('.', $char)) {
+                $kind = 'looks like a full stop';
+            } else {
+                continue;
+            }
+            $checked[$kind]++;
+
+            // Where each could hide: after a letter (a mark there is
+            // otherwise allowed), after a full stop, and alone.
+            foreach (["A{$char}b", "a.{$char}b", $char] as $name) {
+                $this->assertNull(
+                    MailGreeting::safeName($name),
+                    sprintf('U+%04X (%s, %s) was printed in %s', $cp, \IntlChar::charName($cp), $kind, json_encode($name)),
+                );
+            }
+        }
+
+        // The loop must have found what the list is about (Unicode 15: 267
+        // invisible letters and marks, 2 full-stop lookalikes).
+        $this->assertGreaterThanOrEqual(267, $checked['invisible']);
+        $this->assertGreaterThanOrEqual(2, $checked['looks like a full stop']);
     }
 
     // ------------------------------------------------ what it looks like

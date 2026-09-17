@@ -100,6 +100,25 @@ class BroadcastAndNudgeGreetingTest extends TestCase
                 'Assalamu alaikum Jane,', 'Assalamu alaikum,',
                 ['jane.doe', '@example.com'],
             ],
+            // Review finding G1: a zero-width mark after each dot. The reader
+            // still sees "www.evil.example" and "paypal.com".
+            'a web address with a combining grapheme joiner after each dot' => [
+                "www.\u{034F}evil.\u{034F}example", 'Doe',
+                'Assalamu alaikum,', 'Assalamu alaikum,',
+                ["\u{034F}", 'www.', 'example,'],
+            ],
+            'a web address with a variation selector after each dot, first and last name' => [
+                "paypal.\u{FE0F}com", "secure.\u{FE0F}login",
+                'Assalamu alaikum,', 'Assalamu alaikum,',
+                ["\u{FE0F}", 'paypal', 'secure'],
+            ],
+            // The broadcast greets by first name only, so only the nudge has
+            // anything to drop here.
+            'an invisible mark in the last name' => [
+                'Amina', "Rah\u{034F}man",
+                'Assalamu alaikum Amina,', 'Assalamu alaikum,',
+                ["\u{034F}", 'Rah'],
+            ],
             'a Latin name' => [
                 'Amina', 'Rahman',
                 'Assalamu alaikum Amina,', 'Assalamu alaikum Amina Rahman,',
@@ -108,6 +127,11 @@ class BroadcastAndNudgeGreetingTest extends TestCase
             'an Arabic name' => [
                 'عائشة', 'الحربي',
                 'Assalamu alaikum عائشة,', 'Assalamu alaikum عائشة الحربي,',
+                [],
+            ],
+            'an Arabic name with vowel marks' => [
+                'مُحَمَّد', 'عَلِيّ',
+                'Assalamu alaikum مُحَمَّد,', 'Assalamu alaikum مُحَمَّد عَلِيّ,',
                 [],
             ],
             'an empty name' => [
@@ -176,6 +200,13 @@ class BroadcastAndNudgeGreetingTest extends TestCase
         Mail::to(self::READER)->sendNow($fromOldPayload);
 
         $this->assertGreeting($this->theOneMessageTo(self::READER), 'Assalamu alaikum,', ['evil.example']);
+
+        // Also one queued by this branch's first version of the check, which
+        // kept a zero-width mark after a dot (review finding G1).
+        $mail->recipientName = "paypal.\u{FE0F}com";
+        Mail::to('second@family.test')->sendNow(unserialize(serialize($mail)));
+
+        $this->assertGreeting($this->theOneMessageTo('second@family.test'), 'Assalamu alaikum,', ["\u{FE0F}", 'paypal']);
     }
 
     #[Test]
@@ -259,6 +290,8 @@ class BroadcastAndNudgeGreetingTest extends TestCase
         $this->assertNull((new GroupUpdateNudgeMail(...$args, recipientName: self::PLANTED_URL))->recipientName);
         $this->assertNull((new GroupUpdateNudgeMail(...$args, recipientName: 'Jane jane.doe@example.com'))->recipientName);
         $this->assertSame('Ustadh Bilal', (new GroupUpdateNudgeMail(...$args, recipientName: ' Ustadh Bilal '))->recipientName);
+
+        $this->assertNull((new GroupUpdateNudgeMail(...$args, recipientName: "Ustadh www.\u{034F}evil.\u{034F}example"))->recipientName);
 
         // A staff name reaches the same greeting (a parent's reply nudges the teacher).
         Mail::to(self::READER)->sendNow(new GroupUpdateNudgeMail(...$args, recipientName: 'www.evil.example'));
