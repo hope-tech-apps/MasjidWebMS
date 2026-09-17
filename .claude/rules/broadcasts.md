@@ -27,7 +27,7 @@ Every channel keeps its own endpoint, its own model and its own behaviour.
 | `announcement` | Creates an ordinary `announcements` row + flushes `MobileCache::ANNOUNCEMENTS` — same table, same media collection, same public feed |
 | `push` | Creates an ordinary `notifications` row and dispatches the existing `SendMasjidNotificationJob` (which owns OneSignal, its retries and its backoff) |
 | `signage` | Publishes to the board, which is a PULL surface served by `GET /api/mobile/masjids/{id}/signage` |
-| `email` | Sends `BroadcastMail` through the app's existing mail path to CRM contacts |
+| `email` | Sends `BroadcastMail` through the app's existing mail path to CRM contacts. The greeting prints a contact's first name only through `MailGreeting` |
 | `sms` | Texts the CONSENTING part of the CRM contact audience, from the tenant's own registered A2P 10DLC sender, through a provider adapter (T-009) |
 
 Rules that follow from that:

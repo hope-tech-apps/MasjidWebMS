@@ -374,10 +374,14 @@ DECISIONS.md 2026-09-17.
 - **No password, code, token or link in it**, and no model in its payload (scalars only). The
   greeting prints the first name only through `MailGreeting`, because a stranger can store a web
   address as a first name through the public registration form. Any new mail that greets a contact
-  by a stored name must do the same. The "if it was not you" sentence names the app only when
-  `verified_at` is set, and the family portal only when `familyLoginIsActive()`. `verified_at` does
-  not prove the person's app build has "Forgot password?" (older Android builds do not), which is
-  why the sentence always ends with "contact {organisation}". Do not add org-specific claims to it.
+  by a stored name must do the same. `FamilyLoginCodeMail`, `BroadcastMail` and
+  `GroupUpdateNudgeMail` do too, each cleaning the name in its constructor. The mails that still
+  print a name without it are listed in DECISIONS.md, 2026-09-17 "Broadcast and class emails print
+  a stored name only when it looks like a name". The "if it was not you" sentence names the app
+  only when `verified_at` is set, and the family portal only when `familyLoginIsActive()`.
+  `verified_at` does not prove the person's app build has "Forgot password?" (older Android builds
+  do not), which is why the sentence always ends with "contact {organisation}". Do not add
+  org-specific claims to it.
 - **Inline, not `ShouldQueue`**: a security notice must not wait on the worker, and a failed queued
   mail would keep the address in `failed_jobs`. A failed send is caught and logged at `warning`
   with ids and the exception class (no address, no exception message). It must never fail the

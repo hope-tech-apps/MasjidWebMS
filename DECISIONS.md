@@ -1566,12 +1566,54 @@ email to the account's address after any password is set."
   code gets there, so the extra time says nothing to someone without the code. If Resend is slow or
   silent, that wait is at most 10 s, and then the warning is logged. The limit applies to every mail
   sent through Resend, queued or not.
-- `BroadcastMail` and `GroupUpdateNudgeMail` still print a stored name in their greeting without
-  `MailGreeting`. A web address planted as a first name through the public registration form can
-  therefore still appear in a broadcast whose audience includes that record. Not changed here; it
-  is a follow-up for those features.
+- `BroadcastMail` and `GroupUpdateNudgeMail` printed a stored name in their greeting without
+  `MailGreeting`. Fixed the same day (owner: "Fix them too"); see the next entry.
 - English only, like the sign-in code mail, although the portal has an Arabic mode.
 - Nobody can use this to flood an inbox: every app send needs a code from that same inbox, and the
   portal door needs a signed-in session behind `throttle:family`.
 
 Pinned by `tests/Feature/PasswordSetNoticeTest.php`.
+
+## 2026-09-17 — Broadcast and class emails print a stored name only when it looks like a name
+
+**Decision.** `BroadcastMail` and `GroupUpdateNudgeMail` print the stored name in
+"Assalamu alaikum {name}," only through `MailGreeting`, as the sign-in code and password emails do.
+A value that does not look like a name is left out and the greeting is "Assalamu alaikum,". The
+owner chose this on 2026-09-17, in the coordinator's interview
+(`/tmp/manara-plans/ship-plan-2026-09-17.md`): the option **"Fix them too"**, which read "Apply the
+same small check to both emails, so a name that isn't a real name falls back to 'Assalamu
+alaikum,'."
+
+1. **Why.** The public registration form saves any first word as a first name next to any address
+   (finding F1 in the entry above). Production also has imported contacts whose name fields hold
+   pieces of an email address. A broadcast goes to every contact with an address. Most mail apps
+   turn a web address or an email address into a link, and here it would sit in a genuine email
+   from the organisation.
+2. **Where.** Both classes clean the name in their constructors. `BroadcastMail` is queued, so the
+   raw value never reaches `jobs.payload` or `failed_jobs`. Its `content()` checks the name again,
+   so a broadcast that the old code queued before the deploy is greeted safely too. The class email
+   is sent from inside `SendGroupNotificationJob` and is not queued itself. It builds its greeting
+   in `build()`, and its view prints `$greeting` instead of its own if/else.
+3. **What is checked.** The class email greets by first and last name together
+   (`GroupNotificationRecipientResolver`), and by `users.name` when it notifies a teacher. The check
+   covers the whole string: an email address in the last name drops the whole name, and so does a
+   full name longer than 40 characters. The broadcast greets by first name only.
+
+**Alternatives.**
+- **Clean names when they are saved** (registration form, imports). Not done here: the rows already
+  stored would still reach these emails.
+- **No name in these greetings at all.** Not chosen: the owner picked the fallback, which keeps the
+  name for real names.
+
+**Known limits.** These mails still print a stored or typed name without `MailGreeting`. Each needs
+its own decision, because the greeting is not the only place the name or other typed text appears:
+- `FormSubmissionReceipt`: the name typed into a public form, sent to the address typed into the
+  same form. It also lists every attendee name typed into that form.
+- `DonationReceiptMail` and `AnnualStatementMail`: the contact's first and last name ("Valued donor"
+  when both are blank). The attached PDF prints the same name after "Dear".
+- `ContactRequestReply`: the name typed into the public contact form. The email also quotes the
+  original message. It is sent only when an admin replies.
+- `TwoFactorResetMail` and `AccountAccessMail`: `users.name`, a staff account's name. Only a
+  signed-in dashboard user writes it (an admin, or the staff member on their own profile).
+
+Pinned by `tests/Feature/BroadcastAndNudgeGreetingTest.php`.
