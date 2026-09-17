@@ -129,7 +129,13 @@ class TrustedHosts
     private function normalise(string $host): string
     {
         $host = strtolower(trim($host));
-        $host = explode(':', $host, 2)[0];
+
+        // Only a trailing `:digits` is a port. Splitting on the first colon
+        // would turn an IPv6 literal (`[2001:db8::1]`) into `[2001`, and the log
+        // line would then name a host nobody can look up.
+        if (! str_starts_with($host, '[')) {
+            $host = (string) preg_replace('/:\d+$/', '', $host);
+        }
 
         return rtrim($host, '.');
     }
@@ -145,6 +151,18 @@ class TrustedHosts
      * `Cache::add` is the whole lock — it writes only if the key is absent, so
      * two concurrent workers produce one line, not two.
      *
+     * AT `warning`, AND THAT LEVEL IS LOAD-BEARING. Production runs
+     * LOG_LEVEL=warning, so anything quieter is discarded before it reaches
+     * laravel.log — an observing mode whose observations are thrown away is the
+     * failure this project has already paid for once (a Log::info under that
+     * level left no trace). TrustedHostsLogOnlyTest writes through a real file
+     * channel set to `warning` and reads the line back.
+     *
+     * A cache that cannot take the marker must not turn into a 500. In
+     * observing mode this middleware has promised to pass the request, and
+     * the rate limit is a convenience; so a failed `Cache::add` logs anyway —
+     * a duplicate line is cheap, a missed host is what this exists to find.
+     *
      * @param  array<int, string>  $allowed
      */
     private function report(Request $request, string $host, array $allowed): void
@@ -152,8 +170,12 @@ class TrustedHosts
         $interval = max(0, (int) config('trusted_hosts.log_interval', 3600));
         $key = 'trusted-hosts:seen:'.sha1($host);
 
-        if ($interval > 0 && ! Cache::add($key, true, $interval)) {
-            return;
+        try {
+            if ($interval > 0 && ! Cache::add($key, true, $interval)) {
+                return;
+            }
+        } catch (\Throwable) {
+            // Fall through to the log line, un-rate-limited. See above.
         }
 
         Log::warning('Request carried a Host header this deployment does not serve.', [
