@@ -99,10 +99,15 @@ Host.
 at `warning` — production's `LOG_LEVEL`, so the line is kept; a quieter level
 would be discarded before it reached the file — and passes the request through.
 Neither a cache failure while rate-limiting the line nor a log file that cannot
-be written fails the request. `tests/Feature/TrustedHostsLogOnlyTest.php` pins
-all of it: the default, the level (through a real file channel), the cache
-failure, and the unwritable log. Everything below is about the second step —
-making it refuse.
+be written fails the request. What it stores is bounded: markers in a fixed key
+space of 40-byte values, at most 200 new hosts logged an hour, and host, path
+and method cut to 253 bytes in each line. A Host that is not a valid name at all
+(`999.0.0.1`, `bad!name`) gets a 400, but Laravel's own `TrustProxies` already
+gave it that 400 before this middleware existed.
+`tests/Feature/TrustedHostsLogOnlyTest.php` pins all of it: the default, the
+level (through a real file channel), the cache failure, the unwritable log, the
+bounds, and the malformed-Host 400 with and without this middleware.
+Everything below is about the second step — making it refuse.
 
 ## The hosts each box actually serves
 
@@ -177,22 +182,39 @@ and it is why step 2 below is "read the log", not "wait a bit".
 
 ## The log will never be empty — so "zero warnings" is the wrong test
 
-nginx's error log (the only nginx log that records the Host header) shows
-**58 distinct Host values** reaching the production origin in the 14 days to
-2026-09-17. Four are ours (`masjid.hopetechapps.com`, `portal.alrazischool.org`,
-`manara.hopetechapps.com`, the last only because nobody has listed it). The rest
-are the droplet's two IP addresses — with and without `:443`, some 20,000 lines
-of dotfile scans — and about fifty **third-party hostnames whose DNS still points
-at our reserved IP** (`promocao.energisaprev.com.br`, `*.idplugger.com`, …).
+nginx's error log is the only nginx log that records the Host header. Its 15
+files on 2026-09-17 (2026-09-03 00:22 to 2026-09-17 12:14 UTC) name **58
+distinct Host values** at the production origin. The middleware compares names
+with the port and a trailing dot removed, and on that basis they are **49
+names**:
 
-Every one of those will be logged, once an hour each: expect in the order of a
-thousand lines a day. A week of **zero** warnings will not happen with this
-traffic, and waiting for it would postpone enforcement forever. The criterion
-that means what the owner meant is:
+- **3 are ours**: `masjid.hopetechapps.com`, `portal.alrazischool.org`, and
+  `manara.hopetechapps.com`. Only the last is unlisted, because no setting names it.
+- **2 are the droplet's IP addresses**, `159.65.239.51` and `164.90.253.138`,
+  with and without `:443`. They account for about 20,000 lines of dotfile scans.
+- **44 are third-party hostnames whose DNS still points at our reserved IP**:
+  38 recurring ones (`promocao.energisaprev.com.br`, `*.idplugger.com`, …) and
+  6 one-off Qualys scanner names (`*.qualysperiscope.com.`).
+
+**What that evidence does and does not show.** 73,566 of the 76,099 error-log
+lines that carry a Host are `access forbidden by rule`, and 2,521 are
+`directory index ... is forbidden`: nginx refused the request before PHP ran.
+(The other 12 are FastCGI lines, all for `masjid` or `manara`.) So the error
+log proves these Hosts **arrive at the origin**, not that they **reach
+Laravel**. The access log records no Host header. It does show that, for each
+of the 44 foreign names, at least one client IP that sent it also received
+`GET /` 200 (the SPA, served by Laravel) in the same files. That is evidence by
+IP, not proof for each host. Expect most of these names in the unknown-host
+log, each at most once an hour: at most about 1,100 lines a day (46 unlisted
+names × 24), and in practice fewer.
+
+A week of **zero** warnings will not happen with this traffic, and waiting for
+it would postpone enforcement forever. The criterion that matches what the
+owner meant is:
 
 > **Seven consecutive days in which no warning names a hostname in a zone we
-> own**, and no warning shows a request we recognise (a monitor, a webhook, a
-> partner) arriving by IP.
+> own, no hour shows `Unknown-Host logging paused`**, and no warning shows a
+> request we recognise (a monitor, a webhook, a partner) arriving by IP.
 
 ## The order, and why it is this order
 

@@ -28,7 +28,7 @@ names, which pick the organisation `/portal` opens.
 
 | hostname | DNS (Cloudflare) | how nginx serves it | organisation | admitted by | evidence, 2026-09-17 |
 |---|---|---|---|---|---|
-| `masjid.hopetechapps.com` | A 164.90.253.138, **DNS-only** | its own `server_name`, **and** `default_server` on :80 and :443 | all: admin SPA, the API used by both native apps and every Nuxt site, `/jummah-lunch/{id}`, `/portal/{id}`, `/family/{id}` | `APP_URL` | `/up` 200 with `server: nginx/1.24.0`; its Host appears in 4,311 nginx error-log lines (14 days) |
+| `masjid.hopetechapps.com` | A 164.90.253.138, **DNS-only** | its own `server_name`, **and** `default_server` on :80 and :443 | all: admin SPA, the API used by both native apps and every Nuxt site, `/jummah-lunch/{id}`, `/portal/{id}`, `/family/{id}` | `APP_URL` | `/up` 200 with `server: nginx/1.24.0`; its Host appears in 4,441 nginx error-log lines (the files described below) |
 | `portal.alrazischool.org` | A 164.90.253.138, **DNS-only** | its own vhost (`server_name`, no `default_server`), same document root | **14** (the id-less `/portal`; `/` redirects there) | `PORTAL_HOSTS=portal.alrazischool.org=14` | `/up` 200 with `server: nginx`; 558 error-log lines |
 | `manara.hopetechapps.com` | A 164.90.253.138, **proxied** | **no vhost of its own.** It reaches the app only because the masjid vhost is `default_server` | all: the one sign-in door (`/auth/sign-in`), `/api/*`, `/build/*`, `/portal/{id}` | **nothing yet. It must go in `TRUSTED_HOSTS`** | `/api/mobile/masjids` answers JSON with this app's CSP; 127 error-log lines. Worker `manara-marketing` takes **only** the exact paths `/`, `/masjids`, `/schools`, `/community`, and everything else reaches Laravel |
 
@@ -48,21 +48,35 @@ read-only toward staging. The staging values come from
 
 nginx logs the Host header only in its **error** log, so these counts cover
 requests that produced an nginx error line. That is a sample of the traffic,
-not a full count. Over 14 days (2026-09-03 to 2026-09-17) there were
-**58 distinct Host values**:
+not a full count. The 15 error-log files read on 2026-09-17 (2026-09-03 00:22 to
+2026-09-17 12:14 UTC) name **58 distinct Host values**. With the port and a
+trailing dot removed, which is how the middleware compares them, they are **49
+names**: the 3 above, and these 46:
 
-- **IP literals** `159.65.239.51` (8,442), `164.90.253.138` (7,275), and both
-  again with `:443` (2,330 / 2,315). This is scanner traffic: almost all of it
-  is dotfile probes that nginx denies.
-- **About 50 third-party hostnames whose DNS still points at our reserved IP.**
-  Examples: `promocao.energisaprev.com.br` (5,425), `pdscatarinense.idplugger.com`
-  (5,031), `promocaocredceg.com.br` (3,636) and many other `*.idplugger.*` and
-  `promocao*.com.br` names. None of them is ours.
+- **2 IP literals**, `159.65.239.51` (8,444 lines) and `164.90.253.138` (7,276),
+  plus both again with `:443` (2,330 / 2,315). This is scanner traffic: almost
+  all of it is dotfile probes that nginx denies.
+- **44 third-party hostnames whose DNS still points at our reserved IP.** 38
+  recur, for example `promocao.energisaprev.com.br` (5,428),
+  `pdscatarinense.idplugger.com` (5,031), `promocaocredceg.com.br` (3,636) and
+  many other `*.idplugger.*` and `promocao*.com.br` names. The other 6 are
+  one-off Qualys scanner names (`*.qualysperiscope.com.`). None of them is ours.
 
-**Consequence: the unknown-host log will never be empty.** The middleware
-writes each of these hosts once an hour, which is up to roughly 1,400 lines a
-day. "A week of zero warnings" cannot happen. The usable test is **a week with
-zero warnings that name a hostname in a zone we own**. The command is in
+**What this shows, and what it does not.** Of the 76,099 lines that carry a
+Host, 73,566 are `access forbidden by rule` and 2,521 are `directory index ...
+is forbidden`: nginx refused those requests before PHP ran. The remaining 12
+are FastCGI lines, for `masjid` (11) and `manara` (1). So the error log proves
+that these names **arrive at the origin**, not that they **reach Laravel**. The
+access log records no Host. It does show that, for every one of the 44 foreign
+names, at least one client IP that sent it also got `GET /` 200 (the SPA,
+served by Laravel) in the same files. That is evidence by IP, not proof for
+each name.
+
+**Consequence: the unknown-host log will never be empty.** Each unlisted name
+that reaches Laravel is written at most once an hour: at most about 1,100 lines
+a day (46 names × 24), and fewer in practice. "A week of zero warnings" cannot
+happen. The usable test is **a week with zero warnings that name a hostname in
+a zone we own, and no hour in which the log paused**. The commands are in
 `deploy/TRUSTED-HOSTS-ENFORCEMENT.md`.
 
 ---
