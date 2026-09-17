@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Support\MailGreeting;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
@@ -67,6 +68,11 @@ class FamilyLoginCodeMail extends Mailable
         public ?string $orgEmail = null,
         public string $purpose = self::PURPOSE_SIGN_IN,
     ) {
+        // A first name is not always the reader's own words: a stranger can
+        // plant one through the public registration form and then ask for a
+        // code to that address. See MailGreeting. Cleaned here, once, so this
+        // mail, which carries a live code, cannot also carry their link.
+        $this->recipientName = MailGreeting::safeName($recipientName);
     }
 
     public function isForAccountDeletion(): bool
@@ -101,9 +107,7 @@ class FamilyLoginCodeMail extends Mailable
                 'code' => $this->code,
                 'expiresInMinutes' => $this->expiresInMinutes,
                 'forAccountDeletion' => $this->isForAccountDeletion(),
-                'greeting' => $this->recipientName
-                    ? 'Assalamu alaikum ' . $this->recipientName . ','
-                    : 'Assalamu alaikum,',
+                'greeting' => MailGreeting::for($this->recipientName),
             ],
         );
     }

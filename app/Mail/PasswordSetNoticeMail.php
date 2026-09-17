@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Support\MailGreeting;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
@@ -21,7 +22,10 @@ use Illuminate\Mail\Mailables\Envelope;
  * IT CARRIES NOTHING THAT OPENS ANYTHING
  * ---------------------------------------------------------------------------
  *
- * No password, no code, no token, and no link of any kind. A notice that
+ * No password, no code, no token, and no link of any kind. The one value in
+ * it that a stranger can influence is the first name, and MailGreeting leaves
+ * that out unless it looks like a name, so it cannot carry a web address
+ * either. A notice that
  * somebody changed your password is the most-forged email there is; one with
  * no click target gives a phisher no template worth copying and gives whoever
  * reads the inbox no one-click way to change the account. What to do if it was
@@ -70,6 +74,9 @@ class PasswordSetNoticeMail extends Mailable
         /** The office has a live family login for them, so the family portal is real for them. */
         public bool $usesFamilyPortal = false,
     ) {
+        // A first name is not always the reader's own words: see MailGreeting.
+        // Cleaned here, once, so no part of this mail can print the raw value.
+        $this->recipientName = MailGreeting::safeName($recipientName);
     }
 
     public function envelope(): Envelope
@@ -101,9 +108,7 @@ class PasswordSetNoticeMail extends Mailable
                 'loginEmail' => $this->loginEmail,
                 'setAt' => $this->setAt,
                 'ifItWasNotYou' => $this->ifItWasNotYou(),
-                'greeting' => $this->recipientName
-                    ? 'Assalamu alaikum ' . $this->recipientName . ','
-                    : 'Assalamu alaikum,',
+                'greeting' => MailGreeting::for($this->recipientName),
             ],
         );
     }

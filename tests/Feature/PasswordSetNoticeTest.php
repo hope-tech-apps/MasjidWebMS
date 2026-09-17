@@ -6,8 +6,11 @@ use App\Mail\FamilyLoginCodeMail;
 use App\Mail\PasswordSetNoticeMail;
 use App\Models\AppSignupCode;
 use App\Models\Contact;
+use App\Models\FeePlan;
 use App\Models\Masjid;
+use App\Models\Offering;
 use App\Services\Family\FamilyPasswordService;
+use App\Support\MailGreeting;
 use App\Support\TenantContext;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -38,7 +41,8 @@ use Tests\TestCase;
  *    wrong code, a rolled-back transaction. And not before the outermost
  *    transaction commits.
  *  - NOTHING IN IT OPENS ANYTHING: the rendered HTML and text carry no
- *    password, hash, code, token or link.
+ *    password, hash, code, token or link, not even one a stranger planted as
+ *    a first name through the public registration form.
  *  - A FAILED SEND COSTS NOTHING: the password is still set, the response is
  *    still the success, and a warning is logged (production's level).
  *  - Removing a password sends nothing (DECISIONS.md 2026-09-17).
@@ -391,6 +395,129 @@ class PasswordSetNoticeTest extends TestCase
         $this->assertTrue(Hash::check(self::GOOD, $contact->fresh()->getAuthPassword()));
         $this->assertNotNull($this->codeRow($address)->consumed_at);
         $this->assertDeliveryFailureLogged($contact, $address);
+    }
+
+    // ------------------------------------------- a name that is not a name
+
+    #[Test]
+    public function a_web_address_planted_as_a_first_name_reaches_neither_the_code_email_nor_the_notice(): void
+    {
+        // Review finding F1, reproduced end to end. A stranger, not signed in,
+        // registers for a free program with the victim's address and a "name"
+        // that is a web address. The registration keeps its first word as
+        // first_name next to that address, with no login address.
+        $victim = 'victim.planted@test.local';
+        $link = 'https://evil.example/secure-your-account';
+
+        $offering = Offering::factory()->forMasjid($this->masjid)->create(['slug' => 'planted-name']);
+        $plan = FeePlan::factory()->free()->create([
+            'masjid_id' => $this->masjid->id,
+            'offering_id' => $offering->id,
+        ]);
+
+        $this->asANewRequest();
+        $this->postJson('/api/v1/offerings/planted-name/register', [
+            'fee_plan_id' => $plan->id,
+            'payer' => ['name' => "{$link} now", 'email' => $victim],
+            'data' => ['full_name' => 'Anyone'],
+        ], ['masjid-id' => (string) $this->masjid->id])->assertOk();
+
+        $planted = Contact::withoutMasjidScope()->where('email', $victim)->sole();
+        $this->assertSame($link, $planted->first_name, 'The premise: the form stores the address-shaped name.');
+        $this->assertNull($planted->login_email);
+
+        // The stranger asks for a sign-in code to that address, as anyone can.
+        // The genuine code email must not greet the reader with the link.
+        $code = $this->requestCode($victim);
+        $codeMail = Mail::sent(FamilyLoginCodeMail::class, fn (FamilyLoginCodeMail $m) => $m->hasTo($victim))->last();
+        $this->assertNull($codeMail->recipientName);
+        $codeHtml = (string) $codeMail->render();
+        $this->assertStringContainsString('Assalamu alaikum,', $codeHtml);
+        $this->assertStringNotContainsString('evil', $codeHtml);
+        $this->assertStringNotContainsStringIgnoringCase('http', $codeHtml);
+
+        // Later the victim creates an account with that address. The app links
+        // the record by its address and ignores the name they type.
+        $this->verify($victim, $code, [
+            'first_name' => 'Victoria',
+            'last_name' => 'Real',
+            'password' => self::GOOD,
+        ])->assertOk()->assertJsonPath('data.created', false);
+        $this->assertSame($link, $planted->fresh()->first_name);
+
+        $mail = $this->theOneNotice();
+        $this->assertTrue($mail->hasTo($victim));
+        $this->assertNull($mail->recipientName);
+        $this->assertCarriesNothingThatOpensAnything($mail, [self::GOOD, $code]);
+
+        [$html, $text] = $this->rendered($mail);
+        foreach ([$html, $text] as $body) {
+            $this->assertStringContainsString('Assalamu alaikum,', $body);
+            $this->assertStringNotContainsString('evil', $body);
+        }
+    }
+
+    #[Test]
+    public function the_greeting_keeps_real_names_and_drops_anything_a_mail_app_could_turn_into_a_link(): void
+    {
+        $kept = [
+            'Amina' => 'Amina',
+            'Abdul-Rahman' => 'Abdul-Rahman',
+            "O'Neil" => "O'Neil",
+            'D’Souza' => 'D’Souza',
+            'Mary Ann' => 'Mary Ann',
+            '  Bilal  ' => 'Bilal',
+            'عائشة' => 'عائشة',
+            'ʿAbd' => 'ʿAbd',
+            'Zoë' => 'Zoë',
+            'Mohd.' => 'Mohd.',
+            'Abd. Rahman' => 'Abd. Rahman',
+        ];
+
+        foreach ($kept as $name => $printed) {
+            $this->assertSame($printed, MailGreeting::safeName($name), "A real name was dropped: {$name}");
+            $this->assertSame("Assalamu alaikum {$printed},", MailGreeting::for($name));
+        }
+
+        $dropped = [
+            null,
+            '',
+            '   ',
+            'https://evil.example/secure-your-account',
+            'http://x',
+            'evil.example',
+            'www.evil',
+            'Evil.Com',
+            'bob@evil.test',
+            'Amina1',
+            'x:y',
+            'a/b',
+            'ftp:evil',
+            'Amina<b>',
+            "Amina\nVisit",
+            "Amina\u{202E}",          // right-to-left override
+            "Ami\u{200B}na",          // zero-width space
+            'ｅｖｉｌ．ｅｘａｍｐｌｅ', // full-width letters and dot
+            str_repeat('a', MailGreeting::MAX_NAME_LENGTH + 1),
+            '-Amina',
+        ];
+
+        foreach ($dropped as $name) {
+            $this->assertNull(MailGreeting::safeName($name), 'Printed a name that is not a name: ' . json_encode($name));
+            $this->assertSame('Assalamu alaikum,', MailGreeting::for($name));
+        }
+
+        $this->assertSame(
+            str_repeat('a', MailGreeting::MAX_NAME_LENGTH),
+            MailGreeting::safeName(str_repeat('a', MailGreeting::MAX_NAME_LENGTH)),
+        );
+
+        // Both mailables clean the name themselves, whoever builds them.
+        $notice = new PasswordSetNoticeMail(orgName: 'Masjid An-Nur', loginEmail: 'a@test.local', setAt: 'now', recipientName: 'evil.example');
+        $this->assertNull($notice->recipientName);
+        $code = new FamilyLoginCodeMail(orgName: 'Masjid An-Nur', code: '000000', expiresInMinutes: 10, recipientName: 'evil.example');
+        $this->assertNull($code->recipientName);
+        $this->assertSame('Amina', (new FamilyLoginCodeMail(orgName: 'X', code: '000000', expiresInMinutes: 10, recipientName: 'Amina'))->recipientName);
     }
 
     // ------------------------------------------------ what it looks like
