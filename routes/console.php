@@ -217,6 +217,14 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 | running unnoticed, which is why the line is written on every run including a
 | clean one.
 |
+| WHERE THE LINE LANDS. Production sets CANARY_LOG_CHANNEL=monitors (and
+| MEDIA_VERIFY_LOG_CHANNEL likewise). The `monitors` stack in config/logging.php
+| writes every line, at every level, to storage/logs/monitors.log; to
+| laravel.log at LOG_LEVEL; and to ops-alerts at `error`. Production's
+| LOG_LEVEL is `warning`, so laravel.log never holds a clean line. "Did the
+| canary run this hour?" is a question for monitors.log. Until 2026-09-17 there
+| was no monitors.log, and the clean line was dropped on every run.
+|
 | ROUTING WITHIN EXIT 3 — `degraded_by`
 |
 | Exit 3 covers two different facts, and the contract above says so: "an
@@ -692,10 +700,12 @@ Schedule::command('backup:run')->dailyAt('02:40')->withoutOverlapping(60);
 | `media:verify` and `tenancy:canary` default their channel to the application's
 | own and expect an operator to point them at a delivering one; this task exists
 | because the one thing nobody did was the one manual step. `monitors` is the
-| stack of the ordinary file line plus `ops-alerts`, which emails at `error` and
-| is inert until OPS_ALERT_EMAIL is set — so setting that single variable turns
-| the on-call contract on for this and everything else pointed at it, and until
-| it is set this costs one no-op handler per run.
+| stack of storage/logs/monitors.log (every run, the clean `pass` included),
+| the ordinary application log (at LOG_LEVEL, which drops `pass` on
+| production), and `ops-alerts`, which emails at `error` and is inert until
+| OPS_ALERT_EMAIL is set — so setting that single variable turns the on-call
+| contract on for this and everything else pointed at it, and until it is set
+| this costs one no-op handler per run.
 |
 | AND WHAT IF THE CHECKER ITSELF STOPS RUNNING. Four defences, deliberately not
 | all of the same kind, because three of them share one point of failure — see

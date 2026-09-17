@@ -2298,6 +2298,10 @@ class MediaVerify extends Command
      * The LEVEL carries the verdict so an alert rule can route without parsing
      * the body. The contract is documented in routes/console.php.
      *
+     * A clean run logs at `info`, which is below production's LOG_LEVEL. It
+     * reaches a file only through the `monitors` channel's monitors.log
+     * (config/logging.php).
+     *
      * @param  array<string,mixed>  $payload
      */
     private function log(string $status, array $payload): void

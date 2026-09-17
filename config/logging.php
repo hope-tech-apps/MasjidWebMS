@@ -88,7 +88,8 @@ return [
         // media:verify / tenancy:canary route their one-line-per-run here. Level
         // `error` by default, so a partial run (warning) stays a file-only ticket
         // and only a leak / incomplete / broken-or-empty estate (error+/critical)
-        // pages. Inert until OPS_ALERT_EMAIL is set. See App\Logging\OpsAlertChannel.
+        // pages. A clean run (info) never emails. Inert until OPS_ALERT_EMAIL is
+        // set. See App\Logging\OpsAlertChannel.
         'ops-alerts' => [
             'driver' => 'custom',
             'via' => \App\Logging\OpsAlertChannel::class,
@@ -96,13 +97,47 @@ return [
             'to' => env('OPS_ALERT_EMAIL'),
         ],
 
-        // What the scheduled monitors point their log_channel at: the normal file
-        // line (proof-of-run on every run, including clean) AND the email path
-        // (error+ only). ignore_exceptions so a mail hiccup can never take down
-        // the file line beside it.
+        // The scheduled monitors' proof-of-run file: one line for EVERY run of
+        // tenancy:canary, media:verify, backup:check and backup:drill, clean
+        // runs included. About 30 lines a day.
+        //
+        // The level is fixed at `info`, NOT env('LOG_LEVEL'), and that is the
+        // whole point of this channel. A clean run logs at `info`, and
+        // production runs LOG_LEVEL=warning. While `single` was the monitors'
+        // only file, every clean line was dropped: laravel.log for 2026-09-16
+        // held none of ~19 clean canary runs and none of four media sweeps.
+        // "The canary stopped running" read exactly like "the canary is
+        // healthy". Pinned by tests/Feature/MonitorsLogChannelTest.php.
+        //
+        // `single`, not `daily`: /etc/logrotate.d/manara on the droplet already
+        // rotates storage/logs/*.log daily and keeps 14. Dated files from
+        // `daily` would match that glob and be rotated twice.
+        'monitors-file' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/monitors.log'),
+            'level' => 'info',
+            'replace_placeholders' => true,
+        ],
+
+        // What the scheduled monitors point their log_channel at. Each of the
+        // three answers a different question:
+        //
+        //   monitors-file  Did it run? Every run, at every level
+        //                  (storage/logs/monitors.log).
+        //   single         The application log, unchanged. At production's
+        //                  LOG_LEVEL=warning it keeps partial and failed runs
+        //                  beside everything else, and drops clean ones.
+        //   ops-alerts     Should somebody be told? error and above only.
+        //
+        // ignore_exceptions so a mail hiccup can never take down the file lines
+        // beside it. The price: an unwritable monitors.log is swallowed too. The
+        // scheduler runs as www-data, so run a monitor by hand as
+        // `sudo -u www-data`, never as root, or root may create the file and
+        // own it. A monitors.log that stops growing then reads as "not
+        // running". That is a false alarm at worst, never a false green.
         'monitors' => [
             'driver' => 'stack',
-            'channels' => ['single', 'ops-alerts'],
+            'channels' => ['monitors-file', 'single', 'ops-alerts'],
             'ignore_exceptions' => true,
         ],
 

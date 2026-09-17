@@ -4543,7 +4543,9 @@ class TenancyCanary extends Command
 
         if ($status === 'clean') {
             // One line an hour, so "the canary stopped running" is a question
-            // the log can answer. schedule:run discards stdout.
+            // the log can answer. schedule:run discards stdout. `info` is below
+            // production's LOG_LEVEL, so this reaches a file only through the
+            // `monitors` channel's monitors.log (config/logging.php).
             $channel->info('tenancy:canary clean', $summary);
 
             return;

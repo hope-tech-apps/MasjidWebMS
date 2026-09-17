@@ -270,10 +270,13 @@ return [
          * and default to the application's own — which means their email path
          * is OFF until somebody edits .env, and this task exists because the one
          * thing nobody did was the one manual step. So this one defaults to the
-         * `monitors` stack (config/logging.php): the ordinary file line, plus
-         * `ops-alerts`, which emails the operator at level `error` and is inert
-         * while OPS_ALERT_EMAIL is unset. The stack sets `ignore_exceptions`, so
-         * a mail failure can never take down the file line beside it.
+         * `monitors` stack (config/logging.php): storage/logs/monitors.log,
+         * which keeps every run including a clean `pass`; the ordinary
+         * application log, which at production's LOG_LEVEL=warning does not;
+         * and `ops-alerts`, which emails the operator at level `error` and is
+         * inert while OPS_ALERT_EMAIL is unset. The stack sets
+         * `ignore_exceptions`, so a mail failure can never take down the file
+         * lines beside it.
          *
          * Setting OPS_ALERT_EMAIL is therefore the single switch that turns the
          * whole on-call contract on, for this and for anything else pointed at

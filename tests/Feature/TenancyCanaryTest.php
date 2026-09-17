@@ -29,6 +29,7 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Tests\Support\Canary\FlippableDarkSwitch;
 use Tests\Support\Canary\NotADarkSwitch;
 use Tests\Support\Canary\ThrowingDarkSwitch;
+use Tests\Support\LogsLikeProduction;
 use Tests\TestCase;
 
 /**
@@ -50,6 +51,7 @@ use Tests\TestCase;
  */
 class TenancyCanaryTest extends TestCase
 {
+    use LogsLikeProduction;
     use RefreshDatabase;
 
     /** The app side menu: dark on purpose on production since S1. */
@@ -70,6 +72,7 @@ class TenancyCanaryTest extends TestCase
     protected function tearDown(): void
     {
         $this->stopLoopbackOrigin();
+        $this->forgetProductionLogs();
 
         // Static state on the switch doubles: one test's switch must never be
         // the next test's.
@@ -2312,6 +2315,50 @@ class TenancyCanaryTest extends TestCase
 
         $this->assertSame(['unreached_endpoints'], $run['degraded_by']);
         $this->assertSame(3, $exit);
+    }
+
+    #[Test]
+    public function a_clean_run_leaves_a_line_production_keeps(): void
+    {
+        // The tests above mock the channel, so they prove the LEVEL and nothing
+        // about delivery. On 2026-09-16 production's laravel.log held none of
+        // ~19 clean hourly runs: `monitors` wrote to `single` only, and
+        // production runs LOG_LEVEL=warning. So this runs the canary through
+        // the channel production points it at, under production's logging
+        // environment, and reads the file.
+        $this->logLikeProduction();
+        config(['canary.log_channel' => 'monitors']);
+
+        [$exit, $run] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 900]);
+
+        $this->assertSame(0, $exit);
+        $this->assertSame('clean', $run['status']);
+
+        $this->assertSame([], $this->loggedLines('laravel.log', 'tenancy:canary'),
+            'the application log kept the clean line, so this run was not at production\'s LOG_LEVEL');
+
+        $kept = $this->loggedLines('monitors.log', 'tenancy:canary');
+
+        $this->assertCount(1, $kept, 'a clean scheduled run would leave no line on production');
+        $this->assertStringContainsString('.INFO: tenancy:canary clean', $kept[0]);
+        $this->assertSame([], $this->alertSubjects(), 'a clean run emailed the operator');
+    }
+
+    #[Test]
+    public function a_partial_run_is_kept_in_both_logs_and_never_emails(): void
+    {
+        $this->logLikeProduction();
+        config(['canary.log_channel' => 'monitors']);
+
+        $this->registerOptionalRecord404('api/v1/__canary_optional/donation-link');
+
+        [$exit] = $this->runCanary(['--only' => 'api/v1', '--max-requests' => 500]);
+
+        $this->assertSame(3, $exit);
+        $this->assertCount(1, $this->loggedLines('monitors.log', '.WARNING: tenancy:canary partial'));
+        $this->assertCount(1, $this->loggedLines('laravel.log', '.WARNING: tenancy:canary partial'),
+            'a partial run stopped reaching the application log');
+        $this->assertSame([], $this->alertSubjects(), 'a partial run is a ticket, and it emailed like a page');
     }
 
     #[Test]

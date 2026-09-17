@@ -144,10 +144,21 @@ and the clock, and fails when the newest VERIFIED set is older than 36 hours
 (one missed nightly run plus slack).
 
 **`OPS_ALERT_EMAIL` is the single variable that makes any of this reach a
-person.** `backup:check` and `backup:drill` log to the `monitors` channel, which
-is the ordinary file line plus `ops-alerts`; `ops-alerts` emails at level `error`
-and is completely inert while that variable is empty — which is how it is on
-production right now. Set it.
+person.** `backup:check` and `backup:drill` log to the `monitors` channel, as
+do `tenancy:canary` and `media:verify` on production (`CANARY_LOG_CHANNEL`,
+`MEDIA_VERIFY_LOG_CHANNEL`). That channel writes three places:
+
+- `storage/logs/monitors.log`: every run, clean ones included. **This is where
+  to look to see whether a monitor is running.** Production's
+  `LOG_LEVEL=warning` drops the clean `info` line from `laravel.log`, so
+  `laravel.log` cannot tell a healthy monitor from a stopped one.
+- `laravel.log`: partial and failed runs, beside everything else.
+- `ops-alerts`: emails at level `error`, and is completely inert while that
+  variable is empty. It is set on production (checked 2026-09-17).
+
+Run a monitor by hand as `sudo -u www-data`, like the commands above. The
+scheduler writes `monitors.log` as www-data, and a root-owned file would stop
+it silently.
 
 `backup:drill` runs weekly, Sunday 04:20 UTC.
 

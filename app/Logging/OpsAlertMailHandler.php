@@ -21,8 +21,9 @@ use Monolog\LogRecord;
  *
  * It is registered at level `error` (see config/logging.php), so `warning`
  * (a partial run — a ticket, not a page) and `info` (a clean run) are dropped
- * here and land only in the file channel beside it. Only `error` and `critical`
- * — a leak, an incomplete run, a broken/empty media estate — email.
+ * here and land only in the file channels beside it (`monitors-file` keeps
+ * both; `single` keeps only what LOG_LEVEL allows). Only `error` and
+ * `critical` — a leak, an incomplete run, a broken/empty media estate — email.
  */
 class OpsAlertMailHandler extends AbstractProcessingHandler
 {
@@ -39,7 +40,7 @@ class OpsAlertMailHandler extends AbstractProcessingHandler
 
         // Alerting must NEVER break the run it is watching. A mail failure here
         // is swallowed; the same line has already been written to the file
-        // channel this one is stacked beside, so nothing is lost silently.
+        // channels this one is stacked beside, so nothing is lost silently.
         try {
             $level = $record->level->getName();
             $subject = '[Manara '.$level.'] '.Str::limit($record->message, 90);

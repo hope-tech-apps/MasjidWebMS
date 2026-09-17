@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use Tests\Support\LogsLikeProduction;
 use Tests\TestCase;
 
 /**
@@ -32,6 +33,7 @@ use Tests\TestCase;
  */
 class MediaVerifyTest extends TestCase
 {
+    use LogsLikeProduction;
     use RefreshDatabase;
 
     private string $scratch;
@@ -70,6 +72,8 @@ class MediaVerifyTest extends TestCase
         if (is_dir($this->scratch)) {
             exec('rm -rf '.escapeshellarg($this->scratch));
         }
+
+        $this->forgetProductionLogs();
 
         parent::tearDown();
     }
@@ -388,6 +392,35 @@ class MediaVerifyTest extends TestCase
         $this->assertSame(0, $run['dangling']['rows']);
         $this->assertSame(0, $run['orphans']['groups']);
         $this->assertSame(2, $run['estate']['rows_checked']);
+    }
+
+    #[Test]
+    public function a_clean_run_leaves_a_line_production_keeps(): void
+    {
+        // The test above mocks the channel, so it proves the level and nothing
+        // about delivery. Production runs LOG_LEVEL=warning, and laravel.log
+        // for 2026-09-16 held none of that day's four sweeps. This runs the
+        // sweep through the channel production points it at, under
+        // production's logging environment, and reads the file.
+        $this->logLikeProduction();
+        config(['media-verify.log_channel' => 'monitors']);
+
+        $listed = $this->makeMasjid(listed: true);
+        $this->makeMedia($listed, 'logos', withFile: true);
+
+        [$exit, $run] = $this->verify();
+
+        $this->assertSame(0, $exit);
+        $this->assertSame('clean', $run['status']);
+
+        $this->assertSame([], $this->loggedLines('laravel.log', 'media:verify'),
+            'the application log kept the clean line, so this run was not at production\'s LOG_LEVEL');
+
+        $kept = $this->loggedLines('monitors.log', 'media:verify');
+
+        $this->assertCount(1, $kept, 'a clean scheduled sweep would leave no line on production');
+        $this->assertStringContainsString('.INFO: media:verify clean', $kept[0]);
+        $this->assertSame([], $this->alertSubjects(), 'a clean sweep emailed the operator');
     }
 
     // ================================================================

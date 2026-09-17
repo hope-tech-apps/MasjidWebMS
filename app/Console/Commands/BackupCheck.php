@@ -649,7 +649,9 @@ class BackupCheck extends Command
      *
      * A clean line every day is not noise. It is the only thing that makes the
      * ABSENCE of a line mean something, and the absence of a line is how this
-     * checker itself going dark becomes visible.
+     * checker itself going dark becomes visible. The `pass` line is `info`,
+     * below production's LOG_LEVEL, so it is kept only in the `monitors`
+     * channel's monitors.log (config/logging.php).
      *
      * @param  array<string, mixed>  $payload
      */
