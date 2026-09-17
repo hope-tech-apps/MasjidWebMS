@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Support\MailGreeting;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
 
@@ -39,6 +40,10 @@ class GroupUpdateNudgeMail extends Mailable
          */
         public ?string $orgEmail = null,
     ) {
+        // The name is a stored contact or staff name, and a stranger can plant a
+        // web address as a contact's first name through the public registration
+        // form. See MailGreeting. Cleaned here, so the view cannot print the raw value.
+        $this->recipientName = MailGreeting::safeName($recipientName);
     }
 
     public function build(): self
@@ -56,7 +61,9 @@ class GroupUpdateNudgeMail extends Mailable
             // the "From" line and the body agree; the ADDRESS stays the verified
             // sender.
             ->from($fromAddress, $this->orgName ?: config('mail.from.name', config('app.name')))
-            ->view('emails.group-update-nudge');
+            ->view('emails.group-update-nudge', [
+                'greeting' => MailGreeting::for($this->recipientName),
+            ]);
 
         if ($this->orgEmail && filter_var($this->orgEmail, FILTER_VALIDATE_EMAIL)) {
             $mail->replyTo($this->orgEmail);

@@ -16,13 +16,7 @@
                 @endif
               </h1>
 
-              <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">
-                @if($recipientName)
-                  Assalamu alaikum {{ $recipientName }},
-                @else
-                  Assalamu alaikum,
-                @endif
-              </p>
+              <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">{{ $greeting }}</p>
 
               <p style="margin:0 0 24px;font-size:15px;line-height:1.6;">
                 @if($isMessage)

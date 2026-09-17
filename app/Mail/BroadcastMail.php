@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Support\MailGreeting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -79,6 +80,11 @@ class BroadcastMail extends Mailable implements ShouldQueue
         /** The POST that acts; goes in List-Unsubscribe for one-click clients. */
         public ?string $unsubscribeOneClickUrl = null,
     ) {
+        // A stored first name is not always the reader's own words: a stranger
+        // can plant a web address as one through the public registration form.
+        // See MailGreeting. Cleaned here, so the queued payload never holds the
+        // raw value, and again in content() for mail queued before this check.
+        $this->recipientName = MailGreeting::safeName($recipientName);
     }
 
     /**
@@ -126,9 +132,7 @@ class BroadcastMail extends Mailable implements ShouldQueue
                 'link' => $this->link,
                 'imageUrl' => $this->imageUrl,
                 'unsubscribeUrl' => $this->unsubscribeUrl,
-                'greeting' => $this->recipientName
-                    ? 'Assalamu alaikum ' . $this->recipientName . ','
-                    : 'Assalamu alaikum,',
+                'greeting' => MailGreeting::for($this->recipientName),
             ],
         );
     }
