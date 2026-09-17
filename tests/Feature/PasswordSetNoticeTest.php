@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -399,15 +400,26 @@ class PasswordSetNoticeTest extends TestCase
 
     // ------------------------------------------- a name that is not a name
 
-    #[Test]
-    public function a_web_address_planted_as_a_first_name_reaches_neither_the_code_email_nor_the_notice(): void
+    /** @return array<string, array{0: string}> */
+    public static function plantedAddresses(): array
     {
-        // Review finding F1, reproduced end to end. A stranger, not signed in,
-        // registers for a free program with the victim's address and a "name"
-        // that is a web address. The registration keeps its first word as
-        // first_name next to that address, with no login address.
+        return [
+            'a web address (review finding F1)' => ['https://evil.example/secure-your-account'],
+            // Review finding G1: a zero-width mark after each dot. The reader
+            // would see "www.evil.example".
+            'a web address with an invisible mark after each dot (review finding G1)' => ["www.\u{034F}evil.\u{034F}example"],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('plantedAddresses')]
+    public function a_web_address_planted_as_a_first_name_reaches_neither_the_code_email_nor_the_notice(string $link): void
+    {
+        // Reproduced end to end. A stranger, not signed in, registers for a
+        // free program with the victim's address and a "name" that is a web
+        // address. The registration keeps its first word as first_name next
+        // to that address, with no login address.
         $victim = 'victim.planted@test.local';
-        $link = 'https://evil.example/secure-your-account';
 
         $offering = Offering::factory()->forMasjid($this->masjid)->create(['slug' => 'planted-name']);
         $plan = FeePlan::factory()->free()->create([
@@ -551,6 +563,10 @@ class PasswordSetNoticeTest extends TestCase
         $this->assertNull($notice->recipientName);
         $code = new FamilyLoginCodeMail(orgName: 'Masjid An-Nur', code: '000000', expiresInMinutes: 10, recipientName: 'evil.example');
         $this->assertNull($code->recipientName);
+        // Review finding G1, through both constructors.
+        $hidden = "www.\u{034F}evil.\u{034F}example";
+        $this->assertNull((new PasswordSetNoticeMail(orgName: 'X', loginEmail: 'a@test.local', setAt: 'now', recipientName: $hidden))->recipientName);
+        $this->assertNull((new FamilyLoginCodeMail(orgName: 'X', code: '000000', expiresInMinutes: 10, recipientName: "paypal.\u{FE0F}com"))->recipientName);
         $this->assertSame('Amina', (new FamilyLoginCodeMail(orgName: 'X', code: '000000', expiresInMinutes: 10, recipientName: 'Amina'))->recipientName);
     }
 
