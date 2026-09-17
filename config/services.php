@@ -26,6 +26,12 @@ return [
 
     'resend' => [
         'key' => env('RESEND_KEY'),
+        // Seconds. Without them a Resend that never answers holds the request
+        // and its PHP-FPM worker with no limit, nginx answers 504 after 60 s,
+        // and a mail sent inline turns a saved change into an error. The
+        // timeout covers the whole call. See App\Mail\Transport\ResendWithTimeouts.
+        'connect_timeout' => 5,
+        'timeout' => 10,
     ],
 
     'slack' => [

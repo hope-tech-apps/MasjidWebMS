@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Listeners\ResetTenantContextBetweenJobs;
+use App\Mail\Transport\ResendWithTimeouts;
 use App\Models\FormResponse;
 use App\Models\User;
 use App\Observers\UserObserver;
@@ -10,6 +11,7 @@ use App\Support\FormStaffCodes;
 use App\Support\TryAgainIn;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Mail\MailManager;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Auth\RequestGuard;
 use Illuminate\Support\Facades\Auth;
@@ -102,6 +104,13 @@ class AppServiceProvider extends ServiceProvider
         // Keep the additive Spatie role mirrored to the legacy `users.type` on
         // every user save. See App\Observers\UserObserver + User::syncRoleFromType().
         User::observe(UserObserver::class);
+
+        // Every call to Resend gets a time limit. See ResendWithTimeouts.
+        // Registered when the mail manager is first built, so a request that
+        // sends no mail pays nothing for it.
+        $this->callAfterResolving('mail.manager', function (MailManager $mail): void {
+            $mail->extend('resend', fn (array $config) => ResendWithTimeouts::transport($config));
+        });
 
         $this->responseMacro();
         $this->configureRateLimiters();
