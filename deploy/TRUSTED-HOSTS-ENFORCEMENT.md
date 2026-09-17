@@ -14,7 +14,7 @@ after a week of clean logs, as a **separate** decision. And: "Document the
 tenant host map" — that is `docs/tenant-host-map.md`, which is where the host
 list below comes from and where the evidence for each host is recorded.
 
-### The production setting to apply with this release
+### The production setting to apply BEFORE this release is deployed
 
 ```
 TRUSTED_HOSTS=manara.hopetechapps.com
@@ -35,11 +35,53 @@ Al-Razi's own site, the parent guide) is answered by Cloudflare Pages or a
 Worker and reaches Laravel only as `masjid.hopetechapps.com`. Do **not** add the
 droplet's IP addresses or any of the foreign hostnames the log will show.
 
-Applying it is optional for the release itself — the release is safe without
-it, because nothing is refused — but until it is set, `manara.hopetechapps.com`
-writes one warning an hour and hides among the junk the log is meant to be read
-for. Staging's equivalent is `TRUSTED_HOSTS=manara-staging.hopetechapps.com`
-(now in `deploy/staging/env.staging.example`).
+The release is safe without it, because nothing is refused. But until it is
+set, `manara.hopetechapps.com` is the sign-in page's hostname, so every admin
+sign-in writes a warning naming it, and those lines stay in the rotated logs
+for 14 days (`/etc/logrotate.d/manara`: `daily`, `rotate 14`).
+
+**Add it before the deploy, not after.** The code running today reads no
+`TRUSTED_HOSTS` key, and its configuration is cached
+(`bootstrap/cache/config.php`), so the added line changes nothing until
+`bin/deploy` runs `config:clear` and `config:cache`. Those pick it up together
+with the new `config/trusted_hosts.php`. One short gap remains: between
+`bin/deploy`'s `git merge` and its `config:clear` (composer, chown, migrations;
+usually under a minute), the new middleware runs against the old cached
+configuration, which has no `trusted_hosts` section. A manara request in that
+gap still writes one warning. That is why every log check in step 2 counts only
+lines after a stated time (`SINCE`).
+
+On production, as root, in the app directory:
+
+```
+cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
+grep -c '^TRUSTED_HOSTS' .env                    # expect 0 (no such key yet)
+[ -z "$(tail -c1 .env)" ] && echo ends-with-newline   # expect ends-with-newline; if not, stop
+cp -p .env /root/env-backups/.env.$(date -u +%Y%m%dT%H%M%SZ)
+printf 'TRUSTED_HOSTS=manara.hopetechapps.com\n' >> .env   # appends in place: same inode, owner, mode
+stat -c '%U:%G %a' .env                          # expect www-data:www-data 600, as before
+sudo -u www-data HOME=/tmp php -r 'require "vendor/autoload.php";
+  $e = Dotenv\Dotenv::createArrayBacked(getcwd())->load();
+  echo "TRUSTED_HOSTS=", $e["TRUSTED_HOSTS"] ?? "(missing)", " APP_KEY present=", isset($e["APP_KEY"]) ? "yes" : "NO", PHP_EOL;'
+```
+
+The last command parses the whole file as `www-data`, the same way the app
+will, so a broken or unreadable `.env` shows up here and not as a site-wide
+500 after `config:cache`. It must print
+`TRUSTED_HOSTS=manara.hopetechapps.com APP_KEY present=yes`. Do **not** run
+`config:cache` for this step, because `bin/deploy` runs it. On 2026-09-17 the
+file ended with a newline and was `www-data:www-data 600`, `/root/env-backups`
+existed, and this command printed `TRUSTED_HOSTS=(missing) APP_KEY present=yes`
+(phpdotenv 5.6.4). Appending with `>>` as root keeps the inode, owner and mode.
+Never `mv` a file over it; see step 1.
+
+Staging's equivalent is `TRUSTED_HOSTS=manara-staging.hopetechapps.com`. It is
+in `deploy/staging/env.staging.example`, but **only `deploy/staging/provision.sh`
+applies that file.** `scripts/ship.sh staging` runs `bin/deploy` and never
+touches `.env`. So a staging pass of this release runs without the setting,
+unless someone adds the line to staging's `.env` by the same method first. If
+nobody does, `manara-staging.hopetechapps.com` warnings on staging are expected
+and are not a finding.
 
 ## What already shipped, and needs none of this
 
@@ -163,42 +205,65 @@ TRUSTED_HOSTS=manara.hopetechapps.com          # production
 TRUSTED_HOSTS=manara-staging.hopetechapps.com  # staging
 ```
 
-(Production: this is the same line as "The production setting to apply with
-this release" above — if it went on with the release, step 1 is already done.)
+Production: this is the same line as "The production setting to apply BEFORE
+this release is deployed" above. If it went in before the deploy, step 1 is
+done and needs no `config:cache` of its own.
 
-Write it **through the inode** — `cat >` or an editor, never `mv` a new file over
-it as root. Moving a file over `.env` replaces the inode with one owned by root
-and unreadable to `www-data`; `config:cache` then fails and the 500 blames
-`APP_KEY`. Then `php artisan config:cache` and confirm the site still answers.
+If it is added **after** the deploy instead (on either box), write it **through
+the inode**: `>>`, `cat >` or an editor, never `mv` a new file over it as root.
+Moving a file over `.env` replaces the inode with one owned by root and
+unreadable to `www-data`. `config:cache` then fails, and the 500 blames `APP_KEY`.
+Parse-check it as `www-data` (the command above), then `php artisan config:cache`
+as `www-data`, and confirm the site still answers. Set `SINCE` (step 2) to a
+time after that `config:cache`.
 
-Adding the host while enforcement is off changes **nothing observable**. That is
-the point: it is a free step that removes the only known way step 3 can break the
-site, and if something else goes wrong it is trivially attributable.
+Adding the host while enforcement is off changes **nothing observable** except
+that the manara warnings stop. It removes the only known way step 3 can break
+the site, and if something else goes wrong the cause is easy to find.
 
 **2. Leave it observing, and read the log.**
 
-Production logs to `storage/logs/laravel.log` (`LOG_STACK=single`) and the file
-is rotated daily into `laravel.log.N.gz`, so read it with `zgrep`, which takes
-the rotated files and the live one alike:
+Production logs to `storage/logs/laravel.log` (`LOG_STACK=single`). logrotate
+copies it daily into `laravel.log.N` / `laravel.log.N.gz` and keeps 14, so read
+it with `zgrep`, which reads rotated and live files alike.
+
+**Every check counts only lines after `SINCE`.** The files hold 14 days of
+history, so without the filter a single manara line written during the deploy
+(see above) would show up in every check for two weeks. Set `SINCE` to the
+later of: the end of the deploy (its `config:cache`) and the moment the
+`TRUSTED_HOSTS` line took effect. Laravel stamps each line
+`[YYYY-MM-DD HH:MM:SS]` in the app timezone, and production's `APP_TIMEZONE` is `UTC`.
+When the clock restarts, move `SINCE` forward.
 
 ```
 cd /var/www/html/Masjids_App_Management_System/MasjidsManagementSystem
 M="Host header this deployment does not serve"
+SINCE="[2026-09-18 00:00:00]"        # <- set this; UTC; keep the brackets
+since() { awk -v s="$SINCE" 'substr($0, 1, 21) >= s'; }
 
-# every host reported, most frequent first
-zgrep -h "$M" storage/logs/laravel.log* | grep -o '"host":"[^"]*"' | sort | uniq -c | sort -rn
+# every host reported since SINCE, with the mode it was reported in
+zgrep -h "$M" storage/logs/laravel.log* | since \
+  | grep -oE '"host":"[^"]*"|"enforced":(true|false)' | paste -d' ' - - \
+  | sort | uniq -c | sort -rn
 
-# THE GATE: warnings naming a hostname in a zone we own. Must print nothing
-# for seven consecutive days before step 3.
-zgrep -h "$M" storage/logs/laravel.log* \
+# THE GATE, part 1: warnings naming a hostname in a zone we own. Must print
+# nothing for seven consecutive days before step 3.
+zgrep -h "$M" storage/logs/laravel.log* | since \
   | grep -oE '"host":"([a-z0-9-]+\.)*(hopetechapps\.com|alrazischool\.org|burlingtonmasjid\.com|al-aqsaclinic\.org|joinwird\.com|tapcraft\.tech|mizanfintech\.app|aiinnovation\.dev)"' \
   | sort | uniq -c
 
-# requests by IP literal: look at the path and client IP, not the count
-zgrep -h "$M" storage/logs/laravel.log* | grep -E '"host":"[0-9.]+"' | grep -oE '"path":"[^"]*","method":"[A-Z]+","ip":"[^"]*"' | sort | uniq -c | sort -rn | head -30
+# THE GATE, part 2: hours in which the log hit its cap and stopped naming hosts.
+# Must print nothing for the same seven days (see below).
+zgrep -h "Unknown-Host logging paused" storage/logs/laravel.log* | since | cut -c1-21
+
+# requests by IP literal (v4 or v6): look at the path and client IP, not the count
+zgrep -h "$M" storage/logs/laravel.log* | since \
+  | grep -oE '"host":"([0-9.]+|\[[0-9a-f:.]+\])",.*"ip":"[^"]*"' | sed -E 's/"allowed":\[[^]]*\],//' \
+  | sort | uniq -c | sort -rn | head -30
 ```
 
-Each line carries the host, the path, the method and the IP. Repeats of the same
+Each line carries the host, the path, the method and the IP (each cut to 253
+bytes, ending `...[N bytes]` when cut). Repeats of the same
 host are rate-limited to one line an hour, so the count is hosts-over-time, not
 requests. Read for **at least a full day** so a daily monitor or a nightly job
 gets a chance to appear, and for **seven days** before enforcing.
