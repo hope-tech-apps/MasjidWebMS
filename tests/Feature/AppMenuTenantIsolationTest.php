@@ -184,8 +184,10 @@ class AppMenuTenantIsolationTest extends TestCase
         //
         // This origin is reachable on hostnames that are not its own: it is
         // nginx's default_server on both ports, it serves the portal vhosts
-        // from the same document root, and there is no TrustHosts middleware.
-        // So this is not only a "two brands share a deploy" problem — one
+        // from the same document root, and App\Http\Middleware\TrustedHosts
+        // only observes an unknown Host until enforcement is switched on — so
+        // this case runs with the middleware in its shipped mode. This is not
+        // only a "two brands share a deploy" problem — one
         // unauthenticated GET with a chosen Host would otherwise pin an
         // attacker's address into `deletion_page_url`, which [R2] has both
         // clients PREFER over their compiled constant.

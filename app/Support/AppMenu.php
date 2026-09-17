@@ -510,24 +510,27 @@ class AppMenu
                 // The live public page (S1a). It replaces the string both apps
                 // compiled in, so the address can move without a release.
                 //
-                // config('app.url') and NOT url(): url() resolves against the
-                // INCOMING REQUEST'S Host header, and this value is cached for
-                // ten minutes under a key with no host in it and hashed into
-                // the ETag. This origin answers on several hostnames and on any
-                // Host at all — it is nginx's default_server on :80 and :443,
-                // it serves the portal vhosts from the same document root, and
-                // there is no TrustHosts middleware — so url() here means the
-                // first caller to warm an org's entry picks the delete-account
-                // address every phone is handed until it expires. [R2] has both
-                // clients PREFER this string over their compiled constant, so a
-                // wrong one is not a broken link, it is a member tapping Delete
+                // SiteUrl (config('app.url')) and NOT url(): url() resolves
+                // against the INCOMING REQUEST'S Host header, and this value is
+                // cached for ten minutes under a key with no host in it and
+                // hashed into the ETag. This origin answers on several
+                // hostnames and on any Host at all — it is nginx's
+                // default_server on :80 and :443, it serves the portal vhosts
+                // from the same document root, and the TrustedHosts middleware
+                // ships OBSERVING (it logs an unknown Host and lets it
+                // through) — so url() here would mean the first caller to
+                // warm an org's entry picks the delete-account address every
+                // phone is handed until it expires. [R2] has both clients
+                // PREFER this string over their compiled constant, so a wrong
+                // one is not a broken link, it is a member tapping Delete
                 // account and landing on somebody else's page that then asks
                 // for an email address and a code.
                 //
-                // Every other absolute public URL in this application is built
-                // the same way (FormNotifier, ContactUsNotifier,
-                // ConnectOnboardingLandingController, SecurityHeaders).
-                'deletion_page_url' => rtrim((string) config('app.url'), '/') . '/account-deletion',
+                // With an https:// APP_URL (production and staging) SiteUrl::to()
+                // produces exactly the string the inline
+                // rtrim(config('app.url'), '/') . '/account-deletion' did, so
+                // the body and its ETag are unchanged by the switch.
+                'deletion_page_url' => SiteUrl::to('account-deletion'),
             ],
             'profiles' => $profiles,
         ];

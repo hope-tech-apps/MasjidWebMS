@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Masjid;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
+use App\Support\SiteUrl;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -48,8 +49,14 @@ class StripeConnectController extends Controller
                 ], Response::HTTP_CONFLICT);
             }
 
-            $refreshUrl = route('connect.refresh', ['masjid_id' => $masjid->id]);
-            $returnUrl = route('connect.return', ['masjid_id' => $masjid->id]);
+            // On the CONFIGURED host. Stripe keeps these in the Account Link and
+            // sends the admin's browser to them later, to the public landing
+            // (ConnectOnboardingLandingController), which needs no token and
+            // links back to config('app.url') itself — so nothing is gained
+            // by following the host the admin happened to be on, and a value
+            // that outlives its request must not be built from it.
+            $refreshUrl = SiteUrl::route('connect.refresh', ['masjid_id' => $masjid->id]);
+            $returnUrl = SiteUrl::route('connect.return', ['masjid_id' => $masjid->id]);
 
             $url = $this->connect->createOnboardingLink($masjid, $refreshUrl, $returnUrl);
 

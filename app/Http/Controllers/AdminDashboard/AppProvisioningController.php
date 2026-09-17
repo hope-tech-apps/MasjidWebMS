@@ -8,6 +8,7 @@ use App\Models\Masjid;
 use App\Models\ProvisioningJob;
 use App\Services\GithubDispatchService;
 use App\Support\Errors;
+use App\Support\SiteUrl;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -166,8 +167,12 @@ class AppProvisioningController extends Controller
             'display_name' => $displayName,
             'account_mode' => $accountMode,
             'development_team' => $developmentTeam,
-            // Absolute URL the runner POSTs status updates to for THIS job.
-            'callback_url' => route('provisioning.callback'),
+            // Absolute URL the runner POSTs status updates to for THIS job —
+            // on the CONFIGURED host, not the one the super admin's browser
+            // happened to use. The runner calls it minutes later and carries
+            // this job's bearer token to it, so it outlives the request that
+            // built it; see App\Support\SiteUrl.
+            'callback_url' => SiteUrl::route('provisioning.callback'),
             // Per-job bearer the runner echoes to authenticate its callback.
             'callback_token' => $job->callback_token,
         ];

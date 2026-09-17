@@ -3,20 +3,26 @@
 namespace Tests\Feature;
 
 use App\Models\Announcement;
+use App\Models\DonationLink;
 use App\Models\Masjid;
+use App\Models\MasjidAbout;
+use App\Models\MasjidUser;
 use App\Models\MealMenu;
 use App\Models\MobileAppFeature;
 use App\Models\Service;
 use App\Models\User;
 use App\Services\Broadcast\EmailSuppressionService;
+use App\Services\Stripe\StripeConnectService;
 use App\Support\MobileCache;
 use App\Support\SiteUrl;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
+use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -491,6 +497,168 @@ class HostHeaderUrlIntegrityTest extends TestCase
             $html,
             'the forged Host did not reach URL generation — every other case in this file is now vacuous'
         );
+    }
+
+    #[Test]
+    public function the_about_payload_and_its_cache_entry_stay_on_the_configured_host(): void
+    {
+        // One of the five cached keys MobileMedia's docblock names as the flush
+        // list, and one of the two the first version of this suite did not
+        // drive. An About row with no media takes all three placeholders.
+        $masjid = $this->makeMasjid();
+
+        MasjidAbout::create([
+            'masjid_id' => $masjid->id,
+            'about' => 'about',
+            'mission' => 'mission',
+            'vision' => 'vision',
+        ]);
+
+        MobileCache::flushMasjid($masjid->id, MobileCache::ABOUT);
+
+        $body = $this->getAsForgedHost("/api/mobile/masjids/{$masjid->id}/about")
+            ->assertOk()
+            ->getContent();
+
+        // Three envelopes, each carrying original_url AND preview_url.
+        $this->assertSame(
+            6,
+            substr_count($this->readable($body), self::CONFIGURED_URL.'/mobile-assets/placeholder.png'),
+            'precondition: about_image, mission_icon and vision_icon did not all take the placeholder'
+        );
+        $this->assertOnConfiguredHost($body, 'the about response');
+        $this->assertOnConfiguredHost(
+            $this->cachedPayload($masjid->id, MobileCache::ABOUT),
+            'the about CACHE ENTRY'
+        );
+    }
+
+    #[Test]
+    public function the_donation_link_payload_and_its_cache_entry_stay_on_the_configured_host(): void
+    {
+        // The fifth cached key. A link with no banner row takes the placeholder,
+        // and the Donate screen force-unwraps it.
+        $masjid = $this->makeMasjid();
+
+        DonationLink::create([
+            'masjid_id' => $masjid->id,
+            'link' => 'https://give.example.org/masjid',
+        ]);
+
+        MobileCache::flushMasjid($masjid->id, MobileCache::DONATION_LINK);
+
+        $body = $this->getAsForgedHost("/api/mobile/masjids/{$masjid->id}/donation-link")
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString(
+            'mobile-assets/placeholder',
+            $this->readable($body),
+            'precondition: the placeholder path was not taken'
+        );
+        $this->assertOnConfiguredHost($body, 'the donation-link response');
+        $this->assertOnConfiguredHost(
+            $this->cachedPayload($masjid->id, MobileCache::DONATION_LINK),
+            'the donation-link CACHE ENTRY'
+        );
+    }
+
+    #[Test]
+    public function the_provisioning_callback_handed_to_the_runner_is_on_the_configured_host(): void
+    {
+        // Not cached, but it outlives the request by minutes and carries a
+        // secret with it: the self-hosted runner POSTs this job's progress to
+        // `callback_url` with the job's bearer token. It was route(), so the
+        // super admin's Host decided where that token went.
+        $masjid = $this->makeMasjid();
+
+        config([
+            'services.github.dispatch_token' => 'test-dispatch-token',
+            'services.github.ios_repo' => 'hope-tech-apps/ios-test',
+            'services.github.android_repo' => 'hope-tech-apps/android-test',
+        ]);
+        Http::fake(['api.github.com/*' => Http::response('', 204)]);
+
+        Sanctum::actingAs(User::factory()->create([
+            'type' => 'SuperAdmin',
+            'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]));
+
+        $this->postJson(
+            'https://'.self::FORGED_HOST."/api/admin/masjids/{$masjid->id}/provision-apps",
+            ['platforms' => ['android']]
+        )->assertStatus(201);
+
+        $this->assertArrivedOnHost(self::FORGED_HOST);
+
+        $sent = Http::recorded();
+        $this->assertCount(1, $sent, 'precondition: exactly one dispatch should have been sent');
+
+        $callback = $sent[0][0]->data()['client_payload']['callback_url'] ?? null;
+
+        $this->assertIsString($callback, 'the dispatch carried no callback_url');
+        $this->assertSame(self::CONFIGURED_URL.'/api/provisioning/callback', $callback);
+    }
+
+    #[Test]
+    public function the_stripe_onboarding_return_urls_are_on_the_configured_host(): void
+    {
+        // Stripe stores these in the Account Link and sends the admin's browser
+        // to them later — to the PUBLIC landing, which needs no token. They were
+        // route(), so the Host the admin's request arrived on decided them.
+        $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
+        $masjid = $this->makeMasjid();
+        $masjid->forceFill(['crm_enabled' => true])->save();
+
+        $admin = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]);
+        MasjidUser::create([
+            'masjid_id' => $masjid->id, 'user_id' => $admin->id,
+            'role' => 'masjid-admin', 'is_default' => true,
+        ]);
+
+        $captured = [];
+        $service = Mockery::mock(StripeConnectService::class);
+        $service->shouldReceive('createOnboardingLink')
+            ->once()
+            ->andReturnUsing(function (Masjid $org, string $refresh, string $return) use (&$captured): string {
+                $captured = ['refresh' => $refresh, 'return' => $return];
+
+                return 'https://connect.stripe.test/setup/abc';
+            });
+        $this->app->instance(StripeConnectService::class, $service);
+
+        Sanctum::actingAs($admin->fresh());
+
+        $this->postJson('https://'.self::FORGED_HOST."/api/admin/masjids/{$masjid->id}/connect/onboarding")
+            ->assertOk()
+            ->assertJsonPath('data.onboarding_url', 'https://connect.stripe.test/setup/abc');
+
+        $this->assertArrivedOnHost(self::FORGED_HOST);
+
+        $this->assertSame(self::CONFIGURED_URL."/connect/{$masjid->id}/refresh", $captured['refresh'] ?? null);
+        $this->assertSame(self::CONFIGURED_URL."/connect/{$masjid->id}/return", $captured['return'] ?? null);
+    }
+
+    #[Test]
+    public function site_url_upgrades_an_http_app_url_when_https_is_forced(): void
+    {
+        // url() honours AppServiceProvider's URL::forceScheme('https'); a raw
+        // APP_URL does not. Moving a builder from url() to SiteUrl must not start
+        // emitting http:// on a box that forces https but still has an http://
+        // APP_URL.
+        config(['app.url' => 'http://masjid.test', 'app.force_https' => true]);
+        $this->assertSame('https://masjid.test/account-deletion', SiteUrl::to('account-deletion'));
+
+        config(['app.force_https' => false]);
+        $this->assertSame('http://masjid.test/account-deletion', SiteUrl::to('account-deletion'));
+
+        // Never the other way: an https:// APP_URL stays https:// either way.
+        config(['app.url' => 'https://masjid.test']);
+        $this->assertSame('https://masjid.test/account-deletion', SiteUrl::to('account-deletion'));
     }
 
     #[Test]

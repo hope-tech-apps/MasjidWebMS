@@ -73,10 +73,33 @@ final class SiteUrl
      */
     public static function to(string $path = ''): string
     {
-        $base = rtrim((string) config('app.url'), '/');
+        $base = self::base();
         $path = ltrim($path, '/');
 
         return $path === '' ? $base : $base.'/'.$path;
+    }
+
+    /**
+     * APP_URL without its trailing slash — upgraded to https:// when
+     * `app.force_https` is on.
+     *
+     * The upgrade keeps this class a drop-in for `url()` on the configured
+     * host. `url()` honours AppServiceProvider's URL::forceScheme('https');
+     * a raw APP_URL does not. Production and staging both carry an https://
+     * APP_URL today, so this changes nothing there — it exists so that a box
+     * whose APP_URL still says http:// while FORCE_HTTPS is on does not start
+     * handing phones and inboxes http:// links the moment a builder moves
+     * from `url()` to this class.
+     */
+    private static function base(): string
+    {
+        $base = rtrim((string) config('app.url'), '/');
+
+        if (config('app.force_https') && str_starts_with(strtolower($base), 'http://')) {
+            $base = 'https://'.substr($base, strlen('http://'));
+        }
+
+        return $base;
     }
 
     /**
