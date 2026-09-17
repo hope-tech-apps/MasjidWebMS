@@ -218,9 +218,17 @@
                     </div>
                 </div>
 
-                <div v-if="!threads.length" class="text-muted small">{{ t('threads_empty') }}</div>
+                <div v-if="!openedThread && !threads.length" class="text-muted small">{{ t('threads_empty') }}</div>
 
-                <div v-else class="d-flex flex-column gap-2">
+                <!-- ONE SCREEN AT A TIME. The list used to stay on the page with
+                     the opened conversation appended BELOW it, and nothing moved
+                     the viewport — so on a phone, tapping a message looked like
+                     it did nothing and the reply box sat below the whole list,
+                     off-screen. Parents reported they could not answer their
+                     child's teacher, and the access log agrees: conversations
+                     were opened and not one reply was ever posted. The reports
+                     tab on this same screen already works this way. -->
+                <div v-else-if="!openedThread" class="d-flex flex-column gap-2">
                     <button v-for="thread in threads" :key="thread.id" type="button"
                             class="card border-0 shadow-sm align-start"
                             @click="openThread(thread)">
@@ -245,10 +253,15 @@
                 </div>
 
                 <!-- one open conversation -->
-                <div v-if="openedThread" class="card border-0 shadow-sm mt-3">
-                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                        <strong class="small" dir="auto">{{ txThreadSubject(openedThread) || t('thread_untitled') }}</strong>
-                        <button class="btn-close" @click="openedThread = null"></button>
+                <div v-if="openedThread" class="card border-0 shadow-sm">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center gap-2">
+                        <button type="button"
+                                class="btn btn-link btn-sm p-0 text-decoration-none d-inline-flex align-items-center gap-1"
+                                @click="closeThread">
+                            <i :class="backIcon"></i>{{ t('threads_all') }}
+                        </button>
+                        <strong class="small text-truncate" dir="auto">{{ txThreadSubject(openedThread) || t('thread_untitled') }}</strong>
+                        <button class="btn-close" @click="closeThread"></button>
                     </div>
                     <div class="card-body d-flex flex-column gap-3">
                         <!-- `align-self-end` is a cross-axis end in a column flex
@@ -276,7 +289,7 @@
                         </div>
                     </div>
 
-                    <div class="card-footer bg-white">
+                    <div class="card-footer bg-white" ref="replyAnchor">
                         <div v-if="openedThread.is_closed" class="text-muted small">{{ t('thread_closed') }}</div>
                         <template v-else>
                             <div v-if="replyError" class="alert alert-danger small py-2">{{ tMessage(replyError) }}</div>
@@ -808,7 +821,7 @@ import { useFamilyLang } from '@/views/family/familyI18n';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
@@ -1081,6 +1094,8 @@ const fail = (e: any) => {
 };
 
 const replyBody = ref('');
+/** The conversation's footer, so opening one lands on the reply box. */
+const replyAnchor = ref<HTMLElement | null>(null);
 const sendingReply = ref(false);
 const replyError = ref<FamilyMessage | null>(null);
 
@@ -1119,9 +1134,57 @@ const openThread = async (thread: any) => {
         replyBody.value = '';
         replyError.value = null;
         openedMessages.value = rowsOf(res.data?.data?.messages);
+
+        // Land on the REPLY BOX, not the top of the conversation. Hiding the
+        // list was not enough on a phone: with a few messages above it the box
+        // still sat just past the bottom of the screen (measured at 804px in an
+        // 812px viewport on staging), so a parent would again see a message and
+        // no way to answer it. Every messaging app opens at the newest message
+        // for this reason.
+        await nextTick();
+        scrollToReply();
     } catch (e) {
         if (!fail(e)) error.value = { key: 'thread_open_failed' };
     }
+};
+
+/**
+ * Put the reply box on screen, and again once the conversation's photos have
+ * loaded.
+ *
+ * Scrolling once on nextTick was not enough and the staging walk is why this
+ * exists: the scroll ran while the thread was still text-only, then two
+ * attachments finished loading, grew the page, and pushed the box back below
+ * the fold — exactly the symptom parents reported, arriving a second way. A
+ * fixed delay would be a guess about a network; the images' own `load` events
+ * are the fact. `once` per image, so a slow photo cannot keep yanking the page
+ * while somebody is typing.
+ */
+const scrollToReply = () => {
+    const land = () => {
+        if (replyAnchor.value) {
+            replyAnchor.value.scrollIntoView({ block: 'end', behavior: 'smooth' });
+        } else {
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+    };
+
+    land();
+
+    for (const img of Array.from(replyAnchor.value?.parentElement?.querySelectorAll('img') ?? [])) {
+        if (!(img as HTMLImageElement).complete) {
+            img.addEventListener('load', land, { once: true });
+            img.addEventListener('error', land, { once: true });
+        }
+    }
+};
+
+/** Back to the list, with nothing of the last conversation left behind. */
+const closeThread = () => {
+    openedThread.value = null;
+    openedMessages.value = [];
+    replyBody.value = '';
+    replyError.value = null;
 };
 
 const loadChildRecords = async () => {
