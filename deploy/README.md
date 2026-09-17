@@ -158,7 +158,8 @@ do `tenancy:canary` and `media:verify` on production (`CANARY_LOG_CHANNEL`,
 
 Run a monitor by hand as `sudo -u www-data`, like the commands above. The
 scheduler writes `monitors.log` as www-data, and a root-owned file would stop
-it silently.
+it silently. `bin/deploy` creates the file and chowns `storage/` on every
+deploy, so a wrong owner lasts until the next deploy at most.
 
 `backup:drill` runs weekly, Sunday 04:20 UTC.
 

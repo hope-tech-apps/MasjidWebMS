@@ -148,6 +148,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
         echo "    git fetch --quiet origin && git checkout --detach <resolved $REF>"
     fi
     echo "    composer install --no-dev --optimize-autoloader"
+    echo "    touch storage/logs/monitors.log"
     echo "    chown -R $WEB_USER:$WEB_USER app bootstrap/cache config database resources routes storage vendor/composer"
     echo "    php artisan migrate --force"
     echo "    php artisan config:clear route:clear view:clear config:cache route:cache"
@@ -201,6 +202,11 @@ COMPOSER_ALLOW_SUPERUSER=1 composer install \
     --no-interaction --no-progress --no-dev --optimize-autoloader 2>&1 | tail -3
 
 say "Ownership"
+# The scheduled monitors' proof-of-run file (config/logging.php `monitors-file`).
+# Created here, before the chown, so it is www-data's from the moment the config
+# that writes it is live. If a monitor run by hand as root created it first,
+# www-data could not append, and the `monitors` stack swallows that failure.
+touch storage/logs/monitors.log
 chown -R "$WEB_USER":"$WEB_USER" app bootstrap/cache config database resources routes storage vendor/composer
 
 say "Migrations"

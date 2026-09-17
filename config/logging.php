@@ -131,10 +131,11 @@ return [
         //
         // ignore_exceptions so a mail hiccup can never take down the file lines
         // beside it. The price: an unwritable monitors.log is swallowed too. The
-        // scheduler runs as www-data, so run a monitor by hand as
-        // `sudo -u www-data`, never as root, or root may create the file and
-        // own it. A monitors.log that stops growing then reads as "not
-        // running". That is a false alarm at worst, never a false green.
+        // scheduler runs as www-data. A file created by root (a monitor run by
+        // hand without `sudo -u www-data`) would refuse its writes. So bin/deploy
+        // creates monitors.log and chowns storage/ on every deploy. A file that
+        // stops growing anyway reads as "not running": a false alarm at worst,
+        // never a false green.
         'monitors' => [
             'driver' => 'stack',
             'channels' => ['monitors-file', 'single', 'ops-alerts'],
