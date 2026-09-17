@@ -1598,6 +1598,36 @@ alaikum,'."
    (`GroupNotificationRecipientResolver`), and by `users.name` when it notifies a teacher. The check
    covers the whole string: an email address in the last name drops the whole name, and so does a
    full name longer than 40 characters. The broadcast greets by first name only.
+4. **What counts as a name** (all four mails; review finding G1, fixed the same day). The first
+   version allowed a combining mark anywhere after the first letter and only looked at the character
+   right after a full stop, so a zero-width mark after each dot got through:
+   "www.[U+034F]evil.[U+034F]example" and "paypal.[U+FE0F]com" were printed, and the
+   reader saw the address. `MailGreeting` now leaves the name out when it holds any Unicode
+   default-ignorable character or one of the two letters or marks that look like a full stop
+   (U+A4F8, U+1D16D; ICU's confusables data), when a combining mark follows anything but a letter or
+   a mark, or when a full stop comes before a letter with or without marks between. Arabic vowel
+   marks, accents typed as separate marks and Devanagari vowel signs still print.
+   `PasswordSetNoticeTest` checks the list against ICU's data for every code point (it skips if
+   ext-intl is missing; the droplet's PHP has it). Letters that look like "/" or ":" (a Japanese
+   "ノ", a Devanagari visarga) are allowed: real names use them, and with no full stop they cannot
+   spell an address.
+5. **What production holds** (owner: "also check stored first names that look like URLs").
+   A read-only count on 2026-09-17 (prod at `138ae37`, live contacts only, no names read out):
+   - 522 live contacts: org 1 (Burlington) 503, org 14 (Al-Razi) 17, orgs 2 and 13 one each.
+   - **No stored first or last name holds "://" or "www."**, and none holds an invisible character or
+     a full-stop lookalike. Only three values have a full stop before a letter, and all three are
+     email-address pieces (below). Nothing the first version of the check printed is dropped by
+     this one.
+   - First names left out: 2 of 522, both in org 1 and both imported. One is a whole email address
+     (the contact has an email, so broadcasts now greet it with "Assalamu alaikum,"). The other holds
+     "&" and has no email.
+   - Last names left out: 206 of 486, all in org 1. 189 are imported placeholders shaped
+     "{word} {number}" (placeholders get no broadcast, and none has an email). The other 17 hold
+     "/", "(", ")", "&", or "@" and a domain (2, both with an email). All but one were imported;
+     that one came from the Jummah lunch sign-up. Only the class email prints a last name, it goes
+     only to a live family login, and org 1 has none, so no class email reaches any of them today.
+   - Orgs 13 and 14 hold all 11 contacts with a login address (1 and 10) and lose no name. `users.name`: 22 staff
+     names, none left out.
 
 **Alternatives.**
 - **Clean names when they are saved** (registration form, imports). Not done here: the rows already
@@ -1616,4 +1646,5 @@ its own decision, because the greeting is not the only place the name or other t
 - `TwoFactorResetMail` and `AccountAccessMail`: `users.name`, a staff account's name. Only a
   signed-in dashboard user writes it (an admin, or the staff member on their own profile).
 
-Pinned by `tests/Feature/BroadcastAndNudgeGreetingTest.php`.
+Pinned by `tests/Feature/BroadcastAndNudgeGreetingTest.php`, and for `MailGreeting` itself by the
+greeting cases in `tests/Feature/PasswordSetNoticeTest.php`.

@@ -374,7 +374,8 @@ DECISIONS.md 2026-09-17.
 - **No password, code, token or link in it**, and no model in its payload (scalars only). The
   greeting prints the first name only through `MailGreeting`, because a stranger can store a web
   address as a first name through the public registration form. Any new mail that greets a contact
-  by a stored name must do the same. `FamilyLoginCodeMail`, `BroadcastMail` and
+  by a stored name must do the same. Do not loosen `MailGreeting`'s character rules: its first
+  version let a zero-width mark after each dot carry "www.evil.example" through (review finding G1). `FamilyLoginCodeMail`, `BroadcastMail` and
   `GroupUpdateNudgeMail` do too, each cleaning the name in its constructor. The mails that still
   print a name without it are listed in DECISIONS.md, 2026-09-17 "Broadcast and class emails print
   a stored name only when it looks like a name". The "if it was not you" sentence names the app
