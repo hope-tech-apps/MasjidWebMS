@@ -78,9 +78,21 @@ already correct and only the third is missing.
 | `portal.alrazischool.org` | own vhost | yes, from `PORTAL_HOSTS=portal.alrazischool.org=14` |
 | `manara.hopetechapps.com` | **`default_server` only** — named in no vhost and no setting | **NO** |
 
-`manara.hopetechapps.com` answers 200 today and serves the admin SPA. It reaches
-the app purely because the masjid vhost is `default_server`. **Enforcing without
-adding it makes every request to that hostname a 400.**
+`manara.hopetechapps.com` reaches the app only because the masjid vhost is
+`default_server`. Not all of it does: the Cloudflare Worker `manara-marketing` owns
+four exact paths, `/`, `/masjids`, `/schools` and `/community`, and answers them
+without calling the origin. Everything else under that hostname is Laravel: the
+sign-in page `/auth/sign-in`, the admin SPA, `/api/*`, `/up`. You can tell them
+apart by the headers (checked 2026-09-17). `/` returns 200 with no
+`x-frame-options` and no `cf-cache-status`. `/auth/sign-in` and `/up` return 200
+with `x-frame-options: DENY` and `cf-cache-status: DYNAMIC`. That header comes
+only from this app's `SecurityHeaders`: production nginx adds
+`X-Content-Type-Options` (and `Access-Control-Allow-Origin` on two locations)
+but never `X-Frame-Options`, and the Worker sets neither. (`/masjids/`, with a
+trailing slash, is Laravel's too: the Worker's routes match the four paths
+exactly.) **Enforcing
+without adding the hostname makes every Laravel path under it a 400, including
+sign-in, while `/` keeps answering 200.**
 
 This is no longer a prediction. The branch was deployed to staging on 2026-09-15
 in report-only mode, and the middleware logged the staging twin of exactly this
@@ -220,10 +232,25 @@ TRUSTED_HOSTS_ENFORCE=true
 `php artisan config:cache`, then verify by hand:
 
 ```
-curl -s -o /dev/null -w '%{http_code}\n' https://masjid.hopetechapps.com/up          # 200
-curl -s -o /dev/null -w '%{http_code}\n' https://manara.hopetechapps.com/            # 200
-curl -s -o /dev/null -w '%{http_code}\n' https://portal.alrazischool.org/portal      # 200
+for u in https://masjid.hopetechapps.com/up \
+         https://manara.hopetechapps.com/auth/sign-in \
+         https://portal.alrazischool.org/portal; do
+  printf '%s  ' "$u"
+  curl -s -o /dev/null -D - "$u" | tr -d '\r' | grep -iE '^(HTTP/|x-frame-options:)' | tr '\n' ' '
+  echo
+done
+# every line must show a 200 status AND x-frame-options: DENY (either letter case;
+# masjid and portal answer over HTTP/1.1 with capitalised header names)
 ```
+
+Each URL must be answered **by Laravel**, or the check cannot fail. Do not use
+`https://manara.hopetechapps.com/`: the `manara-marketing` Worker answers that
+exact path itself, so it returns 200 even when Laravel refuses the hostname.
+`x-frame-options: DENY` comes only from this app's `SecurityHeaders`: the
+Worker's pages do not carry it, and production nginx never adds it. A refusal is
+a 400, so it fails on the status alone. So "200 plus that header" means Laravel
+admitted the host. All three URLs showed exactly that on 2026-09-17, and
+`https://manara.hopetechapps.com/` showed 200 with no such header.
 
 ### The forged-Host check must go STRAIGHT TO THE ORIGIN
 
