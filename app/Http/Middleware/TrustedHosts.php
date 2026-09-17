@@ -77,6 +77,13 @@ class TrustedHosts
     /** One row: how many new hosts were logged in the current interval. */
     private const BUDGET_KEY = 'trusted-hosts:logged';
 
+    /**
+     * The most bytes of any caller-chosen string that go into a log line. 253
+     * is the longest name DNS can carry, so a longer Host is not a name anyone
+     * could own and nothing of ours is lost by cutting it.
+     */
+    private const MAX_LOGGED_BYTES = 253;
+
     public function handle(Request $request, Closure $next): Response
     {
         $host = $this->normalise((string) $request->getHost());
@@ -158,6 +165,10 @@ class TrustedHosts
      * level left no trace). TrustedHostsLogOnlyTest writes through a real file
      * channel set to `warning` and reads the line back.
      *
+     * The host, the path and the method are the caller's, so each is cut to
+     * MAX_LOGGED_BYTES in the line (production nginx lets about 8 KB of each
+     * through). A cut value ends in `...[N bytes]`.
+     *
      * Nothing on this path may turn into a 500. In observing mode this
      * middleware has promised to pass the request, so:
      *
@@ -185,11 +196,11 @@ class TrustedHosts
         }
 
         $this->warn('Request carried a Host header this deployment does not serve.', [
-            'host' => $host,
+            'host' => $this->capped($host),
             'allowed' => $allowed,
             'enforced' => (bool) config('trusted_hosts.enforce'),
-            'path' => $request->path(),
-            'method' => $request->method(),
+            'path' => $this->capped($request->path()),
+            'method' => $this->capped($request->method()),
             'ip' => $request->ip(),
         ]);
     }
@@ -204,9 +215,10 @@ class TrustedHosts
      * line, per invented Host: a client sending a new random name on every
      * request wrote without limit. Two bounds replace that:
      *
-     *  - THE MARKER KEY SPACE IS FIXED. A host's marker lives in one of 65,536
-     *    slots (the first four hex digits of its sha1) and the slot stores the
-     *    host's name. The table can never hold more than that many markers.
+     *  - THE MARKER KEY SPACE IS FIXED, AND SO IS EACH MARKER. A host's marker
+     *    lives in one of 65,536 slots (the first four hex digits of its sha1)
+     *    and holds the full sha1, never the name: the name can be 8 KB long.
+     *    The table can never hold more than that many 40-byte markers.
      *    A slot that holds a DIFFERENT host (a collision: about a 2% chance
      *    that any two of the 49 names production saw in two weeks share one)
      *    is overwritten and the line is written. A collision can repeat a
@@ -225,10 +237,11 @@ class TrustedHosts
      */
     private function claimLogLine(string $host, int $interval): bool
     {
-        $slot = 'trusted-hosts:seen:'.substr(sha1($host), 0, 4);
+        $fingerprint = sha1($host);
+        $slot = 'trusted-hosts:seen:'.substr($fingerprint, 0, 4);
         $seen = Cache::get($slot);
 
-        if ($seen === $host) {
+        if ($seen === $fingerprint) {
             return false;
         }
 
@@ -249,7 +262,7 @@ class TrustedHosts
                 $this->warn('Unknown-Host logging paused: more new hostnames than trusted_hosts.log_budget this interval. Hosts after this one are not logged until the interval ends.', [
                     'budget' => $budget,
                     'interval_seconds' => $interval,
-                    'first_unlogged_host' => $host,
+                    'first_unlogged_host' => $this->capped($host),
                     'enforced' => (bool) config('trusted_hosts.enforce'),
                 ]);
             }
@@ -258,12 +271,22 @@ class TrustedHosts
         }
 
         if ($seen === null) {
-            return Cache::add($slot, $host, $interval);
+            return Cache::add($slot, $fingerprint, $interval);
         }
 
-        Cache::put($slot, $host, $interval);
+        Cache::put($slot, $fingerprint, $interval);
 
         return true;
+    }
+
+    /** At most MAX_LOGGED_BYTES of `$value`, cut on a character boundary. */
+    private function capped(string $value): string
+    {
+        if (strlen($value) <= self::MAX_LOGGED_BYTES) {
+            return $value;
+        }
+
+        return mb_strcut($value, 0, self::MAX_LOGGED_BYTES, 'UTF-8').'...['.strlen($value).' bytes]';
     }
 
     /** @param  array<string, mixed>  $context */

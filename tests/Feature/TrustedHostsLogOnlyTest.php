@@ -7,6 +7,7 @@ use App\Models\Masjid;
 use App\Support\MobileCache;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -436,6 +437,46 @@ class TrustedHostsLogOnlyTest extends TestCase
         $this->getJson('https://'.$second.self::PROBE)->assertOk();
 
         $this->assertSame([$first, $second], $this->hostsNamed($lines));
+    }
+
+    #[Test]
+    public function a_long_invented_host_leaves_a_fixed_size_marker_and_a_capped_line(): void
+    {
+        // The bounds above count rows and lines. The bytes in each are the
+        // caller's too: production nginx sets no large_client_header_buffers,
+        // so a Host or a path of about 8 KB reaches PHP, and a marker that
+        // stored the host (or a line that carried it whole) would take that
+        // much per request.
+        config(['trusted_hosts.enforce' => false, 'trusted_hosts.log_interval' => 3600]);
+        $this->useDatabaseCache();
+        Route::get('/api/__trusted-hosts-long/{rest}', fn () => response()->json(['ok' => true]))->where('rest', '.*');
+
+        $host = str_repeat('a', 4000).'.example';
+        $path = 'api/__trusted-hosts-long/'.str_repeat('p', 4000);
+
+        // The control: Symfony accepts this name, so it reaches the report
+        // path as itself rather than as a rejected Host.
+        $this->assertSame($host, Request::create('https://'.$host.'/')->getHost());
+
+        $lines = [];
+        $this->captureWarnings($lines);
+
+        $this->get('https://'.$host.'/'.$path)->assertOk();
+
+        $this->assertCount(1, $lines);
+        $context = $lines[0][1];
+
+        $this->assertSame(substr($host, 0, 253).'...[4008 bytes]', $context['host']);
+        $this->assertSame(substr($path, 0, 253).'...[4025 bytes]', $context['path']);
+
+        $rows = DB::table('cache')->where('key', 'like', '%trusted-hosts:seen:%')->pluck('value')->all();
+        $this->assertCount(1, $rows);
+        $this->assertLessThan(100, strlen((string) $rows[0]), 'the marker row grows with the Host the caller chose');
+        $this->assertStringNotContainsString('aaaa', (string) $rows[0]);
+
+        // Still one line per host: the fingerprint recognises it next time.
+        $this->get('https://'.$host.'/'.$path)->assertOk();
+        $this->assertCount(1, $lines);
     }
 
     #[Test]
