@@ -283,6 +283,47 @@ class TrustedHostsLogOnlyTest extends TestCase
     }
 
     #[Test]
+    public function a_log_that_cannot_be_written_does_not_fail_the_request(): void
+    {
+        // The same promise as the cache case, one step later. Production's
+        // laravel.log is www-data-owned today, but a log file root re-created,
+        // a full disk or a bad path would otherwise turn every request with an
+        // unlisted Host into a 500 in a mode whose whole claim is that it
+        // refuses nobody.
+        config(['trusted_hosts.enforce' => false, 'trusted_hosts.log_interval' => 3600]);
+
+        // A log path whose parent is a regular file. Nobody can create it, root
+        // included (mkdir answers ENOTDIR), and the suite runs as root.
+        $notADirectory = (string) tempnam(sys_get_temp_dir(), 'trusted-hosts-notadir-');
+        $this->logFiles[] = $notADirectory;
+
+        config([
+            'logging.channels.trusted_hosts_unwritable' => [
+                'driver' => 'single',
+                'path' => $notADirectory.'/laravel.log',
+                'level' => 'debug',
+            ],
+            'logging.default' => 'trusted_hosts_unwritable',
+        ]);
+
+        // The control: this channel really does throw when written to, so the
+        // request below passes because the middleware absorbed the failure and
+        // not because nothing was ever written.
+        try {
+            Log::warning('trusted-hosts probe: this channel must be unwritable');
+            $this->fail('the log channel accepted a write, so this case would prove nothing');
+        } catch (\UnexpectedValueException) {
+            // expected
+        }
+
+        Route::get('/api/__trusted-hosts-probe', fn () => response()->json(['ok' => true]));
+
+        $this->getJson('https://unlisted.example/api/__trusted-hosts-probe')
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+    }
+
+    #[Test]
     public function a_listed_host_never_touches_the_report_path(): void
     {
         // The other half of the cost argument: the hosts we serve pay nothing.

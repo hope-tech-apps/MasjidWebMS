@@ -56,10 +56,11 @@ Host.
 `App\Http\Middleware\TrustedHosts` ships **observing**. It logs an unknown Host
 at `warning` — production's `LOG_LEVEL`, so the line is kept; a quieter level
 would be discarded before it reached the file — and passes the request through.
-A cache failure while rate-limiting the line does not fail the request.
-`tests/Feature/TrustedHostsLogOnlyTest.php` pins all three: the default, the
-level (through a real file channel), and the cache failure. Everything below is
-about the second step — making it refuse.
+Neither a cache failure while rate-limiting the line nor a log file that cannot
+be written fails the request. `tests/Feature/TrustedHostsLogOnlyTest.php` pins
+all of it: the default, the level (through a real file channel), the cache
+failure, and the unwritable log. Everything below is about the second step —
+making it refuse.
 
 ## The hosts each box actually serves
 

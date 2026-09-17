@@ -158,10 +158,17 @@ class TrustedHosts
      * level left no trace). TrustedHostsLogOnlyTest writes through a real file
      * channel set to `warning` and reads the line back.
      *
-     * A cache that cannot take the marker must not turn into a 500. In
-     * observing mode this middleware has promised to pass the request, and
-     * the rate limit is a convenience; so a failed `Cache::add` logs anyway —
-     * a duplicate line is cheap, a missed host is what this exists to find.
+     * Nothing on this path may turn into a 500. In observing mode this
+     * middleware has promised to pass the request, so:
+     *
+     *  - a cache that cannot take the marker logs anyway. The rate limit is a
+     *    convenience; a duplicate line is cheap, a missed host is what this
+     *    exists to find.
+     *  - a log that cannot be written is swallowed. An unopenable laravel.log
+     *    (re-created by root, a full disk) would otherwise fail every request
+     *    with an unlisted Host, including a hostname we serve on purpose until
+     *    TRUSTED_HOSTS names it. The rest of the app cannot log either in that
+     *    state, so this loses nothing an operator could have read.
      *
      * @param  array<int, string>  $allowed
      */
@@ -178,13 +185,17 @@ class TrustedHosts
             // Fall through to the log line, un-rate-limited. See above.
         }
 
-        Log::warning('Request carried a Host header this deployment does not serve.', [
-            'host' => $host,
-            'allowed' => $allowed,
-            'enforced' => (bool) config('trusted_hosts.enforce'),
-            'path' => $request->path(),
-            'method' => $request->method(),
-            'ip' => $request->ip(),
-        ]);
+        try {
+            Log::warning('Request carried a Host header this deployment does not serve.', [
+                'host' => $host,
+                'allowed' => $allowed,
+                'enforced' => (bool) config('trusted_hosts.enforce'),
+                'path' => $request->path(),
+                'method' => $request->method(),
+                'ip' => $request->ip(),
+            ]);
+        } catch (\Throwable) {
+            // See above: observing must not refuse by accident.
+        }
     }
 }
