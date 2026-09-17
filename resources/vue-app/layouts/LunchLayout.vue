@@ -37,7 +37,8 @@
  */
 import ApiService from '@/core/services/ApiService';
 import { useAuthStore } from '@/stores/authStore';
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { setOrgTitle } from '@/core/pageTitle';
 import { useRouter } from 'vue-router';
 
 const authStore = useAuthStore();
@@ -49,6 +50,12 @@ const signingOut = ref(false);
 const masjidName = computed<string>(() => authStore.user?.masjid?.name ?? 'Jummah Lunch');
 const logoUrl = computed<string | null>(() => authStore.user?.masjid?.logo?.original_url ?? null);
 const staffName = computed<string>(() => authStore.user?.name ?? '');
+
+// The tab title's organisation half (core/pageTitle.ts): whichever org this
+// shell is showing, cleared on the way out so the next screen is not titled
+// with a school the user has just left.
+watch(() => authStore.user?.masjid?.name, (name) => setOrgTitle(name), { immediate: true });
+onBeforeUnmount(() => setOrgTitle(null));
 
 const signOut = async () => {
     signingOut.value = true;

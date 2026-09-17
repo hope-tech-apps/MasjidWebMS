@@ -120,7 +120,8 @@
  * `onPrimary` is computed from WCAG relative luminance server-side, so a school
  * that picks a pale gold gets dark text automatically rather than white-on-cream.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute } from 'vue-router';
 import FamilyApiService from '@/core/services/FamilyApiService';
 
@@ -142,6 +143,11 @@ const masjidId = computed(() => String(
 
 const orgName = ref('');
 const logo = ref<string | null>(null);
+
+// The tab is titled with the school this portal page is for (core/pageTitle.ts)
+// — the same page answers on several schools' own domains.
+watch(orgName, (name) => setOrgTitle(name), { immediate: true });
+onBeforeUnmount(() => setOrgTitle(null));
 const tokens = ref<Record<string, string>>({});
 const loading = ref(true);
 

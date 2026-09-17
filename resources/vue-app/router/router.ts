@@ -6,6 +6,7 @@ import { MASJID_DASHBOARD_ASIDE_MENU, SUPER_DASHBOARD_ASIDE_MENU } from "@/core/
 import { useMasjidStore } from "@/stores/masjidStore";
 import { LOCAL_STORAGE_KEYS } from "@/core/constants/appConfigConstants";
 import { hasGrant, moduleIsOff } from "@/core/access/orgAccess";
+import { setPageTitle } from "@/core/pageTitle";
 
 const router = createRouter({
     history: createWebHistory(),
@@ -14,11 +15,10 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
 
-    if (to.meta.pageTitle) {
-        document.title = `${to.meta.pageTitle} | ${import.meta.env.VITE_APP_NAME}`;
-    } else {
-        document.title = `${import.meta.env.VITE_APP_NAME}`;
-    }
+    // The organisation half of the title is supplied at runtime by the layout
+    // (see core/pageTitle.ts). It used to be VITE_APP_NAME, which the deployed
+    // build never has, so every tab read "… | undefined".
+    setPageTitle(to.meta.pageTitle);
 
     // Stores
     const authStore = useAuthStore();
