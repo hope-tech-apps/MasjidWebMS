@@ -44,7 +44,8 @@
 <script setup lang="ts">
 import TeacherApiService from '@/core/services/TeacherApiService';
 import { useAuthStore } from '@/stores/authStore';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
 
 interface TeacherSchool {
@@ -67,6 +68,12 @@ const calendarPublished = ref(false);
 // The classes list is the shell's home; keep its nav pill lit while browsing it.
 const isClassesActive = computed(() => route.path === '/teacher');
 const isCalendarActive = computed(() => route.name === 'teacherCalendar');
+
+// The tab title's organisation half (core/pageTitle.ts): whichever org this
+// shell is showing, cleared on the way out so the next screen is not titled
+// with a school the user has just left.
+watch(() => school.value?.name, (name) => setOrgTitle(name), { immediate: true });
+onBeforeUnmount(() => setOrgTitle(null));
 
 onMounted(async () => {
     // The header comes from the teacher's own self endpoint — the shell never

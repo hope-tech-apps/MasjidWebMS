@@ -48,7 +48,8 @@
 import DashboardAside from '@/components/dashboard/DashboardAside.vue';
 import DashboardHeader from '@/components/dashboard/DashboardHeader.vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
-import { computed, onBeforeMount, onMounted, onUpdated, ref } from 'vue';
+import { computed, onBeforeMount, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
+import { setOrgTitle } from '@/core/pageTitle';
 import DashboardFooter from '@/components/dashboard/DashboardFooter.vue';
 import SwitchedOffNotice from '@/components/dashboard/SwitchedOffNotice.vue';
 import TenantMismatchNotice from '@/components/dashboard/TenantMismatchNotice.vue';
@@ -96,6 +97,12 @@ const route = useRoute();
 // Stores
 const authStore = useAuthStore();
 const masjidStore = useMasjidStore();
+
+// The tab title's organisation half (core/pageTitle.ts): whichever org this
+// shell is showing, cleared on the way out so the next screen is not titled
+// with a school the user has just left.
+watch(() => masjidStore.masjid?.name, (name) => setOrgTitle(name), { immediate: true });
+onBeforeUnmount(() => setOrgTitle(null));
 const tenantSwitchStore = useTenantSwitchStore();
 
 /**

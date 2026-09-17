@@ -4,5 +4,9 @@ export const LOCAL_STORAGE_KEYS = {
 }
 
 export const API_CONFIG = {
-    base_url: import.meta.env.VITE_APP_URL
+    // `?? ''`, like every other reader of this variable. It is undefined in
+    // every deployed build (see env.d.ts), and axios treats undefined and ''
+    // alike, so this was harmless — but only by axios's grace, and
+    // `ApiService.init` is typed to take a string.
+    base_url: import.meta.env.VITE_APP_URL ?? ''
 }

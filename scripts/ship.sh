@@ -212,6 +212,46 @@ if [ -n "${VITE_APP_URL:-}" ]; then
 fi
 ok "VITE_APP_URL is unset"
 
+# THE SAME VARIABLE, THROUGH THE OTHER DOOR.
+# The shell check above covers vite.config.js's `define`, which reads only the
+# process environment. But vite ALSO loads these files into
+# `import.meta.env`, and four SPA call sites read `import.meta.env.VITE_APP_URL`
+# directly (appConfigConstants, FamilyApiService, StudentApiService,
+# publicLunchStore). A value in any of them bakes a host into the bundle exactly
+# as the shell variable does — and nothing checked them. `vite build` runs in
+# production mode, so these are the four it reads. Any non-empty value refuses,
+# including a `${REFERENCE}`, which vite expands.
+#
+# A MISSING .env IS CORRECT, and is said as a fact rather than warned about: no
+# worktree has one, the build needs nothing from it, and the only thing it used
+# to affect — the tab title — is now set at runtime (core/pageTitle.ts). A
+# warning that fired on every correct deploy would teach people to ignore this
+# block. Do NOT "fix" a missing .env by copying one in: that is how a
+# VITE_APP_URL gets into a build tree in the first place.
+for env_file in .env .env.local .env.production .env.production.local; do
+    env_path="$REPO_ROOT/$env_file"
+    [ -f "$env_path" ] || continue
+    env_values="$(grep -E '^[[:space:]]*(export[[:space:]]+)?VITE_APP_URL[[:space:]]*=' "$env_path" \
+        | sed -E -e 's/^[^=]*=//' -e 's/[[:space:]]+#.*$//' -e 's/^[[:space:]]+//' -e 's/[[:space:]]+$//' \
+                 -e 's/^"(.*)"$/\1/' -e "s/^'(.*)'\$/\1/" || true)"
+    while IFS= read -r env_value; do
+        if [ -n "$env_value" ]; then
+            die "VITE_APP_URL is set in ${env_file} ('${env_value}').
+     vite loads ${env_file} into the bundle, so every host but that one would
+     call that host instead of itself — the build:prod defect, arriving through
+     a file instead of the shell. Empty it (VITE_APP_URL=) or remove the line,
+     and ship again."
+        fi
+    done <<ENV_VALUES
+$env_values
+ENV_VALUES
+done
+if [ -f "$REPO_ROOT/.env" ]; then
+    ok "no VITE_APP_URL value in this tree's env files"
+else
+    ok "no .env in this tree — correct: the SPA build reads nothing it needs from one"
+fi
+
 cd "$REPO_ROOT"
 
 # --------------------------------------------------------------------------

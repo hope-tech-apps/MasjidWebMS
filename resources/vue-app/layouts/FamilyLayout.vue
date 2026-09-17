@@ -51,7 +51,8 @@
 import { useFamilyStore } from '@/stores/familyStore';
 import FamilyApiService from '@/core/services/FamilyApiService';
 import { useFamilyLang } from '@/views/family/familyI18n';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
@@ -66,6 +67,12 @@ const masjidId = computed(() => String(route.params.masjidId ?? familyStore.masj
 const isCalendarActive = computed(() => route.name === 'familyCalendar');
 const orgName = ref('');
 const orgLogo = ref<string | null>(null);
+
+// The tab title's organisation half (core/pageTitle.ts): whichever org this
+// shell is showing, cleared on the way out so the next screen is not titled
+// with a school the user has just left.
+watch(orgName, (name) => setOrgTitle(name), { immediate: true });
+onBeforeUnmount(() => setOrgTitle(null));
 
 onMounted(async () => {
     // The school's name and logo, from the public directory endpoint — these are
