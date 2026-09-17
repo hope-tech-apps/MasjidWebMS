@@ -37,6 +37,31 @@ If it happens anyway, only the account owner can fix it:
    - `exit` the console session;
    - check that `/root` is `700` and `authorized_keys` holds only the expected keys.
 
+### Test trees under `/root`
+
+The suite runs on this droplet, because the Mac has no PHP. The droplet also serves production (1 vCPU), so run one suite at a time. Check that `pgrep -fc "[a]rtisan test"` prints 0, and confirm any busy reading with `/proc/<pid>/cwd`. Give each session its own tree, and build it root-owned. A plain `rsync -a` from the Mac copies uid 501 onto every file.
+
+```sh
+T=/root/<name>-ci
+rm -rf "$T" && mkdir -m 755 "$T"
+# from the Mac, in the worktree:
+rsync -rltz --no-owner --no-group --exclude vendor --exclude node_modules --exclude .git \
+  --exclude .env --exclude bootstrap/cache --exclude public/build ./ root@<host>:$T/
+# on the droplet:
+cd "$T" && mkdir -p -m 755 bootstrap/cache
+install -m 600 -o root -g root .env.testing .env   # before composer: the app cannot boot without APP_KEY
+COMPOSER_ALLOW_SUPERUSER=1 composer install --no-interaction
+php artisan package:discover && composer dump-autoload -o
+# back on the Mac: the Vite bundle, built from the SAME commit, with VITE_APP_URL unset
+# (node_modules: `cp -Rc` from the main checkout; a symlink breaks the manifest)
+npm run build
+rsync -rltz --no-owner --no-group public/build/ root@<host>:$T/public/build/
+# on the droplet:
+find "$T" ! -user root | wc -l      # must print 0
+```
+
+`storage/` is copied on purpose, because the tests need its skeleton, so sync from a clean worktree rather than one with local logs in it. Without `public/build`, `ExampleTest` fails with "Vite manifest not found" (see `tests/CLAUDE.md`). Don't copy another tree's build: older trees passed only because a stale bundle from another commit was lying in them. Run the full suite detached (`nohup nice -n 10 php artisan test > /root/<name>-full.log 2>&1 &`) and poll the log. Delete the tree when the work has shipped.
+
 ## Queue worker — `masjid-queue.service`
 
 The app uses `QUEUE_CONNECTION=database` and dispatches `SendMasjidNotificationJob`
