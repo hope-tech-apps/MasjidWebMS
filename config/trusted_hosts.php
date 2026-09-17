@@ -80,4 +80,16 @@ return [
 
     'log_interval' => (int) env('TRUSTED_HOSTS_LOG_INTERVAL', 3600),
 
+    /*
+    | How many DIFFERENT unknown hosts are logged per interval, in total. The
+    | Host is the caller's choice, so without a ceiling a client inventing a
+    | new name per request writes a log line and a cache row per request.
+    | Past the ceiling one "Unknown-Host logging paused" line is written and
+    | nothing more until the interval ends. Production's nginx error log named
+    | 49 distinct hosts (port and trailing dot removed) in the 14 days to
+    | 2026-09-17, so 200 new names an hour is far above normal traffic.
+    */
+
+    'log_budget' => (int) env('TRUSTED_HOSTS_LOG_BUDGET', 200),
+
 ];

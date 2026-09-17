@@ -74,6 +74,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class TrustedHosts
 {
+    /** One row: how many new hosts were logged in the current interval. */
+    private const BUDGET_KEY = 'trusted-hosts:logged';
+
     public function handle(Request $request, Closure $next): Response
     {
         $host = $this->normalise((string) $request->getHost());
@@ -141,15 +144,12 @@ class TrustedHosts
     }
 
     /**
-     * One log line per unknown host per interval.
+     * One log line per unknown host per interval, and a ceiling on all of them.
      *
      * Rate-limited because this IP already takes unsolicited scanner traffic
      * (`GET /crossdomain.xml` and friends in nginx's access log), and a line per
      * request would bury the thing the operator is reading the log FOR: a
      * legitimate hostname nobody put on the list.
-     *
-     * `Cache::add` is the whole lock — it writes only if the key is absent, so
-     * two concurrent workers produce one line, not two.
      *
      * AT `warning`, AND THAT LEVEL IS LOAD-BEARING. Production runs
      * LOG_LEVEL=warning, so anything quieter is discarded before it reaches
@@ -175,27 +175,104 @@ class TrustedHosts
     private function report(Request $request, string $host, array $allowed): void
     {
         $interval = max(0, (int) config('trusted_hosts.log_interval', 3600));
-        $key = 'trusted-hosts:seen:'.sha1($host);
 
         try {
-            if ($interval > 0 && ! Cache::add($key, true, $interval)) {
+            if ($interval > 0 && ! $this->claimLogLine($host, $interval)) {
                 return;
             }
         } catch (\Throwable) {
             // Fall through to the log line, un-rate-limited. See above.
         }
 
+        $this->warn('Request carried a Host header this deployment does not serve.', [
+            'host' => $host,
+            'allowed' => $allowed,
+            'enforced' => (bool) config('trusted_hosts.enforce'),
+            'path' => $request->path(),
+            'method' => $request->method(),
+            'ip' => $request->ip(),
+        ]);
+    }
+
+    /**
+     * Whether this request should write the line for `$host`.
+     *
+     * THE HOST IS CHOSEN BY THE CALLER, so whatever this stores is too.
+     * Production's cache is the `database` store on the shared MySQL, which
+     * deletes an expired row only when that same key is read again. A marker
+     * keyed by the host itself therefore left one permanent row, and one log
+     * line, per invented Host: a client sending a new random name on every
+     * request wrote without limit. Two bounds replace that:
+     *
+     *  - THE MARKER KEY SPACE IS FIXED. A host's marker lives in one of 65,536
+     *    slots (the first four hex digits of its sha1) and the slot stores the
+     *    host's name. The table can never hold more than that many markers.
+     *    A slot that holds a DIFFERENT host (a collision: about a 2% chance
+     *    that any two of the 49 names production saw in two weeks share one)
+     *    is overwritten and the line is written. A collision can repeat a
+     *    line; it never hides a host.
+     *
+     *  - A BUDGET PER INTERVAL. At most `log_budget` new hosts are written
+     *    per interval, counted in one row. The first host over the budget
+     *    writes one "logging paused" line instead, and every later one costs
+     *    two reads and no write until the interval ends. The paused line tells
+     *    the reader that the log is incomplete for that interval: see
+     *    deploy/TRUSTED-HOSTS-ENFORCEMENT.md.
+     *
+     * `Cache::add` on an empty slot is the lock: of two workers reporting the
+     * same new host at once, one writes the line. On the collision path two
+     * workers can both write it; that is a duplicate, not a loss.
+     */
+    private function claimLogLine(string $host, int $interval): bool
+    {
+        $slot = 'trusted-hosts:seen:'.substr(sha1($host), 0, 4);
+        $seen = Cache::get($slot);
+
+        if ($seen === $host) {
+            return false;
+        }
+
+        $budget = max(1, (int) config('trusted_hosts.log_budget', 200));
+
+        if ((int) Cache::get(self::BUDGET_KEY, 0) > $budget) {
+            return false;
+        }
+
+        // `add` opens the interval if none is open (the database store drops
+        // an expired row when it is read, so the old count is not reused);
+        // `increment` is atomic in that store.
+        Cache::add(self::BUDGET_KEY, 0, $interval);
+        $written = Cache::increment(self::BUDGET_KEY);
+
+        if (is_numeric($written) && (int) $written > $budget) {
+            if ((int) $written === $budget + 1) {
+                $this->warn('Unknown-Host logging paused: more new hostnames than trusted_hosts.log_budget this interval. Hosts after this one are not logged until the interval ends.', [
+                    'budget' => $budget,
+                    'interval_seconds' => $interval,
+                    'first_unlogged_host' => $host,
+                    'enforced' => (bool) config('trusted_hosts.enforce'),
+                ]);
+            }
+
+            return false;
+        }
+
+        if ($seen === null) {
+            return Cache::add($slot, $host, $interval);
+        }
+
+        Cache::put($slot, $host, $interval);
+
+        return true;
+    }
+
+    /** @param  array<string, mixed>  $context */
+    private function warn(string $message, array $context): void
+    {
         try {
-            Log::warning('Request carried a Host header this deployment does not serve.', [
-                'host' => $host,
-                'allowed' => $allowed,
-                'enforced' => (bool) config('trusted_hosts.enforce'),
-                'path' => $request->path(),
-                'method' => $request->method(),
-                'ip' => $request->ip(),
-            ]);
+            Log::warning($message, $context);
         } catch (\Throwable) {
-            // See above: observing must not refuse by accident.
+            // See report(): observing must not refuse by accident.
         }
     }
 }

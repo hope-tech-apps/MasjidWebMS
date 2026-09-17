@@ -191,6 +191,15 @@ host are rate-limited to one line an hour, so the count is hosts-over-time, not
 requests. Read for **at least a full day** so a daily monitor or a nightly job
 gets a chance to appear, and for **seven days** before enforcing.
 
+The Host is the caller's choice, so the log is also capped: at most
+`TRUSTED_HOSTS_LOG_BUDGET` (default 200) **new** hostnames an hour. The first
+one over the cap writes a single line starting `Unknown-Host logging paused`
+and naming it as `first_unlogged_host`; nothing more is written until the hour
+ends. **A paused hour is an hour the log cannot vouch for** — a hostname of ours
+could have arrived after the cap. If the pause check below prints anything
+inside the seven days, read nginx's error log for that hour (it records every
+Host nginx logged an error for) or restart the clock.
+
 Three outcomes:
 
 - Only junk — scanner noise, raw IPs probing dotfiles, the foreign domains in

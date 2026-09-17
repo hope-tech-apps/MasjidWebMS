@@ -5,8 +5,10 @@ namespace Tests\Feature;
 use App\Models\Announcement;
 use App\Models\Masjid;
 use App\Support\MobileCache;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\Test;
@@ -31,14 +33,17 @@ use Tests\TestCase;
  *      laravel.log, and an observing mode that records nothing looks exactly
  *      like one that has nothing to record.
  *
- * Plus the promise that makes log-only safe to ship: the report path cannot
- * itself fail the request.
+ * Plus the promises that make log-only safe to ship: the report path cannot
+ * itself fail the request, and a client inventing Host names cannot make it
+ * write without limit.
  */
 class TrustedHostsLogOnlyTest extends TestCase
 {
     use RefreshDatabase;
 
-    private const ENV_KEYS = ['TRUSTED_HOSTS', 'TRUSTED_HOSTS_ENFORCE', 'TRUSTED_HOSTS_LOG_INTERVAL'];
+    private const ENV_KEYS = ['TRUSTED_HOSTS', 'TRUSTED_HOSTS_ENFORCE', 'TRUSTED_HOSTS_LOG_INTERVAL', 'TRUSTED_HOSTS_LOG_BUDGET'];
+
+    private const PROBE = '/api/__trusted-hosts-probe';
 
     /** @var array<int, string> */
     private array $logFiles = [];
@@ -150,6 +155,62 @@ class TrustedHostsLogOnlyTest extends TestCase
         return $path;
     }
 
+    /**
+     * Make the database store the default, as production has it
+     * (CACHE_STORE=database), backed by `$table` on the in-memory connection.
+     */
+    private function useDatabaseCache(string $table = 'cache'): void
+    {
+        config([
+            'cache.default' => 'database',
+            'cache.stores.database' => [
+                'driver' => 'database',
+                'connection' => null,
+                'table' => $table,
+                'lock_connection' => null,
+                'lock_table' => 'cache_locks',
+            ],
+        ]);
+    }
+
+    /** A route that runs only the global middleware stack. */
+    private function registerProbe(): void
+    {
+        // Under /api/ so the SPA catch-all in routes/web.php does not take it,
+        // and with no middleware group, so nothing but the global stack runs.
+        Route::get(self::PROBE, fn () => response()->json(['ok' => true]));
+    }
+
+    /**
+     * Record every warning instead of writing it.
+     *
+     * @param  array<int, array{0: string, 1: array<string, mixed>}>  $lines
+     */
+    private function captureWarnings(array &$lines): void
+    {
+        Log::shouldReceive('warning')->andReturnUsing(function (string $message, array $context = []) use (&$lines): void {
+            $lines[] = [$message, $context];
+        });
+    }
+
+    /**
+     * @param  array<int, array{0: string, 1: array<string, mixed>}>  $lines
+     * @return array<int, string>
+     */
+    private function hostsNamed(array $lines): array
+    {
+        return array_values(array_map(
+            static fn (array $line): string => (string) $line[1]['host'],
+            array_filter($lines, static fn (array $line): bool => str_contains($line[0], 'Host header this deployment does not serve')),
+        ));
+    }
+
+    /** @param  array<int, array{0: string, 1: array<string, mixed>}>  $lines */
+    private function pausedLines(array $lines): int
+    {
+        return count(array_filter($lines, static fn (array $line): bool => str_starts_with($line[0], 'Unknown-Host logging paused')));
+    }
+
     #[Test]
     public function the_shipped_default_is_log_only(): void
     {
@@ -158,6 +219,7 @@ class TrustedHostsLogOnlyTest extends TestCase
         $this->assertFalse($defaults['enforce'], 'with no TRUSTED_HOSTS_ENFORCE in the environment the middleware must only observe');
         $this->assertSame([], $defaults['extra']);
         $this->assertSame(3600, $defaults['log_interval']);
+        $this->assertSame(200, $defaults['log_budget']);
 
         // The control: the same file DOES read the environment, so the
         // assertions above are about the default and not about a constant.
@@ -264,22 +326,116 @@ class TrustedHostsLogOnlyTest extends TestCase
         // not turn that promise into a 500 on every request with an unlisted
         // Host — which, until TRUSTED_HOSTS is set, includes a hostname we
         // serve on purpose.
+        //
+        // Production's store (database), pointed at a table that does not
+        // exist, so every cache call the middleware makes throws, in whatever
+        // order it makes them.
         config(['trusted_hosts.enforce' => false, 'trusted_hosts.log_interval' => 3600]);
+        $this->useDatabaseCache('no_such_cache_table');
+        $this->registerProbe();
 
-        // Under /api/ so the SPA catch-all in routes/web.php does not take it,
-        // and with no middleware group, so nothing but the global stack runs
-        // and the cache mock below sees only the middleware's own call.
-        Route::get('/api/__trusted-hosts-probe', fn () => response()->json(['ok' => true]));
-
-        Cache::shouldReceive('add')->once()->andThrow(new \RuntimeException('cache store unavailable'));
+        // The control: the store really is broken.
+        try {
+            Cache::get('trusted-hosts-probe');
+            $this->fail('the cache store answered, so this case would prove nothing');
+        } catch (QueryException) {
+            // expected
+        }
 
         Log::shouldReceive('warning')
             ->once()
             ->withArgs(fn (string $message, array $context = []): bool => ($context['host'] ?? null) === 'unlisted.example');
 
-        $this->getJson('https://unlisted.example/api/__trusted-hosts-probe')
+        $this->getJson('https://unlisted.example'.self::PROBE)
             ->assertOk()
             ->assertJsonPath('ok', true);
+    }
+
+    #[Test]
+    public function a_flood_of_invented_hosts_leaves_a_bounded_trace(): void
+    {
+        // The Host is the caller's choice. Production caches in the shared
+        // MySQL, whose database store only deletes an expired row when that key
+        // is read again, so a marker per host name meant one permanent row and
+        // one log line for every invented name. The trace must stay bounded
+        // however many names a client invents.
+        config([
+            'trusted_hosts.enforce' => false,
+            'trusted_hosts.log_interval' => 3600,
+            'trusted_hosts.log_budget' => 5,
+        ]);
+        $this->useDatabaseCache();
+        $this->registerProbe();
+
+        $lines = [];
+        $this->captureWarnings($lines);
+
+        foreach (range(1, 40) as $i) {
+            $this->getJson("https://flood-{$i}.example".self::PROBE)->assertOk();
+        }
+
+        // Five names, then one line saying the log is now incomplete.
+        $this->assertSame(
+            ['flood-1.example', 'flood-2.example', 'flood-3.example', 'flood-4.example', 'flood-5.example'],
+            $this->hostsNamed($lines)
+        );
+        $this->assertSame(1, $this->pausedLines($lines));
+        $this->assertCount(6, $lines);
+
+        $paused = array_values(array_filter($lines, static fn (array $line): bool => str_starts_with($line[0], 'Unknown-Host logging paused')))[0][1];
+        $this->assertSame('flood-6.example', $paused['first_unlogged_host']);
+
+        // Five markers and one counter, not forty rows. The control is the
+        // lower bound: the rows are really in this table.
+        $keys = DB::table('cache')->where('key', 'like', '%trusted-hosts%')->pluck('key')->all();
+        $this->assertCount(6, $keys, 'the flood left '.count($keys).' cache rows');
+        foreach ($keys as $key) {
+            $this->assertMatchesRegularExpression('/trusted-hosts:(seen:[0-9a-f]{4}|logged)$/', $key, 'a marker key is not from the fixed key space');
+        }
+
+        // A host already named this interval stays silent.
+        $this->getJson('https://flood-1.example'.self::PROBE)->assertOk();
+        $this->assertCount(6, $lines);
+
+        // A new interval: the budget is back, for new names and for old ones.
+        $this->travel(3601)->seconds();
+
+        $this->getJson('https://flood-41.example'.self::PROBE)->assertOk();
+        $this->getJson('https://flood-1.example'.self::PROBE)->assertOk();
+
+        $this->assertSame(['flood-41.example', 'flood-1.example'], array_slice($this->hostsNamed($lines), 5));
+        $this->assertSame(1, $this->pausedLines($lines));
+    }
+
+    #[Test]
+    public function two_hosts_that_share_a_marker_slot_are_both_logged(): void
+    {
+        // The marker key space is fixed, so two names can land in one slot. A
+        // collision may repeat a line; it must never hide a host.
+        config(['trusted_hosts.enforce' => false, 'trusted_hosts.log_interval' => 3600]);
+        $this->useDatabaseCache();
+        $this->registerProbe();
+
+        $first = 'slot-a.example';
+        $prefix = substr(sha1($first), 0, 4);
+        $second = null;
+
+        for ($i = 0; $i < 2_000_000 && $second === null; $i++) {
+            if (substr(sha1("slot-{$i}.example"), 0, 4) === $prefix) {
+                $second = "slot-{$i}.example";
+            }
+        }
+
+        $this->assertNotNull($second, 'no colliding name found; the slot width changed');
+
+        $lines = [];
+        $this->captureWarnings($lines);
+
+        $this->getJson('https://'.$first.self::PROBE)->assertOk();
+        $this->getJson('https://'.$second.self::PROBE)->assertOk();
+        $this->getJson('https://'.$second.self::PROBE)->assertOk();
+
+        $this->assertSame([$first, $second], $this->hostsNamed($lines));
     }
 
     #[Test]
@@ -316,7 +472,7 @@ class TrustedHostsLogOnlyTest extends TestCase
             // expected
         }
 
-        Route::get('/api/__trusted-hosts-probe', fn () => response()->json(['ok' => true]));
+        $this->registerProbe();
 
         $this->getJson('https://unlisted.example/api/__trusted-hosts-probe')
             ->assertOk()
@@ -329,13 +485,13 @@ class TrustedHostsLogOnlyTest extends TestCase
         // The other half of the cost argument: the hosts we serve pay nothing.
         config(['trusted_hosts.enforce' => false, 'trusted_hosts.extra' => ['manara.test']]);
 
-        Route::get('/api/__trusted-hosts-probe', fn () => response()->json(['ok' => true]));
+        $this->registerProbe();
 
-        Cache::shouldReceive('add')->never();
+        Cache::shouldReceive('get', 'add', 'put', 'increment')->never();
         Log::shouldReceive('warning')->never();
 
         foreach (['masjid.test', 'portal.school.test', 'manara.test', 'MANARA.TEST', 'manara.test.'] as $host) {
-            $this->getJson('https://'.$host.'/api/__trusted-hosts-probe')->assertOk();
+            $this->getJson('https://'.$host.self::PROBE)->assertOk();
         }
     }
 
@@ -346,7 +502,7 @@ class TrustedHostsLogOnlyTest extends TestCase
         // into `[2001` — a log line naming a host nobody can look up.
         config(['trusted_hosts.enforce' => false]);
 
-        Route::get('/api/__trusted-hosts-probe', fn () => response()->json(['ok' => true]));
+        $this->registerProbe();
 
         Log::shouldReceive('warning')
             ->once()
