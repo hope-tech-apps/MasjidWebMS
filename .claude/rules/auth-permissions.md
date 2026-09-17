@@ -147,8 +147,10 @@ never `permission:`.
   would be decoration. `FamilyLoginCodeMail` is **not `ShouldQueue` and must
   never be** — `QUEUE_CONNECTION=database`, so queueing would spool the
   plaintext into `jobs.payload` and, on failure, into `failed_jobs`. (It is not
-  the only unqueued mailable: `TwoFactorResetMail` and `PasswordSetNoticeMail`
-  are security notices sent inline so they do not wait on a worker.)
+  the only mailable without `ShouldQueue`. As of 2026-09-17 `AccountAccessMail`,
+  `ContactRequestReply`, `DonationReceiptMail`, `GroupUpdateNudgeMail`,
+  `PasswordSetNoticeMail` and `TwoFactorResetMail` have none either. Its reason,
+  a secret in the payload, is the one that makes queueing it a leak.)
 - **Neither endpoint may become a directory.** `request-code` answers a fixed
   202 for every well-formed address — live parent, revoked, never-enabled,
   soft-deleted, or nobody — and `FamilyLoginService::issue()` returns `void` so
@@ -370,19 +372,25 @@ DECISIONS.md 2026-09-17.
   call `PasswordSetNotice` outside the transaction that wrote the password: outside a transaction
   `DB::afterCommit()` sends immediately.
 - **No password, code, token or link in it**, and no model in its payload (scalars only). The
-  "if it was not you" sentence names the app only when `verified_at` is set, and the family portal
-  only when `familyLoginIsActive()`. Do not add org-specific claims to it.
+  greeting prints the first name only through `MailGreeting`, because a stranger can store a web
+  address as a first name through the public registration form. Any new mail that greets a contact
+  by a stored name must do the same. The "if it was not you" sentence names the app only when
+  `verified_at` is set, and the family portal only when `familyLoginIsActive()`. `verified_at` does
+  not prove the person's app build has "Forgot password?" (older Android builds do not), which is
+  why the sentence always ends with "contact {organisation}". Do not add org-specific claims to it.
 - **Inline, not `ShouldQueue`**: a security notice must not wait on the worker, and a failed queued
   mail would keep the address in `failed_jobs`. A failed send is caught and logged at `warning`
   with ids and the exception class (no address, no exception message). It must never fail the
-  password change or turn its response into an error.
+  password change or turn its response into an error. That holds for a Resend that never answers
+  only because `ResendWithTimeouts` gives every Resend call a time limit. Never build a mail
+  transport without one: nginx answers 504 after 60 s and nothing reaches the `catch`.
 - **`clear()` sends nothing.** Its second caller adopts an address, and an email there would tell
   the new address's reader that the record had a password under another address. A notice for the
   portal's "Remove it" would go in `FamilyPasswordController::destroy`, not in `clear()`.
 - A new door that sets a contact's password must go through `set()`. Then it gets the notice
   without extra code, and `PasswordSetNoticeTest` shows the pattern for pinning it.
 
-Pinned by `tests/Feature/PasswordSetNoticeTest.php`.
+Pinned by `tests/Feature/PasswordSetNoticeTest.php` and `tests/Feature/ResendTransportTimeoutTest.php`.
 
 ## `users.type` is the source of truth — spatie roles are a bridge
 

@@ -1504,15 +1504,23 @@ email to the account's address after any password is set."
    back. So nothing is sent for a refused `verify-code` (wrong, spent or replayed code, a revoked
    contact), a 422 (the request rules, a blank name), or a rolled-back write. The address and the
    time are read inside the transaction.
-3. **Nothing in it opens anything.** No password, code, token or link. It says which organisation,
-   which address, when (in the organisation's timezone, with the zone named, UTC if it has none),
-   and what to do if it was not you. That last sentence names only the ways back that exist for this
-   person: "Forgot password?" in the app only when they have proved the address to the app
-   (`verified_at`), and "sign in to the family portal with an emailed code and choose Change my
-   password" only when the office has a live family login for them. Then "contact {organisation}".
-   Not every organisation has an app or a portal, so naming one they lack would be a made-up claim.
+3. **Nothing in it opens anything.** No password, code, token or link. The first name in the
+   greeting is printed only when it looks like a name (`MailGreeting`, which the sign-in code mail
+   uses too): the public registration form lets a stranger store a web address as a first name next
+   to someone else's address (review finding F1, fixed the same day). It says which organisation,
+   which address, when (in the organisation's timezone with PHP's zone abbreviation, which for a
+   zone that has none is a UTC offset such as "+03"; UTC if the organisation has no zone), and what
+   to do if it was not you. That last sentence names the app only when the person has proved the
+   address to it (`verified_at`), and "sign in to the family portal with an emailed code and choose
+   Change my password" only when the office has a live family login for them. Then "contact
+   {organisation}". Not every organisation has an app or a portal, so naming one they lack would be
+   a made-up claim. `verified_at` does not mean the person's installed app has "Forgot password?":
+   Android builds before `feat/r1-owner-feedback` have no password sign-in at all. The sentence
+   always ends with "contact {organisation}", which works for everyone.
    The subject is the same for everyone ("Your password was set") and does not name the
-   organisation, like the sign-in code's. It says "set", not "changed": that is true for a first
+   organisation, like the sign-in code's. The From name is the organisation, so a lock screen or
+   inbox list that shows the sender still names it. The generic subject only keeps the subject
+   from naming it a second time. It says "set", not "changed": that is true for a first
    password too, and it does not say whether a password existed before. On an address the app has
    just linked, an earlier password may have been chosen under someone else's address. From name is
    the organisation, the address is `MAIL_FROM_ADDRESS`, and replies go to the organisation's email
@@ -1525,7 +1533,11 @@ email to the account's address after any password is set."
    already paid for a bcrypt hash. The price is no retry.
 5. **A failed send never fails the change.** The send is wrapped. On failure the password stays set,
    the response is the same success, and `Log::warning('password set notice delivery failed')`
-   records the contact id, the organisation id and the exception class. Warning, because production
+   records the contact id, the organisation id and the exception class. A Resend call that never
+   answers counts as a failure because every Resend call has a time limit (`ResendWithTimeouts`:
+   5 s to connect, 10 s in all). Laravel's own Resend client has none. Without the limit, a hung call
+   would outlast nginx's 60 s, the response would be a 504 with nothing logged, and the PHP-FPM
+   worker would stay stuck (review finding F2, fixed the same day). Warning, because production
    runs `LOG_LEVEL=warning`. No address and no exception message, because a transport error can
    quote the recipient.
 6. **Removing a password sends nothing.** `FamilyPasswordService::clear()` has two callers. The
@@ -1551,9 +1563,13 @@ email to the account's address after any password is set."
 - No retry. If the mail provider is down at that moment, this notice is lost and a warning is
   logged.
 - A successful `verify-code` with a password now also waits on one mail API call. Only a correct
-  code gets there, so the extra time says nothing to someone without the code. Laravel builds the
-  Resend client as a Guzzle client with no options, so no request timeout is set. The sign-in code
-  mail on `request-code` has the same exposure.
+  code gets there, so the extra time says nothing to someone without the code. If Resend is slow or
+  silent, that wait is at most 10 s, and then the warning is logged. The limit applies to every mail
+  sent through Resend, queued or not.
+- `BroadcastMail` and `GroupUpdateNudgeMail` still print a stored name in their greeting without
+  `MailGreeting`. A web address planted as a first name through the public registration form can
+  therefore still appear in a broadcast whose audience includes that record. Not changed here; it
+  is a follow-up for those features.
 - English only, like the sign-in code mail, although the portal has an Arabic mode.
 - Nobody can use this to flood an inbox: every app send needs a code from that same inbox, and the
   portal door needs a signed-in session behind `throttle:family`.

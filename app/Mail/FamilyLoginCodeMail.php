@@ -15,12 +15,12 @@ use Illuminate\Mail\Mailables\Envelope;
  * NOT `ShouldQueue`, AND IT MUST NEVER BE
  * ---------------------------------------------------------------------------
  *
- * Most mailables here are (`BroadcastMail` says so explicitly), and the reason
+ * Many mailables here are (`BroadcastMail` says so explicitly), and the reason
  * is sound for them: an admin composing a broadcast to three thousand contacts
- * must not wait on a relay. Do NOT make this one match. (A few others are also
- * sent inline, for their own reasons — TwoFactorResetMail and
- * PasswordSetNoticeMail are security notices that must not wait on a worker.
- * This one is the one whose reason is a secret in the payload.)
+ * must not wait on a relay. Do NOT make this one match. (Several others have no
+ * `ShouldQueue` either, among them TwoFactorResetMail and PasswordSetNoticeMail,
+ * security notices that must not wait on a worker. This one's reason is
+ * different: a secret in the payload.)
  *
  * `QUEUE_CONNECTION` is `database` here. A queued mailable is serialized into
  * `jobs.payload` — public properties and all — so queueing this would write the

@@ -100,10 +100,12 @@ class PasswordSetNotice
     }
 
     /**
-     * The moment in the organisation's own timezone, with the zone named, so
-     * "3:04 PM" cannot be read in the wrong one. UTC when the organisation has
-     * none or an unknown one. The same format ContactUsNotifier::receivedAt()
-     * gives the office.
+     * The moment in the organisation's own timezone, followed by PHP's
+     * abbreviation for the zone ("EDT"), so "3:04 PM" cannot be read in the
+     * wrong one. A zone with no abbreviation prints its UTC offset instead
+     * ("10:04 PM +03" for Asia/Riyadh). UTC when the organisation has none or
+     * an unknown one. The same format ContactUsNotifier::receivedAt() gives the
+     * office.
      */
     public static function formatForOrganisation(CarbonInterface $at, ?Masjid $masjid): string
     {

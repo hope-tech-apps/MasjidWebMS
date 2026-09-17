@@ -84,9 +84,10 @@ class PasswordSetNoticeMail extends Mailable
         return new Envelope(
             from: new Address(config('mail.from.address'), $this->orgName ?: config('mail.from.name')),
             // Identical for every organisation and every case, like the sign-in
-            // code's subject: a subject shows on a lock screen and in a shared
-            // inbox list, and naming the school there says the family attends
-            // it. "set" rather than "changed" because it is true both for a new
+            // code's subject. The From name above IS the organisation, so a lock
+            // screen or inbox list that shows the sender still names it; this
+            // only keeps the subject from naming it a second time. "set" rather
+            // than "changed" because it is true both for a new
             // account's first password and for a replacement, and because the
             // wording must not say whether a password existed before: on an
             // address the app has just linked, that earlier password may have
@@ -117,13 +118,16 @@ class PasswordSetNoticeMail extends Mailable
      * What to do if the reader did not set it. Built here, once, so the HTML
      * and text parts cannot say different things.
      *
-     * It names only the ways back in that exist for THIS person. Not every
+     * It names a way back only when this person has used it. Not every
      * organisation has an app and not every one has a family portal, so
      * "use the app" to a parent whose school has none would be a claim about
      * the organisation that nobody made. `usesApp` is true only when this
      * person has proved the address to this organisation's app, and
      * `usesFamilyPortal` only when the office has a live family login for
-     * them. The control names are the ones those screens show today.
+     * them. `usesApp` does not prove their installed build has "Forgot
+     * password?": Android builds before feat/r1-owner-feedback have no
+     * password sign-in. So every case ends with "contact {org}", which works
+     * for everyone. The control names are the ones the current screens show.
      */
     public function ifItWasNotYou(): string
     {
