@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\ArabicDailyNote;
 use App\Models\ArabicLetterProgress;
 use App\Models\BehaviorAward;
 use App\Models\BehaviorSkill;
@@ -221,6 +222,17 @@ class FamilyPortalTest extends TestCase
     private function url(string $path = ''): string
     {
         return "/api/family/masjids/{$this->masjid->id}" . $path;
+    }
+
+    private function seedDailyNote(GroupMembership $membership, string $day, string $text): ArabicDailyNote
+    {
+        return app(TenantContext::class)->runWithout(fn () => ArabicDailyNote::create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'group_membership_id' => $membership->id,
+            'session_date' => $day,
+            'note' => $text,
+        ]));
     }
 
     private function groupUrl(string $path = ''): string
@@ -735,6 +747,74 @@ class FamilyPortalTest extends TestCase
         $this->as($this->parentA)
             ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/letters"))
             ->assertForbidden();
+    }
+
+    #[Test]
+    public function a_parent_reads_the_teachers_arabic_notes_about_their_own_child(): void
+    {
+        // Owner decision 2026-09-17: parents see what the teacher wrote about
+        // their child's Arabic — the per-letter note on the tracker and the
+        // daily note on the lesson — on the same ground the hifz payload
+        // already states. Both arrive through the ward edge and nowhere else.
+        $this->seedDailyNote($this->childAMembership, '2026-09-15', 'Read the first line unaided.');
+        $this->seedDailyNote($this->childAMembership, '2026-09-16', 'Tired by the end; we stopped early.');
+
+        ArabicLetterProgress::create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'group_membership_id' => $this->childAMembership->id,
+            'alphabet' => CurriculumRegistry::ALPHABET_ARABIC,
+            'drill_id' => 'ba',
+            'status' => ArabicCurriculum::STATUS_LEARNING,
+            'note' => 'Reverses bāʾ and tāʾ — practise the dots at home.',
+        ]);
+
+        $notes = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/arabic-notes"))
+            ->assertOk();
+
+        // Newest day first, and the day as a plain DATE string: a timestamp at
+        // UTC midnight would render a day early for every parent west of UTC.
+        $this->assertSame(['2026-09-16', '2026-09-15'], collect($notes->json('data.data'))->pluck('session_date')->all());
+        $this->assertSame('Tired by the end; we stopped early.', $notes->json('data.data.0.note'));
+
+        $letters = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childAMembership->id}/letters"))
+            ->assertOk();
+
+        $ba = collect($letters->json('data.letters'))->flatMap(fn ($l) => $l['drills'])->firstWhere('id', 'ba');
+        $this->assertSame('Reverses bāʾ and tāʾ — practise the dots at home.', $ba['note']);
+    }
+
+    #[Test]
+    public function a_parent_cannot_read_the_arabic_notes_about_another_familys_child(): void
+    {
+        // The note is a sentence a teacher wrote about somebody's daughter. The
+        // ward edge is the only thing between it and every other parent in the
+        // class, so it is asserted on the new route directly rather than
+        // assumed from the letters route beside it.
+        $this->seedDailyNote($this->childBMembership, '2026-09-16', 'About Bilal, not for parent A.');
+
+        $response = $this->as($this->parentA)
+            ->getJson($this->groupUrl("/members/{$this->childBMembership->id}/arabic-notes"))
+            ->assertForbidden();
+
+        $this->assertStringNotContainsString('About Bilal', $response->getContent());
+    }
+
+    #[Test]
+    public function a_parent_cannot_write_or_delete_a_daily_arabic_note(): void
+    {
+        // The route is a GET and nothing else. Writing is the teacher's.
+        $note = $this->seedDailyNote($this->childAMembership, '2026-09-16', 'Teacher wrote this.');
+        $url = $this->groupUrl("/members/{$this->childAMembership->id}/arabic-notes");
+
+        $this->as($this->parentA)->putJson($url, ['session_date' => '2026-09-16', 'note' => 'Parent edit'])
+            ->assertStatus(405);
+        $this->as($this->parentA)->deleteJson("{$url}/{$note->id}")
+            ->assertNotFound();
+
+        $this->assertSame('Teacher wrote this.', $note->fresh()->note);
     }
 
     #[Test]
