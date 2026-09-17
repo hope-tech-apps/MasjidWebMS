@@ -12,7 +12,10 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
+use Symfony\Component\HttpFoundation\Exception\SuspiciousOperationException;
+use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 use Tests\TestCase;
 
 /**
@@ -180,6 +183,28 @@ class TrustedHostsLogOnlyTest extends TestCase
         // Under /api/ so the SPA catch-all in routes/web.php does not take it,
         // and with no middleware group, so nothing but the global stack runs.
         Route::get(self::PROBE, fn () => response()->json(['ok' => true]));
+    }
+
+    /**
+     * A request whose Host header is exactly `$host`, sent through the HTTP
+     * kernel as the test client would send it.
+     *
+     * Symfony 7's Request::create() refuses a malformed host inside the URI,
+     * so the absolute-URI trick cannot deliver one. A client sends it in the
+     * Host header instead, and PHP-FPM builds the real request from HTTP_HOST
+     * without that check; setting both after create() is the same thing.
+     */
+    private function getWithRawHost(string $host, string $path): TestResponse
+    {
+        $symfony = SymfonyRequest::create('https://placeholder.example'.$path, 'GET', [], [], [], ['HTTP_ACCEPT' => 'application/json']);
+        $symfony->headers->set('Host', $host);
+        $symfony->server->set('HTTP_HOST', $host);
+
+        $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
+        $response = $kernel->handle($request = $this->createTestRequest($symfony));
+        $kernel->terminate($request, $response);
+
+        return $this->createTestResponse($response, $request);
     }
 
     /**
@@ -477,6 +502,53 @@ class TrustedHostsLogOnlyTest extends TestCase
         // Still one line per host: the fingerprint recognises it next time.
         $this->get('https://'.$host.'/'.$path)->assertOk();
         $this->assertCount(1, $lines);
+    }
+
+    #[Test]
+    public function a_host_symfony_rejects_was_already_refused_by_the_framework(): void
+    {
+        // getHost() throws for a Host no DNS name could be, and the middleware
+        // calls it first, so such a request gets a 400 even in log-only mode.
+        // That refuses nobody new: Laravel's own TrustProxies calls host() on
+        // every request and gives the same 400 without this middleware. If a
+        // framework upgrade stops doing that, this case fails, and log-only
+        // mode would then be refusing requests the app used to serve.
+        config(['trusted_hosts.enforce' => false, 'trusted_hosts.log_interval' => 3600]);
+        $this->registerProbe();
+        Log::spy();
+
+        $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
+        $this->assertContains(\App\Http\Middleware\TrustedHosts::class, $kernel->getGlobalMiddleware());
+
+        foreach (['999.0.0.1', 'bad!name.example'] as $host) {
+            // The control: Symfony really rejects it, and a good name is served.
+            $probe = Request::create('https://placeholder.example/');
+            $probe->headers->set('Host', $host);
+
+            try {
+                $probe->getHost();
+                $this->fail("Symfony accepted {$host}, so this case proves nothing");
+            } catch (SuspiciousOperationException) {
+                // expected
+            }
+
+            $this->getWithRawHost($host, self::PROBE)->assertStatus(400);
+        }
+
+        $this->getWithRawHost('unlisted.example', self::PROBE)->assertOk();
+
+        // The same requests with this middleware taken out of the stack.
+        $kernel->setGlobalMiddleware(array_values(array_filter(
+            $kernel->getGlobalMiddleware(),
+            static fn ($middleware): bool => $middleware !== \App\Http\Middleware\TrustedHosts::class,
+        )));
+        $this->assertNotContains(\App\Http\Middleware\TrustedHosts::class, $kernel->getGlobalMiddleware());
+
+        foreach (['999.0.0.1', 'bad!name.example'] as $host) {
+            $this->getWithRawHost($host, self::PROBE)->assertStatus(400);
+        }
+
+        $this->getWithRawHost('unlisted.example', self::PROBE)->assertOk();
     }
 
     #[Test]

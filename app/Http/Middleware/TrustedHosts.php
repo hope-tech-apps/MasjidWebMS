@@ -86,7 +86,12 @@ class TrustedHosts
 
     public function handle(Request $request, Closure $next): Response
     {
-        $host = $this->normalise((string) $request->getHost());
+        // getHost() throws for a Host no DNS name could be (`999.0.0.1`,
+        // `bad!name`), and Laravel answers that with a 400 in either mode. That
+        // refuses nobody the app would have served: the framework's own
+        // TrustProxies middleware calls host() on every request and gives the
+        // same 400. TrustedHostsLogOnlyTest pins that.
+        $host = $this->normalise($request->getHost());
         $allowed = $this->allowedHosts();
 
         if ($allowed === [] || in_array($host, $allowed, true)) {
