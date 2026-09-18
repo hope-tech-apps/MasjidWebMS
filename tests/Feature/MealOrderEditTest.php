@@ -80,7 +80,10 @@ class MealOrderEditTest extends TestCase
         $this->masjid->user_id = $this->admin->id;
         $this->masjid->save();
 
-        $this->menu = MealMenu::factory()->forMasjid($this->masjid)->open()->create();
+        // Service dates are named rather than generated: the table is unique on
+        // (masjid_id, service_date), and two menus at one organisation must not
+        // depend on a faker sequence to land on different Fridays.
+        $this->menu = MealMenu::factory()->forMasjid($this->masjid)->open()->create(['service_date' => '2027-01-08']);
         $this->biryani = MealMenuItem::factory()->create([
             'masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->menu->id,
             'name' => 'Chicken Biryani Plate', 'price_minor' => 800,
@@ -91,7 +94,7 @@ class MealOrderEditTest extends TestCase
         ]);
 
         // A second menu at the same organisation: its items are not orderable here.
-        $this->otherMenu = MealMenu::factory()->forMasjid($this->masjid)->open()->create();
+        $this->otherMenu = MealMenu::factory()->forMasjid($this->masjid)->open()->create(['service_date' => '2027-01-15']);
         $this->otherMenuPlate = MealMenuItem::factory()->create([
             'masjid_id' => $this->masjid->id, 'meal_menu_id' => $this->otherMenu->id,
             'name' => 'Next Week Plate', 'price_minor' => 900,
@@ -99,7 +102,7 @@ class MealOrderEditTest extends TestCase
 
         // Another organisation entirely.
         $this->otherOrg = $this->org();
-        $otherOrgMenu = MealMenu::factory()->forMasjid($this->otherOrg)->open()->create();
+        $otherOrgMenu = MealMenu::factory()->forMasjid($this->otherOrg)->open()->create(['service_date' => '2027-01-08']);
         $this->otherOrgPlate = MealMenuItem::factory()->create([
             'masjid_id' => $this->otherOrg->id, 'meal_menu_id' => $otherOrgMenu->id,
             'name' => 'Someone Else\'s Plate', 'price_minor' => 1,
@@ -499,7 +502,7 @@ class MealOrderEditTest extends TestCase
     #[Test]
     public function another_organisations_order_is_a_404_on_the_board(): void
     {
-        $otherMenu = MealMenu::factory()->forMasjid($this->otherOrg)->open()->create();
+        $otherMenu = MealMenu::factory()->forMasjid($this->otherOrg)->open()->create(['service_date' => '2027-01-22']);
         $foreign = $this->placeOrder([[$this->otherOrgPlate, 1]], [
             'masjid_id' => $this->otherOrg->id,
             'meal_menu_id' => $otherMenu->id,
