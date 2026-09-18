@@ -345,6 +345,10 @@ class JummahLunchOrdersController extends Controller
                 );
             } catch (LunchLineRefusal $e) {
                 return response()->api(422, $e->getMessage(), null);
+            } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+                // Also a RuntimeException: the order went between the read and the
+                // lock. Answered as the miss it is, never with a model's own words.
+                return response()->api(404, 'Order not found.', null);
             } catch (\Illuminate\Database\QueryException $e) {
                 // Before RuntimeException, which it extends: never show SQL.
                 report($e);
