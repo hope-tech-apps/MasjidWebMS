@@ -8,10 +8,11 @@ use App\Http\Requests\Admin\MealMenus\MarkMealOrderPaidRequest;
 use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
-use App\Models\MealMenuItem;
 use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
+use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
+use App\Support\LunchOrderLines;
 use Illuminate\Support\Facades\DB;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
@@ -160,49 +161,19 @@ class MealOrdersController extends Controller
             return $this->refuse('Open this menu before taking orders on it.');
         }
 
-        $wanted = [];
-        foreach ((array) $request->validated('items') as $row) {
-            $id = (int) ($row['item_id'] ?? 0);
-            $qty = (int) ($row['quantity'] ?? 0);
-            if ($id > 0 && $qty > 0) {
-                $wanted[$id] = ($wanted[$id] ?? 0) + $qty;
-            }
-        }
+        $wanted = LunchOrderLines::wanted((array) $request->validated('items'));
 
-        if ($wanted === []) {
-            return $this->refuse('Add at least one item.');
-        }
-
-        $menuItems = MealMenuItem::where('meal_menu_id', $menu->id)
-            ->where('is_available', true)
-            ->whereIn('id', array_keys($wanted))
-            ->get()
-            ->keyBy('id');
-
-        if ($menuItems->count() !== count($wanted)) {
-            return $this->refuse('One or more items are not on this menu or are marked unavailable.');
-        }
-
-        $lines = [];
-        $subtotal = 0;
-        foreach ($wanted as $id => $qty) {
-            $item = $menuItems->get($id);
-
-            // Staff see the cap on the board; say so rather than silently
-            // trimming what they were asked for, as the public page does.
-            if ($item->max_quantity !== null && $qty > $item->max_quantity) {
-                return $this->refuse("Only {$item->max_quantity} × {$item->name} per order.");
-            }
-
-            $lineTotal = (int) $item->price_minor * $qty;
-            $subtotal += $lineTotal;
-            $lines[] = [
-                'meal_menu_item_id' => $item->id,
-                'item_name' => $item->name,
-                'unit_price_minor' => (int) $item->price_minor,
-                'quantity' => $qty,
-                'line_total_minor' => $lineTotal,
-            ];
+        try {
+            // The same pricing the public page runs (LunchOrderLines), with the
+            // one difference staff need: over the kitchen's cap, say so rather
+            // than silently trimming what they were asked for.
+            ['lines' => $lines, 'subtotal_minor' => $subtotal] = LunchOrderLines::price(
+                $menu,
+                $wanted,
+                LunchOrderLines::CAP_REFUSE
+            );
+        } catch (LunchLineRefusal $e) {
+            return $this->refuse($this->linesRefusal($e));
         }
 
         // Checked before anything is written, so a refusal leaves no order behind.
@@ -357,6 +328,20 @@ class MealOrdersController extends Controller
     private function refuse(string $message)
     {
         return response()->json(['status' => 'failed', 'data' => $message], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    /**
+     * The board's words for a refusal from the shared pricing (LunchOrderLines).
+     * Staff are looking at the menu, so "not on this menu" is the useful fact;
+     * the customer's page says "no longer available" for the same refusal.
+     */
+    private function linesRefusal(LunchLineRefusal $e): string
+    {
+        return match ($e->kind) {
+            LunchLineRefusal::EMPTY_ORDER => 'Add at least one item.',
+            LunchLineRefusal::UNAVAILABLE => 'One or more items are not on this menu or are marked unavailable.',
+            default => $e->getMessage(),
+        };
     }
 
     public function show($masjid_id, $menu_id, $order_id)

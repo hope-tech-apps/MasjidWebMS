@@ -12,7 +12,9 @@ use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
 use App\Services\Lunch\LunchSmsOptIn;
+use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
+use App\Support\LunchOrderLines;
 use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
@@ -112,54 +114,21 @@ class JummahLunchOrdersController extends Controller
             }
 
             // Combine duplicate item ids, then price EVERY line from the item's
-            // own price_minor — the client's numbers are never trusted.
-            $wanted = [];
-            foreach ((array) $request->input('items', []) as $row) {
-                $id = (int) ($row['item_id'] ?? 0);
-                $qty = (int) ($row['quantity'] ?? 0);
-                if ($id > 0 && $qty > 0) {
-                    $wanted[$id] = ($wanted[$id] ?? 0) + $qty;
-                }
-            }
+            // own price_minor — the client's numbers are never trusted. The loop
+            // lives in LunchOrderLines, shared with the staff board and with both
+            // edit endpoints, so no two doors can price a plate differently.
+            $wanted = LunchOrderLines::wanted((array) $request->input('items', []));
 
-            if ($wanted === []) {
-                return response()->api(422, 'Your order is empty.', null);
-            }
-
-            $menuItems = MealMenuItem::withoutMasjidScope()
-                ->where('masjid_id', $masjidId)
-                ->where('meal_menu_id', $menu->id)
-                ->where('is_available', true)
-                ->whereIn('id', array_keys($wanted))
-                ->get()
-                ->keyBy('id');
-
-            // Every requested item must resolve to a live item on THIS menu — a
-            // missing one means the menu changed under the customer.
-            if ($menuItems->count() !== count($wanted)) {
-                return response()->api(422, 'One or more items are no longer available — please refresh the menu.', null);
-            }
-
-            $lines = [];
-            $subtotal = 0;
-            foreach ($wanted as $id => $qty) {
-                /** @var MealMenuItem $item */
-                $item = $menuItems->get($id);
-
-                if ($item->max_quantity !== null && $qty > $item->max_quantity) {
-                    $qty = (int) $item->max_quantity; // clamp to the kitchen's cap
-                }
-
-                $lineTotal = (int) $item->price_minor * $qty;
-                $subtotal += $lineTotal;
-
-                $lines[] = [
-                    'meal_menu_item_id' => $item->id,
-                    'item_name' => $item->name,
-                    'unit_price_minor' => (int) $item->price_minor,
-                    'quantity' => $qty,
-                    'line_total_minor' => $lineTotal,
-                ];
+            try {
+                // The public page TRIMS an order over the kitchen's cap rather
+                // than refusing it, which is what it has always done.
+                ['lines' => $lines, 'subtotal_minor' => $subtotal] = LunchOrderLines::price(
+                    $menu,
+                    $wanted,
+                    LunchOrderLines::CAP_CLAMP
+                );
+            } catch (LunchLineRefusal $e) {
+                return response()->api(422, $e->getMessage(), null);
             }
 
             // The optional extra (the one figure the CUSTOMER sets) and Stripe's
