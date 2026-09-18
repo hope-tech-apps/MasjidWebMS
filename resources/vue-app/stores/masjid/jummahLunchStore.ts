@@ -249,6 +249,50 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Failed to mark paid.");
     }
 
+    /**
+     * Change what is ON an order — after the cutoff, and on a PAID order too.
+     * That is the point of it: ordering closes so the kitchen can count plates,
+     * and the changes people ask for arrive after that.
+     *
+     * ADMIN ONLY. The route sits under the admin prefix and deliberately not in
+     * the lunch realm — editing an order somebody has already paid for is not a
+     * volunteer's call — so a LunchStaff is refused here rather than shown a
+     * button that 403s.
+     *
+     * `items` is the FULL set of lines after the edit; a line left out is
+     * removed. NO PRICE IS SENT and no payment field is: the server re-prices
+     * every line from the menu and NEVER moves the order's payment state. When a
+     * paid order's total changes, the difference comes back as `balance_minor` on
+     * the order and in the server's own sentence — money still owed, or owed
+     * back. Nothing here settles it.
+     */
+    async function updateOrderItems(
+        menuId: number | string,
+        orderId: number | string,
+        items: { meal_menu_item_id: number; quantity: number }[]
+    ): Promise<{ order: any; changed: boolean; message: string }> {
+        ensureMasjid();
+        if (isLunchStaff()) {
+            throw new Error("Only a masjid administrator can change what is on an order.");
+        }
+        const body = new URLSearchParams();
+        items.forEach((it, i) => {
+            body.append(`items[${i}][meal_menu_item_id]`, String(it.meal_menu_item_id));
+            body.append(`items[${i}][quantity]`, String(it.quantity));
+        });
+        const res: AxiosResponse = await ApiService.patch(`${base()}/menus/${menuId}/orders/${orderId}/items`, body);
+        if (res.data?.status === "success") {
+            return {
+                order: res.data.data ?? null,
+                // A server that predates the flag is read as "something changed",
+                // which is what every response before it meant.
+                changed: typeof res.data.changed === "boolean" ? res.data.changed : true,
+                message: typeof res.data.message === "string" ? res.data.message : "",
+            };
+        }
+        throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not change the order.");
+    }
+
     async function updateOrderStatus(menuId: number | string, orderId: number | string, status: string): Promise<any> {
         ensureMasjid();
         const body = new URLSearchParams();
@@ -412,6 +456,6 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,
-        fetchOrders, createOrder, paymentLink, markOrderPaid, updateOrderStatus, uploadFlyer,
+        fetchOrders, createOrder, paymentLink, markOrderPaid, updateOrderStatus, updateOrderItems, uploadFlyer,
     };
 });
