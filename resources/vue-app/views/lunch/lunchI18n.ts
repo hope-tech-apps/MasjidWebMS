@@ -8,6 +8,12 @@ import { computed, ref } from "vue";
  * localStorage so it also survives the Stripe round-trip and a reload. Only the
  * UI CHROME is translated; the menu item's name/description come from the
  * database exactly as the masjid typed them.
+ *
+ * The same line divides the words below from the SERVER's own sentences. Why an
+ * order cannot be changed ("Orders for this menu are closed."), and what
+ * happened when it was, are answered by the API in English and shown as they
+ * come — so the page can never tell a customer something the endpoint did not,
+ * which is the one thing worse than showing them English.
  */
 export type LunchLang = "en" | "ar";
 
@@ -75,6 +81,18 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         online: "Online",
         at_pickup: "At pickup",
         pickup_show: "Pick up after Jummah prayer. Show order",
+        // changing an order already placed
+        edit_change: "Change my order",
+        edit_cancel: "Cancel",
+        edit_save: "Save changes",
+        edit_saving: "Saving…",
+        edit_new_total: "New total — confirmed when you save",
+        edit_min_one: "Your order must keep at least one plate.",
+        edit_saved: "Your order has been updated.",
+        edit_failed: "We couldn't change your order.",
+        one_fewer: "One fewer {x}",
+        one_more: "One more {x}",
+        pay_new_total: "Pay the new total",
     },
     ar: {
         badge: "غداء الجمعة",
@@ -127,6 +145,18 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         online: "عبر الإنترنت",
         at_pickup: "عند الاستلام",
         pickup_show: "الاستلام بعد صلاة الجمعة. أظهِر رقم الطلب",
+        // changing an order already placed
+        edit_change: "تعديل طلبي",
+        edit_cancel: "إلغاء",
+        edit_save: "حفظ التعديل",
+        edit_saving: "جارٍ الحفظ…",
+        edit_new_total: "الإجمالي الجديد — يُعتمد عند الحفظ",
+        edit_min_one: "يجب أن يبقى في الطلب طبق واحد على الأقل.",
+        edit_saved: "تم تحديث طلبك.",
+        edit_failed: "تعذّر تعديل طلبك.",
+        one_fewer: "إنقاص {x}",
+        one_more: "زيادة {x}",
+        pay_new_total: "ادفع الإجمالي الجديد",
     },
 };
 

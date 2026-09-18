@@ -77,6 +77,46 @@ export const usePublicLunchStore = defineStore("publicLunchStore", () => {
         }
     }
 
+    /**
+     * Change what is on an order already placed, on the link the customer holds.
+     *
+     * `items` is the FULL set of lines after the edit, which is what the endpoint
+     * takes: a line left out is removed. NO PRICE IS SENT — the server re-prices
+     * every line from the menu, so the totals that come back are the only ones
+     * this page may show.
+     *
+     * A refusal (closed, paid, cancelled, a plate over the kitchen's cap) comes
+     * back as the server's own sentence and is handed straight to the page.
+     */
+    async function updateOrder(
+        masjidId: string,
+        uuid: string,
+        items: { meal_menu_item_id: number; quantity: number }[]
+    ): Promise<{ ok: boolean; order?: any; checkoutUrl?: string; message?: string }> {
+        loading.value = true;
+        error.value = null;
+        try {
+            const res = await client(masjidId).patch(`/api/v1/lunch-orders/${uuid}`, { items });
+            const updated = res.data?.data?.order ?? null;
+            // Only ever replaced with what the server sent back. A response
+            // without an order leaves the page showing what it already had,
+            // rather than blanking it or keeping the numbers typed into it.
+            if (updated) {
+                order.value = updated;
+            }
+            return {
+                ok: true,
+                order: updated,
+                checkoutUrl: res.data?.data?.checkout_url ?? undefined,
+                message: res.data?.message,
+            };
+        } catch (e: any) {
+            return { ok: false, message: messageFrom(e, "We couldn't change your order.") };
+        } finally {
+            loading.value = false;
+        }
+    }
+
     async function fetchOrder(masjidId: string, uuid: string): Promise<any | null> {
         loading.value = true;
         error.value = null;
@@ -92,5 +132,5 @@ export const usePublicLunchStore = defineStore("publicLunchStore", () => {
         }
     }
 
-    return { menu, order, loading, error, fetchMenu, placeOrder, fetchOrder };
+    return { menu, order, loading, error, fetchMenu, placeOrder, fetchOrder, updateOrder };
 });

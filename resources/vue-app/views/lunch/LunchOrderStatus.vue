@@ -22,10 +22,25 @@
                 <div class="lunch-pad">
                     <div v-if="cancelled" class="lunch-note warn">{{ t('cancel_note') }}</div>
 
+                    <!-- What the server said about the change just saved, in its own
+                         words, and the new card page when the amount moved. -->
+                    <div v-if="savedMessage" class="lunch-note ok" role="status">{{ savedMessage }}</div>
+                    <a v-if="newCheckoutUrl" class="lunch-pay-new" :href="newCheckoutUrl">{{ t('pay_new_total') }}</a>
+
                     <ul class="lunch-lines">
                         <li v-for="(it, i) in order.items" :key="i">
-                            <span>{{ it.quantity }} × {{ it.item_name }}</span>
-                            <span>{{ money(it.line_total_minor) }}</span>
+                            <span>
+                                <template v-if="!editing">{{ it.quantity }} × </template>{{ it.item_name }}
+                                <small v-if="editing" class="lunch-muted">· {{ money(Number(it.unit_price_minor) * (draft[i] || 0)) }}</small>
+                            </span>
+                            <span v-if="!editing">{{ money(it.line_total_minor) }}</span>
+                            <span v-else class="lunch-qty">
+                                <button type="button" :aria-label="t('one_fewer', it.item_name)"
+                                    :disabled="saving || (draft[i] || 0) <= 0" @click="bump(i, -1)">−</button>
+                                <span class="lunch-qty-n" aria-live="polite">{{ draft[i] || 0 }}</span>
+                                <button type="button" :aria-label="t('one_more', it.item_name)"
+                                    :disabled="saving || (draft[i] || 0) >= 99" @click="bump(i, 1)">+</button>
+                            </span>
                         </li>
                     </ul>
 
@@ -41,9 +56,33 @@
                         <span>{{ money(order.fee_covered_minor) }}</span>
                     </div>
 
+                    <!-- While editing, the figure shown is this page's arithmetic on
+                         the prices it was given. The SERVER re-prices every line and
+                         recomputes the card fee, so the label says the total is
+                         settled on save and the saved order's own total comes back
+                         from the server a moment later. -->
                     <div class="lunch-total-row">
-                        <span>{{ t('total') }}</span>
-                        <strong>{{ money(order.total_minor) }}</strong>
+                        <span>{{ editing ? t('edit_new_total') : t('total') }}</span>
+                        <strong>{{ money(editing ? previewTotal : order.total_minor) }}</strong>
+                    </div>
+
+                    <div class="lunch-edit">
+                        <template v-if="!editing">
+                            <button v-if="order.can_edit" type="button" class="lunch-btn" @click="startEdit">{{ t('edit_change') }}</button>
+                            <!-- Not a button they can't press: the reason, in the
+                                 sentence the endpoint itself would have answered with. -->
+                            <p v-else-if="order.edit_notice" class="lunch-muted lunch-why">{{ order.edit_notice }}</p>
+                        </template>
+                        <template v-else>
+                            <p v-if="draftPlates <= 0" class="lunch-muted lunch-why">{{ t('edit_min_one') }}</p>
+                            <div class="lunch-edit-actions">
+                                <button type="button" class="lunch-btn ghost" :disabled="saving" @click="cancelEdit">{{ t('edit_cancel') }}</button>
+                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0" @click="saveEdit">
+                                    {{ saving ? t('edit_saving') : t('edit_save') }}
+                                </button>
+                            </div>
+                        </template>
+                        <p v-if="editError" class="lunch-note warn lunch-why" role="alert">{{ editError }}</p>
                     </div>
 
                     <div class="lunch-status-grid">
@@ -65,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { usePublicLunchStore } from "@/stores/publicLunchStore";
 import { useLunchLang } from "./lunchI18n";
@@ -97,6 +136,87 @@ const payLabel = computed(() => {
         default: return t("not_paid");
     }
 });
+
+// --------------------------------------------- changing an order already placed
+//
+// Offered only while the SERVER says it may be (order.can_edit), and refused
+// again by the server on the locked row whatever this page decided. The draft is
+// a quantity per line, by position, and Save sends the FULL set of lines — which
+// is what the endpoint takes, and what stops two edits crossing from adding up to
+// a basket nobody chose.
+//
+// NO PRICE IS EVER SENT. The number shown while editing is this page's own sum
+// of the unit prices it was given, labelled as settled on save; the totals it
+// shows afterwards are the server's.
+const editing = ref(false);
+const saving = ref(false);
+const editError = ref("");
+const savedMessage = ref("");
+const newCheckoutUrl = ref("");
+const draft = ref<number[]>([]);
+
+const lines = computed<any[]>(() => order.value?.items ?? []);
+const draftPlates = computed(() => draft.value.reduce((n, q) => n + (Number(q) || 0), 0));
+const draftSubtotal = computed(() => lines.value.reduce(
+    (sum: number, it: any, i: number) => sum + Number(it.unit_price_minor || 0) * (draft.value[i] || 0), 0));
+// The extra the customer chose is never touched by an edit, and the card fee only
+// moves on an order that was already covering it — so both are carried across as
+// they stand, and the server has the last word on the fee.
+const previewTotal = computed(() => draftSubtotal.value
+    + Number(order.value?.donation_minor || 0)
+    + Number(order.value?.fee_covered_minor || 0));
+
+function startEdit(): void {
+    draft.value = lines.value.map((it: any) => Number(it.quantity) || 0);
+    editError.value = "";
+    savedMessage.value = "";
+    newCheckoutUrl.value = "";
+    editing.value = true;
+}
+
+function cancelEdit(): void {
+    editing.value = false;
+    editError.value = "";
+}
+
+function bump(i: number, delta: number): void {
+    const next = [...draft.value];
+    // 99 is the endpoint's own ceiling per line; the kitchen's cap is lower and
+    // is the server's to enforce, in words this page shows as they come.
+    next[i] = Math.max(0, Math.min(99, (next[i] || 0) + delta));
+    draft.value = next;
+}
+
+async function saveEdit(): Promise<void> {
+    if (!order.value || draftPlates.value <= 0 || saving.value) return;
+    saving.value = true;
+    editError.value = "";
+
+    const items = lines.value
+        .map((it: any, i: number) => ({
+            meal_menu_item_id: Number(it.meal_menu_item_id),
+            quantity: draft.value[i] || 0,
+        }))
+        // A line whose menu item was deleted has no id to send. The server already
+        // refuses to offer an edit on such an order (can_edit), so this never
+        // drops a line in practice — it is here so it cannot start to.
+        .filter((l) => Number.isFinite(l.meal_menu_item_id) && l.meal_menu_item_id > 0);
+
+    const res = await store.updateOrder(masjidId, uuid, items);
+    saving.value = false;
+
+    if (!res.ok) {
+        // The server's reason — closed, paid, over the kitchen's cap — as it wrote it.
+        editError.value = res.message || t("edit_failed");
+        return;
+    }
+
+    editing.value = false;
+    savedMessage.value = res.message || t("edit_saved");
+    // Their old card page was for the old amount and has been closed; this is the
+    // new one. Without it an edit would take away the only way they had to pay.
+    newCheckoutUrl.value = res.checkoutUrl || "";
+}
 
 function money(minor: number): string {
     // Grouped, because the optional extra is the first field on these pages that
@@ -151,5 +271,24 @@ onMounted(() => store.fetchOrder(masjidId, uuid));
 .pill.refunded { background: #eee; color: #666; }
 .lunch-pickup-note { background: #f2f8f5; border-radius: 12px; padding: 14px; font-size: 14px; color: #0c3d2b; text-align: center; margin: 0; }
 .lunch-note.warn { background: #fbe6d4; color: #a05a1a; border-radius: 12px; padding: 12px; font-size: 14px; margin-bottom: 16px; }
+.lunch-note.ok { background: #d7f0e0; color: #14533a; border-radius: 12px; padding: 12px; font-size: 14px; margin-bottom: 12px; }
+/* Quantity stepper. Flex with gap only, no side margins, so the row reads the
+   same way round in Arabic as the line it sits on. */
+.lunch-qty { display: flex; align-items: center; gap: 10px; }
+.lunch-qty button {
+    width: 30px; height: 30px; border-radius: 50%; font-size: 17px; line-height: 1;
+    background: #f2f8f5; color: #0c3d2b; border: 1px solid #cfe3d8; cursor: pointer;
+}
+.lunch-qty button:disabled { opacity: .45; cursor: default; }
+.lunch-qty-n { min-width: 1.5rem; text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lunch-edit { margin-bottom: 16px; }
+.lunch-edit-actions { display: flex; gap: 10px; }
+.lunch-btn {
+    flex: 1; padding: 11px 16px; border-radius: 12px; border: 1px solid #0c3d2b;
+    background: #0c3d2b; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.lunch-btn.ghost { background: #fff; color: #0c3d2b; }
+.lunch-btn:disabled { opacity: .5; cursor: default; }
+.lunch-why { font-size: 13px; margin: 0 0 10px; }
 .lunch-muted { color: #888; }
 </style>
