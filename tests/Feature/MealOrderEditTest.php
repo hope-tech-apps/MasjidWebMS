@@ -207,6 +207,40 @@ class MealOrderEditTest extends TestCase
     }
 
     #[Test]
+    public function repeating_one_item_across_many_rows_cannot_go_past_the_ceiling_a_single_row_has(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 1]]);
+
+        // Biryani has no `max_quantity`: the kitchen never set one, which before
+        // this ceiling meant the only bound on it was per ROW. The request rules
+        // allow 100 rows of 99, the rows are summed, and 9,900 plates came out
+        // the other side — $79,200 of food on an endpoint nobody signs in to use.
+        $rows = array_fill(0, 100, ['meal_menu_item_id' => $this->biryani->id, 'quantity' => 99]);
+
+        $this->editAsCustomer($order, $rows)
+            ->assertOk()
+            ->assertJsonPath('data.order.subtotal_minor', 99 * 800)
+            ->assertJsonPath('data.order.total_minor', 99 * 800);
+
+        $order = $order->fresh()->load('items');
+        $this->assertCount(1, $order->items);
+        $this->assertSame(99, (int) $order->items->first()->quantity);
+    }
+
+    #[Test]
+    public function the_ceiling_is_the_shared_one_every_door_prices_through(): void
+    {
+        // Asserted on the shared class itself, because the public order page and
+        // the staff board sum repeated rows through this same method — the edit
+        // endpoints were never the only door standing open.
+        $wanted = \App\Support\LunchOrderLines::wanted(
+            array_fill(0, 100, ['item_id' => $this->biryani->id, 'quantity' => 99])
+        );
+
+        $this->assertSame([$this->biryani->id => 99], $wanted);
+    }
+
+    #[Test]
     public function an_item_from_another_menu_is_refused(): void
     {
         $order = $this->placeOrder([[$this->biryani, 1]]);
