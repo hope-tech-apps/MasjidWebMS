@@ -399,7 +399,16 @@ class JummahLunchOrdersController extends Controller
             $checkoutUrl = null;
             $pageFailed = false;
 
-            if ($result['page_closed'] && $order->payment_method === MealOrder::METHOD_ONLINE) {
+            // Whether the order says online or at-pickup: what decides this is
+            // that a page WAS closed, which only happens when the order was
+            // holding one. Staff send a payment link to pay-at-pickup customers
+            // too, and an order that says `pickup` while carrying a live session
+            // is a real shape on the live board — reading the method instead of
+            // the fact left exactly those customers with a dead link and nothing
+            // in its place. Making the page marks the order as paying online,
+            // which is what pressing "Payment link" on the board has always done
+            // — an order holding a live page is one somebody may pay on it.
+            if ($result['page_closed']) {
                 try {
                     $checkoutUrl = $this->checkout->paymentLink(
                         $order,
