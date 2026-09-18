@@ -1648,3 +1648,79 @@ its own decision, because the greeting is not the only place the name or other t
 
 Pinned by `tests/Feature/BroadcastAndNudgeGreetingTest.php`, and for `MailGreeting` itself by the
 greeting cases in `tests/Feature/PasswordSetNoticeTest.php`.
+
+## 2026-09-18 — An order can be changed after it is placed: by the customer until the cutoff, by staff at any time (extends 2026-09-11's mark-paid rule; nothing here marks money as taken)
+
+**Decision.** A Jummah-lunch order's items can be changed after it has been
+placed, through two doors.
+
+1. **The customer, on the link they already hold** — `PATCH /api/v1/lunch-orders/{uuid}`,
+   the same unbound `masjid-id` idiom and the same uuid-as-capability as the
+   status page, on the tighter `lunch-order` limiter because it writes and can
+   move a payment page. The body is the FULL set of lines after the edit; a
+   quantity of 0 removes one. It is refused, with a sentence they can act on,
+   once ordering has closed (`now >= ordering_closes_at`, the cutoff the kitchen
+   counts plates against), once the order is paid or refunded, and if it was
+   cancelled. An order may never be emptied: cancelling is a conversation with
+   the masjid, not an empty basket.
+2. **Staff, on the board** — `PATCH .../jummah-lunch/menus/{menu}/orders/{order}/items`,
+   inside the existing `capability:jummah_lunch` group, `admin` middleware, NO new
+   permission (`Permission::count()` stays 8). **No cutoff**: the requests staff
+   actually get — "can you make that three?" — arrive after ordering closes, and
+   handling them is the point. Deliberately NOT in `routes/lunch.php`: changing
+   an order somebody has already paid for is not a volunteer's call.
+
+**A PAID order may be edited by staff, and no edit ever settles money.**
+`payment_status`, `paid_at`, `paid_via` and who recorded the payment are never
+touched. What the order's total was when the money landed is recorded once, by
+the first edit after payment (`meal_orders.settled_total_minor`), and the
+difference is published as `balance_minor` on every admin payload: positive is
+still owed by the customer, negative is owed back. The board's
+`revenue_paid_minor` now sums what SETTLED, not the new price of the food. NULL
+means nothing has been edited since the money came, so no row was backfilled.
+
+**One pricing path, not three.** The public page and the staff board each had
+their own copy of the "resolve the items, cap them, price them" loop; the edits
+would have been a third and a fourth. It is now `App\Support\LunchOrderLines`,
+and the two existing callers use it — prices, totals and refusals unchanged. The
+body still never prices anything: it carries ids and quantities, and
+`validated()` drops everything else. The one deliberate difference between doors
+is the kitchen's cap: the public ORDER page trims to it (as it always has), while
+both edits and staff entry refuse and say so.
+
+**The donation stands and the card fee follows.** `donation_minor` is the one
+amount the customer chose, so an edit to the food never touches it.
+`fee_covered_minor` is recomputed with the placing-time formula
+(`StripeFees::coverage`) ONLY for an order that was already covering the fee; an
+order that never covered it does not start.
+
+**An unpaid order's open Stripe page holds the OLD amount**, so it is closed
+before the new total is written (`MealOrderCheckoutService::closePageBeforeRepricing`,
+the sibling of `closePageBeforePaidByHand`), under the same row lock every other
+money path takes. If Stripe will not close it, or reports it paid or clearing,
+**nothing is changed at all** — two payable amounts for one order is the failure
+this prevents. For the customer a new page for the new total is made immediately,
+so an edit never silently removes their only way to pay; staff use "Payment link"
+as they already do.
+
+**Every edit is recorded** in `meal_order_edits` (masjid, order, actor
+customer|staff, the staff user when there is one, and the lines and money before
+and after), written in the same transaction, so no edit commits without its row.
+A request that changes nothing records nothing.
+
+**Alternatives.**
+- **Cancel and re-order.** Rejected: it loses the order number the kitchen has
+  already written down, and for a paid order it means a refund and a second
+  charge for what is usually one extra plate.
+- **Let the customer cancel from the same link.** Not built: an order that
+  vanishes after the kitchen has counted plates is the masjid's decision.
+- **Let the edit re-charge or refund the difference.** Rejected outright. The
+  balance is a fact staff act on; no endpoint here may move money.
+- **Let lunch volunteers edit too.** Not now — see above.
+
+Pinned by `tests/Feature/MealOrderEditTest.php` (the cutoff a minute either side,
+a paid order refused to the customer and taken by the board, the cap, an item
+from another menu and from another organisation, a crafted price ignored, the
+last plate, the donation untouched, the fee moving only when it was already
+covered, the audit row and its actor, and the Stripe page for the old amount)
+and, for the new table's tenant scoping, `MealOrderTenantIsolationTest`.
