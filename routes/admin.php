@@ -377,6 +377,14 @@ Route::prefix('admin')->group(function () {
                     Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
                     Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');
                     Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
+                    // Changing what is on an order, after the cutoff and on a paid
+                    // order too — the requests staff actually get once ordering has
+                    // closed. Administrators only: it is deliberately NOT in
+                    // routes/lunch.php, because editing an order somebody has
+                    // already paid for is not a volunteer's call. No new permission
+                    // (Permission::count() stays 8) — `admin` already means a
+                    // SuperAdmin or this organisation's own MasjidAdmin.
+                    Route::patch('/menus/{menu_id}/orders/{order_id}/items', 'updateItems');
                 });
             });
 

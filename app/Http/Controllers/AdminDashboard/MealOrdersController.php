@@ -4,11 +4,13 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\MealMenus\CreatePaymentLinkRequest;
+use App\Http\Requests\Admin\MealMenus\EditMealOrderItemsRequest;
 use App\Http\Requests\Admin\MealMenus\MarkMealOrderPaidRequest;
 use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
 use App\Models\MealOrderItem;
+use App\Services\Lunch\MealOrderEditor;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
@@ -39,8 +41,13 @@ class MealOrdersController extends Controller
      */
     private const PAID_ON_ITS_PAGE = 'This order was already paid by card online, so nothing was recorded. If you also took money for it by hand, give that back.';
 
-    public function __construct(private MealOrderCheckoutService $checkout)
-    {
+    /** An order may not be emptied: cancelling one is its own action. */
+    private const EDIT_FLOOR = 'An order must keep at least one plate. Cancel the order instead.';
+
+    public function __construct(
+        private MealOrderCheckoutService $checkout,
+        private MealOrderEditor $editor
+    ) {
     }
 
     /**
@@ -263,6 +270,135 @@ class MealOrdersController extends Controller
             'data' => $order->load(['items', 'enteredBy:id,name']),
             'checkout_url' => $checkoutUrl,
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * PATCH .../orders/{order_id}/items — staff change what is ON an order.
+     *
+     * The reason this exists and the customer's own edit is not enough: the
+     * cutoff. Ordering closes so the kitchen can count plates, and the requests
+     * that arrive after it — "can you make that three?", someone turning up for a
+     * friend — are exactly the ones staff have to handle. So there is NO cutoff
+     * check here, and a menu that has closed is still editable.
+     *
+     * A PAID order may be edited too, and this is the part to be careful about:
+     *   - nothing here touches `payment_status`, `paid_at`, `paid_via` or who
+     *     recorded the payment. An edit is not a payment, and money must never be
+     *     marked settled by an edit;
+     *   - what was actually paid is remembered the first time (`settled_total_minor`),
+     *     so the difference shows as `balance_minor` on the order: POSITIVE is
+     *     still owed by the customer, NEGATIVE is owed back to them. The board
+     *     shows it and staff settle it with the customer, in cash or in Stripe;
+     *   - an UNPAID order's open card page is for the old amount, so it is closed
+     *     first ("Payment link" makes a new one for the new total). If Stripe will
+     *     not close it, nothing is changed at all.
+     * Prices always come from the menu, the customer's optional extra is left
+     * alone, and an order may not be emptied — cancelling is its own action.
+     */
+    public function updateItems(EditMealOrderItemsRequest $request, $masjid_id, $menu_id, $order_id)
+    {
+        // Tenant-scoped (BelongsToMasjid): another organisation's menu or order
+        // is a 404, never a row this board can touch.
+        $menu = MealMenu::findOrFail($menu_id);
+        $order = MealOrder::where('meal_menu_id', $menu->id)->with('items')->findOrFail($order_id);
+
+        if (($refusal = self::staffMayEdit($order)) !== null) {
+            return $this->refuse($refusal);
+        }
+
+        $wanted = LunchOrderLines::wanted((array) $request->validated('items'), 'meal_menu_item_id');
+
+        if ($wanted === []) {
+            return $this->refuse(self::EDIT_FLOOR);
+        }
+
+        try {
+            $result = $this->editor->apply(
+                $order,
+                $menu,
+                $wanted,
+                MealOrderEditor::ACTOR_STAFF,
+                $request->user()?->id,
+                function (MealOrder $locked) {
+                    // Asked again on the locked row: a cancellation or a refund
+                    // that committed while this request waited must still refuse.
+                    if (($refusal = self::staffMayEdit($locked)) !== null) {
+                        throw new \RuntimeException($refusal);
+                    }
+                }
+            );
+        } catch (LunchLineRefusal $e) {
+            return $this->refuse($this->linesRefusal($e));
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Before RuntimeException, which it extends: never show SQL to staff.
+            return $this->failed($e);
+        } catch (\Stripe\Exception\ExceptionInterface $e) {
+            // Before RuntimeException too: some of the SDK's own errors extend it.
+            report($e);
+
+            return $this->refuse('Stripe did not answer, so this order\'s card payment link could not be closed and nothing was changed. Try again in a moment.');
+        } catch (\RuntimeException $e) {
+            return $this->refuse($e->getMessage());
+        } catch (\Exception $e) {
+            return $this->failed($e);
+        }
+
+        $order = $result['order']->fresh()->load(['items', 'enteredBy:id,name', 'markedPaidBy:id,name']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => self::editMessage($order, (bool) $result['changed'], (bool) $result['page_closed']),
+            'changed' => (bool) $result['changed'],
+            'data' => $order,
+        ], Response::HTTP_OK);
+    }
+
+    /** Why staff may not change this order's items right now, or null when they may. */
+    private static function staffMayEdit(MealOrder $order): ?string
+    {
+        if ($order->status === MealOrder::STATUS_CANCELLED) {
+            return 'This order was cancelled. Set it back to confirmed first.';
+        }
+
+        if ($order->payment_status === MealOrder::PAYMENT_REFUNDED) {
+            return 'This order was refunded, so its items cannot be changed.';
+        }
+
+        return null;
+    }
+
+    /**
+     * What the board is told afterwards. When the money moved on an order that
+     * was already paid, the sentence SAYS SO — in money, and as something still
+     * to be done. Nothing in the system settles a balance.
+     */
+    private static function editMessage(MealOrder $order, bool $changed, bool $pageClosed): string
+    {
+        if (! $changed) {
+            return "Nothing changed on order #{$order->order_number}.";
+        }
+
+        $balance = (int) $order->balance_minor;
+
+        if ($order->payment_status === MealOrder::PAYMENT_PAID && $balance > 0) {
+            return "Order #{$order->order_number} updated. The customer still owes " . self::money($balance) . ' — it has not been collected.';
+        }
+
+        if ($order->payment_status === MealOrder::PAYMENT_PAID && $balance < 0) {
+            return "Order #{$order->order_number} updated. " . self::money(-$balance) . ' is owed back to the customer — refund it in Stripe or by hand.';
+        }
+
+        if ($pageClosed) {
+            return "Order #{$order->order_number} updated. Its old payment link was closed; press \"Payment link\" to make one for the new total.";
+        }
+
+        return "Order #{$order->order_number} updated.";
+    }
+
+    /** Minor units as the board writes money. */
+    private static function money(int $minor): string
+    {
+        return '$' . number_format($minor / 100, 2);
     }
 
     /**

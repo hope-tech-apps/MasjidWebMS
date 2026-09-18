@@ -132,6 +132,14 @@ Route::prefix('v1')->group(function () {
     Route::get('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'show'])
         ->middleware('throttle:lunch-menu');
 
+    // Changing an order already placed, on the link the customer holds. The uuid
+    // is the capability, exactly as it is for the status read above — but this
+    // one WRITES and moves money (it can close a Stripe payment page and open a
+    // new one for the new total), so it takes the tight `lunch-order` allowance
+    // that placing an order takes, not the loose read one.
+    Route::patch('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'update'])
+        ->middleware('throttle:lunch-order');
+
     // Public zakat calculator (T-031). The odd one out among the public POSTs
     // here: it WRITES NOTHING. It is a POST anyway because its body is a
     // person's net worth, which must not travel in a query string and from
