@@ -115,6 +115,16 @@ class MealOrder extends Model
         'payment_method',
     ];
 
+    /**
+     * `balance_minor` rides on every payload that serialises the model — the
+     * board, and the staff endpoints that answer with an order. The PUBLIC order
+     * page builds its own array field by field (JummahLunchOrdersController::
+     * serializeOrder) and is unaffected by what is appended here.
+     */
+    protected $appends = [
+        'balance_minor',
+    ];
+
     protected $attributes = [
         'status' => self::STATUS_PENDING,
         'payment_method' => self::METHOD_PICKUP,
@@ -134,6 +144,7 @@ class MealOrder extends Model
             'donation_minor' => 'integer',
             'fee_covered_minor' => 'integer',
             'total_minor' => 'integer',
+            'settled_total_minor' => 'integer',
             'placed_at' => 'datetime',
             'paid_at' => 'datetime',
             'picked_up_at' => 'datetime',
@@ -160,6 +171,12 @@ class MealOrder extends Model
     public function items(): HasMany
     {
         return $this->hasMany(MealOrderItem::class);
+    }
+
+    /** Every change made to this order after it was placed, oldest first. */
+    public function edits(): HasMany
+    {
+        return $this->hasMany(MealOrderEdit::class);
     }
 
     /**
@@ -246,6 +263,37 @@ class MealOrder extends Model
     public function isPaid(): bool
     {
         return $this->payment_status === self::PAYMENT_PAID;
+    }
+
+    /**
+     * What has actually been paid for this order, in minor units.
+     *
+     * For everything the webhook and Mark paid have ever written, that is the
+     * order's own total: a paid order's total could not move. Since orders can be
+     * edited, the first edit of a PAID order records the total it had when the
+     * money settled (`settled_total_minor`), and that is the answer from then on.
+     * An unpaid order has settled nothing.
+     */
+    public function settledMinor(): int
+    {
+        if ($this->settled_total_minor !== null) {
+            return (int) $this->settled_total_minor;
+        }
+
+        return $this->payment_status === self::PAYMENT_PAID ? (int) $this->total_minor : 0;
+    }
+
+    /**
+     * What is still owed on this order: POSITIVE means the customer owes it,
+     * NEGATIVE means it is owed back to them. Appended to every admin payload,
+     * because an edit that changes a paid order's total must be visible as money
+     * and never as a settled payment — nothing here marks anything paid.
+     *
+     * An unpaid order's balance is simply its total, which is what is owed.
+     */
+    public function getBalanceMinorAttribute(): int
+    {
+        return (int) $this->total_minor - $this->settledMinor();
     }
 
     public function isOnline(): bool

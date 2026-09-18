@@ -53,6 +53,19 @@ class MealOrderCheckoutService
 
     private const NO_ACCOUNT = 'This organisation\'s Stripe account is not on record, so this order\'s card payment link could not be checked and nothing was recorded.';
 
+    /**
+     * Closing the page before an order is re-priced (closePageBeforeRepricing).
+     * Said to a customer on their own order link as well as to staff, so they
+     * name the one fact that matters: the order was NOT changed.
+     */
+    private const PAID_NOT_CHANGED = 'This order has just been paid by card online, so nothing was changed. It will show as paid in a moment.';
+
+    private const CLEARING_NOT_CHANGED = 'A bank payment for this order is still clearing on Stripe, so nothing was changed. It will show as paid when the money lands.';
+
+    private const PAGE_NOT_CLOSED = 'This order\'s card payment link could not be closed, so nothing was changed. Try again in a moment.';
+
+    private const NO_ACCOUNT_NOT_CHANGED = 'This organisation\'s Stripe account is not on record, so this order\'s card payment link could not be checked and nothing was changed.';
+
     public function __construct(private StripeClient $stripe)
     {
     }
@@ -435,6 +448,65 @@ class MealOrderCheckoutService
             throw new RuntimeException(self::LINK_NOT_CLOSED);
         }
 
+        $order->stripe_checkout_session_id = null;
+        $order->save();
+    }
+
+    /**
+     * Before an unpaid order's lines are re-priced (App\Services\Lunch\
+     * MealOrderEditor), make sure the page it already holds cannot be paid for the
+     * OLD amount. Call it on the LOCKED row, inside the transaction that writes
+     * the new lines: checkout() and paymentLink() take the same lock, so no page
+     * can be made in between.
+     *
+     * The sibling of closePageBeforePaidByHand, with the same answers and the same
+     * discipline — a refusal changes nothing, and anything short of a page that is
+     * definitely closed is a refusal:
+     *
+     *   - no page on record: nothing to ask, and nothing to close;
+     *   - open: closed first, and forgotten on the row. A new page for the new
+     *     amount is a separate decision the caller makes afterwards;
+     *   - complete and paid: refused. The webhook is about to record that payment,
+     *     and re-pricing an order Stripe holds money for would silently change what
+     *     the customer agreed to pay;
+     *   - complete and unpaid: a bank payment is clearing, so refused for the same
+     *     reason;
+     *   - a close Stripe refused, or no account to ask: refused. An unclosed page
+     *     plus a new total is two payable amounts for one order.
+     *
+     * @throws RuntimeException when the order must not be re-priced
+     * @throws \Stripe\Exception\ExceptionInterface when Stripe did not answer
+     */
+    public function closePageBeforeRepricing(MealOrder $order): void
+    {
+        if (! $order->stripe_checkout_session_id) {
+            return;
+        }
+
+        $account = (string) Masjid::find($order->masjid_id)?->stripe_account_id;
+        if ($account === '') {
+            throw new RuntimeException(self::NO_ACCOUNT_NOT_CHANGED);
+        }
+
+        $session = $this->retrieveCheckoutSession((string) $order->stripe_checkout_session_id, $account);
+
+        if ($session['status'] === 'open') {
+            $session = $this->closeAndSee($order, $account);
+        }
+
+        if ($session['status'] === 'complete') {
+            // `payment_status`, never `status` alone: a bank debit completes its page unpaid.
+            throw new RuntimeException(($session['payment_status'] ?? null) === 'unpaid'
+                ? self::CLEARING_NOT_CHANGED
+                : self::PAID_NOT_CHANGED);
+        }
+
+        if ($session['status'] !== 'expired') {
+            throw new RuntimeException(self::PAGE_NOT_CLOSED);
+        }
+
+        // Saved inside the caller's transaction: no live page is left, so nothing
+        // reopens it and a new one starts from a clean idempotency key.
         $order->stripe_checkout_session_id = null;
         $order->save();
     }
