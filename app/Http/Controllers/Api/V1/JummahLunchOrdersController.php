@@ -58,6 +58,15 @@ class JummahLunchOrdersController extends Controller
 
     private const EDIT_FLOOR = 'An order must keep at least one plate. Please contact the masjid to cancel it.';
 
+    /**
+     * A line whose menu item has since been DELETED (meal_order_items.
+     * meal_menu_item_id goes null, the snapshotted name and price stand). The
+     * edit body names lines by item id, so such a line cannot be sent back — an
+     * edit would silently drop it and quietly reduce the order. The page is told
+     * not to offer the controls at all, and says why.
+     */
+    private const EDIT_ITEM_GONE = 'Part of this order is no longer on the menu. Please contact the masjid to change it.';
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private MealOrderEditor $editor
@@ -224,19 +233,19 @@ class JummahLunchOrdersController extends Controller
                     );
 
                     return response()->api(200, 'ok', [
-                        'order' => $this->serializeOrder($result['order']),
+                        'order' => $this->serializeOrder($result['order'], $menu),
                         'checkout_url' => $result['checkout_url'],
                     ]);
                 } catch (\RuntimeException $e) {
                     // The order is saved (unpaid); surface why checkout couldn't open.
                     return response()->api(422, $e->getMessage(), [
-                        'order' => $this->serializeOrder($order),
+                        'order' => $this->serializeOrder($order, $menu),
                     ]);
                 }
             }
 
             return response()->api(200, 'Thank you — your order is in. Pay when you pick up after Jummah.', [
-                'order' => $this->serializeOrder($order->load('items')),
+                'order' => $this->serializeOrder($order->load('items'), $menu),
             ]);
         } catch (\Exception $e) {
             return response()->api(500, Errors::publicMessage($e), null);
@@ -265,7 +274,19 @@ class JummahLunchOrdersController extends Controller
             return response()->api(404, 'Order not found.', null);
         }
 
-        return response()->api(200, 'ok', ['order' => $this->serializeOrder($order->load('items'))]);
+        // Read ONLY to answer "may this be changed?" (can_edit / edit_notice).
+        // Looked up only while the organisation's lunch is on, because that is
+        // what `update` requires: switched off it answers 404, and a page that
+        // offered the controls would be refused. Reading the order itself stays
+        // reachable either way, which is the whole point of this endpoint.
+        $menu = self::lunchIsOn($masjidId)
+            ? MealMenu::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->whereKey($order->meal_menu_id)
+                ->first()
+            : null;
+
+        return response()->api(200, 'ok', ['order' => $this->serializeOrder($order->load('items'), $menu)]);
     }
 
     /**
@@ -367,7 +388,7 @@ class JummahLunchOrdersController extends Controller
 
             if (! $result['changed']) {
                 return response()->api(200, 'Your order is unchanged.', [
-                    'order' => $this->serializeOrder($order->load('items')),
+                    'order' => $this->serializeOrder($order->load('items'), $menu),
                 ]);
             }
 
@@ -396,7 +417,7 @@ class JummahLunchOrdersController extends Controller
                 default => 'Your order has been updated.',
             };
 
-            $payload = ['order' => $this->serializeOrder($order->fresh()->load('items'))];
+            $payload = ['order' => $this->serializeOrder($order->fresh()->load('items'), $menu)];
 
             if ($checkoutUrl !== null) {
                 $payload['checkout_url'] = $checkoutUrl;
@@ -514,10 +535,27 @@ class JummahLunchOrdersController extends Controller
     }
 
     /**
+     * The public order payload.
+     *
+     * `$menu` is the order's own menu when the caller already has it. It decides
+     * two fields the ORDER PAGE cannot work out for itself:
+     *
+     *  - `can_edit` — whether the customer may change this order right now. The
+     *    page has the payment status and the cancellation, but nothing about the
+     *    cutoff, and an editor it offers after the cutoff would only 409;
+     *  - `edit_notice` — WHY not, in the same sentence `update` would answer with,
+     *    so the page shows the server's own words and never invents its own.
+     *
+     * Each line carries `meal_menu_item_id` because the edit body names lines by
+     * it. It is null on a line whose menu item was deleted, which is exactly the
+     * case `can_edit` refuses.
+     *
      * @return array<string,mixed>
      */
-    private function serializeOrder(MealOrder $order): array
+    private function serializeOrder(MealOrder $order, ?MealMenu $menu = null): array
     {
+        $editNotice = self::editNotice($order, $menu);
+
         return [
             'uuid' => $order->uuid,
             'order_number' => $order->order_number,
@@ -531,8 +569,13 @@ class JummahLunchOrdersController extends Controller
             'total_minor' => (int) $order->total_minor,
             'currency' => $order->currency,
             'placed_at' => optional($order->placed_at)->toIso8601String(),
+            'can_edit' => $editNotice === null,
+            'edit_notice' => $editNotice,
             'items' => $order->relationLoaded('items')
                 ? $order->items->map(fn (MealOrderItem $i) => [
+                    // Null when the menu item was deleted; the snapshotted name
+                    // and price below still say what was ordered.
+                    'meal_menu_item_id' => $i->meal_menu_item_id === null ? null : (int) $i->meal_menu_item_id,
                     'item_name' => $i->item_name,
                     'unit_price_minor' => (int) $i->unit_price_minor,
                     'quantity' => (int) $i->quantity,
@@ -540,6 +583,38 @@ class JummahLunchOrdersController extends Controller
                 ])->values()->all()
                 : [],
         ];
+    }
+
+    /**
+     * Why the customer may not change this order through the page, or null when
+     * they may — the same answers `update` gives, asked ahead of time so the page
+     * shows a sentence instead of controls that would be refused.
+     *
+     * This is a DISPLAY answer, never an authorisation: `update` asks all of it
+     * again, and once more on the locked row. A page that offered the controls
+     * anyway would still be refused there.
+     */
+    private static function editNotice(MealOrder $order, ?MealMenu $menu): ?string
+    {
+        // No menu in hand means the caller could not resolve one (deleted, or the
+        // organisation's lunch is switched off, where `update` answers 404). The
+        // customer's fact either way is that they cannot change it here.
+        if ($menu === null) {
+            return self::EDIT_CLOSED;
+        }
+
+        if (($refusal = self::customerMayEdit($order, $menu)) !== null) {
+            return $refusal;
+        }
+
+        // Every line must be able to travel back in the edit body, or saving would
+        // drop the one that cannot and reduce the order without anyone asking.
+        if ($order->relationLoaded('items')
+            && $order->items->contains(fn (MealOrderItem $i) => $i->meal_menu_item_id === null)) {
+            return self::EDIT_ITEM_GONE;
+        }
+
+        return null;
     }
 
     /**
