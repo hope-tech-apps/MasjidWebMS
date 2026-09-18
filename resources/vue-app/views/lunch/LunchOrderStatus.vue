@@ -77,7 +77,7 @@
                             <p v-if="draftPlates <= 0" class="lunch-muted lunch-why">{{ t('edit_min_one') }}</p>
                             <div class="lunch-edit-actions">
                                 <button type="button" class="lunch-btn ghost" :disabled="saving" @click="cancelEdit">{{ t('edit_cancel') }}</button>
-                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0" @click="saveEdit">
+                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0 || !draftDirty" @click="saveEdit">
                                     {{ saving ? t('edit_saving') : t('edit_save') }}
                                 </button>
                             </div>
@@ -157,6 +157,12 @@ const draft = ref<number[]>([]);
 
 const lines = computed<any[]>(() => order.value?.items ?? []);
 const draftPlates = computed(() => draft.value.reduce((n, q) => n + (Number(q) || 0), 0));
+// Saving a basket identical to the one already stored spends one of the twelve
+// public order-writes an hour this connection is allowed — and a masjid's wifi is
+// ONE connection for everybody on it. The server answers "Your order is
+// unchanged." and records nothing, so there is nothing to spend it on.
+const draftDirty = computed(() => lines.value.some(
+    (it: any, i: number) => (draft.value[i] || 0) !== (Number(it.quantity) || 0)));
 const draftSubtotal = computed(() => lines.value.reduce(
     (sum: number, it: any, i: number) => sum + Number(it.unit_price_minor || 0) * (draft.value[i] || 0), 0));
 // The extra the customer chose is never touched by an edit, and the card fee only
@@ -188,7 +194,7 @@ function bump(i: number, delta: number): void {
 }
 
 async function saveEdit(): Promise<void> {
-    if (!order.value || draftPlates.value <= 0 || saving.value) return;
+    if (!order.value || draftPlates.value <= 0 || !draftDirty.value || saving.value) return;
     saving.value = true;
     editError.value = "";
 
