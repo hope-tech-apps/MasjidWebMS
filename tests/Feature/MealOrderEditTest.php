@@ -565,7 +565,93 @@ class MealOrderEditTest extends TestCase
         $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
     }
 
+    // --------------------------------------- what the ORDER PAGE is told it may do
+
+    #[Test]
+    public function the_order_page_is_told_it_may_be_changed_and_each_line_carries_the_id_the_edit_body_names(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 2], [$this->water, 1]]);
+
+        $response = $this->showOrder($order)->assertStatus(200);
+
+        $this->assertTrue($response->json('data.order.can_edit'));
+        $this->assertNull($response->json('data.order.edit_notice'));
+
+        // Without these ids the page cannot build an edit body at all: it would
+        // have only the snapshotted NAMES, and names are not what the endpoint
+        // takes. This is the field the whole editor hangs on.
+        $this->assertSame(
+            [$this->biryani->id, $this->water->id],
+            array_column($response->json('data.order.items'), 'meal_menu_item_id')
+        );
+    }
+
+    #[Test]
+    public function after_the_cutoff_the_order_page_is_given_the_reason_instead_of_the_controls(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 1]]);
+        $this->menu->forceFill(['ordering_closes_at' => now()->subMinute()])->save();
+
+        $response = $this->showOrder($order)->assertStatus(200);
+
+        $this->assertFalse($response->json('data.order.can_edit'));
+        // The SAME sentence a PATCH would answer with, so the page never writes
+        // its own words for a refusal it did not make.
+        $this->assertSame('Orders for this menu are closed.', $response->json('data.order.edit_notice'));
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Orders for this menu are closed.');
+    }
+
+    #[Test]
+    public function a_paid_order_tells_the_page_it_is_paid_rather_than_that_ordering_closed(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 1]], [
+            'payment_status' => MealOrder::PAYMENT_PAID,
+            'paid_at' => now(),
+        ]);
+
+        $response = $this->showOrder($order)->assertStatus(200);
+
+        $this->assertFalse($response->json('data.order.can_edit'));
+        $this->assertSame(
+            'This order is already paid. Please contact the masjid to change it.',
+            $response->json('data.order.edit_notice')
+        );
+    }
+
+    #[Test]
+    public function a_line_whose_menu_item_was_deleted_stops_the_page_offering_an_edit(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 2], [$this->water, 1]]);
+
+        // The snapshotted name and price stand, but meal_menu_item_id goes null —
+        // so this line cannot travel back in an edit body. An editor offered here
+        // would drop it on save and quietly reduce the order.
+        $this->water->delete();
+
+        $response = $this->showOrder($order)->assertStatus(200);
+
+        $this->assertNull($response->json('data.order.items.1.meal_menu_item_id'));
+        $this->assertSame(100, (int) $response->json('data.order.items.1.line_total_minor'));
+        $this->assertFalse($response->json('data.order.can_edit'));
+        $this->assertSame(
+            'Part of this order is no longer on the menu. Please contact the masjid to change it.',
+            $response->json('data.order.edit_notice')
+        );
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    /** The public order page's own read. */
+    private function showOrder(MealOrder $order)
+    {
+        return $this->getJson(
+            '/api/v1/lunch-orders/' . $order->uuid,
+            ['masjid-id' => (string) $this->masjid->id]
+        );
+    }
 
     /** The customer's own edit, on the link they hold. */
     private function editAsCustomer(MealOrder $order, array $items)
