@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Masjid;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\LunchOrders\EditLunchOrderRequest;
 use App\Http\Requests\Api\V1\LunchOrders\SubmitLunchOrderRequest;
 use App\Models\MealMenu;
 use App\Models\MealMenuItem;
@@ -12,6 +13,7 @@ use App\Models\MealOrderItem;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
 use App\Services\Lunch\LunchSmsOptIn;
+use App\Services\Lunch\MealOrderEditor;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
 use App\Support\LunchOrderLines;
@@ -41,8 +43,25 @@ use Illuminate\Support\Facades\DB;
  */
 class JummahLunchOrdersController extends Controller
 {
-    public function __construct(private MealOrderCheckoutService $checkout)
-    {
+    /**
+     * The sentences a customer is given when their order cannot be changed. Each
+     * one says what is true and what they can do about it; none of them mention
+     * an endpoint, a status column or a menu id.
+     */
+    private const EDIT_CLOSED = 'Orders for this menu are closed.';
+
+    private const EDIT_PAID = 'This order is already paid. Please contact the masjid to change it.';
+
+    private const EDIT_REFUNDED = 'This order was refunded. Please contact the masjid to change it.';
+
+    private const EDIT_CANCELLED = 'This order was cancelled. Please contact the masjid to change it.';
+
+    private const EDIT_FLOOR = 'An order must keep at least one plate. Please contact the masjid to cancel it.';
+
+    public function __construct(
+        private MealOrderCheckoutService $checkout,
+        private MealOrderEditor $editor
+    ) {
     }
 
     /**
@@ -247,6 +266,172 @@ class JummahLunchOrdersController extends Controller
         }
 
         return response()->api(200, 'ok', ['order' => $this->serializeOrder($order->load('items'))]);
+    }
+
+    /**
+     * PATCH /api/v1/lunch-orders/{uuid} — the customer changes what they ordered,
+     * on the same link they already hold. The uuid is the capability, exactly as
+     * it is for `show`: nothing else identifies them, and nothing else has to.
+     *
+     * The body carries the FULL set of lines after the edit; a quantity of 0
+     * removes one. Every price is re-derived from the menu (MealOrderEditor), the
+     * optional extra they chose is left alone, and the card fee is recomputed only
+     * if they were already covering it.
+     *
+     * Refused while there is money or a deadline in the way — each with a sentence
+     * the customer can act on, and each asked AGAIN on the locked row, because the
+     * cutoff can pass and a payment can land while this request is in flight:
+     *   - ordering for this menu has closed (the whole point of a cutoff is that
+     *     the kitchen counts plates after it);
+     *   - the order is paid, or was refunded: changing what was paid for is the
+     *     masjid's decision, not a public endpoint's;
+     *   - the order was cancelled.
+     * An order may never drop to zero plates here: cancelling is a conversation
+     * with the masjid, not a PATCH with an empty basket.
+     */
+    public function update(EditLunchOrderRequest $request, string $uuid)
+    {
+        try {
+            $masjidId = (int) $request->header('masjid-id');
+
+            if ($masjidId <= 0) {
+                return response()->api(400, 'A masjid must be specified.', null);
+            }
+
+            // An edit WRITES, so it stops when the organisation's lunch is
+            // switched off, exactly as placing an order does. Reading an existing
+            // order's status (show) deliberately stays reachable.
+            if (! PublicTenant::exists($masjidId) || ! self::lunchIsOn($masjidId)) {
+                return response()->api(404, 'Ordering is not available.', null);
+            }
+
+            $order = MealOrder::findByUuidForMasjid($uuid, $masjidId);
+
+            if (! $order) {
+                return response()->api(404, 'Order not found.', null);
+            }
+
+            $menu = MealMenu::withoutMasjidScope()
+                ->where('masjid_id', $masjidId)
+                ->whereKey($order->meal_menu_id)
+                ->first();
+
+            if (! $menu) {
+                return response()->api(409, self::EDIT_CLOSED, null);
+            }
+
+            if (($refusal = self::customerMayEdit($order, $menu)) !== null) {
+                return response()->api(409, $refusal, null);
+            }
+
+            $wanted = LunchOrderLines::wanted((array) $request->validated('items'), 'meal_menu_item_id');
+
+            if ($wanted === []) {
+                return response()->api(422, self::EDIT_FLOOR, null);
+            }
+
+            try {
+                $result = $this->editor->apply(
+                    $order,
+                    $menu,
+                    $wanted,
+                    MealOrderEditor::ACTOR_CUSTOMER,
+                    null,
+                    function (MealOrder $locked) use ($menu) {
+                        if (($refusal = self::customerMayEdit($locked, $menu)) !== null) {
+                            throw new \RuntimeException($refusal);
+                        }
+                    }
+                );
+            } catch (LunchLineRefusal $e) {
+                return response()->api(422, $e->getMessage(), null);
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Before RuntimeException, which it extends: never show SQL.
+                report($e);
+
+                return response()->api(500, 'Your order could not be changed just now. Please try again in a moment.', null);
+            } catch (\Stripe\Exception\ExceptionInterface $e) {
+                // Before RuntimeException too: some of the SDK's own errors extend it.
+                report($e);
+
+                return response()->api(409, 'Your order could not be changed just now. Please try again in a moment.', null);
+            } catch (\RuntimeException $e) {
+                return response()->api(409, $e->getMessage(), null);
+            }
+
+            $order = $result['order'];
+
+            if (! $result['changed']) {
+                return response()->api(200, 'Your order is unchanged.', [
+                    'order' => $this->serializeOrder($order->load('items')),
+                ]);
+            }
+
+            // Their card page was for the old amount and has been closed, so make
+            // them a new one for the new amount — otherwise an edit would quietly
+            // take away the only way they had to pay. The order stands whatever
+            // Stripe says; it is never marked paid here.
+            $checkoutUrl = null;
+            $pageFailed = false;
+
+            if ($result['page_closed'] && $order->payment_method === MealOrder::METHOD_ONLINE) {
+                try {
+                    $checkoutUrl = $this->checkout->paymentLink(
+                        $order,
+                        null
+                    )['checkout_url'] ?: null;
+                } catch (\Throwable $e) {
+                    report($e);
+                    $pageFailed = true;
+                }
+            }
+
+            $message = match (true) {
+                $checkoutUrl !== null => 'Your order has been updated. Use the new payment link to pay the new total — your old one no longer works.',
+                $pageFailed => 'Your order has been updated, but a new payment link could not be made. Please contact the masjid to pay.',
+                default => 'Your order has been updated.',
+            };
+
+            $payload = ['order' => $this->serializeOrder($order->fresh()->load('items'))];
+
+            if ($checkoutUrl !== null) {
+                $payload['checkout_url'] = $checkoutUrl;
+            }
+
+            return response()->api(200, $message, $payload);
+        } catch (\Exception $e) {
+            return response()->api(500, Errors::publicMessage($e), null);
+        }
+    }
+
+    /**
+     * Why this customer may not change this order right now, or null when they
+     * may. Asked before the work starts so the answer is cheap, and again on the
+     * LOCKED row so a payment or the cutoff landing mid-request still refuses.
+     *
+     * The order is deliberate: someone who has paid is told they have paid, even
+     * when ordering has also closed, because that is the fact they need in order
+     * to know what to ask the masjid for.
+     */
+    private static function customerMayEdit(MealOrder $order, MealMenu $menu): ?string
+    {
+        if ($order->status === MealOrder::STATUS_CANCELLED) {
+            return self::EDIT_CANCELLED;
+        }
+
+        if ($order->payment_status === MealOrder::PAYMENT_PAID) {
+            return self::EDIT_PAID;
+        }
+
+        if ($order->payment_status !== MealOrder::PAYMENT_UNPAID) {
+            return self::EDIT_REFUNDED;
+        }
+
+        if (! $menu->isOpenForOrders()) {
+            return self::EDIT_CLOSED;
+        }
+
+        return null;
     }
 
     /**
