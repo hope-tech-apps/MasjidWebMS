@@ -188,18 +188,38 @@ class MealOrder extends Model
      * (compatible with each other) and InnoDB would deadlock their inserts,
      * failing one customer. The unique index on (masjid_id, meal_menu_id,
      * order_number) stays the final guarantee against a duplicate number.
+     *
+     * It counted the rows and added one until 2026-09-18, and that broke the
+     * moment an order was removed: on Burlington's live menu two orders from one
+     * customer were combined into one, the count fell back to a number already
+     * on the board, and EVERY further order — staff entry and the public page
+     * alike — was refused by the unique index with a database error. The menu
+     * was stuck there for good, because the count could never pass the highest
+     * number again.
+     *
+     * So it reads the HIGHEST number on the menu instead. Removing an order now
+     * leaves a gap in the numbering (the board shows … 007, 009 …) rather than
+     * reusing a number that was already given to somebody, which is the right
+     * trade: a gap is a question, a repeat is two people holding one ticket.
+     * `order_number` is a string, so the highest is taken on its NUMERIC value,
+     * in PHP rather than in SQL: production is MySQL and the tests are SQLite,
+     * and the cast that orders "010" above "009" is spelled differently in each.
+     * A menu holds a few dozen orders, so reading the column costs nothing, and
+     * anything non-numeric counts as 0 instead of crashing somebody's order.
      */
     public static function nextOrderNumber(int $masjidId, int $menuId): string
     {
         MealMenu::withoutMasjidScope()->whereKey($menuId)->lockForUpdate()->first();
 
-        $seq = static::withoutMasjidScope()
+        $highest = static::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
             ->where('meal_menu_id', $menuId)
             ->lockForUpdate()
-            ->count() + 1;
+            ->pluck('order_number')
+            ->map(static fn ($number): int => (int) $number)
+            ->max() ?? 0;
 
-        return str_pad((string) $seq, 3, '0', STR_PAD_LEFT);
+        return str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
     }
 
     public function contact(): BelongsTo
