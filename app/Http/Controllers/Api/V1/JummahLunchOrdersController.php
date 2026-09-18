@@ -67,6 +67,25 @@ class JummahLunchOrdersController extends Controller
      */
     private const EDIT_ITEM_GONE = 'Part of this order is no longer on the menu. Please contact the masjid to change it.';
 
+    /**
+     * The same answers as a stable name, sent beside the sentence as
+     * `edit_notice_code`.
+     *
+     * The order page is bilingual, and the sentences above are not: they are the
+     * API's own words, in English, and a page that rewrote them could tell a
+     * customer something the endpoint did not. A code is neither — it names the
+     * FACT, so the page can say it in the language the reader chose and fall back
+     * to the sentence for anything it does not recognise. Adding a refusal
+     * without a code here is safe: it simply arrives in English.
+     */
+    private const EDIT_NOTICE_CODES = [
+        self::EDIT_CLOSED => 'closed',
+        self::EDIT_PAID => 'paid',
+        self::EDIT_REFUNDED => 'refunded',
+        self::EDIT_CANCELLED => 'cancelled',
+        self::EDIT_ITEM_GONE => 'item_gone',
+    ];
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private MealOrderEditor $editor
@@ -566,7 +585,10 @@ class JummahLunchOrdersController extends Controller
      *    page has the payment status and the cancellation, but nothing about the
      *    cutoff, and an editor it offers after the cutoff would only 409;
      *  - `edit_notice` — WHY not, in the same sentence `update` would answer with,
-     *    so the page shows the server's own words and never invents its own.
+     *    so the page shows the server's own words and never invents its own;
+     *  - `edit_notice_code` — the same answer as a name the page can translate,
+     *    because this page is read in Arabic as often as in English and one
+     *    English line under an Arabic total is not an answer.
      *
      * Each line carries `meal_menu_item_id` because the edit body names lines by
      * it. It is null on a line whose menu item was deleted, which is exactly the
@@ -593,6 +615,7 @@ class JummahLunchOrdersController extends Controller
             'placed_at' => optional($order->placed_at)->toIso8601String(),
             'can_edit' => $editNotice === null,
             'edit_notice' => $editNotice,
+            'edit_notice_code' => $editNotice === null ? null : (self::EDIT_NOTICE_CODES[$editNotice] ?? null),
             'items' => $order->relationLoaded('items')
                 ? $order->items->map(fn (MealOrderItem $i) => [
                     // Null when the menu item was deleted; the snapshotted name

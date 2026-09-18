@@ -265,12 +265,16 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * paid order's total changes, the difference comes back as `balance_minor` on
      * the order and in the server's own sentence — money still owed, or owed
      * back. Nothing here settles it.
+     *
+     * When the order was unpaid and holding a payment page, that page was for the
+     * old amount and has been closed; `checkoutUrl` is the replacement, ready to
+     * hand to the customer whose old link has just stopped working.
      */
     async function updateOrderItems(
         menuId: number | string,
         orderId: number | string,
         items: { meal_menu_item_id: number; quantity: number }[]
-    ): Promise<{ order: any; changed: boolean; message: string }> {
+    ): Promise<{ order: any; changed: boolean; message: string; checkoutUrl: string }> {
         ensureMasjid();
         if (isLunchStaff()) {
             throw new Error("Only a masjid administrator can change what is on an order.");
@@ -288,6 +292,11 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
                 // which is what every response before it meant.
                 changed: typeof res.data.changed === "boolean" ? res.data.changed : true,
                 message: typeof res.data.message === "string" ? res.data.message : "",
+                // An unpaid order's old payment page was for the old amount, so
+                // the edit closed it — and the server made the replacement rather
+                // than leaving the customer's link dead until somebody presses
+                // "Payment link". Empty when there was no page to replace.
+                checkoutUrl: typeof res.data.checkout_url === "string" ? res.data.checkout_url : "",
             };
         }
         throw new Error(typeof res.data?.data === "string" ? res.data.data : "Could not change the order.");
