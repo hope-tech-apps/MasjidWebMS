@@ -329,6 +329,10 @@ class MealOrdersController extends Controller
             );
         } catch (LunchLineRefusal $e) {
             return $this->refuse($this->linesRefusal($e));
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            // Also a RuntimeException: the order went between the read and the
+            // lock. Answered as the miss it is, never with a model's own words.
+            return response()->json(['status' => 'failed', 'data' => 'That order is no longer on this menu.'], Response::HTTP_NOT_FOUND);
         } catch (\Illuminate\Database\QueryException $e) {
             // Before RuntimeException, which it extends: never show SQL to staff.
             return $this->failed($e);
