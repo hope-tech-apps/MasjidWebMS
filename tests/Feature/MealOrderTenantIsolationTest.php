@@ -6,6 +6,7 @@ use App\Models\Masjid;
 use App\Models\MealMenu;
 use App\Models\MealMenuItem;
 use App\Models\MealOrder;
+use App\Models\MealOrderEdit;
 use App\Models\MealOrderItem;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -112,6 +113,41 @@ class MealOrderTenantIsolationTest extends TestCase
         // Even asked for masjid A's context, B's uuid resolves only under B.
         $this->assertNull(MealMenu::findByUuidForMasjid($b->uuid, $this->masjidA->id));
         $this->assertNotNull(MealMenu::findByUuidForMasjid($b->uuid, $this->masjidB->id));
+    }
+
+    #[Test]
+    public function an_order_edit_is_scoped_to_its_masjid(): void
+    {
+        // The audit trail of who changed an order says who changed a PAID order,
+        // so it must be as unreachable across organisations as the order itself.
+        $menuA = MealMenu::factory()->forMasjid($this->masjidA)->create();
+        $orderA = MealOrder::factory()->create(['masjid_id' => $this->masjidA->id, 'meal_menu_id' => $menuA->id]);
+
+        $menuB = MealMenu::factory()->forMasjid($this->masjidB)->create();
+        $orderB = MealOrder::factory()->create(['masjid_id' => $this->masjidB->id, 'meal_menu_id' => $menuB->id]);
+
+        $editA = MealOrderEdit::record($orderA, MealOrderEdit::ACTOR_CUSTOMER, null, ['total_minor' => 800], ['total_minor' => 1600]);
+        $editB = MealOrderEdit::record($orderB, MealOrderEdit::ACTOR_STAFF, null, ['total_minor' => 500], ['total_minor' => 0]);
+
+        $this->tenant->set($this->masjidA->id);
+
+        $this->assertSame(1, MealOrderEdit::count());
+        $this->assertNotNull(MealOrderEdit::find($editA->id));
+        $this->assertNull(MealOrderEdit::find($editB->id), 'another masjid\'s edit history must not be readable');
+    }
+
+    #[Test]
+    public function recording_an_edit_stamps_the_order_s_masjid_not_the_bound_one(): void
+    {
+        // The customer's own edit runs UNBOUND (the public /api/v1 idiom), where
+        // the BelongsToMasjid hook has nothing to stamp.
+        $menuB = MealMenu::factory()->forMasjid($this->masjidB)->create();
+        $orderB = MealOrder::factory()->create(['masjid_id' => $this->masjidB->id, 'meal_menu_id' => $menuB->id]);
+
+        $edit = MealOrderEdit::record($orderB, MealOrderEdit::ACTOR_CUSTOMER, null, [], []);
+
+        $this->assertSame($this->masjidB->id, (int) $edit->masjid_id);
+        $this->assertNull($edit->updated_at, 'an audit row is written once and never updated');
     }
 
     private function makeMasjid(): Masjid

@@ -102,7 +102,12 @@ class MealOrdersController extends Controller
             // cancelled orders) and Items ordered (which doesn't) reconcile.
             'cancelled_orders' => (clone $all)->where('status', MealOrder::STATUS_CANCELLED)->count(),
             'items_by_item' => $itemsByItem,
-            'revenue_paid_minor' => (int) (clone $paid)->sum('total_minor'),
+            // What actually SETTLED, which is the order's total until an edit
+            // moves it: staff can change a paid order's items, and the money the
+            // masjid has is the amount that was paid, not the new price of the
+            // food. `settled_total_minor` is NULL on every order nobody has
+            // edited since paying, so nothing needed backfilling.
+            'revenue_paid_minor' => (int) (clone $paid)->sum(DB::raw('COALESCE(settled_total_minor, total_minor)')),
             // The optional extra, kept separate from food revenue in both
             // columns: what has actually settled, and what is still owed on
             // live orders. `revenue_paid_minor` already includes it.
