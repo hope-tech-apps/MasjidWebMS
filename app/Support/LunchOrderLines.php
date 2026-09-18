@@ -29,6 +29,21 @@ use App\Models\MealMenuItem;
  */
 final class LunchOrderLines
 {
+    /**
+     * The most of any one item a single order may ask for.
+     *
+     * Every request rule in this module already declares `max:99` on a row's
+     * quantity, but a body may repeat an id and the rows are SUMMED below, so
+     * until this ceiling existed "99" bounded a ROW and bounded nothing about an
+     * ORDER: 100 rows of 99 was 9,900 plates of any item the kitchen had not
+     * given its own `max_quantity`. That is a real number on the staff board, a
+     * real count for the kitchen, and — on the public page, which nobody has to
+     * sign in to use — a real Checkout Session for that amount on the masjid's
+     * live Stripe account. `donation_minor` has been bounded for exactly that
+     * reason since it shipped; the food had no bound at all.
+     */
+    public const MAX_LINE_QUANTITY = 99;
+
     /** Over the kitchen's cap: trim to it (what the public page has always done). */
     public const CAP_CLAMP = 'clamp';
 
@@ -42,7 +57,9 @@ final class LunchOrderLines
      * endpoints a zero was never orderable, and on the edit endpoints a zero is
      * precisely how a customer removes a line. A body repeating an id is summed,
      * so "2 plates and 1 plate" is one line of three rather than two lines the
-     * kitchen reads as separate.
+     * kitchen reads as separate — and that sum is held to MAX_LINE_QUANTITY, the
+     * same ceiling the request rules already declare for one row, so repeating a
+     * row cannot buy more of a dish than validation says is allowed.
      *
      * @param  array<int,mixed>  $rows
      * @return array<int,int>
@@ -60,7 +77,7 @@ final class LunchOrderLines
             $qty = (int) ($row['quantity'] ?? 0);
 
             if ($id > 0 && $qty > 0) {
-                $wanted[$id] = ($wanted[$id] ?? 0) + $qty;
+                $wanted[$id] = min(self::MAX_LINE_QUANTITY, ($wanted[$id] ?? 0) + $qty);
             }
         }
 
