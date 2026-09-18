@@ -159,6 +159,16 @@
                                         {{ money(o.total_minor) }}
                                         <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
                                         <span v-if="Number(o.fee_covered_minor) > 0" class="badge bg-secondary-subtle text-secondary-emphasis ms-1" :title="'Customer covered ' + money(o.fee_covered_minor) + ' of card fees'">+fee</span>
+                                        <!-- A PAID order whose items were changed afterwards: the
+                                             money that settled is not the money the food now costs.
+                                             It stays on the board until somebody settles it by hand —
+                                             nothing in the system marks a balance as collected. -->
+                                        <div v-if="balanceOf(o) > 0" class="small text-danger fw-semibold">
+                                            Owes {{ money(balanceOf(o)) }} — not collected
+                                        </div>
+                                        <div v-else-if="balanceOf(o) < 0" class="small text-warning-emphasis fw-semibold">
+                                            {{ money(-balanceOf(o)) }} owed back — refund by hand
+                                        </div>
                                     </td>
                                     <!-- Paid: how the money came (paidLabel). Unpaid: the channel it was ordered through.
                                          Focusable from script only: Mark paid moves focus here once its button is gone. -->
@@ -184,6 +194,10 @@
                                         </select>
                                     </td>
                                     <td class="text-end text-nowrap">
+                                        <!-- After the cutoff, and on a paid order: the changes staff
+                                             actually get asked for. Administrators only — the server
+                                             does not serve this to a lunch volunteer. -->
+                                        <button v-if="canEditItems(o)" class="btn btn-sm btn-outline-secondary me-1" @click="openEditItems(o)">Edit items</button>
                                         <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled' && currentMenu?.allow_online_payment"
                                             class="btn btn-sm btn-outline-primary me-1" @click="openPayLink(o)">Payment link</button>
                                         <button v-if="o.status === 'cancelled'" class="btn btn-sm btn-outline-success me-1" @click="setOrderStatus(o, 'confirmed')">Restore</button>
@@ -490,6 +504,64 @@
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="closeMarkPaid">Cancel</button>
                     <button class="btn btn-success" :disabled="!paidModal.via || paidSaving || !!paidStale" @click="confirmMarkPaid">{{ paidSaving ? 'Saving…' : 'Mark paid' }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit what is ON an order. No cutoff: this is for the requests that
+             arrive after ordering closes. A paid order may be edited too, and says
+             plainly that the payment does not move with it. -->
+        <div v-if="editModal.show" class="jl-modal">
+            <div class="jl-dialog card">
+                <div class="card-header"><h5 class="mb-0">Edit order #{{ editModal.order?.order_number }} · {{ editModal.order?.customer_name }}</h5></div>
+                <div class="card-body">
+                    <div v-if="editModal.order?.payment_status === 'paid'" class="alert alert-warning py-2 small" role="alert">
+                        <strong>This order is already paid.</strong> Changing the items does not change the
+                        payment — nothing here takes money or gives it back. If the new total differs from
+                        the {{ money(editPaidMinor) }} already paid, the difference stays on the board until
+                        you settle it with the customer.
+                    </div>
+                    <div v-if="editBlocked.length" class="alert alert-danger py-2 small" role="alert">
+                        This order has {{ editBlocked.length === 1 ? 'a line' : 'lines' }} that can't be
+                        re-priced: <strong>{{ editBlocked.join(", ") }}</strong>. The item was removed from
+                        this menu or marked unavailable, and the server refuses the whole edit while that is
+                        true. Put it back under Menu Items first.
+                    </div>
+                    <div class="mb-2">
+                        <div class="form-label mb-1">Items</div>
+                        <div v-for="it in orderableItems" :key="it.id" class="d-flex align-items-center justify-content-between gap-2 py-2 border-bottom">
+                            <div>
+                                <div>{{ it.name }}</div>
+                                <div class="text-muted small">{{ money(it.price_minor) }}<span v-if="it.max_quantity"> · max {{ it.max_quantity }} per order</span></div>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" :aria-label="`One fewer ${it.name}`" :disabled="!(editModal.qty[it.id] > 0)" @click="bumpEdit(it, -1)">−</button>
+                                <span class="jlo-qty" aria-live="polite">{{ editModal.qty[it.id] || 0 }}</span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" :aria-label="`One more ${it.name}`" :disabled="!!it.max_quantity && (editModal.qty[it.id] || 0) >= Number(it.max_quantity)" @click="bumpEdit(it, 1)">+</button>
+                            </div>
+                        </div>
+                    </div>
+                    <p v-if="editPlates <= 0" class="small text-danger mb-2">
+                        An order must keep at least one plate. To call it off, set its status to cancelled instead.
+                    </p>
+                    <!-- The server prices the food from the menu and recomputes the card fee, so
+                         these are what to expect, settled on save. -->
+                    <div class="small text-muted">
+                        <div class="d-flex justify-content-between"><span>Food</span><span>{{ money(editSubtotal) }}</span></div>
+                        <div v-if="editStoredExtra > 0" class="d-flex justify-content-between"><span>Extra (unchanged)</span><span>{{ money(editStoredExtra) }}</span></div>
+                        <div v-if="editStoredFee > 0" class="d-flex justify-content-between"><span>Card fee (recalculated on save)</span><span>{{ money(editStoredFee) }}</span></div>
+                    </div>
+                    <div class="d-flex justify-content-between fw-semibold mt-1"><span>New total</span><span>{{ money(editTotal) }}</span></div>
+                    <div v-if="editModal.order?.payment_status === 'paid' && editTotal !== editPaidMinor" class="d-flex justify-content-between mt-1"
+                        :class="editTotal > editPaidMinor ? 'text-danger' : 'text-warning-emphasis'">
+                        <span>{{ editTotal > editPaidMinor ? 'Customer would still owe' : 'Would be owed back' }}</span>
+                        <span class="fw-semibold">{{ money(Math.abs(editTotal - editPaidMinor)) }}</span>
+                    </div>
+                    <div v-if="editError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ editError }}</div>
+                </div>
+                <div class="card-footer d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" @click="editModal.show = false">Cancel</button>
+                    <button class="btn btn-success" :disabled="editSaving || editPlates <= 0 || editBlocked.length > 0" @click="saveEditItems">{{ editSaving ? 'Saving…' : 'Save items' }}</button>
                 </div>
             </div>
         </div>
@@ -908,6 +980,103 @@ async function saveOrder() {
     } catch (e) {
         orderError.value = orderErrorText(e);
     } finally { savingOrder.value = false; }
+}
+
+// ------------------------------------------------- changing what is ON an order
+//
+// The endpoint has NO cutoff — that is why it exists: ordering closes so the
+// kitchen can count plates, and "can you make that three?" arrives afterwards. A
+// PAID order may be edited too, and the one rule that matters is that an edit is
+// never a payment: the server leaves payment_status, paid_at and Stripe alone,
+// and the difference between the new total and what settled comes back as
+// `balance_minor`, shown on the row until somebody settles it by hand.
+//
+// Admin-only, matching the route: a LunchStaff is never offered the button, and
+// the store refuses it if they somehow reach it.
+const editModal = reactive<{ show: boolean; order: any; qty: Record<number, number> }>({ show: false, order: null, qty: {} });
+const editSaving = ref(false);
+const editError = ref("");
+
+// `balance_minor` is the order's total minus what actually settled, so on an
+// UNPAID order it is simply the whole total. Only a PAID order can carry a
+// balance that means anything, and only after an edit moved its total. Read
+// defensively: a server that predates the field sends nothing, and NaN must
+// never render as money.
+function balanceOf(o: any): number {
+    if (o?.payment_status !== "paid" || o?.balance_minor == null) return 0;
+    const n = Number(o.balance_minor);
+    return Number.isFinite(n) ? n : 0;
+}
+// Cancelled and refunded orders are what the server itself refuses (staffMayEdit);
+// a button that is certain to be refused is worse than no button.
+function canEditItems(o: any): boolean {
+    return !isLunchStaff.value && o?.status !== "cancelled" && o?.payment_status !== "refunded";
+}
+const editStoredExtra = computed<number>(() => Number(editModal.order?.donation_minor || 0));
+const editStoredFee = computed<number>(() => Number(editModal.order?.fee_covered_minor || 0));
+// What actually settled: the order's own total until an edit moved it, and
+// `settled_total_minor` from then on. Derived from the balance the server sends
+// rather than recomputed, so the board cannot disagree with it.
+const editPaidMinor = computed<number>(() => Number(editModal.order?.total_minor || 0) - balanceOf(editModal.order));
+const editSubtotal = computed<number>(() => orderableItems.value.reduce(
+    (sum: number, i: any) => sum + (editModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
+const editPlates = computed<number>(() => orderableItems.value.reduce(
+    (n: number, i: any) => n + (editModal.qty[i.id] || 0), 0));
+// The extra is never touched by an edit and the card fee only moves on an order
+// already covering it, so both are carried across as they stand. The server has
+// the last word on the fee, which is why the row says "recalculated on save".
+const editTotal = computed<number>(() => editSubtotal.value + editStoredExtra.value + editStoredFee.value);
+// Lines this board cannot send back: the item was deleted (no id left) or is
+// marked unavailable, and the shared pricing refuses the WHOLE edit while that is
+// true. Named here so nobody presses Save into a certain refusal.
+const editBlocked = computed<string[]>(() => {
+    const live = new Set(orderableItems.value.map((i: any) => Number(i.id)));
+    return (editModal.order?.items || [])
+        .filter((l: any) => Number(l.quantity) > 0 && (l.meal_menu_item_id == null || !live.has(Number(l.meal_menu_item_id))))
+        .map((l: any) => String(l.item_name));
+});
+
+function openEditItems(o: any) {
+    const qty: Record<number, number> = {};
+    (o.items || []).forEach((l: any) => {
+        if (l.meal_menu_item_id != null) qty[Number(l.meal_menu_item_id)] = Number(l.quantity) || 0;
+    });
+    Object.assign(editModal, { show: true, order: o, qty });
+    editError.value = "";
+}
+function bumpEdit(it: any, delta: number) {
+    const next = Math.max(0, (editModal.qty[it.id] || 0) + delta);
+    editModal.qty[it.id] = it.max_quantity ? Math.min(next, Number(it.max_quantity)) : next;
+}
+async function saveEditItems() {
+    const o = editModal.order;
+    if (!currentMenu.value || !o || editPlates.value <= 0) return;
+    editSaving.value = true;
+    editError.value = "";
+    // The FULL set of lines after the edit; a zero is how a line is removed.
+    const items = orderableItems.value.map((i: any) => ({
+        meal_menu_item_id: Number(i.id),
+        quantity: editModal.qty[i.id] || 0,
+    }));
+    let saved: { order: any; changed: boolean; message: string } | null = null;
+    try {
+        saved = await store.updateOrderItems(currentMenu.value.id, o.id, items);
+        editModal.show = false;
+    } catch (e: any) {
+        editError.value = serverReason(e, "Could not change the order.");
+    } finally {
+        editSaving.value = false;
+    }
+    // Either way: a refused press may mean the board was stale.
+    await refreshOrders();
+    if (!saved) return;
+    // The server's own sentence — it names the money still owed, or owed back, on
+    // a paid order. Never softened, and never replaced with one of ours.
+    const owes = balanceOf(saved.order) !== 0;
+    Swal.fire({
+        icon: !saved.changed ? "info" : owes ? "warning" : "success",
+        text: saved.message || `Order #${o.order_number} updated.`,
+    });
 }
 
 const menuModal = reactive({
