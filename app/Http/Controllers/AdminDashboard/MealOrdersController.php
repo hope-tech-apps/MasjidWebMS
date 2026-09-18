@@ -44,6 +44,13 @@ class MealOrdersController extends Controller
     /** An order may not be emptied: cancelling one is its own action. */
     private const EDIT_FLOOR = 'An order must keep at least one plate. Cancel the order instead.';
 
+    /**
+     * A line on the order that no body can name: its dish was deleted from the
+     * menu, or is marked unavailable, so neither screen offers it as something to
+     * keep and saving would drop it without anyone choosing to.
+     */
+    private const EDIT_ITEM_GONE = 'This order has something on it that is no longer on the menu: %s. Put it back under Menu Items, then change the order.';
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private MealOrderEditor $editor
@@ -318,6 +325,17 @@ class MealOrdersController extends Controller
             return $this->refuse(self::EDIT_FLOOR);
         }
 
+        // Staff are allowed to take a line off an order — that is half of what
+        // this endpoint is for — so an id left out of the body is a removal. It
+        // is NOT a removal when the dish cannot be named any more: the dialog
+        // does not render an unavailable or deleted dish, so its line could only
+        // ever leave silently, and on a paid order that quietly lowers the total
+        // and puts money on the board as owed back. The dialog already says so
+        // and disables Save; this is the same answer where it cannot be skipped.
+        if (($gone = LunchOrderLines::unreachable($menu, $order->items, $wanted)) !== []) {
+            return $this->refuse(sprintf(self::EDIT_ITEM_GONE, implode(', ', $gone)));
+        }
+
         try {
             $result = $this->editor->apply(
                 $order,
@@ -325,11 +343,16 @@ class MealOrdersController extends Controller
                 $wanted,
                 MealOrderEditor::ACTOR_STAFF,
                 $request->user()?->id,
-                function (MealOrder $locked) {
-                    // Asked again on the locked row: a cancellation or a refund
-                    // that committed while this request waited must still refuse.
+                function (MealOrder $locked) use ($menu, $wanted) {
+                    // Asked again on the locked row: a cancellation, a refund, or
+                    // a dish taken off the menu while this request waited must
+                    // still refuse.
                     if (($refusal = self::staffMayEdit($locked)) !== null) {
                         throw new \RuntimeException($refusal);
+                    }
+
+                    if (($gone = LunchOrderLines::unreachable($menu, $locked->items, $wanted)) !== []) {
+                        throw new \RuntimeException(sprintf(self::EDIT_ITEM_GONE, implode(', ', $gone)));
                     }
                 }
             );

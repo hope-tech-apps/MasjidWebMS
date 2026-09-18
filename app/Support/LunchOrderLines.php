@@ -85,6 +85,73 @@ final class LunchOrderLines
     }
 
     /**
+     * Lines already ON an order that a request body cannot speak about, given the
+     * set it is asking for — by name, for whoever has to be told.
+     *
+     * An edit body is the FULL basket afterwards, so a line left out is a line
+     * removed. That is the right reading for a dish still on the menu: somebody
+     * looked at it and took it off. It is the WRONG reading in two cases, and
+     * both of them quietly shrink an order nobody meant to shrink:
+     *
+     *   - the dish was deleted from the menu, so the order's line has no
+     *     `meal_menu_item_id` left and there is no id that could have named it;
+     *   - the dish is still on the menu but marked unavailable, so neither the
+     *     order page nor the board offers it as something to keep.
+     *
+     * Either way the screens show a sentence and refuse to offer Save, which is a
+     * display answer — and a body that never asked a screen is not bound by one.
+     * So the servers ask the same question here, and refuse the whole edit.
+     *
+     * Costs a query only when the body has actually dropped a line.
+     *
+     * @param  iterable<object>  $lines  the order's current lines
+     * @param  array<int,int>  $wanted  [item id => quantity] the body is asking for
+     * @return array<int,string>  item names, empty when every line can be spoken about
+     */
+    public static function unreachable(MealMenu $menu, iterable $lines, array $wanted): array
+    {
+        $gone = [];
+        $dropped = [];
+
+        foreach ($lines as $line) {
+            if ((int) $line->quantity <= 0) {
+                continue;
+            }
+
+            $id = $line->meal_menu_item_id === null ? null : (int) $line->meal_menu_item_id;
+
+            if ($id === null) {
+                $gone[] = (string) $line->item_name;
+
+                continue;
+            }
+
+            if (! array_key_exists($id, $wanted)) {
+                $dropped[$id] = (string) $line->item_name;
+            }
+        }
+
+        if ($dropped !== []) {
+            $stillOffered = MealMenuItem::withoutMasjidScope()
+                ->where('masjid_id', $menu->masjid_id)
+                ->where('meal_menu_id', $menu->id)
+                ->where('is_available', true)
+                ->whereIn('id', array_keys($dropped))
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            foreach ($dropped as $id => $name) {
+                if (! in_array($id, $stillOffered, true)) {
+                    $gone[] = $name;
+                }
+            }
+        }
+
+        return array_values(array_unique($gone));
+    }
+
+    /**
      * Price every wanted line from the menu.
      *
      * @param  array<int,int>  $wanted  [item id => quantity], from wanted()
