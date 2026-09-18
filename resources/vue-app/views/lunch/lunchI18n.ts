@@ -9,11 +9,13 @@ import { computed, ref } from "vue";
  * UI CHROME is translated; the menu item's name/description come from the
  * database exactly as the masjid typed them.
  *
- * The same line divides the words below from the SERVER's own sentences. Why an
- * order cannot be changed ("Orders for this menu are closed."), and what
- * happened when it was, are answered by the API in English and shown as they
- * come — so the page can never tell a customer something the endpoint did not,
- * which is the one thing worse than showing them English.
+ * The same line divides the words below from the SERVER's own sentences. What
+ * happened when an order WAS changed is answered by the API in English and shown
+ * as it comes — the page must never tell a customer something the endpoint did
+ * not. Why an order cannot be changed is different: it stands under the total on
+ * every order page whose lunch has closed, so it is sent as a CODE as well
+ * (`edit_notice_code`) and said here in the reader's own language, with the
+ * server's sentence as the fallback for a code this bundle does not know.
  */
 export type LunchLang = "en" | "ar";
 
@@ -93,6 +95,15 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         one_fewer: "One fewer {x}",
         one_more: "One more {x}",
         pay_new_total: "Pay the new total",
+        // why an order cannot be changed — keyed by the server's edit_notice_code.
+        // Each one says CHANGE, because this sits under the total on a perfectly
+        // valid order: "Orders for this menu are closed." on its own reads as
+        // though the order itself is off.
+        edit_why_closed: "This order can no longer be changed here — ordering for this lunch has closed. Your order still stands.",
+        edit_why_paid: "This order is already paid, so it cannot be changed here. Please contact the masjid.",
+        edit_why_refunded: "This order was refunded, so it cannot be changed here. Please contact the masjid.",
+        edit_why_cancelled: "This order was cancelled, so it cannot be changed here. Please contact the masjid.",
+        edit_why_item_gone: "Part of this order is no longer on the menu, so it cannot be changed here. Please contact the masjid.",
     },
     ar: {
         badge: "غداء الجمعة",
@@ -157,6 +168,12 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         one_fewer: "إنقاص {x}",
         one_more: "زيادة {x}",
         pay_new_total: "ادفع الإجمالي الجديد",
+        // سبب تعذّر تعديل الطلب — حسب edit_notice_code القادم من الخادم
+        edit_why_closed: "لا يمكن تعديل هذا الطلب هنا — أُغلق استقبال الطلبات لهذا الغداء. طلبك ما زال قائمًا.",
+        edit_why_paid: "تم دفع هذا الطلب، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
+        edit_why_refunded: "تمت إعادة مبلغ هذا الطلب، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
+        edit_why_cancelled: "تم إلغاء هذا الطلب، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
+        edit_why_item_gone: "أحد أصناف هذا الطلب لم يعد على القائمة، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
     },
 };
 

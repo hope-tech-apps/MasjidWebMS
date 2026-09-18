@@ -69,9 +69,10 @@
                     <div class="lunch-edit">
                         <template v-if="!editing">
                             <button v-if="order.can_edit" type="button" class="lunch-btn" @click="startEdit">{{ t('edit_change') }}</button>
-                            <!-- Not a button they can't press: the reason, in the
-                                 sentence the endpoint itself would have answered with. -->
-                            <p v-else-if="order.edit_notice" class="lunch-muted lunch-why">{{ order.edit_notice }}</p>
+                            <!-- Not a button they can't press: the reason, said in
+                                 the reader's own language when the server named
+                                 the fact, and in the server's own words otherwise. -->
+                            <p v-else-if="editWhy" class="lunch-muted lunch-why">{{ editWhy }}</p>
                         </template>
                         <template v-else>
                             <p v-if="draftPlates <= 0" class="lunch-muted lunch-why">{{ t('edit_min_one') }}</p>
@@ -129,6 +130,21 @@ const headline = computed(() => {
     return t("order_received");
 });
 
+// Why the order cannot be changed. The server sends both a sentence and a name
+// for the fact; the name is what can be translated, and an unknown one falls back
+// to the sentence so a newer server is never silenced by an older bundle.
+const EDIT_WHY: Record<string, string> = {
+    closed: "edit_why_closed",
+    paid: "edit_why_paid",
+    refunded: "edit_why_refunded",
+    cancelled: "edit_why_cancelled",
+    item_gone: "edit_why_item_gone",
+};
+const editWhy = computed<string>(() => {
+    const key = EDIT_WHY[String(order.value?.edit_notice_code ?? "")];
+    return key ? t(key) : String(order.value?.edit_notice ?? "");
+});
+
 const payLabel = computed(() => {
     switch (order.value?.payment_status) {
         case "paid": return t("paid");
@@ -158,9 +174,11 @@ const draft = ref<number[]>([]);
 const lines = computed<any[]>(() => order.value?.items ?? []);
 const draftPlates = computed(() => draft.value.reduce((n, q) => n + (Number(q) || 0), 0));
 // Saving a basket identical to the one already stored spends one of the twelve
-// public order-writes an hour this connection is allowed — and a masjid's wifi is
-// ONE connection for everybody on it. The server answers "Your order is
-// unchanged." and records nothing, so there is nothing to spend it on.
+// public order-writes an hour this IP gets on this masjid (AppServiceProvider's
+// `lunch-order` limiter keys on IP + masjid-id, so it is per connection, not per
+// masjid — though everyone on the masjid's wifi shares one). The server answers
+// "Your order is unchanged.", records nothing, and there was nothing to spend it
+// on.
 const draftDirty = computed(() => lines.value.some(
     (it: any, i: number) => (draft.value[i] || 0) !== (Number(it.quantity) || 0)));
 const draftSubtotal = computed(() => lines.value.reduce(

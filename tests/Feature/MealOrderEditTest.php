@@ -820,6 +820,38 @@ class MealOrderEditTest extends TestCase
         $this->assertCount(1, $order->fresh()->load('items')->items);
     }
 
+    #[Test]
+    public function the_reason_an_order_cannot_be_changed_is_named_as_well_as_written(): void
+    {
+        // The page is read in Arabic as often as in English, and this sentence
+        // sits under the total on EVERY order once a lunch has closed. The
+        // sentence stays exactly as it was; the name beside it is what the page
+        // can say in the reader's own language.
+        $order = $this->placeOrder([[$this->biryani, 1]]);
+        $this->menu->forceFill(['ordering_closes_at' => now()->subMinute()])->save();
+
+        $this->showOrder($order)
+            ->assertOk()
+            ->assertJsonPath('data.order.can_edit', false)
+            ->assertJsonPath('data.order.edit_notice', 'Orders for this menu are closed.')
+            ->assertJsonPath('data.order.edit_notice_code', 'closed');
+
+        $paid = $this->placeOrder([[$this->biryani, 1]], [
+            'payment_status' => MealOrder::PAYMENT_PAID,
+            'paid_at' => now(),
+        ]);
+
+        $this->showOrder($paid)->assertOk()->assertJsonPath('data.order.edit_notice_code', 'paid');
+
+        // And an order that CAN be changed carries neither.
+        $this->menu->forceFill(['ordering_closes_at' => now()->addDay()])->save();
+        $this->showOrder($order)
+            ->assertOk()
+            ->assertJsonPath('data.order.can_edit', true)
+            ->assertJsonPath('data.order.edit_notice', null)
+            ->assertJsonPath('data.order.edit_notice_code', null);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** The public order page's own read. */

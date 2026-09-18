@@ -1064,7 +1064,7 @@ async function saveEditItems() {
         meal_menu_item_id: Number(i.id),
         quantity: editModal.qty[i.id] || 0,
     }));
-    let saved: { order: any; changed: boolean; message: string } | null = null;
+    let saved: { order: any; changed: boolean; message: string; checkoutUrl: string } | null = null;
     try {
         saved = await store.updateOrderItems(currentMenu.value.id, o.id, items);
         editModal.show = false;
@@ -1079,6 +1079,14 @@ async function saveEditItems() {
     // The server's own sentence — it names the money still owed, or owed back, on
     // a paid order. Never softened, and never replaced with one of ours.
     const owes = balanceOf(saved.order) !== 0;
+    // The edit closed the payment page the customer was holding, and the server
+    // has already made the one for the new total. Put it in front of staff now:
+    // the customer's old link is dead from this moment, and a link nobody sends
+    // is the same to them as no link at all.
+    if (saved.checkoutUrl) {
+        showPayLink(saved.order, saved.checkoutUrl);
+        return;
+    }
     Swal.fire({
         icon: !saved.changed ? "info" : owes ? "warning" : "success",
         text: saved.message || `Order #${o.order_number} updated.`,
