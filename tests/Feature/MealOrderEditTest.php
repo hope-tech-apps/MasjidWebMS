@@ -369,25 +369,24 @@ class MealOrderEditTest extends TestCase
     }
 
     #[Test]
-    public function a_form_encoded_edit_is_read_the_same_as_json(): void
+    public function an_edit_posted_as_form_fields_is_read_the_same_as_json(): void
     {
-        // The SPA pins a global axios Content-Type of x-www-form-urlencoded,
-        // which every instance in the app inherits — including the public order
-        // page's own. An edit must survive arriving that way.
+        // The SPA pins a global axios Content-Type of x-www-form-urlencoded, which
+        // every instance in the app inherits — including the public order page's
+        // own — so an edit must not depend on arriving as JSON.
+        //
+        // What this pins is that the endpoint reads `items` from the request body
+        // whatever shape it came in. It does NOT pin the parse of a RAW
+        // form-urlencoded PATCH body: that fix-up lives in Symfony's
+        // createFromGlobals, which the test harness's Request::create does not run,
+        // so a raw body here would be empty for reasons that have nothing to do
+        // with this code.
         $order = $this->placeOrder([[$this->biryani, 1]]);
 
-        $body = http_build_query(['items' => [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]]]);
-
-        $this->call(
-            'PATCH',
+        $this->patch(
             '/api/v1/lunch-orders/' . $order->uuid,
-            [], [], [],
-            [
-                'HTTP_ACCEPT' => 'application/json',
-                'HTTP_MASJID_ID' => (string) $this->masjid->id,
-                'CONTENT_TYPE' => 'application/x-www-form-urlencoded',
-            ],
-            $body
+            ['items' => [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]]],
+            ['Accept' => 'application/json', 'masjid-id' => (string) $this->masjid->id]
         )->assertOk();
 
         $this->assertSame(1600, (int) $order->fresh()->total_minor);
