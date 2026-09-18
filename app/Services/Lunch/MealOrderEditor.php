@@ -23,8 +23,10 @@ use Illuminate\Support\Facades\DB;
  *   - `donation_minor` is left exactly as it was. It is the one amount the
  *     customer chose, and an edit to the food is not a decision about it;
  *   - `fee_covered_minor` is recomputed with the formula used when the order was
- *     placed, but ONLY if it was already covering the fee. An order that never
- *     covered the card fee does not start covering it because its plates changed;
+ *     placed, but ONLY if it was already covering the fee AND the order is still
+ *     unpaid. An order that never covered the card fee does not start covering it
+ *     because its plates changed, and a PAID order keeps the fee it was actually
+ *     charged: from then on that column is a record, not a quote;
  *   - `total_minor` = subtotal + donation + fee;
  *   - an unpaid order's OPEN Stripe page holds the old amount, so it is closed
  *     before the new one is written. Otherwise a customer could add a plate and
@@ -97,9 +99,22 @@ final class MealOrderEditor
 
             $subtotal = (int) $priced['subtotal_minor'];
             $donation = (int) $row->donation_minor;
-            $fee = (int) $row->fee_covered_minor > 0
-                ? StripeFees::coverage($subtotal + $donation)
-                : 0;
+
+            // The card fee is a GROSS-UP on an amount Stripe is about to process,
+            // so it is recomputed only while there is still a card payment ahead
+            // of this order. Once the money has landed, `fee_covered_minor` stops
+            // being a quote and becomes the record of what the customer actually
+            // paid Stripe — the board's "Card fees covered" tile sums that column
+            // and has to stay true. Re-grossing it on a paid order would also add
+            // cents of Stripe fee to a balance Stripe will never see: there is no
+            // way to re-charge a paid order here, so staff settle the difference
+            // by hand, and asking them for 2.9% of a plate they will be handed
+            // cash for is asking for money nobody owes.
+            $fee = (int) $row->fee_covered_minor;
+            if ($fee > 0 && $row->payment_status === MealOrder::PAYMENT_UNPAID) {
+                $fee = StripeFees::coverage($subtotal + $donation);
+            }
+
             $total = $subtotal + $donation + $fee;
 
             $after = self::snapshotOf($priced['lines'], $subtotal, $donation, $fee, $total);

@@ -510,6 +510,52 @@ class MealOrderEditTest extends TestCase
     }
 
     #[Test]
+    public function a_paid_orders_card_fee_stays_the_one_that_was_actually_charged(): void
+    {
+        // The live shape this was found on: one plate, the customer added $5 and
+        // covered the card fee, all of it paid by card.
+        $fee = StripeFees::coverage(1600 + 500);
+        $this->assertSame(94, $fee, 'the rate this was measured at (2.9% + 30c)');
+
+        $order = $this->placeOrder([[$this->biryani, 2]], [
+            'payment_method' => MealOrder::METHOD_ONLINE,
+            'payment_status' => MealOrder::PAYMENT_PAID,
+            'status' => MealOrder::STATUS_CONFIRMED,
+            'paid_at' => now(),
+            'donation_minor' => 500,
+            'fee_covered_minor' => $fee,
+        ]);
+        $this->assertSame(2194, (int) $order->total_minor);
+
+        // Staff add a plate after the cutoff. The plate is $8.00, so that is
+        // exactly what the customer owes — not $8.00 plus a card fee on money
+        // no card will ever process.
+        $response = $this->editAsStaff($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertOk()
+            ->assertJsonPath('data.fee_covered_minor', 94)
+            ->assertJsonPath('data.total_minor', 2400 + 500 + 94)
+            ->assertJsonPath('data.balance_minor', 800);
+
+        $this->assertStringContainsString('$8.00', (string) $response->json('message'));
+
+        // And the board's two paid-money tiles still decompose: what settled,
+        // less the extra, less the fee actually collected, is the food paid for.
+        Sanctum::actingAs($this->admin);
+        $summary = $this->getJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders")
+            ->assertOk()
+            ->json('data.summary');
+
+        $this->assertSame(2194, (int) $summary['revenue_paid_minor']);
+        $this->assertSame(500, (int) $summary['donations_paid_minor']);
+        $this->assertSame(94, (int) $summary['fees_covered_paid_minor'], 'the fee the customer was charged, not a new quote');
+        $this->assertSame(
+            1600,
+            (int) $summary['revenue_paid_minor'] - (int) $summary['donations_paid_minor'] - (int) $summary['fees_covered_paid_minor'],
+            'the food that was actually paid for'
+        );
+    }
+
+    #[Test]
     public function staff_cannot_empty_an_order(): void
     {
         $order = $this->placeOrder([[$this->biryani, 1]]);
