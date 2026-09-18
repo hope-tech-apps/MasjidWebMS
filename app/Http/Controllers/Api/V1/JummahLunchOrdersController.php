@@ -351,6 +351,15 @@ class JummahLunchOrdersController extends Controller
                 return response()->api(422, self::EDIT_FLOOR, null);
             }
 
+            // The page is told `can_edit=false` when a line can no longer be named
+            // (`editNotice`), but that is a display answer: a body that never
+            // loaded the page would simply leave the line out, and leaving a line
+            // out is how a line is removed. So the same question is asked here,
+            // where it is a refusal, and again on the locked row below.
+            if (LunchOrderLines::unreachable($menu, $order->load('items')->items, $wanted) !== []) {
+                return response()->api(409, self::EDIT_ITEM_GONE, null);
+            }
+
             try {
                 $result = $this->editor->apply(
                     $order,
@@ -358,9 +367,13 @@ class JummahLunchOrdersController extends Controller
                     $wanted,
                     MealOrderEditor::ACTOR_CUSTOMER,
                     null,
-                    function (MealOrder $locked) use ($menu) {
+                    function (MealOrder $locked) use ($menu, $wanted) {
                         if (($refusal = self::customerMayEdit($locked, $menu)) !== null) {
                             throw new \RuntimeException($refusal);
+                        }
+
+                        if (LunchOrderLines::unreachable($menu, $locked->items, $wanted) !== []) {
+                            throw new \RuntimeException(self::EDIT_ITEM_GONE);
                         }
                     }
                 );

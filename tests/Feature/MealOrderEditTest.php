@@ -766,6 +766,60 @@ class MealOrderEditTest extends TestCase
         );
     }
 
+    #[Test]
+    public function a_body_that_leaves_out_a_line_nobody_could_name_is_refused_on_both_doors(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 2], [$this->water, 1]]);
+
+        // The dish is deleted: the order's line keeps its name and price but has
+        // no id left, so no body can ask to keep it. The page already refuses to
+        // offer an editor (can_edit=false) — but a body that never loaded the
+        // page just leaves the line out, and leaving a line out removes it.
+        $this->water->delete();
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Part of this order is no longer on the menu. Please contact the masjid to change it.');
+
+        $response = $this->editAsStaff($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertStatus(422);
+        $this->assertStringContainsString('Water', (string) $response->json('data'));
+
+        $order = $order->fresh()->load('items');
+        $this->assertCount(2, $order->items, 'nothing was dropped');
+        $this->assertSame(1700, (int) $order->total_minor);
+        $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_line_whose_dish_went_unavailable_cannot_be_dropped_by_leaving_it_out(): void
+    {
+        $order = $this->placeOrder([[$this->biryani, 2], [$this->water, 1]]);
+
+        // Still on the menu, but the kitchen has run out: neither screen offers
+        // it, so a body omitting it did not choose to remove it.
+        $this->water->forceFill(['is_available' => false])->save();
+
+        $this->editAsStaff($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertStatus(422);
+
+        $this->assertSame(1700, (int) $order->fresh()->total_minor);
+    }
+
+    #[Test]
+    public function staff_may_still_take_a_line_off_an_order_while_its_dish_is_on_the_menu(): void
+    {
+        // The refusal above must not cost staff the ordinary case: a dish that is
+        // still offered, left out of the body, is a line somebody removed.
+        $order = $this->placeOrder([[$this->biryani, 2], [$this->water, 1]]);
+
+        $this->editAsStaff($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertOk()
+            ->assertJsonPath('data.total_minor', 1600);
+
+        $this->assertCount(1, $order->fresh()->load('items')->items);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** The public order page's own read. */
