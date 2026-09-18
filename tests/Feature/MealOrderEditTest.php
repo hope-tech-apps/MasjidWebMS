@@ -623,6 +623,50 @@ class MealOrderEditTest extends TestCase
     }
 
     #[Test]
+    public function a_staff_edit_hands_back_a_working_payment_link_for_the_new_total(): void
+    {
+        // The case this endpoint exists for: an unpaid card order, edited after
+        // ordering has closed. Closing the old page is right — it is for the old
+        // amount — but the customer is holding that link, and until now nothing
+        // replaced it unless a member of staff read a sentence and pressed a
+        // button. Menu 5 had unpaid card orders on the board when this was found.
+        $order = $this->placeOrder([[$this->biryani, 1]], [
+            'payment_method' => MealOrder::METHOD_ONLINE,
+            'stripe_checkout_session_id' => 'cs_test_old_staff',
+        ]);
+
+        $response = $this->editAsStaff($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertOk()
+            ->assertJsonPath('data.total_minor', 1600);
+
+        $this->assertSame(['cs_test_old_staff'], self::$expired);
+        $this->assertSame(1, self::$pagesMade, 'the customer is left with a way to pay');
+        $this->assertNotNull($response->json('checkout_url'));
+        $this->assertSame(MealOrder::PAYMENT_UNPAID, $order->fresh()->payment_status);
+        $this->assertNotSame('cs_test_old_staff', $order->fresh()->stripe_checkout_session_id);
+    }
+
+    #[Test]
+    public function an_order_that_says_pay_at_pickup_but_holds_a_payment_page_still_gets_a_new_one(): void
+    {
+        // A live shape on the board: staff send a payment link to someone who
+        // chose to pay at pickup. The order still says `pickup` and still carries
+        // the session. Deciding on the method rather than on the page meant the
+        // link was expired at Stripe and nothing was made to replace it.
+        $order = $this->placeOrder([[$this->biryani, 1]], [
+            'payment_method' => MealOrder::METHOD_PICKUP,
+            'stripe_checkout_session_id' => 'cs_test_link_sent',
+        ]);
+
+        $response = $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertOk();
+
+        $this->assertSame(['cs_test_link_sent'], self::$expired);
+        $this->assertSame(1, self::$pagesMade);
+        $this->assertNotNull($response->json('data.checkout_url'));
+    }
+
+    #[Test]
     public function an_order_stripe_reports_as_paid_is_not_changed(): void
     {
         // The webhook is seconds behind: Stripe already holds the customer's card

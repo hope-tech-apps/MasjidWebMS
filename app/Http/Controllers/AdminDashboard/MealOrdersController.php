@@ -288,10 +288,16 @@ class MealOrdersController extends Controller
      *   - what was actually paid is remembered the first time (`settled_total_minor`),
      *     so the difference shows as `balance_minor` on the order: POSITIVE is
      *     still owed by the customer, NEGATIVE is owed back to them. The board
-     *     shows it and staff settle it with the customer, in cash or in Stripe;
+     *     shows it, and staff settle it with the customer OUTSIDE this system —
+     *     a paid order cannot be given a payment page (the checkout service
+     *     refuses one before Stripe is touched) and Mark paid does nothing to an
+     *     order that is already paid, so the balance is a note to act on, and it
+     *     stays on the board until somebody edits the order back;
      *   - an UNPAID order's open card page is for the old amount, so it is closed
-     *     first ("Payment link" makes a new one for the new total). If Stripe will
-     *     not close it, nothing is changed at all.
+     *     first, and a replacement for the new total is made straight away and
+     *     handed back as `checkout_url`. The customer is holding that link; an
+     *     edit must not be the thing that takes away their only way to pay. If
+     *     Stripe will not close the old page, nothing is changed at all.
      * Prices always come from the menu, the customer's optional extra is left
      * alone, and an order may not be emptied — cancelling is its own action.
      */
@@ -347,13 +353,32 @@ class MealOrdersController extends Controller
             return $this->failed($e);
         }
 
+        // The order was holding an unpaid card page for the old amount, and the
+        // edit closed it. Make the replacement HERE rather than leaving a
+        // sentence asking staff to remember to press "Payment link": the customer
+        // is holding a link that no longer works, and the only thing standing
+        // between them and no way to pay at all was somebody reading a message.
+        $checkoutUrl = null;
+        $pageFailed = false;
+
+        if ($result['page_closed']) {
+            try {
+                $checkoutUrl = $this->checkout->paymentLink($result['order'], null)['checkout_url'] ?: null;
+            } catch (\Throwable $e) {
+                // The edit is committed and stands. Only the new page failed.
+                report($e);
+                $pageFailed = true;
+            }
+        }
+
         $order = $result['order']->fresh()->load(['items', 'enteredBy:id,name', 'markedPaidBy:id,name']);
 
         return response()->json([
             'status' => 'success',
-            'message' => self::editMessage($order, (bool) $result['changed'], (bool) $result['page_closed']),
+            'message' => self::editMessage($order, (bool) $result['changed'], (bool) $result['page_closed'], $checkoutUrl, $pageFailed),
             'changed' => (bool) $result['changed'],
             'data' => $order,
+            'checkout_url' => $checkoutUrl,
         ], Response::HTTP_OK);
     }
 
@@ -376,8 +401,13 @@ class MealOrdersController extends Controller
      * was already paid, the sentence SAYS SO — in money, and as something still
      * to be done. Nothing in the system settles a balance.
      */
-    private static function editMessage(MealOrder $order, bool $changed, bool $pageClosed): string
-    {
+    private static function editMessage(
+        MealOrder $order,
+        bool $changed,
+        bool $pageClosed,
+        ?string $checkoutUrl = null,
+        bool $pageFailed = false
+    ): string {
         if (! $changed) {
             return "Nothing changed on order #{$order->order_number}.";
         }
@@ -390,6 +420,14 @@ class MealOrdersController extends Controller
 
         if ($order->payment_status === MealOrder::PAYMENT_PAID && $balance < 0) {
             return "Order #{$order->order_number} updated. " . self::money(-$balance) . ' is owed back to the customer — refund it in Stripe or by hand.';
+        }
+
+        if ($checkoutUrl !== null) {
+            return "Order #{$order->order_number} updated. Its old payment link stopped working, so a new one for the new total is ready to send — the customer's old link no longer works.";
+        }
+
+        if ($pageFailed) {
+            return "Order #{$order->order_number} updated, but its old payment link was closed and a new one could not be made. Press \"Payment link\" to try again — until then the customer has no way to pay.";
         }
 
         if ($pageClosed) {
