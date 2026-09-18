@@ -201,17 +201,26 @@ class MealOrder extends Model
      * leaves a gap in the numbering (the board shows … 007, 009 …) rather than
      * reusing a number that was already given to somebody, which is the right
      * trade: a gap is a question, a repeat is two people holding one ticket.
-     * `order_number` is a string, so the highest is taken on its NUMERIC value,
-     * in PHP rather than in SQL: production is MySQL and the tests are SQLite,
-     * and the cast that orders "010" above "009" is spelled differently in each.
-     * A menu holds a few dozen orders, so reading the column costs nothing, and
-     * anything non-numeric counts as 0 instead of crashing somebody's order.
+     * Reading the highest number still present would fix the middle of the list
+     * but not its end: remove the LAST order and its number becomes free again,
+     * so two customers can still be told "024". A number is what the kitchen
+     * calls out, so it must never be handed out twice. `meal_menus` therefore
+     * remembers the highest number the menu has ever ISSUED, under the same lock,
+     * and the counter only ever goes up.
+     *
+     * The stored counter and the rows are reconciled on every call — whichever
+     * is higher wins — so a menu that pre-dates the column needs no backfill,
+     * and a row inserted by hand outside this method cannot be shadowed.
+     * `order_number` is a string, so its numeric value is taken in PHP rather
+     * than in SQL: production is MySQL, the tests are SQLite, and the cast that
+     * sorts "010" above "009" is spelled differently in each. Anything that is
+     * not a plain figure counts as 0 instead of crashing somebody's order.
      */
     public static function nextOrderNumber(int $masjidId, int $menuId): string
     {
-        MealMenu::withoutMasjidScope()->whereKey($menuId)->lockForUpdate()->first();
+        $menu = MealMenu::withoutMasjidScope()->whereKey($menuId)->lockForUpdate()->first();
 
-        $highest = static::withoutMasjidScope()
+        $highestOnTheMenu = static::withoutMasjidScope()
             ->where('masjid_id', $masjidId)
             ->where('meal_menu_id', $menuId)
             ->lockForUpdate()
@@ -219,7 +228,14 @@ class MealOrder extends Model
             ->map(static fn ($number): int => (int) $number)
             ->max() ?? 0;
 
-        return str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
+        $issued = max((int) ($menu->order_number_sequence ?? 0), $highestOnTheMenu);
+        $next = $issued + 1;
+
+        if ($menu) {
+            MealMenu::withoutMasjidScope()->whereKey($menuId)->update(['order_number_sequence' => $next]);
+        }
+
+        return str_pad((string) $next, 3, '0', STR_PAD_LEFT);
     }
 
     public function contact(): BelongsTo

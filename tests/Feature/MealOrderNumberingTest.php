@@ -44,13 +44,24 @@ class MealOrderNumberingTest extends TestCase
 
         app(TenantContext::class)->forgetTenant();
 
-        $this->masjid = Masjid::factory()->create();
+        $this->masjid = $this->makeMasjid();
         $this->menu = MealMenu::factory()->forMasjid($this->masjid)->open()->create();
         $this->plate = MealMenuItem::factory()->create([
             'masjid_id' => $this->masjid->id,
             'meal_menu_id' => $this->menu->id,
             'name' => 'Lasagna',
             'price_minor' => 800,
+        ]);
+    }
+
+    private function makeMasjid(): Masjid
+    {
+        return Masjid::create([
+            'name' => 'Numbering Test ' . uniqid(),
+            'email' => 'office' . uniqid() . '@masjid.test',
+            'phone' => '+1' . random_int(1000000000, 9999999999),
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St',
+            'latitude' => 0.0, 'longitude' => 0.0, 'org_type' => 'masjid',
         ]);
     }
 
@@ -120,7 +131,7 @@ class MealOrderNumberingTest extends TestCase
         $otherMenu = MealMenu::factory()->forMasjid($this->masjid)->open()->create([
             'service_date' => $this->menu->service_date->copy()->addWeek(),
         ]);
-        $otherMasjid = Masjid::factory()->create();
+        $otherMasjid = $this->makeMasjid();
         $foreignMenu = MealMenu::factory()->forMasjid($otherMasjid)->open()->create();
 
         $this->assertSame('001', MealOrder::nextOrderNumber((int) $this->masjid->id, (int) $otherMenu->id));
@@ -132,10 +143,33 @@ class MealOrderNumberingTest extends TestCase
     public function a_number_that_is_not_a_plain_figure_is_ignored_rather_than_refusing_the_order(): void
     {
         // Nothing writes one today; this pins that a stray value cannot stop a menu.
-        $order = $this->placeOrder();
+        $order = $this->placeOrder();   // 001, and the menu has now issued 1
         $order->order_number = 'X1';
         $order->save();
 
-        $this->assertSame('001', MealOrder::nextOrderNumber((int) $this->masjid->id, (int) $this->menu->id));
+        $this->assertSame('002', MealOrder::nextOrderNumber((int) $this->masjid->id, (int) $this->menu->id));
+    }
+
+    #[Test]
+    public function the_menu_remembers_what_it_issued_even_when_every_order_is_removed(): void
+    {
+        $this->placeOrder();                        // 001
+        $this->placeOrder();                        // 002
+        MealOrder::withoutMasjidScope()->where('meal_menu_id', $this->menu->id)->delete();
+
+        $this->assertSame('003', $this->placeOrder()->order_number,
+            'an emptied menu must not start again at 001 and reuse numbers people were given');
+    }
+
+    #[Test]
+    public function an_order_written_outside_this_method_is_not_shadowed_by_the_counter(): void
+    {
+        // A row inserted by hand (a repair, an import) carries a number the
+        // counter never saw. The next order must clear BOTH.
+        $order = $this->placeOrder();               // 001
+        $order->order_number = '042';
+        $order->save();
+
+        $this->assertSame('043', MealOrder::nextOrderNumber((int) $this->masjid->id, (int) $this->menu->id));
     }
 }
