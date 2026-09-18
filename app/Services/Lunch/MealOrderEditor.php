@@ -9,6 +9,7 @@ use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\LunchOrderLines;
 use App\Support\StripeFees;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Changing what is ON a lunch order after it was placed — the one implementation,
@@ -77,7 +78,19 @@ final class MealOrderEditor
         ?int $userId,
         ?\Closure $guard = null
     ): array {
-        return DB::transaction(function () use ($order, $menu, $wanted, $actor, $userId, $guard) {
+        // The id of the page this attempt closed at Stripe, if it closed one.
+        // Expiring a Checkout Session CANNOT be undone, but everything after it
+        // here can: if a later step throws — a line write, the audit row, or the
+        // three deadlock attempts running out — the transaction rolls back and
+        // restores `stripe_checkout_session_id` on the row, pointing at a session
+        // that is dead at Stripe. The customer's saved link then 404s while the
+        // order still claims to have a live payment page, and nothing anywhere
+        // says otherwise. Carried out of the closure so the failure path can make
+        // the row tell the truth again.
+        $closedSessionId = null;
+
+        try {
+            return DB::transaction(function () use ($order, $menu, $wanted, $actor, $userId, $guard, &$closedSessionId) {
             // The same row lock every other money path on an order takes
             // (MealOrderCheckoutService::checkout / paymentLink, markPaid,
             // cancelling), so an edit cannot interleave with a payment page being
@@ -131,7 +144,9 @@ final class MealOrderEditor
             // the staff board's to edit, not the customer's.
             $pageClosed = false;
             if ($row->payment_status === MealOrder::PAYMENT_UNPAID && $row->stripe_checkout_session_id) {
+                $sessionId = (string) $row->stripe_checkout_session_id;
                 $this->checkout->closePageBeforeRepricing($row);
+                $closedSessionId = $sessionId;
                 $pageClosed = true;
             }
 
@@ -156,7 +171,61 @@ final class MealOrderEditor
             MealOrderEdit::record($row, $actor, $userId, $before, $after);
 
             return ['order' => $row->load('items'), 'changed' => true, 'page_closed' => $pageClosed];
-        }, 3); // retried on a deadlock rather than failing the customer
+            }, 3); // retried on a deadlock rather than failing the customer
+        } catch (\Throwable $e) {
+            // The edit did not happen — and must not. But the page really is
+            // expired at Stripe, so leaving the id on the row would be the one
+            // thing worse than losing the edit: an order that offers the customer
+            // a link Stripe will refuse, with no way for staff to see why.
+            //
+            // Closing AFTER the commit instead would be worse still. Between the
+            // commit and the close the customer holds a live page for the OLD
+            // amount, and paying it marks the new order paid in full — the exact
+            // failure the close-first order exists to prevent. So the close stays
+            // where it is and the failure path repairs the row.
+            if ($closedSessionId !== null) {
+                $this->forgetClosedPage($order, $closedSessionId);
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Clear a session id this attempt expired at Stripe, after the edit failed.
+     *
+     * Outside the transaction that rolled back, and deliberately narrow: the
+     * WHERE pins the exact id that was closed, so if anything minted a new page
+     * in between — the lock is gone by now — that live page is left alone. A row
+     * that no longer holds the closed id is already correct and is not touched.
+     *
+     * Failure here is logged, never thrown: the caller is already failing, and
+     * replacing the reason an edit was refused with a second, unrelated error
+     * would tell the customer the wrong thing.
+     */
+    private function forgetClosedPage(MealOrder $order, string $closedSessionId): void
+    {
+        try {
+            $repaired = MealOrder::withoutMasjidScope()
+                ->whereKey($order->id)
+                ->where('stripe_checkout_session_id', $closedSessionId)
+                ->update(['stripe_checkout_session_id' => null]);
+
+            if ($repaired > 0) {
+                $order->stripe_checkout_session_id = null;
+
+                Log::warning('lunch.edit.page_closed_but_edit_failed', [
+                    'order_id' => (int) $order->id,
+                    'session_id' => $closedSessionId,
+                ]);
+            }
+        } catch (\Throwable $repairFailed) {
+            Log::error('lunch.edit.dead_page_not_cleared', [
+                'order_id' => (int) $order->id,
+                'session_id' => $closedSessionId,
+                'error' => $repairFailed->getMessage(),
+            ]);
+        }
     }
 
     /**

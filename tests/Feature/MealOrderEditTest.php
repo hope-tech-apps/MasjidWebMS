@@ -602,6 +602,58 @@ class MealOrderEditTest extends TestCase
     // ------------------------------------------------------- the Stripe page
 
     #[Test]
+    public function an_edit_that_fails_after_closing_the_page_does_not_leave_a_dead_link_on_the_order(): void
+    {
+        // Expiring a Checkout Session cannot be undone, and the close happens
+        // INSIDE the edit's transaction — deliberately, because closing after the
+        // commit would leave the customer holding a live page for the OLD amount.
+        // So when a later step throws, the rollback restores
+        // `stripe_checkout_session_id` on the row and it points at a session that
+        // is dead at Stripe: the customer's saved link 404s while the order still
+        // claims to have a payment page, and nothing says otherwise.
+        //
+        // The failure is forced by removing the audit table, which is the last
+        // write in the transaction and therefore genuinely after the close.
+        $order = $this->placeOrder([[$this->biryani, 1]], [
+            'payment_method' => MealOrder::METHOD_ONLINE,
+            'stripe_checkout_session_id' => 'cs_test_doomed',
+        ]);
+
+        \Illuminate\Support\Facades\Schema::drop('meal_order_edits');
+
+        $threw = null;
+
+        try {
+            app(\App\Services\Lunch\MealOrderEditor::class)->apply(
+                $order,
+                $this->menu,
+                [$this->biryani->id => 2],
+                \App\Services\Lunch\MealOrderEditor::ACTOR_CUSTOMER,
+                null
+            );
+        } catch (\Throwable $e) {
+            $threw = $e;
+        }
+
+        $this->assertNotNull($threw, 'the edit must still fail — the audit row is not optional');
+
+        $fresh = $order->fresh();
+
+        // The edit did NOT happen: the money and the lines are untouched.
+        $this->assertSame(800, (int) $fresh->total_minor, 'a failed edit must not move the money');
+        $this->assertSame(1, (int) $fresh->items()->sum('quantity'), 'a failed edit must not change the plates');
+
+        // But the page really was expired at Stripe, so the row must not keep
+        // offering it. Null is the honest state, and it is what lets the board
+        // and the customer's page mint a fresh link.
+        $this->assertSame(['cs_test_doomed'], self::$expired, 'the page was closed at Stripe');
+        $this->assertNull(
+            $fresh->stripe_checkout_session_id,
+            'the order still points at a session Stripe has expired; the customer\'s link 404s with nothing saying why'
+        );
+    }
+
+    #[Test]
     public function the_old_payment_page_is_closed_and_a_new_one_is_made_for_the_new_total(): void
     {
         // An unpaid ONLINE order with a live Stripe page for $8.00. If that page
