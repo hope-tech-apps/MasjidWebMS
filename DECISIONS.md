@@ -1724,3 +1724,51 @@ from another menu and from another organisation, a crafted price ignored, the
 last plate, the donation untouched, the fee moving only when it was already
 covered, the audit row and its actor, and the Stripe page for the old amount)
 and, for the new table's tenant scoping, `MealOrderTenantIsolationTest`.
+
+## 2026-09-18 — The two edit screens, and why the ORDER PAGE is told what it may do rather than working it out
+
+**Decision.** The two endpoints above are reached from two screens, and neither
+screen decides anything about money or permission for itself.
+
+**The customer's order page** (`views/lunch/LunchOrderStatus.vue`) gains a
+"Change my order" control that steps the quantity on each line and saves the
+FULL set. It cannot add an item the order does not already have: the order link
+is not the menu, and someone wanting something new can place an order.
+
+Whether the control appears at all is the SERVER's answer, not the page's. The
+public order payload now carries `can_edit` and `edit_notice` — the notice being
+the exact sentence a refused `PATCH` would have answered with — so a closed or
+paid order shows the reason where the button would be, in the server's words.
+The page could work out "paid" and "cancelled" from fields it already had, but
+never the cutoff, and a control that only ever 409s is worse than none. Each
+line also carries `meal_menu_item_id`, because the edit body names lines by id
+and the page previously held only the snapshotted NAMES.
+
+**A line whose menu item was deleted** has no id left (`nullOnDelete`), so it
+cannot travel back in a full-set body: saving would drop it and quietly reduce
+the order. Such an order reports `can_edit: false` with its own sentence. This
+is a display answer; `update` still asks everything again, and again on the
+locked row.
+
+**The figure shown while editing is labelled as settled on save.** The page sums
+the unit prices it was given; the server re-prices every line and recomputes the
+card fee, and the totals shown after saving are the server's. Both languages
+carry every new string (`lunchI18n.ts`, 60 keys each); the server's own
+sentences are shown in English as they come, like menu item names, so the page
+can never tell a customer something the endpoint did not.
+
+**The staff board** (`views/dashboard/JummahLunchView.vue`) gains "Edit items" on
+an order row — quantities per line, any available item added, still working
+after the cutoff. On a paid order the editor says plainly that saving does not
+move the payment, shows what actually settled, and names what would be owed or
+owed back; afterwards `balance_minor` stays on the row ("Owes $X — not
+collected" / "$X owed back — refund by hand") until somebody settles it by hand.
+Lines the shared pricing would refuse — item deleted or marked unavailable — are
+named before Save rather than discovered through a refusal. Administrators only,
+matching the route: a LunchStaff is never shown the button and the store refuses
+it.
+
+Pinned by the four `MealOrderEditTest` cases covering the order page's own read
+(the ids on each line, the cutoff sentence, the paid sentence, and the deleted
+item), each proved to fail against a payload that answers `can_edit` blindly or
+drops the item id.
