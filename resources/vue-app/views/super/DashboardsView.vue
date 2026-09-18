@@ -1,8 +1,13 @@
 <template>
-    <div class="d-flex flex-column align-items-center justify-content-center gap-5 w-100 vh-100">
+    <!-- `min-vh-100`, not `vh-100`: with eight organisations the grid is taller
+         than a phone screen, and a fixed 100vh box makes the page scroll inside
+         a container that was told it is exactly one screen tall — which is why
+         the heading slid away and the cards looked cut off. `py-4` keeps the
+         first card off the status bar. -->
+    <div class="d-flex flex-column align-items-center justify-content-center gap-4 gap-md-5 w-100 min-vh-100 py-4">
         <div class="d-flex flex-column align-items-center justify-content-center gap-2">
             <img :src="'/manara-icon.svg'" alt="Manara" width="84" height="84" class="mb-1" />
-            <div class="display-4 text-cgreen text-center fw-bold">
+            <div class="text-cgreen text-center fw-bold brand-title">
                 Manara
             </div>
 
@@ -15,21 +20,33 @@
                 or
             </span>
 
-            <div class="fs-2 text-cdark text-center fw-bold">
+            <div class="text-cdark text-center fw-bold pick-title">
                 Select A Mosque
             </div>
         </div>
 
         <div class="container">
-            <div class="d-flex flex-row flex-wrap align-items-center justify-content-center gap-4">
-                <button v-for="masjid in masjids" type="button" @click="setAuthUserMasjidId(masjid)"
+            <!-- A GRID, not fixed-width cards in a flex row. The cards were
+                 16rem wide, so on a 375px phone exactly one fitted per row and
+                 the list became eight screens of scrolling. `auto-fill` with a
+                 minimum column gives two per row on a phone and as many as fit
+                 on a laptop, with no breakpoint list to maintain. -->
+            <div class="mosque-grid">
+                <button v-for="masjid in masjids" :key="masjid.id" type="button"
+                    @click="setAuthUserMasjidId(masjid)"
                     class="btn btn-light card border-0 shadow mosque-card">
                     <div
-                        class="card-body text-center d-flex flex-column align-items-center justify-content-center gap-4 w-100">
-                        <div class="rounded-2 overflow-hidden mosque-logo">
-                            <img :src="masjid.logo?.original_url" :alt="`${masjid.name}_logo`" class="w-100 rounded-2">
+                        class="card-body text-center d-flex flex-column align-items-center justify-content-between gap-3 w-100 h-100">
+                        <div class="rounded-2 overflow-hidden mosque-logo d-flex align-items-center justify-content-center w-100">
+                            <!-- An organisation with no logo used to render an
+                                 empty bordered box (the ZZ sandbox on
+                                 production). Show its initials instead, so every
+                                 card says what it is. -->
+                            <img v-if="masjid.logo?.original_url" :src="masjid.logo.original_url"
+                                :alt="`${masjid.name} logo`" class="rounded-2 mosque-logo__img" loading="lazy">
+                            <span v-else class="mosque-logo__initials text-cgreen fw-bold">{{ initials(masjid.name) }}</span>
                         </div>
-                        <div class="fs-6 fw-bold text-cdark">
+                        <div class="fw-bold text-cdark mosque-card__name">
                             {{ masjid.name }}
                         </div>
                     </div>
@@ -71,6 +88,15 @@ const masjids = computed(() => {
     return masjidsStore.masjids
 });
 
+/** Up to two initials, for an organisation with no logo uploaded. */
+const initials = (name?: string | null): string =>
+    (name ?? '?')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0]?.toUpperCase() ?? '')
+        .join('') || '?';
+
 async function setAuthUserMasjidId(masjid: Masjid) {
     authStore.dashboardMasjidId = masjid.id;
     authStore.saveDashboardMasjidId(masjid.id);
@@ -90,20 +116,92 @@ const goToSuperDashboard = () => {
 </script>
 
 <style scoped>
+/* Two columns on the narrowest phone, more as the screen allows. `1fr` rather
+   than a fixed width so two cards always fill the row instead of leaving a
+   ragged gutter. */
+.mosque-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: 1rem;
+    width: 100%;
+}
+
+@media (min-width: 576px) {
+    .mosque-grid {
+        grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+        gap: 1.5rem;
+    }
+}
+
 .mosque-card {
-    width: 16rem;
-    height: 14rem;
+    width: 100%;
+    /* Was a fixed 14rem. A long name like "Intellicor International Academy"
+       wrapped to three lines and pushed itself against the card's edge. */
+    min-height: 11rem;
+}
+
+@media (min-width: 576px) {
+    .mosque-card {
+        min-height: 14rem;
+    }
 }
 
 .mosque-card .mosque-logo {
+    height: 5rem;
+}
+
+@media (min-width: 576px) {
+    .mosque-card .mosque-logo {
+        height: 8rem;
+    }
+}
+
+.mosque-card .mosque-logo__img {
     max-width: 100%;
-    height: 8rem;
+    max-height: 100%;
     object-fit: contain;
 }
 
-.mosque-card .mosque-logo img {
-    height: 100%;
-    object-fit: contain;
+.mosque-card .mosque-logo__initials {
+    font-size: 2rem;
+    line-height: 1;
+}
+
+/* The name has to stay readable at 150px wide: smaller on a phone, and allowed
+   to wrap rather than overflow its card. */
+.mosque-card__name {
+    font-size: 0.85rem;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+@media (min-width: 576px) {
+    .mosque-card__name {
+        font-size: 1rem;
+    }
+}
+
+/* Bootstrap has no responsive variants of `display-*` or `fs-*`, so
+   `display-md-4` and `fs-md-2` would have been dead classes that quietly did
+   nothing. Sized here instead. */
+.brand-title {
+    font-size: calc(1.475rem + 2.7vw);
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.pick-title {
+    font-size: 1.25rem;
+}
+
+@media (min-width: 576px) {
+    .brand-title {
+        font-size: 3.5rem;
+    }
+
+    .pick-title {
+        font-size: 1.75rem;
+    }
 }
 
 .super-dashboard-link {
