@@ -513,9 +513,9 @@
              plainly that the payment does not move with it. -->
         <div v-if="editModal.show" class="jl-modal">
             <div class="jl-dialog card">
-                <div class="card-header"><h5 class="mb-0">Edit order #{{ editModal.order?.order_number }} · {{ editModal.order?.customer_name }}</h5></div>
+                <div class="card-header"><h5 class="mb-0">Edit order #{{ editOrder?.order_number }} · {{ editOrder?.customer_name }}</h5></div>
                 <div class="card-body">
-                    <div v-if="editModal.order?.payment_status === 'paid'" class="alert alert-warning py-2 small" role="alert">
+                    <div v-if="editOrder?.payment_status === 'paid'" class="alert alert-warning py-2 small" role="alert">
                         <strong>This order is already paid.</strong> Changing the items does not change the
                         payment — nothing here takes money or gives it back. If the new total differs from
                         the {{ money(editPaidMinor) }} already paid, the difference stays on the board until
@@ -552,7 +552,7 @@
                         <div v-if="editStoredFee > 0" class="d-flex justify-content-between"><span>Card fee (recalculated on save)</span><span>{{ money(editStoredFee) }}</span></div>
                     </div>
                     <div class="d-flex justify-content-between fw-semibold mt-1"><span>New total</span><span>{{ money(editTotal) }}</span></div>
-                    <div v-if="editModal.order?.payment_status === 'paid' && editTotal !== editPaidMinor" class="d-flex justify-content-between mt-1"
+                    <div v-if="editOrder?.payment_status === 'paid' && editTotal !== editPaidMinor" class="d-flex justify-content-between mt-1"
                         :class="editTotal > editPaidMinor ? 'text-danger' : 'text-warning-emphasis'">
                         <span>{{ editTotal > editPaidMinor ? 'Customer would still owe' : 'Would be owed back' }}</span>
                         <span class="fw-semibold">{{ money(Math.abs(editTotal - editPaidMinor)) }}</span>
@@ -1012,12 +1012,18 @@ function balanceOf(o: any): number {
 function canEditItems(o: any): boolean {
     return !isLunchStaff.value && o?.status !== "cancelled" && o?.payment_status !== "refunded";
 }
-const editStoredExtra = computed<number>(() => Number(editModal.order?.donation_minor || 0));
-const editStoredFee = computed<number>(() => Number(editModal.order?.fee_covered_minor || 0));
+// The order as the board holds it NOW, found by id in the live list, so each
+// 15-second poll reaches the open editor: a payment that lands, or a cancellation
+// on another device. The copy from when it opened stands in only if the order is
+// gone. Without this the editor could promise "this order is unpaid" about an
+// order that had just been paid, and only the server's reply would say otherwise.
+const editOrder = computed<any>(() => orders.value.find((o: any) => o.id === editModal.order?.id) ?? editModal.order);
+const editStoredExtra = computed<number>(() => Number(editOrder.value?.donation_minor || 0));
+const editStoredFee = computed<number>(() => Number(editOrder.value?.fee_covered_minor || 0));
 // What actually settled: the order's own total until an edit moved it, and
 // `settled_total_minor` from then on. Derived from the balance the server sends
 // rather than recomputed, so the board cannot disagree with it.
-const editPaidMinor = computed<number>(() => Number(editModal.order?.total_minor || 0) - balanceOf(editModal.order));
+const editPaidMinor = computed<number>(() => Number(editOrder.value?.total_minor || 0) - balanceOf(editOrder.value));
 const editSubtotal = computed<number>(() => orderableItems.value.reduce(
     (sum: number, i: any) => sum + (editModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
 const editPlates = computed<number>(() => orderableItems.value.reduce(
@@ -1031,7 +1037,7 @@ const editTotal = computed<number>(() => editSubtotal.value + editStoredExtra.va
 // true. Named here so nobody presses Save into a certain refusal.
 const editBlocked = computed<string[]>(() => {
     const live = new Set(orderableItems.value.map((i: any) => Number(i.id)));
-    return (editModal.order?.items || [])
+    return (editOrder.value?.items || [])
         .filter((l: any) => Number(l.quantity) > 0 && (l.meal_menu_item_id == null || !live.has(Number(l.meal_menu_item_id))))
         .map((l: any) => String(l.item_name));
 });
@@ -1049,7 +1055,7 @@ function bumpEdit(it: any, delta: number) {
     editModal.qty[it.id] = it.max_quantity ? Math.min(next, Number(it.max_quantity)) : next;
 }
 async function saveEditItems() {
-    const o = editModal.order;
+    const o = editOrder.value;
     if (!currentMenu.value || !o || editPlates.value <= 0) return;
     editSaving.value = true;
     editError.value = "";
