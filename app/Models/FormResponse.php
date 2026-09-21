@@ -148,12 +148,23 @@ class FormResponse extends Model
     public const PAID_VIA_VENMO = 'venmo';
     public const PAID_VIA_CHECK = 'check';
 
+    /**
+     * The masjid's own Square card reader (owner, 2026-09-20). A family that taps a
+     * card at the desk has paid by card, but NOT through this platform's Stripe: the
+     * money lands in the organisation's Square account, so nothing here can see it and
+     * no webhook will ever record it. Staff record it by hand like Zelle or a cheque,
+     * and naming Square rather than folding it into "external" is what lets the office
+     * reconcile against a Square payout later.
+     */
+    public const PAID_VIA_SQUARE = 'square';
+
     public const PAID_VIA = [
         self::PAID_VIA_CASH,
         self::PAID_VIA_ZELLE,
         self::PAID_VIA_CASHAPP,
         self::PAID_VIA_VENMO,
         self::PAID_VIA_CHECK,
+        self::PAID_VIA_SQUARE,
     ];
 
     /** What "Mark paid" may record. Cash is "Take cash", which says so itself. */
@@ -162,6 +173,7 @@ class FormResponse extends Model
         self::PAID_VIA_CASHAPP,
         self::PAID_VIA_VENMO,
         self::PAID_VIA_CHECK,
+        self::PAID_VIA_SQUARE,
     ];
 
     /** The words a screen, an export or a receipt uses for each. */
@@ -171,6 +183,7 @@ class FormResponse extends Model
         self::PAID_VIA_CASHAPP => 'Cash App',
         self::PAID_VIA_VENMO => 'Venmo',
         self::PAID_VIA_CHECK => 'Check',
+        self::PAID_VIA_SQUARE => 'Square',
     ];
 
     public const PAYMENT_UNPAID = 'unpaid';
