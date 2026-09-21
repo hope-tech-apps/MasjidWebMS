@@ -11,6 +11,7 @@ use App\Http\Requests\Admin\Groups\StoreGroupThreadRequest;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMessage;
+use App\Models\GroupMessageReaction;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
 use App\Models\Masjid;
@@ -18,6 +19,7 @@ use App\Models\User;
 use App\Support\Errors;
 use App\Support\GroupAudience;
 use App\Support\GroupMessageAttachments;
+use App\Support\GroupMessageSignals;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -49,6 +51,12 @@ use Symfony\Component\HttpFoundation\Response;
  * controller is mounted in BOTH staff realms (routes/admin.php and
  * routes/teacher.php), so every download link is built for the realm the
  * request arrived through — a teacher login is refused by the admin realm.
+ *
+ * REACTIONS AND READ RECEIPTS (owner, 2026-09-21). react()/unreact() add and
+ * remove the caller's 🤲 👍 💯 ❓ behind replying's own gate (route write
+ * gate + mayReceiveThread() + not closed). Every serialized message carries
+ * its reactions and `read_by`, derived from the readers' bookmarks by
+ * App\Support\GroupMessageSignals — a staff viewer is shown every name.
  *
  * Tenant isolation is not hand-rolled: `tenant` middleware binds TenantContext
  * and BelongsToMasjid auto-scopes Group, GroupThread, GroupMessage,
@@ -184,7 +192,7 @@ class GroupThreadsController extends Controller
 
                     // The opener has read what they just wrote; without this,
                     // their own first message would greet them as "unread".
-                    $this->markRead($thread, $request->user());
+                    $this->markRead($thread, $request->user(), (int) $message->id);
                 }
 
                 return $thread;
@@ -242,12 +250,21 @@ class GroupThreadsController extends Controller
             ->with(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments'])
             ->orderBy('created_at')
             ->orderBy('id')
-            ->paginate($request->query('per_page', 50))
-            ->through(fn (GroupMessage $message) => $this->serializeMessage(
-                $message, $request, $masjid_id, $group_id, $mayReceiveMedia, $viewerId
-            ));
+            ->paginate($request->query('per_page', 50));
 
-        $this->markRead($thread, $request->user());
+        // Opening the conversation is reading it — up to the newest message this
+        // page actually SERVED, not the newest in the thread: a receipt must not
+        // claim somebody saw a message that was never put in front of them.
+        // Written BEFORE the receipts are computed, and it cannot matter: a
+        // viewer is never listed as a reader of what they are looking at.
+        $servedUpTo = collect($messages->items())->max('id');
+        $this->markRead($thread, $request->user(), $servedUpTo !== null ? (int) $servedUpTo : null);
+
+        $signals = GroupMessageSignals::forMessages($thread, $messages->items(), $request->user());
+
+        $messages->through(fn (GroupMessage $message) => $this->serializeMessage(
+            $message, $request, $masjid_id, $group_id, $mayReceiveMedia, $viewerId, $signals[(int) $message->id] ?? null
+        ));
 
         return response()->json([
             'status' => 'success',
@@ -299,7 +316,7 @@ class GroupThreadsController extends Controller
                 GroupMessageAttachments::store($message, $uploads);
 
                 // You have read what you just wrote.
-                $this->markRead($thread, $request->user());
+                $this->markRead($thread, $request->user(), (int) $message->id);
 
                 return $message;
             });
@@ -322,7 +339,8 @@ class GroupThreadsController extends Controller
                 // supplied the bytes a moment ago.
                 'data' => $this->serializeMessage(
                     $message->load(['author:id,name', 'attachments']),
-                    $request, $masjid_id, $group_id, true, $request->user()?->id
+                    $request, $masjid_id, $group_id, true, $request->user()?->id,
+                    GroupMessageSignals::forMessages($thread, [$message], $request->user())[(int) $message->id] ?? null
                 ),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
@@ -331,6 +349,30 @@ class GroupThreadsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * PUT .../threads/{thread_id}/messages/{message_id}/reactions/{reaction}
+     *
+     * Add this caller's 🤲 / 👍 / 💯 / ❓. Idempotent — a second tap, or two
+     * tabs, leave one row — which is why adding and removing are two verbs
+     * rather than one "toggle" that a double-tap would undo.
+     *
+     * The gate is REPLYING's gate, check for check: the route's write gate
+     * (`permission:manage contacts` / `teacher.leads`), then
+     * mayReceiveThread(), then "not closed". The message is found THROUGH the
+     * thread, so a message id from another conversation is a 404 even when the
+     * caller may read this one.
+     */
+    public function react(Request $request, $masjid_id, $group_id, $thread_id, $message_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $thread_id, $message_id, $reaction, true);
+    }
+
+    /** DELETE .../reactions/{reaction} — take it back. Idempotent the same way. */
+    public function unreact(Request $request, $masjid_id, $group_id, $thread_id, $message_id, $reaction)
+    {
+        return $this->setReaction($request, $group_id, $thread_id, $message_id, $reaction, false);
     }
 
     /**
@@ -411,6 +453,54 @@ class GroupThreadsController extends Controller
         ], Response::HTTP_OK);
     }
 
+    /** Shared body of react/unreact. */
+    private function setReaction(Request $request, $group_id, $thread_id, $message_id, $reaction, bool $on)
+    {
+        $group = Group::findOrFail($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+
+        $this->authorizeThread($request->user(), $group, $thread);
+
+        $message = $thread->messages()->findOrFail($message_id);
+
+        if (! GroupMessageReaction::isAllowed($reaction)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['reaction' => ['A reaction must be one of: '.implode(' ', GroupMessageReaction::REACTIONS).'.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($thread->isClosed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This conversation is closed; reopen it to continue.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $key = [
+            'group_message_id' => $message->id,
+            'reaction' => $reaction,
+            // The AUTHENTICATED account, never a client claim.
+            'user_id' => $request->user()->id,
+        ];
+
+        if ($on) {
+            // createOrFirst: the unique key settles a race between two taps
+            // instead of the second one 500ing.
+            GroupMessageReaction::createOrFirst($key);
+        } else {
+            GroupMessageReaction::query()->where($key)->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'message_id' => (int) $message->id,
+                'reactions' => GroupMessageSignals::reactionsFor($message, $request->user()),
+            ],
+        ], Response::HTTP_OK);
+    }
+
     /** Shared body of close/reopen — one write path, two route verbs. */
     private function setClosed(Request $request, $group_id, $thread_id, bool $closed)
     {
@@ -449,21 +539,18 @@ class GroupThreadsController extends Controller
     }
 
     /**
-     * Move the caller's read bookmark to now. updateOrCreate against the
-     * (thread, user) unique key, so concurrent views race to the same row
-     * rather than minting duplicates; masjid_id is stamped by the creating
-     * hook from the bound tenant.
+     * Move the caller's read bookmark to now, and its message high-water mark
+     * forward to `$upToMessageId` (the newest message they were shown). Keyed
+     * on the (thread, user) unique key; masjid_id is stamped by the creating
+     * hook from the bound tenant. See GroupThreadRead::advance().
      */
-    private function markRead(GroupThread $thread, ?User $user): void
+    private function markRead(GroupThread $thread, ?User $user, ?int $upToMessageId = null): void
     {
         if ($user === null) {
             return;
         }
 
-        GroupThreadRead::updateOrCreate(
-            ['group_thread_id' => $thread->id, 'user_id' => $user->id],
-            ['last_read_at' => now()],
-        );
+        GroupThreadRead::advance((int) $thread->id, (int) $user->id, null, $upToMessageId);
     }
 
     /** The caller's bookmark on one thread, if any. */
@@ -564,7 +651,8 @@ class GroupThreadsController extends Controller
         $masjid_id,
         $group_id,
         bool $mayReceiveMedia,
-        $viewerId
+        $viewerId,
+        ?array $signals = null
     ): array {
         $attachments = $message->relationLoaded('attachments') ? $message->attachments : collect();
 
@@ -600,6 +688,11 @@ class GroupThreadsController extends Controller
                 ], static fn ($v) => $v !== null)
                 : null,
             'author_is_parent' => $message->authorIsParent(),
+            // 🤲 👍 💯 ❓ with counts and, for staff, every name; and who has
+            // read this message. Staff see parents' and colleagues' receipts —
+            // see GroupMessageSignals for what a parent is shown instead.
+            'reactions' => $signals['reactions'] ?? [],
+            'read_by' => $signals['read_by'] ?? [],
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }
@@ -624,6 +717,7 @@ class GroupThreadsController extends Controller
             'accepted_image_types' => (array) config('groups.media.mime_types', []),
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_message' => (int) config('groups.media.max_per_post', 0),
+            'reactions' => GroupMessageReaction::catalogue(),
         ];
     }
 

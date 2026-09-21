@@ -1820,3 +1820,45 @@ BISS teacher feedback, applied Manara-wide, teacher realm only.
   (a test compares them). A class figure is the sum of those rows. This is the "teacher's overview … a list of
   per-student rows a leader is already entitled to" that `.claude/rules/groups.md` §1 foresaw; the no-leaderboard
   rule is unchanged: nothing sorts children by points and nothing here reaches a family.
+
+## 2026-09-21 — Reactions and read receipts on teacher ↔ family messages (owner request, Manara-wide)
+
+**Asked:** reactions on messages, exactly 🤲 👍 💯 ❓ (🤲 is the "Ameen"), one of each per
+person per message, toggled; and read receipts both ways — the teacher sees a parent read it,
+the parent sees the teacher read theirs, the office sees read status. Marked read on opening,
+not on listing.
+
+**Shape** — branch `feat/message-reactions`:
+
+- `group_message_reactions` (masjid, message, `reaction` key, `user_id` XOR `contact_id`),
+  two unique keys (one per principal column; NULLs partition them on both drivers). The set is
+  the PHP constant `GroupMessageReaction::REACTIONS`; the server 422s anything else and the
+  model refuses it too. PUT adds, DELETE removes — two idempotent verbs rather than a toggle,
+  so a double tap or a second tab cannot flip the answer back. No notification.
+- **The gate is replying's gate.** Route write gate (`permission:manage contacts` / 
+  `teacher.leads` / family guard) → `mayReceiveThread()` → not closed; the message is resolved
+  through the thread, so another family's message id is a 404 even from a thread you may read.
+- **Receipts are the existing bookmark**, made exact: `group_thread_reads.last_read_message_id`
+  = the newest message the reader was actually served, forward-only. Opening a thread moves it;
+  the list never does. There is deliberately no "mark read" route — only somebody the thread
+  was shown to can move their bookmark.
+- **Who sees whose names** is one class, `App\Support\GroupMessageSignals`: staff see everyone;
+  a parent sees staff names only, other parents' reactions as a count, other parents' reading
+  not at all.
+- **Counted lists:** the family realm's write list grows by two (13 routes) and the teacher
+  realm's by two, both argued in the guard tests. `group_message_reactions.contact_id` is an
+  OFFICE record for account deletion (like `group_thread_reads.contact_id`), and both new
+  message-id columns are `reviewed_keep` in the staging scrub.
+
+**Admin view:** the group's Conversations tab (`GroupThreadsTab.vue`) shows read status under
+every message and lets an admin who may read the thread react. That tab still only opens for
+an admin who is in the group (GroupAudience) — an off-roster admin sees neither the thread nor
+its receipts, unchanged.
+
+**Alternatives rejected:** a per-message receipt table (the bookmark already records it, and
+per-message rows would multiply writes by thread length); timestamps alone (whole seconds, and
+page one of a long thread would "read" the rest); showing parents each other's reads (discloses
+class membership and co-guardian activity); an open emoji picker (owner chose the four).
+
+**Open for the owner:** an office admin who opens a thread shows to the family as "Seen by
+<admin name>" — the office IS the school, but say if only teachers should count.

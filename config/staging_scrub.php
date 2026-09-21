@@ -596,6 +596,8 @@ return [
         'masjid_forms_card_links_log.typed_name' => 'The holder ORGANISATION\'s name as a SuperAdmin typed it to confirm a forms card link — public directory data, like masjids.name. The free-text consent_reference beside it IS anonymised.',
         'masjids.forms_card_via_masjid_id' => 'Another organisation\'s id, not personal data. Kept so a linked child still reads as linked on staging; it cannot charge there, because every masjids.stripe_charges_enabled is forced to 0 above and the resolver fails closed.',
         'masjids.forms_card_via_set_by' => 'An internal users.id, like masjids.updated_by (kept). The user it names is anonymised in `users`.',
+        'group_message_reactions.group_message_id' => 'A foreign key to group_messages, not message text — the token list flags the word "message". The row holds only which of four fixed reaction keys a user/contact chose; the message it points at IS scrubbed in group_messages.',
+        'group_thread_reads.last_read_message_id' => 'A read high-water mark: the id of the newest group_messages row a reader was shown, compared with <=. An integer, not message text.',
         'donation_receipts.serial_number' => 'A GAP-FREE per-masjid sequence allocated by ReceiptService, UNIQUE(masjid_id, serial_number). Never renumber and never delete rows: a hole is something the allocator\'s unique index then fights. The receipt\'s payment_reference IS nulled.',
     ],
 ];

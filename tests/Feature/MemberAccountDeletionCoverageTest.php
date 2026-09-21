@@ -96,6 +96,10 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'donation_subscriptions' => ['contact_id'],
             'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
             'group_messages' => ['author_contact_id'],
+            // 2026-09-21: a parent's reaction in a class conversation. Office
+            // record, like the read bookmark below; only a guardian can write
+            // one, and their guardian edge already keeps the contact.
+            'group_message_reactions' => ['contact_id'],
             'group_thread_reads' => ['contact_id'],
             'group_threads' => ['created_by_contact_id'],
             'meal_orders' => ['contact_id'],

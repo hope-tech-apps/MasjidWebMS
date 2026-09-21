@@ -103,6 +103,11 @@ class MemberAccountDeletion
         // ward, and a ward's record is office data about them too.
         'group_memberships' => ['contact_id', 'guardian_of_contact_id'],
         'group_messages' => ['author_contact_id'],
+        // A parent's 🤲/👍/💯/❓ in a class conversation — part of that
+        // conversation's record, classified like the read bookmark beside it.
+        // Only a guardian can write one, and a guardian's edge already keeps
+        // the contact, so this changes no outcome.
+        'group_message_reactions' => ['contact_id'],
         'group_thread_reads' => ['contact_id'],
         'group_threads' => ['created_by_contact_id'],
         'meal_orders' => ['contact_id'],

@@ -84,11 +84,13 @@ use Illuminate\Support\Facades\Route;
 | request at all. The tenth (2026-09-12) is "Translate to Arabic", and it is the
 | odd one out: it writes nothing about a family at all, only a cache row keyed on
 | a hash, and it is a POST solely because the text a parent wants translated does
-| not fit in a query string. Everything else is a GET. Withdrawing their own
+| not fit in a query string. Two more (2026-09-21) are a
+| reaction on a message in a thread the parent may already reply in, and its
+| removal. Everything else is a GET. Withdrawing their own
 | consent is still T-015h — absent rather than half-built.
 |
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them and fails on an eleventh. Adding a route here without
+| every one of them (thirteen routes since 2026-09-21) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -256,6 +258,21 @@ Route::prefix('family')
                     // Authorised by the same `mayReceiveThread()` the reads use,
                     // and the author comes from the TOKEN, never the payload.
                     Route::post('/{thread_id}/messages', 'storeMessage');
+
+                    // A parent's 🤲 / 👍 / 💯 / ❓ on a message, and taking it
+                    // back (2026-09-21) — two more counted writes. The
+                    // reply's gate exactly: `mayReceiveThread()`, then "not
+                    // closed", with the message found THROUGH the thread and the
+                    // contact from the token. Nothing else: no payload, no
+                    // notification, and only the four keys in
+                    // GroupMessageReaction::REACTIONS.
+                    //
+                    // Marking a thread READ is deliberately NOT a route. It stays
+                    // what it always was — opening the thread (the GET above),
+                    // after the same entitlement check — so a bookmark can only
+                    // ever be moved by somebody the thread was actually shown to.
+                    Route::put('/{thread_id}/messages/{message_id}/reactions/{reaction}', 'react');
+                    Route::delete('/{thread_id}/messages/{message_id}/reactions/{reaction}', 'unreact');
                 });
 
             // Per-CHILD records, addressed by the ward's own participant
