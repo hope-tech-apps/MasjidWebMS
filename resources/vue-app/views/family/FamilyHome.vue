@@ -1,5 +1,5 @@
 <template>
-    <div :dir="dir" :lang="lang">
+    <div :dir="dir" :lang="lang" :data-tx-lang="translatedInto ?? undefined">
         <!-- `flex-wrap`: the translate button carries two languages at once and
              is wide, so on a phone the pair drops below the greeting rather
              than crushing it to one word per line. -->
@@ -29,10 +29,7 @@
                     {{ translationShowing ? tBoth('tr_show_original') : tBoth('tr_translate') }}
                 </button>
 
-                <button type="button" class="btn btn-sm btn-outline-secondary"
-                        :title="t('switch_lang_title')" @click="toggle">
-                    {{ switchLabel }}
-                </button>
+                <FamilyLangPicker />
             </div>
         </div>
 
@@ -162,6 +159,7 @@ import FamilyApiService, { rowsOf } from '@/core/services/FamilyApiService';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
+import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
@@ -171,12 +169,12 @@ import { useRoute, useRouter } from 'vue-router';
 const route = useRoute();
 const router = useRouter();
 const familyStore = useFamilyStore();
-const { lang, isAr, dir, toggle, t, tMessage, tBoth, tMessageBoth, switchLabel } = useFamilyLang();
+const { lang, isRtl, dir, t, tMessage, tBoth, tMessageBoth } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
 const firstName = computed(() => familyStore.contact?.first_name ?? '');
 
-const chevronIcon = computed(() => (isAr.value ? 'bi bi-chevron-left' : 'bi bi-chevron-right'));
+const chevronIcon = computed(() => (isRtl.value ? 'bi bi-chevron-left' : 'bi bi-chevron-right'));
 
 const groups = ref<any[]>([]);
 const loading = ref(true);
@@ -264,6 +262,7 @@ const {
     incomplete: translationIncomplete,
     showOriginal,
     showing: translationShowing,
+    showingLang: translatedInto,
     available: translationAvailable,
     setAvailable: setTranslationAvailable,
     translate,

@@ -46,12 +46,23 @@ return [
     'model' => env('TRANSLATION_MODEL', config('services.anthropic.model')),
 
     /*
-    | The languages a parent may ask for. One today; the request refuses
-    | anything not in this list with a 422 rather than passing an arbitrary
-    | string through to the model, because "translate this into <whatever the
-    | client sent>" is a prompt the caller would be writing.
+    | The languages a parent may ask for. The request refuses anything not in
+    | this list with a 422 rather than passing an arbitrary string through to
+    | the model, because "translate this into <whatever the client sent>" is a
+    | prompt the caller would be writing.
+    |
+    | Arabic since 2026-09-12; Urdu, Pashto, Dari and Spanish added 2026-09-21
+    | at the owner's request. Each tag must ALSO be described in
+    | App\Support\PortalLanguage (its prompt name and its direction) — a tag
+    | listed here and not there is silently not offered, rather than reaching
+    | the model as a bare code. Dari is `fa-AF`, not `prs`: see PortalLanguage
+    | for why. Order is the order the portal's picker lists them in.
+    |
+    | Adding a language multiplies the cache (rows are keyed per target), not
+    | the per-request ceilings below: one request still translates into ONE
+    | language.
     */
-    'languages' => ['ar'],
+    'languages' => ['ar', 'ur', 'ps', 'fa-AF', 'es'],
 
     /*
     | How many strings one request may carry. A screen's worth — a feed post

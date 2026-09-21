@@ -2,18 +2,19 @@
     <div class="d-flex justify-content-center" :dir="dir" :lang="lang">
         <div class="card border-0 shadow-sm w-100" style="max-width: 460px;">
             <div class="card-body p-4">
-                <div class="d-flex justify-content-between align-items-start gap-3 mb-4">
-                    <div>
+                <!-- `flex-wrap` + a floor on the text: the language picker is
+                     wider than the old two-way button, and on a phone the
+                     explanation must not be squeezed into a column of two-word
+                     lines beside it — the picker drops underneath instead. -->
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+                    <div class="flex-grow-1" style="flex-basis: 14rem;">
                         <h1 class="h4 mb-1">{{ t('signin_title') }}</h1>
                         <p class="text-muted small mb-0">{{ t('signin_sub') }}</p>
                     </div>
                     <!-- Same place as on every other screen in this realm. It
                          matters most here: this is the first page a parent who
                          does not read English ever sees. -->
-                    <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0"
-                            :title="t('switch_lang_title')" @click="toggle">
-                        {{ switchLabel }}
-                    </button>
+                    <FamilyLangPicker />
                 </div>
 
                 <!-- Step 1: the address -->
@@ -100,13 +101,14 @@
 <script setup lang="ts">
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
+import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 const route = useRoute();
 const router = useRouter();
 const familyStore = useFamilyStore();
-const { lang, dir, toggle, t, switchLabel } = useFamilyLang();
+const { lang, dir, t } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
 const step = ref<'email' | 'code'>('email');

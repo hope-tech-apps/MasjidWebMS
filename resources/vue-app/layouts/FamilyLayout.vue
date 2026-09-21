@@ -51,6 +51,9 @@
 import { useFamilyStore } from '@/stores/familyStore';
 import FamilyApiService from '@/core/services/FamilyApiService';
 import { useFamilyLang } from '@/views/family/familyI18n';
+// Nastaliq for Urdu. Declared for the whole realm, downloaded only when Urdu is
+// actually on screen — see the file for why that costs other languages nothing.
+import '@/views/family/urduFont.css';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { setOrgTitle } from '@/core/pageTitle';
 import { useRoute, useRouter } from 'vue-router';

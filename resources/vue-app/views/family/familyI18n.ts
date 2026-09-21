@@ -1,7 +1,18 @@
 import { computed, ref } from "vue";
+import { UR } from "@/views/family/locales/ur";
+import { PS } from "@/views/family/locales/ps";
+import { FA_AF } from "@/views/family/locales/fa-AF";
+import { ES } from "@/views/family/locales/es";
 
 /**
- * Bilingual (English / Arabic) layer for the PARENT portal.
+ * The language layer for the PARENT portal: English and Arabic, and since
+ * 2026-09-21 Urdu, Pashto, Dari and Spanish.
+ *
+ * THE FOUR NEWER LANGUAGES ARE MACHINE-DRAFTED. Their tables live one per file
+ * under ./locales/ precisely so that each can carry that warning at its head
+ * and be handed to a fluent reader on its own; until one has been reviewed its
+ * `reviewed` flag in FAMILY_LANGS below stays false. English and Arabic stay in
+ * this file as they were.
  *
  * Modelled on views/lunch/lunchI18n.ts, and for the same reason: the language is
  * a module-level singleton, so the home screen, a class, the sign-in card and
@@ -27,7 +38,72 @@ import { computed, ref } from "vue";
  * rewritten, and the English column is left exactly as it appears on screen
  * today so that turning Arabic on is the only thing this layer changes.
  */
-export type FamilyLang = "en" | "ar";
+export type FamilyLang = "en" | "ar" | "ur" | "ps" | "fa-AF" | "es";
+
+/**
+ * Everything the portal needs to know about one language, in the order the
+ * picker lists them.
+ *
+ * `dir` is the reason this table exists rather than a list of codes: Urdu,
+ * Pashto and Dari are right-to-left like Arabic, and every screen in this realm
+ * lays itself out from `dir` (see the logical-property rules at the foot of
+ * FamilyClass.vue and FamilyLayout.vue), so a wrong flag here is a mirrored
+ * page. App\Support\PortalLanguage holds the server's copy, and
+ * tests/Feature/FamilyLanguagesMirrorTest.php keeps the two in step — keep one
+ * language per line so it can read them.
+ *
+ * `intl` is the locale handed to Intl for dates and weekday names. Every
+ * right-to-left one pins Western digits (`nu-latn`) for the reason the Arabic
+ * one always has — the counts on the same screen arrive from the server as 25,
+ * and one screen in two numeral systems is harder to read than either. Pashto
+ * and Dari also pin the GREGORIAN calendar (`ca-gregory`): CLDR's default for
+ * both is the Solar Hijri calendar, which would print today as "30 Sunbula
+ * 1405" beside a school calendar, a report date and a teacher's "see you on the
+ * 25th" that are all Gregorian.
+ *
+ * Dari is `fa-AF`, not `prs` — the browser itself canonicalises `prs` to
+ * `fa-AF` (`Intl.getCanonicalLocales("prs")`), so `fa-AF` is the one spelling
+ * that survives a round trip. See App\Support\PortalLanguage.
+ */
+export type FamilyLangInfo = {
+    code: FamilyLang;
+    /** The language's name in itself — what a parent who reads only it can find. */
+    label: string;
+    dir: "ltr" | "rtl";
+    intl: string;
+    /** False until a fluent speaker has read the table. */
+    reviewed: boolean;
+};
+
+export const FAMILY_LANGS: FamilyLangInfo[] = [
+    { code: "en", label: "English", dir: "ltr", intl: "en", reviewed: true },
+    { code: "ar", label: "العربية", dir: "rtl", intl: "ar-u-nu-latn", reviewed: true },
+    { code: "ur", label: "اردو", dir: "rtl", intl: "ur-u-ca-gregory-nu-latn", reviewed: false },
+    { code: "ps", label: "پښتو", dir: "rtl", intl: "ps-u-ca-gregory-nu-latn", reviewed: false },
+    { code: "fa-AF", label: "دری", dir: "rtl", intl: "fa-AF-u-ca-gregory-nu-latn", reviewed: false },
+    { code: "es", label: "Español", dir: "ltr", intl: "es", reviewed: false },
+];
+
+const INFO: Record<FamilyLang, FamilyLangInfo> = Object.fromEntries(
+    FAMILY_LANGS.map((info) => [info.code, info]),
+) as Record<FamilyLang, FamilyLangInfo>;
+
+/**
+ * A tag from storage or from the browser, as one of ours — or null.
+ *
+ * Browsers report `ur-PK`, `es-419`, `ps-AF`; Windows reports Dari as `prs-AF`;
+ * an Iranian-Persian reader reports `fa` or `fa-IR`, and Dari is the closest
+ * thing on offer for them. Matching on the primary subtag covers all of it.
+ */
+export function normaliseFamilyLang(tag: unknown): FamilyLang | null {
+    if (typeof tag !== "string") return null;
+
+    const primary = tag.trim().toLowerCase().split(/[-_]/)[0];
+
+    if (primary === "prs" || primary === "fa") return "fa-AF";
+
+    return (["en", "ar", "ur", "ps", "es"] as const).find((code) => code === primary) ?? null;
+}
 
 /**
  * One error or confirmation slot in a view.
@@ -46,7 +122,7 @@ const LANG_KEY = "MANARA_FAMILY_LANG";
 
 function initial(): FamilyLang {
     try {
-        return localStorage.getItem(LANG_KEY) === "ar" ? "ar" : "en";
+        return normaliseFamilyLang(localStorage.getItem(LANG_KEY)) ?? "en";
     } catch {
         return "en";
     }
@@ -54,7 +130,40 @@ function initial(): FamilyLang {
 
 const lang = ref<FamilyLang>(initial());
 
+/**
+ * The language to offer a parent whose portal is still in ENGLISH.
+ *
+ * The translate button and its notices are labelled in two languages at once
+ * (see tBoth) for the parent who has not found the picker. With one other
+ * language that second label was always Arabic; with five, it is the first one
+ * the parent's own browser says it reads, and Arabic when it names none of
+ * ours — which is exactly what this portal did before, for every parent whose
+ * phone is not set to Urdu, Pashto, Dari or Spanish. Read once: a browser's
+ * language list does not change under an open page.
+ */
+function suggestedOther(): Exclude<FamilyLang, "en"> {
+    try {
+        const tags = (navigator.languages?.length ? navigator.languages : [navigator.language]) ?? [];
+
+        for (const tag of tags) {
+            const code = normaliseFamilyLang(tag);
+
+            if (code && code !== "en") return code;
+        }
+    } catch {
+        /* no navigator (SSR, a locked-down webview) — fall through */
+    }
+
+    return "ar";
+}
+
+const suggested = suggestedOther();
+
 const STRINGS: Record<FamilyLang, Record<string, string>> = {
+    ur: UR,
+    ps: PS,
+    "fa-AF": FA_AF,
+    es: ES,
     en: {
         // ------------------------------------------------------------ shared
         switch_lang_title: "Switch language",
@@ -552,7 +661,14 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
 
 export function useFamilyLang() {
     const isAr = computed(() => lang.value === "ar");
-    const dir = computed(() => (isAr.value ? "rtl" : "ltr"));
+
+    /**
+     * Right-to-left — Arabic, Urdu, Pashto or Dari. Anything that points a
+     * direction (a back arrow, a chevron) reads this, never `isAr`: an Urdu
+     * page is laid out exactly like an Arabic one.
+     */
+    const isRtl = computed(() => INFO[lang.value].dir === "rtl");
+    const dir = computed(() => INFO[lang.value].dir);
 
     /**
      * The locale handed to toLocaleDateString.
@@ -564,16 +680,38 @@ export function useFamilyLang() {
      * as 25. One screen showing a date in one numeral system and its counts in
      * another is harder to read than either would be alone.
      */
-    const locale = computed(() => (isAr.value ? "ar-u-nu-latn" : "en"));
+    const locale = computed(() => INFO[lang.value].intl);
 
-    function toggle(): void {
-        lang.value = isAr.value ? "en" : "ar";
+    /** Choose a language; anything that is not one of ours is ignored. */
+    function setLang(next: unknown): void {
+        const code = normaliseFamilyLang(next);
+
+        if (!code) return;
+
+        lang.value = code;
         try {
-            localStorage.setItem(LANG_KEY, lang.value);
+            localStorage.setItem(LANG_KEY, code);
         } catch {
             /* private mode / storage disabled — the in-memory ref still works */
         }
     }
+
+    /**
+     * English and back again. Kept for any screen still carrying the old
+     * two-way button; the five screens use FamilyLangPicker.vue.
+     */
+    function toggle(): void {
+        setLang(lang.value === "en" ? suggested : "en");
+    }
+
+    /**
+     * The language a "Translate" tap asks for: the portal's own language, or —
+     * while the portal is in English — the one the second label names, so the
+     * button always translates into the language written on it.
+     */
+    const translationTarget = computed<Exclude<FamilyLang, "en">>(() =>
+        lang.value === "en" ? suggested : lang.value,
+    );
 
     /** Translate a key for the current language, with a `{x}` interpolation slot. */
     function t(key: string, x?: string): string {
@@ -590,7 +728,12 @@ export function useFamilyLang() {
      * returns exactly today's wording when the portal is in English.
      */
     function tCount(base: string, n: number): string {
-        const suffix = n === 1 ? "one" : n === 2 ? "two" : n >= 3 && n <= 10 ? "few" : "many";
+        // Urdu, Pashto, Dari and Spanish have one form for one and one for the
+        // rest, the same two English has; each table fills all four keys so a
+        // missing one can never fall through to English mid-sentence.
+        const suffix = lang.value !== "ar"
+            ? (n === 1 ? "one" : "many")
+            : n === 1 ? "one" : n === 2 ? "two" : n >= 3 && n <= 10 ? "few" : "many";
         return t(`${base}_${suffix}`, String(n));
     }
 
@@ -615,12 +758,16 @@ export function useFamilyLang() {
      * whichever way round the parent's problem is.
      */
     function tBoth(key: string): string {
-        const ar = STRINGS.ar[key] ?? key;
-        const en = STRINGS.en[key] ?? key;
+        // The current language first, then the other one: English when the
+        // portal is in any other language, and the browser's own language
+        // (Arabic when it names none of ours) when the portal is in English.
+        const other: FamilyLang = lang.value === "en" ? suggested : "en";
+        const here = STRINGS[lang.value][key] ?? STRINGS.en[key] ?? key;
+        const there = STRINGS[other][key] ?? STRINGS.en[key] ?? key;
 
-        if (ar === en) return en;
+        if (here === there) return here;
 
-        return isAr.value ? `${ar} · ${en}` : `${en} · ${ar}`;
+        return `${here} · ${there}`;
     }
 
     /** {@see tMessage}, in both languages. The API's own words pass through as they came. */
@@ -629,8 +776,11 @@ export function useFamilyLang() {
         return m.text ?? (m.key ? tBoth(m.key) : "");
     }
 
-    /** The label shown ON the toggle button (the language it switches TO). */
-    const switchLabel = computed(() => (isAr.value ? "English" : "العربية"));
+    /** The label shown ON the old toggle button (the language it switches TO). */
+    const switchLabel = computed(() => INFO[lang.value === "en" ? suggested : "en"].label);
 
-    return { lang, isAr, dir, locale, toggle, t, tCount, tMessage, tBoth, tMessageBoth, switchLabel };
+    return {
+        lang, isAr, isRtl, dir, locale, setLang, toggle, translationTarget,
+        t, tCount, tMessage, tBoth, tMessageBoth, switchLabel, languages: FAMILY_LANGS,
+    };
 }

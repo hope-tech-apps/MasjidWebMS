@@ -6,10 +6,7 @@
              `catalogue` exist. `justify-content-end` is a flex end, so it
              follows the direction without an override. -->
         <div class="d-flex justify-content-end px-3 pt-3">
-            <button type="button" class="btn btn-sm btn-outline-secondary"
-                    :title="t('switch_lang_title')" @click="toggle">
-                {{ switchLabel }}
-            </button>
+            <FamilyLangPicker />
         </div>
 
         <div v-if="loading" class="text-center py-5"><span class="spinner-border text-success"></span></div>
@@ -84,6 +81,7 @@
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import { useFamilyLang } from '@/views/family/familyI18n';
+import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
@@ -98,7 +96,7 @@ import { useRouter } from 'vue-router';
  * are shown as it sends them — this view translates its own words only.
  */
 const router = useRouter();
-const { lang, dir, toggle, t, switchLabel } = useFamilyLang();
+const { lang, dir, t } = useFamilyLang();
 
 const ctx = StudentApiService.context();
 const loading = ref(true);
