@@ -32,7 +32,7 @@
                  on Bootstrap's JS having initialised. -->
             <div class="d-flex align-items-end gap-2 mb-4 border-bottom position-relative">
                 <ul class="nav nav-tabs flex-nowrap overflow-auto flex-grow-1 border-0">
-                    <li v-for="t in tabs" :key="t.key" class="nav-item">
+                    <li v-for="t in visibleTabs" :key="t.key" class="nav-item">
                         <button type="button" class="nav-link text-nowrap"
                                 :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
                             <i :class="`bi ${t.icon} me-1`"></i>{{ t.label }}
@@ -1712,6 +1712,25 @@ const moreTabs: { key: TabKey; label: string; icon: string }[] = [
 ];
 
 const activeMoreTab = computed(() => moreTabs.find((t) => t.key === activeTab.value) ?? null);
+
+/**
+ * The tab a SUBJECT owns (owner, 2026-09-21): Arabic owns the letters, Qur'an owns
+ * hifdh, and Islamic Studies owns neither. Every other tab belongs to whoever
+ * teaches the class. `group.my_subjects` is null for a teacher who teaches
+ * everything — every assignment before subjects existed, and every full-time
+ * teacher — so for them nothing is hidden.
+ *
+ * This only hides; the server refuses the same routes (`teacher.teaches:`), which
+ * is the actual boundary. A tab shown here that the server refused would be a bug
+ * in this list, not a hole.
+ */
+const SUBJECT_OF_TAB: Partial<Record<TabKey, string>> = { letters: 'arabic', hifz: 'quran' };
+const teachesTab = (key: TabKey): boolean => {
+    const needs = SUBJECT_OF_TAB[key];
+    const mine = group.value?.my_subjects;
+    return !needs || !Array.isArray(mine) || mine.length === 0 || mine.includes(needs);
+};
+const visibleTabs = computed(() => tabs.filter((t) => teachesTab(t.key)));
 
 const moreOpen = ref(false);
 

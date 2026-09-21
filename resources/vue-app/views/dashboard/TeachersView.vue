@@ -221,6 +221,24 @@
                                                 <label class="form-check-label w-100" :for="`class_${option.id}`">
                                                     {{ option.name }}
                                                 </label>
+                                                <!-- WHICH SUBJECTS in this class (owner, 2026-09-21).
+                                                     Only once the class is ticked. None ticked means
+                                                     the whole class — what a full-time teacher is —
+                                                     so an admin who adds a teacher and skips this
+                                                     gets exactly what they always got. -->
+                                                <div v-if="form.class_ids.includes(option.id)"
+                                                     class="d-flex flex-wrap gap-3 ms-4 mt-1 mb-2 small">
+                                                    <div v-for="subj in subjectOptions" :key="subj.value" class="form-check form-check-inline m-0">
+                                                        <input class="form-check-input" type="checkbox"
+                                                               :id="`subj_${option.id}_${subj.value}`"
+                                                               :checked="subjectsFor(option.id).includes(subj.value)"
+                                                               @change="toggleSubject(option.id, subj.value)">
+                                                        <label class="form-check-label" :for="`subj_${option.id}_${subj.value}`">{{ subj.label }}</label>
+                                                    </div>
+                                                    <span class="text-muted">
+                                                        {{ subjectsFor(option.id).length ? '' : 'All subjects' }}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
                                         <div v-if="fieldErrors.class_ids" class="text-danger small mt-1">
@@ -287,7 +305,7 @@
 <script setup lang="ts">
 import { ref, onBeforeMount, computed, watch } from 'vue';
 import PageDataContainer from '@/components/PageDataContainer.vue';
-import { Teacher, TeacherClass, TeacherPayload, TeacherUpdatePayload } from '@/core/types/data/masjid-related/Teacher';
+import { Teacher, TeacherClass, TeacherPayload, TeacherSubject, TeacherUpdatePayload } from '@/core/types/data/masjid-related/Teacher';
 import { Group } from '@/core/types/data/masjid-related/Group';
 import { useTeachersStore } from '@/stores/masjid/teachersStore';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
@@ -339,7 +357,27 @@ const deleting = ref(false);
 /** The row whose invite is being re-sent, so only its button spins. */
 const resendingId = ref<number | null>(null);
 
-const emptyForm = (): TeacherPayload => ({ name: '', email: '', phone: '', class_ids: [] });
+const emptyForm = (): TeacherPayload => ({ name: '', email: '', phone: '', class_ids: [], class_subjects: {} });
+
+/**
+ * The subjects a class assignment can be narrowed to — GroupStaff::SUBJECTS, in
+ * the same order and words. A copy, so it is pinned: TeacherSubjectListTest fails
+ * if the two drift, which is how the hifz quality list rotted for 18 days.
+ */
+const subjectOptions = ref<{ value: TeacherSubject; label: string }[]>([
+    { value: 'quran', label: "Qur'an" },
+    { value: 'arabic', label: 'Arabic' },
+    { value: 'islamic_studies', label: 'Islamic Studies' },
+]);
+const subjectsFor = (classId: number): TeacherSubject[] => form.value.class_subjects?.[classId] ?? [];
+const toggleSubject = (classId: number, subject: TeacherSubject) => {
+    const map = { ...(form.value.class_subjects ?? {}) };
+    const current = new Set(map[classId] ?? []);
+    current.has(subject) ? current.delete(subject) : current.add(subject);
+    // Empty is "all subjects" on the server, so it is sent as null, never [].
+    map[classId] = current.size ? [...current] as TeacherSubject[] : null;
+    form.value.class_subjects = map;
+};
 const form = ref<TeacherPayload>(emptyForm());
 
 // Computed
@@ -416,7 +454,7 @@ const openEditModal = async (teacher: Teacher) => {
     fieldErrors.value = {};
     // Seed name/email from the row so the modal is not empty for the split second
     // before the detail read lands.
-    form.value = { name: teacher.name, email: teacher.email, phone: '', class_ids: [] };
+    form.value = { name: teacher.name, email: teacher.email, phone: '', class_ids: [], class_subjects: {} };
     showFormModal.value = true;
     // Make sure the class options are present to tick.
     if (classOptions.value.length === 0) loadClasses();
@@ -428,8 +466,11 @@ const openEditModal = async (teacher: Teacher) => {
             name: detail.name,
             email: detail.email,
             phone: detail.phone ?? '',
-            class_ids: Array.isArray(detail.class_ids) ? [...detail.class_ids] : []
+            class_ids: Array.isArray(detail.class_ids) ? [...detail.class_ids] : [],
+            // Round-tripped as stored, so saving a renamed teacher keeps what they teach.
+            class_subjects: { ...((detail as any).class_subjects ?? {}) }
         };
+
     } catch (error) {
         // Couldn't pre-fill — close and tell the admin rather than show a stale form.
         showFormModal.value = false;
@@ -478,7 +519,8 @@ const submitForm = async () => {
             const payload: TeacherUpdatePayload = {
                 name: form.value.name,
                 phone: form.value.phone,
-                class_ids: form.value.class_ids
+                class_ids: form.value.class_ids,
+                class_subjects: form.value.class_subjects
             };
             const updated = await teachersStore.updateTeacher(editingId.value, payload);
             closeFormModal();

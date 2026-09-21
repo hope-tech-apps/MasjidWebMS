@@ -48,6 +48,47 @@ class GroupStaff extends Pivot
         self::ROLE_TEACHER,
     ];
 
+    /*
+     * What a teacher may teach in one class (`subjects`, owner 2026-09-21). NULL
+     * means ALL of them — every assignment made before subjects existed, and a
+     * full-time school's teacher who has the whole class.
+     *
+     * Two subjects own a tab of their own, and that tab is refused to a teacher
+     * who does not teach it, on the server (`teacher.teaches:`), not just hidden:
+     * Arabic owns the letters tracker and the daily Arabic notes; Qur'an owns
+     * hifdh. Islamic Studies owns neither. Everything else in a class — roster,
+     * attendance, points, class story, messages, files, lesson plans, grades,
+     * reports — belongs to whoever teaches the class at all.
+     */
+    public const SUBJECT_QURAN = 'quran';
+
+    public const SUBJECT_ARABIC = 'arabic';
+
+    public const SUBJECT_ISLAMIC_STUDIES = 'islamic_studies';
+
+    public const SUBJECTS = [
+        self::SUBJECT_QURAN,
+        self::SUBJECT_ARABIC,
+        self::SUBJECT_ISLAMIC_STUDIES,
+    ];
+
+    public const SUBJECT_LABELS = [
+        self::SUBJECT_QURAN => "Qur'an",
+        self::SUBJECT_ARABIC => 'Arabic',
+        self::SUBJECT_ISLAMIC_STUDIES => 'Islamic Studies',
+    ];
+
+    /**
+     * Whether this assignment covers `$subject`. NULL (or an empty list, which
+     * nothing writes, treated the same so it can never mean "nothing") is all.
+     */
+    public function teaches(string $subject): bool
+    {
+        $subjects = $this->subjects;
+
+        return $subjects === null || $subjects === [] || in_array($subject, $subjects, true);
+    }
+
     /**
      * `assigned_by_user_id` is deliberately NOT fillable — it is a server-derived
      * audit field set from Auth::id() at the assignment call site, never from a
@@ -58,6 +99,7 @@ class GroupStaff extends Pivot
         'group_id',
         'user_id',
         'role',
+        'subjects',
         'assigned_at',
     ];
 
@@ -65,6 +107,7 @@ class GroupStaff extends Pivot
     {
         return [
             'assigned_at' => 'datetime',
+            'subjects' => 'array',
         ];
     }
 }

@@ -114,6 +114,13 @@ Route::prefix('teacher')
 
                         Route::get('/', [TeacherGroupsController::class, 'show']);
 
+                        // ARABIC — the letters tracker and the daily Arabic notes.
+                        // `teacher.teaches:arabic` refuses a teacher whose
+                        // assignment to this class does not include Arabic
+                        // (owner, 2026-09-21: "only access specific to the
+                        // subject they're teaching"). An assignment with no
+                        // subjects recorded teaches everything, as before.
+                        Route::middleware('teacher.teaches:arabic')->group(function () {
                         // Arabic letters (reused; fenced by teacher.leads).
                         Route::get('/letters', [ArabicLettersController::class, 'index']);
                         Route::put('/letters/stage', [ArabicLettersController::class, 'setStage']);
@@ -129,6 +136,7 @@ Route::prefix('teacher')
                         Route::get('/members/{membership_id}/arabic-notes', [ArabicLettersController::class, 'dailyNotes']);
                         Route::put('/members/{membership_id}/arabic-notes', [ArabicLettersController::class, 'saveDailyNote']);
                         Route::delete('/members/{membership_id}/arabic-notes/{note_id}', [ArabicLettersController::class, 'deleteDailyNote']);
+                        }); // teacher.teaches:arabic
 
                         // Behaviour points (reused; GroupAudience grants leader standing).
                         Route::get('/awards', [BehaviorAwardsController::class, 'index']);
@@ -199,11 +207,15 @@ Route::prefix('teacher')
                         Route::get('/resources/{resource_id}/download', [ResourcesController::class, 'download']);
 
                         // Ḥifẓ (reused).
+                        // QUR'AN — hifdh, refused to a teacher who does not teach
+                        // Qur'an in this class (owner, 2026-09-21).
+                        Route::middleware('teacher.teaches:quran')->group(function () {
                         Route::get('/hifz', [HifzEntriesController::class, 'index']);
                         Route::post('/hifz', [HifzEntriesController::class, 'store']);
                         Route::delete('/hifz/{entry_id}', [HifzEntriesController::class, 'destroy']);
                         Route::get('/members/{membership_id}/hifz', [HifzEntriesController::class, 'forMember']);
                         Route::get('/members/{membership_id}/hifz/progress', [HifzEntriesController::class, 'progress']);
+                        }); // teacher.teaches:quran
 
                         // Class story (reused; GroupAudience). No lifecycle beyond CRUD.
                         Route::get('/posts', [GroupPostsController::class, 'index']);

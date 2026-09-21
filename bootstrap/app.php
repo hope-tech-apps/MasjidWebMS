@@ -123,6 +123,7 @@ return Application::configure(basePath: dirname(__DIR__))
             // lookup is scoped to the teacher's school. This is what fences the
             // reused admin controllers to the teacher's own classes.
             'teacher.leads' => \App\Http\Middleware\EnsureTeacherLeadsGroup::class,
+            'teacher.teaches' => \App\Http\Middleware\EnsureTeacherTeachesSubject::class,
             // Binds TenantContext to a MasjidAdmin's masjid; no-op for SuperAdmin
             // and never applied to the public mobile routes. See routes/admin.php.
             'tenant' => ResolveMasjidTenant::class,
