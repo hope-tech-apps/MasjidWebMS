@@ -63,10 +63,16 @@
                     </div>
                 </div>
 
-                <!-- Minutes After Adhan Mode -->
-                <div class="container" v-if="iqamaType === 'minutes_after_adhan'">
+                <!-- Minutes after adhan. Shown in BOTH modes: on Specific Time Ranges these
+                     still decide every prayer on a day no range covers (the cross-platform
+                     rule in tests/fixtures/iqama-resolution.json), so hiding them here let a
+                     save quietly zero them. -->
+                <div class="container">
                     <div class="row justify-content-center">
                         <div class="col-12">
+                            <p v-if="iqamaType === 'specific_time_ranges'" class="text-muted small mb-2">
+                                Minutes after adhan, used for any prayer on a day that no time range below covers.
+                            </p>
                             <div class="table-responsive bg-white">
                                 <table class="table m-0">
                                     <thead>
@@ -256,6 +262,8 @@ const validationSchema = computed(() => {
         // Dynamic validation for time ranges
         const schema: any = {};
         SALAH_KEYS.forEach(salah => {
+            // The fallback offset. 0 is a real setting here ("iqama at the adhan").
+            schema[`${salah}_iqama_setting`] = number().integer().min(0).required().label(`${salah} minutes after adhan`);
             timeRanges.value[salah].forEach((range, index) => {
                 schema[`${salah}_range_${index}_date_range`] = string()
                     .required()
@@ -339,10 +347,11 @@ watch(() => iqamaTimeSetting.value, (newValue) => {
                     const endDate = range.end_date || '';
                     const dateRange = startDate && endDate ? `${startDate} to ${endDate}` : '';
 
-                    // Create Date objects for the picker
+                    // Create Date objects for the picker, at LOCAL midnight. new Date("2026-09-21")
+                    // is UTC midnight, which the picker showed as Sep 20 anywhere west of UTC.
                     let dateRangeArray: Date[] | null = null;
                     if (startDate && endDate) {
-                        dateRangeArray = [new Date(startDate), new Date(endDate)];
+                        dateRangeArray = [parseLocalDate(startDate), parseLocalDate(endDate)];
                     }
 
                     timeRanges.value[range.salah].push({
@@ -389,6 +398,11 @@ const removeTimeRange = (salah: typeof SALAH_KEYS[number], index: number) => {
     timeRanges.value[salah].splice(index, 1);
 }
 
+const parseLocalDate = (ymd: string): Date => {
+    const [y, m, d] = ymd.slice(0, 10).split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
 const formatDate = (date: Date): string => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -426,11 +440,13 @@ const onSubmit = async () => {
                     show_iqama_times: showIqamaTimes.value
                 };
 
-                if (iqamaType.value === 'minutes_after_adhan') {
-                    SALAH_KEYS.forEach(k => {
-                        apiRequestData[k] = settingsModel.value[k as keyof SettingsModel];
-                    });
-                } else {
+                // Offsets go in BOTH modes: on Specific Time Ranges they are the fallback
+                // for days no range covers, and leaving them out used to reset them to 0.
+                SALAH_KEYS.forEach(k => {
+                    apiRequestData[k] = settingsModel.value[k as keyof SettingsModel];
+                });
+
+                if (iqamaType.value === 'specific_time_ranges') {
                     // Prepare time ranges - only include non-empty ranges
                     const allTimeRanges: any[] = [];
                     SALAH_KEYS.forEach(salah => {

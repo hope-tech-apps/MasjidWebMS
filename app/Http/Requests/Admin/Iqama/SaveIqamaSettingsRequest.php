@@ -21,14 +21,23 @@ class SaveIqamaSettingsRequest extends BaseFormRequest
 
     public function rules(): array
     {
+        // On Specific Time Ranges an offset is only the fallback for days no range
+        // covers, and 0 there is a real, stored setting ("iqama at the adhan"):
+        // Burlington and NAFIS Apex both store 0 for Fajr/Dhuhr/Asr. Now that the admin
+        // screen sends the offsets in that mode too, min:1 would refuse their own saved
+        // values. Minutes After Adhan keeps its existing rule.
+        $offset = $this->input('iqama_type') === 'specific_time_ranges'
+            ? 'nullable|integer|min:0'
+            : 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1';
+
         return [
             'iqama_type' => 'required|in:minutes_after_adhan,specific_time_ranges',
             'show_iqama_times' => 'nullable|boolean',
-            'fajr' => 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1',
-            'dhuhr' => 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1',
-            'asr' => 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1',
-            'maghrib' => 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1',
-            'isha' => 'required_if:iqama_type,minutes_after_adhan|nullable|integer|min:1',
+            'fajr' => $offset,
+            'dhuhr' => $offset,
+            'asr' => $offset,
+            'maghrib' => $offset,
+            'isha' => $offset,
             'time_ranges' => 'required_if:iqama_type,specific_time_ranges|nullable|array',
             'time_ranges.*.salah' => 'required|in:fajr,dhuhr,asr,maghrib,isha',
             'time_ranges.*.start_date' => 'required|date',

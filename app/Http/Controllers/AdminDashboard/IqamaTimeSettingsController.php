@@ -27,14 +27,29 @@ class IqamaTimeSettingsController extends Controller
             $masjid = Masjid::findOrFail($masjid_id);
             $iqamaTime = $masjid->iqamaTimeSettings;
 
+            // The five offsets are live in BOTH modes. On Specific Time Ranges, any
+            // prayer with no range covering the day is adhan + its offset (the rule in
+            // tests/fixtures/iqama-resolution.json, implemented by the website, iOS, tvOS
+            // and Android). The admin screen used to send no offsets in that mode, and
+            // this used `?? 0`, so every save there silently put Fajr and Maghrib iqama
+            // ON the adhan for a masjid that runs fixed Dhuhr/Asr/Isha with relative
+            // Fajr/Maghrib. An offset the request does not carry keeps its stored value.
+            $offset = function (string $salah) use ($request, $iqamaTime): int {
+                if ($request->filled($salah)) {
+                    return (int) $request->input($salah);
+                }
+
+                return $iqamaTime ? (int) $iqamaTime->{$salah} : 0;
+            };
+
             $data = [
                 'iqama_type' => $request->input('iqama_type'),
                 'show_iqama_times' => $request->boolean('show_iqama_times', true),
-                'fajr' => $request->input('fajr') ?? 0,
-                'dhuhr' => $request->input('dhuhr') ?? 0,
-                'asr' => $request->input('asr') ?? 0,
-                'maghrib' => $request->input('maghrib') ?? 0,
-                'isha' => $request->input('isha') ?? 0,
+                'fajr' => $offset('fajr'),
+                'dhuhr' => $offset('dhuhr'),
+                'asr' => $offset('asr'),
+                'maghrib' => $offset('maghrib'),
+                'isha' => $offset('isha'),
             ];
 
             if ($iqamaTime) {

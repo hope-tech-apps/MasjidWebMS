@@ -8,6 +8,16 @@ use Carbon\Carbon;
 
 class IqamaTimeSettingResource extends JsonResource
 {
+    /** The masjid's zone, when the caller already has it (see masjidTimezone()). */
+    private ?string $zone = null;
+
+    public function inTimezone(?string $zone): static
+    {
+        $this->zone = $zone;
+
+        return $this;
+    }
+
     /**
      * Transform the resource into an array.
      *
@@ -46,7 +56,7 @@ class IqamaTimeSettingResource extends JsonResource
      */
     private function getSpecificTimeRanges(): array
     {
-        $today = Carbon::today();
+        $today = Carbon::today($this->masjidTimezone());
 
         return [
             'fajr' => $this->getCurrentTimeForSalah('fajr', $today),
@@ -55,6 +65,27 @@ class IqamaTimeSettingResource extends JsonResource
             'maghrib' => $this->getCurrentTimeForSalah('maghrib', $today),
             'isha' => $this->getCurrentTimeForSalah('isha', $today),
         ];
+    }
+
+    /**
+     * The zone "today" is decided in: the masjid's own, as the fixture rule says
+     * ("compared in the masjid's timezone") and as iOS, tvOS and Android already do.
+     *
+     * It used to be the app zone, UTC. For a masjid in New York that turns the date
+     * over at 8 PM EDT (7 PM EST), so on the last day of a range the website served
+     * the NEXT range's time for the whole evening, which is exactly when Isha is
+     * prayed, while every app still showed the right one. An unknown or blank zone
+     * keeps the old behaviour rather than failing the settings payload.
+     */
+    private function masjidTimezone(): string
+    {
+        $zone = (string) ($this->zone ?? $this->resource->masjid?->timezone ?? '');
+
+        if ($zone !== '' && in_array($zone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+            return $zone;
+        }
+
+        return (string) config('app.timezone', 'UTC');
     }
 
     /**
@@ -69,12 +100,17 @@ class IqamaTimeSettingResource extends JsonResource
         // Get all time ranges for this salah
         $timeRanges = $this->timeRanges->where('salah', $salah);
 
-        // Find the time range that includes today's date
-        $currentRange = $timeRanges->first(function ($range) use ($today) {
-            $startDate = Carbon::parse($range->start_date);
-            $endDate = Carbon::parse($range->end_date);
+        // Find the time range that includes today's date. Compared as Y-m-d strings,
+        // both bounds inclusive: `today` is midnight in the MASJID's zone while the
+        // stored dates parse as midnight in the app zone, so comparing instants would
+        // drop the last day of every range for any masjid west of UTC.
+        $day = $today->format('Y-m-d');
 
-            return $today->between($startDate, $endDate);
+        $currentRange = $timeRanges->first(function ($range) use ($day) {
+            $startDate = Carbon::parse($range->start_date)->format('Y-m-d');
+            $endDate = Carbon::parse($range->end_date)->format('Y-m-d');
+
+            return $startDate <= $day && $day <= $endDate;
         });
 
         if (!$currentRange) {

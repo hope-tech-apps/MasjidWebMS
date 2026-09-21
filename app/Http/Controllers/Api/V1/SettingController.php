@@ -101,7 +101,11 @@ class SettingController extends Controller
                     'icon_url' => $feature->icon->original_url ?? null,
                 ];
             })->values(),
-            'iqama_settings' => $masjid->iqamaTimeSettings ? new IqamaTimeSettingResource($masjid->iqamaTimeSettings) : null,
+            // The resource decides "today" in the masjid's own zone; hand it the zone we
+            // already hold rather than have it load the masjid again.
+            'iqama_settings' => $masjid->iqamaTimeSettings
+                ? (new IqamaTimeSettingResource($masjid->iqamaTimeSettings))->inTimezone($masjid->timezone)
+                : null,
             'jumaa_settings' => $this->getJumaaSettings(),
         ];
 
