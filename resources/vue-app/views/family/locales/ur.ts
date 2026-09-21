@@ -242,4 +242,9 @@ export const UR: Record<string, string> = {
     reaction_hundred: "100",
     reaction_question: "سوال",
     reaction_failed: "یہ ردِعمل محفوظ نہیں ہو سکا۔",
+    // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
+    marks_section_simple: "بہترین / اچھا / مزید محنت درکار",
+    simple_mark_3: "بہترین",
+    simple_mark_2: "اچھا",
+    simple_mark_1: "مزید محنت درکار",
 };

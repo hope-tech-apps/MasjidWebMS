@@ -242,4 +242,9 @@ export const ES: Record<string, string> = {
     reaction_hundred: "100",
     reaction_question: "Pregunta",
     reaction_failed: "No se pudo guardar la reacción.",
+    // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
+    marks_section_simple: "Excelente / Bien / Necesita mejorar",
+    simple_mark_3: "Excelente",
+    simple_mark_2: "Bien",
+    simple_mark_1: "Necesita mejorar",
 };

@@ -242,4 +242,9 @@ export const FA_AF: Record<string, string> = {
     reaction_hundred: "100",
     reaction_question: "سوال",
     reaction_failed: "این واکنش ذخیره نشد.",
+    // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
+    marks_section_simple: "عالی / خوب / نیاز به تلاش بیشتر",
+    simple_mark_3: "عالی",
+    simple_mark_2: "خوب",
+    simple_mark_1: "نیاز به تلاش بیشتر",
 };

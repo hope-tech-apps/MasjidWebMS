@@ -242,4 +242,9 @@ export const PS: Record<string, string> = {
     reaction_hundred: "100",
     reaction_question: "پوښتنه",
     reaction_failed: "دا غبرگون خوندي نه شو.",
+    // Three-word marking scale (2026-09-21) — machine-drafted like the rest.
+    marks_section_simple: "ډېر ښه / ښه / لا کار ته اړتیا لري",
+    simple_mark_3: "ډېر ښه",
+    simple_mark_2: "ښه",
+    simple_mark_1: "لا کار ته اړتیا لري",
 };
