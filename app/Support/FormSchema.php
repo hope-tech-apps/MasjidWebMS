@@ -223,7 +223,11 @@ class FormSchema
                     // set must refuse every answer, never switch the check off.
                     $rules[] = FormOptionSources::rule($values);
                 } elseif ($values !== []) {
-                    $rules[] = 'in:' . implode(',', $values);
+                    // Rule::in, never an 'in:' string: Laravel splits that string on
+                    // commas, so an option like "Yes, reach out to me" became two
+                    // values and could never be submitted (the 422 read "The
+                    // selected … is invalid"). Same reason memberRules() uses it.
+                    $rules[] = Rule::in($values);
                 }
                 break;
 
