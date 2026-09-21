@@ -1830,3 +1830,13 @@ Switching language drops translations already on screen rather than re-buying th
 Pinned by `FamilyTranslationTest` (accept ×5 with dir + prompt name, refuse ×10 near-misses,
 undescribed/withdrawn config tags) and `FamilyLanguagesMirrorTest` (TS↔PHP direction and order,
 key coverage, `{x}` slots, the MACHINE-DRAFTED banner, religious terms kept).
+
+**Follow-up, same day — owner: "Yes add Nastaliq, and Dari is fine."** Browsers set to `fa`/`fa-IR`
+keep being offered Dari. Urdu gets Noto Nastaliq Urdu (OFL 1.1), self-hosted from
+`@fontsource/noto-nastaliq-urdu` so it rides `font-src 'self'` and no parent's IP goes to a font CDN.
+Only the Arabic-script subset at weight 400 (159 KB woff2; the 212 KB woff is emitted as a fallback
+but modern browsers never fetch it); no bold, `font-synthesis: none`. Named only under `:lang(ur)`
+and `[data-tx-lang="ur"]` (set by FamilyClass/FamilyHome while an Urdu translation is showing, so an
+English portal translating into Urdu gets it too), so no other language downloads it. Staff text shown
+as written and the Arabic letter chips (`lang="ar"`) keep the ordinary face inside an Urdu page.
+Pinned by `FamilyUrduFontTest`.

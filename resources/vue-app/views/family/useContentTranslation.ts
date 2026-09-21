@@ -264,6 +264,14 @@ export function useContentTranslation(
     /** True when the screen is currently displaying translated text. */
     const showing = computed(() => hasTranslations.value && !showOriginal.value);
 
+    /**
+     * The language staff text is being SHOWN in right now, or null while the
+     * school's own words are showing. The views put it on their root as
+     * `data-tx-lang`, which is how urduFont.css draws a translation into Urdu
+     * in Nastaliq even when the portal around it is in English.
+     */
+    const showingLang = computed<string | null>(() => (showing.value ? target.value : null));
+
     /** True when something on screen is still in the language it was written in. */
     const incomplete = computed(() => unresolved.value.size > 0);
 
@@ -607,6 +615,7 @@ export function useContentTranslation(
         showOriginal,
         hasTranslations,
         showing,
+        showingLang,
         available,
         setAvailable,
         translate,

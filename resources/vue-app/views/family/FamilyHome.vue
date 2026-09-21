@@ -1,5 +1,5 @@
 <template>
-    <div :dir="dir" :lang="lang">
+    <div :dir="dir" :lang="lang" :data-tx-lang="translatedInto ?? undefined">
         <!-- `flex-wrap`: the translate button carries two languages at once and
              is wide, so on a phone the pair drops below the greeting rather
              than crushing it to one word per line. -->
@@ -262,6 +262,7 @@ const {
     incomplete: translationIncomplete,
     showOriginal,
     showing: translationShowing,
+    showingLang: translatedInto,
     available: translationAvailable,
     setAvailable: setTranslationAvailable,
     translate,

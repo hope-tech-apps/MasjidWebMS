@@ -1,0 +1,112 @@
+/*
+ * Nastaliq for Urdu — and for Urdu only.
+ *
+ * Owner, 2026-09-21: "Yes add Nastaliq." Urdu readers read Nastaliq; the
+ * Naskh a phone falls back to for Arabic script reads to them the way a
+ * typewriter face reads to an English reader of handwriting-shaped print.
+ * Pashto and Dari are NOT given it (they are written in Naskh), and nor is
+ * Arabic.
+ *
+ * SELF-HOSTED, from @fontsource/noto-nastaliq-urdu (Noto Nastaliq Urdu, SIL
+ * Open Font License 1.1 — the licence travels in node_modules/@fontsource/
+ * noto-nastaliq-urdu/LICENSE). Vite copies the file into public/build, so it is
+ * served from this app's own origin: the CSP's `font-src 'self'` already allows
+ * it (app/Http/Middleware/SecurityHeaders.php), and no parent's IP address is
+ * handed to a font CDN for opening the portal in Urdu.
+ *
+ * ONLY THE ARABIC-SCRIPT SUBSET, WEIGHT 400 (≈156 KB woff2). Latin text on an
+ * Urdu page — a child's name, an email address — keeps the app's own face,
+ * because the @font-face below covers only the Arabic blocks (unicode-range)
+ * and the browser falls through to the next family for everything else. No
+ * bold weight is shipped: Nastaliq headings are conventionally set by size,
+ * and a second ~155 KB file for semibold labels is not worth a phone's data.
+ * `font-synthesis: none` stops the browser smearing a fake bold instead.
+ *
+ * NOTHING IS DOWNLOADED UNTIL IT IS USED. A browser fetches a @font-face only
+ * when an element that is actually rendered names the family AND contains a
+ * character in its unicode-range. The family is named only under `:lang(ur)`
+ * and under `[data-tx-lang="ur"]`, so a parent reading in English, Arabic,
+ * Pashto, Dari or Spanish never pays for it. `font-display: swap` (set by
+ * fontsource) shows the fallback until it lands.
+ *
+ * TWO KINDS OF TEXT, TWO RULES:
+ *   - The portal's own words, in an Urdu portal: every element under the
+ *     `lang="ur"` root each screen already sets.
+ *   - What a teacher wrote, TRANSLATED into Urdu: the views put
+ *     `data-tx-lang="ur"` on their root while an Urdu translation is showing,
+ *     and staff text is always fenced with dir="auto". That covers an English
+ *     portal whose Translate button targets Urdu too.
+ *   Staff text shown AS WRITTEN keeps the ordinary face even in an Urdu
+ *   portal: a teacher's Arabic, or a du'a they quoted, is not Urdu and must not
+ *   be drawn as if it were. So are the Arabic letter chips (they carry
+ *   lang="ar").
+ *
+ * NASTALIQ IS TALL. Its ascenders and descenders run well outside the box a
+ * Latin face is designed for, so every place that sets a tight line box —
+ * Bootstrap's buttons, badges, pills, selects, and anything with overflow
+ * hidden such as .text-truncate — clips it unless given room. The numbers
+ * below were set by eye in the browser at 375px and desktop.
+ *
+ * tests/Feature/FamilyUrduFontTest.php pins that every rule naming the font is
+ * scoped to Urdu.
+ */
+@import "@fontsource/noto-nastaliq-urdu/arabic-400.css";
+
+:lang(ur) {
+    font-family: "Noto Nastaliq Urdu", "Poppins", system-ui, sans-serif;
+    font-synthesis: none;
+    line-height: 2.1;
+}
+
+/* Tight line boxes that would clip. */
+:lang(ur) .btn,
+:lang(ur) .form-select,
+:lang(ur) .form-control,
+:lang(ur) .nav-link,
+:lang(ur) .badge,
+:lang(ur) .alert {
+    line-height: 2;
+}
+
+:lang(ur) .btn-sm,
+:lang(ur) .form-select-sm {
+    padding-top: 0.1rem;
+    padding-bottom: 0.2rem;
+}
+
+:lang(ur) h1,
+:lang(ur) h2,
+:lang(ur) h3,
+:lang(ur) .h4,
+:lang(ur) .h5,
+:lang(ur) .h6 {
+    line-height: 2;
+}
+
+/* overflow: hidden cuts whatever leaves the line box. */
+:lang(ur) .text-truncate {
+    line-height: 2.2;
+    padding-block: 0.1em;
+}
+
+/* What the school wrote, as written: the ordinary face, even in Urdu. */
+:lang(ur) [dir="auto"],
+:lang(ur) :lang(ar) {
+    font-family: "Poppins", system-ui, sans-serif;
+    line-height: 1.6;
+}
+
+/* …unless it is showing translated INTO Urdu, in either portal language. */
+[data-tx-lang="ur"] [dir="auto"] {
+    font-family: "Noto Nastaliq Urdu", "Poppins", system-ui, sans-serif;
+    font-synthesis: none;
+    line-height: 2.1;
+}
+
+/* Names are fenced with dir="auto" too; an Urdu translation leaves them Latin,
+   and the unicode-range fall-through keeps them in the app's face. The Arabic
+   letter chips are never Urdu, whatever is showing. */
+[data-tx-lang="ur"] :lang(ar) {
+    font-family: "Poppins", system-ui, sans-serif;
+    line-height: 1.6;
+}

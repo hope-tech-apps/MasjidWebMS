@@ -1,5 +1,5 @@
 <template>
-    <div :dir="dir" :lang="lang">
+    <div :dir="dir" :lang="lang" :data-tx-lang="translatedInto ?? undefined">
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
             <!-- An arrow is a direction. "Back" points at the start of the line,
                  which is the left in English and the right in Arabic, so the
@@ -393,7 +393,8 @@
                                      hijāʾī order runs right to left whichever way
                                      the chrome is pointing, and A–Z runs the other
                                      way in an Arabic portal just the same. -->
-                                <div class="d-flex flex-wrap gap-1 mt-2" :dir="track.direction">
+                                <div class="d-flex flex-wrap gap-1 mt-2" :dir="track.direction"
+                                     :lang="track.alphabet === 'arabic' ? 'ar' : 'en'">
                                     <span v-for="l in track.letters" :key="l.id"
                                           class="letter-chip"
                                           :class="[`letter-chip--${l.status}`, { 'letter-chip--pair': l.glyph?.length > 1 }]"
@@ -411,7 +412,7 @@
                                     <div class="small fw-semibold mt-2">{{ t('arabic_letter_notes') }}</div>
                                     <ul class="list-unstyled small mb-0">
                                         <li v-for="n in drillNotes(track)" :key="n.drill.id" class="mt-1">
-                                            <span :dir="track.direction" class="fw-semibold">{{ n.letter.glyph }}</span>
+                                            <span :dir="track.direction" :lang="track.alphabet === 'arabic' ? 'ar' : 'en'" class="fw-semibold">{{ n.letter.glyph }}</span>
                                             <span class="text-muted" dir="ltr"> {{ n.drill.label }}</span>
                                             <div class="fst-italic" dir="auto">
                                                 {{ txDrillNote(child, track, n.drill) }}
@@ -1657,6 +1658,7 @@ const {
     incomplete: translationIncomplete,
     showOriginal,
     showing: translationShowing,
+    showingLang: translatedInto,
     hasTranslations: hasTranslated,
     available: translationAvailable,
     setAvailable: setTranslationAvailable,
