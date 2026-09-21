@@ -31,7 +31,7 @@
                  component state rather than data-bs-toggle, so it cannot depend
                  on Bootstrap's JS having initialised. -->
             <div class="d-flex align-items-end gap-2 mb-4 border-bottom position-relative">
-                <ul class="nav nav-tabs flex-nowrap overflow-auto flex-grow-1 border-0">
+                <ul class="nav nav-tabs flex-nowrap overflow-auto flex-grow-1 border-0 tc-tabs">
                     <li v-for="t in visibleTabs" :key="t.key" class="nav-item">
                         <button type="button" class="nav-link text-nowrap"
                                 :class="{ active: activeTab === t.key }" @click="activeTab = t.key">
@@ -96,7 +96,7 @@
 
             <!-- ================================================= ATTENDANCE -->
             <section v-else-if="activeTab === 'attendance'">
-                <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+                <div class="d-flex flex-wrap align-items-end gap-2 mb-3 tc-att-toolbar">
                     <div>
                         <label class="form-label small mb-1">Day</label>
                         <input type="date" class="form-control form-control-sm" style="width: 170px"
@@ -140,7 +140,7 @@
 
                     <div class="list-group mb-3">
                         <div v-for="s in students" :key="s.membership_id"
-                             class="list-group-item d-flex align-items-center gap-3 flex-wrap">
+                             class="list-group-item d-flex align-items-center gap-3 flex-wrap tc-att-row">
                             <PersonAvatar :avatar="s.contact?.avatar"
                                           :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="36" />
                             <div class="flex-grow-1">
@@ -163,7 +163,7 @@
                         </div>
                     </div>
 
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 tc-att-save">
                         <button class="btn btn-success btn-sm" :disabled="attSaving || !markedCount"
                                 @click="saveAttendance">
                             <i class="bi bi-save me-1"></i>
@@ -203,7 +203,7 @@
                              otherwise: the ladder belongs to the qāʿidah, and
                              setting it from an English screen would move the
                              class's ARABIC denominator. -->
-                        <div v-if="stageOptions.length > 1" class="d-flex align-items-center gap-2">
+                        <div v-if="stageOptions.length > 1" class="d-flex align-items-center gap-2 tc-stage-picker">
                             <label class="small text-muted mb-0">This class is on</label>
                             <select class="form-select form-select-sm" style="width:auto"
                                     :value="currentStageId" :disabled="savingStage"
@@ -896,7 +896,7 @@
                     </div>
                     <div class="card-body d-flex flex-column gap-3">
                         <div v-for="m in openedMessages" :key="m.id"
-                             :class="m.is_mine ? 'align-self-end text-end' : ''" style="max-width: 85%;">
+                             :class="m.is_mine ? 'align-self-end text-end' : ''" class="tc-bubble" style="max-width: 85%;">
                             <div class="text-muted small">
                                 {{ m.is_mine ? 'You' : (m.author?.name || 'Guardian') }} · {{ when(m.created_at) }}
                             </div>
@@ -3946,3 +3946,7 @@ watch(activeTab, (tab) => {
 .drill--mastered { background: rgba(25, 135, 84, .10); }
 .drill--learning { background: rgba(255, 193, 7, .10); }
 </style>
+
+<!-- The phone layout, in its own file so it can change without touching the
+     template above. Scoped like the block before it. -->
+<style scoped src="./TeacherClass.phone.css"></style>
