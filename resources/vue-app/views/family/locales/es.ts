@@ -232,4 +232,14 @@ export const ES: Record<string, string> = {
     mark_missing: "No entregado",
     mark_excused: "Exento",
     marks_truncated: "Se muestran los {x} más recientes.",
+    // Reactions and read receipts (2026-09-21) — machine-drafted like the rest.
+    seen_by: "Visto por {x}",
+    not_seen: "Aún no visto",
+    reaction_others: "{n} más",
+    reactions_group: "Reacciones",
+    reaction_ameen: "Ameen",
+    reaction_thumbs_up: "Me gusta",
+    reaction_hundred: "100",
+    reaction_question: "Pregunta",
+    reaction_failed: "No se pudo guardar la reacción.",
 };

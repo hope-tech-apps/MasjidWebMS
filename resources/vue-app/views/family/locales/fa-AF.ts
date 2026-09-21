@@ -232,4 +232,14 @@ export const FA_AF: Record<string, string> = {
     mark_missing: "تحویل داده نشده",
     mark_excused: "معاف",
     marks_truncated: "آخرین {x} مورد نمایش داده می‌شود.",
+    // Reactions and read receipts (2026-09-21) — machine-drafted like the rest.
+    seen_by: "دیده شده توسط {x}",
+    not_seen: "هنوز دیده نشده",
+    reaction_others: "{n} نفر دیگر",
+    reactions_group: "واکنش‌ها",
+    reaction_ameen: "آمین",
+    reaction_thumbs_up: "عالی",
+    reaction_hundred: "100",
+    reaction_question: "سوال",
+    reaction_failed: "این واکنش ذخیره نشد.",
 };

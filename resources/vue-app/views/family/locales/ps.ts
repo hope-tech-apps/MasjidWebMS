@@ -232,4 +232,14 @@ export const PS: Record<string, string> = {
     mark_missing: "نه دی سپارل شوی",
     mark_excused: "معاف",
     marks_truncated: "وروستي {x} ښودل کېږي.",
+    // Reactions and read receipts (2026-09-21) — machine-drafted like the rest.
+    seen_by: "{x} ولیدل",
+    not_seen: "تر اوسه نه دی لیدل شوی",
+    reaction_others: "{n} نور",
+    reactions_group: "غبرگونونه",
+    reaction_ameen: "آمین",
+    reaction_thumbs_up: "ښه",
+    reaction_hundred: "100",
+    reaction_question: "پوښتنه",
+    reaction_failed: "دا غبرگون خوندي نه شو.",
 };

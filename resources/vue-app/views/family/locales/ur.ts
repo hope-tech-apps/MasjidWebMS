@@ -232,4 +232,14 @@ export const UR: Record<string, string> = {
     mark_missing: "جمع نہیں کرایا",
     mark_excused: "معاف",
     marks_truncated: "تازہ ترین {x} دکھائے جا رہے ہیں۔",
+    // Reactions and read receipts (2026-09-21) — machine-drafted like the rest.
+    seen_by: "{x} نے دیکھ لیا",
+    not_seen: "ابھی نہیں دیکھا گیا",
+    reaction_others: "{n} مزید",
+    reactions_group: "ردِعمل",
+    reaction_ameen: "آمین",
+    reaction_thumbs_up: "بہت خوب",
+    reaction_hundred: "100",
+    reaction_question: "سوال",
+    reaction_failed: "یہ ردِعمل محفوظ نہیں ہو سکا۔",
 };
