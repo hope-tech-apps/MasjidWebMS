@@ -8,6 +8,10 @@
 
         <div class="card-body w-100">
             <div class="d-flex flex-column gap-4">
+                <div v-if="loadState === 'failed'" class="alert alert-danger mb-0" role="alert">
+                    Could not load this organisation's iqama settings, so saving is turned off. Reload the page to try again.
+                </div>
+
                 <!-- Iqama Type Selection -->
                 <div class="container">
                     <div class="row">
@@ -82,7 +86,13 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <template v-if="iqamaTimeSetting">
+                                        <!-- Rendered once the GET has answered, INCLUDING when it answered
+                                             "no row yet" (data: null). The schema requires these fields in
+                                             both modes, and vee-validate counts a schema path with no
+                                             rendered field as invalid, so gating them on the row itself
+                                             made Save do nothing, silently, for an organisation with no
+                                             iqama row. -->
+                                        <template v-if="loadState === 'ready'">
                                             <tr v-for="key in SALAH_KEYS" :key="key" class="border-0">
                                                 <td class="border-0 text-capitalize">
                                                     {{ key }}
@@ -185,7 +195,7 @@
         </div>
 
         <div class="card-footer bg-white border-0 d-flex justify-content-end">
-            <LoadingButton type="submit" :is-loading="isLoading" classes="btn btn-success">
+            <LoadingButton v-if="loadState !== 'failed'" type="submit" :is-loading="isLoading || loadState === 'loading'" classes="btn btn-success">
                 Save Changes
             </LoadingButton>
         </div>
@@ -247,6 +257,10 @@ const SALAH_KEYS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const;
 const isLoading = ref<boolean>(false);
 const iqamaType = ref<IqamaType>('minutes_after_adhan');
 const showIqamaTimes = ref<boolean>(true);
+// 'loading' until the GET answers; 'ready' once it has, with the row or with null for an
+// organisation that has none yet (the first Save creates it); 'failed' if it could not be
+// read, in which case saving is off, so defaults are never saved over settings we could not see.
+const loadState = ref<'loading' | 'ready' | 'failed'>('loading');
 
 // Form
 const validationSchema = computed(() => {
@@ -371,17 +385,25 @@ watch(() => iqamaTimeSetting.value, (newValue) => {
 
 // Functions
 const fetchIqamaSettings = async () => {
-    if (masjidStore.masjid?.id) {
-        await ApiService.get(`/api/admin/masjids/${masjidStore.masjid.id}/iqama`)
-            .then(res => {
-                if (res.data?.status === 'success' && res.data?.data) {
+    if (!masjidStore.masjid?.id) {
+        loadState.value = 'failed';
+        return;
+    }
+    await ApiService.get(`/api/admin/masjids/${masjidStore.masjid.id}/iqama`)
+        .then(res => {
+            if (res.data?.status === 'success') {
+                if (res.data?.data) {
                     iqamaTimeSetting.value = res.data.data;
                 }
-            })
-            .catch((e: AxiosError) => {
-                console.log('Get iqama setting error: \n', e);
-            });
-    }
+                loadState.value = 'ready';
+            } else {
+                loadState.value = 'failed';
+            }
+        })
+        .catch((e: AxiosError) => {
+            console.log('Get iqama setting error: \n', e);
+            loadState.value = 'failed';
+        });
 }
 
 const addTimeRange = (salah: typeof SALAH_KEYS[number]) => {
@@ -429,6 +451,9 @@ const updateDateRange = (salah: typeof SALAH_KEYS[number], index: number) => {
 }
 
 const onSubmit = async () => {
+    if (loadState.value !== 'ready') {
+        return;
+    }
     isLoading.value = true;
     QSwal.fire("Question", 'Change iqama settings?', 'question')
         .then(async (result) => {
