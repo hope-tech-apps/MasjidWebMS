@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Family;
 use App\Http\Requests\Family\TranslateContentRequest;
 use App\Services\Translation\TranslationUnavailableException;
 use App\Services\Translation\Translator;
+use App\Support\PortalLanguage;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * "Translate to Arabic", over whatever a parent is looking at.
+ * "Translate", over whatever a parent is looking at — into Arabic, Urdu,
+ * Pashto, Dari or Spanish (App\Support\PortalLanguage).
  *
  * Parents at Al-Razi do not all read English and their teachers write in it, so
  * a class story, a message from a teacher and a report-card comment are all
@@ -134,6 +136,12 @@ class TranslationsController extends FamilyController
             'status' => 'success',
             'data' => [
                 'target' => $target,
+                // Which way the translated text runs. Urdu, Pashto and Dari are
+                // right-to-left like Arabic and Spanish is not; the portal fences
+                // staff text with dir="auto" already, but a client rendering the
+                // translation in a block of its own should not have to keep a
+                // second copy of this table to lay it out.
+                'dir' => PortalLanguage::dir($target),
                 // Cast to an object so the shape is a MAP whatever the keys are.
                 // PHP turns the array key "0" into the integer 0, so a client
                 // that keys its paragraphs by index would get back a JSON ARRAY

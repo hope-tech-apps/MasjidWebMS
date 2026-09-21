@@ -7,10 +7,7 @@
                 <i :class="backIcon"></i>{{ t('cal_back') }}
             </router-link>
 
-            <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0"
-                    :title="t('switch_lang_title')" @click="toggle">
-                {{ switchLabel }}
-            </button>
+            <FamilyLangPicker />
         </div>
 
         <h1 class="h4 mb-1">{{ t('cal_title') }}</h1>
@@ -103,6 +100,7 @@ import {
 } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
+import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -120,10 +118,10 @@ import { useRoute, useRouter } from 'vue-router';
 const route = useRoute();
 const router = useRouter();
 const familyStore = useFamilyStore();
-const { lang, isAr, dir, locale, toggle, t, tMessage, switchLabel } = useFamilyLang();
+const { lang, isRtl, dir, locale, t, tMessage } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
-const backIcon = computed(() => (isAr.value ? 'bi bi-arrow-right' : 'bi bi-arrow-left'));
+const backIcon = computed(() => (isRtl.value ? 'bi bi-arrow-right' : 'bi bi-arrow-left'));
 
 const calendar = ref<SchoolCalendarReadPayload | null>(null);
 const loading = ref(true);

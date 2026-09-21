@@ -30,10 +30,7 @@
                     {{ translationShowing ? tBoth('tr_show_original') : tBoth('tr_translate') }}
                 </button>
 
-                <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0"
-                        :title="t('switch_lang_title')" @click="toggle">
-                    {{ switchLabel }}
-                </button>
+                <FamilyLangPicker />
             </div>
         </div>
 
@@ -861,6 +858,7 @@ import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
+import FamilyLangPicker from '@/views/family/FamilyLangPicker.vue';
 import type { FamilyMessage } from '@/views/family/familyI18n';
 import { useContentTranslation } from '@/views/family/useContentTranslation';
 import type { TranslatableItem } from '@/views/family/useContentTranslation';
@@ -870,7 +868,7 @@ import { useRoute, useRouter } from 'vue-router';
 const route = useRoute();
 const router = useRouter();
 const familyStore = useFamilyStore();
-const { lang, isAr, dir, locale, toggle, t, tCount, tMessage, tBoth, tMessageBoth, switchLabel } = useFamilyLang();
+const { lang, isRtl, dir, locale, t, tCount, tMessage, tBoth, tMessageBoth } = useFamilyLang();
 
 const masjidId = computed(() => String(route.params.masjidId));
 const groupId = computed(() => String(route.params.groupId));
@@ -885,9 +883,9 @@ const base = computed(() => `/api/family/masjids/${masjidId.value}/groups/${grou
  * points at the start of the line, a chevron points at the screen it opens, and
  * a range arrow runs the way the reader reads.
  */
-const backIcon = computed(() => (isAr.value ? 'bi bi-arrow-right' : 'bi bi-arrow-left'));
-const chevronIcon = computed(() => (isAr.value ? 'bi bi-chevron-left' : 'bi bi-chevron-right'));
-const rangeArrow = computed(() => (isAr.value ? '←' : '→'));
+const backIcon = computed(() => (isRtl.value ? 'bi bi-arrow-right' : 'bi bi-arrow-left'));
+const chevronIcon = computed(() => (isRtl.value ? 'bi bi-chevron-left' : 'bi bi-chevron-right'));
+const rangeArrow = computed(() => (isRtl.value ? '←' : '→'));
 
 const group = ref<any>(null);
 const posts = ref<any[]>([]);

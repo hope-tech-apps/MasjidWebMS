@@ -1798,3 +1798,35 @@ One live link per person across both tables.
 **Alternatives rejected:** keep 60 min (the 2026-09-17 answer — superseded); raise the shared
 expiry (lengthens every reset); a `kind` column on the shared table (every reader would have
 to honour it, and one that forgot would accept a reset as an invite).
+
+## 2026-09-21 — Parent portal: Urdu, Pashto, Dari and Spanish beside Arabic (labels machine-drafted)
+
+Owner: "Add them, portal labels too." Two surfaces, both extended:
+
+- **Content translation** (the Translate button over what teachers write):
+  `config('translation.languages')` is now `['ar','ur','ps','fa-AF','es']`, and a tag is only
+  offered if `App\Support\PortalLanguage` also describes it (prompt name + direction) — an
+  operator who lists an undescribed tag gets a 422, not a bare code in the prompt. The response
+  now carries `data.dir`. The prompt keeps Qur'anic/du'a Arabic verbatim and adds no honorifics.
+  The cache is keyed per target, so each extra language is a separate purchase per paragraph.
+- **Portal labels**: one file per new locale under `resources/vue-app/views/family/locales/`,
+  every one headed **MACHINE-DRAFTED, not reviewed by a fluent speaker**, with
+  `reviewed: false` in `FAMILY_LANGS`. A native `<select>` (`FamilyLangPicker.vue`, endonyms)
+  replaces the English/العربية toggle on the five screens.
+
+**Dari is `fa-AF`, not `prs`.** `prs` is the ISO 639-3 code and Windows' locale, but CLDR aliases
+it: `Intl.getCanonicalLocales('prs')` → `fa-AF` in browsers and Node, so a stored `prs` would be
+rewritten by the date formatter and reach the cache as a second tag for one language. The client
+normalises `prs`/`prs-AF`/`fa*` to `fa-AF`; the server accepts only `fa-AF`.
+
+**Dates:** every RTL locale pins Western digits (`nu-latn`), as Arabic always did; Pashto and Dari
+also pin `ca-gregory`, because CLDR's default for both is the Solar Hijri calendar ("30 Sunbula
+1405" beside a Gregorian school calendar).
+
+**English-mode default target:** the first of the browser's languages we offer, else Arabic — so a
+parent whose phone is not set to one of the new languages sees exactly what they saw before.
+Switching language drops translations already on screen rather than re-buying them unasked.
+
+Pinned by `FamilyTranslationTest` (accept ×5 with dir + prompt name, refuse ×10 near-misses,
+undescribed/withdrawn config tags) and `FamilyLanguagesMirrorTest` (TS↔PHP direction and order,
+key coverage, `{x}` slots, the MACHINE-DRAFTED banner, religious terms kept).

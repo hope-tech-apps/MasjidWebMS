@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Family;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Support\PortalLanguage;
 use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 use Illuminate\Validation\Rule;
 
@@ -39,8 +40,13 @@ class TranslateContentRequest extends BaseFormRequest
         return [
             // Not a free string. An unlisted tag would become part of the prompt
             // ("translate this into <whatever the caller sent>"), which is the
-            // caller writing instructions for the model.
-            'target' => ['required', 'string', Rule::in((array) config('translation.languages', ['ar']))],
+            // caller writing instructions for the model. PortalLanguage::allowed()
+            // is config's list narrowed to the tags whose prompt name and
+            // direction are known, so a tag an operator lists without describing
+            // is refused here too. Rule::in compares strictly as strings: `AR`,
+            // `ar ` and `prs` are all refused, which keeps one tag per language
+            // in the cache.
+            'target' => ['required', 'string', Rule::in(PortalLanguage::allowed())],
 
             'items' => [
                 'required',

@@ -1,10 +1,12 @@
-import { computed, ref } from "vue";
+import { computed, ref, unref, watch } from "vue";
 import type { ComputedRef, Ref } from "vue";
 import FamilyApiService from "@/core/services/FamilyApiService";
+import { useFamilyLang } from "@/views/family/familyI18n";
 import type { FamilyMessage } from "@/views/family/familyI18n";
 
 /**
- * "Translate to Arabic", over the words the TEACHERS wrote.
+ * "Translate", over the words the TEACHERS wrote — into the language the
+ * parent picked (Arabic, Urdu, Pashto, Dari or Spanish; see familyI18n.ts).
  *
  * familyI18n.ts translates the CHROME — the tabs, the buttons, the sentence
  * that explains why a class story is hidden — and deliberately never touches a
@@ -130,16 +132,18 @@ function retryAfterMs(e: any): number {
         : HARD_FAILURE_COOLDOWN_MS;
 }
 
-/**
- * The only language on offer, matching `config('translation.languages')`. It is
- * an option rather than a constant so a second language is a call-site change
- * and not a rewrite, but the button says "Arabic" because that is what this
- * school's families asked for.
- */
-const DEFAULT_TARGET = "ar";
-
 export type ContentTranslationOptions = {
-    target?: string;
+    /**
+     * The language to translate into. Defaults to the portal's own
+     * `translationTarget` (familyI18n.ts): the language the parent picked, or
+     * — while the portal is in English — the one the button's second label
+     * names. It follows the picker, so it is taken as a ref.
+     *
+     * The server is authoritative on which tags exist
+     * (`config('translation.languages')` narrowed by App\Support\PortalLanguage);
+     * a tag it does not offer comes back 422 and is handled like any other.
+     */
+    target?: string | Ref<string> | ComputedRef<string>;
 
     /**
      * The view's own `fail(e)` — the helper that sends an expired session back
@@ -163,7 +167,8 @@ export function useContentTranslation(
     masjidId: Ref<string> | ComputedRef<string>,
     options: ContentTranslationOptions = {},
 ) {
-    const target = options.target ?? DEFAULT_TARGET;
+    const { translationTarget } = useFamilyLang();
+    const target = computed<string>(() => unref(options.target ?? translationTarget));
 
     /**
      * key → the translated string. A Map rather than a plain object because
@@ -445,6 +450,12 @@ export function useContentTranslation(
         loading.value = true;
         error.value = null;
 
+        // The language this run was asked in. The picker can change while a
+        // batch is on the wire, and a reply in the old language must not be
+        // written into a map the watcher has just emptied for the new one.
+        const askedIn = target.value;
+        const superseded = () => target.value !== askedIn;
+
         try {
             for (const batch of batches) {
                 let served: Record<string, unknown> = {};
@@ -452,12 +463,16 @@ export function useContentTranslation(
                 try {
                     const res = await FamilyApiService.post(
                         `/api/family/masjids/${masjidId.value}/translations`,
-                        { target, items: batch },
+                        { target: askedIn, items: batch },
                     );
 
                     served = res.data?.data?.translations ?? {};
                 } catch (e: any) {
                     if (options.onAuthFailure?.(e)) {
+                        return;
+                    }
+
+                    if (superseded()) {
                         return;
                     }
 
@@ -505,6 +520,10 @@ export function useContentTranslation(
                     return;
                 }
 
+                if (superseded()) {
+                    return;
+                }
+
                 for (const [key, value] of Object.entries(served)) {
                     if (typeof value !== "string" || value === "") {
                         continue;
@@ -544,6 +563,31 @@ export function useContentTranslation(
             }
         }
     }
+
+    /**
+     * A new language is a new question.
+     *
+     * Everything held here — the translations, what is unresolved, how often
+     * each key has been paid for — is an answer in ONE language, and the
+     * parent who switches the picker from Arabic to Urdu while a class story is
+     * showing in Arabic must not be left reading Arabic under Urdu chrome and
+     * a "Show original" button that implies the page is in their language. So
+     * the screen goes back to the school's own words and the button back to
+     * "Translate"; nothing is bought for the new language until the parent
+     * taps it, for the reason this file never translates on its own. A
+     * cooldown still standing is kept: a provider that is down or an allowance
+     * that is spent is no less so in another language.
+     *
+     * A request still in flight for the old language is not cancelled, but
+     * what it brings back is dropped (see the language check in translate()).
+     */
+    watch(target, () => {
+        translations.value.clear();
+        unresolved.value.clear();
+        attempts.clear();
+        error.value = null;
+        showOriginal.value = false;
+    });
 
     /** Back to the originals, with nothing remembered — the ledger included. */
     function clear(): void {
