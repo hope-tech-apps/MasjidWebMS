@@ -1772,3 +1772,29 @@ Pinned by the four `MealOrderEditTest` cases covering the order page's own read
 (the ids on each line, the cutoff sentence, the paid sentence, and the deleted
 item), each proved to fail against a payload that answers `can_edit` blindly or
 drops the item id.
+
+## 2026-09-21 — Staff invite links last 7 days; resets stay 60 minutes (SUPERSEDES 2026-09-17)
+
+**This reverses an earlier answer. Read both before changing either.**
+
+- **2026-09-17**, in Abdul-Rahman's owner interview (`/tmp/manara-plans/ship-plan-2026-09-17.md`):
+  asked whether invites should get their own longer lifetime, the owner answered
+  **"Keep 60 minutes"**, against the recommendation of 7 days.
+- **2026-09-21**, in Abdul-Lateef's session, after the BISS teacher meeting where teachers were
+  told to watch for a set-up email: offered "Keep 60 min, lean on Forgot password" or "Longer,
+  for invites only", the owner chose **"Longer, for invites only"**.
+
+The 2026-09-21 answer stands. Reason given in context: teachers opening an invite hours later
+is the ordinary case, and the MEC admins' invites all died unopened on 2026-09-15.
+
+**Shape of the decision** — `feat/invite-links-7-days`: invites get their own broker and
+table (`invites`, `account_invite_tokens`, 7 days); Forgot password stays on `users` /
+`password_reset_tokens` at 60 minutes. NOT a longer expiry on the shared table: a token
+records nothing about why it was minted, and raising the shared expiry is what made every
+admin's reset link live 72 hours from 2026-09-16 (which, because the scheduled revert stalled,
+ran about 7 hours past its bounded window — see Abdul-Rahman's 2026-09-19 recovery).
+One live link per person across both tables.
+
+**Alternatives rejected:** keep 60 min (the 2026-09-17 answer — superseded); raise the shared
+expiry (lengthens every reset); a `kind` column on the shared table (every reader would have
+to honour it, and one that forgot would accept a reset as an invite).
