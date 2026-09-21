@@ -946,7 +946,7 @@
                                 <span v-if="planForm.prefill_source" class="badge bg-success-subtle text-success-emphasis fw-normal">
                                     from the pacing guide
                                 </span>
-                                <button v-if="planFor(planDate)" class="btn btn-sm btn-link px-0"
+                                <button v-if="planFor(planDate) && weekdaysOnly.length > 1" class="btn btn-sm btn-link px-0"
                                         :disabled="copying" @click="copyAcrossWeek">
                                     {{ copying ? 'Copying…' : 'Copy to the rest of this week' }}
                                 </button>
@@ -955,7 +955,7 @@
                             <!-- The guide gives ONE code per subject per week and a
                                  week is four or five lessons, so a prefilled code is
                                  a draft the teacher owns, not a fact. -->
-                            <p v-if="planForm.prefill_source" class="text-muted small mb-2">
+                            <p v-if="planForm.prefill_source && !planHidden.has('standard_code')" class="text-muted small mb-2">
                                 Prefilled fields are editable. Verify standard codes against the
                                 official DPI documents before citing them outside the school.
                             </p>
@@ -977,7 +977,7 @@
                          its reflection on Tuesday afternoon. A section opens
                          itself when it already has content, or nobody would know
                          a written plan was not empty. -->
-                    <div v-for="sec in planSections" :key="sec.key" class="card border-0 shadow-sm mb-2">
+                    <div v-for="sec in visiblePlanSections" :key="sec.key" class="card border-0 shadow-sm mb-2">
                         <button type="button"
                                 class="card-body d-flex align-items-center gap-2 w-100 text-start border-0 bg-transparent"
                                 @click="togglePlanSection(sec.key)">
@@ -1069,10 +1069,10 @@
                             <thead>
                                 <tr>
                                     <th style="width:6rem">Day</th>
-                                    <th>Standard</th>
+                                    <th v-if="!planHidden.has('standard_code')">Standard</th>
                                     <th>Objective</th>
                                     <th>Activities</th>
-                                    <th>Differentiation</th>
+                                    <th v-if="!planHidden.has('differentiation_support')">Differentiation</th>
                                     <th>Assessment</th>
                                 </tr>
                             </thead>
@@ -1080,10 +1080,10 @@
                                 <tr v-for="d in weekdaysOnly" :key="d.iso"
                                     style="cursor:pointer" @click="jumpToDay(d.iso)">
                                     <td class="fw-semibold small">{{ d.label }}</td>
-                                    <td class="small">{{ planFor(d.iso)?.standard_code || '—' }}</td>
+                                    <td v-if="!planHidden.has('standard_code')" class="small">{{ planFor(d.iso)?.standard_code || '—' }}</td>
                                     <td class="small">{{ planFor(d.iso)?.objective || '—' }}</td>
                                     <td class="small">{{ planFor(d.iso)?.body || '—' }}</td>
-                                    <td class="small">{{ planFor(d.iso)?.differentiation_support || '—' }}</td>
+                                    <td v-if="!planHidden.has('differentiation_support')" class="small">{{ planFor(d.iso)?.differentiation_support || '—' }}</td>
                                     <td class="small">{{ planFor(d.iso)?.assessment_formative || '—' }}</td>
                                 </tr>
                             </tbody>
@@ -1117,9 +1117,8 @@
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Marked on</label>
-                                    <select v-model="assignmentForm.scale" class="form-select form-select-sm" style="width:9.5rem">
-                                        <option value="levels">Levels 4–1</option>
-                                        <option value="points">Points</option>
+                                    <select v-model="assignmentForm.scale" class="form-select form-select-sm" style="min-width:9.5rem">
+                                        <option v-for="sc in gradingScales" :key="sc" :value="sc">{{ SCALE_LABELS[sc] ?? sc }}</option>
                                     </select>
                                 </div>
                                 <!-- Only points work has a maximum to ask for. On the
@@ -1154,7 +1153,7 @@
                             <div class="flex-grow-1">
                                 <div class="fw-semibold small">{{ a.title }}</div>
                                 <div class="text-muted small">
-                                    {{ a.assigned_on }} · {{ a.scale === 'levels' ? 'levels 4–1' : `out of ${a.points_possible}` }}
+                                    {{ a.assigned_on }} · {{ a.scale === 'levels' ? 'levels 4–1' : a.scale === 'simple' ? 'Excellent / Good / Needs work' : `out of ${a.points_possible}` }}
                                 </div>
                             </div>
                             <span class="badge" :class="a.scored >= a.roster ? 'bg-success-subtle text-success-emphasis' : 'bg-light text-muted'">
@@ -1170,7 +1169,7 @@
                     </button>
                     <div class="fw-semibold mb-1">{{ openAssignment.title }}</div>
                     <div class="text-muted small mb-3">
-                        {{ openAssignment.scale === 'levels' ? 'Performance levels' : `Out of ${openAssignment.points_possible}` }}
+                        {{ openAssignment.scale === 'levels' ? 'Performance levels' : openAssignment.scale === 'simple' ? 'Excellent / Good / Needs work' : `Out of ${openAssignment.points_possible}` }}
                     </div>
 
                     <!-- THE KEY. Rendered from the payload, never hardcoded, so
@@ -1216,6 +1215,19 @@
                                     {{ l.level }} <span class="d-none d-md-inline">· {{ l.short_label }}</span>
                                 </button>
                             </div>
+                            <!-- EXCELLENT / GOOD / NEEDS WORK: three buttons, the
+                                 words from the payload (simple_marks), stored 3/2/1.
+                                 Tapping the lit one clears it, as on levels. -->
+                            <div v-else-if="openAssignment.scale === 'simple'" class="d-flex align-items-center gap-1 flex-wrap">
+                                <button v-for="m in simpleMarks" :key="m.value" type="button"
+                                        class="btn btn-sm"
+                                        :class="marks_g[s.membership_id]?.points_earned === m.value && marks_g[s.membership_id]?.status === 'scored'
+                                            ? 'btn-primary' : 'btn-outline-primary'"
+                                        :disabled="isExempt(s.membership_id)"
+                                        @click="setLevel(s.membership_id, m.value)">
+                                    {{ m.label }}
+                                </button>
+                            </div>
                             <!-- Typing a mark IS "scored". No third button, and the
                                  box is never disabled — the old design made you
                                  press S before you could type the thing S meant. -->
@@ -1241,6 +1253,12 @@
                         Choose a level to score a child.
                         <span class="text-danger-emphasis">Missing</span> is shown but left out of the average —
                         a 1 means “Needs Support”, which is not the same as work that was never handed in.
+                        <span class="fw-semibold">Excused</span> does not count at all.
+                        A child you leave blank is simply not marked yet.
+                    </p>
+                    <p v-else-if="openAssignment.scale === 'simple'" class="text-muted small mb-2">
+                        Choose Excellent, Good or Needs work for each child. Families see the word, never a number.
+                        <span class="text-danger-emphasis">Missing</span> is shown and counted on its own;
                         <span class="fw-semibold">Excused</span> does not count at all.
                         A child you leave blank is simply not marked yet.
                     </p>
@@ -1966,6 +1984,17 @@ const planSections = [
     ] },
 ];
 
+// The organisation's shorter plan (`short_lesson_plan`, SuperAdmin-set): the
+// fields its form leaves out, from the lesson-plans payload. Empty everywhere
+// else. A section with nothing left in it is not drawn at all.
+const planHidden = ref<Set<string>>(new Set());
+const visiblePlanSections = computed(() => planSections
+    .map((sec) => ({ ...sec, fields: sec.fields.filter((f) => !planHidden.value.has(f.key)) }))
+    .filter((sec) => sec.fields.length > 0));
+// The weekdays the school meets on (0 = Sunday), from its school calendar; null
+// without one, and then the week grid is Monday to Friday as it always was.
+const planWeekdays = ref<number[] | null>(null);
+
 const planOpen = ref<Record<string, boolean>>({});
 const togglePlanSection = (key: string) => { planOpen.value[key] = !planOpen.value[key]; };
 
@@ -1989,8 +2018,10 @@ const weekDays = computed(() => {
     return out;
 });
 
-/** The school week. The template's grid is Monday to Friday. */
-const weekdaysOnly = computed(() => weekDays.value.slice(1, 6));
+/** The school week. The template's grid is Monday to Friday, or the calendar's meeting days. */
+const weekdaysOnly = computed(() => planWeekdays.value
+    ? weekDays.value.filter((_, i) => planWeekdays.value!.includes(i))
+    : weekDays.value.slice(1, 6));
 
 const weekLabel = computed(() => {
     const days = weekDays.value;
@@ -2073,6 +2104,7 @@ const prefillFromGuide = async () => {
         if (!cell) { planError.value = 'The guide has nothing for that week.'; return; }
 
         const fill = (k: string, v: any) => {
+            if (planHidden.value.has(k)) return;
             if (v && !String(planForm.value[k] ?? '').trim()) planForm.value[k] = v;
         };
 
@@ -2137,6 +2169,8 @@ const loadLessonPlans = async () => {
             `${base.value}/lesson-plans?from=${days[0].iso}&to=${days[6].iso}`
         );
         plans.value = res.data?.data?.plans ?? [];
+        planHidden.value = new Set(res.data?.data?.hidden_fields ?? []);
+        planWeekdays.value = Array.isArray(res.data?.data?.meeting_weekdays) ? res.data.data.meeting_weekdays : null;
         syncPlanForm();
     } catch {
         planError.value = 'Could not load this week.';
@@ -2222,6 +2256,12 @@ const creatingAssignment = ref(false);
 // this component, and a copy of it in the SPA is a copy that goes stale.
 const levelKey = ref<any[]>([]);
 const defaultScale = ref('levels');
+// The scales THIS school offers (App\Support\SchoolSettings): levels or points,
+// or points and Excellent / Good / Needs work where a SuperAdmin switched on
+// `simple_marking`. The words come from the payload too.
+const gradingScales = ref<string[]>(['levels', 'points']);
+const SCALE_LABELS: Record<string, string> = { levels: 'Levels 4–1', points: 'Points', simple: 'Excellent / Good / Needs work' };
+const simpleMarks = ref<{ value: number; label: string }[]>([]);
 const openAssignment = ref<any>(null);
 const marks_g = ref<Record<number, { status: string | null; points_earned: number | null }>>({});
 const savingScores = ref(false);
@@ -2235,6 +2275,8 @@ const loadAssignments = async () => {
         assignments.value = res.data?.data ?? [];
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
         defaultScale.value = res.data?.default_scale ?? defaultScale.value;
+        gradingScales.value = res.data?.scales ?? gradingScales.value;
+        simpleMarks.value = res.data?.simple_marks ?? simpleMarks.value;
         if (!assignmentForm.value.title) assignmentForm.value.scale = defaultScale.value;
     } catch {
         gradesError.value = 'Could not load the gradebook.';
@@ -2281,6 +2323,7 @@ const openScores = async (a: any) => {
         const res = await TeacherApiService.get(`${base.value}/assignments/${a.id}`);
         openAssignment.value = res.data?.data ?? null;
         levelKey.value = res.data?.performance_levels ?? levelKey.value;
+        simpleMarks.value = res.data?.simple_marks ?? simpleMarks.value;
         const next: Record<number, any> = {};
         for (const s of openAssignment.value?.students ?? []) {
             // An unmarked child stays unmarked. Seeding a default here would

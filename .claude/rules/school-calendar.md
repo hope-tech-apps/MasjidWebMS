@@ -93,6 +93,14 @@ reads `years: []`.
 - On a sourced field with fewer open days than `minSelections`, an answer, or a
   required blank, is refused with `NOT_ENOUGH_OPEN`.
 
+## The lesson-plan week (2026-09-21)
+
+`GET .../lesson-plans` serves `meeting_weekdays` = `SchoolCalendar::meetingWeekdays()`
+(each year's first-day weekday, 0 = Sunday), or `null` when the organisation has no
+year. The teacher's week grid and "Copy to the rest of this week" use those days, and
+fall back to Monday–Friday on `null`, so Al-Razi is unchanged. BISS's "Sundays only"
+needed nothing else: its year starts on a Sunday and its off-Sundays are closures.
+
 ## Not built (say so rather than imply it)
 
 No per-day capacity, no alert when a chosen day later closes, no public

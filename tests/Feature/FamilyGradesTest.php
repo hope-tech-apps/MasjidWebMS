@@ -525,7 +525,9 @@ class FamilyGradesTest extends TestCase
 
         // ---- the shape, top to bottom ----
 
-        $this->assertKeysAre(['status', 'data', 'performance_levels', 'meta'], $body, 'the envelope');
+        // `simple_marks` is the Excellent / Good / Needs work key (2026-09-21),
+        // a platform constant like `performance_levels`.
+        $this->assertKeysAre(['status', 'data', 'performance_levels', 'simple_marks', 'meta'], $body, 'the envelope');
 
         $this->assertKeysAre(
             ['student', 'summary', 'scores', 'scores_shown', 'scores_truncated'],
@@ -541,9 +543,20 @@ class FamilyGradesTest extends TestCase
         );
 
         $this->assertKeysAre(
-            ['recorded', 'counted', 'excused', 'points_earned', 'points_possible', 'points_counted', 'levels'],
+            ['recorded', 'counted', 'excused', 'points_earned', 'points_possible', 'points_counted', 'levels', 'simple'],
             $body['data']['summary'],
             'data.summary'
+        );
+        // This child's own count of each word, and deliberately no mean.
+        $this->assertKeysAre(
+            ['recorded', 'counted', 'missing', 'distribution'],
+            $body['data']['summary']['simple'],
+            'data.summary.simple'
+        );
+        $this->assertKeysAre(
+            ['value', 'label', 'count'],
+            $body['data']['summary']['simple']['distribution'][0],
+            'data.summary.simple.distribution[]'
         );
         $this->assertKeysAre(
             ['recorded', 'counted', 'missing', 'mean', 'mean_label', 'distribution'],
@@ -557,7 +570,7 @@ class FamilyGradesTest extends TestCase
         );
 
         $this->assertKeysAre(
-            ['assignment', 'status', 'points_earned', 'note'],
+            ['assignment', 'status', 'points_earned', 'mark_label', 'note'],
             $body['data']['scores'][0],
             'data.scores[]'
         );

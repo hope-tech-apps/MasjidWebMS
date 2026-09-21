@@ -143,6 +143,40 @@ return [
         'listed_when_off' => false,
     ],
 
+    // Three school SETTINGS for a weekly school (Burlington Islamic Sunday
+    // School, org 18). Grants because each one is off everywhere until a
+    // SuperAdmin decides otherwise, and only a SuperAdmin may change them
+    // (owner, 2026-09-21: "Only you for now"). Off is what every school,
+    // Al-Razi included, does today. App\Support\SchoolSettings is the one
+    // reader. DECISIONS.md 2026-09-21.
+
+    'report_card_core_subjects' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Report card: Qur\'an, Islamic Studies and Arabic only',
+        'description' => 'Report cards carry only Qur\'an, Islamic Studies and Arabic Language, with Al-Razi\'s criteria, at every grade. Learning Behaviours stay. Off: the grade-band subjects are added as today.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
+    'short_lesson_plan' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Shorter lesson plan',
+        'description' => 'Lesson plans leave out the standard, the Differentiation section, the STEM line and the exit ticket. Reflection and the subject and Islamic integration lines stay.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
+    'simple_marking' => [
+        'kind' => 'grant',
+        'group' => 'school',
+        'label' => 'Mark work Excellent, Good or Needs work',
+        'description' => 'For each piece of work the teacher chooses a score out of a number of points or Excellent / Good / Needs work. Families see the word, never a percentage made from it. Off: points and the four performance levels, as today.',
+        'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        'listed_when_off' => false,
+    ],
+
     // ------------------------------------------------------------------
     // Modules — default ON; labels are the sidebar titles
     // ------------------------------------------------------------------

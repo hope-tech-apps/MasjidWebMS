@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Teacher;
 use App\Http\Requests\Teacher\SaveLessonPlanRequest;
 use App\Models\Group;
 use App\Models\LessonPlan;
+use App\Support\SchoolCalendar;
+use App\Support\SchoolSettings;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -53,6 +55,15 @@ class LessonPlanController extends TeacherController
                 'from' => $from->toDateString(),
                 'to' => $to->toDateString(),
                 'plans' => $plans->map(fn (LessonPlan $p): array => $this->plan($p))->values(),
+                // The organisation's shorter plan (`short_lesson_plan`): the
+                // template fields this school's form does not show. `[]`
+                // everywhere else. The plans above still carry every field.
+                'hidden_fields' => SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id)),
+                // The weekdays the school meets on (0 = Sunday), from its school
+                // calendar, so the week grid shows a Sunday school's Sunday.
+                // NULL when it has no calendar (Al-Razi): the grid stays Monday
+                // to Friday, as before.
+                'meeting_weekdays' => $this->meetingWeekdays((int) $masjid_id),
             ],
         ], Response::HTTP_OK);
     }
@@ -88,7 +99,16 @@ class LessonPlanController extends TeacherController
         // field `nullable` rather than `sometimes` precisely so that an omitted
         // field CLEARS — a partial payload must not silently keep stale prose.
         // The frontend consequence is that there is no per-section autosave.
+        //
+        // EXCEPT the fields this organisation's shorter plan leaves out
+        // (SchoolSettings::HIDDEN_LESSON_PLAN_FIELDS). Hidden means not shown and
+        // not written: those columns are left as they are, whatever a client
+        // sends, so they are never required, never filled from here, and a plan
+        // written before the setting was switched on keeps what it had.
+        $hidden = SchoolSettings::hiddenLessonPlanFields(SchoolSettings::org($masjid_id));
+
         $fields = collect(LessonPlan::TEMPLATE_FIELDS)
+            ->reject(fn (string $f) => in_array($f, $hidden, true))
             ->mapWithKeys(fn (string $f) => [$f => $request->validated($f)])
             ->all();
 
@@ -153,6 +173,19 @@ class LessonPlanController extends TeacherController
             'prefill_source' => $plan->prefill_source,
             'updated_at' => optional($plan->updated_at)->toIso8601String(),
         ];
+    }
+
+    /**
+     * The weekdays this school meets on, from SchoolCalendar (the one authority
+     * on meeting days): each year's `first_day` weekday. Null with no calendar.
+     *
+     * @return list<int>|null
+     */
+    private function meetingWeekdays(int $masjidId): ?array
+    {
+        $calendar = SchoolCalendar::for($masjidId);
+
+        return $calendar->hasCalendar() ? $calendar->meetingWeekdays() : null;
     }
 
     /**

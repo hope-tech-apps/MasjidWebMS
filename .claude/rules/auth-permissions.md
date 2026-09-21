@@ -488,7 +488,9 @@ entry has a `kind`, a `group` (`config/capability_groups.php`), a `label` and a 
   - Column-backed (`crm` → `crm_enabled`, `assistant` → `assistant_enabled`): listed so every
     capability reads from one catalogue; their own middleware (`crm`, `assistant`) and SuperAdmin
     endpoints are unchanged and stay the only writers.
-  - Override-backed (`web_pages`, `jummah_lunch`, `school_calendar`, `form_editing`): stored in
+  - Override-backed (`web_pages`, `jummah_lunch`, `school_calendar`, `form_editing`, and the three
+    weekly-school settings `report_card_core_subjects`, `short_lesson_plan`, `simple_marking`, read
+    only through `App\Support\SchoolSettings`, DECISIONS.md 2026-09-21): stored in
     `masjids.capability_overrides` (JSON, NOT fillable, in `PUBLIC_DIRECTORY_DENYLIST`). Absent key
     → the org_type default, chosen to reproduce what each vertical reached before the catalogue.
 - **Modules** (`kind => module`) are what a SuperAdmin switches per organisation; same overrides

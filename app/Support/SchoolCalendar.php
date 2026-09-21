@@ -90,6 +90,18 @@ final class SchoolCalendar
         return $this->years->isNotEmpty();
     }
 
+    /**
+     * The weekdays this school meets on (0 = Sunday), one per distinct year
+     * weekday, ascending. `[]` with no calendar.
+     *
+     * @return list<int>
+     */
+    public function meetingWeekdays(): array
+    {
+        return $this->years->map(fn (SchoolYear $y) => $y->meetingWeekday())
+            ->unique()->sort()->values()->all();
+    }
+
     public function yearContaining(string $day): ?SchoolYear
     {
         return $this->years->first(fn (SchoolYear $y) => $y->first_day->toDateString() <= $day

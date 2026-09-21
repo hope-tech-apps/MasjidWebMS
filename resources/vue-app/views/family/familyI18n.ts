@@ -280,6 +280,12 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         marks_error: "Some marks could not be loaded just now.",
         marks_section_points: "Points work",
         marks_section_levels: "Performance levels",
+        marks_section_simple: "Excellent / Good / Needs work",
+        // The three-word scale (App\\Support\\SimpleMark), keyed by its stored
+        // code. Always shown as the word, never as a number.
+        simple_mark_3: "Excellent",
+        simple_mark_2: "Good",
+        simple_mark_1: "Needs work",
         // The count of pieces of work behind a points total, so "86.5 of 100"
         // is not read as a percentage of the term. `count_of` carries the "of".
         marks_pieces_one: "across {x} piece of work",
@@ -507,6 +513,10 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         marks_error: "تعذّر تحميل بعض الدرجات الآن.",
         marks_section_points: "الأعمال المُقيَّمة بالنقاط",
         marks_section_levels: "مستويات الأداء",
+        marks_section_simple: "ممتاز / جيد / يحتاج إلى تحسين",
+        simple_mark_3: "ممتاز",
+        simple_mark_2: "جيد",
+        simple_mark_1: "يحتاج إلى تحسين",
         marks_pieces_one: "في عمل واحد",
         marks_pieces_two: "في عملين",
         marks_pieces_few: "في {x} أعمال",

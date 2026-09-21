@@ -355,9 +355,13 @@ class SchoolRecordsExportController extends Controller
             function (AssignmentScore $s) use ($out) {
                 // A level is only meaningful with its word beside it; a bare 3
                 // in a receiving system means nothing.
+                // Excellent / Good / Needs work goes in the same column as its
+                // word, for the same reason.
                 $level = $s->assignment && $s->assignment->usesLevels() && $s->points_earned !== null
                     ? PerformanceLevel::label((int) $s->points_earned)
-                    : null;
+                    : ($s->assignment && $s->assignment->usesSimpleMarks() && $s->points_earned !== null
+                        ? \App\Support\SimpleMark::label($s->points_earned)
+                        : null);
 
                 Csv::row($out, [
                     Csv::num($s->id), Csv::num($s->class_assignment_id), Csv::num($s->group_id),

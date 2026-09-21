@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Family;
 use App\Models\AssignmentScore;
 use App\Models\ClassAssignment;
 use App\Support\PerformanceLevel;
+use App\Support\SimpleMark;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -155,6 +156,10 @@ class GradesController extends FamilyController
                     // Levels work, reported as levels: a distribution and a mean
                     // level to one decimal. Never a percentage.
                     'levels' => $this->levelSummary((int) $membership->id),
+                    // Excellent / Good / Needs work: a count of each word, the
+                    // same shared arithmetic the teacher's copy calls. No mean,
+                    // no percentage.
+                    'simple' => SimpleMark::summaryFor((int) $membership->id),
                 ],
                 'scores' => $scores->map(fn (AssignmentScore $s): array => [
                     'assignment' => $s->assignment ? $this->assignment($s->assignment) : null,
@@ -163,6 +168,12 @@ class GradesController extends FamilyController
                     // `points_earned` of null is never drawn as a zero.
                     'status' => $s->status,
                     'points_earned' => $s->points_earned !== null ? (float) $s->points_earned : null,
+                    // The WORD for an Excellent / Good / Needs work mark, so the
+                    // portal prints "Good" and never "2 of 3". Null on the other
+                    // scales, as before.
+                    'mark_label' => $s->assignment?->usesSimpleMarks() && $s->status === AssignmentScore::STATUS_SCORED
+                        ? SimpleMark::label($s->points_earned)
+                        : null,
                     // The teacher's own words about this piece of work, and the
                     // reason a parent opens the screen at all.
                     'note' => $s->note,
@@ -176,6 +187,7 @@ class GradesController extends FamilyController
             // screen hardcodes "4 means Exceeds", and so "what does a 3 mean?"
             // is answerable in the school's own words without emailing them.
             'performance_levels' => PerformanceLevel::key(),
+            'simple_marks' => SimpleMark::key(),
             'meta' => $this->meta(),
         ], Response::HTTP_OK);
     }

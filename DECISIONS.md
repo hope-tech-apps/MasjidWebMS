@@ -1798,3 +1798,72 @@ One live link per person across both tables.
 **Alternatives rejected:** keep 60 min (the 2026-09-17 answer — superseded); raise the shared
 expiry (lengthens every reset); a `kind` column on the shared table (every reader would have
 to honour it, and one that forgot would accept a reset as an invite).
+
+## 2026-09-21 — Weekly-school settings: a shorter report card, lesson plan and marking scale, per organisation, SuperAdmin-only
+
+**Decision.** Burlington Islamic Sunday School (org 18) meets once a week and teaches
+Qur'an, Islamic Studies and Arabic. Three per-organisation settings, OFF for every
+organisation (Al-Razi, org 14, unchanged), ON for org 18. Owner's words, 2026-09-21: report
+card "Reuse Al-Razi's"; behaviours "Keep it"; lesson plan drop "Differentiation section, STEM
+line, Exit ticket" plus the standards; gradebook "Teacher picks per assignment"; calendar
+"Sundays only"; setup changes "Only you for now".
+
+1. **Three grants in `config/capabilities.php`, group `school`, `listed_when_off => false`.**
+   `report_card_core_subjects`, `short_lesson_plan`, `simple_marking`. Grants, not modules:
+   each is off until decided, and the only writer is the existing SuperAdmin-only
+   `PATCH .../capabilities/{key}` (in-controller 403 for anyone else, one ledger row per
+   flip). The switch panel shows them under "School" with no SPA change. One reader:
+   `App\Support\SchoolSettings`.
+2. **Report card.** `ReportCardTemplate::forGrade(..., coreOnly: true)` returns `CORE` only —
+   Qur'an, Islamic Studies, Arabic Language with Al-Razi's criteria, no Grammar, no grade-band
+   subjects — at every grade. Learning Behaviours are added as always.
+3. **Lesson plan.** `SchoolSettings::HIDDEN_LESSON_PLAN_FIELDS` = the two standard fields, the
+   five Differentiation fields, `cross_integration_stem`, `assessment_exit_ticket`. **Hidden
+   means not shown and not written:** `LessonPlanController::save` leaves those columns as they
+   are (a plan from before the switch keeps them; a client that still sends them fills
+   nothing). None was ever required. The index serves `hidden_fields`; the SPA drops the fields,
+   any section left empty (Differentiation, Assessment), the week grid's Standard and
+   Differentiation columns, the "verify standard codes" note, and prefill of the code.
+4. **Gradebook.** A third scale, `simple` (Excellent 3 / Good 2 / Needs work 1,
+   `App\Support\SimpleMark`), stored like levels in `points_earned` with `points_possible`
+   forced to 3. Which scales a teacher may choose is the organisation's: levels + points
+   everywhere (as before), **points + simple** with `simple_marking` (the owner: "a score or a
+   simple scale"; levels are Al-Razi's rubric). Editing work keeps the scale it already has.
+   Every payload carrying such a mark carries its word (`mark_label`) and the key
+   (`simple_marks`); the summaries gain `simple` = a count per word + missing, and **no mean
+   and no percentage** (points and levels summaries are filtered by scale, so a "Good" never
+   reaches a denominator). Moving marked work onto or off `simple` is refused (422 on `scale`);
+   points↔levels behaves as before.
+5. **Calendar: nothing new was needed.** `SchoolCalendar` already makes the meeting weekday the
+   first day's (2026-10-11, a Sunday, for BISS) and admins already mark off-Sundays as closures
+   behind `school_calendar`, which org 18 has. The one gap was the lesson-plan week grid, which
+   was Monday–Friday and whose "Copy to the rest of this week" would have written a Sunday plan
+   onto five weekdays. The lesson-plans index now serves `meeting_weekdays` from the calendar
+   (null with no calendar: Al-Razi keeps Mon–Fri), and the copy button needs two or more days.
+6. **Org 18 is switched on by a data migration**
+   (`2026_09_21_120000_switch_on_sunday_school_settings_for_biss`): only if row 18 is a
+   non-deleted school whose name contains "Sunday School"; sets only keys its
+   `capability_overrides` does not already name; one NULL-actor ledger row per key it set;
+   idempotent. Anything else logs one warning and writes nothing.
+
+**Alternatives.**
+- **Let the org's own admins change them.** Rejected: owner, "Only you for now".
+- **A `settings` JSON column or a separate school-settings table.** Rejected: the capability
+  catalogue already has the storage, the writer, the ledger and the panel.
+- **Store the three words as a string column.** Rejected: levels already live in
+  `points_earned` with the same "never a denominator" guard; a second storage shape would be a
+  second set of reads to keep right.
+- **Null the hidden lesson-plan fields on save.** Rejected: switching the setting on would then
+  erase what older plans said on their next save.
+- **A "Sundays only" calendar setting / refusing off-weekday registers.** Not built: the
+  calendar already expresses Sundays-only, and the register rule (only closures are enforced)
+  stays as the school-calendar rules file states.
+
+**Known limits.**
+- "Score (% + letter, as today)": the gradebook has never shown a percentage or a letter
+  grade. A score is points ("8 of 10"), as today. Adding % or letters would be new and was not
+  built.
+- A stale config cache during a deploy reads every setting as off (grants fail closed); a
+  report card prepared in that window gains grade-band rows that are then never removed.
+  BISS has no report cards before its first quarter ends.
+- The Team & Access screen lists a setting that is on as a chip, like any grant.

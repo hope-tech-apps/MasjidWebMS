@@ -12,6 +12,8 @@ use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Support\PerformanceLevel;
+use App\Support\SchoolSettings;
+use App\Support\SimpleMark;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +46,7 @@ class GradebookController extends TeacherController
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
         $group = Group::findOrFail($group_id);
+        $org = SchoolSettings::org($masjid_id);
 
         $roster = $group->memberships()->participants()->current()->count();
 
@@ -63,7 +66,12 @@ class GradebookController extends TeacherController
             // and every existing caller indexes into it, so nesting it inside
             // would have been a breaking change to read the key off.
             'performance_levels' => PerformanceLevel::key(),
-            'default_scale' => config('groups.default_grading_scale', ClassAssignment::SCALE_POINTS),
+            // The ORGANISATION'S choices (App\Support\SchoolSettings): levels or
+            // points everywhere, points or Excellent / Good / Needs work where
+            // `simple_marking` is on. `default_scale` is what the form starts on.
+            'default_scale' => SchoolSettings::defaultScale($org),
+            'scales' => SchoolSettings::gradingScales($org),
+            'simple_marks' => SimpleMark::key(),
         ], Response::HTTP_OK);
     }
 
@@ -105,7 +113,7 @@ class GradebookController extends TeacherController
         return response()->json([
             'status' => 'success',
             'data' => $this->assignment($assignment) + [
-                'students' => $students->map(function (GroupMembership $m) use ($scores): array {
+                'students' => $students->map(function (GroupMembership $m) use ($scores, $assignment): array {
                     $score = $scores->get($m->id);
 
                     return $this->student($m) + [
@@ -115,6 +123,7 @@ class GradebookController extends TeacherController
                         'points_earned' => $score && $score->points_earned !== null
                             ? (float) $score->points_earned
                             : null,
+                        'mark_label' => $score ? $this->markLabel($assignment, $score) : null,
                         'note' => $score?->note,
                     ];
                 })->values(),
@@ -122,6 +131,7 @@ class GradebookController extends TeacherController
             // The marking screen is where a teacher most needs the key — it is
             // the moment they choose between a 2 and a 3 for a real child.
             'performance_levels' => PerformanceLevel::key(),
+            'simple_marks' => SimpleMark::key(),
         ], Response::HTTP_OK);
     }
 
@@ -139,6 +149,23 @@ class GradebookController extends TeacherController
     {
         $group = Group::findOrFail($group_id);
         $assignment = $group->assignments()->findOrFail($assignment_id);
+
+        // Excellent / Good / Needs work is stored 3/2/1, so moving work onto or
+        // off that scale with marks already entered would re-read every "Good"
+        // as 2 points or as "Approaching". Refused, never converted. Changes
+        // between points and levels behave as they always have.
+        $scale = $request->validated('scale');
+
+        if ($scale !== $assignment->scale
+            && in_array(ClassAssignment::SCALE_SIMPLE, [$scale, $assignment->scale], true)
+            && $assignment->scores()->where('status', AssignmentScore::STATUS_SCORED)->exists()) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['scale' => [
+                    'This work already has marks, so how it is marked cannot change now. Set new work instead.',
+                ]],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         $ceiling = (int) $request->validated('points_possible');
 
@@ -244,6 +271,22 @@ class GradebookController extends TeacherController
                     'data' => ['scores' => [
                         'This work is marked on performance levels, so each mark must be one of: '
                         . implode(', ', array_reverse(PerformanceLevel::ALL)) . '.',
+                    ]],
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+        }
+
+        // The same for Excellent / Good / Needs work: one of three stored codes,
+        // never a 2.5 or a 0. The ceiling check has already refused a 4.
+        if ($assignment->usesSimpleMarks()) {
+            $notAMark = $rows->filter(fn ($r) => ($r['points_earned'] ?? null) !== null
+                && ! SimpleMark::isValid($r['points_earned']));
+
+            if ($notAMark->isNotEmpty()) {
+                return response()->json([
+                    'status' => 'failed',
+                    'data' => ['scores' => [
+                        'This work is marked Excellent, Good or Needs work, so each mark must be one of those.',
                     ]],
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
@@ -374,15 +417,20 @@ class GradebookController extends TeacherController
                     // Levels work, reported as levels: a distribution and a mean
                     // level to one decimal. Never a percentage.
                     'levels' => $levels,
+                    // Excellent / Good / Needs work, reported as a count of each
+                    // word. No mean and no percentage (App\Support\SimpleMark).
+                    'simple' => SimpleMark::summaryFor((int) $membership->id),
                 ],
                 // THE KEY, served with the data rather than hardcoded on each
                 // screen, so "what does a 3 mean?" is answerable everywhere in
                 // the school's own words. See App\Support\PerformanceLevel.
                 'performance_levels' => PerformanceLevel::key(),
+                'simple_marks' => SimpleMark::key(),
                 'scores' => $scores->map(fn (AssignmentScore $s): array => [
                     'assignment' => $s->assignment ? $this->assignment($s->assignment) : null,
                     'status' => $s->status,
                     'points_earned' => $s->points_earned !== null ? (float) $s->points_earned : null,
+                    'mark_label' => $s->assignment ? $this->markLabel($s->assignment, $s) : null,
                     'note' => $s->note,
                 ])->values(),
                 'scores_shown' => $scores->count(),
@@ -489,6 +537,18 @@ class GradebookController extends TeacherController
                 'count' => (int) $scored->where('level', $level)->sum('n'),
             ], PerformanceLevel::ALL),
         ];
+    }
+
+    /**
+     * The WORD for an Excellent / Good / Needs work mark, so no screen turns the
+     * stored 3/2/1 back into a word (or a number) itself. Null on every other
+     * scale, where the payload has always carried the number alone.
+     */
+    private function markLabel(ClassAssignment $a, AssignmentScore $s): ?string
+    {
+        return $a->usesSimpleMarks() && $s->status === AssignmentScore::STATUS_SCORED
+            ? SimpleMark::label($s->points_earned)
+            : null;
     }
 
     private function assignment(ClassAssignment $a): array
