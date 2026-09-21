@@ -141,6 +141,7 @@ return [
         'contact_login_events' => 'The login audit log: actor_name, actor_email, actor_ip, login_email. A RETENTION RECORD in production — never truncate it there; expendable only in the staging copy.',
         'personal_access_tokens' => 'Live Sanctum bearer tokens for real admins and real devices. Polymorphic, nothing FKs it.',
         'password_reset_tokens' => 'Live reset tokens keyed by a real email address — the email IS the primary key.',
+        'account_invite_tokens' => 'Live 7-day invite tokens keyed by a real staff email address — the email IS the primary key, and a copied row is a working first-password link.',
 
         // Send logs and provider ledgers.
         'notifications' => 'The push send-log (title, message, onesignal_message_id). Dropped so a staging admin cannot re-fire a real OneSignal message id and so the in-app inbox starts empty.',

@@ -516,18 +516,25 @@ class AuthController extends Controller
 
     /**
      * Set a new password from a link. Also used for the FIRST password on an
-     * invited account — same token, same expiry, same single use.
+     * invited account — same single use, but a 7-day token from its own table
+     * (config/auth.php `invites`), where a reset is 60 minutes.
      */
     public function resetPassword(ResetPasswordRequest $request, AccountAccessService $access)
     {
-        $status = $access->reset($request->only('email', 'password', 'password_confirmation', 'token'));
+        $kind = (string) ($request->validated('kind') ?? AccountAccessService::KIND_RESET);
+
+        $status = $access->reset($request->only('email', 'password', 'password_confirmation', 'token'), $kind);
 
         if ($status !== PasswordBroker::PASSWORD_RESET) {
+            // Says what to DO, not only what went wrong. A teacher opening an
+            // invite a week late is the ordinary case, and "ask for a new one"
+            // from a screen with no one to ask sends them nowhere; Forgot
+            // password on the sign-in page mints a fresh link with no admin.
             return response()->json([
                 'status' => 'error',
                 'message' => $status === PasswordBroker::INVALID_TOKEN
-                    ? 'That link has already been used or has expired. Ask for a new one.'
-                    : 'That link could not be used. Ask for a new one.',
+                    ? 'That link has already been used or has expired. Use "Forgot password" on the sign-in page to get a new one.'
+                    : 'That link could not be used. Use "Forgot password" on the sign-in page to get a new one.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 

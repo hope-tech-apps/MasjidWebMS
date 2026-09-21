@@ -11,6 +11,10 @@ class ResetPasswordRequest extends BaseFormRequest
     {
         return [
             'token' => ['required', 'string'],
+            // Which kind of link this is (AccountAccessService::KIND_*). Optional:
+            // every reset link, and every link minted before invites had their own
+            // table, carries none, and those are resets.
+            'kind' => ['nullable', 'string', 'in:invite,reset'],
             'email' => ['required', 'email', 'max:255'],
             // `confirmed` needs password_confirmation. The strength floor is
             // Laravel's own default plus a length the school's staff will

@@ -219,6 +219,29 @@ return [
             'expire' => 60,
             'throttle' => 60,
         ],
+
+        // THE FIRST-PASSWORD LINK a new staff account is emailed, and nothing else.
+        //
+        // Seven days, where a reset is one hour (owner, 2026-09-21). An invite goes
+        // to someone who has never used the system and is not waiting for it: the
+        // BISS teachers were told at a meeting to watch for it, and the MEC admins'
+        // invites all expired unopened inside the hour on 2026-09-15. A reset is the
+        // opposite case — the person asked for it seconds ago — and stays short,
+        // because a reset email sitting in an inbox is a password-change credential
+        // for as long as it lives.
+        //
+        // Its OWN TABLE, not a longer expiry on the shared one. A token carries no
+        // record of why it was minted, so one table with two lifetimes cannot tell
+        // an invite from a Forgot-password request; raising the shared expiry is
+        // what made every admin's reset link live 72 hours on 2026-09-16. Here a
+        // reset token cannot acquire an invite's life, because it is never written
+        // where invites are read.
+        'invites' => [
+            'provider' => 'users',
+            'table' => 'account_invite_tokens',
+            'expire' => 60 * 24 * 7,
+            'throttle' => 60,
+        ],
     ],
 
     /*
