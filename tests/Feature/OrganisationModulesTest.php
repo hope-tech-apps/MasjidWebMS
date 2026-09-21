@@ -192,7 +192,8 @@ class OrganisationModulesTest extends TestCase
             $data = $this->getJson("/api/admin/masjids/{$org->id}")->assertOk()->json('data');
 
             $this->assertSame(
-                ['web_pages', 'jummah_lunch', 'school_calendar', 'crm', 'assistant', 'form_editing'],
+                ['web_pages', 'jummah_lunch', 'school_calendar', 'crm', 'assistant', 'form_editing',
+                    'report_card_core_subjects', 'short_lesson_plan', 'simple_marking'],
                 array_keys($data['capabilities']),
                 "a {$orgType}'s capabilities gained or lost a key"
             );
@@ -221,6 +222,9 @@ class OrganisationModulesTest extends TestCase
             'crm' => true,
             'assistant' => false,
             'form_editing' => false,
+            'report_card_core_subjects' => false,
+            'short_lesson_plan' => false,
+            'simple_marking' => false,
         ], $data['capabilities']);
 
         foreach (self::MODULE_READS as $module => $path) {

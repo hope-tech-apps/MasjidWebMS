@@ -8,6 +8,7 @@ use App\Models\ReportCard;
 use App\Models\ReportCardMark;
 use App\Support\PerformanceLevel;
 use App\Support\ReportCardTemplate;
+use App\Support\SchoolSettings;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -97,7 +98,12 @@ class ReportCardService
 
         $position = 0;
 
-        foreach (ReportCardTemplate::rowsForGrade($card->grade_label) as $row) {
+        // The organisation's `report_card_core_subjects` setting (BISS): CORE
+        // only. Read on every prepare, like the template itself, so a card that
+        // already has other rows keeps them — see the docblock above.
+        $coreOnly = SchoolSettings::reportCardCoreOnly(SchoolSettings::org($card->masjid_id));
+
+        foreach (ReportCardTemplate::rowsForGrade($card->grade_label, $coreOnly) as $row) {
             $this->ensureRow($card, ReportCardMark::KIND_ACADEMIC, $row['subject'], $row['criterion'], $position++);
         }
 

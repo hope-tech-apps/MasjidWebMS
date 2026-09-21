@@ -41,9 +41,21 @@ class ClassAssignment extends Model
      */
     public const SCALE_LEVELS = 'levels';
 
+    /**
+     * Marked Excellent / Good / Needs work — see App\Support\SimpleMark.
+     *
+     * Only where a SuperAdmin switched on `simple_marking` for the organisation
+     * (App\Support\SchoolSettings::gradingScales decides what a teacher may
+     * choose). Stored 3/2/1 with `points_possible` forced to 3, and like a level
+     * it is never a denominator: no percentage and no mean is made from it.
+     */
+    public const SCALE_SIMPLE = 'simple';
+
+    /** Every scale a stored row may carry. What a teacher may CHOOSE is per organisation. */
     public const SCALES = [
         self::SCALE_POINTS,
         self::SCALE_LEVELS,
+        self::SCALE_SIMPLE,
     ];
 
     protected $fillable = [
@@ -68,6 +80,12 @@ class ClassAssignment extends Model
     public function usesLevels(): bool
     {
         return $this->scale === self::SCALE_LEVELS;
+    }
+
+    /** Is this marked Excellent / Good / Needs work? */
+    public function usesSimpleMarks(): bool
+    {
+        return $this->scale === self::SCALE_SIMPLE;
     }
 
     public function group(): BelongsTo

@@ -5,6 +5,8 @@ namespace App\Http\Requests\Teacher;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\ClassAssignment;
 use App\Support\PerformanceLevel;
+use App\Support\SchoolSettings;
+use App\Support\SimpleMark;
 use Illuminate\Validation\Rule;
 
 /**
@@ -34,6 +36,18 @@ use Illuminate\Validation\Rule;
  * choosing "performance levels" has already said everything there is to say
  * about the maximum, and a form that then asked them for one would be offering a
  * way to create a five-level assignment the rest of the system cannot read.
+ * The Excellent / Good / Needs work scale is forced to SimpleMark::MAX the same
+ * way.
+ *
+ * ---------------------------------------------------------------------------
+ * WHICH scales a teacher may choose is the ORGANISATION'S (SchoolSettings)
+ * ---------------------------------------------------------------------------
+ *
+ * Levels or points everywhere, as before; points or Excellent / Good / Needs
+ * work where a SuperAdmin switched on `simple_marking` (BISS). A scale the
+ * organisation does not offer is refused, with one exception: correcting work
+ * that already exists keeps the scale it was set on, so a switch flipped later
+ * never makes old work uneditable.
  */
 class StoreClassAssignmentRequest extends BaseFormRequest
 {
@@ -47,12 +61,16 @@ class StoreClassAssignmentRequest extends BaseFormRequest
      */
     protected function prepareForValidation(): void
     {
-        $scale = $this->input('scale') ?? config('groups.default_grading_scale', ClassAssignment::SCALE_POINTS);
+        $scale = $this->input('scale') ?? SchoolSettings::defaultScale($this->organisation());
 
         $merge = ['scale' => $scale];
 
         if ($scale === ClassAssignment::SCALE_LEVELS) {
             $merge['points_possible'] = PerformanceLevel::MAX;
+        }
+
+        if ($scale === ClassAssignment::SCALE_SIMPLE) {
+            $merge['points_possible'] = SimpleMark::MAX;
         }
 
         $this->merge($merge);
@@ -62,13 +80,36 @@ class StoreClassAssignmentRequest extends BaseFormRequest
     {
         return [
             'title' => ['required', 'string', 'max:200'],
-            'scale' => ['required', Rule::in(ClassAssignment::SCALES)],
+            'scale' => ['required', Rule::in($this->offeredScales())],
             'points_possible' => [
                 'required', 'integer', 'min:1',
                 'max:' . (int) config('groups.gradebook.max_points_possible', 1000),
             ],
             'assigned_on' => ['required', 'date_format:Y-m-d'],
         ];
+    }
+
+    /**
+     * What this organisation offers, plus the scale the work being corrected
+     * already has.
+     *
+     * @return list<string>
+     */
+    private function offeredScales(): array
+    {
+        $offered = SchoolSettings::gradingScales($this->organisation());
+
+        $existing = $this->route('assignment_id')
+            ? ClassAssignment::query()->whereKey((int) $this->route('assignment_id'))->value('scale')
+            : null;
+
+        return $existing !== null ? array_values(array_unique([...$offered, $existing])) : $offered;
+    }
+
+    /** The organisation in the URL, which the `tenant` middleware has already matched to the teacher. */
+    private function organisation(): ?\App\Models\Masjid
+    {
+        return SchoolSettings::org($this->route('masjid_id'));
     }
 
     public function messages(): array

@@ -762,6 +762,27 @@
                                     </ul>
                                 </template>
 
+                                <!-- EXCELLENT / GOOD / NEEDS WORK: how many of
+                                     each word, and nothing else. No average and
+                                     no percentage exists for this scale, on the
+                                     server or here. `?.` because an older
+                                     backend sends no `simple` block. -->
+                                <template v-if="marksFor(child).summary.simple?.recorded > 0">
+                                    <h3 class="text-uppercase text-muted small">{{ t('marks_section_simple') }}</h3>
+                                    <ul class="list-unstyled small mb-3">
+                                        <li v-for="row in marksFor(child).summary.simple.distribution" :key="row.value"
+                                            class="d-flex justify-content-between">
+                                            <span dir="auto">{{ simpleWord(row.value, row.label) }}</span>
+                                            <span class="text-muted">{{ row.count }}</span>
+                                        </li>
+                                        <li v-if="marksFor(child).summary.simple.missing"
+                                            class="d-flex justify-content-between">
+                                            <span>{{ t('mark_missing') }}</span>
+                                            <span class="text-muted">{{ marksFor(child).summary.simple.missing }}</span>
+                                        </li>
+                                    </ul>
+                                </template>
+
                                 <!-- THE KEY, from the payload and never
                                      hardcoded — the same one the report card
                                      opens with, open by default here too. A
@@ -1522,6 +1543,7 @@ const EMPTY_MARKS = {
         recorded: 0, counted: 0, excused: 0,
         points_earned: 0, points_possible: 0, points_counted: 0,
         levels: { recorded: 0, counted: 0, missing: 0, mean: null, mean_label: null, distribution: [] },
+        simple: { recorded: 0, counted: 0, missing: 0, distribution: [] },
     },
     scores: [],
     scores_shown: 0,
@@ -1589,10 +1611,23 @@ const onDay = (day: string | null | undefined) => (day ? when(`${day}T00:00:00`)
  *     points scale, and the LEVEL with the school's own word for it on the
  *     levels scale. Never a percentage of four.
  */
+/**
+ * Excellent / Good / Needs work in the portal's language. The stored 3/2/1 is
+ * only a key into the table; the server's own word is the fallback.
+ */
+const simpleWord = (value: any, fallback?: string | null): string => {
+    const key = `simple_mark_${Number(value)}`;
+    const word = t(key);
+    return word && word !== key ? word : (fallback ?? '');
+};
+
 const markText = (s: any): string => {
     if (s?.status === 'missing') return t('mark_missing');
     if (s?.status === 'excused') return t('mark_excused');
     if (s?.points_earned === null || s?.points_earned === undefined) return t('not_assessed');
+
+    // The WORD, never "2 of 3": the server sends it as `mark_label`.
+    if (s.assignment?.scale === 'simple') return simpleWord(s.points_earned, s.mark_label);
 
     if (s.assignment?.scale === 'levels') {
         // Through levelPhrase, so a mark reads "3 · يحقق" on a page that has

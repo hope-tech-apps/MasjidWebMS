@@ -133,13 +133,19 @@ final class ReportCardTemplate
      * blank is a visible gap they can act on; a card silently missing
      * Mathematics is one nobody notices until a parent asks.
      *
+     * `$coreOnly` is the organisation's `report_card_core_subjects` setting
+     * (App\Support\SchoolSettings): a weekly school that teaches only Qur'an,
+     * Islamic Studies and Arabic marks every child on CORE, whatever the grade
+     * (owner, 2026-09-21: "Reuse Al-Razi's"). Learning Behaviours are added by
+     * the caller either way.
+     *
      * @return array<string, array<int, string>>
      */
-    public static function forGrade(?string $gradeLabel): array
+    public static function forGrade(?string $gradeLabel, bool $coreOnly = false): array
     {
         $subjects = self::CORE;
 
-        if (self::isPreK($gradeLabel)) {
+        if ($coreOnly || self::isPreK($gradeLabel)) {
             return $subjects;
         }
 
@@ -162,11 +168,11 @@ final class ReportCardTemplate
      *
      * @return array<int, array{subject: string, criterion: string}>
      */
-    public static function rowsForGrade(?string $gradeLabel): array
+    public static function rowsForGrade(?string $gradeLabel, bool $coreOnly = false): array
     {
         $rows = [];
 
-        foreach (self::forGrade($gradeLabel) as $subject => $criteria) {
+        foreach (self::forGrade($gradeLabel, $coreOnly) as $subject => $criteria) {
             foreach ($criteria as $criterion) {
                 $rows[] = ['subject' => $subject, 'criterion' => $criterion];
             }
