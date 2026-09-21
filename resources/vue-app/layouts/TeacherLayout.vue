@@ -2,14 +2,14 @@
     <div class="min-vh-100 bg-light">
         <nav class="navbar navbar-expand bg-white border-bottom sticky-top">
             <div class="container-fluid px-3 px-lg-4">
-                <router-link to="/teacher" class="navbar-brand d-flex align-items-center gap-2 text-decoration-none">
+                <router-link to="/teacher" class="navbar-brand d-flex align-items-center gap-2 text-decoration-none teacher-brand">
                     <img v-if="school?.logo_url" :src="school.logo_url" alt="" width="32" height="32"
                          class="rounded" style="object-fit: cover;">
                     <img v-else :src="'/manara-icon.svg'" alt="" width="32" height="32">
-                    <span class="fw-semibold text-dark">{{ school?.name || 'My Classes' }}</span>
+                    <span class="fw-semibold text-dark text-truncate">{{ school?.name || 'My Classes' }}</span>
                 </router-link>
 
-                <div class="ms-auto d-flex align-items-center gap-3">
+                <div class="ms-auto d-flex align-items-center gap-3 flex-shrink-0">
                     <router-link to="/teacher"
                                  class="nav-link px-0 d-none d-sm-inline"
                                  :class="isClassesActive ? 'fw-semibold text-success' : 'text-muted'">
@@ -21,13 +21,13 @@
                          (where My Classes is the brand link), so it keeps an
                          accessible name that contains the visible word. -->
                     <router-link v-if="calendarPublished" to="/teacher/calendar"
-                                 class="nav-link px-0 d-inline-flex align-items-center gap-1"
+                                 class="nav-link px-0 d-inline-flex align-items-center gap-1 teacher-tap"
                                  :class="isCalendarActive ? 'fw-semibold text-success' : 'text-muted'"
                                  aria-label="School calendar" title="School calendar">
                         <i class="bi bi-calendar3"></i><span class="d-none d-sm-inline">Calendar</span>
                     </router-link>
                     <span v-if="teacherName" class="text-muted small d-none d-md-inline">{{ teacherName }}</span>
-                    <button class="btn btn-sm btn-outline-secondary" :disabled="signingOut" @click="signOut">
+                    <button class="btn btn-sm btn-outline-secondary teacher-tap" :disabled="signingOut" @click="signOut">
                         <span v-if="signingOut" class="spinner-border spinner-border-sm"></span>
                         <span v-else>Sign out</span>
                     </button>
@@ -35,7 +35,7 @@
             </div>
         </nav>
 
-        <main class="container py-4" style="max-width: 960px;">
+        <main class="container py-3 py-sm-4" style="max-width: 960px;">
             <router-view />
         </main>
     </div>
@@ -107,3 +107,28 @@ const signOut = async () => {
     }
 };
 </script>
+
+<style scoped>
+/*
+ * A school's full name ("Burlington Islamic Sunday School") is wider than a
+ * phone on its own, and `.navbar-brand` never wraps — so the header alone
+ * pushed every teacher screen ~120px sideways, and Sign out sat off the edge.
+ * The brand may shrink (min-width: 0) and its name truncates; the controls on
+ * the right keep their size.
+ */
+.teacher-brand {
+    /* Shrink only; never grow, or the empty header becomes one big link home. */
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+@media (max-width: 575.98px), (pointer: coarse) {
+    /* 44px targets, and the calendar icon is only an icon here. */
+    .teacher-brand,
+    .teacher-tap {
+        min-height: 44px;
+        min-width: 44px;
+        justify-content: center;
+    }
+}
+</style>

@@ -118,4 +118,14 @@ const remove = (index: number) => {
     border-radius: 50%;
     opacity: 1;
 }
+
+/* A finger, not a cursor: the "Add photos" label is a 31px .btn-sm, and a <label>
+   does not centre its content the way a <button> does, hence the flex. */
+@media (max-width: 575.98px), (pointer: coarse) {
+    label.btn {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
+}
 </style>

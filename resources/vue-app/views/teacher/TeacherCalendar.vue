@@ -140,3 +140,18 @@ const load = async () => {
 
 onMounted(load);
 </script>
+
+<style scoped>
+/* Read on a phone as often as at a desk: the way back and the year switch are
+   finger targets (44px), not 21px and 31px ones. */
+@media (max-width: 575.98px), (pointer: coarse) {
+    a.small {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+    .btn {
+        min-height: 44px;
+    }
+}
+</style>

@@ -1,0 +1,273 @@
+/*
+ * TeacherClass on a phone.
+ *
+ * Teachers take the register, mark letters and post the class story from a
+ * phone held in one hand, in the room. At 375px the screen scrolled sideways:
+ * fixed-width selects sat in half-width columns, long names and file names had
+ * no place to break, and 14px inputs made iOS zoom in on focus and leave the
+ * page panned off to one side.
+ *
+ * This file is SCOPED to TeacherClass.vue (it is loaded with
+ * `<style scoped src>`), so none of it reaches another screen. It lives in its
+ * own file on purpose: TeacherClass.vue is edited by several people at once,
+ * and a phone layout written as markup changes all through the template would
+ * collide with every one of them. Everything below is keyed off classes the
+ * template already has, plus a handful of `tc-*` hooks.
+ *
+ * Two media queries, for two different questions:
+ *  - (max-width: 575.98px)  is the LAYOUT question — below Bootstrap's `sm`,
+ *    rows stack and fixed widths give way. Desktop is untouched.
+ *  - (pointer: coarse)      is the FINGER question — a tablet in a teacher's
+ *    hand needs 44px targets and 16px inputs as much as a phone does, but
+ *    keeps its wide layout.
+ */
+
+/* ------------------------------------------------------------ fingers */
+@media (max-width: 575.98px), (pointer: coarse) {
+    /* 44px is Apple's and WCAG 2.5.5's minimum target. A <button> centres its
+       own content vertically, so min-height alone is enough. */
+    .btn,
+    .nav-link {
+        min-height: 44px;
+    }
+    /* Icon-only buttons (week arrows, download, the pencil and bin on a daily
+       note) need the width as well as the height. Recognised as a button whose
+       icon has no me-/ms- spacing, i.e. nothing beside it but an optional
+       visually-hidden label. NOT every .btn: a min-width replaces the flex
+       default `min-width: auto`, and "Remove" then shrank below its own word. */
+    .btn:has(> i.bi:not([class*="me-"]):not([class*="ms-"])) {
+        min-width: 44px;
+    }
+
+    /* The X on cards and the letter panel is 1em square by default. Padding,
+       not width, so the glyph stays the size it was and only the target grows. */
+    .btn-close {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        padding: 14px;
+    }
+
+    /* Below 16px, iOS Safari zooms the page to the focused field and does not
+       zoom back — which leaves a teacher panned sideways after every entry.
+       This is the sideways scroll that no amount of layout fixes. */
+    .form-control,
+    .form-select {
+        font-size: 16px;
+        min-height: 44px;
+    }
+
+    /* The avatar picker is its own component; its buttons are reached from here. */
+    .modal :deep(.btn) {
+        min-height: 44px;
+    }
+
+    details > summary {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }
+
+    .form-check-inline {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+}
+
+/* ------------------------------------------------------------- layout */
+@media (max-width: 575.98px) {
+    /* Nothing on this screen may be wider than the phone. A long file name,
+       URL or hyphenated name has no natural break, and without `anywhere` its
+       min-content width is the whole word — which is what pushed the page
+       sideways. `anywhere` (unlike `break-word`) also lowers min-content, so
+       flex items can actually shrink past it. `.card` is named as well
+       because Bootstrap sets `word-wrap: break-word` on every card, which
+       would otherwise win by inheritance inside one. */
+    section,
+    section .card {
+        overflow-wrap: anywhere;
+    }
+
+    /* ...but never inside a button label. "Avatar" broke into "Av / at / ar"
+       once `anywhere` let the button shrink below its one word. */
+    .btn {
+        overflow-wrap: normal;
+    }
+
+    /* Nor inside the small joining words between two fields ("from [ ] to [ ]",
+       "[ ] / 20"), which otherwise stack one letter per line. */
+    .d-flex.gap-1 > span.small {
+        overflow-wrap: normal;
+        white-space: nowrap;
+    }
+
+    /* "← My Classes" and "← All students" are the way back; a 21px line of
+       small text is not a target. */
+    a[href="/teacher"].small {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+    }
+
+    /* A flex child's default `min-width: auto` is its longest word. The
+       name/title column in every list row is `flex-grow-1`; letting it shrink
+       is what keeps the badge and chevron beside it on screen. */
+    .flex-grow-1 {
+        min-width: 0 !important;
+    }
+    /* The name + grade badge line inside that column: the badge drops under
+       the name rather than squeezing it until "Muhammad" breaks mid-word. */
+    .flex-grow-1 > .d-flex {
+        flex-wrap: wrap;
+        row-gap: 0.125rem !important;
+    }
+
+    /* Inline widths (`width:10rem`, `min-width:14rem`) were written for a
+       desktop row. In a half-width column on a phone they are wider than the
+       column itself. Inside a grid column, a field fills that column; anywhere
+       else it can never exceed its container. !important because the widths
+       are inline styles. */
+    .row > [class*="col"] > .form-control,
+    .row > [class*="col"] > .form-select {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .form-control,
+    .form-select {
+        max-width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* A wrapping list row (register, gradebook, files, report card): the
+       avatar or icon and the name share the first line, and every control
+       after them starts a line of its own. Without this a long name dropped
+       under its avatar, leaving the avatar alone on a line. */
+    .list-group-item.flex-wrap > .flex-grow-1 {
+        flex: 1 1 calc(100% - 4rem);
+    }
+
+    /* Gradebook: the four levels share one full line, a thumb wide each, and
+       Missing / Excused split the line under them. */
+    .list-group-item > .d-flex.flex-wrap {
+        flex: 1 1 100%;
+    }
+    .list-group-item.flex-wrap > .btn {
+        flex: 1 1 0;
+    }
+    .list-group-item > .d-flex.flex-wrap > .btn {
+        min-width: 44px;
+        flex: 1 1 0;
+    }
+
+    /* A status badge at the end of a row ("Sent Sep 21, 2026", "5 of 23
+       marked") may take two short lines rather than leave the child's name
+       a 60px column on a small phone. */
+    .list-group-item > .badge {
+        white-space: normal;
+        text-align: end;
+        max-width: 7.5rem;
+    }
+
+    /* Row gaps were sized for a desk. */
+    .list-group-item.gap-3 {
+        gap: 0.5rem 0.75rem !important;
+    }
+
+    /* ---- tab bar -------------------------------------------------------
+       It already scrolls inside itself (the page does not). What it lacked on
+       a phone was any sign that it scrolls: the fifth tab was simply cut off.
+       The fade says "there is more this way"; the scrollbar is hidden because
+       on a phone it is only a flicker anyway. */
+    .tc-tabs {
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+        mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+        padding-right: 16px;
+    }
+    .tc-tabs::-webkit-scrollbar {
+        display: none;
+    }
+    .tc-tabs .nav-link {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+    }
+
+    /* ---- attendance ----------------------------------------------------
+       One-handed: the four marks get their own full-width row under the
+       child's name, as four equal thumb-sized buttons, instead of a cramped
+       32px strip squeezed in beside the name. */
+    .tc-att-row > .btn-group {
+        flex: 1 1 100%;
+    }
+    .tc-att-row > .btn-group > .btn {
+        flex: 1 1 0;
+        min-height: 48px;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    /* Save stays under the thumb for the whole register, rather than a full
+       scroll away from the child just marked. */
+    .tc-att-save {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        background: var(--bs-body-bg, #fff);
+        border-top: 1px solid var(--bs-border-color, #dee2e6);
+        padding: 0.5rem 0;
+        flex-wrap: wrap;
+    }
+    .tc-att-save > .btn-success {
+        flex: 1 1 100%;
+        min-height: 48px;
+        font-size: 1rem;
+    }
+
+    /* The day picker had a fixed 170px width beside a spacer; on a phone the
+       day and "All present" share the row. */
+    .tc-att-toolbar > div:first-child {
+        flex: 1 1 auto;
+    }
+    .tc-att-toolbar input[type="date"] {
+        width: 100% !important;
+    }
+
+    /* ---- letters: "This class is on [stage]" -------------------------
+       The select sized itself to its longest stage name, wider than the
+       phone. Label above, select full width. */
+    .tc-stage-picker {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+    .tc-stage-picker > .form-select {
+        width: 100% !important;
+    }
+
+    /* ---- report card / behaviours: the note under a criterion ----------
+       Criterion, then the level buttons, then the note, each on its own line
+       at full width — `width:18rem` does not fit beside anything. */
+    .list-group-item > .form-control {
+        flex: 1 1 100%;
+        width: 100% !important;
+    }
+    .list-group-item > .btn-group {
+        flex: 1 1 100%;
+    }
+    .list-group-item > .btn-group > .btn {
+        flex: 1 1 0;
+    }
+
+    /* Messages: a bubble may use nearly the full width on a phone. */
+    .tc-bubble {
+        max-width: 92% !important;
+    }
+
+    /* A reply box and Send stay side by side; the box must be allowed to
+       shrink for that. */
+    .card-footer .d-flex > textarea {
+        min-width: 0;
+    }
+}
