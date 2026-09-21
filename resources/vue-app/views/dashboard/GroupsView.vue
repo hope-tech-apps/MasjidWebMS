@@ -180,10 +180,15 @@
                                             <option v-for="kind in kinds" :key="kind" :value="kind">{{ kind }}</option>
                                         </select>
                                     </div>
-                                    <div class="col-12">
+                                    <div class="col-md-8">
                                         <label class="form-label">Slug <span class="text-danger">*</span></label>
                                         <input type="text" class="form-control font-monospace" v-model.trim="form.slug" required>
                                         <div class="form-text">Lowercase letters, numbers and hyphens.</div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Order</label>
+                                        <input type="number" min="0" max="9999" step="1" class="form-control" v-model.number="form.position" placeholder="—">
+                                        <div class="form-text">Lowest first. Blank = after the numbered ones.</div>
                                     </div>
                                     <div class="col-12">
                                         <label class="form-label">Description</label>
@@ -261,7 +266,7 @@ const slugTouched = ref(false);
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const emptyForm = (): GroupPayload => ({
-    name: '', slug: '', kind: 'class', description: '', is_active: true, starts_on: '', ends_on: ''
+    name: '', slug: '', kind: 'class', position: '', description: '', is_active: true, starts_on: '', ends_on: ''
 });
 const form = ref<GroupPayload>(emptyForm());
 
@@ -407,6 +412,7 @@ const openEditModal = (group: Group) => {
         name: group.name ?? '',
         slug: group.slug ?? '',
         kind: group.kind ?? 'class',
+        position: group.position ?? '',
         description: group.description ?? '',
         is_active: group.is_active,
         starts_on: group.starts_on ?? '',

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -56,6 +57,9 @@ class Group extends Model
         'name',
         'slug',
         'kind',
+        // Office-chosen display order; NULL sorts last, then by name. See
+        // scopeInDisplayOrder and the 2026-09-21 migration.
+        'position',
         'description',
         'is_active',
         'starts_on',
@@ -74,6 +78,7 @@ class Group extends Model
     {
         return [
             'is_active' => 'boolean',
+            'position' => 'integer',
             'starts_on' => 'date',
             'ends_on' => 'date',
         ];
@@ -105,6 +110,21 @@ class Group extends Model
      * a mis-click must not destroy a roster, and it must not destroy the class
      * story either. Bytes go when the retention purge says they go.
      */
+    /**
+     * The order an office chose (`position`, lowest first), then everything it
+     * has not placed, alphabetically. Every screen that lists a school's classes
+     * uses this, so a parent, a teacher and the office see one order.
+     * `position IS NULL` first sorts unplaced groups last on MySQL and SQLite
+     * alike, whose NULL ordering otherwise disagrees.
+     */
+    public function scopeInDisplayOrder(Builder $query): Builder
+    {
+        return $query->orderByRaw('position IS NULL')
+            ->orderBy('position')
+            ->orderBy('name')
+            ->orderBy('id');
+    }
+
     protected static function booted(): void
     {
         static::deleting(function (self $group): void {

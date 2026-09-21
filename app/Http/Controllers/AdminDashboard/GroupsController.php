@@ -54,7 +54,7 @@ class GroupsController extends Controller
             })
             ->when($request->filled('kind'), fn ($q) => $q->ofKind($request->query('kind')))
             ->when($request->boolean('active_only'), fn ($q) => $q->active())
-            ->orderBy('name')
+            ->inDisplayOrder()
             ->paginate($request->query('per_page', 15));
 
         return response()->json([

@@ -52,8 +52,7 @@ class GroupsController extends FamilyController
 
         $groups = Group::query()
             ->whereHas('memberships', fn ($q) => $q->where('contact_id', $contact->id))
-            ->orderBy('name')
-            ->orderBy('id')
+            ->inDisplayOrder()
             ->get();
 
         // The QUERY above is still the guarantee against every group this

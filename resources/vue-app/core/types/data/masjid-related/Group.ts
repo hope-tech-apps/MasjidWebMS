@@ -100,6 +100,8 @@ export type Group = {
     name: string;
     slug: string;
     kind: GroupKind;
+    /** Office-chosen display order, lowest first; null = unplaced (listed after, by name). */
+    position?: number | null;
     description: string | null;
     is_active: boolean;
     starts_on: string | null;
@@ -120,6 +122,8 @@ export type GroupPayload = {
     name: string;
     slug: string;
     kind: GroupKind;
+    /** '' = unplaced; the server reads an empty field as null. */
+    position: number | '';
     description: string;
     is_active: boolean;
     starts_on: string;

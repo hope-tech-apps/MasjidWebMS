@@ -35,6 +35,9 @@ class UpdateGroupRequest extends GroupFormRequest
             ],
             'kind' => ['sometimes', 'required', Rule::in(Group::KINDS)],
             'description' => 'sometimes|nullable|string',
+            // Display order (lowest first); blank = unplaced, listed after the
+            // placed ones, alphabetically.
+            'position' => 'sometimes|nullable|integer|min:0|max:9999',
             'is_active' => 'sometimes|boolean',
             'starts_on' => 'sometimes|nullable|date',
             // Ordering is only checkable when the caller sent both ends of the

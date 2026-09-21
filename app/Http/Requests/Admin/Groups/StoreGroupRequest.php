@@ -43,6 +43,9 @@ class StoreGroupRequest extends GroupFormRequest
             ],
             'kind' => ['required', Rule::in(Group::KINDS)],
             'description' => 'nullable|string',
+            // Display order (lowest first); blank = unplaced, listed after the
+            // placed ones, alphabetically.
+            'position' => 'nullable|integer|min:0|max:9999',
             'is_active' => 'sometimes|boolean',
             'starts_on' => 'nullable|date',
             // Ordering is only checkable when both ends of the window were sent;

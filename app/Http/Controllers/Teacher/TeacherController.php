@@ -40,7 +40,7 @@ abstract class TeacherController extends Controller
     {
         return Group::query()
             ->ledBy((int) Auth::id())
-            ->orderBy('name')
+            ->inDisplayOrder()
             ->get();
     }
 

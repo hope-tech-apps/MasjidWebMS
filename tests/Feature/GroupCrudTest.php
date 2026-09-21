@@ -75,6 +75,41 @@ class GroupCrudTest extends TestCase
         ]);
     }
 
+    #[Test]
+    public function classes_list_in_the_order_the_office_chose_and_unplaced_ones_follow_alphabetically(): void
+    {
+        // Owner, 2026-09-21: "sort them in grade order". Alphabetical put PreK and
+        // Kindergarten after the numbered grades; a position fixes that, and a
+        // group nobody placed still lists, after the placed ones, by name.
+        Group::factory()->create(['masjid_id' => $this->masjidA->id, 'name' => 'PreK', 'slug' => 'prek', 'position' => 1]);
+        Group::factory()->create(['masjid_id' => $this->masjidA->id, 'name' => 'Kindergarten', 'slug' => 'kindergarten', 'position' => 2]);
+        Group::factory()->create(['masjid_id' => $this->masjidA->id, 'name' => '1st Grade', 'slug' => '1st-grade', 'position' => 3]);
+
+        Sanctum::actingAs($this->adminA);
+        $names = collect($this->getJson($this->groupsUrl())->assertOk()->json('data.data'))->pluck('name')->all();
+
+        // Grade 3 / Grade 4 (setUp) have no position: after the placed ones, A→Z.
+        $this->assertSame(['PreK', 'Kindergarten', '1st Grade', 'Grade 3', 'Grade 4'], $names);
+    }
+
+    #[Test]
+    public function an_admin_sets_and_clears_a_classs_position_and_nonsense_is_refused(): void
+    {
+        Sanctum::actingAs($this->adminA);
+        $url = $this->groupsUrl() . '/' . $this->groupA->id;
+
+        $this->putJson($url, ['position' => 7])->assertOk()->assertJsonPath('data.position', 7);
+        $this->assertSame(7, $this->groupA->fresh()->position);
+
+        // The form sends '' for a blank field; that means "unplaced", not 0.
+        $this->putJson($url, ['position' => ''])->assertOk();
+        $this->assertNull($this->groupA->fresh()->position);
+
+        $this->putJson($url, ['position' => -1])->assertStatus(422);
+        $this->putJson($url, ['position' => 'first'])->assertStatus(422);
+        $this->assertNull($this->groupA->fresh()->position);
+    }
+
     /** Create a Masjid row with the minimum columns the schema requires. */
     private function makeMasjid(array $overrides = []): Masjid
     {
