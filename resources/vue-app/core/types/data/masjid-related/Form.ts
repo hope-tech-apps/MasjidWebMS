@@ -26,7 +26,7 @@ export type FormPaymentMethod = 'online' | 'cash' | 'external' | 'office';
  * payment marked without saying how. Null on a card payment and on rows settled before
  * the column existed.
  */
-export type FormPaidVia = 'cash' | 'zelle' | 'cashapp' | 'venmo' | 'check';
+export type FormPaidVia = 'cash' | 'zelle' | 'cashapp' | 'venmo' | 'check' | 'square';
 
 /** paid_via in plain words. A stored value missing here is shown as it is. */
 export const FORM_PAID_VIA_LABELS: Record<FormPaidVia, string> = {
@@ -34,14 +34,17 @@ export const FORM_PAID_VIA_LABELS: Record<FormPaidVia, string> = {
     zelle: 'Zelle',
     cashapp: 'Cash App',
     venmo: 'Venmo',
-    check: 'Check'
+    check: 'Check',
+    // The masjid's own Square reader: a card tapped at the desk, whose money lands in
+    // the organisation's Square account and never in a Stripe webhook this app can see.
+    square: 'Square'
 };
 
 /**
  * The methods "Mark paid" offers on an office row, where the server REQUIRES one. Cash is
  * not among them: cash goes through "Take cash", which records paid_via 'cash' itself.
  */
-export const FORM_OFFICE_MARK_PAID_VIA: FormPaidVia[] = ['zelle', 'cashapp', 'venmo', 'check'];
+export const FORM_OFFICE_MARK_PAID_VIA: FormPaidVia[] = ['zelle', 'cashapp', 'venmo', 'check', 'square'];
 
 /** payment_status on a row with a money leg (FormResponse::PAYMENT_STATUSES). */
 export type FormPaymentStatus = 'unpaid' | 'paid';

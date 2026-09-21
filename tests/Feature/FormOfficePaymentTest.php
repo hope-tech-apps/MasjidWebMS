@@ -520,7 +520,7 @@ class FormOfficePaymentTest extends TestCase
             $this->postJson($this->url("/{$row->id}/mark-paid-external"), $body)
                 ->assertStatus(422)
                 ->assertJsonPath('status', 'failed')
-                ->assertJsonPath('message', fn (string $message) => str_starts_with($message, 'Choose how they paid: Zelle, Cash App, Venmo or Check.'));
+                ->assertJsonPath('message', fn (string $message) => str_starts_with($message, 'Choose how they paid: Zelle, Cash App, Venmo, Check or Square.'));
 
             $fresh = $row->fresh();
             $this->assertSame(FormResponse::METHOD_OFFICE, $fresh->payment_method, json_encode($body));
@@ -551,6 +551,38 @@ class FormOfficePaymentTest extends TestCase
 
         $this->assertSame(FormResponse::PAID_VIA_ZELLE, $row->fresh()->paid_via);
         $this->assertSame($this->admin->id, $row->fresh()->marked_paid_by_user_id);
+    }
+
+    #[Test]
+    public function a_card_tapped_on_the_masjids_square_reader_is_recorded_like_any_other_hand_payment(): void
+    {
+        // The owner's Sunday School families pay at the desk on the masjid's own
+        // Square reader (2026-09-20). That money lands in the ORGANISATION's Square
+        // account, not in this platform's Stripe, so no webhook will ever see it and
+        // the office had no way to close the registration off: the dialog offered
+        // Zelle, Cash App, Venmo and Check, and the server refused anything else.
+        // Square is named rather than folded into "external" so the office can
+        // reconcile these rows against a Square payout later.
+        $row = $this->officeRow(3, 'Square Family');
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson($this->url("/{$row->id}/mark-paid-external"), ['via' => 'square'])
+            ->assertOk()
+            ->assertJsonPath('data.payment_status', 'paid')
+            ->assertJsonPath('data.paid_via', 'square');
+
+        $paid = $row->fresh();
+        $this->assertSame(FormResponse::PAID_VIA_SQUARE, $paid->paid_via);
+        $this->assertSame(FormResponse::METHOD_EXTERNAL, $paid->payment_method, 'the method stays external; paid_via is the detail beside it');
+        $this->assertSame($this->admin->id, $paid->marked_paid_by_user_id);
+        $this->assertNotNull($paid->paid_at);
+
+        // It is external money, counted once there, and broken out under its own name.
+        $totals = $this->getJson($this->url('/cash-totals'))->assertOk()->json('data');
+
+        $this->assertSame(25000, $totals['other_paid']['external']['total_minor']);
+        $this->assertSame(25000, $totals['external_by_via']['square']['total_minor'], 'a detail of external, not a second total');
+        $this->assertSame(0, $totals['totals']['cash_minor'], 'a card at the desk is not cash in the drawer');
     }
 
     #[Test]
@@ -648,6 +680,7 @@ class FormOfficePaymentTest extends TestCase
                 ['value' => 'cashapp', 'label' => 'Cash App'],
                 ['value' => 'venmo', 'label' => 'Venmo'],
                 ['value' => 'check', 'label' => 'Check'],
+                ['value' => 'square', 'label' => 'Square'],
             ])
             ->assertJsonPath('meta.payment_filters', ['paid', 'unpaid', 'settled', 'cash', 'online', 'external', 'office']);
     }
