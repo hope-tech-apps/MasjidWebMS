@@ -61,8 +61,24 @@ export type GroupMessage = {
     attachments?: GroupMessageAttachment[];
     media_withheld?: boolean;
     is_mine?: boolean;
+    /** All four reactions, always, in catalogue order. */
+    reactions?: GroupMessageReaction[];
+    /** Who has read this message (never its author, never the viewer). */
+    read_by?: GroupMessageReader[];
     created_at: string | null;
 };
+
+/** 🤲 👍 💯 ❓ — the fixed set, `GroupMessageReaction::REACTIONS`. */
+export type GroupMessageReaction = {
+    key: 'ameen' | 'thumbs_up' | 'hundred' | 'question' | string;
+    emoji: string;
+    count: number;
+    mine: boolean;
+    /** Everyone the viewer may be shown by name, excluding the viewer. */
+    by: GroupMessageReader[];
+};
+
+export type GroupMessageReader = { name: string; is_parent: boolean };
 
 /** Shape submitted when opening a thread, optionally with its first message. */
 export type GroupThreadPayload = {

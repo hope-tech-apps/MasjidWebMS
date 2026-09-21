@@ -8,9 +8,11 @@ use App\Http\Requests\Family\StoreFamilyThreadRequest;
 use App\Jobs\SendGroupNotificationJob;
 use App\Models\Contact;
 use App\Models\GroupMessage;
+use App\Models\GroupMessageReaction;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
 use App\Models\Masjid;
+use App\Support\GroupMessageSignals;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
@@ -47,6 +49,12 @@ use Symfony\Component\HttpFoundation\Response;
  * none. Both halves are now real columns — `group_messages.author_contact_id`
  * and `group_thread_reads.contact_id` — so this surface writes exactly two
  * things and no more: a reply, and the reader's own bookmark.
+ *
+ * 2026-09-21 (owner): a third and a fourth — a parent's REACTION (🤲 👍 💯 ❓,
+ * the fixed set in GroupMessageReaction) and its removal, gated exactly as a
+ * reply is. And the bookmark stopped being private to its reader: the
+ * TEACHER now sees it as a read receipt, while a parent sees only the
+ * school's receipts, never another parent's (App\Support\GroupMessageSignals).
  *
  * PHOTOS. A teacher's message may carry photos. A parent receives them on the
  * same terms as the conversation, plus media consent on a CLASS-WIDE thread
@@ -88,8 +96,9 @@ class GroupThreadsController extends FamilyController
 
         // This parent's OWN bookmarks for the threads on this page — one query,
         // and only for the ids already selected, so an unread flag costs a
-        // lookup rather than a query per row. Nobody else's read state is
-        // fetched or serve-able: a bookmark says when YOU last looked.
+        // lookup rather than a query per row. Listing is NOT reading: nothing
+        // here moves a bookmark, so a thread only counts as read (and only
+        // shows the teacher a receipt) once it is actually opened.
         $reads = GroupThreadRead::query()
             ->where('contact_id', $this->contact()?->id)
             ->whereIn('group_thread_id', collect($threads->items())->pluck('id')->all())
@@ -129,13 +138,25 @@ class GroupThreadsController extends FamilyController
             ->with(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments'])
             ->orderBy('created_at')
             ->orderBy('id')
-            ->paginate($this->perPage($request, 50))
-            ->through(fn (GroupMessage $message) => $this->serializeMessage($message, $mayReceiveMedia));
+            ->paginate($this->perPage($request, 50));
 
-        // Opening a conversation is reading it. The bookmark is the READER'S
-        // own and nobody else's — it records that this parent has seen it, and
-        // is not visible to, nor writable by, any other principal.
-        $this->markRead($thread);
+        // Opening a conversation is reading it, up to the newest message this
+        // page SERVED. The bookmark is the READER'S own and nobody else's, and
+        // is writable by no other principal. Since 2026-09-21 it is also the
+        // read receipt the TEACHER sees ("Seen by Huda Yusuf") — which is the
+        // point of it, and which is why it is written here, after
+        // mayReceiveThread(), and never by the listing.
+        $servedUpTo = collect($messages->items())->max('id');
+        $this->markRead($thread, $servedUpTo !== null ? (int) $servedUpTo : null);
+
+        // Reactions and the SCHOOL's receipts. A parent is shown staff names
+        // only; another family member's reaction is counted, never named, and
+        // another parent's reading is not shown at all (GroupMessageSignals).
+        $signals = GroupMessageSignals::forMessages($thread, $messages->items(), $this->contact());
+
+        $messages->through(fn (GroupMessage $message) => $this->serializeMessage(
+            $message, $mayReceiveMedia, $signals[(int) $message->id] ?? null
+        ));
 
         return response()->json([
             'status' => 'success',
@@ -257,13 +278,13 @@ class GroupThreadsController extends FamilyController
                 'about_membership_id' => $about->id,
             ]);
 
-            $thread->messages()->create([
+            $first = $thread->messages()->create([
                 'author_contact_id' => $this->contact()->id,
                 'body' => $request->validated('body'),
             ]);
 
             // You have read what you just wrote.
-            $this->markRead($thread);
+            $this->markRead($thread, (int) $first->id);
 
             return $thread;
         });
@@ -306,7 +327,7 @@ class GroupThreadsController extends FamilyController
             ]);
 
             // You have read what you just wrote.
-            $this->markRead($thread);
+            $this->markRead($thread, (int) $message->id);
 
             return $message;
         });
@@ -327,9 +348,83 @@ class GroupThreadsController extends FamilyController
             // A parent's reply carries no photos, so there is nothing to withhold.
             'data' => $this->serializeMessage(
                 $message->load(['author:id,name', 'authorContact:id,first_name,last_name', 'attachments']),
-                true
+                true,
+                GroupMessageSignals::forMessages($thread, [$message], $this->contact())[(int) $message->id] ?? null
             ),
         ], Response::HTTP_CREATED);
+    }
+
+    /**
+     * PUT .../threads/{thread_id}/messages/{message_id}/reactions/{reaction}
+     *
+     * A parent's 🤲 / 👍 / 💯 / ❓ — the "Ameen" to a teacher's du'a, the
+     * thumbs-up that means "got it" without a reply the teacher has to read.
+     *
+     * AUTHORISED EXACTLY AS A REPLY IS, in the same order: `mayReceiveThread()`
+     * (so another family's private conversation is a 403 and nothing is
+     * written), then "not closed". The message is resolved THROUGH that thread,
+     * so a parent cannot aim a reaction at another family's message by pairing
+     * its id with a thread they may read — that is a 404. The reacting contact
+     * is the TOKEN's, never the payload's; there is no payload.
+     *
+     * Idempotent: a second PUT leaves one row. No notification — a reaction is
+     * an acknowledgement, and a push for every 👍 would bury the replies.
+     */
+    public function react($masjid_id, $group_id, $thread_id, $message_id, $reaction)
+    {
+        return $this->setReaction($group_id, $thread_id, $message_id, $reaction, true);
+    }
+
+    /** DELETE .../reactions/{reaction} — take it back. Same gate, equally idempotent. */
+    public function unreact($masjid_id, $group_id, $thread_id, $message_id, $reaction)
+    {
+        return $this->setReaction($group_id, $thread_id, $message_id, $reaction, false);
+    }
+
+    private function setReaction($group_id, $thread_id, $message_id, $reaction, bool $on)
+    {
+        $group = $this->group($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+
+        if (! $this->audience->mayReceiveThread($this->contact(), $group, $thread)) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this conversation.');
+        }
+
+        $message = $thread->messages()->findOrFail($message_id);
+
+        if (! GroupMessageReaction::isAllowed($reaction)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => ['reaction' => ['A reaction must be one of: '.implode(' ', GroupMessageReaction::REACTIONS).'.']],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        if ($thread->isClosed()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This conversation has been closed by the school.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $key = [
+            'group_message_id' => $message->id,
+            'reaction' => $reaction,
+            'contact_id' => $this->contact()->id,
+        ];
+
+        if ($on) {
+            GroupMessageReaction::createOrFirst($key);
+        } else {
+            GroupMessageReaction::query()->where($key)->delete();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'message_id' => (int) $message->id,
+                'reactions' => GroupMessageSignals::reactionsFor($message, $this->contact()),
+            ],
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -341,7 +436,7 @@ class GroupThreadsController extends FamilyController
      * into the staff column would attribute it to an account id that means
      * something else entirely.
      */
-    private function markRead(GroupThread $thread): void
+    private function markRead(GroupThread $thread, ?int $upToMessageId = null): void
     {
         $contact = $this->contact();
 
@@ -349,10 +444,7 @@ class GroupThreadsController extends FamilyController
             return;
         }
 
-        GroupThreadRead::updateOrCreate(
-            ['group_thread_id' => $thread->id, 'contact_id' => $contact->id],
-            ['last_read_at' => now()],
-        );
+        GroupThreadRead::advance((int) $thread->id, null, (int) $contact->id, $upToMessageId);
     }
 
     private function serializeThread(GroupThread $thread, $lastReadAt = null): array
@@ -406,7 +498,7 @@ class GroupThreadsController extends FamilyController
     /**
      * @return array<string,mixed>
      */
-    private function serializeMessage(GroupMessage $message, bool $mayReceiveMedia): array
+    private function serializeMessage(GroupMessage $message, bool $mayReceiveMedia, ?array $signals = null): array
     {
         $attachments = $message->relationLoaded('attachments') ? $message->attachments : collect();
 
@@ -433,6 +525,10 @@ class GroupThreadsController extends FamilyController
             'author_is_parent' => $message->authorIsParent(),
             'is_mine' => $message->author_contact_id !== null
                 && (int) $message->author_contact_id === (int) $this->contact()?->id,
+            // All four reactions with counts; names are staff-only for a parent.
+            'reactions' => $signals['reactions'] ?? [],
+            // Which STAFF have read this message. Never another parent.
+            'read_by' => $signals['read_by'] ?? [],
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }

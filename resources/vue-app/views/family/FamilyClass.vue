@@ -286,6 +286,14 @@
                             <p v-else-if="m.media_withheld" class="text-muted small fst-italic mb-0 mt-1">
                                 {{ t('message_media_withheld') }}
                             </p>
+                            <!-- 🤲 👍 💯 ❓, and under a parent's own message whether
+                                 the school has read it. The server sends staff
+                                 names only; other families are counted, never named. -->
+                            <MessageSignals v-model:reactions="m.reactions" :read-by="m.read_by"
+                                            :show-receipt="m.is_mine" :align-end="m.is_mine"
+                                            :can-react="!openedThread.is_closed"
+                                            :labels="signalLabels"
+                                            :send="(key: string, on: boolean) => reactTo(m, key, on)" />
                         </div>
                     </div>
 
@@ -859,6 +867,7 @@ import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import StudentApiService from '@/core/services/StudentApiService';
 import FamilyAttachment from '@/views/family/FamilyAttachment.vue';
+import MessageSignals from '@/components/common/MessageSignals.vue';
 import { useFamilyStore } from '@/stores/familyStore';
 import { useFamilyLang } from '@/views/family/familyI18n';
 import type { FamilyMessage } from '@/views/family/familyI18n';
@@ -1252,6 +1261,37 @@ const scrollToReply = () => {
         }
     }
 };
+
+// Reactions (🤲 👍 💯 ❓). Add and remove are separate idempotent verbs, so a
+// double tap cannot flip the answer back; the reply is the fresh counts.
+const reactTo = async (m: any, key: string, on: boolean) => {
+    if (!openedThread.value) return null;
+    const url = `${base.value}/threads/${openedThread.value.id}/messages/${m.id}/reactions/${key}`;
+    try {
+        const res = on ? await FamilyApiService.put(url) : await FamilyApiService.delete(url);
+        return res.data?.data?.reactions ?? null;
+    } catch (e: any) {
+        if (fail(e)) return null;
+        const served = e?.response?.data?.message;
+        replyError.value = served ? { text: served } : { key: 'reaction_failed' };
+        return null;
+    }
+};
+
+const signalLabels = computed(() => ({
+    you: t('msg_you'),
+    seenBy: t('seen_by'),
+    notSeen: t('not_seen'),
+    others: t('reaction_others'),
+    and: isAr.value ? '، ' : ', ',
+    reactionsGroup: t('reactions_group'),
+    reactionNames: {
+        ameen: t('reaction_ameen'),
+        thumbs_up: t('reaction_thumbs_up'),
+        hundred: t('reaction_hundred'),
+        question: t('reaction_question'),
+    },
+}));
 
 /** Back to the list, with nothing of the last conversation left behind. */
 const closeThread = () => {

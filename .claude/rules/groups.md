@@ -560,13 +560,32 @@ members/guardians channel. What a follow-on slice must not re-decide:
   way. A SOFT delete keeps them. Retention is the same pattern
   (`retained_until` from `config('groups.messaging')`), swept by the SAME
   `groups:purge-feed` command.
-- **Unread is a bookmark, not a receipt**: one `last_read_at` per
-  (thread, user) in `group_thread_reads`, moved on view/write. It is never an
-  authorization record.
+- **Unread is a bookmark, and since 2026-09-21 the bookmark is also the
+  receipt.** One row per (thread, reader) in `group_thread_reads` —
+  `last_read_at` plus `last_read_message_id`, the newest message the reader
+  was SERVED (forward-only, `GroupThreadRead::advance()`). It moves on OPENING
+  a thread (show) and on writing, never on the list. A receipt is derived —
+  `GroupThreadRead::covers($message)` — and never stored per message. Old rows
+  without the id answer by time. It is never an authorization record.
+- **Who is shown whose receipts and reactions is ONE decision,
+  `App\Support\GroupMessageSignals`.** Staff (office, teacher) see every
+  name. A parent sees staff names and their own `mine`; another parent's
+  reaction is COUNTED but never named, and another parent's reading is not
+  shown at all — on a class-wide thread a name would reveal which families
+  are in the room, and on a private one when the other guardian looked.
+- **Reactions are the fixed four** (`GroupMessageReaction::REACTIONS`:
+  ameen 🤲, thumbs_up 👍, hundred 💯, question ❓), one row per (message,
+  reaction, person), added by PUT and removed by DELETE on
+  `.../threads/{id}/messages/{id}/reactions/{key}` in all three realms. The
+  gate is REPLYING's, in the same order: the realm's write gate, then
+  `mayReceiveThread()`, then "not closed", with the message found THROUGH
+  the thread. No notification. A new realm that shows messages must serialize
+  through `GroupMessageSignals`, not re-derive names.
 
 Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php` +
-`tests/Feature/GroupMessagePhotosTest.php`.
+`tests/Feature/GroupMessagePhotosTest.php` +
+`tests/Feature/GroupMessageReactionsTest.php`.
 
 ## Behaviour / recognition — the Classroom module (T-013)
 

@@ -107,6 +107,16 @@
                             <div v-else-if="message.media_withheld" class="small text-muted fst-italic mt-1">
                                 A photo in this message is hidden from you.
                             </div>
+                            <!--
+                                Read status on EVERY message here, not only the
+                                viewer's own: this is the office's oversight view,
+                                so "has the family seen the teacher's note?" is
+                                the question it is opened to answer. A bookmark
+                                moves only when somebody OPENS the thread.
+                            -->
+                            <MessageSignals v-model:reactions="message.reactions" :read-by="message.read_by"
+                                            show-receipt :can-react="!openThread.is_closed"
+                                            :send="(key: string, on: boolean) => reactTo(message, key, on)" />
                         </div>
                     </div>
 
@@ -201,6 +211,7 @@ import { ref, computed, onBeforeMount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
+import MessageSignals from '@/components/common/MessageSignals.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
 import { GroupMessage, GroupThread, GroupThreadPayload } from '@/core/types/data/masjid-related/GroupThread';
@@ -351,6 +362,18 @@ const submitMessage = async () => {
         });
     } finally {
         sending.value = false;
+    }
+};
+
+/** 🤲 👍 💯 ❓ — refused (403) for an admin who may not read the thread, 422 once it is closed. */
+const reactTo = async (message: GroupMessage, key: string, on: boolean) => {
+    const thread = openThread.value;
+    if (!thread) return null;
+    try {
+        return await threadsStore.setReaction(props.groupId, thread.id, message.id, key, on);
+    } catch (error) {
+        Swal.fire({ icon: 'error', title: 'Not saved', text: apiErrorText(error, 'That reaction could not be saved.') });
+        return null;
     }
 };
 

@@ -252,6 +252,12 @@ Route::prefix('teacher')
                         // story. The download is a GET, so the counted write list
                         // does not change.
                         Route::post('/threads/{thread_id}/messages', [GroupThreadsController::class, 'storeMessage']);
+                        // 🤲 👍 💯 ❓ (2026-09-21) — the same controller and the
+                        // same gate as the reply above: `teacher.leads`, then
+                        // mayReceiveThread() and "not closed". Add and remove are
+                        // two idempotent verbs, not one toggle a double-tap undoes.
+                        Route::put('/threads/{thread_id}/messages/{message_id}/reactions/{reaction}', [GroupThreadsController::class, 'react']);
+                        Route::delete('/threads/{thread_id}/messages/{message_id}/reactions/{reaction}', [GroupThreadsController::class, 'unreact']);
                         Route::get('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}', [GroupThreadsController::class, 'downloadAttachment']);
 
                         // Student avatar OVERRIDE — group-scoped (solves the

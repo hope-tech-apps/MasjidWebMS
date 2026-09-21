@@ -1646,6 +1646,17 @@ class FamilyPortalTest extends TestCase
         // order to read what their teacher wrote. If a later slice wants one, the
         // eleventh entry belongs here and in the docblock at routes/family.php,
         // in the same commit, argued the way the ten above are.
+        //
+        // 2026-09-21 (owner): the list grows by TWO, deliberately — a parent's
+        // reaction on a message (🤲 👍 💯 ❓, and only those four) and its
+        // removal. They are admitted on the same terms as the reply they sit
+        // beside: authorised by the same `mayReceiveThread()`, refused on a
+        // closed conversation, the message resolved THROUGH the thread (so
+        // another family's message is unreachable by id), the contact taken
+        // from the token, and no payload at all. Two verbs rather than one
+        // "toggle" so that a double-tap or a second tab cannot flip the answer
+        // back. Read receipts added NOTHING here: marking read is still the GET
+        // that opens a thread, never a route of its own.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1665,6 +1676,7 @@ class FamilyPortalTest extends TestCase
         sort($writes);
 
         $this->assertSame([
+            'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/password',
             'POST /api/family/masjids/{masjid_id}/auth/password',
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
@@ -1675,6 +1687,7 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/translations',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',
+            'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'PUT /api/family/masjids/{masjid_id}/password',
         ], $writes);
     }

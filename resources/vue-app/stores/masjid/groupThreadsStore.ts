@@ -7,6 +7,7 @@ import { BackendApiRoute } from "@/core/types/config/BackendApiRoutes";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import {
     GroupMessage,
+    GroupMessageReaction,
     GroupThread,
     GroupThreadPayload,
     GroupThreadsMeta
@@ -135,6 +136,27 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
     }
 
     /**
+     * Add (`on`) or remove this caller's reaction. Two idempotent verbs server
+     * side; resolves with the message's fresh reactions.
+     */
+    async function setReaction(
+        groupId: number | string,
+        threadId: number | string,
+        messageId: number | string,
+        key: string,
+        on: boolean
+    ): Promise<GroupMessageReaction[] | null> {
+        if (!masjidStore.masjid?.id) return null;
+
+        const url = `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/threads/${threadId}/messages/${messageId}/reactions/${key}` as BackendApiRoute;
+        const res: AxiosResponse = on ? await ApiService.put(url, {}) : await ApiService.delete(url);
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data.reactions;
+        }
+        return null;
+    }
+
+    /**
      * Close or reopen a conversation. State, not deletion: it stays readable, it
      * just takes no further messages. Both verbs are idempotent server-side.
      */
@@ -166,6 +188,7 @@ export const useGroupThreadsStore = defineStore('groupThreadsStore', () => {
         clearOpenThread,
         createThread,
         postMessage,
+        setReaction,
         setThreadClosed
     }
 })

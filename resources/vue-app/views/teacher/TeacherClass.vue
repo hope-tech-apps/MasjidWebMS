@@ -834,6 +834,11 @@
                             <div v-else-if="m.media_withheld" class="text-muted small fst-italic mt-1">
                                 A photo in this message is hidden.
                             </div>
+                            <!-- 🤲 👍 💯 ❓ and, under your own messages, which family has read it. -->
+                            <MessageSignals v-model:reactions="m.reactions" :read-by="m.read_by"
+                                            :show-receipt="m.is_mine" :align-end="m.is_mine"
+                                            :can-react="!openedThread.is_closed"
+                                            :send="(key: string, on: boolean) => reactTo(m, key, on)" />
                         </div>
                     </div>
                     <div class="card-footer bg-white">
@@ -1661,6 +1666,7 @@ import TeacherApiService, { rowsOf } from '@/core/services/TeacherApiService';
 import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
+import MessageSignals from '@/components/common/MessageSignals.vue';
 import TeacherPhotoPicker from '@/views/teacher/TeacherPhotoPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
@@ -3348,6 +3354,20 @@ const sendReply = async () => {
         replyError.value = photoErrorText(e, 'Your reply could not be sent.');
     } finally {
         sendingReply.value = false;
+    }
+};
+
+// A reaction on a message. Two idempotent verbs, not a toggle, so a double
+// tap cannot undo itself; the server answers with the message's fresh counts.
+const reactTo = async (m: any, key: string, on: boolean) => {
+    if (!openedThread.value) return null;
+    const url = `${base.value}/threads/${openedThread.value.id}/messages/${m.id}/reactions/${key}`;
+    try {
+        const res = on ? await TeacherApiService.put(url) : await TeacherApiService.delete(url);
+        return res.data?.data?.reactions ?? null;
+    } catch (e: any) {
+        replyError.value = apiErrorText(e, 'That reaction could not be saved.');
+        return null;
     }
 };
 

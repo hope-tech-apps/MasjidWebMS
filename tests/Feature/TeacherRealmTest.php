@@ -167,6 +167,13 @@ class TeacherRealmTest extends TestCase
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            // A reaction (🤲 👍 💯 ❓) and its removal, 2026-09-21. The reply's
+            // own gate — `teacher.leads`, then mayReceiveThread() and "not
+            // closed" — so it reaches exactly the conversations a teacher can
+            // already answer, and adds no lifecycle verb: a teacher still
+            // cannot close, reopen or delete a thread.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
+            'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar/override',
 

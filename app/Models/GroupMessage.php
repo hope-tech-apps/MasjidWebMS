@@ -101,6 +101,12 @@ class GroupMessage extends Model
         return $this->hasMany(GroupMessageAttachment::class);
     }
 
+    /** 🤲 👍 💯 ❓ — see GroupMessageReaction for the fixed set and who may add one. */
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(GroupMessageReaction::class);
+    }
+
     /** The admin account that wrote it; null once that account is deleted. */
     public function author(): BelongsTo
     {
