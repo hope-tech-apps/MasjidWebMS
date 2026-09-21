@@ -43,7 +43,8 @@
               </table>
 
               <p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:#6b7280;">
-                This link expires in {{ $expiresInMinutes }} minutes and can only be used once.
+                This link expires in {{ $expiresIn }} and can only be used once.
+                If it has expired, use <strong>Forgot password</strong> on the sign-in page to get a new one.
               </p>
 
               <p style="margin:0 0 24px;font-size:13px;line-height:1.6;color:#6b7280;">

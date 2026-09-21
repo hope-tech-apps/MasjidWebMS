@@ -24,6 +24,9 @@ class AccountAccessMail extends Mailable
 
     public const MODE_RESET = 'reset';
 
+    /** The lifetime in words for the email ("7 days", "1 hour"), never "10080 minutes". */
+    public string $expiresIn;
+
     public function __construct(
         public User $user,
         public string $url,
@@ -31,6 +34,31 @@ class AccountAccessMail extends Mailable
         public ?string $orgName = null,
         public int $expiresInMinutes = 60,
     ) {
+        $this->expiresIn = self::inWords($expiresInMinutes);
+    }
+
+    /**
+     * Whole days, else whole hours, else minutes — the way a person says it.
+     *
+     * Computed here and not in the template: a Blade `@php` block compiles onto
+     * one line, so a `//` comment inside it silently swallows the assignment that
+     * follows and the view dies on an undefined variable.
+     */
+    public static function inWords(int $minutes): string
+    {
+        if ($minutes >= 1440 && $minutes % 1440 === 0) {
+            $days = intdiv($minutes, 1440);
+
+            return $days.' '.($days === 1 ? 'day' : 'days');
+        }
+
+        if ($minutes >= 60 && $minutes % 60 === 0) {
+            $hours = intdiv($minutes, 60);
+
+            return $hours.' '.($hours === 1 ? 'hour' : 'hours');
+        }
+
+        return $minutes.' '.($minutes === 1 ? 'minute' : 'minutes');
     }
 
     public function build(): self

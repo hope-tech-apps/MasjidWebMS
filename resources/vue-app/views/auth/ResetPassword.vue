@@ -87,6 +87,10 @@ const fromHash = new URLSearchParams((window.location.hash || '').replace(/^#/, 
 
 const token = ref(String(fromHash.get('token') ?? route.query.token ?? ''));
 const email = ref(String(fromHash.get('email') ?? route.query.email ?? ''));
+// Which kind of link: 'invite' for a new account's first password (7 days, its
+// own token table), absent for Forgot password. Sent back so the server looks in
+// the right table; a link without it is a reset, as every link before this was.
+const kind = ref(String(fromHash.get('kind') ?? route.query.kind ?? ''));
 const hasLink = computed(() => token.value !== '' && email.value !== '');
 
 // Scrub it. The values are captured above, so the address bar does not need to
@@ -115,6 +119,7 @@ const submit = async () => {
         await ApiService.post('/api/admin/reset-password' as any, {
             token: token.value,
             email: email.value,
+            ...(kind.value === 'invite' ? { kind: 'invite' } : {}),
             password: password.value,
             password_confirmation: passwordConfirmation.value,
         });
@@ -123,7 +128,7 @@ const submit = async () => {
         const data = e?.response?.data;
         error.value = data?.message
             || data?.data?.password?.[0]
-            || 'That link could not be used. Ask for a new one.';
+            || 'That link could not be used. Use "Forgot password" on the sign-in page to get a new one.';
     } finally {
         loading.value = false;
     }
