@@ -263,6 +263,23 @@ class HifzEntry extends Model
         return $span === null ? 0 : $span[1] - $span[0] + 1;
     }
 
+    /**
+     * Does this entry cover exactly one complete sūrah, first āyah to last?
+     *
+     * DERIVED from the range, never stored: a "whole sūrah" entry is recorded
+     * as its ordinary first–last range (StoreHifzEntryRequest fills it in), so
+     * the same range typed by hand reads as whole too, and there is no flag that
+     * could disagree with the coordinates beside it.
+     */
+    public function isWholeSurah(): bool
+    {
+        $surah = (int) $this->from_surah;
+
+        return $surah === (int) $this->to_surah
+            && (int) $this->from_ayah === 1
+            && QuranIndex::ayahsIn($surah) === (int) $this->to_ayah;
+    }
+
     /** Entries of one kind. Unknown kinds match nothing rather than everything. */
     public function scopeOfKind(Builder $query, string $kind): Builder
     {

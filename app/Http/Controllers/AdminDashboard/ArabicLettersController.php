@@ -4,6 +4,7 @@ namespace App\Http\Controllers\AdminDashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Arabic\MarkDrillRequest;
+use App\Http\Requests\Admin\Arabic\MasterAllDrillsRequest;
 use App\Http\Requests\Admin\Arabic\SaveDailyNoteRequest;
 use App\Http\Requests\Admin\Arabic\SetClassStageRequest;
 use App\Models\ArabicDailyNote;
@@ -16,6 +17,7 @@ use App\Support\Letters\LetterTracker;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -136,6 +138,82 @@ class ArabicLettersController extends Controller
             'status' => 'success',
             'data' => $tracker->forStudent($group, $membership->load('contact')),
             'meta' => $this->meta(),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * Mark EVERY drill on one track mastered for one student, in one write.
+     *
+     * For the child who arrives already knowing their letters (BISS teachers,
+     * 2026-09-21). It is the single mark repeated, not a different kind of
+     * record: the same `arabic_letter_progress` cells, each moved through
+     * `moveTo()`, so `mastered_at` and `marked_by_user_id` mean exactly what
+     * they mean when a teacher taps one drill at a time.
+     *
+     * What it deliberately does NOT do:
+     *   - touch a drill that is already mastered. Its first-mastery date and the
+     *     name of whoever marked it are history, and re-stamping them would say
+     *     this teacher marked it today;
+     *   - touch a note. A note is the teacher's words about the child, and this
+     *     is a statement about progress;
+     *   - reach past the class's stage. "All" is the stage's syllabus, which is
+     *     the progress denominator — a drill from further up the qāʿidah would be
+     *     a tick no bar counts and no screen shows, the same reason `mark`
+     *     refuses one.
+     *
+     * One transaction, so a failure part-way cannot leave a child two-thirds
+     * "mastered" by a button that reported an error.
+     */
+    public function masterAll(MasterAllDrillsRequest $request, $masjid_id, $group_id, $membership_id)
+    {
+        $tracker = LetterTracker::for(
+            (string) ($request->validated('alphabet') ?? CurriculumRegistry::ALPHABET_ARABIC)
+        );
+        $curriculum = $tracker->curriculum();
+
+        $group = Group::findOrFail($group_id);
+        $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
+
+        $drills = $curriculum->syllabus($tracker->stageFor($group));
+        $userId = Auth::id();
+
+        $changed = DB::transaction(function () use ($drills, $membership, $group, $curriculum, $userId): int {
+            $existing = ArabicLetterProgress::query()
+                ->where('group_membership_id', $membership->id)
+                ->where('alphabet', $curriculum->alphabetId())
+                ->whereIn('drill_id', $drills)
+                ->get()
+                ->keyBy('drill_id');
+
+            $changed = 0;
+
+            foreach ($drills as $drillId) {
+                $row = $existing[$drillId] ?? new ArabicLetterProgress([
+                    'group_membership_id' => $membership->id,
+                    'alphabet' => $curriculum->alphabetId(),
+                    'drill_id' => $drillId,
+                ]);
+
+                if ($row->exists && $row->isMastered()) {
+                    continue;
+                }
+
+                $row->group_id = $group->id;
+                $row->moveTo(ArabicCurriculum::STATUS_MASTERED, $userId);
+                $row->save();
+                $changed++;
+            }
+
+            return $changed;
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $changed === 0
+                ? 'Everything on this track was already mastered.'
+                : "Marked {$changed} ".($changed === 1 ? 'drill' : 'drills').' mastered.',
+            'data' => $tracker->forStudent($group, $membership->load('contact')),
+            'meta' => $this->meta() + ['changed' => $changed],
         ], Response::HTTP_OK);
     }
 

@@ -221,6 +221,75 @@ class BehaviorAwardsController extends Controller
     }
 
     /**
+     * GET .../groups/{group_id}/awards/totals
+     *
+     * Each current student's running total, for the TEACHER'S Points tab (BISS
+     * teachers, 2026-09-21: "how many points does she have?" meant opening her
+     * record and adding it up).
+     *
+     * This is the "teacher's overview" `.claude/rules/groups.md` foresaw — a
+     * list of per-student rows a leader is already entitled to — and it keeps
+     * the rule's other half:
+     *   - LEADERS ONLY, refused outright to anyone else, even though a guardian
+     *     would only ever see their own child through the constrained query. A
+     *     parent has `summary` for their child; nobody but the teacher has a
+     *     screen that lists a class;
+     *   - in ROSTER order, with no rank and no position field. Sorting by points
+     *     is the leaderboard, and a client that wants it would have to build it;
+     *   - each total is the SAME number `summary` reports as `totals.points`
+     *     (and the family summary a parent reads): the net SUM of the
+     *     snapshotted points over non-revoked awards, negatives included. One
+     *     definition, pinned by a test that compares them.
+     *
+     * The class figure is the sum of the rows returned, so it can never
+     * disagree with the list beneath it. Awards of a child who has since left
+     * the class are in neither: they are still that child's, but they are no
+     * longer this room's.
+     */
+    public function totals(Request $request, $masjid_id, $group_id)
+    {
+        $group = Group::findOrFail($group_id);
+
+        if (! $this->audience->isLeaderOf($request->user(), $group)) {
+            abort(403, 'Only the class\'s teachers can see every student\'s points.');
+        }
+
+        $students = $group->memberships()
+            ->participants()->current()
+            ->with('contact:id,first_name,last_name,'.Contact::AVATAR_COLUMNS)
+            ->orderBy('id')
+            ->get();
+
+        $sums = $this->readableAwards($request->user(), $group)
+            ->whereIn('group_membership_id', $students->pluck('id'))
+            ->selectRaw('group_membership_id, COUNT(*) as awards_count, SUM(points) as points_total')
+            ->groupBy('group_membership_id')
+            ->get()
+            ->keyBy('group_membership_id');
+
+        $rows = $students->map(function (GroupMembership $m) use ($sums): array {
+            $row = $sums[$m->id] ?? null;
+
+            return $this->student($m) + [
+                'awards' => (int) ($row->awards_count ?? 0),
+                'points' => (int) ($row->points_total ?? 0),
+            ];
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'students' => $rows,
+                'class' => [
+                    'awards' => (int) $rows->sum('awards'),
+                    'points' => (int) $rows->sum('points'),
+                ],
+            ],
+            'meta' => $this->meta(),
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * POST .../groups/{group_id}/awards
      *
      * Give one skill to ONE student. The values are SNAPSHOTTED onto the award

@@ -246,7 +246,38 @@
                                     {{ tracker.totals?.mastered ?? 0 }} of {{ tracker.totals?.total ?? 0 }} mastered
                                 </div>
                             </div>
+                            <!-- MARK ALL MASTERED, for a child who already knows
+                                 them (BISS teachers, 2026-09-21). Two steps on
+                                 purpose: one tap here would change dozens of
+                                 cells, so the button only asks, and the
+                                 confirmation says what will and will not change. -->
+                            <button v-if="(tracker.totals?.mastered ?? 0) < (tracker.totals?.total ?? 0) && !confirmMasterAll"
+                                    type="button" class="btn btn-sm btn-outline-success ms-auto"
+                                    :disabled="masteringAll" @click="confirmMasterAll = true">
+                                Mark all mastered
+                            </button>
                         </div>
+                        <div v-if="confirmMasterAll" class="alert alert-warning small" role="alert">
+                            <p class="mb-2">
+                                Mark all {{ (tracker.totals?.total ?? 0) - (tracker.totals?.mastered ?? 0) }} remaining
+                                {{ tracker.stage?.label ? `“${tracker.stage.label}”` : '' }} drills mastered for
+                                {{ name(selected.contact) }}?
+                            </p>
+                            <p class="mb-2 text-muted">
+                                Drills already mastered keep their date, and notes are not touched.
+                                You can still move any drill back by tapping it.
+                            </p>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm btn-success" :disabled="masteringAll" @click="masterAll">
+                                    <span v-if="masteringAll" class="spinner-border spinner-border-sm"></span>
+                                    <span v-else>Yes, mark all mastered</span>
+                                </button>
+                                <button type="button" class="btn btn-sm btn-link text-muted" :disabled="masteringAll"
+                                        @click="confirmMasterAll = false">Cancel</button>
+                            </div>
+                            <p v-if="masterAllError" class="text-danger mt-2 mb-0">{{ masterAllError }}</p>
+                        </div>
+                        <div v-if="masterAllNote" class="alert alert-success py-2 small">{{ masterAllNote }}</div>
 
                         <!-- The alphabet's OWN direction, off the payload: Arabic
                              begins at the top right and runs leftward, English
@@ -467,6 +498,40 @@
                     </option>
                 </select>
 
+                <!-- RUNNING TOTALS (BISS teachers, 2026-09-21). The net of every
+                     award, corrections included — the same number the family
+                     sees for their own child. In ROSTER order and never sorted
+                     by points: this is the teacher's overview, not a leaderboard
+                     (.claude/rules/groups.md). -->
+                <div v-if="pointsTotals" class="card border-0 bg-light mb-3">
+                    <div class="card-body py-2">
+                        <div v-if="pointsMembership && selectedPointsTotal" class="d-flex justify-content-between align-items-baseline">
+                            <span class="small fw-semibold">{{ name(selectedPointsTotal.contact) }}’s total</span>
+                            <span class="fw-semibold">{{ signedPoints(selectedPointsTotal.points) }}</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-baseline small text-muted">
+                            <span>Whole class</span>
+                            <span>{{ signedPoints(pointsTotals.class?.points ?? 0) }}</span>
+                        </div>
+                        <details class="mt-1">
+                            <summary class="small text-primary" style="cursor:pointer">Each student’s total</summary>
+                            <ul class="list-unstyled mb-0 mt-1">
+                                <li v-for="t in pointsTotals.students" :key="t.membership_id"
+                                    class="d-flex justify-content-between small py-1 border-bottom">
+                                    <button type="button" class="btn btn-link btn-sm p-0 text-reset text-decoration-none"
+                                            @click="pointsMembership = t.membership_id; loadAwards()">
+                                        {{ name(t.contact) }}
+                                    </button>
+                                    <span>{{ signedPoints(t.points) }}</span>
+                                </li>
+                            </ul>
+                        </details>
+                    </div>
+                </div>
+                <p v-else-if="pointsTotalsFailed" class="text-muted small">
+                    The running totals could not be loaded. This is not the same as everyone having none.
+                </p>
+
                 <template v-if="pointsMembership">
                     <!-- Add points, when a behaviour vocabulary is available. -->
                     <div class="card border mb-3" v-if="skills.length">
@@ -615,10 +680,21 @@
                                     <label class="form-label small text-muted mb-1">Ayahs</label>
                                     <div class="d-flex align-items-center gap-1">
                                         <input type="number" min="1" :max="surahAyahs" class="form-control form-control-sm"
-                                               style="width:4.5rem" v-model.number="hifzForm.from_ayah" placeholder="from">
+                                               style="width:4.5rem" v-model.number="hifzForm.from_ayah" placeholder="from"
+                                               :disabled="hifzForm.whole_surah">
                                         <span class="text-muted small">to</span>
                                         <input type="number" min="1" :max="surahAyahs" class="form-control form-control-sm"
-                                               style="width:4.5rem" v-model.number="hifzForm.to_ayah" placeholder="to">
+                                               style="width:4.5rem" v-model.number="hifzForm.to_ayah" placeholder="to"
+                                               :disabled="hifzForm.whole_surah">
+                                    </div>
+                                    <!-- The whole surah, without knowing how many
+                                         āyāt it has: the SERVER fills in first to
+                                         last from its own index, so the record is
+                                         an ordinary full range. -->
+                                    <div class="form-check form-check-inline small mt-1">
+                                        <input id="hifz-whole-surah" type="checkbox" class="form-check-input"
+                                               v-model="hifzForm.whole_surah">
+                                        <label for="hifz-whole-surah" class="form-check-label">Whole surah</label>
                                     </div>
                                 </div>
                                 <div v-if="ayahCount" class="col-6 col-sm-auto">
@@ -673,7 +749,8 @@
                     <ul v-else class="list-unstyled mb-0">
                         <li v-for="h in hifz" :key="h.id" class="d-flex gap-2 align-items-baseline py-1 border-bottom small">
                             <span class="text-capitalize flex-grow-1">
-                                {{ h.kind }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}
+                                <template v-if="h.whole_surah">{{ h.kind }}: all of {{ h.from?.surah_name ?? `Surah ${h.from?.surah}` }}</template>
+                                <template v-else>{{ h.kind }}: {{ ayah(h.from) }} &rarr; {{ ayah(h.to) }}</template>
                                 <span class="text-muted">· {{ h.quality }} · {{ when(h.recited_at) }}</span>
                             </span>
                             <button class="btn btn-sm btn-link text-danger p-0" :disabled="removingHifz === h.id"
@@ -2694,6 +2771,42 @@ const advance = async (drill: any) => {
     }
 };
 
+// Mark every drill at the class's stage mastered for the open child. The server
+// decides WHICH drills (the stage's syllabus, the same denominator as the
+// totals), so this sends only the track.
+const confirmMasterAll = ref(false);
+const masteringAll = ref(false);
+const masterAllNote = ref('');
+const masterAllError = ref('');
+const masterAll = async () => {
+    if (!selected.value) return;
+    masteringAll.value = true;
+    masterAllError.value = '';
+    masterAllNote.value = '';
+    try {
+        const res = await TeacherApiService.put(
+            `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
+            { alphabet: lettersAlphabet.value }
+        );
+        tracker.value = res.data?.data ?? tracker.value;
+        masterAllNote.value = res.data?.message ?? 'Marked mastered.';
+        confirmMasterAll.value = false;
+    } catch (e: any) {
+        // Nothing is shown as mastered unless the server said so: the tracker is
+        // only replaced by a successful response.
+        masterAllError.value = e?.response?.data?.message
+            ?? 'That did not save. Check your connection and try again.';
+    } finally {
+        masteringAll.value = false;
+    }
+};
+// A confirmation or a result belongs to the child and track it was about.
+watch([selected, lettersAlphabet], () => {
+    confirmMasterAll.value = false;
+    masterAllNote.value = '';
+    masterAllError.value = '';
+});
+
 const setStage = async (stage: string) => {
     savingStage.value = true;
     stageNote.value = '';
@@ -2981,6 +3094,26 @@ const createSkill = async () => {
     }
 };
 
+// Every current student's running total, from the server, which sums the same
+// awards the family summary does. Not computed here from `awards`: that list is
+// one page of one child, and a total built from a page is a wrong number.
+const pointsTotals = ref<any>(null);
+const pointsTotalsFailed = ref(false);
+const loadPointsTotals = async () => {
+    pointsTotalsFailed.value = false;
+    try {
+        const res = await TeacherApiService.get(`${base.value}/awards/totals`);
+        pointsTotals.value = res.data?.data ?? null;
+    } catch {
+        // Hidden rather than shown as zeros: a failed read is not "no points".
+        pointsTotals.value = null;
+        pointsTotalsFailed.value = true;
+    }
+};
+const selectedPointsTotal = computed(() => pointsTotals.value?.students
+    ?.find((t: any) => String(t.membership_id) === String(pointsMembership.value)) ?? null);
+const signedPoints = (n: number) => `${n > 0 ? '+' : ''}${n}`;
+
 const loadAwards = async () => {
     awards.value = [];
     if (!pointsMembership.value) return;
@@ -3033,6 +3166,7 @@ const giveAward = async () => {
         awardPoints.value = null;
         awardNote.value = '';
         await loadAwards();
+        loadPointsTotals();
     } catch (e: any) {
         awardError.value = e?.response?.data?.message || 'Those points could not be given.';
     } finally {
@@ -3045,6 +3179,7 @@ const removeAward = async (award: any) => {
     try {
         await TeacherApiService.delete(`${base.value}/awards/${award.id}`);
         awards.value = awards.value.filter((a) => a.id !== award.id);
+        loadPointsTotals();
     } catch {
         awardError.value = 'That entry could not be removed.';
     } finally {
@@ -3122,6 +3257,8 @@ const hifzForm = ref({
     // wrote its explanation here and a teacher looking at that record saw 25
     // excellent recitations with no sign that nobody heard them.
     note: '',
+    // "Whole surah": no āyah range is sent; the server records 1 to the last.
+    whole_surah: false,
 });
 
 /** Āyāt in the chosen surah — the ceiling both inputs are bounded by. */
@@ -3129,13 +3266,17 @@ const surahAyahs = computed(() =>
     surahs.value.find((s) => s.number === hifzForm.value.surah)?.ayahs ?? 286);
 
 const ayahCount = computed(() => {
+    if (hifzForm.value.whole_surah) {
+        // Only when the index actually loaded — never the 286 fallback above.
+        return surahs.value.find((s) => s.number === hifzForm.value.surah)?.ayahs ?? 0;
+    }
     const { from_ayah: f, to_ayah: t } = hifzForm.value;
     return f && t && t >= f ? t - f + 1 : 0;
 });
 
 const hifzValid = computed(() =>
-    !!hifzForm.value.surah && ayahCount.value > 0
-    && (hifzForm.value.to_ayah ?? 0) <= surahAyahs.value);
+    !!hifzForm.value.surah && (hifzForm.value.whole_surah || (ayahCount.value > 0
+    && (hifzForm.value.to_ayah ?? 0) <= surahAyahs.value)));
 
 const loadSurahs = async () => {
     if (surahs.value.length) return;
@@ -3177,9 +3318,12 @@ const recordHifz = async () => {
             // The API's interval may cross surahs; this form deliberately does
             // not, so both ends carry the one chosen surah.
             from_surah: hifzForm.value.surah,
-            from_ayah: hifzForm.value.from_ayah,
             to_surah: hifzForm.value.surah,
-            to_ayah: hifzForm.value.to_ayah,
+            // A whole surah sends no āyāt at all, so the server's index is the
+            // only source of where it ends.
+            ...(hifzForm.value.whole_surah
+                ? { whole_surah: 1 }
+                : { from_ayah: hifzForm.value.from_ayah, to_ayah: hifzForm.value.to_ayah }),
             quality: hifzForm.value.quality,
             major_mistakes: 0,
             minor_mistakes: 0,
@@ -3191,6 +3335,9 @@ const recordHifz = async () => {
         // The surah is KEPT: the next entry for this child is usually the next
         // few āyāt of the same one.
         hifzForm.value.from_ayah = hifzForm.value.to_ayah = null;
+        // Unticked after each record: the next entry is usually a few āyāt, and
+        // a box left ticked would record a second whole surah by accident.
+        hifzForm.value.whole_surah = false;
         // The NOTE is cleared, unlike the surah. A note is about the portion
         // just recorded; carrying it forward would silently attach one child's
         // "struggled with the waqf" to the next portion, or to the next child
@@ -3761,6 +3908,7 @@ watch(activeTab, (tab) => {
     if (tab === 'story' && !posts.value.length && !postsLoading.value) loadPosts();
     if (tab === 'messages' && !threads.value.length && !threadsLoading.value) loadThreads();
     if (tab === 'points' && !skills.value.length) loadSkills();
+    if (tab === 'points') loadPointsTotals();
     if (tab === 'attendance') loadAttendance();
     if (tab === 'hifz') loadSurahs();
     if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }

@@ -1798,3 +1798,25 @@ One live link per person across both tables.
 **Alternatives rejected:** keep 60 min (the 2026-09-17 answer — superseded); raise the shared
 expiry (lengthens every reset); a `kind` column on the shared table (every reader would have
 to honour it, and one that forgot would accept a reset as an invite).
+
+## 2026-09-21 — Teacher shortcuts: mark all letters, whole surah, running points totals (narrows groups.md "no class-wide endpoint")
+
+BISS teacher feedback, applied Manara-wide, teacher realm only.
+
+- **Mark all letters mastered** — `PUT .../members/{id}/letters/master-all` (`teacher.teaches:arabic`, body
+  `alphabet`). "All" is the class stage's syllabus on that track — the progress denominator — never further up
+  the qāʿidah. It writes the same `arabic_letter_progress` cells through `moveTo()` as the single mark; drills
+  already mastered keep their `mastered_at` and `marked_by_user_id`, and no note is touched. One transaction.
+  The screen asks for confirmation first. Rejected: a stored "knows all letters" flag (a second truth beside the
+  cells, which every reader would have to consult).
+- **Whole surah** — `whole_surah` on the existing `POST .../hifz` (still `teacher.teaches:quran`); no new route,
+  no column. The request fills in `from_surah:1 .. from_surah:last` from `QuranIndex` before validation, so the
+  row is an ordinary full range and HifzProgress reads it unchanged. `whole_surah` in the payload is DERIVED
+  (`HifzEntry::isWholeSurah()`), so a hand-typed full range reads as whole too. A contradicting range sent
+  alongside is a 422, not a guess.
+- **Running points totals** — `GET .../awards/totals`, leaders only (a guardian is refused even though the
+  query would constrain them). Per current student, in ROSTER order, no rank field; each number is the net
+  `SUM(points)` the per-student summary and the family summary report, negatives included, revoked excluded
+  (a test compares them). A class figure is the sum of those rows. This is the "teacher's overview … a list of
+  per-student rows a leader is already entitled to" that `.claude/rules/groups.md` §1 foresaw; the no-leaderboard
+  rule is unchanged: nothing sorts children by points and nothing here reaches a family.
