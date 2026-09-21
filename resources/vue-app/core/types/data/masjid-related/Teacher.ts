@@ -32,6 +32,14 @@ export type Teacher = {
     classes: TeacherClass[];
 };
 
+/**
+ * What a teacher teaches in ONE class (GroupStaff::SUBJECTS; owner, 2026-09-21).
+ * Keyed by class id. A class left out, or given an empty list, teaches everything —
+ * which is what every full-time teacher is.
+ */
+export type TeacherSubject = 'quran' | 'arabic' | 'islamic_studies';
+export type ClassSubjects = Record<number, TeacherSubject[] | null>;
+
 /** Shape submitted by the "Add Teacher" form (server stamps masjid_id). */
 export type TeacherPayload = {
     name: string;
@@ -39,6 +47,7 @@ export type TeacherPayload = {
     phone: string;
     /** The ids of the classes this teacher leads — at least one is required. */
     class_ids: number[];
+    class_subjects?: ClassSubjects;
 };
 
 /**
@@ -55,6 +64,7 @@ export type TeacherDetail = {
     email: string;
     phone: string;
     class_ids: number[];
+    class_subjects?: ClassSubjects;
 };
 
 /**
@@ -68,4 +78,5 @@ export type TeacherUpdatePayload = {
     name: string;
     phone: string;
     class_ids: number[];
+    class_subjects?: ClassSubjects;
 };

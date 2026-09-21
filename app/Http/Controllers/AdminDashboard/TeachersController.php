@@ -52,9 +52,13 @@ class TeachersController extends Controller
             }
 
             $classes = $rows->where('user_id', $userId)
-                ->map(fn (GroupStaff $r) => $groups->get($r->group_id))
+                ->map(function (GroupStaff $r) use ($groups) {
+                    $g = $groups->get($r->group_id);
+
+                    // null = every subject; see GroupStaff::SUBJECTS.
+                    return $g === null ? null : ['id' => (int) $g->id, 'name' => $g->name, 'subjects' => $r->subjects ?: null];
+                })
                 ->filter()
-                ->map(fn (Group $g) => ['id' => (int) $g->id, 'name' => $g->name])
                 ->values();
 
             return [
@@ -69,6 +73,13 @@ class TeachersController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $teachers,
+            // The subjects an assignment may be narrowed to, in the order and words
+            // the screen shows them, so the admin form never carries its own copy.
+            'meta' => [
+                'subjects' => collect(GroupStaff::SUBJECTS)
+                    ->map(fn (string $s) => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s]])
+                    ->values(),
+            ],
         ], Response::HTTP_OK);
     }
 
@@ -114,9 +125,15 @@ class TeachersController extends Controller
             // The classes they lead. masjid_id MUST be explicit — attach() bypasses
             // the BelongsToMasjid creating hook (see GroupStaff).
             foreach ($classes as $group) {
+                $subjects = $request->subjectsFor((int) $group->id);
+
                 $group->staff()->attach($user->id, [
                     'masjid_id' => $group->masjid_id,
                     'role' => GroupStaff::ROLE_TEACHER,
+                    // Encoded by hand: attach() writes through the query builder,
+                    // so the model's `array` cast never runs (the same reason
+                    // masjid_id is passed explicitly — see GroupStaff).
+                    'subjects' => $subjects,
                     'assigned_by_user_id' => Auth::id(),
                     'assigned_at' => now(),
                 ]);
@@ -150,6 +167,18 @@ class TeachersController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
                 'class_ids' => $this->ledClassIds($user),
+                // Per class, as stored: null for "teaches everything". The edit
+                // form round-trips this, so an admin editing a name cannot
+                // silently widen a Sunday School teacher back to every subject.
+                'class_subjects' => GroupStaff::query()
+                    ->where('user_id', $user->id)
+                    ->get(['group_id', 'subjects'])
+                    ->mapWithKeys(fn (GroupStaff $r) => [(int) $r->group_id => $r->subjects ?: null]),
+            ],
+            'meta' => [
+                'subjects' => collect(GroupStaff::SUBJECTS)
+                    ->map(fn (string $s) => ['value' => $s, 'label' => GroupStaff::SUBJECT_LABELS[$s]])
+                    ->values(),
             ],
         ], Response::HTTP_OK);
     }
@@ -190,12 +219,34 @@ class TeachersController extends Controller
             }
 
             foreach ($classes->whereIn('id', $toAdd) as $group) {
+                $subjects = $request->subjectsFor((int) $group->id);
+
                 $group->staff()->attach($user->id, [
                     'masjid_id' => $group->masjid_id,
                     'role' => GroupStaff::ROLE_TEACHER,
+                    'subjects' => $subjects,
                     'assigned_by_user_id' => Auth::id(),
                     'assigned_at' => now(),
                 ]);
+            }
+
+            // A class the teacher ALREADY leads keeps its row, and may have its
+            // subjects changed — only when the request speaks about it, so a
+            // client that never sends `class_subjects` leaves every existing
+            // assignment exactly as it was.
+            if ($request->has('class_subjects')) {
+                foreach (array_intersect($classIds, $current) as $keptId) {
+                    $subjects = $request->subjectsFor((int) $keptId);
+
+                    GroupStaff::query()
+                        ->where('user_id', $user->id)
+                        ->where('group_id', $keptId)
+                        // A query update skips the model's casts, so this path
+                        // encodes for itself. attach() above goes through the
+                        // pivot model (->using(GroupStaff)) and must NOT encode,
+                        // or the list is stored twice and read back as a string.
+                        ->update(['subjects' => $subjects === null ? null : json_encode(array_values($subjects))]);
+                }
             }
         });
 
@@ -312,11 +363,22 @@ class TeachersController extends Controller
 
     private function serialize(User $user, $classes): array
     {
+        // What was actually stored, read back — not what the request asked for,
+        // so the screen shows the assignment as it now is.
+        $subjects = GroupStaff::query()
+            ->where('user_id', $user->id)
+            ->get(['group_id', 'subjects'])
+            ->mapWithKeys(fn (GroupStaff $r) => [(int) $r->group_id => $r->subjects ?: null]);
+
         return [
             'id' => (int) $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'classes' => $classes->map(fn (Group $g) => ['id' => (int) $g->id, 'name' => $g->name])->values(),
+            'classes' => $classes->map(fn (Group $g) => [
+                'id' => (int) $g->id,
+                'name' => $g->name,
+                'subjects' => $subjects->get((int) $g->id),
+            ])->values(),
         ];
     }
 }

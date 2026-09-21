@@ -91,7 +91,29 @@ abstract class TeacherController extends Controller
             'description' => $group->description,
             'is_active' => (bool) $group->is_active,
             'arabic_stage' => $group->arabicStage(),
+            // What THIS teacher teaches in this class: null for everything (every
+            // assignment before subjects existed, and a full-time teacher), else a
+            // list. The screen hides the tabs a subject owns; the server refuses
+            // them regardless (`teacher.teaches:`), so this is a courtesy, not the
+            // boundary.
+            'my_subjects' => $this->mySubjects($group),
+            'subject_labels' => \App\Models\GroupStaff::SUBJECT_LABELS,
             'students' => $students->map(fn (GroupMembership $m): array => $this->student($m))->values(),
         ];
+    }
+
+    /** @return list<string>|null */
+    private function mySubjects(Group $group): ?array
+    {
+        $subjects = \App\Models\GroupStaff::query()
+            ->where('group_id', $group->id)
+            ->where('user_id', Auth::id())
+            ->value('subjects');
+
+        if (is_string($subjects)) {
+            $subjects = json_decode($subjects, true);
+        }
+
+        return is_array($subjects) && $subjects !== [] ? array_values($subjects) : null;
     }
 }

@@ -92,6 +92,70 @@ class TeacherProvisioningTest extends TestCase
     }
 
     #[Test]
+    public function an_admin_records_which_subjects_a_teacher_teaches_in_each_class(): void
+    {
+        // Sunday School splits one class across three teachers (owner, 2026-09-21).
+        Mail::fake();
+
+        $response = $this->postJson($this->base().'/teachers', [
+            'name' => 'Ustadh Hussam',
+            'email' => 'hussam@school.test',
+            'class_ids' => [$this->classOne->id, $this->classTwo->id],
+            'class_subjects' => [
+                $this->classOne->id => ['quran'],
+                // classTwo omitted: teaches everything there.
+            ],
+        ])->assertCreated();
+
+        $teacher = User::findOrFail($response->json('data.id'));
+
+        $this->assertSame(['quran'], $this->subjectsOf($teacher, $this->classOne));
+        $this->assertNull($this->subjectsOf($teacher, $this->classTwo), 'a class left out teaches everything');
+
+        // Read back as stored, per class.
+        $classes = collect($response->json('data.classes'))->keyBy('id');
+        $this->assertSame(['quran'], $classes[$this->classOne->id]['subjects']);
+        $this->assertNull($classes[$this->classTwo->id]['subjects']);
+    }
+
+    #[Test]
+    public function changing_a_teachers_subjects_leaves_their_classes_in_place_and_an_older_client_changes_nothing(): void
+    {
+        Mail::fake();
+        $id = $this->postJson($this->base().'/teachers', [
+            'name' => 'Ustadha Aman', 'email' => 'aman@school.test',
+            'class_ids' => [$this->classOne->id],
+            'class_subjects' => [$this->classOne->id => ['arabic']],
+        ])->assertCreated()->json('data.id');
+        $teacher = User::findOrFail($id);
+
+        // A client that knows about subjects changes them on a class kept.
+        $this->putJson($this->base()."/teachers/{$id}", [
+            'name' => 'Ustadha Aman', 'class_ids' => [$this->classOne->id],
+            'class_subjects' => [$this->classOne->id => ['arabic', 'islamic_studies']],
+        ])->assertOk();
+        $this->assertSame(['arabic', 'islamic_studies'], $this->subjectsOf($teacher, $this->classOne));
+
+        // A client written before subjects existed sends no `class_subjects`,
+        // and must not wipe what an admin set.
+        $this->putJson($this->base()."/teachers/{$id}", [
+            'name' => 'Ustadha Aman', 'class_ids' => [$this->classOne->id],
+        ])->assertOk();
+        $this->assertSame(['arabic', 'islamic_studies'], $this->subjectsOf($teacher, $this->classOne),
+            'an absent class_subjects must not be read as "clear them"');
+    }
+
+    #[Test]
+    public function a_subject_that_does_not_exist_is_refused(): void
+    {
+        $this->postJson($this->base().'/teachers', [
+            'name' => 'X', 'email' => 'x@school.test',
+            'class_ids' => [$this->classOne->id],
+            'class_subjects' => [$this->classOne->id => ['science']],
+        ])->assertStatus(422);
+    }
+
+    #[Test]
     public function editing_a_teacher_syncs_their_class_assignments(): void
     {
         $teacher = $this->makeTeacher([$this->classOne->id]);
@@ -192,6 +256,15 @@ class TeacherProvisioningTest extends TestCase
         }
 
         return $teacher;
+    }
+
+    private function subjectsOf(User $teacher, Group $class): ?array
+    {
+        $raw = \App\Models\GroupStaff::query()
+            ->where('user_id', $teacher->id)->where('group_id', $class->id)->value('subjects');
+        $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
+
+        return $decoded ?: null;
     }
 
     private function ledClassIds(User $teacher): array
