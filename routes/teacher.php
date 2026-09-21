@@ -126,6 +126,12 @@ Route::prefix('teacher')
                         Route::put('/letters/stage', [ArabicLettersController::class, 'setStage']);
                         Route::get('/members/{membership_id}/letters', [ArabicLettersController::class, 'show']);
                         Route::put('/members/{membership_id}/letters', [ArabicLettersController::class, 'mark']);
+                        // Every drill at the class's stage mastered in one go,
+                        // for a child who already knows them (BISS teachers,
+                        // 2026-09-21). The same cells the single mark writes;
+                        // already-mastered drills and notes are left alone. PUT
+                        // because a second call changes nothing.
+                        Route::put('/members/{membership_id}/letters/master-all', [ArabicLettersController::class, 'masterAll']);
 
                         // The daily Arabic note: one child, one day, the
                         // teacher's own words. Per-student by the owner's
@@ -140,6 +146,10 @@ Route::prefix('teacher')
 
                         // Behaviour points (reused; GroupAudience grants leader standing).
                         Route::get('/awards', [BehaviorAwardsController::class, 'index']);
+                        // Every current student's running total, in roster
+                        // order — the teacher's overview groups.md allows, never
+                        // a ranking. Leaders only. A GET: the write list is unchanged.
+                        Route::get('/awards/totals', [BehaviorAwardsController::class, 'totals']);
                         Route::post('/awards', [BehaviorAwardsController::class, 'store']);
                         Route::delete('/awards/{award_id}', [BehaviorAwardsController::class, 'destroy']);
                         Route::get('/members/{membership_id}/awards', [BehaviorAwardsController::class, 'forMember']);

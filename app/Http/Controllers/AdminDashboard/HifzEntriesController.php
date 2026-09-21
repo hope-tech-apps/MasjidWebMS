@@ -438,6 +438,9 @@ class HifzEntriesController extends Controller
             'from' => QuranIndex::describe((int) $entry->from_surah, (int) $entry->from_ayah),
             'to' => QuranIndex::describe((int) $entry->to_surah, (int) $entry->to_ayah),
             'ayahs' => $entry->ayahCount(),
+            // Derived from the range, so a client can say "all of An-Naba"
+            // rather than "An-Naba 1 - 40" without its own copy of the counts.
+            'whole_surah' => $entry->isWholeSurah(),
             'quality' => $entry->quality(),
             'major_mistakes' => (int) $entry->major_mistakes,
             'minor_mistakes' => (int) $entry->minor_mistakes,

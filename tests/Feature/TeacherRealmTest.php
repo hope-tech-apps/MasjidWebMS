@@ -144,6 +144,10 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/logout',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/letters/stage',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/letters',
+            // Every drill mastered at once (BISS teachers, 2026-09-21). No new
+            // authority: it writes the same cells the single mark above does,
+            // for one child, and only on a track the teacher teaches.
+            'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/letters/master-all',
             // The realm's only SCHOOL-level create. See routes/teacher.php for
             // why the behaviour vocabulary is the one thing a teacher may add
             // without the office, and why editing it is still not.
