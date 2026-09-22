@@ -849,24 +849,55 @@
                             />
                         </div>
 
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Notify these emails</label>
+                        <div class="col-md-6 mb-3" role="group" aria-labelledby="formNotifyEmailsLabel">
+                            <span class="form-label d-block" id="formNotifyEmailsLabel">Notify these emails</span>
                             <div
                                 v-for="(email, emailIndex) in draft.settings.notifyEmails"
                                 :key="emailIndex"
-                                class="input-group input-group-sm mb-1"
+                                class="mb-1"
                             >
-                                <input type="email" class="form-control" v-model.trim="draft.settings.notifyEmails[emailIndex]" />
-                                <button type="button" class="btn btn-outline-danger" @click="draft.settings.notifyEmails.splice(emailIndex, 1)">
-                                    <i class="bi bi-x-lg"></i>
-                                </button>
+                                <div class="input-group input-group-sm">
+                                    <label class="visually-hidden" :for="`formNotifyEmail${emailIndex}`">
+                                        Notification email {{ emailIndex + 1 }}
+                                    </label>
+                                    <input
+                                        :id="`formNotifyEmail${emailIndex}`"
+                                        type="email"
+                                        class="form-control"
+                                        :class="{ 'is-invalid': !!fieldIssue(`settings.notifyEmails.${emailIndex}`) }"
+                                        autocomplete="email"
+                                        placeholder="name@example.com"
+                                        v-model.trim="draft.settings.notifyEmails[emailIndex]"
+                                        @input="clearServerError(`settings.notifyEmails.${emailIndex}`)"
+                                    />
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-danger"
+                                        :aria-label="`Remove notification email ${emailIndex + 1}`"
+                                        @click="removeNotifyEmail(emailIndex)"
+                                    >
+                                        <i class="bi bi-x-lg" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                                <div v-if="fieldIssue(`settings.notifyEmails.${emailIndex}`)" class="invalid-feedback d-block">
+                                    {{ fieldIssue(`settings.notifyEmails.${emailIndex}`) }}
+                                </div>
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" @click="draft.settings.notifyEmails.push('')">
-                                <i class="bi bi-plus-circle"></i> Add Email
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                :disabled="draft.settings.notifyEmails.length >= MAX_NOTIFY_EMAILS"
+                                @click="addNotifyEmail()"
+                            >
+                                <i class="bi bi-plus-circle" aria-hidden="true"></i> Add Email
                             </button>
+                            <div v-if="fieldIssue('settings.notifyEmails')" class="invalid-feedback d-block">
+                                {{ fieldIssue('settings.notifyEmails') }}
+                            </div>
                             <div class="form-text">
-                                Emailed whenever someone submits. Leave empty and it goes to the
-                                masjid's own contact address.
+                                Emailed whenever someone submits, instead of the masjid's own contact
+                                address — not as well as it. Leave it empty and submissions go to the
+                                masjid's contact address again. Up to {{ MAX_NOTIFY_EMAILS }} addresses.
                             </div>
                         </div>
 
@@ -1265,6 +1296,27 @@ const MAX_COUNT_TIERS = 10;
 /** StoreFormRequest's limit on settings.payment.officeInstructions. */
 const OFFICE_INSTRUCTIONS_MAX = 1000;
 
+/**
+ * StoreFormRequest's `settings.notifyEmails` limit — `nullable|array|max:10`.
+ *
+ * FormNotifier::MAX_RECIPIENTS is 20, but that is the send-time backstop for a list
+ * that reached the column another way (the importer, a seeded template, the
+ * comma-separated string coordinatorRecipients() also accepts). The builder can only
+ * ever save 10, so 10 is what it offers.
+ */
+const MAX_NOTIFY_EMAILS = 10;
+
+/**
+ * Good enough to catch the typo, deliberately not RFC 5322.
+ *
+ * The server's `email:rfc` is the enforcement and its 422 lands on
+ * `settings.notifyEmails.{i}` where this message sits, so the two cannot disagree about
+ * whether a form saves — only about how early the admin hears. Anything stricter here
+ * would reject an address the server accepts, which is the one failure that costs a
+ * recipient.
+ */
+const NOTIFY_EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+
 type Draft = {
     name: string;
     slug: string;
@@ -1367,6 +1419,24 @@ const omit = (record: Record<string, any>, keys: readonly string[]): Record<stri
     const copy = { ...record };
     keys.forEach(key => delete copy[key]);
     return copy;
+};
+
+/**
+ * The stored `settings.notifyEmails` as one editable row each.
+ *
+ * The column holds a list through every door the builder and the importer share, but
+ * FormNotifier::coordinatorRecipients() also reads the comma-separated string form, so
+ * the column can hold one. Splitting it here on the same separators means such a form
+ * opens as addresses rather than as characters, and saves back as a proper list.
+ */
+const toNotifyEmailRows = (value: unknown): string[] => {
+    if (typeof value === 'string') {
+        return value.split(/[,;\s]+/).map(email => email.trim()).filter(Boolean);
+    }
+
+    return Array.isArray(value)
+        ? value.filter((email): email is string => typeof email === 'string').map(email => email.trim())
+        : [];
 };
 
 /** A price as a number: import files may carry "25.00". Null when it is not one. */
@@ -1569,7 +1639,11 @@ const load = async () => {
                 successTitle: settings.successTitle ?? '',
                 successBody: settings.successBody ?? '',
                 successNextSteps: [...(settings.successNextSteps ?? [])],
-                notifyEmails: [...(settings.notifyEmails ?? [])],
+                // Not simply spread: coordinatorRecipients() also accepts the
+                // comma-separated STRING an admin is likely to hand-write into the column
+                // (FormNotificationTest pins that), and spreading a string yields one row
+                // per CHARACTER — which the next save would then store back as the list.
+                notifyEmails: toNotifyEmailRows(settings.notifyEmails),
                 confirmationEmail: settings.confirmationEmail !== false,
                 paymentNote: settings.paymentNote ?? '',
                 intro: settings.intro ?? '',
@@ -1646,7 +1720,10 @@ const buildPayload = (): FormPayload => {
     const nextSteps = draftSettings.successNextSteps.map(step => step.trim()).filter(Boolean);
     if (nextSteps.length) settings.successNextSteps = nextSteps;
 
-    const notifyEmails = draftSettings.notifyEmails.map(email => email.trim()).filter(Boolean);
+    // Left out entirely when empty, never sent as []: `notifyEmails` is a MANAGED key, so
+    // the absent key is what clears a previous list — and an absent list is exactly what
+    // FormNotifier reads as "use the masjid's own contact address".
+    const notifyEmails = cleanNotifyEmails(draftSettings.notifyEmails);
     if (notifyEmails.length) settings.notifyEmails = notifyEmails;
 
     // Only sent when switched off — absent means on, which is the server's default too.
@@ -2235,10 +2312,16 @@ const problems = computed<string[]>(() => {
         const step = /^settings\.fee\.tiers\.(\d+)\./.exec(key);
         const countRow = /^settings\.fee\.countTiers\.(\d+)\./.exec(key);
 
+        const notifyRow = /^settings\.notifyEmails\.(\d+)$/.exec(key);
+
         if (countRow) {
             found.push(`Price ${Number(countRow[1]) + 1} by number of entries: ${message}`);
         } else if (step) {
             found.push(`Price step ${Number(step[1]) + 1}: ${message}`);
+        } else if (notifyRow) {
+            found.push(`Notification email ${Number(notifyRow[1]) + 1}: ${message}`);
+        } else if (key === 'settings.notifyEmails') {
+            found.push(`Notify these emails: ${message}`);
         } else if (key.startsWith('settings.whatsapp')) {
             found.push(`WhatsApp group link: ${message}`);
         } else {
@@ -2359,6 +2442,62 @@ const countTierIssues = (s: DraftSettings, paying: boolean): Record<string, stri
 };
 
 /**
+ * What the admin typed, reduced to what is actually saved: trimmed, blanks dropped,
+ * duplicates collapsed.
+ *
+ * Duplicates collapse rather than refuse because that is what the server already does
+ * with them — FormNotifier::coordinatorRecipients() lowercases and uniques the list
+ * before Mail::to() — so refusing here would invent a rejection the save does not make.
+ * The comparison is case-insensitive for the same reason, but the FIRST spelling is the
+ * one kept: the admin's own capitalisation is what shows in the field afterwards, and
+ * lowercasing it on their behalf would edit their typing to no purpose.
+ */
+const cleanNotifyEmails = (emails: string[]): string[] => {
+    const seen = new Set<string>();
+
+    return emails
+        .map(email => email.trim())
+        .filter(email => {
+            if (!email) return false;
+
+            const key = email.toLowerCase();
+            if (seen.has(key)) return false;
+
+            seen.add(key);
+            return true;
+        });
+};
+
+/**
+ * `settings.notifyEmails`, keyed as StoreFormRequest keys its refusals.
+ *
+ * Only the format is checked per row. The count cannot exceed the cap through the Add
+ * button, but a form loaded from elsewhere (the importer shares these rules, a template
+ * is seeded straight into the column) can carry more, and that form has to be able to
+ * say so rather than meet an unexplained 422.
+ */
+const notifyEmailIssues = (s: DraftSettings): Record<string, string> => {
+    const issues: Record<string, string> = {};
+
+    s.notifyEmails.forEach((email, index) => {
+        const trimmed = email.trim();
+
+        // A blank row is how an admin starts typing one; it is dropped on save, not refused.
+        if (!trimmed) return;
+
+        if (!NOTIFY_EMAIL_PATTERN.test(trimmed)) {
+            issues[`settings.notifyEmails.${index}`] = `"${trimmed}" is not an email address.`;
+        }
+    });
+
+    if (cleanNotifyEmails(s.notifyEmails).length > MAX_NOTIFY_EMAILS) {
+        issues['settings.notifyEmails'] = `A form can notify at most ${MAX_NOTIFY_EMAILS} addresses. Remove some.`;
+    }
+
+    return issues;
+};
+
+/**
  * StoreFormRequest's settings rules and crossCheck()'s payment rules, keyed as the server
  * keys its refusals, so a problem shows beside its field before Save and a 422 lands on
  * the same spot. A courtesy: the server re-checks all of it.
@@ -2377,6 +2516,8 @@ const paymentIssues = computed<Record<string, string>>(() => {
     if (s.paymentOfficeInstructions.trim().length > OFFICE_INSTRUCTIONS_MAX) {
         issues['settings.payment.officeInstructions'] = `Keep the instructions for paying the office to ${OFFICE_INSTRUCTIONS_MAX} characters or fewer.`;
     }
+
+    Object.assign(issues, notifyEmailIssues(s));
 
     // Only the chosen pricing is saved, so only its own values are checked.
     if (pricing === 'dateSteps') {
@@ -2496,6 +2637,27 @@ const addTier = () => {
 const removeTier = (index: number) => {
     draft.value.settings.feeTiers.splice(index, 1);
     clearTierErrors();
+};
+
+/** Notify-email refusals are keyed by position, which adding or removing one shifts. */
+const clearNotifyEmailErrors = () => {
+    const remaining = { ...serverFieldErrorsByKey.value };
+    Object.keys(remaining)
+        .filter(key => key === 'settings.notifyEmails' || key.startsWith('settings.notifyEmails.'))
+        .forEach(key => delete remaining[key]);
+    serverFieldErrorsByKey.value = remaining;
+};
+
+const addNotifyEmail = () => {
+    if (draft.value.settings.notifyEmails.length >= MAX_NOTIFY_EMAILS) return;
+
+    draft.value.settings.notifyEmails.push('');
+    clearNotifyEmailErrors();
+};
+
+const removeNotifyEmail = (index: number) => {
+    draft.value.settings.notifyEmails.splice(index, 1);
+    clearNotifyEmailErrors();
 };
 
 /** Refusals about the fee no longer describe it once its pricing changes. */

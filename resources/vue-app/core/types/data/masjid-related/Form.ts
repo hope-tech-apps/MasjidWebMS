@@ -816,7 +816,13 @@ export type FormSettings = {
     successTitle?: string | null;
     successBody?: string | null;
     successNextSteps?: string[];
-    notifyEmails?: string[];
+    /**
+     * Who hears about a submission, INSTEAD of the masjid's own contact address.
+     * Absent or empty means that address is used (App\Support\FormNotifier).
+     * A list through every door that writes it; the string form is one
+     * coordinatorRecipients() also reads, so a stored form can carry it.
+     */
+    notifyEmails?: string[] | string;
     /** Absent means on — the submitter gets a copy of what they sent. */
     confirmationEmail?: boolean;
     /** Shown beside the total on that copy: when payment is due, card surcharges. */
