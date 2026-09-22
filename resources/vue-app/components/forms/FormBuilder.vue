@@ -856,10 +856,16 @@
                                 :key="emailIndex"
                                 class="mb-1"
                             >
+                                <!--
+                                    Outside the input-group on purpose: Bootstrap squares off
+                                    the corners of every `.input-group > :not(:first-child)`, so
+                                    a label sitting in there would round the wrong edge of the
+                                    box it names.
+                                -->
+                                <label class="visually-hidden" :for="`formNotifyEmail${emailIndex}`">
+                                    Notification email {{ emailIndex + 1 }}
+                                </label>
                                 <div class="input-group input-group-sm">
-                                    <label class="visually-hidden" :for="`formNotifyEmail${emailIndex}`">
-                                        Notification email {{ emailIndex + 1 }}
-                                    </label>
                                     <input
                                         :id="`formNotifyEmail${emailIndex}`"
                                         type="email"
