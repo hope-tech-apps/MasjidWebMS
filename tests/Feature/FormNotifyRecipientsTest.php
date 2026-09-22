@@ -236,17 +236,38 @@ class FormNotifyRecipientsTest extends TestCase
         // The browser-side checks in FormBuilder.vue mirror these two rules. Pinning them
         // here is what stops those messages inventing a refusal the server does not make,
         // or missing one it does.
-        $this->postJson(
+        //
+        // Not assertJsonValidationErrors(): this API answers a 422 with its own envelope,
+        // { status: 'failed', data: { '<dotted key>': [message] } }, not Laravel's
+        // { message, errors }. That flat dotted key IS the contract the builder reads —
+        // serverFieldErrors() keys serverFieldErrorsByKey by it and fieldIssue() looks the
+        // row up by the same string — so the key is what the assertion is about.
+        $badAddress = $this->postJson(
             "/api/admin/masjids/{$this->masjid->id}/forms",
             $this->document(['notifyEmails' => ['najd@office.test', 'not-an-address']])
-        )->assertStatus(422)->assertJsonValidationErrors('settings.notifyEmails.1');
+        )->assertStatus(422);
+
+        $this->assertArrayHasKey('settings.notifyEmails.1', $badAddress->json('data'));
+
+        // Row 0 was fine, so nothing should be reported against it.
+        $this->assertArrayNotHasKey('settings.notifyEmails.0', $badAddress->json('data'));
 
         $eleven = array_map(fn ($n) => "coordinator{$n}@office.test", range(1, 11));
 
-        $this->postJson(
+        $tooMany = $this->postJson(
             "/api/admin/masjids/{$this->masjid->id}/forms",
             $this->document(['notifyEmails' => $eleven])
-        )->assertStatus(422)->assertJsonValidationErrors('settings.notifyEmails');
+        )->assertStatus(422);
+
+        // Keyed at the list, not a row — which is why the builder renders the cap message
+        // under the Add button rather than beside an address.
+        $this->assertArrayHasKey('settings.notifyEmails', $tooMany->json('data'));
+
+        // Ten is accepted, so the builder's cap is the rule's cap and not one short of it.
+        $this->postJson(
+            "/api/admin/masjids/{$this->masjid->id}/forms",
+            $this->document(['notifyEmails' => array_slice($eleven, 0, 10)])
+        )->assertCreated();
     }
 
     #[Test]
