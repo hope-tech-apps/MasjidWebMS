@@ -22,6 +22,9 @@ class ServicesController extends Controller
         $services = Service::filterByMasjid()
             ->with('image', 'icon')
             ->latest()
+            // Tie-break, as on the home page: without it a small page size
+            // repeated one service on two pages and skipped another.
+            ->orderBy('id')
             ->paginate($perPage);
 
         return response()->api(200, __('api.success'), [

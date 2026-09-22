@@ -18,7 +18,12 @@ class HomeController extends Controller
      */
     public function index(Request $request)
     {
-        $services = Service::filterByMasjid()->latest()->limit(6)->get();
+        // ->orderBy('id') breaks created_at ties. Without it MySQL picks the
+        // order of services that share a timestamp (imported ones do), so
+        // adding an older service could swap which six appear here. Ascending
+        // id is the order these ties already came back in; see
+        // ServiceListOrderTest.
+        $services = Service::filterByMasjid()->latest()->orderBy('id')->limit(6)->get();
         $announcements = Announcement::filterByMasjid()->latest()->limit(3)->get();
         return response()->api(200, __('api.success'), [
             'sections' => $this->getSections(),
