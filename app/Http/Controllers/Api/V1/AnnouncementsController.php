@@ -23,7 +23,9 @@ class AnnouncementsController extends Controller
 
         $query = Announcement::filterByMasjid()
             ->with('image')
-            ->latest();
+            ->latest()
+            // Tie-break, as on the home page (AnnouncementListOrderTest).
+            ->orderBy('id');
 
         // Filter active announcements (within date range)
         if ($filterActive) {

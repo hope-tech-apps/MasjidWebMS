@@ -24,7 +24,8 @@ class HomeController extends Controller
         // id is the order these ties already came back in; see
         // ServiceListOrderTest.
         $services = Service::filterByMasjid()->latest()->orderBy('id')->limit(6)->get();
-        $announcements = Announcement::filterByMasjid()->latest()->limit(3)->get();
+        // Same tie-break for the three announcements (AnnouncementListOrderTest).
+        $announcements = Announcement::filterByMasjid()->latest()->orderBy('id')->limit(3)->get();
         return response()->api(200, __('api.success'), [
             'sections' => $this->getSections(),
             'services' => ServiceResource::collection($services),
