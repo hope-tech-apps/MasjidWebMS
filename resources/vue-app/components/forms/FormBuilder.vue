@@ -866,12 +866,24 @@
                                     Notification email {{ emailIndex + 1 }}
                                 </label>
                                 <div class="input-group input-group-sm">
+                                    <!--
+                                        NOT autocomplete="email". This box holds OTHER people's
+                                        addresses, and that token asks the browser to offer the
+                                        SIGNED-IN ADMIN their own: one accepted autofill while
+                                        tabbing through and the form quietly notifies the admin
+                                        instead of the office, which is the outcome this field
+                                        exists to prevent. Plain "off" is not the opt-out here —
+                                        Chrome disregards it on a field its heuristics read as an
+                                        address field, and type="email" under a label saying
+                                        "Notification email" is precisely that; "new-password" is
+                                        the value it does honour.
+                                    -->
                                     <input
                                         :id="`formNotifyEmail${emailIndex}`"
                                         type="email"
                                         class="form-control"
                                         :class="{ 'is-invalid': !!fieldIssue(`settings.notifyEmails.${emailIndex}`) }"
-                                        autocomplete="email"
+                                        autocomplete="new-password"
                                         placeholder="name@example.com"
                                         v-model.trim="draft.settings.notifyEmails[emailIndex]"
                                         @input="clearServerError(`settings.notifyEmails.${emailIndex}`)"
