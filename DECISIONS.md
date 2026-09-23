@@ -1973,3 +1973,38 @@ line, Exit ticket" plus the standards; gradebook "Teacher picks per assignment";
   report card prepared in that window gains grade-band rows that are then never removed.
   BISS has no report cards before its first quarter ends.
 - The Team & Access screen lists a setting that is on as a chip, like any grant.
+
+## 2026-09-23 — The office reads the gradebook; it does not mark
+Decision: the admin console's classroom screen gains a **Gradebook** tab
+served by three GETs that mount `Teacher\GradebookController` unchanged
+(`/assignments`, `/assignments/{id}`, `/members/{id}/grades`, all
+`permission:view contacts`). No admin route exists for `store`, `update`,
+`destroy` or `saveScores`, and `AdminGradebookReadTest` pins their absence
+along with the names-only payload, the gate and the tenant boundary.
+Alternatives: (a) a second admin controller — rejected, two implementations
+of one gradebook drift, and this is the mirror of `ArabicLettersController`,
+which the teacher realm already reuses the other way round; (b) full CRUD for
+admins — rejected: entering a mark mails the family
+(`GradebookController::announceMarks`) and stamps `scored_by_user_id`, so an
+office screen that could do it would put a name on a judgement nobody in the
+room made. Rationale: the school asked to *see* the gradebook as
+administration; seeing it is the whole ask, and the read is the half with no
+blast radius. Payloads stay the teacher realm's names-only ones — narrower
+than the console shows elsewhere, never wider.
+
+## 2026-09-23 — The teacher's Letters tab reads the class, not just the child
+Decision: `TeacherClass.vue` calls `GET .../letters` (the class overview)
+whenever the Letters tab opens, the track changes, the stage changes or the
+teacher comes back from a child. Alternatives: pass the ladder down on the
+group payload — rejected, it would be a second source for something the
+letters endpoint already answers, and the stage summary and per-child counts
+would still be missing. Rationale: the tab previously fetched nothing until a
+child was opened, so a teacher saw a bare list of names and the category
+picker (The Letters / Short Vowels / Sukūn & Shadda / Tanwīn / Long Vowels)
+appeared only if `group.arabic_stages` happened to be present — while the
+office's copy of the same tab had the ladder, the summary and every child's
+x/28. The endpoint was already mounted in the teacher realm and fenced by
+`teacher.leads`: this adds a read a teacher was always entitled to, and no new
+authority. Verified live on 2026-09-23 in the QA sandbox (org 17): five
+categories listed, and moving the class from The Letters to Short Vowels
+re-read the class and moved the denominator from 28 to 112.
