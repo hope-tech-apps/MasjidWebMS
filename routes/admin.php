@@ -984,6 +984,35 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/members/{membership_id}/arabic-notes/{note_id}', 'deleteDailyNote')->middleware('permission:manage contacts');
                     });
 
+                // The gradebook, from the OFFICE's side — READ ONLY.
+                //
+                // Three GETs and no writes, mounting the teacher realm's own
+                // controller unchanged (the mirror of ArabicLettersController
+                // above, which the teacher realm reuses the other way round).
+                // Setting work and entering marks stay teacher verbs: those
+                // writes mail families (GradebookController::announceMarks) and
+                // stamp the marker's user id, and an office screen that could
+                // enter a mark would put a teacher's name on a judgement nobody
+                // in the room made. The office asks what was set and how each
+                // child did; it does not mark. There is deliberately no admin
+                // route for `store`, `update`, `destroy` or `saveScores`, and
+                // AdminGradebookReadTest pins their absence.
+                //
+                // `view contacts`, like the letter tracker and the roster beside
+                // it: the same kind of record about the same children, and no new
+                // permission to add to the seeded set.
+                //
+                // The payloads are the teacher realm's names-only ones
+                // (TeacherController::student) — narrower than the admin console
+                // shows elsewhere, never wider.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(\App\Http\Controllers\Teacher\GradebookController::class)
+                    ->group(function () {
+                        Route::get('/assignments', 'index')->middleware('permission:view contacts');
+                        Route::get('/assignments/{assignment_id}', 'show')->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
+                    });
+
                 // Guardian consent, recorded against ONE guardian edge — the
                 // obligation .claude/rules/groups.md records: "a guardian edge
                 // records a relationship, NOT consent." Written here, CHECKED at

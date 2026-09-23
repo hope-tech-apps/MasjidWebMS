@@ -89,6 +89,16 @@
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
 
+                    <!-- Read only: the office reads the gradebook, the teacher
+                         writes it. No roster prop — the marks payload carries its
+                         own students, live off the assignment rather than off
+                         this page's copy of the roster. -->
+                    <GroupGradesTab
+                        v-else-if="activeTab === 'grades'"
+                        :groupId="groupId"
+                        :masjidId="masjidStore.masjid?.id ?? 0"
+                    />
+
                     <GroupHifzTab
                         v-else-if="activeTab === 'hifz'"
                         :groupId="groupId"
@@ -115,6 +125,7 @@ import GroupRosterTab from './groups/GroupRosterTab.vue';
 import GroupStoryTab from './groups/GroupStoryTab.vue';
 import GroupPointsTab from './groups/GroupPointsTab.vue';
 import GroupLettersTab from './groups/GroupLettersTab.vue';
+import GroupGradesTab from './groups/GroupGradesTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';
 import { Group } from '@/core/types/data/masjid-related/Group';
@@ -124,9 +135,10 @@ import { apiErrorText } from '@/core/services/ApiErrors';
 
 /**
  * One group, with everything that hangs off it: the roster, the class story, the
- * behaviour record, the hifz log and the teacher <-> guardian conversations.
+ * behaviour record, the letter tracker, the gradebook, the hifz log and the
+ * teacher <-> guardian conversations.
  *
- * The ROSTER is loaded here rather than inside each tab because four of the five
+ * The ROSTER is loaded here rather than inside each tab because four of the seven
  * panels need it (to name a student in a picker, to render a per-student row) and
  * fetching it five times would be four extra requests for the same list. The
  * disclosures themselves are NOT hoisted: each tab fetches its own records only
@@ -137,7 +149,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
  * .claude/rules/verticals.md.
  */
 
-type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'hifz' | 'threads';
+type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'hifz' | 'threads';
 
 // Routing
 const route = useRoute();
@@ -164,6 +176,10 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'story', label: 'Class Story', icon: 'bi-journal-text' },
     { key: 'points', label: 'Points', icon: 'bi-star' },
     { key: 'letters', label: 'Letters', icon: 'bi-fonts' },
+    // The gradebook, read only — see GroupGradesTab.vue. It sits beside Letters
+    // because both answer the same question about a child (how are they doing?),
+    // one in the qāʿidah and one in the work the class was set.
+    { key: 'grades', label: 'Gradebook', icon: 'bi-clipboard-check' },
     // "Hifdh" is the school's own spelling; the key stays `hifz` (stored value,
     // route segment, API field).
     { key: 'hifz', label: 'Hifdh', icon: 'bi-book' },
