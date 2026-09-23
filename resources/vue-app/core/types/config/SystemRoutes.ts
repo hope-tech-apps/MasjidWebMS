@@ -53,6 +53,10 @@ export type MasjidDashboardRoute =
     '/masjid/teachers' |
     // School years and no-school days (`school_calendar` capability).
     '/masjid/school-calendar' |
+    // The office's read of the register the class teachers take. Beside the
+    // calendar because the columns come from it. The path stays neutral like
+    // /groups: the SIDEBAR decides that this is a school screen, not the URL.
+    '/masjid/attendance' |
     // The intake triage queue (Community vertical) and one request's own page.
     '/masjid/appointment-requests' |
     `/masjid/appointment-requests/${number}` |

@@ -61,7 +61,7 @@
                         Each tab is mounted only while it is the active one (v-if,
                         not v-show): every one of these panels is a group-scoped
                         DISCLOSURE about children, and mounting them all up front
-                        would fetch four sets of records an admin never asked to
+                        would fetch eight sets of records an admin never asked to
                         see. Least disclosure applies to what we request, not only
                         to what we render.
                     -->
@@ -99,6 +99,17 @@
                         :masjidId="masjidStore.masjid?.id ?? 0"
                     />
 
+                    <!-- Read only, like the gradebook above it: the office reads
+                         the week, the teacher writes it. No roster prop — a plan
+                         is about the lesson, never about a named child, which is
+                         why the teacher's own form refuses to hold a follow-up
+                         list. -->
+                    <GroupLessonPlansTab
+                        v-else-if="activeTab === 'lessons'"
+                        :groupId="groupId"
+                        :masjidId="masjidStore.masjid?.id ?? 0"
+                    />
+
                     <GroupHifzTab
                         v-else-if="activeTab === 'hifz'"
                         :groupId="groupId"
@@ -109,6 +120,17 @@
                         v-else-if="activeTab === 'threads'"
                         :groupId="groupId"
                         :memberships="groupsStore.memberships"
+                    />
+
+                    <!-- Read only, and the only tab here whose rows are files
+                         rather than records: uploading one set to `families`
+                         mails every guardian in the class, and removing one
+                         takes the bytes off the disk. Neither is the office's
+                         to do on a teacher's behalf. -->
+                    <GroupFilesTab
+                        v-else-if="activeTab === 'files'"
+                        :groupId="groupId"
+                        :masjidId="masjidStore.masjid?.id ?? 0"
                     />
                 </div>
             </div>
@@ -125,9 +147,11 @@ import GroupRosterTab from './groups/GroupRosterTab.vue';
 import GroupStoryTab from './groups/GroupStoryTab.vue';
 import GroupPointsTab from './groups/GroupPointsTab.vue';
 import GroupLettersTab from './groups/GroupLettersTab.vue';
+import GroupLessonPlansTab from './groups/GroupLessonPlansTab.vue';
 import GroupGradesTab from './groups/GroupGradesTab.vue';
 import GroupHifzTab from './groups/GroupHifzTab.vue';
 import GroupThreadsTab from './groups/GroupThreadsTab.vue';
+import GroupFilesTab from './groups/GroupFilesTab.vue';
 import { Group } from '@/core/types/data/masjid-related/Group';
 import { useGroupsStore } from '@/stores/masjid/groupsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -135,10 +159,10 @@ import { apiErrorText } from '@/core/services/ApiErrors';
 
 /**
  * One group, with everything that hangs off it: the roster, the class story, the
- * behaviour record, the letter tracker, the gradebook, the hifz log and the
- * teacher <-> guardian conversations.
+ * behaviour record, the letter tracker, the gradebook, the week's lesson plans,
+ * the hifz log, the teacher <-> guardian conversations and the class's files.
  *
- * The ROSTER is loaded here rather than inside each tab because four of the seven
+ * The ROSTER is loaded here rather than inside each tab because four of the nine
  * panels need it (to name a student in a picker, to render a per-student row) and
  * fetching it five times would be four extra requests for the same list. The
  * disclosures themselves are NOT hoisted: each tab fetches its own records only
@@ -149,7 +173,8 @@ import { apiErrorText } from '@/core/services/ApiErrors';
  * .claude/rules/verticals.md.
  */
 
-type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'hifz' | 'threads';
+type TabKey = 'roster' | 'story' | 'points' | 'letters' | 'grades' | 'lessons' | 'hifz'
+    | 'threads' | 'files';
 
 // Routing
 const route = useRoute();
@@ -180,10 +205,19 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
     // because both answer the same question about a child (how are they doing?),
     // one in the qāʿidah and one in the work the class was set.
     { key: 'grades', label: 'Gradebook', icon: 'bi-clipboard-check' },
+    // After the gradebook rather than between it and Letters, which would break
+    // the adjacency the line above exists to explain. Next to the marks is still
+    // the right neighbourhood: the plan is what the class was set and the
+    // gradebook is how they did on it. Same label and same icon as the teacher's
+    // own tab, so a phone call about "Lesson Plans" is about one screen.
+    { key: 'lessons', label: 'Lesson Plans', icon: 'bi-calendar3' },
     // "Hifdh" is the school's own spelling; the key stays `hifz` (stored value,
     // route segment, API field).
     { key: 'hifz', label: 'Hifdh', icon: 'bi-book' },
-    { key: 'threads', label: 'Messages', icon: 'bi-chat-dots' }
+    { key: 'threads', label: 'Messages', icon: 'bi-chat-dots' },
+    // Last, as it is on the teacher's screen: the only tab whose rows are files
+    // rather than records about children, and the one the office opens least.
+    { key: 'files', label: 'Files', icon: 'bi-folder2-open' }
 ];
 
 // Computed

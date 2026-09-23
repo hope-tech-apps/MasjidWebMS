@@ -244,6 +244,36 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/SchoolCalendarView.vue")
             },
+            {
+                // The attendance log: the office's read of the register the
+                // class teachers take. Beside the School Calendar because the
+                // calendar decides which days are columns.
+                //
+                // `requiresCrm`, like the roster screens it reads: the server
+                // route sits inside the `crm` group behind
+                // `permission:view contacts`, and an organisation without the
+                // CRM has no roster for a register to be about.
+                //
+                // Nothing here names the school vertical, because router.ts has
+                // no vertical branch to name it to — its guard reads
+                // allowedUsers, requiresCrm, the capability pair, requiresModule
+                // and requiresAssistant, and nothing else. That is by design:
+                // visibility is decided once, in orgAccess.menuItemState(), and
+                // the sidebar item is where this screen is marked school-only.
+                //
+                // No `requiresCapability`: the register needs no new switch and
+                // none was minted. An organisation with no school year still
+                // gets the screen, with columns only where a register exists.
+                path: 'attendance',
+                name: 'masjid.attendanceLog',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin', 'MasjidAdmin'],
+                    pageTitle: 'Attendance',
+                    requiresCrm: true
+                },
+                component: () => import("@/views/dashboard/AttendanceLogView.vue")
+            },
             // The clinic's intake queue. Registered here, with the other
             // per-feature route files, because these are children of the
             // /masjid dashboard layout — see appointmentsManagementRoutes.ts.

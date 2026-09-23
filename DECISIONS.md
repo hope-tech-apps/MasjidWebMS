@@ -2008,3 +2008,41 @@ x/28. The endpoint was already mounted in the teacher realm and fenced by
 authority. Verified live on 2026-09-23 in the QA sandbox (org 17): five
 categories listed, and moving the class from The Letters to Short Vowels
 re-read the class and moved the denominator from 28 to 112.
+
+## 2026-09-23 — The office's attendance log shows counts, never a rate
+Decision: `/masjid/attendance` and its two GETs report present / late / absent /
+excused and a denominator called `registers`, and compute no percentage
+anywhere. `registers` is the UNION of the days a child's class took a register
+while they were enrolled and the days they hold a mark on.
+Alternatives: (a) "present X of Y school days" — the number the office will ask
+for, refused: three different situations produce a missing mark (the register
+was never taken, it was taken and the child was skipped, there was no school),
+and dividing by school days silently converts all three into absence on a screen
+a parent may be shown. Al-Razi cannot even define Y — it has no `school_years`
+row and the `school_calendar` capability defaults off. (b) `max(clipped days,
+marks)`, which is what shipped first and what the review caught: a mistyped
+`joined_at` pushes a real mark outside the clip, and the max() refilled that
+hole with an unrelated unmarked day, printing "2 marked of 2 registers" directly
+above a register the child was never marked on. A union makes
+`marked + unmarked <= registers` structural. `AdminAttendanceLogTest::
+a_mark_outside_the_clip_and_a_skipped_day_are_both_counted` fails under max()
+and passes under the union.
+Rationale: this screen's only claim is that its numbers are the record. A
+denominator it cannot defend is worth less than no denominator. When a school
+enters its year and closures, a rate against school days becomes definable and
+can be added deliberately — for that school, and said in those words.
+
+## 2026-09-23 — Office reads of teacher work mount the teacher's own controller
+Decision: the office's lesson-plan and files tabs mount
+`Teacher\LessonPlanController@index` and `Teacher\ResourcesController@index|download`
+unchanged under `permission:view contacts`, GETs only — the third and fourth
+uses of the pattern the gradebook set this morning. The files list deliberately
+carries the staff-only files as well as the ones shared with families, because
+the office is the school's staff and is the desk that answers for what a parent
+can see; `AdminSchoolOfficeReadsTest` pins that, so a later reader who sees the
+family realm's `visibleToFamilies()` scope beside this mount does not conclude
+the office one forgot it.
+Alternatives: a second admin controller per feature — rejected, two
+implementations of one read drift; admin writes — rejected, a lesson plan
+carries `author_user_id` and a file set to `families` mails every guardian in
+the class.
