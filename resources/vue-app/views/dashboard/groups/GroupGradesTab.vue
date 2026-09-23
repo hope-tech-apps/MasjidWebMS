@@ -65,7 +65,10 @@
                                 {{ student.summary.points_earned }} / {{ student.summary.points_possible }}
                                 <span v-if="pointsPct !== null" class="fs-6 text-muted">({{ pointsPct }}%)</span>
                             </div>
-                            <div class="text-muted small">over {{ student.summary.points_counted }} pieces of work</div>
+                            <div class="text-muted small">
+                                over {{ student.summary.points_counted }}
+                                {{ student.summary.points_counted === 1 ? 'piece' : 'pieces' }} of work
+                            </div>
                         </div>
                     </div>
                 </div>
