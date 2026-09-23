@@ -1313,15 +1313,39 @@ const OFFICE_INSTRUCTIONS_MAX = 1000;
 const MAX_NOTIFY_EMAILS = 10;
 
 /**
- * Good enough to catch the typo, deliberately not RFC 5322.
+ * The longest an address can be: 254 is the most an SMTP path can carry (RFC 5321
+ * §4.5.3.1.3).
  *
- * The server's `email:rfc` is the enforcement and its 422 lands on
- * `settings.notifyEmails.{i}` where this message sits, so the two cannot disagree about
- * whether a form saves — only about how early the admin hears. Anything stricter here
- * would reject an address the server accepts, which is the one failure that costs a
- * recipient.
+ * Not a mirror of a server rule — the server refuses long addresses sooner than this
+ * (`email:rfc,filter` caps the local part at 64 characters and each domain label at 63,
+ * measured). It is here so a pasted novel is answered where it was pasted instead of
+ * riding to the server and back; anything between this and the server's own ceiling is
+ * refused on Save, which is the harmless direction.
  */
-const NOTIFY_EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/;
+const NOTIFY_EMAIL_MAX = 254;
+
+/**
+ * Good enough to catch the typo, deliberately not RFC 5322 — and deliberately never
+ * STRICTER than the server.
+ *
+ * The server's `email:rfc,filter` is the enforcement and its 422 lands on
+ * `settings.notifyEmails.{i}` where this message sits, so the two must not disagree about
+ * whether a form saves — only about how early the admin hears. A refusal here is not a
+ * warning beside the row: it joins `problems`, which disables Save for the WHOLE form, so
+ * anything rejected here that the server would have taken locks the admin out of editing
+ * the form's name and its questions until they delete the row.
+ *
+ * So this asks for the only thing every address the server accepts has — an @, something
+ * in front of it, and a domain carrying neither a space nor a second @ — which still
+ * catches the missing @, the one typo worth catching without a round trip.
+ *
+ * Everything finer belongs to `settings.notifyEmails.*` => `email:rfc,filter`, which is
+ * the SAME test FormNotifier applies at send time, so a refusal there is never a refusal
+ * of an address that would have been delivered. Erring loose is deliberate:
+ * `office@intranet` and `john doe@example.com` pass here and meet the server's 422 on
+ * this very key, a Save later but against the rule that actually governs delivery.
+ */
+const NOTIFY_EMAIL_PATTERN = /^.+@[^\s@]+$/;
 
 type Draft = {
     name: string;
@@ -2490,6 +2514,13 @@ const notifyEmailIssues = (s: DraftSettings): Record<string, string> => {
 
         // A blank row is how an admin starts typing one; it is dropped on save, not refused.
         if (!trimmed) return;
+
+        if (trimmed.length > NOTIFY_EMAIL_MAX) {
+            issues[`settings.notifyEmails.${index}`] =
+                `That address is ${trimmed.length} characters. An email address is at most ${NOTIFY_EMAIL_MAX}.`;
+
+            return;
+        }
 
         if (!NOTIFY_EMAIL_PATTERN.test(trimmed)) {
             issues[`settings.notifyEmails.${index}`] = `"${trimmed}" is not an email address.`;

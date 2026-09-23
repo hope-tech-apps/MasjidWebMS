@@ -212,7 +212,16 @@ final class FormDocument
             'settings.successNextSteps' => 'nullable|array|max:10',
             'settings.successNextSteps.*' => 'string|max:255',
             'settings.notifyEmails' => 'nullable|array|max:10',
-            'settings.notifyEmails.*' => 'email:rfc',
+            // `,filter` — the same FILTER_VALIDATE_EMAIL the SEND path uses. `email:rfc`
+            // alone accepts addresses FormNotifier::coordinatorRecipients() then drops,
+            // and dropping every recipient sends the form back to the masjid's own
+            // address: the office is stored, shown in the builder, and never mailed, with
+            // nothing on screen to say so. Measured as accepted by rfc and refused by the
+            // notifier: office@intranet, office@localhost, "john doe"@example.com, a@b.
+            // It is also the only length bound `email:` has — filter caps the local part
+            // at 64 characters and each domain label at 63, which is what refuses the
+            // 100,012-character address that `email:rfc` stored whole in this json column.
+            'settings.notifyEmails.*' => 'email:rfc,filter',
             'settings.intro' => 'nullable|string|max:20000',
 
             // Whether the submitter gets a copy. Absent means yes — a form that collects an

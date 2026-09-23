@@ -215,6 +215,24 @@ class FormDoorEquivalenceTest extends TestCase
                 ];
             }, false],
 
+            // Notification recipients, `email:rfc,filter` on both doors. The `filter` half
+            // is the same FILTER_VALIDATE_EMAIL the SEND path applies, and it is there
+            // because `email:rfc` alone accepts addresses FormNotifier then drops — and a
+            // form whose every recipient is dropped falls back to the masjid's own
+            // address. Stored, shown in the builder, never mailed, nothing said.
+            'a notification recipient on an intranet host with no dot' => [function (&$d) {
+                $d['settings']['notifyEmails'] = ['office@intranet'];
+            }, false],
+            // `email:` carries the only length bound there is. Under `rfc` alone this
+            // validated and was written whole into the settings json column; `filter`
+            // caps the local part at 64 characters (measured), which refuses it.
+            'a notification recipient of a hundred thousand characters' => [function (&$d) {
+                $d['settings']['notifyEmails'] = [str_repeat('a', 100000) . '@example.com'];
+            }, false],
+            'a long but ordinary notification recipient' => [function (&$d) {
+                $d['settings']['notifyEmails'] = ['registrations.vendor-booth@fall-festival.masjid-example.org'];
+            }, true],
+
             // The payment settings contract.
             'a payment switch that is not a yes or a no' => [function (&$d) {
                 $d['settings']['payment'] = ['online' => 'maybe'];

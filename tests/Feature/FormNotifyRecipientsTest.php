@@ -268,6 +268,57 @@ class FormNotifyRecipientsTest extends TestCase
             "/api/admin/masjids/{$this->masjid->id}/forms",
             $this->document(['notifyEmails' => array_slice($eleven, 0, 10)])
         )->assertCreated();
+
+        // No length bound of its own lives in these rules — `email:` carries it. Under
+        // `email:rfc` alone a 100,012-character address validated and was written whole
+        // into the settings json column, then handed to Mail::to(). The refusal is keyed
+        // at the ROW, which is what lets the builder say so beside the address.
+        $tooLong = $this->postJson(
+            "/api/admin/masjids/{$this->masjid->id}/forms",
+            $this->document(['notifyEmails' => [str_repeat('a', 100000) . '@example.com']])
+        )->assertStatus(422);
+
+        $this->assertArrayHasKey('settings.notifyEmails.0', $tooLong->json('data'));
+
+        // And nothing ordinary is caught by it: a real office address is long.
+        $long = 'registrations.vendor-booth@fall-festival.masjid-example.org';
+
+        $this->assertSame([$long], $this->createForm(['notifyEmails' => [$long]])->fresh()->settings['notifyEmails']);
+    }
+
+    #[Test]
+    public function an_address_that_could_never_be_delivered_is_refused_rather_than_stored(): void
+    {
+        // THE SAVE AND THE SEND HAVE TO AGREE ABOUT WHAT AN ADDRESS IS.
+        //
+        // `email:rfc` accepts `office@intranet`; FILTER_VALIDATE_EMAIL, which is what
+        // coordinatorRecipients() screens with, does not. Saved under the rfc-only rule
+        // this form stored the office, showed it in the builder, dropped it at send time
+        // and fell back to the masjid's general address — the whole point of the feature
+        // undone, with a 201 and a filled-in field saying it had worked.
+        $refused = $this->postJson(
+            "/api/admin/masjids/{$this->masjid->id}/forms",
+            $this->document(['notifyEmails' => ['office@intranet']])
+        )->assertStatus(422);
+
+        $this->assertArrayHasKey('settings.notifyEmails.0', $refused->json('data'));
+
+        // The send-time half, which is WHY the rule reads `email:rfc,filter`: a row that
+        // reached the column another way — a seeded template, a hand-edited settings blob
+        // — still silently falls back, and only the save-time refusal can prevent that.
+        Mail::fake();
+
+        $form = $this->createForm(['notifyEmails' => ['najd@office.test']]);
+        $form->forceFill(['settings' => array_merge($form->settings, [
+            'notifyEmails' => ['office@intranet'],
+        ])])->save();
+
+        $this->submit($form)->assertOk();
+
+        $recipients = $this->coordinatorRecipientsOf();
+
+        $this->assertSame([strtolower($this->masjid->email)], $recipients);
+        $this->assertNotContains('office@intranet', $recipients);
     }
 
     #[Test]
