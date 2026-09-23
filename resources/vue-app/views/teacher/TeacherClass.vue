@@ -196,7 +196,7 @@
                     <div class="card-body d-flex flex-wrap gap-3 align-items-center justify-content-between">
                         <div>
                             <div class="fw-semibold">{{ currentStageLabel || alphabetHeading }}</div>
-                            <div v-if="tracker?.stage?.summary" class="text-muted small">{{ tracker.stage.summary }}</div>
+                            <div v-if="currentStageSummary" class="text-muted small">{{ currentStageSummary }}</div>
                         </div>
                         <!-- Hidden on a single-stage track. English is one stage
                              by design, and the endpoint refuses to be told
@@ -215,22 +215,40 @@
                 </div>
                 <div v-if="stageNote" class="alert alert-info py-2 small">{{ stageNote }}</div>
 
-                <!-- Student list -->
+                <!-- Student list, with each child's progress THROUGH THE STAGE
+                     ON SCREEN. The row used to be a bare name: a teacher could
+                     not see what the class's stage had cost anybody without
+                     opening all twelve children one at a time, while the
+                     office's copy of this same tab showed the whole class at a
+                     glance. Same endpoint, same denominator. -->
                 <div v-if="!selected" class="list-group">
-                    <button v-for="s in students" :key="s.membership_id" type="button"
+                    <button v-for="s in lettersRoster" :key="s.membership_id" type="button"
                             class="list-group-item list-group-item-action d-flex align-items-center gap-3"
                             @click="openLetters(s)">
                         <PersonAvatar :avatar="s.contact?.avatar"
                                       :first-name="s.contact?.first_name" :last-name="s.contact?.last_name" :size="38" />
-                        <span class="fw-semibold small flex-grow-1">{{ name(s.contact) }}</span>
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold small">{{ name(s.contact) }}</div>
+                            <!-- Only where the overview answered. An empty bar
+                                 drawn while the counts are still in flight says
+                                 "nothing mastered", which is a different fact
+                                 from "not counted yet". -->
+                            <div v-if="s.mastered !== undefined" class="progress mt-1" style="height:6px;">
+                                <div class="progress-bar bg-success"
+                                     :style="{ width: Math.round((s.completion || 0) * 100) + '%' }"></div>
+                            </div>
+                        </div>
+                        <span v-if="s.mastered !== undefined" class="text-muted small text-nowrap">
+                            {{ s.mastered }} / {{ lettersOverview?.total }}
+                        </span>
                         <i class="bi bi-chevron-right text-muted"></i>
                     </button>
-                    <div v-if="!students.length" class="text-muted small p-3">No students on this roster yet.</div>
+                    <div v-if="!lettersRoster.length" class="text-muted small p-3">No students on this roster yet.</div>
                 </div>
 
                 <!-- One child's tracker -->
                 <div v-else>
-                    <button class="btn btn-link px-0 text-decoration-none mb-2" @click="selected = null">
+                    <button class="btn btn-link px-0 text-decoration-none mb-2" @click="closeLetters">
                         &larr; All students
                     </button>
 
@@ -2703,8 +2721,35 @@ const letterHeading = computed(() => {
     return [l.arabic_name, l.transliteration ?? l.glyph].filter(Boolean).join(' — ');
 });
 
-// Stage options come from whatever the letters payload exposes (the family/admin
-// overview carries `stages`); the mutation itself uses the frozen PUT.
+/**
+ * The CLASS overview — the same `GET .../letters` the office's screen reads.
+ *
+ * This tab fetched nothing until a child was opened, so a teacher got a bare
+ * list of names: no stage summary, no per-child progress, and — because the
+ * LADDER arrives on that payload — no way to see which part of the qāʿidah the
+ * class is on, or to move it, unless the group object happened to carry
+ * `arabic_stages`. The office's copy of the same tab had all three. Reading the
+ * overview when the tab opens is what closes that gap; the endpoint was already
+ * mounted in this realm (routes/teacher.php) and fenced by `teacher.leads`, so
+ * this adds a read a teacher was always entitled to and no new authority.
+ */
+const lettersOverview = ref<any>(null);
+
+/**
+ * Who to list, and what is known about them.
+ *
+ * The overview leads because it carries the counts. The roster is the fallback
+ * for the moment before it answers, and if it fails: a list of names without
+ * progress is the screen teachers had yesterday, and it beats an empty panel
+ * that reads as a class with no children in it.
+ */
+const lettersRoster = computed<any[]>(() => (
+    lettersOverview.value?.students?.length ? lettersOverview.value.students : students.value
+));
+
+// Stage options come from whatever the letters payload exposes (the class
+// overview and the family/admin ones all carry `stages`); the mutation itself
+// uses the frozen PUT.
 //
 // The fallback matters more than it looks: `group.arabic_stages` is the
 // QĀʿIDAH's ladder read off the class, and it is there whichever track is on
@@ -2713,14 +2758,15 @@ const letterHeading = computed(() => {
 const stageOptions = computed<any[]>(() => (
     lettersAlphabet.value === 'english'
         ? []
-        : (tracker.value?.stages ?? group.value?.arabic_stages ?? [])
+        : (tracker.value?.stages ?? lettersOverview.value?.stages ?? group.value?.arabic_stages ?? [])
 ));
 // Same trap in the label: before a child is opened there is no tracker, and the
 // group's own `arabic_stage` would caption the English track with a rung of the
 // qāʿidah ("Vowels"). It is only an answer for the track it belongs to.
 const stageFallback = computed(() => (lettersAlphabet.value === 'english' ? '' : group.value?.arabic_stage ?? ''));
-const currentStageId = computed(() => tracker.value?.stage?.id ?? stageFallback.value);
-const currentStageLabel = computed(() => tracker.value?.stage?.label ?? stageFallback.value);
+const currentStageId = computed(() => tracker.value?.stage?.id ?? lettersOverview.value?.stage?.id ?? stageFallback.value);
+const currentStageLabel = computed(() => tracker.value?.stage?.label ?? lettersOverview.value?.stage?.label ?? stageFallback.value);
+const currentStageSummary = computed(() => tracker.value?.stage?.summary ?? lettersOverview.value?.stage?.summary ?? '');
 
 // Arabic's four contextual forms and English's two cases, in one map: the shape
 // row is the same markup either way.
@@ -2735,6 +2781,36 @@ const badgeClass = (s: string) => s === 'mastered'
     ? 'bg-success-subtle text-success-emphasis'
     : (s === 'learning' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-light text-muted');
 const NEXT: Record<string, string> = { not_started: 'learning', learning: 'mastered', mastered: 'not_started' };
+
+/**
+ * Read the class overview for one track.
+ *
+ * Failure is SILENT here and only here: the roster below is still listable, a
+ * child can still be opened and every letter can still be marked, so a red
+ * banner over a screen that works would be noise. Every WRITE on this tab
+ * reports its own failure.
+ */
+const loadLettersOverview = async (which: string = lettersAlphabet.value) => {
+    try {
+        const res = await TeacherApiService.get(`${base.value}/letters?alphabet=${which}`);
+        lettersOverview.value = res.data?.data ?? null;
+    } catch {
+        lettersOverview.value = null;
+    }
+};
+
+/**
+ * Back to the class list — and re-read it.
+ *
+ * The teacher has just been marking, so the counts behind them are stale by
+ * definition. Re-reading here rather than after every tap keeps twenty-eight
+ * taps to one extra request.
+ */
+const closeLetters = () => {
+    selected.value = null;
+    openLetter.value = null;
+    loadLettersOverview();
+};
 
 const openLetters = async (s: any) => {
     selected.value = s;
@@ -2790,7 +2866,12 @@ const switchAlphabet = async (next: string) => {
     tracker.value = null;
     openDrillNote.value = null;
     drillNoteDraft.value = '';
+    // The two tracks have different syllabi and different denominators, so the
+    // class counts are re-read rather than recombined — the same rule the open
+    // child follows two lines down.
+    lettersOverview.value = null;
 
+    await loadLettersOverview(next);
     if (selected.value) await openLetters(selected.value);
 };
 
@@ -2863,7 +2944,9 @@ const setStage = async (stage: string) => {
         const res = await TeacherApiService.put(`${base.value}/letters/stage`, { stage });
         stageNote.value = res.data?.message ?? 'Class stage updated.';
         if (group.value) group.value.arabic_stage = stage;
-        // A narrower stage re-scopes an open tracker.
+        // A narrower stage re-scopes an open tracker — and the whole class's
+        // denominator with it, so the list behind the child is re-read too.
+        await loadLettersOverview();
         if (selected.value) await openLetters(selected.value);
     } catch {
         stageNote.value = 'The class stage could not be changed.';
@@ -3974,6 +4057,9 @@ watch(activeTab, (tab) => {
     if (tab === 'points') loadPointsTotals();
     if (tab === 'attendance') loadAttendance();
     if (tab === 'hifz') loadSurahs();
+    // Every time, not once: the counts move whenever a child is marked, and this
+    // is the screen the teacher comes back to between children.
+    if (tab === 'letters') loadLettersOverview();
     if (tab === 'lessons') { loadLessonPlans(); if (!curriculum.value.grades.length) loadCurriculum(); }
     if (tab === 'grades' && !assignments.value.length) loadAssignments();
     if (tab === 'files' && !resources.value.length) loadResources();
