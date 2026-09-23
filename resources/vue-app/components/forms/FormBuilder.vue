@@ -1464,9 +1464,21 @@ const toNotifyEmailRows = (value: unknown): string[] => {
         return value.split(/[,;\s]+/).map(email => email.trim()).filter(Boolean);
     }
 
-    return Array.isArray(value)
-        ? value.filter((email): email is string => typeof email === 'string').map(email => email.trim())
-        : [];
+    // A JSON OBJECT is not a shape any door here writes, but `settings` is a json column
+    // and the server's `array` rule accepts a PHP assoc array as readily as a list, so the
+    // column can hold one (measured: it saves 201 and FormNotifier mails it correctly).
+    // Reading its values rather than giving up matters because giving up is SILENT —
+    // `notifyEmails` is a MANAGED key, so no rows on screen means the preserved-settings
+    // merge does not carry the stored value either and buildPayload() omits the key, and
+    // the admin's next unrelated wording change would delete the recipients and send the
+    // form back to the masjid's own address with nothing on screen to say so.
+    const list: unknown[] = Array.isArray(value)
+        ? value
+        : (value !== null && typeof value === 'object' ? Object.values(value) : []);
+
+    return list
+        .filter((email): email is string => typeof email === 'string')
+        .map(email => email.trim());
 };
 
 /** A price as a number: import files may carry "25.00". Null when it is not one. */
