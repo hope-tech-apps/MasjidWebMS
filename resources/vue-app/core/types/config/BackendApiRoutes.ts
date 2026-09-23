@@ -233,3 +233,20 @@ export type BackendApiRoute =
     // that flips one entry is `capabilities/${key}`.
     | `/api/admin/masjids/${string}/capabilities`
     | `/api/admin/masjids/${string}/capabilities/${string}`
+    // The attendance log (the school office's read of the register) and one
+    // child's own record. READ-ONLY: every write the register has lives in the
+    // teacher realm, so there is no POST/PUT shape here and adding one would be
+    // a new decision rather than a new line.
+    //
+    // Both carry `?${string}` and neither has a bare form, for the same reason
+    // the impact report above does not: attendanceLogStore always appends the
+    // serialized filters, and the default window is an EMPTY query string
+    // rather than an absent one — which this shape still matches. A shape no
+    // caller uses is an inventory entry that cannot be trusted.
+    //
+    // The `members/${string}` segment is spelled out rather than swallowed by a
+    // trailing `${string}`: the two endpoints answer different payloads, and
+    // one shape covering both would let a typo in either reach the office as a
+    // 404 on a screen whose empty state reads "no register was taken".
+    | `/api/admin/masjids/${string}/attendance?${string}`
+    | `/api/admin/masjids/${string}/attendance/members/${string}?${string}`

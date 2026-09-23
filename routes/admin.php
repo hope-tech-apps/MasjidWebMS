@@ -942,6 +942,35 @@ Route::prefix('admin')->group(function () {
                 Route::post('{masjid_id}/records/roster-import', [RosterImportController::class, 'commit'])
                     ->middleware('permission:manage contacts');
 
+                // THE SCHOOL-WIDE ATTENDANCE LOG — every class, a window of
+                // days, READ ONLY.
+                //
+                // A TOP-LEVEL PREFIX, beside the records export above and
+                // deliberately NOT under groups/{group_id}: the question this
+                // screen answers is "which registers were not taken this
+                // fortnight, and which children have gaps" — a whole-school
+                // question that a group-scoped URL would force the office to ask
+                // one class at a time and add up by hand. One class is the
+                // NARROWING (`?group_id=`), not the shape of the route.
+                //
+                // Two GETs and nothing else, on a controller with two public
+                // methods. Taking and correcting a register stays a teacher verb
+                // (Teacher\AttendanceController): a mark stamps
+                // `marked_by_user_id`, so an office screen that could write one
+                // would record a teacher as having seen a child they never saw.
+                // The same line the gradebook block below draws.
+                //
+                // `view contacts`, the gate the roster, the letter tracker and
+                // the gradebook already carry — no new permission, and none
+                // needed: this is the same kind of record about the same
+                // children, read by the same people.
+                Route::prefix('{masjid_id}/attendance')
+                    ->controller(\App\Http\Controllers\AdminDashboard\AttendanceLogController::class)
+                    ->group(function () {
+                        Route::get('/', 'index')->middleware('permission:view contacts');
+                        Route::get('/members/{membership_id}', 'forMember')->middleware('permission:view contacts');
+                    });
+
                 // Group rosters. A membership links an existing Contact to a
                 // group with a role; a guardian membership additionally names the
                 // member it is a guardian OF, within that group.
@@ -1011,6 +1040,58 @@ Route::prefix('admin')->group(function () {
                         Route::get('/assignments', 'index')->middleware('permission:view contacts');
                         Route::get('/assignments/{assignment_id}', 'show')->middleware('permission:view contacts');
                         Route::get('/members/{membership_id}/grades', 'forMember')->middleware('permission:view contacts');
+                    });
+
+                // LESSON PLANS, from the office's side — the READ, and only it.
+                //
+                // One GET on the teacher realm's own controller, unchanged.
+                // `save` and `destroy` are absent for a reason the gradebook's
+                // does not cover: a plan stamps `author_user_id = Auth::id()`,
+                // and LessonPlanController::save is an upsert that writes the
+                // WHOLE object every time (an omitted field clears, by design),
+                // so one save from an office screen would not merely sign a
+                // teacher's week with an administrator's name — it would replace
+                // the prose with an empty form and leave no earlier version to
+                // go back to.
+                //
+                // `index` is identity-free: it takes ?from=&to=, asks the group
+                // and never the caller, which is what makes it safe to mount
+                // here as it stands. The office asks what the class is due to
+                // cover; the teacher says what it is.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(\App\Http\Controllers\Teacher\LessonPlanController::class)
+                    ->group(function () {
+                        Route::get('/lesson-plans', 'index')->middleware('permission:view contacts');
+                    });
+
+                // CLASS FILES, from the office's side — list and download.
+                //
+                // Two GETs, the teacher realm's controller unchanged, and no
+                // store/update/destroy: an upload stamps `uploaded_by_user_id`,
+                // and flipping a file to `families` dispatches
+                // SendGroupNotificationJob, so an office screen with those verbs
+                // could mail a class's parents over a teacher's signature.
+                //
+                // VISIBILITY, DECIDED HERE AND ON PURPOSE: this list includes
+                // STAFF-ONLY files as well as the ones shared with families,
+                // because ResourcesController::index applies no visibility scope
+                // — and that is right for this realm. The office IS the school's
+                // staff; a principal who cannot see the handout their own
+                // teacher filed has to ring the teacher to ask for it.
+                //
+                // Read that against the FAMILY mount, which applies
+                // GroupResource::visibleToFamilies() as a query SCOPE so a
+                // staff-only file is a 404 rather than a 403 that confirms it
+                // exists. Two mounts of one controller, two different answers,
+                // and the difference is a decision rather than an oversight on
+                // this side. AdminSchoolOfficeReadsTest downloads a staff-only
+                // file through this route so that nobody later "fixes" it.
+                Route::prefix('{masjid_id}/groups/{group_id}')
+                    ->controller(\App\Http\Controllers\Teacher\ResourcesController::class)
+                    ->group(function () {
+                        Route::get('/resources', 'index')->middleware('permission:view contacts');
+                        Route::get('/resources/{resource_id}/download', 'download')
+                            ->middleware('permission:view contacts');
                     });
 
                 // Guardian consent, recorded against ONE guardian edge — the

@@ -357,6 +357,45 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         requiresCapability: 'school_calendar'
     },
     {
+        // The attendance log — the office's read of the register the class
+        // teachers take. Under School Calendar because the calendar decides
+        // which days are columns, and above the money screens because this is
+        // a classroom screen an office opens every morning.
+        //
+        // `requiresOrgTypes: ['school']` and nothing else. A register is a
+        // school's document: a masjid's halaqa and a community org's volunteer
+        // team do not take one, and an item offered to every vertical is an
+        // item most tenants have to learn to ignore. With no `requiresModule`
+        // beside it there is no way past the vertical (itemFitsOrgType), which
+        // is the intent — this is not a masjid feature somebody might switch on.
+        //
+        // NO `requiresCapability` and NO `requiresModule`: no switch was minted
+        // for this screen and none should be. The register already follows
+        // `school_calendar` for its columns and the server's
+        // `permission:view contacts` for who may read it.
+        //
+        // `requiresCrm`, matching the route: the endpoints sit inside the `crm`
+        // group, so without the CRM this item would lead somewhere that refuses
+        // it. An item that opens a 401 is worse than an item that is not there.
+        //
+        // Plain "Attendance", no `title_term`: there is no attendance key in
+        // the terminology pack, and every vertical that takes a register calls
+        // it the same thing.
+        title: "Attendance",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="4" y="3.5" width="16" height="17" rx="2" stroke="white" stroke-width="1.7"/>
+                <path d="M8 3V6" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M16 3V6" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M8 11.5L10 13.5L13.5 10" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8 17H13" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>
+                `,
+        to: '/masjid/attendance',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin'],
+        requiresCrm: true,
+        requiresOrgTypes: ['school']
+    },
+    {
         // Offerings — the things people register and pay for, and the roster and
         // fee plans hung off each one.
         //
