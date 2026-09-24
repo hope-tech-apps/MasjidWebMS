@@ -307,4 +307,29 @@ return [
         'fcm_v1_service_account_json' => env('ONESIGNAL_FCM_V1_SERVICE_ACCOUNT_JSON'),
     ],
 
+    // The public-site renderer (Nuxt on Cloudflare Pages). Live preview and
+    // save-purge — docs/live-preview.md. Every key blank = both features OFF:
+    // no preview session is issued and no save calls the renderer.
+    'renderer' => [
+        // Shared with the renderer's NUXT_MANARA_SHARED_SECRET. At least 32
+        // characters, or it counts as unset. Staging has its OWN value — never
+        // production's, which would let staging purge production's page cache.
+        'secret' => env('RENDERER_SHARED_SECRET'),
+
+        // The origin the preview iframe loads (a host that serves no tenant):
+        // production https://manara-renderer.pages.dev.
+        'preview_origin' => env('RENDERER_PREVIEW_ORIGIN'),
+
+        // Comma list of renderer deployments whose page cache a save purges.
+        'purge_origins' => env('RENDERER_PURGE_ORIGINS'),
+
+        // Comma list of admin SPA origins a preview token may name. Blank =
+        // this deployment's own APP_URL origin only.
+        'admin_origins' => env('RENDERER_PREVIEW_ADMIN_ORIGINS'),
+
+        // Seconds per purge call. The call runs after the response is sent, so
+        // this bounds how long a PHP worker is held, never how long an admin waits.
+        'timeout' => (int) env('RENDERER_TIMEOUT', 5),
+    ],
+
 ];

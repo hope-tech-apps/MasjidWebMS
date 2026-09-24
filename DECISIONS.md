@@ -2129,3 +2129,119 @@ the provisioning body (`directory-listing.md`, `verticals.md`) now load for
 Rationale: the type-blind labels filed 5 and "5" under one key, so the `actorId`-uncast
 promise above had no test; with only one organisation, "the new org" and "the first
 org" got the same label; and a session editing only the provisioner loaded neither rule.
+
+## 2026-09-24 — Live preview: a signed preview mode on a host that serves no tenant
+Decision: the page tool's preview is the real renderer in an iframe, loaded from
+the renderer project's own `*.pages.dev` host at `/__manara/preview/<path>?mp=<token>`.
+The prefix is covered by no cache rule, so Nitro routes it to the uncached
+catch-all renderer; a `render:before` hook verifies a five-minute HMAC token
+Laravel signs (org, surface, path, admin origin), takes the tenant from the token,
+rewrites the path and stamps no-store, noindex and `frame-ancestors <admin origin>`.
+Unsaved edits reach it only by `postMessage` from that admin origin and are laid
+over the Pinia store in the browser. Save purges the org's `MANARA_PAGE_CACHE`
+keys through a signed `POST /__manara/purge` on the renderer, called after the
+response. Contract: `docs/live-preview.md`.
+Alternatives: (a) `?preview=` on the tenant's own URL — rejected, a cached route
+stores every distinct query under its own key and `shouldBypassCache` cannot be
+passed through JSON route rules; (b) preview on the tenant's own domain — rejected,
+the tenant would come from the Host (W1's code), the admin would need every
+tenant host in `frame-src`, and a Studio draft with no host could not be shown;
+(c) server-side draft storage read by the renderer — rejected, it needs a new
+authenticated read path and persists unsaved content; (d) giving Laravel KV
+credentials — rejected by the brief; (e) purging the whole cache on every save —
+rejected, it hands every client admin a lever over every other tenant's cold renders.
+Rationale: every live tenant host keeps exactly today's code path, the uncached
+path is chosen by Nitro's own routing rather than by a flag, and one preview
+origin is one entry in the admin CSP and one in the postMessage allowlist.
+
+## 2026-09-24 — Preview gates are the save routes' gates, one mint route per surface
+Decision: `pages/preview-session` sits inside the `capability:web_pages` +
+`capability:website` group, `theme/preview-session` beside the theme save
+(admin + tenant only), `splash-announcements/preview-session` inside
+`capability:splash`. The token names its surface and the renderer accepts only
+that surface's overrides.
+Alternatives: one mint route under the pages gate — rejected, a MasjidAdmin who
+may edit the theme but not the pages (web_pages off, e.g. Burlington) could not
+preview the theme they can save; one ungated mint route — rejected, the brief asks
+for tokens issued only to people allowed to edit.
+Rationale: whoever may save a surface may preview it, and no one else; placing the
+route in the save route's group makes that true by construction.
+
+## 2026-09-24 — Renderer preview/purge work merges to `main` only
+Decision: follow W1 — `manara-renderer` (branch `main`) gets preview and purge;
+`cloudflare-migration` / `mec-web` is not touched, so `mec-web.pages.dev` keeps its
+5-minute window.
+Alternatives: port to both branches as the payload fix was — rejected, W1 fixed
+`cloudflare-migration` as a control that is not redeployed.
+Rationale: one live renderer to reason about; MEC's Manara host is on `main`.
+
+## 2026-09-24 — A second purge pass, and "immediately" means about a minute on KV
+Decision: a save purges at once (after the response) and again 75 s later on the
+queue (`PurgeRendererCacheAgain`, unique per organisation). The owner is told that on
+Cloudflare KV a saved change reaches visitors elsewhere in about a minute, not on the
+next request.
+Alternatives: one pass only — rejected, measured on staging: a page warmed in another
+region seconds before a save was missing from KV's eventually consistent listing and
+would have lived its full 5 minutes; a strongly consistent page cache (Durable Object)
+— not built, it is new infrastructure and an owner decision.
+Rationale: measured, not assumed — the fresh render appeared 64 s after a staging save,
+well before the entry would have expired, against up to 5 minutes plus a
+stale-while-revalidate request before this work.
+
+## 2026-09-24 — Purges leave the request: a coalesced first pass, and a second pass that trails the last save
+Decision: `renderer.purge`'s `terminate()` only calls `RendererPurgeScheduler::afterSave`, which
+records the save time and queues two jobs. `PurgeRendererCache` runs 3 s later and is unique per
+organisation until it starts, so a burst (a section reorder is one request per section) shares one
+purge. `PurgeRendererCacheAgain` is unique for up to 30 minutes. It `release()`s itself until 75 s
+have passed since the most recent save, then purges. Each pass makes at most `MAX_CALLS` (2) calls,
+following the renderer's key cursor. This supersedes the "second pass 75 s later" entry above,
+whose job was a throttle: a save inside an earlier save's window got no second pass of its own.
+Alternatives: purge inline in `terminate()` (holds a PHP-FPM worker on the renderer, and fans out one
+full list-and-delete per request); a debounce by re-dispatching with a new delay (a unique job
+cannot be re-dispatched while it is pending, and a non-unique one fans out again).
+Rationale: the KV list and delete budget is account-wide and the plan is unknown, so the cost must be
+bounded per save burst: about 2 lists and 2 × the organisation's keys in deletes. Review findings 4,
+5, 8, 10 and 17.
+
+## 2026-09-24 — Saves of read-time bound content purge too
+Decision: `renderer.purge` is also on the details, About Us, donation-link, contact-reasons, forms,
+offerings and fee-plans groups: the sources `SectionContentBinder` reads into public pages.
+Alternatives: leave them on the 5-minute expiry (the earlier open question).
+Rationale: the owner wants Save to go live (decided through the point session, 2026-09-24). The route
+table pin lists the groups by prefix, so a missing one fails the suite.
+
+## 2026-09-24 — The signed preview path is the decoded path; the URL carries it encoded
+Decision: the token's `p` is the decoded slug path. `PreviewToken::encodePath` percent-encodes each
+segment for the iframe URL, and the renderer compares with h3's decoded `event.path`. Both sides
+refuse `%` and list the forbidden characters explicitly: PHP's `\s` without `/u` was ASCII-only
+while JavaScript's matched U+00A0, U+2028 and U+FEFF.
+Alternatives: sign the encoded form (both sides would need a browser-exact encoder).
+Rationale: an Arabic slug minted a token and never previewed (review finding 1). One canonical form,
+pinned by a shared Arabic vector.
+
+## 2026-09-24 — L5 ships with the preview, and typography is rebuilt only when a font changes
+Decision: the Brand Studio font and header/footer controls stay tied to the preview being available.
+`core/helpers/themeTokens.ts` rebuilds `tokens.typography` only when a font select changed, and
+keeps the saved stylesheet's families for any face left as "Current". Colours alone post no tokens.
+Alternatives: gate L5 on its own flag (the review's other option).
+Rationale: fonts and header/footer style are in the owner's scope, so the point session chose to fix
+the bug and ship L5 (review finding 7). Changing only Header style no longer drops a custom heading
+font from every public page.
+
+## 2026-09-24 — The preview frame is sandboxed, and a reload heals itself
+Decision: the iframe carries `sandbox="allow-scripts allow-same-origin allow-forms allow-popups
+allow-popups-to-escape-sandbox"`, with no top navigation. The renderer's sanitiser keeps only
+`_blank` or no target. A second `load` of the same frame element (a reload, or Nuxt's chunk-error
+reload) makes the pane wait 8 s for `ready`, then open one new session per 30 s, then show the
+error. The element's first `load` is never treated as a reload, because it can fire after `ready`.
+Alternatives: sanitiser only, or sandbox only (one layer each); treat any `load` after `ready` as a
+reload (the first version, found here: the first document's `load` can follow hydration when images
+finish late, which would have looped the pane).
+Rationale: review findings 2 and 3. The renderer strips `mp` from the frame's URL, so a reloaded frame
+is not a preview any more and needs a fresh session.
+
+## 2026-09-24 — Dragging to reorder the menu keeps publishing on drop
+Decision: no preview step for menu order. A drop saves at once, as before, and that save purges.
+Alternatives: a staged reorder with its own Save button.
+Rationale: the owner kept today's behaviour (decided through the point session, 2026-09-24), and the
+doc now says so instead of claiming menu order is previewed (review finding 12).

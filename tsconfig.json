@@ -26,6 +26,6 @@
       "resources/vue-app/**/*.tsx",
       "resources/vue-app/**/*.vue"
 ],
-    "exclude": ["node_modules"]
+    "exclude": ["node_modules", "resources/vue-app/tests"]
 }
   

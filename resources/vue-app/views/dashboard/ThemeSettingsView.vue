@@ -73,6 +73,41 @@
                     <p class="text-muted small mb-0">
                         Leave a field blank to fall back to the app's built-in default.
                     </p>
+
+                    <!-- Typography and header/footer style: design tokens the website already
+                         reads (tokens.typography.*, tokens.layout.*). Shown with the live
+                         preview, so an admin sees what a choice does before saving it. -->
+                    <div v-if="previewAvailable === true" class="mt-4">
+                        <div class="fw-semibold text-uppercase text-muted small mb-3">Website fonts &amp; layout</div>
+                        <div class="row">
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-heading-font">Heading font</label>
+                                <select id="theme-heading-font" v-model="styleModel.heading" class="form-select" @change="touched.fonts = true">
+                                    <option v-for="f in fontChoices('heading')" :key="f.key" :value="f.key">{{ f.label }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-body-font">Body font</label>
+                                <select id="theme-body-font" v-model="styleModel.body" class="form-select" @change="touched.fonts = true">
+                                    <option v-for="f in fontChoices('body')" :key="f.key" :value="f.key">{{ f.label }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-header-style">Header style</label>
+                                <select id="theme-header-style" v-model="styleModel.header" class="form-select" @change="touched.layout = true">
+                                    <option value="default">Standard</option>
+                                    <option value="overlay">Over the page's top image</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-footer-style">Footer style</label>
+                                <select id="theme-footer-style" v-model="styleModel.footer" class="form-select" @change="touched.layout = true">
+                                    <option value="default">Standard</option>
+                                    <option value="columns">Columns</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Derived palette + preview -->
@@ -121,6 +156,12 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- The organisation's real website with these unsaved colours
+                     (docs/live-preview.md). Renders nothing where preview is unavailable. -->
+                <div v-if="previewAvailable === true" class="col-12">
+                    <LivePreviewPane surface="theme" path="/" :overrides="themeOverrides" />
+                </div>
             </div>
         </div>
 
@@ -134,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed } from 'vue';
+import { ref, onBeforeMount, computed, watch } from 'vue';
 import { Form, Field, ErrorMessage } from 'vee-validate';
 import { object, string } from 'yup';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -144,6 +185,16 @@ import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import type { AxiosError } from 'axios';
 import type { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import type { ThemeSetting } from '@/core/types/data/masjid-related/ThemeSetting';
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
+import {
+    fontChoices as themeFontChoices,
+    styleFromTokens,
+    themePayload as buildThemePayload,
+    type StyleModel,
+    type Tokens,
+    type Touched,
+} from '@/core/helpers/themeTokens';
+import { usePreviewAvailability } from '@/composables/useLivePreview';
 
 // Stores
 const masjidStore = useMasjidStore();
@@ -164,6 +215,24 @@ const settingsModel = ref({
     accent_color: '',
     background_color: ''
 });
+
+/*
+ * Website fonts and header/footer style: the `tokens` the renderer reads. All the rules
+ * (what is kept, what is rebuilt, when anything is sent) are core/helpers/themeTokens.ts.
+ */
+const savedTokens = ref<Tokens | null>(null);
+const styleModel = ref<StyleModel>(styleFromTokens(null));
+const touched = ref<Touched>({ fonts: false, layout: false });
+const fontChoices = (face: 'heading' | 'body') => themeFontChoices(savedTokens.value, face);
+
+const loadStyle = (tokens: Tokens | null | undefined) => {
+    savedTokens.value = tokens && typeof tokens === 'object' ? tokens : null;
+    styleModel.value = styleFromTokens(savedTokens.value);
+    touched.value = { fonts: false, layout: false };
+};
+
+/** What Save posts, and what the preview is derived from. */
+const themePayload = () => buildThemePayload(settingsModel.value, savedTokens.value, styleModel.value, touched.value);
 
 // Validation — a hex color (#RGB, #RRGGBB or #RRGGBBAA), or empty to fall back.
 const hexRule = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -291,6 +360,7 @@ const fetchSettings = async () => {
             settingsModel.value.secondary_color = data.secondary_color ?? '';
             settingsModel.value.accent_color = data.accent_color ?? '';
             settingsModel.value.background_color = data.background_color ?? '';
+            loadStyle(data.tokens);
         }
     } catch (error) {
         console.error('Error fetching settings:', error);
@@ -302,7 +372,7 @@ const onSubmit = async () => {
     QSwal.fire("Question", 'Save theme settings?', 'question')
         .then(async (result) => {
             if (result.isConfirmed) {
-                await ApiService.post(`/api/admin/masjids/${masjidStore.masjid?.id}/theme`, settingsModel.value)
+                await ApiService.post(`/api/admin/masjids/${masjidStore.masjid?.id}/theme`, themePayload())
                     .then(async res => {
                         if (res.data.status === 'success') {
                             QSwal.fire("Success", "Theme settings saved successfully.", "success");
@@ -322,6 +392,39 @@ const onSubmit = async () => {
             }
         });
 };
+
+// Live preview. The site reads the resolved token tree ahead of the four flat colours,
+// so the theme it is sent must be the SERVER's derivation (App\Support\DesignTokens) of
+// these unsaved values — POST .../theme/preview, which saves nothing. Debounced; a value
+// the server refuses (a half-typed hex) keeps the last good preview.
+const previewAvailable = usePreviewAvailability('theme');
+const previewTheme = ref<Record<string, unknown> | null>(null);
+const themeOverrides = computed(() => (previewTheme.value ? { theme: previewTheme.value } : {}));
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+let previewRequest = 0;
+
+const refreshPreviewTheme = () => {
+    if (previewAvailable.value !== true || !masjidStore.masjid?.id) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+        const mine = ++previewRequest;
+        try {
+            const res = await ApiService.post(
+                `/api/admin/masjids/${masjidStore.masjid?.id}/theme/preview`,
+                themePayload(),
+            );
+            if (mine === previewRequest && res.data?.status === 'success' && res.data.data?.theme) {
+                previewTheme.value = res.data.data.theme;
+            }
+        } catch {
+            // Invalid while typing: keep showing the last theme that was valid.
+        }
+    }, 250);
+};
+
+watch(settingsModel, refreshPreviewTheme, { deep: true });
+watch(styleModel, refreshPreviewTheme, { deep: true });
+watch(previewAvailable, refreshPreviewTheme);
 </script>
 
 <style scoped>

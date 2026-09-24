@@ -181,6 +181,12 @@ export type BackendApiRoute =
     `/api/admin/masjids/${string}/iqama` |
     `/api/admin/masjids/${string}/jumaa` |
     `/api/admin/masjids/${string}/theme` |
+    // Live preview sessions (docs/live-preview.md): one per editing surface, each
+    // behind the same gate as that surface's save.
+    `/api/admin/masjids/${string}/theme/preview-session` |
+    `/api/admin/masjids/${string}/theme/preview` |
+    `/api/admin/masjids/${string}/pages/preview-session` |
+    `/api/admin/masjids/${string}/splash-announcements/preview-session` |
     // The organisation's nisab price (T-043c). ONE shape, two verbs: GET returns
     // the stored row plus the nisab reference resolved by the same server code
     // the public calculator answers donors from; POST saves the price, its date

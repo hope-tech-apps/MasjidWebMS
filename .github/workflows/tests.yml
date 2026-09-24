@@ -61,6 +61,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Run the admin SPA's unit tests
+        # Pure rules extracted from the SPA (live-preview frame, Brand Studio tokens), run
+        # by Node's own test runner: no test framework, no browser.
+        run: npm run test:spa
+
       - name: Run the suite
         env:
           APP_ENV: testing

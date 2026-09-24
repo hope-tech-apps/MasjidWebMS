@@ -1,15 +1,29 @@
 <template>
     <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-dialog-centered modal-xl modal-dialog-scrollable">
+        <div class="modal-dialog modal-dialog-scrollable" :class="previewOn ? 'modal-fullscreen' : 'modal-dialog-centered modal-xl'">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
                         <i class="bi bi-layout-text-sidebar me-2"></i>
                         {{ isEdit ? 'Edit Section' : 'Add Section to Page' }}
                     </h5>
+                    <!-- Live preview (docs/live-preview.md): offered only when the API says it is
+                         available for this organisation, so an unconfigured deployment sees
+                         exactly the modal it had. -->
+                    <button
+                        v-if="previewOffered"
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary ms-auto me-3"
+                        @click="showPreview = !showPreview"
+                    >
+                        <i class="bi me-1" :class="showPreview ? 'bi-eye-slash' : 'bi-eye'"></i>
+                        {{ showPreview ? 'Hide preview' : 'Show preview' }}
+                    </button>
                     <button type="button" class="btn-close" @click="$emit('close')"></button>
                 </div>
                 <div class="modal-body">
+                  <div :class="previewOn ? 'row g-3 h-100' : ''">
+                    <div :class="previewOn ? 'col-lg-5 section-editor-column' : ''">
                     <!-- Mode Selection (only for new sections) -->
                     <div v-if="!isEdit" class="mb-4">
                         <div class="btn-group w-100" role="group">
@@ -285,6 +299,15 @@
                             />
                         </div>
                     </form>
+                    </div>
+                    <div v-if="previewOn && previewPage" class="col-lg-7">
+                        <LivePreviewPane
+                            surface="pages"
+                            :path="pagePath(previewPage.slug)"
+                            :overrides="sectionOverrides"
+                        />
+                    </div>
+                  </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" @click="$emit('close')">
@@ -327,6 +350,8 @@ import { PageSection, SectionType } from '@/core/types/data/masjid-related/PageS
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { ref, computed, onMounted, shallowRef, provide } from 'vue';
 import { useSectionImages } from '@/composables/useSectionImages';
+import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
 import Swal from 'sweetalert2';
 
 // Import section editors
@@ -362,6 +387,12 @@ import OfferingSectionEditor from '@/components/sections/editors/OfferingSection
 const props = defineProps<{
     section?: PageSection;
     pageId: number;
+    /**
+     * The page being edited, for the live preview. Without it no preview is offered.
+     * `sections` (the page's saved sections) matter only for a page that is not active yet:
+     * the site has no copy of it, so the whole page is sent.
+     */
+    previewPage?: { id: number; slug: string; title?: string; is_active?: boolean; sections?: PageSection[] };
 }>();
 
 // Emits
@@ -468,6 +499,64 @@ const editorMap: Record<SectionType, any> = {
 };
 
 const currentEditor = shallowRef<any>(null);
+
+// Live preview: the page as visitors would see it with THIS unsaved section.
+const previewAvailable = usePreviewAvailability('pages');
+const showPreview = ref(true);
+const previewOffered = computed(() =>
+    !!props.previewPage && previewAvailable.value === true && !(!isEdit.value && mode.value === 'attach'),
+);
+const previewOn = computed(() => previewOffered.value && showPreview.value);
+
+/**
+ * The unsaved section, in the renderer's override shape (docs/live-preview.md §4.5). Its
+ * `content` is merged key by key over the saved content, as the update endpoint merges
+ * it; a pending image is its data: URL, which is exactly what the editor holds. A new
+ * section has no id yet, so it travels as -1 and is appended to the page.
+ */
+const asOverride = (s: any, id: number) => {
+    const onWeb = !Array.isArray(s.platforms) || s.platforms.length === 0 || s.platforms.includes('web');
+
+    return {
+        id,
+        section_type: s.section_type,
+        title: s.title || null,
+        // PHP serialises an empty array as [], and the site accepts only an object here.
+        content: s.content && typeof s.content === 'object' && !Array.isArray(s.content) ? s.content : {},
+        order: Number(s.order) || 1,
+        is_active: !!s.is_active && onWeb,
+        settings: s.settings && typeof s.settings === 'object' && !Array.isArray(s.settings) && Object.keys(s.settings).length
+            ? s.settings
+            : null,
+    };
+};
+
+const sectionOverrides = computed(() => {
+    const page = props.previewPage;
+    const f = formData.value;
+    if (!page || !f.section_type) return {};
+    const edited = asOverride(f, props.section?.id ?? -1);
+
+    // An active page is on the site already: send only the section being edited, and
+    // the site merges it over the saved one. A page not yet active is not on the site
+    // at all, so send all of it — shown as it will look once it is switched on.
+    if (page.is_active !== false) {
+        return { pages: [{ id: page.id, sections: [edited] }] };
+    }
+    const others = (page.sections ?? [])
+        .filter((s) => s.id !== props.section?.id)
+        .map((s) => asOverride(s, s.id));
+
+    return {
+        pages: [{
+            id: page.id,
+            slug: page.slug,
+            title: page.title || page.slug,
+            is_active: true,
+            sections: [...others, edited],
+        }],
+    };
+});
 
 // Lifecycle
 onMounted(async () => {
@@ -647,6 +736,11 @@ const handleSubmit = async () => {
 <style scoped>
 .modal {
     display: block;
+}
+
+.section-editor-column {
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
 }
 
 .btn-check:checked + .btn-outline-primary {
