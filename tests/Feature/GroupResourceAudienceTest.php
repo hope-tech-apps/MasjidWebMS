@@ -217,11 +217,17 @@ class GroupResourceAudienceTest extends TestCase
 
         $this->kareem->forceFill(['left_on' => now()->subDay()->toDateString()])->save();
 
-        // 403 on the listing, 404 on the file — the split the realm has always
-        // made: the group is real and they are no longer entitled to it, and the
-        // file is one the constrained query no longer returns at all.
+        // AN EMPTY SHELF, AND A 404 ON THE FILE.
+        //
+        // The listing assertion here used to be `assertForbidden()`. It changed
+        // when the owner's ruling took the blanket consent gate out of the
+        // controller: a family that has left is still IN the group (their rows
+        // are retained on purpose), so the audience hands back a constrained
+        // query rather than null, and the controller's 403 is now reserved for a
+        // caller with no standing at all. What this family can SEE is unchanged
+        // — nothing — which is the property this test exists for.
         $this->asParent($this->kareemsParent)->getJson($this->familyUrl() . '/resources')
-            ->assertForbidden();
+            ->assertOk()->assertJsonCount(0, 'data');
         $this->asParent($this->kareemsParent)->get($this->familyUrl() . "/resources/{$id}/download")
             ->assertNotFound();
 
@@ -403,19 +409,94 @@ class GroupResourceAudienceTest extends TestCase
 
     // ---------------------------------------------------------------- consent
 
+    /**
+     * THE OWNER'S RULING, 2026-09-24: "yes bypass the consent gate for files
+     * addressed to one child".
+     *
+     * A file naming ONE child is a disclosure about that child to their own
+     * guardian — the same shape as a behaviour award, a ḥifẓ entry and a
+     * participant thread, none of which consult consent. Requiring it here
+     * locked a parent out of the document most obviously theirs, a report card,
+     * and told them nothing about it.
+     *
+     * THIS TEST REPLACES ONE THAT ASSERTED THE OPPOSITE
+     * (`a_guardian_who_never_consented_is_refused_a_targeted_file_too`). It is a
+     * deliberate reversal of a shipped rule, not a fixed bug, and the three
+     * refusals after the first assertion are the SCOPE of the reversal: the
+     * bypass reaches the addressed file and nothing else the same request could
+     * have picked up.
+     */
     #[Test]
-    public function a_guardian_who_never_consented_is_refused_a_targeted_file_too(): void
+    public function a_guardian_who_never_consented_still_gets_a_file_addressed_to_their_own_child(): void
+    {
+        $child = $this->enrol($this->class, 'Bilal');
+        $parent = $this->guardianOf($this->class, $child, 'Noor', consented: false);
+
+        $addressed = $this->upload(GroupResource::VISIBILITY_STUDENTS, [$child->id]);
+        $wholeClass = $this->upload(GroupResource::VISIBILITY_FAMILIES);
+        $staffOnly = $this->upload();
+        $anotherChilds = $this->upload(GroupResource::VISIBILITY_STUDENTS, [$this->kareem->id]);
+
+        // THE RULING: no consent record anywhere, and the addressed file
+        // arrives — in the listing and as bytes.
+        $listed = $this->asParent($parent)->getJson($this->familyUrl() . '/resources')
+            ->assertOk()->json('data');
+
+        $this->assertCount(1, $listed, 'the addressed file, and only it');
+        $this->assertSame($addressed, (int) $listed[0]['id']);
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$addressed}/download")
+            ->assertOk();
+
+        // AND NOTHING WIDER. A whole-class handout is classroom-wide content and
+        // keeps the consent rule the class story has always had; the staff-only
+        // file and another child's addressed file are untouched.
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$wholeClass}/download")
+            ->assertNotFound();
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$staffOnly}/download")
+            ->assertNotFound();
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$anotherChilds}/download")
+            ->assertNotFound();
+    }
+
+    /**
+     * The control for the test above: a CONSENTED parent in the same class does
+     * get the whole-class file, so that test's refusal of it is the consent rule
+     * still standing on `families` rather than a broken fixture.
+     */
+    #[Test]
+    public function consent_still_gates_the_whole_class_file(): void
+    {
+        $wholeClass = $this->upload(GroupResource::VISIBILITY_FAMILIES);
+
+        $this->asParent($this->kareemsParent)
+            ->get($this->familyUrl() . "/resources/{$wholeClass}/download")->assertOk();
+    }
+
+    /**
+     * THE SCOPE OF THE RULING, from the other side: consent stopped gating an
+     * addressed file, and LEAVING THE CLASS did not.
+     *
+     * `standingIn()` answered both questions with one flag until this change, so
+     * this property came free; splitting `current` out of `feed` is exactly what
+     * could have lost it, and this is the test that would notice.
+     */
+    #[Test]
+    public function the_consent_bypass_does_not_survive_leaving_the_class(): void
     {
         $child = $this->enrol($this->class, 'Bilal');
         $parent = $this->guardianOf($this->class, $child, 'Noor', consented: false);
 
         $id = $this->upload(GroupResource::VISIBILITY_STUDENTS, [$child->id]);
 
-        // 403 on the LISTING (the honest answer to "am I entitled to this
-        // class's handouts at all"), 404 on the file (which says nothing about
-        // whether that id names anything).
-        $this->asParent($parent)->getJson($this->familyUrl() . '/resources')->assertForbidden();
-        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$id}/download")->assertNotFound();
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$id}/download")->assertOk();
+
+        $this->asTeacher();
+        $child->forceFill(['left_on' => now()->subDay()->toDateString()])->save();
+
+        $this->asParent($parent)->getJson($this->familyUrl() . '/resources')
+            ->assertOk()->assertJsonCount(0, 'data');
+        $this->asParent($parent)->get($this->familyUrl() . "/resources/{$id}/download")
+            ->assertNotFound();
     }
 
     // ---------------------------------------------------------- notifications

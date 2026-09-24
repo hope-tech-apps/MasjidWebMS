@@ -643,11 +643,28 @@ What a follow-on slice must not re-decide:
   class: a class-wide nudge would tell every family that something had been filed
   for somebody. `wardGuardians()` is the wrong one here — it is not
   consent-gated, and a targeted file is.
-- **Consent gates a targeted handout, unlike a participant thread, an award or a
-  ḥifẓ entry.** Those are records ABOUT a child; a handout is something the
-  school SENDS. Said out loud because it is the one place this surface departs
-  from the "consent gates broadcasts, not a parent's view of their own child"
-  call the three slices above all made. See DECISIONS.md, 2026-09-24.
+- **CONSENT GATES THE WHOLE-CLASS FILE AND NOT THE ADDRESSED ONE** (owner's
+  ruling, 2026-09-24). A `families` handout is classroom-wide content and keeps
+  the class story's consent rule. A `students` file reaches the named child's
+  guardian with NO consent record, because it is a record ABOUT that child —
+  the same call T-005c, T-013 and T-014 all made. An earlier round of this
+  feature gated both and is the thing that was wrong: the document is a report
+  card, and the gate locked the parent out of it in silence.
+- **Consent and departure are TWO questions, and `standingIn()` returns two
+  flags.** `feed` (may receive a class-wide disclosure; consent, for a guardian)
+  and `current` (holds a row that has not left; no consent clause). They moved
+  together until a handout could be addressed to one child. The `families`
+  branch asks `feed`, the `students` branch asks `current`, so leaving the class
+  still ends a targeted file even though consent no longer gates it. A reader
+  reaching for the wrong flag is how this drifts back.
+- **The consent gate lives in `GroupAudience` and NOWHERE else.**
+  `Family\ResourcesController` used to call
+  `authorizeDisclosure(DISCLOSURE_FEED)` over the whole surface, which 403'd the
+  listing before the audience query ran and hid a targeted file the audience
+  would have served. It now 403s only on null (no standing in the group at all)
+  and otherwise serves the constrained query — the shape
+  `Family\BehaviorAwardsController::readable()` has always had. A second consent
+  branch in a controller can only disagree with the first, and this one did.
 
 Proven by `tests/Feature/GroupResourceAudienceTest.php` (two families in ONE
 classroom — a one-family fixture cannot express a single property above) plus

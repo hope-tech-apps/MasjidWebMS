@@ -2,14 +2,15 @@
 
 namespace App\Http\Controllers\Family;
 
+use App\Models\Group;
 use App\Models\GroupResource;
-use App\Support\GroupAudience;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * The handouts a class has chosen to share with this family.
+ * The handouts a class has shared with this family.
  *
  * ## VISIBILITY IS A QUERY CONSTRAINT, NOT A RESPONSE FILTER
  *
@@ -26,37 +27,33 @@ use Symfony\Component\HttpFoundation\Response;
  *   - The listing and the download ask the SAME question of the same builder, so
  *     "it was in my list" and "I may fetch its bytes" cannot come apart.
  *
- * ## WHY THE DECISION IS NOT HERE (2026-09-24)
+ * ## THERE IS NO CONSENT CHECK IN THIS FILE, AND ITS ABSENCE IS THE DESIGN
  *
- * This controller used to apply `GroupResource::visibleToFamilies()` itself. It
- * no longer may: a file can now be addressed to NAMED STUDENTS, and which
- * parents that reaches is answered from guardian edges — the same question
- * `GroupAudience` already answers for a participant thread, a behaviour award
- * and a ḥifẓ entry. A second implementation living in a controller is exactly
- * the drift that class exists to prevent (.claude/rules/groups.md).
+ * This controller used to apply `GroupResource::visibleToFamilies()` itself, and
+ * then `authorizeDisclosure(DISCLOSURE_FEED)` over the whole surface. Both are
+ * gone, and the second one had become actively wrong: since the owner's ruling
+ * of 2026-09-24 a file addressed to ONE child reaches that child's guardian
+ * whether or not they ever consented — like a behaviour award, a ḥifẓ entry and
+ * a participant thread, none of which are consent-gated — so a blanket 403 here
+ * hid a file the audience was willing to serve. Consent still gates the
+ * WHOLE-CLASS shelf, and it does so inside `readableResourcesQuery()` where the
+ * listing and the download read it from one place. A consent branch out here
+ * could only ever disagree with that one.
  *
- * The consent gate below is DISCLOSURE_FEED — the same call a group-wide thread
- * makes, and it is kept here on top of the query constraint rather than replaced
- * by it. A family with no feed consent already sees no class story, so handouts
- * behave identically and this introduces no new class of exclusion. See
- * DECISIONS.md, 2026-09-24, for why a targeted file is consent-gated where a
- * participant thread about the same child is not.
+ * What is left is the shape `Family\BehaviorAwardsController` already uses: 403
+ * when the caller has no standing in the group AT ALL, and otherwise the
+ * constrained query — which may legitimately be empty.
  */
 class ResourcesController extends FamilyController
 {
     public function index(Request $request, $masjid_id, $group_id): JsonResponse
     {
         $group = $this->group($group_id);
-        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
 
-        // Never null here — authorizeDisclosure has already refused a caller
-        // with no standing — but this method promises a query either way, and
-        // "cannot happen" is not a reason to dereference a null.
-        $readable = $this->audience->readableResourcesQuery($this->contact(), $group);
-
-        $resources = $readable === null
-            ? collect()
-            : $readable->orderByDesc('created_at')->orderByDesc('id')->get();
+        $resources = $this->readable($group)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get();
 
         return response()->json([
             'status' => 'success',
@@ -71,25 +68,11 @@ class ResourcesController extends FamilyController
     {
         $group = $this->group($group_id);
 
-        $readable = $this->audience->readableResourcesQuery($this->contact(), $group);
-
-        if ($readable === null) {
-            // No standing in this group AT ALL — a 403, matching index() and the
-            // rest of the realm. The 404s below are for a file that exists in a
-            // class this family IS in and may not have; that difference is the
-            // one the 403/404 split has always meant here.
-            $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
-
-            abort(Response::HTTP_FORBIDDEN);
-        }
-
-        // Constrain BEFORE findOrFail: a file this family may not have resolves
+        // Constrain BEFORE the lookup: a file this family may not have resolves
         // to nothing, so the miss is indistinguishable from an id that was never
-        // real. findOrFail stays OUTSIDE any try/catch so the JSON renderer turns
-        // it into a clean 404 (private-uploads rule 5).
-        $resource = $readable->whereKey($resource_id)->firstOrFail();
-
-        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_FEED);
+        // real. firstOrFail stays OUTSIDE any try/catch so the JSON renderer
+        // turns it into a clean 404 (private-uploads rule 5).
+        $resource = $this->readable($group)->whereKey($resource_id)->firstOrFail();
 
         if (! $resource->exists()) {
             return response()->json([
@@ -102,5 +85,25 @@ class ResourcesController extends FamilyController
             'Content-Type' => $resource->mime_type,
             'Cache-Control' => 'private, no-store, max-age=0',
         ]);
+    }
+
+    /**
+     * This family's readable files, or a 403 when they have no standing in the
+     * group at all.
+     *
+     * The 403/404 split, restated because it is the whole interface: 403 means
+     * "this class is not yours", which is honest and gives nothing away about
+     * its contents; 404 means "no such file for you", which is what every other
+     * refusal in here has to look like.
+     */
+    private function readable(Group $group): Builder
+    {
+        $query = $this->audience->readableResourcesQuery($this->contact(), $group);
+
+        if ($query === null) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this group\'s files.');
+        }
+
+        return $query;
     }
 }

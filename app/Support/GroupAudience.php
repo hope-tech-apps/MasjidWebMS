@@ -740,15 +740,34 @@ class GroupAudience
      * lists, the same participant-role belt-and-braces clause — so the two
      * cannot drift about who a caller's children are.
      *
-     * FEED STANDING IS REQUIRED FOR BOTH FAMILY BRANCHES, targeted included.
-     * The controllers also 403 on it, and this restates it rather than trusting
-     * them: .claude/rules/groups.md requires the endpoint refusal and the query
-     * constraint both, and a listing that is correct on its own is what makes
-     * that true if a controller ever forgets to ask.
+     * ## CONSENT GATES THE CLASS-WIDE FILE AND NOT THE ADDRESSED ONE
+     *
+     * The two family branches ask DIFFERENT questions of `standingIn()`, and the
+     * owner ruled on this on 2026-09-24 (DECISIONS.md):
+     *
+     *   - `families` asks `feed` — recorded consent, for a guardian. A
+     *     whole-class handout is classroom-wide content and keeps the rule the
+     *     class story has always had.
+     *   - `students` asks `current` — still in the class, and NOTHING about
+     *     consent. A file addressed to one child is a disclosure about that
+     *     child to their own guardian, which is what a behaviour award, a ḥifẓ
+     *     entry and a participant thread already are, and none of those three is
+     *     consent-gated. Requiring consent here locked a parent out of the
+     *     document most obviously theirs — a report card — and told them
+     *     nothing about it.
+     *
+     * LEAVING THE CLASS STILL ENDS BOTH. `current` is false for a row with a
+     * leaving date, so a withdrawal narrows a targeted file exactly as it did
+     * before consent stopped gating it. Consent and departure were one flag
+     * until this change; separating them is the change, and widening the second
+     * one is not.
      *
      * Null (rather than an empty query) distinguishes "not in this group" —
      * which the controller answers with 403 — from "in the group with nothing to
-     * see", which is an empty 200.
+     * see", which is an empty 200. THE CONTROLLER NO LONGER ASKS CONSENT ON ITS
+     * OWN BEHALF: a second consent branch out there could only disagree with
+     * this one, and it was disagreeing already — a 403 over the whole listing
+     * hid the targeted file this method was willing to serve.
      */
     public function readableResourcesQuery(?Authenticatable $principal, Group $group): ?Builder
     {
@@ -768,39 +787,46 @@ class GroupAudience
             return $query;
         }
 
-        if (! $standing['feed']) {
-            // In the group, but with no class-wide standing: a guardian who has
-            // never consented, or a family whose child has left. An
-            // unconstrained WHERE would grant everything, so it is pinned shut
-            // rather than assumed unreachable.
-            return $query->whereRaw('1 = 0');
-        }
-
         $targets = array_merge(
             $standing['participant_contact_ids'],
             $standing['ward_contact_ids']
         );
 
-        return $query->where(function (Builder $audience) use ($targets): void {
-            $audience->where('visibility', GroupResource::VISIBILITY_FAMILIES);
+        return $query->where(function (Builder $audience) use ($standing, $targets): void {
+            $granted = false;
 
-            if ($targets === []) {
-                return;
+            // The class-wide shelf, on consent. Unchanged.
+            if ($standing['feed']) {
+                $audience->orWhere('visibility', GroupResource::VISIBILITY_FAMILIES);
+                $granted = true;
             }
 
-            $audience->orWhere(function (Builder $targeted) use ($targets): void {
-                $targeted->where('visibility', GroupResource::VISIBILITY_STUDENTS)
-                    ->whereHas('recipients', function (Builder $recipient) use ($targets): void {
-                        $recipient->whereHas('membership', function (Builder $membership) use ($targets): void {
-                            $membership->whereIn('contact_id', $targets)
-                                // Belt and braces with the audience rule above: a
-                                // recipient row mis-pointed at a GUARDIAN edge must
-                                // not become readable because that guardian's own
-                                // contact is in the target list.
-                                ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);
+            // The addressed file, on standing alone. Reached by a guardian who
+            // has never consented, which is the point of the branch.
+            if ($standing['current'] && $targets !== []) {
+                $audience->orWhere(function (Builder $targeted) use ($targets): void {
+                    $targeted->where('visibility', GroupResource::VISIBILITY_STUDENTS)
+                        ->whereHas('recipients', function (Builder $recipient) use ($targets): void {
+                            $recipient->whereHas('membership', function (Builder $membership) use ($targets): void {
+                                $membership->whereIn('contact_id', $targets)
+                                    // Belt and braces with the audience rule above: a
+                                    // recipient row mis-pointed at a GUARDIAN edge must
+                                    // not become readable because that guardian's own
+                                    // contact is in the target list.
+                                    ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);
+                            });
                         });
-                    });
-            });
+                });
+                $granted = true;
+            }
+
+            // Reachable: a guardian with no consent whose child has left, or a
+            // guardian edge naming no ward. A WHERE group with no clauses would
+            // constrain NOTHING — the one failure mode this class must never
+            // have — so it is pinned shut rather than assumed unreachable.
+            if (! $granted) {
+                $audience->whereRaw('1 = 0');
+            }
         });
     }
 
@@ -950,10 +976,21 @@ class GroupAudience
      * Shared by the thread decisions above so the single-thread check and the
      * list constraint cannot disagree about who the caller is.
      *
+     * `feed` and `current` are DIFFERENT QUESTIONS and the difference is
+     * load-bearing. `feed` is "may this caller receive a CLASS-WIDE disclosure",
+     * which for a guardian means recorded consent; `current` is only "is this
+     * caller still in the class", which consent has nothing to do with. They
+     * moved together until a handout could be addressed to ONE child
+     * (2026-09-24): that disclosure is about the caller's own child, so it is
+     * not consent-gated — but leaving the class still ends it, and one flag
+     * cannot say both. A reader who wants "consented" must not reach for
+     * `current`, and a reader who wants "still here" must not reach for `feed`.
+     *
      * @return array{
      *     in_group: bool,
      *     leader: bool,
      *     feed: bool,
+     *     current: bool,
      *     participant_contact_ids: array<int,int>,
      *     ward_contact_ids: array<int,int>,
      * }
@@ -964,6 +1001,7 @@ class GroupAudience
             'in_group' => false,
             'leader' => false,
             'feed' => false,
+            'current' => false,
             'participant_contact_ids' => [],
             'ward_contact_ids' => [],
         ];
@@ -982,6 +1020,7 @@ class GroupAudience
                 'in_group' => true,
                 'leader' => true,
                 'feed' => true,
+                'current' => true,
                 'participant_contact_ids' => [],
                 'ward_contact_ids' => [],
             ];
@@ -995,6 +1034,7 @@ class GroupAudience
 
         $leader = false;
         $feed = false;
+        $current = false;
         $participantContactIds = [];
         $wardContactIds = [];
 
@@ -1012,6 +1052,7 @@ class GroupAudience
                 // the thread about them) keep resolving: leaving a class is not
                 // losing what the school recorded while they were in it.
                 $feed = $feed || ! $membership->hasLeft();
+                $current = $current || ! $membership->hasLeft();
                 $participantContactIds[] = (int) $membership->contact_id;
                 // A leader who has left stops leading: the role is what grants
                 // unconstrained reads of the whole class's records, and an adult
@@ -1032,6 +1073,11 @@ class GroupAudience
                 // above is deliberately kept, so this parent can still open
                 // their own child's records.
                 $feed = $feed || (! $membership->hasLeft() && $membership->consentCovers(self::DISCLOSURE_FEED));
+                // NO consent clause, and that is the whole difference between
+                // this line and the one above it: an edge that has not left is
+                // a family still in the class, whether or not they ever agreed
+                // to be sent the class story.
+                $current = $current || ! $membership->hasLeft();
             }
         }
 
@@ -1039,6 +1085,7 @@ class GroupAudience
             'in_group' => true,
             'leader' => $leader,
             'feed' => $feed,
+            'current' => $current,
             'participant_contact_ids' => array_values(array_unique($participantContactIds)),
             'ward_contact_ids' => array_values(array_unique($wardContactIds)),
         ];

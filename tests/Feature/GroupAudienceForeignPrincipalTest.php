@@ -394,11 +394,16 @@ class GroupAudienceForeignPrincipalTest extends TestCase
             $this->group->behaviorAwards()->getQuery(),
         ]));
 
+        // `current` joined this shape when the owner's ruling made consent and
+        // departure two different questions (2026-09-24): a file addressed to
+        // one child is not consent-gated, but leaving the class still ends it,
+        // and one flag could not say both.
         $this->assertSame(
             [
                 'in_group' => false,
                 'leader' => false,
                 'feed' => false,
+                'current' => false,
                 'participant_contact_ids' => [],
                 'ward_contact_ids' => [],
             ],
