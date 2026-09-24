@@ -212,7 +212,13 @@ class RendererCachePurgeTest extends TestCase
             [self::RENDERER => ['ok' => true, 'deleted' => 1612, 'calls' => 3]],
             app(RendererCachePurge::class)->purge(13),
         );
+    }
 
+    #[Test]
+    public function a_renderer_that_always_has_more_is_called_at_most_max_calls_times_and_logged(): void
+    {
+        // Its own test: a second Http::fake() for the same URL would be shadowed by the
+        // first one's (exhausted) sequence.
         Log::spy();
         Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 800, 'remaining' => true])]);
         $result = app(RendererCachePurge::class)->purge(13);
