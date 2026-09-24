@@ -23,15 +23,8 @@ export const STUDIO_STEPS: StudioStep[] = [
     { key: 'foundation', title: 'Foundation', headingId: 'studio-panel-identity' },
     { key: 'features', title: 'Features', headingId: 'studio-features-title' },
     { key: 'layout', title: 'Layout', headingId: 'studio-layout-title' },
-    { key: 'generate', title: 'Generate', headingId: null },
+    { key: 'generate', title: 'Generate', headingId: 'studio-generate-title' },
 ];
-
-/**
- * Generate is Step 3, which provisions the organisation. It arrives with S8
- * (docs/manara-studio-w1.md); until then the stepper shows it and nothing can
- * open it.
- */
-export const GENERATE_AVAILABLE = false;
 
 export function stepTitle(key: string | null | undefined): string {
     return STUDIO_STEPS.find((step) => step.key === key)?.title ?? STUDIO_STEPS[0].title;

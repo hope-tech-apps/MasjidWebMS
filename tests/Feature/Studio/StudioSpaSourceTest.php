@@ -22,7 +22,8 @@ use Tests\TestCase;
  *  - the native labels the mockups print are keyed exactly as AppMenu keys the
  *    menu and tabs, so a registry key with no label fails here instead of
  *    rendering blank;
- *  - no store credential can reach the autosave: no Studio file names one (R7);
+ *  - no store credential can reach the autosave: only Step 3's two credential
+ *    files name one (S8), and neither the autosave nor the draft store does (R7);
  *  - both routes and the sidebar entry exist, SuperAdmin-only;
  *  - the device frames draw exactly the tabs the server's preview serves, in
  *    the app's own hard-coded colours (held equal to StudioPreview's), at
@@ -49,6 +50,15 @@ class StudioSpaSourceTest extends TestCase
         'core/types/data/Studio.ts',
         'core/helpers/prepareLogo.ts',
         'core/helpers/extractPalette.ts',
+    ];
+
+    /**
+     * The only Studio files that may name a store credential (S8, R7): Step 3's
+     * pure half, which builds the provision body, and the fields that type them.
+     */
+    private const CREDENTIAL_FILES = [
+        'core/studio/provision.ts',
+        'components/super/studio/generate/ByoCredentialsFields.vue',
     ];
 
     /** The distinctive terminology labels OnboardingVerticalPickerTest guards in the wizard. */
@@ -110,14 +120,29 @@ class StudioSpaSourceTest extends TestCase
     }
 
     #[Test]
-    public function no_studio_file_names_a_store_credential(): void
+    public function only_step_3s_credential_files_name_a_store_credential(): void
     {
         $this->assertNotEmpty(StudioDraft::SECRET_KEYS);
+        $files = $this->studioFiles();
 
-        foreach ($this->studioFiles() as $relative => $code) {
+        foreach ($files as $relative => $code) {
+            if (in_array($relative, self::CREDENTIAL_FILES, true)) {
+                continue;
+            }
+
             foreach (StudioDraft::SECRET_KEYS as $secret) {
                 $this->assertStringNotContainsString($secret, $code, "{$relative} names the store credential '{$secret}'; it must never reach a draft (R7)");
             }
+        }
+
+        // The allowance is for Step 3 only: nothing that saves a draft reads
+        // those files, so a credential cannot ride along into an autosave.
+        foreach (['core/studio/draftAnswers.ts', 'core/studio/autosave.ts'] as $saver) {
+            $this->assertArrayHasKey($saver, $files);
+            $this->assertStringNotContainsString('provision', $files[$saver], "{$saver} must not read Step 3's provision module");
+        }
+        foreach (self::CREDENTIAL_FILES as $allowed) {
+            $this->assertArrayHasKey($allowed, $files, "{$allowed} moved; update the allowance rather than widening it");
         }
     }
 

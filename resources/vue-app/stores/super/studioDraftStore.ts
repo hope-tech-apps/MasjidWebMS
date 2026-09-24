@@ -8,6 +8,7 @@ import { extractDominantColors } from "@/core/helpers/extractPalette";
 import { LogoPreparationError, prepareLogo } from "@/core/helpers/prepareLogo";
 import { createAutosave, SaveRequest } from "@/core/studio/autosave";
 import { carryChoices, ChoiceContext, sameChoices } from "@/core/studio/featureChoices";
+import { ProvisionOutcome, ProvisionSecrets, provisionBody, readProvisionOutcome } from "@/core/studio/provision";
 import {
     autosaveBody,
     changedSections,
@@ -99,6 +100,15 @@ function statusOf(error: unknown): number | undefined {
  *  the palette report, the mockups' data and the starter plan in one place
  *  (R19). A slower answer to an older request is dropped.
  *
+ * STEP 3 (S8)
+ *  provision() saves anything unsent first, because the server provisions the
+ *  draft it holds, then posts the BYO credentials it is handed and nothing
+ *  else. The credentials are an argument, never state here: the step keeps
+ *  them in its own memory and they are never autosaved (R7). A created
+ *  organisation disarms the autosave for good (the draft is now the record of
+ *  what was made); a 409 reloads the draft, which arrives read-only, and shows
+ *  the organisation that already exists instead of offering a retry.
+ *
  * Opening another draft bumps `generation`; any answer still arriving for the
  * previous one is ignored, so it can never land in the wrong draft.
  */
@@ -167,6 +177,8 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
     const logoUrl = ref<string | null>(null);
     const logoBusy = ref(false);
     const logoError = ref<string | null>(null);
+    const provisioning = ref(false);
+    const provisionOutcome = ref<ProvisionOutcome | null>(null);
 
     /** Fingerprints of each section as the server last confirmed it. */
     const saved = shallowRef<Record<StudioSectionKey, string>>(fingerprints(emptyAnswers()));
@@ -227,6 +239,8 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         presetsError.value = null;
         previewError.value = null;
         logoError.value = null;
+        provisioning.value = false;
+        provisionOutcome.value = null;
         currentStep.value = 'foundation';
         revokeLogoUrl();
     }
@@ -547,6 +561,80 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         }
     }
 
+    // ------------------------------------------------------------ provision
+    /**
+     * Step 3's button: the draft becomes an organisation, once (S8). Returns
+     * the outcome, which is also kept for the results screen; null when
+     * nothing was attempted (no draft, read only, already running) or the
+     * draft was closed meanwhile.
+     */
+    async function provision(secrets: ProvisionSecrets): Promise<ProvisionOutcome | null> {
+        const current = draft.value;
+        if (!current || readOnly.value || provisioning.value) return null;
+
+        const gen = generation;
+        provisioning.value = true;
+        provisionOutcome.value = null;
+
+        try {
+            // The server provisions what it has saved, so the latest edits go first.
+            await flush();
+            if (gen !== generation) return null;
+
+            if (saveState.value === 'error' || saveState.value === 'conflict' || changedSections(answers, saved.value).length) {
+                const reason = saveState.value === 'conflict' ? conflictMessage.value : saveError.value;
+                provisionOutcome.value = {
+                    kind: 'failed',
+                    message: `The latest answers are not saved, so nothing was created.${reason ? ` ${reason}` : ''}`,
+                };
+                return provisionOutcome.value;
+            }
+
+            let status: number | undefined;
+            let body: unknown;
+            try {
+                const res = await ApiService.post(`/api/admin/studio/drafts/${current.id}/provision`, provisionBody(answers, secrets));
+                status = res.status;
+                body = res.data;
+            } catch (error) {
+                status = isAxiosError(error) ? error.response?.status : undefined;
+                body = isAxiosError(error) ? error.response?.data : undefined;
+            }
+            if (gen !== generation) return null;
+
+            const outcome = readProvisionOutcome(status, body);
+
+            if (outcome.kind === 'conflict') {
+                // Show what exists, never a retry: the reloaded draft is read only.
+                await load(current.id);
+                if (draft.value?.id !== current.id) return null;
+                provisionOutcome.value = outcome;
+                return outcome;
+            }
+
+            if (outcome.kind === 'created' || outcome.kind === 'unconfirmed') {
+                // The organisation exists: this draft is its record now and is
+                // never saved again. Marked here rather than reloaded, so the
+                // results survive a failed reload, and so a backend that did
+                // not mark the draft cannot be offered a second provision.
+                armed.value = false;
+                autosave.reset();
+                clearPreviewTimer();
+                const masjidId = outcome.kind === 'created' ? outcome.result.masjid_id : outcome.masjidId;
+                draft.value = { ...current, ...draft.value, status: 'provisioned', provisioned_masjid_id: masjidId };
+                // The list, if it was loaded, says Live straight away rather than after its next fetch.
+                drafts.value = drafts.value.map((row) => row.id === current.id
+                    ? { ...row, status: 'provisioned', provisioned_masjid_id: masjidId }
+                    : row);
+            }
+
+            provisionOutcome.value = outcome;
+            return outcome;
+        } finally {
+            if (gen === generation || draft.value?.id === current.id) provisioning.value = false;
+        }
+    }
+
     // ------------------------------------------------------------ reference
     /** The wizard's options: verticals with their terminology, prayer choices, countries. Fetched once. */
     async function fetchOptions(): Promise<void> {
@@ -624,6 +712,8 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         load, reload, reset, patchSection, flush, setStep, refreshPreview, previewPreset,
         // logo
         logoUrl, logoBusy, logoError, fetchLogo, uploadLogo, removeLogo,
+        // step 3
+        provisioning, provisionOutcome, provision,
         // reference
         optionsError, fetchOptions, fetchCities,
         catalogueLoading, catalogueError, fetchCatalogue,

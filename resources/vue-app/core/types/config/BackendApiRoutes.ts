@@ -279,4 +279,6 @@ export type BackendApiRoute =
     | `/api/admin/studio/drafts/${number}`
     | `/api/admin/studio/drafts/${number}/logo`
     | `/api/admin/studio/drafts/${number}/preview`
+    // Step 3 (S8): the draft becomes an organisation, once.
+    | `/api/admin/studio/drafts/${number}/provision`
     | `/api/admin/studio/layout-presets?org_type=${string}`

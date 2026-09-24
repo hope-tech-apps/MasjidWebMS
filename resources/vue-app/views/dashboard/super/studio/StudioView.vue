@@ -85,6 +85,7 @@
                         <StepFoundation v-if="store.currentStep === 'foundation'" />
                         <StudioFeatureStep v-else-if="store.currentStep === 'features'" />
                         <StudioLayoutStep v-else-if="store.currentStep === 'layout'" />
+                        <StepGenerate v-else-if="store.currentStep === 'generate'" />
 
                         <div class="step-nav d-flex flex-column gap-2">
                             <ul v-if="nextBlockers.length" class="next-blockers small mb-0">
@@ -125,8 +126,9 @@
  * The stepper is Foundation, Features, Layout, Generate. The step shown is the
  * draft's `current_step`, saved the moment it changes, so a reload resumes on
  * the same step. Features and Layout open only once Foundation is complete
- * (core/studio/foundationGate.ts, including the logo rule); Generate is shown
- * and stays disabled until S8 builds it.
+ * (core/studio/foundationGate.ts, including the logo rule), and so does
+ * Generate (S8), whose own gate keeps its Provision button disabled until the
+ * website's logo, subdomain and approved layout are there (R27).
  *
  * The step body takes `col-xl-7`; the preview takes `col-xl-5`, sticky, and
  * below xl it folds away behind a button so the form keeps the screen. The
@@ -143,10 +145,11 @@
 import StepFoundation from '@/components/super/studio/steps/StepFoundation.vue';
 import StudioFeatureStep from '@/components/super/studio/steps/StudioFeatureStep.vue';
 import StudioLayoutStep from '@/components/super/studio/steps/StudioLayoutStep.vue';
+import StepGenerate from '@/components/super/studio/steps/StepGenerate.vue';
 import StudioPreviewPanel from '@/components/super/studio/preview/StudioPreviewPanel.vue';
 import { QSwal } from '@/core/plugins/SweetAlerts2';
 import { foundationBlockers } from '@/core/studio/foundationGate';
-import { GENERATE_AVAILABLE, STUDIO_STEPS, stepHeadingId, stepIndex } from '@/core/studio/steps';
+import { STUDIO_STEPS, stepHeadingId, stepIndex } from '@/core/studio/steps';
 import { StudioStepKey } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -181,7 +184,6 @@ const savedTime = computed(() => {
  * blocks behind Retry rather than falling back to a list of its own).
  */
 function stepBlockedReason(step: StudioStepKey): string {
-    if (step === 'generate' && !GENERATE_AVAILABLE) return 'Generate is not available yet.';
     if (step !== 'foundation' && foundationReasons.value.length) return foundationReasons.value.join(' ');
     if (store.currentStep === 'features' && stepIndex(step) > currentIndex.value && !featuresReady.value) {
         return 'The feature list has not loaded.';
@@ -198,7 +200,7 @@ const nextBlockers = computed(() => {
     if (!nextStep.value) return [];
     const reason = stepBlockedReason(nextStep.value.key);
     if (!reason) return [];
-    return foundationReasons.value.length && nextStep.value.key !== 'generate' ? foundationReasons.value : [reason];
+    return foundationReasons.value.length ? foundationReasons.value : [reason];
 });
 
 /**

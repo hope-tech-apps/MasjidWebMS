@@ -45,7 +45,7 @@
  * the same watch the wizard keeps drops tvOS whenever iOS is taken away.
  */
 import StudioPanel from '@/components/super/studio/foundation/StudioPanel.vue';
-import { PLATFORM_OPTIONS } from '@/core/studio/platforms';
+import { ACCOUNT_MODE_OPTIONS, PLATFORM_OPTIONS } from '@/core/studio/platforms';
 import { StudioAccountMode, StudioPlatform } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, watch } from 'vue';
@@ -58,10 +58,7 @@ const ACCOUNT_APPS: { slug: AccountApp; title: string }[] = [
     { slug: 'web', title: 'Web' },
 ];
 
-const ACCOUNT_MODES: { value: StudioAccountMode; label: string }[] = [
-    { value: 'managed', label: 'Managed' },
-    { value: 'byo', label: 'Bring your own' },
-];
+const ACCOUNT_MODES = ACCOUNT_MODE_OPTIONS;
 
 const store = useStudioDraftStore();
 const section = computed(() => store.answers.platforms);

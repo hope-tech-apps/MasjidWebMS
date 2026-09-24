@@ -1,6 +1,6 @@
 /**
  * Manara Studio's wire shapes, typed from the controllers that serve them
- * (docs/manara-studio-w1.md S1-S5). Each type names its source so a change on
+ * (docs/manara-studio-w1.md S1-S5, S8). Each type names its source so a change on
  * the server has one obvious place to follow it here.
  *
  * The answer sections mirror `UpdateStudioDraftRequest::sectionRules()`
@@ -8,7 +8,7 @@
  * section may hold is listed, because the server refuses any key it does not
  * know rather than storing it where nothing reads it.
  */
-import type { MasjidDomainCheck, MasjidDomainRequest } from "@/core/types/data/MasjidDomain";
+import type { MasjidDomain, MasjidDomainCheck, MasjidDomainRequest } from "@/core/types/data/MasjidDomain";
 import type { OrgType, Terminology } from "@/core/types/data/Vertical";
 
 /** `StudioDraft::STEPS` (app/Models/StudioDraft.php). */
@@ -334,3 +334,74 @@ export type StudioPreview = {
 };
 
 export type StudioSaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict';
+
+/** `ProvisionContext::$capabilitiesApplied`: the departures `CapabilityWriter::applyAtCreation` wrote, and the keys it left at their defaults. */
+export type StudioCapabilitiesApplied = {
+    changed: { key: string; enabled: boolean }[];
+    unchanged: string[];
+};
+
+/** One section `StarterSite::applyTo` wrote inactive, with why it waits (admin-facing hints). */
+export type StudioInactiveSection = {
+    page: string;
+    slot: string;
+    section_type: string;
+    title: string;
+    hints: string[];
+};
+
+/** `StarterSite::applyTo()`'s report. */
+export type StudioStarterSiteResult = {
+    preset: string;
+    created: string[];
+    skipped: string[];
+    sections_active: number;
+    sections_inactive: StudioInactiveSection[];
+    placeholders_open: number;
+};
+
+/** `StudioProvisionResult::$afterCommit`: what ran after the organisation was committed. */
+export type StudioProvisionAfterCommit = {
+    invites_sent: number;
+    invites_failed: number;
+    warnings: string[];
+};
+
+/**
+ * The 201 body's `data` of POST /api/admin/studio/drafts/{id}/provision
+ * (StudioProvisionController::body): the wizard's `{masjid_id, masjid,
+ * app_publishing}` plus what Studio added. `capabilities_applied` is optional
+ * here on purpose: a backend older than S8 ignores the draft's feature map and
+ * never sends it, and the results screen must then say so rather than succeed
+ * (core/studio/provision.ts readProvisionOutcome).
+ */
+export type StudioProvisionResult = {
+    masjid_id: number;
+    masjid: { id: number; name: string } & Record<string, unknown>;
+    app_publishing: {
+        enabled_platforms: string[] | null;
+        ios_account_mode: StudioAccountMode | null;
+        android_account_mode: StudioAccountMode | null;
+        web_account_mode: StudioAccountMode | null;
+        has_asc_key: boolean;
+        has_play_service_account: boolean;
+    };
+    draft_id: number;
+    brand_assets?: {
+        logo_url: string | null;
+        favicon_url: string | null;
+        touch_icon_url: string | null;
+        share_image_url: string | null;
+    };
+    capabilities_applied?: StudioCapabilitiesApplied | null;
+    starter_site?: StudioStarterSiteResult | null;
+    web?: {
+        host: string;
+        status: string;
+        waiting_on: string | null;
+        live_url: string | null;
+        manual_steps: string[];
+    } | null;
+    domains?: MasjidDomain[];
+    after_commit?: StudioProvisionAfterCommit;
+};

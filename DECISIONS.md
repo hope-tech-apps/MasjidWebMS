@@ -2764,3 +2764,50 @@ Alternatives: a `config('studio.appliers')` registry (R10, rejected by the plan)
 Rationale: each keeps a Studio org identical to what the wizard would make from the same answers
 except for the draft-only writes R10 names, and keeps every live tenant's payloads byte-identical
 (`LivePublicPayloadsUnchangedTest` compares against recordings the base fe390d7d wrote).
+
+## 2026-09-24 — Studio W1 S8 (stage B): Step 3 in the Studio SPA, and the calls the plan left open
+Decision:
+- **Where the store credentials live (R7).** In `StepGenerate`'s own `reactive`, never in the
+  draft store, whose answers are autosaved. `ByoCredentialsFields` owns no copy (it emits each
+  keystroke); `store.provision(secrets)` puts them in the provision body through
+  `core/studio/provision.ts provisionBody` and nowhere else; they are blanked once an organisation
+  exists and dropped with the page. S5's `StudioSpaSourceTest::no_studio_file_names_a_store_credential`
+  forbade any Studio file to name one, which Step 3 cannot satisfy, so it became
+  `only_step_3s_credential_files_name_a_store_credential`: exactly `core/studio/provision.ts` and
+  `generate/ByoCredentialsFields.vue` may, and `draftAnswers.ts` and `autosave.ts` must not read the
+  provision module. The plan's contract for that test ("the autosave body never contains a
+  SECRET_KEYS field") is unchanged, and `studio-provision.test.ts` checks the autosave body directly.
+- **The Provision gate** is R27's three items worded exactly as `StudioBrandGate` words its 422,
+  plus two the server would also refuse or silently default: each selected BYO platform's
+  credentials (the wizard's `required_if` rules), and Step 1's feature map. A draft that never
+  opened Features has no map, and `StudioProvisioning` then sends an empty one, so every switch
+  would start at its default unseen; the button says "Open Features" instead.
+- **Before the POST the autosave is flushed**, because the server provisions the draft it holds; if
+  the flush fails or conflicts, nothing is sent and the step says the answers are not saved.
+- **A 201 marks the draft provisioned in the SPA** (autosave disarmed for good, the list row Live)
+  rather than reloading it, so the results survive a failed reload, and a backend that did not
+  mark the draft cannot be offered a second provision. A 201 without `capabilities_applied` is
+  shown as an error naming the organisation, never as success; a 409 reloads the draft (read only)
+  and says nothing new was created, with no retry; a lost answer says a retry is safe, because the
+  server answers 409 for a draft it already provisioned.
+- **The invitation line** is ticked only when `invites_sent > 0` and `invites_failed == 0`. With
+  none sent and none failed it says why in the provisioner's terms: an existing `user_id` is not
+  invited, and a draft without `admin.email` names no one to invite. A reopened provisioned draft
+  does not know, and says so.
+- **The web address** after provisioning is S7's `StudioDomainAttachPanel` for the new
+  organisation, so Check now and "Open live site" (a link only once `live_url` exists, R24) are
+  S7's own; the step itself never links a host.
+- A confirm dialog precedes the POST, because it creates a real organisation and sends mail.
+- `core/studio/steps.ts` loses `GENERATE_AVAILABLE`; Generate opens under the same Foundation gate
+  as Features and Layout, and its heading takes focus like theirs.
+- The account-mode labels moved to `core/studio/platforms.ts` (`ACCOUNT_MODE_OPTIONS`), shared by
+  the Platforms panel and the review.
+Alternatives: credentials in the Pinia store (autosave-adjacent state, visible to devtools and
+every Studio component); reloading the draft after a 201 (loses the one-time report on a failed
+GET); letting Provision through without a feature map (the org would be born at defaults nobody
+reviewed).
+Rationale: every sentence on the results screen restates the server's report, the credentials
+have exactly one path out of the browser, and a provision can only ever be offered once.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 106 errors at ce3e945e
+(stage A; stage A changed no SPA file, so 106 is this tree's base, not the 105 recorded at
+8b5787da) and the same 106, line for line, with this slice.
