@@ -2129,3 +2129,31 @@ the provisioning body (`directory-listing.md`, `verticals.md`) now load for
 Rationale: the type-blind labels filed 5 and "5" under one key, so the `actorId`-uncast
 promise above had no test; with only one organisation, "the new org" and "the first
 org" got the same label; and a session editing only the provisioner loaded neither rule.
+
+## 2026-09-24 — Studio W1 S4: calls made where the plan was silent
+Decision: the `header` block's label is written `page.{slug}` and resolves to the label of
+the page it opens. A button between starter pages never opens a page the public site does
+not serve: a banner keeps its place and loses only that button; any other section whose
+target page was omitted is omitted; one whose target page is written inactive is written
+inactive with an open `linked_page` placeholder (a new hint), which is what happens to
+`school.*`'s Apply call to action while the Admissions page waits for tuition and a
+reviewed form. `{page_id}` and `{form_template}` leaves are null in a plan and listed under
+the section's `refs`, for S8's writer to fill once the rows exist. `StarterSite::plan()`
+throws on any template literal STRUCTURAL does not allow, so the no-invention rule holds at
+run time as well as in `StudioLayoutPresetsTest`. A plan never pre-fills bound prose (the
+layouts recon's layout-preview did): it holds exactly what S8 writes, and each placeholder
+says whether it is `open`. The preview uses the draft's own preset when it is one of its
+org type's, otherwise the default, and says which (`web.preset_source`); `web.approved` is
+true only for the draft's own choice with `layout.approved_at` set (R27). `palette`,
+`web_tokens` and `platform_contrast` are null until all four colours are chosen, as the
+draft resource's `palette` already is (R25). Preview `answers` are held to the autosave's
+rules (`StudioPreviewRequest` extends `UpdateStudioDraftRequest` without `lock_version`).
+The unsaved organisation takes its switches from `CapabilityCatalogue::resolve()`: column
+grants on their columns, every other key stored only where it departs from its default at
+creation, as S8 will store it. `tvos.header_title` is the name, which is what the board
+draws when tv-config sends none. `TvConfigSnapshotTest`'s fixture was recorded from the
+controller at 9a412074, before its constants became public, and is re-recorded only with
+`TV_CONFIG_SNAPSHOT_RECORD=1`, a run that always fails.
+Rationale: each keeps the preview, the gate and S8's writer on one derivation and keeps a
+new client's site from publishing a dead link or a word nobody gave; recorded because the
+plan left them open.

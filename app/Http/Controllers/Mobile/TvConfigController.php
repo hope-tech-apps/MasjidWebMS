@@ -80,17 +80,21 @@ use Illuminate\Support\Facades\Cache;
  */
 class TvConfigController extends Controller
 {
+    // Public so Manara Studio's tvOS preview frame reads these rather than
+    // retyping them (App\Support\Studio\StudioPreview). Visibility only: the
+    // body is pinned byte for byte by TvConfigSnapshotTest.
+
     /** Per-slide carousel dwell, in seconds (TVConfig.defaults). */
-    private const CAROUSEL_INTERVAL_SECONDS = 10;
+    public const CAROUSEL_INTERVAL_SECONDS = 10;
 
     /** Caption printed under the donate QR (TVConfig.defaults). */
-    private const DONATE_CAPTION = 'Scan to Donate';
+    public const DONATE_CAPTION = 'Scan to Donate';
 
     /** all_active | tv_flagged | manual — see SignageStore.activeAnnouncements. */
-    private const ANNOUNCEMENT_SELECTION = 'all_active';
+    public const ANNOUNCEMENT_SELECTION = 'all_active';
 
     /** dark | light — the client compares this against "light" and nothing else. */
-    private const THEME = 'dark';
+    public const THEME = 'dark';
 
     public function index($masjid_id)
     {
