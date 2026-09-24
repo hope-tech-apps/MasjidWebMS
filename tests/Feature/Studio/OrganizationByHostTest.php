@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\MakesStudioDomains;
@@ -214,5 +215,38 @@ class OrganizationByHostTest extends TestCase
         foreach ($middleware as $name) {
             $this->assertStringStartsNotWith('auth', (string) $name, "the lookup runs {$name}");
         }
+    }
+
+    /**
+     * S8 fills `favicon_url` and `share_image_url` from Studio's own
+     * collections, and never from `logos`: every live tenant has a logo and no
+     * favicon, and a fallback would change Burlington's and MEC's tab icons.
+     */
+    #[Test]
+    public function favicon_comes_from_favicons_never_logos(): void
+    {
+        Storage::fake('public');
+        $org = $this->makeOrg();
+        $this->makeDomain($org, 'www.example.org', MasjidDomain::STATUS_MANUAL, ['serving_confirmed_at' => now()]);
+
+        $png = function (string $name): string {
+            $path = tempnam(sys_get_temp_dir(), 'by-host-');
+            imagepng(imagecreatetruecolor(8, 8), $path);
+
+            return $path;
+        };
+
+        $org->addMedia($png('logo'))->usingFileName('logo.png')->toMediaCollection('logos');
+
+        $this->lookup('www.example.org')->assertOk()
+            ->assertJsonPath('data.favicon_url', null)
+            ->assertJsonPath('data.share_image_url', null);
+
+        $favicon = $org->addMedia($png('favicon'))->usingFileName('favicon.png')->toMediaCollection('favicons');
+        $share = $org->addMedia($png('share'))->usingFileName('share-image.png')->toMediaCollection('share_images');
+
+        $this->lookup('www.example.org')->assertOk()
+            ->assertJsonPath('data.favicon_url', $favicon->original_url)
+            ->assertJsonPath('data.share_image_url', $share->original_url);
     }
 }

@@ -80,6 +80,7 @@ use App\Http\Controllers\AdminDashboard\StudioDomainCheckController;
 use App\Http\Controllers\AdminDashboard\StudioDraftsController;
 use App\Http\Controllers\AdminDashboard\StudioLayoutPresetsController;
 use App\Http\Controllers\AdminDashboard\StudioPreviewController;
+use App\Http\Controllers\AdminDashboard\StudioProvisionController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
@@ -1677,6 +1678,9 @@ Route::prefix('admin')->group(function () {
             // Layout and preview (S4): read-only, whatever the verb.
             Route::get('/layout-presets', [StudioLayoutPresetsController::class, 'index']);
             Route::post('/drafts/{draft_id}/preview', [StudioPreviewController::class, 'preview'])->whereNumber('draft_id');
+
+            // Step 3 (S8): the draft becomes an organisation, once.
+            Route::post('/drafts/{draft_id}/provision', [StudioProvisionController::class, 'provision'])->whereNumber('draft_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

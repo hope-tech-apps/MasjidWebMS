@@ -2625,3 +2625,248 @@ and two provisioning controllers that write no membership — so "every organisa
 since" has an owner with no row. Checking only the pivot let an office admin list a video, open
 the download endpoint and mint a ticket, and then be refused the bytes for owning the school.
 Removing the ownership arm fails that test with a 403 where 206 is expected.
+
+## 2026-09-24 — Studio W1 S5 (stage A): calls made where the plan was silent
+Decision: the drafts list asks for `?status=all`, because the Status column links a provisioned
+draft to its organisation and the endpoint defaults to open drafts only. The Identity panel's
+organisation types, terminology and prayer choices come from `GET /onboarding/options`, the
+endpoint the wizard reads, so Studio holds no copy of `config/verticals.php`. Nothing is
+pre-chosen on a new draft: no colours (R25), no calculation method, no iqama offsets, no
+timezone; a platform starts on the Managed account mode, as in the wizard. Next from
+Foundation needs the organisation type, the name, four colours, one platform, and the logo when
+web is chosen (the plan names only the logo rule; the rest are what Steps 1 and 2 read). The
+autosave sends each changed section whole and drops blanks (`''`, null, empty objects), which the
+server reads as absent; a step change is saved at once with any pending sections. A 409 disarms
+the autosave until "Reload draft"; a 422 or network failure waits for the next edit or Retry.
+The logo sampler's candidates are saved to `brand.extracted` only on upload, never on load, so
+opening a draft never writes. `prepareLogo` redraws an over-cap PNG or JPEG as PNG too (the plan
+says "any other type"), and draws an SVG at the 2048 px cap. `appLabels.ts` copies iOS from
+`origin/main` 8e5191f and Android from `feat/r1-owner-answers` aeac265, the only branch with the
+R1 tab bar `StudioPreview::ANDROID_TABS` cites.
+Rationale: each keeps a draft to what the operator entered and keeps Studio off an eighth copy of
+the feature list; recorded because the plan left them open.
+Measured: `vue-tsc --noEmit` at b81980da reports 105 errors (vue-tsc 2.2.12 on the repo's
+TypeScript 5.7.3), not the 29 the plan cites; this slice adds none.
+
+## 2026-09-24 — Studio W1 S5 (stage B): calls made where the plan was silent
+Decision: the feature step writes the full map of served keys (R9) as soon as its catalogue is
+there on an armed draft: a stored boolean is kept, an unset key starts on `default_at_creation`, or
+on when a `preselect_with` platform is chosen, and a stored key the catalogue no longer serves is
+dropped. Preselect therefore applies to keys the operator has not set; a platform added later does
+not flip a stored switch, and the row says "Suggested with …" instead. Leaving Features forward is
+blocked until its catalogue has loaded (StudioView), because the step is blocked behind Retry. Each
+layout card's thumbnail is the preview endpoint's plan of THIS draft with that preset swapped in
+(`studioDraftStore.previewPreset`, `presetPreviewBody`), not the preset payload, so cards show the
+sections the client's switches keep and the client's own words; nothing is saved by it. "Show in
+preview" writes `layout.preset` and clears `approved_at`; "Approve this layout" writes both, and a
+preset from another organisation type is not treated as chosen. The website frame reads section
+words by content field (title/heading, subtitle/description, text, button_text, links' labels),
+never by section type, draws the first section of a page as its banner, shows each open
+placeholder's admin hint, and follows `theme_layout` through `themeTokens.styleFromTokens`. The
+frames draw in greys until the four colours exist (R25). The app colours the apps hard-code live in
+`appLabels.ts` beside the words and are held equal to StudioPreview's constants by a test. Phone
+frames draw at no more than 0.6 scale so the sticky column fits a laptop screen. The platform list
+moved from the Platforms panel to `core/studio/platforms.ts` so the panel, the feature step and the
+preview name platforms alike.
+Rationale: each keeps the SPA on the server's one derivation (R19) with no copy of keys, labels,
+presets or section types; recorded because the plan left them open.
+Deviations from the plan's wording, following the code: iOS menu items' `parts` is an object of
+module => bool (`AppMenu::sections`, app/Support/AppMenu.php:359), not a list, and Studio.ts now
+says so.
+
+## 2026-09-24 — Studio W1 S5 review: the feature map follows the draft, and the autosave is its own module
+Decision: the stored feature map is carried, not frozen (supersedes stage B's "a platform added
+later does not flip a stored switch"). The draft still stores the full map of served keys (R9)
+and the server has no field for which keys the operator touched, so they are told apart by where
+they sit: `carryChoices` (core/studio/featureChoices.ts) empties the map when the organisation
+type changes (a masjid's worship switches are not a school's; the new type starts from its own
+defaults), and when the platforms change it moves every switch still on the starting value the
+old platforms gave it onto the new platforms' starting value, keeping any switch the operator
+moved. The store does this (`syncFeatureChoices`), not the feature step, because both answers
+change on Foundation where the step is not mounted; when the platforms move under a stored map
+without this type's catalogue loaded, the store fetches it. The one choice this cannot keep is an
+operator's "off" for a Web-suggested switch after Web is removed and added again: it then looks
+untouched and comes back on, suggested. The autosave's timing and rules moved to
+core/studio/autosave.ts (the store keeps the answers, the lock version and the one PATCH) so
+node can test them; a step change now names the step the operator is on when they move back
+before the previous step's save answers. The website mockup lists only active pages in its menu
+and footer (core/studio/sitePages.ts), as PagesController serves them. `prepareLogo` keeps a
+wide logo's short side at the server's 96 px, letting the long side pass 2048 up to the server's
+8000, and refuses a logo too thin for both with a sentence; the two limits are held equal to
+`config('studio.logo.min_px')` and StoreStudioDraftLogoRequest by StudioSpaSourceTest. The
+sticky preview column stops below the fixed header through `--dash-header-height`, which
+DashboardLayout now publishes from the height it already measures (FlyerStudioView's sticky
+column has the same `top: 1rem` and is left as it is, outside this slice). Rebased onto
+8b5787da: BackendApiRoutes keeps S7's domain routes and S5's Studio routes with the domain check
+listed once, and `StudioDomainCheck`/`StudioDomainCheckRequest` are now S7's
+`MasjidDomainCheck`/`MasjidDomainRequest`, which carry the Cloudflare cases and `zone_status`.
+Rationale: each closes a way the draft, the preview or the upload could say something other
+than what Step 3 will create or the server will take; recorded because the first cut chose
+otherwise.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 105 errors at
+8b5787da and 105 at this commit, the same set.
+
+## 2026-09-24 — Studio W1 S8 (stage A): provision from a draft, and the calls the plan left open
+Decision (the four the plan asks this slice to record):
+- **Two ledger policies.** The single switch (`MasjidsController::setCapability`) still ledgers a
+  no-op flip (`CapabilityChangeLedgerTest`), because a SuperAdmin pressed a button on a live org.
+  `CapabilityWriter::applyAtCreation` ledgers only DEPARTURES from `defaultAtCreation`, because a
+  key left at its default was not decided about, and a Studio org must stay as sparse as a
+  wizard-made one (R9). A CRM choice is a departure like any other: the row is born at
+  `capabilities.crm.provision_default` and the writer ledgers the change (R26).
+- **Iqama.** On the Studio path iqama is displayed only when the client gave times: the draft's
+  "client has not given iqama times" tick (`prayer.iqama_given = false`) is sent as
+  `show_iqama_times = false`. The wizard's invented 20/10/10/5/10 schedule, shown by default,
+  stays on the wizard's path only (`OrganisationProvisioner`, iqama block). (Tightened by the S8
+  review fixes below: an untouched panel is hidden too, and a partial set is refused.)
+- **Donation labels.** "Donation Link" / "Donate Now" (written when a donation link comes without
+  wording) stay: they are interface words, not facts about a congregation, and D8's list is
+  history, scholars, programmes and numbers. `StudioStarterSiteServedProvenanceTest` allows exactly
+  these two, plus SectionContentBinder's own mission/vision card words ("Our Mission", "Our
+  Vision") and item types (`mission`, `vision`), and nothing else that is not a fact, a label, a
+  page path, a structural value or the org's own media URL.
+- **Jumu'ah.** The 13:30 default is still stored. The web does not draw it; W2/W3 must not show it
+  unless it was supplied.
+
+Calls made where the plan was silent:
+- `settings.studio` is `{version: 1, preset, slot, placeholders: [{field, kind, hint, essential,
+  source?}]}` on EVERY starter section. Whether a placeholder is open is never stored (it is a
+  function of the content and the bound rows) and neither is the hint's sentence (a key into
+  `studio_layouts.hints`). `StarterPlaceholders::publicSettings` strips it on the public path.
+- `StudioProvisioning::provision` returns a `StudioProvisionResult` (the org, the context, the
+  after-commit report) rather than a bare `Masjid`, because the 201 body needs all three. What the
+  provisioner's optional steps did travels on `ProvisionContext` (`capabilitiesApplied`,
+  `starterSite`, `domains`), leaving `create()`'s signature as the wizard and the demo fixture call it.
+- Studio always sends `capabilities` (an empty map when the draft never reached Step 1), so a
+  Studio org is always born through the switches with its pivot derived from them, and the 201
+  always carries `capabilities_applied` (the SPA treats its absence as an old backend).
+- The web deliverable (`layout_preset`, `web_domain`) is flattened from the draft only when web is
+  selected; the request refuses either without web, and a custom domain without a slug, rather
+  than dropping it.
+- A host row is written with `waiting_on = token` when the Cloudflare token is blank (what the
+  attacher writes on its first pass), so the 201 says so before the job has run. The attach job is
+  dispatched only by Studio, after the commit. A direct POST to the wizard's endpoint carrying a
+  slug gets its rows but no immediate job; `domains:reconcile` advances them within five minutes.
+- The brand gate also refuses a name another organisation has. `masjids.name` is unique in the
+  database and the wizard's rules never checked it, so a duplicate was a 500 naming nothing;
+  Studio answers 422 on `name`. The wizard's own behaviour is left as it was.
+- The logo bytes are copied from the draft's private disk into
+  `storage/app/private/studio-tmp/{draft}-{random}/` before the transaction, and medialibrary adds
+  from those copies with `preservingOriginal()` (kept as the plan requires; with copies as the
+  source it is belt and braces, not the only thing that makes a retry possible).
+- The 409 is answered before validation as well as under the lock: a second provision of the same
+  answers would otherwise fail validation (its email now belongs to the first org) and read as
+  "fix your answers" instead of "this exists".
+- `StudioDraftProvisionPayloadTest` was edited: it pinned S2's "slug, description and capabilities
+  are not yet request keys", which this slice makes them.
+Alternatives: a `config('studio.appliers')` registry (R10, rejected by the plan); storing
+`open`/`hint_text` in the marker (stale the moment an admin types the About text); a nullable
+`capabilities_applied` (indistinguishable from an old backend).
+Rationale: each keeps a Studio org identical to what the wizard would make from the same answers
+except for the draft-only writes R10 names, and keeps every live tenant's payloads byte-identical
+(`LivePublicPayloadsUnchangedTest` compares against recordings the base fe390d7d wrote).
+
+## 2026-09-24 — Studio W1 S8 (stage B): Step 3 in the Studio SPA, and the calls the plan left open
+Decision:
+- **Where the store credentials live (R7).** In `StepGenerate`'s own `reactive`, never in the
+  draft store, whose answers are autosaved. `ByoCredentialsFields` owns no copy (it emits each
+  keystroke); `store.provision(secrets)` puts them in the provision body through
+  `core/studio/provision.ts provisionBody` and nowhere else; they are blanked once an organisation
+  exists and dropped with the page. S5's `StudioSpaSourceTest::no_studio_file_names_a_store_credential`
+  forbade any Studio file to name one, which Step 3 cannot satisfy, so it became
+  `only_step_3s_credential_files_name_a_store_credential`: exactly `core/studio/provision.ts` and
+  `generate/ByoCredentialsFields.vue` may, and `draftAnswers.ts` and `autosave.ts` must not read the
+  provision module. The plan's contract for that test ("the autosave body never contains a
+  SECRET_KEYS field") is unchanged, and `studio-provision.test.ts` checks the autosave body directly.
+- **The Provision gate** is R27's three items worded exactly as `StudioBrandGate` words its 422,
+  plus two the server would also refuse or silently default: each selected BYO platform's
+  credentials (the wizard's `required_if` rules), and Step 1's feature map. A draft that never
+  opened Features has no map, and `StudioProvisioning` then sends an empty one, so every switch
+  would start at its default unseen; the button says "Open Features" instead.
+- **Before the POST the autosave is flushed**, because the server provisions the draft it holds; if
+  the flush fails or conflicts, nothing is sent and the step says the answers are not saved.
+- **A 201 marks the draft provisioned in the SPA** (autosave disarmed for good, the list row Live)
+  rather than reloading it, so the results survive a failed reload, and a backend that did not
+  mark the draft cannot be offered a second provision. A 201 without `capabilities_applied` is
+  shown as an error naming the organisation, never as success; a 409 reloads the draft (read only)
+  and says nothing new was created, with no retry; a lost answer says a retry is safe, because the
+  server answers 409 for a draft it already provisioned.
+- **The invitation line** is ticked only when `invites_sent > 0` and `invites_failed == 0`. With
+  none sent and none failed it says why in the provisioner's terms: an existing `user_id` is not
+  invited, and a draft without `admin.email` names no one to invite. A reopened provisioned draft
+  does not know, and says so.
+- **The web address** after provisioning is S7's `StudioDomainAttachPanel` for the new
+  organisation, so Check now and "Open live site" (a link only once `live_url` exists, R24) are
+  S7's own; the step itself never links a host.
+- A confirm dialog precedes the POST, because it creates a real organisation and sends mail.
+- `core/studio/steps.ts` loses `GENERATE_AVAILABLE`; Generate opens under the same Foundation gate
+  as Features and Layout, and its heading takes focus like theirs.
+- The account-mode labels moved to `core/studio/platforms.ts` (`ACCOUNT_MODE_OPTIONS`), shared by
+  the Platforms panel and the review.
+Alternatives: credentials in the Pinia store (autosave-adjacent state, visible to devtools and
+every Studio component); reloading the draft after a 201 (loses the one-time report on a failed
+GET); letting Provision through without a feature map (the org would be born at defaults nobody
+reviewed).
+Rationale: every sentence on the results screen restates the server's report, the credentials
+have exactly one path out of the browser, and a provision can only ever be offered once.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 106 errors at ce3e945e
+(stage A; stage A changed no SPA file, so 106 is this tree's base, not the 105 recorded at
+8b5787da) and the same 106, line for line, with this slice.
+
+## 2026-09-24 — Studio W1 S8 review fixes: iqama's truth, a draft that changes under Provision, and Step 3's answer
+Decision:
+- **Iqama, completed.** Studio always sends `show_iqama_times` (`StudioDraft::showsIqama`): true
+  only for a masjid (an absent type reads as one, as the request reads it) with at least one offset
+  and no "not given" tick. The request then requires all five (`ProvisionMasjidRequest::
+  iqamaIncomplete`, 422 naming the missing prayers), and Step 3 says the same sentence as a
+  blocker (`provision.ts iqamaBlockers`). So an untouched panel is hidden, Fajr alone is refused
+  rather than shown beside four invented times or hidden with the one the client gave, and all
+  five are shown. On Studio's path (`show_iqama_times` sent) an offset nobody gave is the column's
+  own 0, never 20/10/10/5/10; it is never shown, because iqama is then hidden. The wizard never
+  sends the key and keeps its `true` and its fallbacks (ProvisionIqamaTruthTest::the_legacy_path_is_unchanged).
+- **Jumu'ah stays as recorded.** The 13:30 default is still stored on both paths: the S8 contract
+  records that call (docs/manara-studio-w1.md, "Jumu'ah"), so the review's suggestion to extend
+  the iqama rule to it was not taken here.
+- **A draft that changed is refused, not provisioned.** Under the lock the draft must still have
+  the `lock_version`, `logo_path` and `logo_sha256` it was read with (a logo upload does not move
+  the version), and Step 3 sends the `lock_version` it reviewed (optional in
+  `StudioProvisionRequest`). Otherwise `StudioDraftChanged`: 409 `{status:'conflict', message,
+  data:{draft_id, provisioned_masjid_id: null}}`, nothing written, and the SPA reloads the draft
+  and says to review and press again. A null `provisioned_masjid_id` is how the SPA tells it from
+  "already provisioned".
+- **Races answer what is true.** A 422 from validation or the brand gate re-reads the draft: now
+  provisioned (a twin committed after the pre-check) is the 409 naming the organisation; gone is
+  a 404. A draft discarded before the lock is a 404, not a 500.
+- **Account modes only for selected platforms.** `toProvisionPayload` sends `apps[p]` only for a
+  platform in `platforms.platforms`; a "Bring your own" left on an unticked platform made the
+  wizard's `required_if` demand credentials Step 3 has no field for. The provisioner then stores
+  the default `managed` mode for the unselected platform.
+- **Capability keys are top-level config keys.** Looked up with `array_key_exists` on
+  `config('capabilities')`, as `UpdateStudioDraftRequest` does; `config("capabilities.{$key}")`
+  read a dotted key as a path.
+- **Malformed wizard input is a 422.** `org_type` is read as a string only when it is one before
+  rules() uses it, and `slug` and the web-domain keys `bail` at `string`, so an array never reaches
+  a `(string)` cast (PHP's warning, Laravel's 500).
+- **Step 3's answer.** "Not created" only on the controller's own 500 envelope; a 404 says the
+  draft is gone; no answer, a proxy's 502/504 or any other status is `unknown` ("press Provision
+  again to find out": a created organisation answers 409). While a provision runs the steps, the
+  stepper, Back/Next and the logo are locked (`store.editable`), and leaving asks first (the
+  browser's prompt, and a route-leave dialog), because the results exist only in that answer. The
+  invitation line names the administrator the draft held when Provision was pressed
+  (`Invitee`, carried in the outcome). The answer takes focus (`outcomeFocusId`). Pages are
+  "switched on", never "live", until the domain panel confirms serving. A provisioned draft's logo
+  is not fetched (its bytes are deleted after the commit); the Brand panel says it is on the
+  organisation.
+- **The store's order is testable.** `saveThenPost` (flush, then check the save, then post) and
+  `clearsSecrets` are pure functions in `provision.ts`, unit-tested; the source test pins that the
+  store posts only through the one and the step clears by the other, and the credential guard now
+  removes the two allowed expressions exactly instead of skipping their lines.
+Alternatives: hiding iqama silently whenever any offset is missing (drops times the client gave);
+rebuilding the payload from the locked row (would provision answers nobody reviewed); returning a
+bare 201 when the response body fails after the commit (the SPA's wording now covers it, and a
+partial body would need its own type).
+Rationale: the organisation is made only from answers someone reviewed and saved, a Studio org
+never shows a time the congregation did not give, and every sentence on Step 3 is one the server's
+answer supports.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12, TypeScript 5.7.3) reports 106 errors at fe390d7d and
+at 41ea90d3 in this environment, and the same 106, line for line, with these fixes.

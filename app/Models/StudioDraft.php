@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Http\Requests\Admin\Onboarding\ProvisionMasjidRequest;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
@@ -53,16 +54,17 @@ class StudioDraft extends Model
     ];
 
     /**
-     * How each section's keys land in ProvisionMasjidRequest today. Keys not
-     * named here stay in the draft: `vibe` never leaves it (R12), `extracted`
-     * and `ink_overrides` are Studio's own, and `slug`, `description`,
-     * `iqama_given`, `features`, `layout` and `domain` become request keys only
-     * when S8 teaches the request to accept them.
+     * How each section's keys land in ProvisionMasjidRequest as they are.
+     * Keys not named here stay in the draft: `vibe` never leaves it (R12), and
+     * `extracted` and `ink_overrides` are Studio's own (the inks reach the new
+     * org through StudioProvisioning, not the request). `iqama_given`,
+     * `features`, `layout` and `domain` are renamed on the way out; see
+     * toProvisionPayload().
      */
     private const PROVISION_KEYS = [
         'identity' => [
             'org_type', 'name', 'email', 'phone', 'address', 'country_id', 'city_id',
-            'latitude', 'longitude', 'timezone', 'user_id', 'admin',
+            'latitude', 'longitude', 'timezone', 'user_id', 'admin', 'slug', 'description',
             'donation_link', 'donation_title', 'donation_message',
             'facebook_url', 'youtube_url', 'instagram_url', 'whatsapp_url', 'whatsapp_number',
         ],
@@ -250,6 +252,13 @@ class StudioDraft extends Model
      * only for a platform whose account_mode is `byo`: a managed platform's
      * credentials are Hope Tech's, and anything typed for it is discarded.
      *
+     * An account mode is sent only for a platform still selected. The Platforms
+     * panel keeps a mode when its platform is unticked (ticking it again brings
+     * the choice back), and the request's `required_if:…,byo` rules would
+     * otherwise demand credentials for a platform nobody ordered, which Step 3
+     * has no field for. The provisioner uses a mode only for a selected
+     * platform anyway.
+     *
      * @param  array{ios?: array<string, string>, android?: array<string, string>}  $secrets
      * @return array<string, mixed>
      */
@@ -272,9 +281,11 @@ class StudioDraft extends Model
             $payload['brand'] = $brand;
         }
 
+        $selected = (array) ($this->section('platforms')['platforms'] ?? []);
+
         $apps = [];
         foreach ((array) ($this->section('platforms')['apps'] ?? []) as $platform => $app) {
-            if (is_array($app) && array_key_exists('account_mode', $app)) {
+            if (in_array($platform, $selected, true) && is_array($app) && array_key_exists('account_mode', $app)) {
                 $apps[$platform] = ['account_mode' => $app['account_mode']];
             }
         }
@@ -291,6 +302,65 @@ class StudioDraft extends Model
             $payload['apps'] = $apps;
         }
 
+        // Studio's request keys (S8). Always sent: without it the provisioner
+        // keeps the wizard's `true` and fills every missing offset with its
+        // invented 20/10/10/5/10.
+        $payload['show_iqama_times'] = $this->showsIqama();
+
+        $capabilities = $this->section('features')['capabilities'] ?? null;
+        if (is_array($capabilities)) {
+            $payload['capabilities'] = $capabilities;
+        }
+
+        // The starter website and the client's own domain are the web
+        // deliverable, sent only when web is selected: the request refuses
+        // them otherwise, and a draft that dropped web keeps its choices for
+        // the day it is selected again.
+        if (in_array('web', (array) ($this->section('platforms')['platforms'] ?? []), true)) {
+            $preset = $this->section('layout')['preset'] ?? null;
+            if (is_string($preset) && $preset !== '') {
+                $payload['layout_preset'] = $preset;
+            }
+
+            $custom = $this->section('domain')['custom'] ?? null;
+            if (is_array($custom) && is_string($custom['host'] ?? null) && $custom['host'] !== '') {
+                $payload['web_domain'] = [
+                    'custom_host' => $custom['host'],
+                    'custom_zone_apex' => $custom['zone_apex'] ?? null,
+                ];
+            }
+        }
+
         return $payload;
+    }
+
+    /**
+     * Whether the organisation shows iqama times (DECISIONS, S8 "Iqama"): only
+     * a masjid whose client gave times, and never with the "client has not
+     * given iqama times" tick. An untouched panel gave none, so iqama is
+     * hidden. A panel with SOME offsets answers true on purpose: the request
+     * then refuses the missing ones by name, rather than hiding times the
+     * client did give or showing ones they did not.
+     */
+    private function showsIqama(): bool
+    {
+        $prayer = $this->section('prayer');
+        $orgType = $this->section('identity')['org_type'] ?? null;
+
+        // The request reads an absent type as a masjid (ProvisionMasjidRequest::prepareForValidation).
+        if ((is_string($orgType) && $orgType !== '' ? $orgType : Masjid::ORG_TYPE_MASJID) !== Masjid::ORG_TYPE_MASJID
+            || ($prayer['iqama_given'] ?? null) === false) {
+            return false;
+        }
+
+        $offsets = is_array($prayer['iqama'] ?? null) ? $prayer['iqama'] : [];
+
+        foreach (array_keys(ProvisionMasjidRequest::IQAMA_PRAYERS) as $salah) {
+            if (filled($offsets[$salah] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

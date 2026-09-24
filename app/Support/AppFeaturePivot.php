@@ -3,7 +3,9 @@
 namespace App\Support;
 
 use App\Models\Masjid;
+use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
+use LogicException;
 
 /**
  * The legacy Mobile App Features pivot (`masjid_mobile_app_features`) as an
@@ -36,6 +38,37 @@ final class AppFeaturePivot
 
         foreach (MobileAppFeature::query()->orderBy('id')->pluck('id') as $id) {
             $rows[(int) $id] = AppMenu::legacyAvailability($m, (int) $id);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Write a NEW organisation's pivot from its switches: one row per catalogue
+     * feature, `is_available` as rowsFor() says, so /features (installed
+     * Android builds) and /menu (the switches) start out agreeing.
+     *
+     * Creation only. An organisation that already has pivot rows has an
+     * installed app reading them, and replacing them is the app-features
+     * cutover's decision (app-features:cutover-plan), not provisioning's; so
+     * this refuses rather than overwrite or add a second row per feature.
+     *
+     * @return array<int, bool> the rows written, feature id => is_available
+     */
+    public static function seedFromSwitches(Masjid $m): array
+    {
+        if (MasjidMobileAppFeature::query()->where('masjid_id', $m->id)->exists()) {
+            throw new LogicException("Organisation {$m->id} already has Mobile App Features rows; seedFromSwitches only seeds a new organisation.");
+        }
+
+        $rows = self::rowsFor($m);
+
+        foreach ($rows as $featureId => $available) {
+            MasjidMobileAppFeature::create([
+                'masjid_id' => $m->id,
+                'feature_id' => $featureId,
+                'is_available' => $available,
+            ]);
         }
 
         return $rows;

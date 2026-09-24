@@ -138,6 +138,33 @@ class ProvisionOrgTypeTest extends TestCase
         $this->assertSame(0, Masjid::count());
     }
 
+    /**
+     * rules() is built before anything is validated, so a malformed value
+     * reaches the code that builds it. An org_type that is an array, cast to a
+     * string there, was PHP's "Array to string conversion" and a 500; the
+     * wizard's own `string` rule answers 422, as it always did. Studio's slug
+     * and custom domain keys likewise stop at `string`.
+     */
+    #[Test]
+    public function a_malformed_org_type_slug_or_domain_is_a_422_never_a_500(): void
+    {
+        foreach ([
+            ['org_type', ['org_type' => ['masjid']]],
+            // Studio's capability check reads the type too, after the rules.
+            ['org_type', ['org_type' => ['masjid'], 'capabilities' => ['gallery' => true]]],
+            ['slug', ['slug' => ['annur']]],
+            ['web_domain.custom_host', ['slug' => 'annur', 'web_domain' => ['custom_host' => ['www.annur.test'], 'custom_zone_apex' => 'annur.test']]],
+            ['web_domain.custom_zone_apex', ['slug' => 'annur', 'web_domain' => ['custom_host' => 'www.annur.test', 'custom_zone_apex' => ['annur.test']]]],
+        ] as [$field, $overrides]) {
+            $this->provision($overrides)
+                ->assertStatus(422)
+                ->assertJsonPath('status', 'failed')
+                ->assertJsonStructure(['data' => [$field]]);
+        }
+
+        $this->assertSame(0, Masjid::count());
+    }
+
     #[Test]
     public function an_explicit_feature_selection_still_wins_over_the_vertical_default(): void
     {

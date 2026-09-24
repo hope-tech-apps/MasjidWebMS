@@ -645,6 +645,43 @@ class Masjid extends Model implements HasMedia
             ->latest();
     }
 
+    /**
+     * The brand derivatives Studio makes from the logo at Step 3
+     * (docs/manara-studio-w1.md S8): a 48x48 favicon, a 180x180 touch icon and
+     * a 1200x630 share image, each in its own collection.
+     *
+     * `model_type` is part of the key for the reason logo() gives. Only a
+     * Studio-provisioned organisation has these rows; /api/v1/settings and the
+     * by-host lookup emit a URL for one only when the row exists, and never
+     * fall back to `logos`, so no live tenant's tab icon or share card changes
+     * because this code shipped.
+     */
+    public const FAVICONS = 'favicons';
+
+    public const TOUCH_ICONS = 'touch_icons';
+
+    public const SHARE_IMAGES = 'share_images';
+
+    public function favicon() {
+        return $this->brandDerivative(self::FAVICONS);
+    }
+
+    public function touch_icon() {
+        return $this->brandDerivative(self::TOUCH_ICONS);
+    }
+
+    public function share_image() {
+        return $this->brandDerivative(self::SHARE_IMAGES);
+    }
+
+    private function brandDerivative(string $collection) {
+        return $this->hasOne(Media::class, 'model_id')
+            ->where('model_type', self::class)
+            ->where('collection_name', $collection)
+            ->orderBy('created_at', 'desc')
+            ->latest();
+    }
+
     public function socialMediaLinks() {
         return $this->hasMany(MasjidSocialMediaLink::class);
     }

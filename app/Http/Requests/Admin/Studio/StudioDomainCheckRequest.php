@@ -46,9 +46,6 @@ class StudioDomainCheckRequest extends BaseFormRequest
 
     public function rules(): array
     {
-        $reserved = (array) config('cloudflare.reserved_labels');
-        $suffix = (string) config('cloudflare.managed_suffix');
-
         return [
             'kind' => ['required', 'string', Rule::in(MasjidDomain::KINDS)],
 
@@ -56,15 +53,9 @@ class StudioDomainCheckRequest extends BaseFormRequest
                 'exclude_unless:kind,' . MasjidDomain::KIND_MANAGED_SUBDOMAIN,
                 'required',
                 'string',
-                function (string $attribute, mixed $value, Closure $fail) use ($reserved) {
-                    if (! HostName::isLabel((string) $value)) {
-                        $fail('Use letters, digits and hyphens only, up to 63 characters, not starting or ending with a hyphen.');
-
-                        return;
-                    }
-
-                    if (in_array($value, $reserved, true)) {
-                        $fail("\"{$value}\" is reserved and cannot be an organisation's subdomain.");
+                function (string $attribute, mixed $value, Closure $fail) {
+                    if (($refusal = self::labelRefusal((string) $value)) !== null) {
+                        $fail($refusal);
                     }
                 },
             ],
@@ -73,23 +64,9 @@ class StudioDomainCheckRequest extends BaseFormRequest
                 'exclude_unless:kind,' . MasjidDomain::KIND_CUSTOM,
                 'required',
                 'string',
-                function (string $attribute, mixed $value, Closure $fail) use ($suffix) {
-                    $host = HostName::normalize((string) $value);
-
-                    if ($host === null) {
-                        $fail('That is not a host name.');
-
-                        return;
-                    }
-
-                    if (($refusal = WritableHost::refusal($host)) !== null) {
+                function (string $attribute, mixed $value, Closure $fail) {
+                    if (($refusal = self::customHostRefusal((string) $value)) !== null) {
                         $fail($refusal);
-
-                        return;
-                    }
-
-                    if ($host === $suffix || str_ends_with($host, '.' . $suffix)) {
-                        $fail("Hosts under {$suffix} are managed subdomains; choose that option instead.");
                     }
                 },
             ],
@@ -99,28 +76,73 @@ class StudioDomainCheckRequest extends BaseFormRequest
                 'required',
                 'string',
                 function (string $attribute, mixed $value, Closure $fail) {
-                    $apex = HostName::normalize((string) $value);
-
-                    if ($apex === null) {
-                        $fail('The zone is not a host name.');
-
-                        return;
-                    }
-
-                    if (($refusal = WritableHost::refusal($apex)) !== null) {
+                    if (($refusal = self::zoneApexRefusal((string) $value, (string) $this->input('host'))) !== null) {
                         $fail($refusal);
-
-                        return;
-                    }
-
-                    $host = HostName::normalize((string) $this->input('host'));
-
-                    if ($host !== null && $host !== $apex && ! str_ends_with($host, '.' . $apex)) {
-                        $fail("{$host} is not in the zone {$apex}.");
                     }
                 },
             ],
         ];
+    }
+
+    /**
+     * Why a managed-subdomain label cannot be used, or null. Shared with
+     * ProvisionMasjidRequest's `slug`, which names the same subdomain: one copy
+     * of the rule, so the check and the provision cannot disagree.
+     */
+    public static function labelRefusal(string $label): ?string
+    {
+        if (! HostName::isLabel($label)) {
+            return 'Use letters, digits and hyphens only, up to 63 characters, not starting or ending with a hyphen.';
+        }
+
+        if (in_array($label, (array) config('cloudflare.reserved_labels'), true)) {
+            return "\"{$label}\" is reserved and cannot be an organisation's subdomain.";
+        }
+
+        return null;
+    }
+
+    /** Why a custom host cannot be used, or null. Shared with ProvisionMasjidRequest's `web_domain.custom_host`. */
+    public static function customHostRefusal(string $value): ?string
+    {
+        $suffix = (string) config('cloudflare.managed_suffix');
+        $host = HostName::normalize($value);
+
+        if ($host === null) {
+            return 'That is not a host name.';
+        }
+
+        if (($refusal = WritableHost::refusal($host)) !== null) {
+            return $refusal;
+        }
+
+        if ($host === $suffix || str_ends_with($host, '.' . $suffix)) {
+            return "Hosts under {$suffix} are managed subdomains; choose that option instead.";
+        }
+
+        return null;
+    }
+
+    /** Why a zone apex cannot hold `$hostValue`, or null. Shared with ProvisionMasjidRequest's `web_domain.custom_zone_apex`. */
+    public static function zoneApexRefusal(string $value, string $hostValue): ?string
+    {
+        $apex = HostName::normalize($value);
+
+        if ($apex === null) {
+            return 'The zone is not a host name.';
+        }
+
+        if (($refusal = WritableHost::refusal($apex)) !== null) {
+            return $refusal;
+        }
+
+        $host = HostName::normalize($hostValue);
+
+        if ($host !== null && $host !== $apex && ! str_ends_with($host, '.' . $apex)) {
+            return "{$host} is not in the zone {$apex}.";
+        }
+
+        return null;
     }
 
     /** The host this request names, normalised. Only call after validation. */

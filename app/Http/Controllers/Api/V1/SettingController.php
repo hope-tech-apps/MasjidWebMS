@@ -24,6 +24,9 @@ class SettingController extends Controller
             'logo',
             'header_logo',
             'footer_logo',
+            'favicon',
+            'touch_icon',
+            'share_image',
             'donationLink.image',
             'masjidAbout.aboutImage',
             'masjidAbout.missionIcon',
@@ -46,7 +49,7 @@ class SettingController extends Controller
     {
         $this->init();
         $masjid = $this->masjid;
-        return response()->api(200, __('api.success'), [
+        $data = [
             'masjid' => [
                 'id' => $masjid->id,
                 'name' => $masjid->name,
@@ -100,7 +103,39 @@ class SettingController extends Controller
             })->values(),
             'iqama_settings' => $masjid->iqamaTimeSettings ? new IqamaTimeSettingResource($masjid->iqamaTimeSettings) : null,
             'jumaa_settings' => $this->getJumaaSettings(),
-        ]);
+        ];
+
+        return response()->api(200, __('api.success'), $this->withBrandDerivatives($data, $masjid));
+    }
+
+    /**
+     * Studio's favicon, touch icon and share image URLs, placed after
+     * `footer_logo_url`, and ONLY for an organisation that has that row
+     * (docs/manara-studio-w1.md R11, S8).
+     *
+     * Not `null` when absent: every live organisation has none of the three, and
+     * a key it never had would change the bytes of its settings payload and of
+     * anything the renderer serializes from it. Never taken from `logos`
+     * either, or Burlington's and MEC's tab icons would change unasked.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function withBrandDerivatives(array $data, Masjid $masjid): array
+    {
+        $derivatives = array_filter([
+            'favicon_url' => $masjid->favicon?->original_url,
+            'touch_icon_url' => $masjid->touch_icon?->original_url,
+            'share_image_url' => $masjid->share_image?->original_url,
+        ], fn ($url) => $url !== null);
+
+        if ($derivatives === []) {
+            return $data;
+        }
+
+        $at = array_search('footer_logo_url', array_keys($data), true) + 1;
+
+        return array_slice($data, 0, $at, true) + $derivatives + array_slice($data, $at, null, true);
     }
 
     public function getJumaaSettings()

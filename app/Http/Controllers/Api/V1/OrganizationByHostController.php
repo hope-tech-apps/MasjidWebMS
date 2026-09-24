@@ -29,8 +29,11 @@ use Illuminate\Http\Request;
  *   trashed organisation gets the same 404, so the answer says nothing about
  *   which of those it was.
  *
- * `favicon_url` and `share_image_url` are null until S8 fills them from their
- * own media collections. They are never taken from `logos`.
+ * `favicon_url` and `share_image_url` come from the `favicons` and
+ * `share_images` collections Studio writes at Step 3 (S8), and are null for an
+ * organisation without them. They are never taken from `logos`: every live
+ * tenant has a logo and none has a favicon, and a fallback would change
+ * Burlington's and MEC's tab icons unasked (draft-and-logo rule F).
  */
 class OrganizationByHostController extends Controller
 {
@@ -59,8 +62,8 @@ class OrganizationByHostController extends Controller
                 'masjid_id' => $masjid->id,
                 'name' => $masjid->name,
                 'description' => $masjid->description,
-                'favicon_url' => null,
-                'share_image_url' => null,
+                'favicon_url' => $masjid->favicon?->original_url,
+                'share_image_url' => $masjid->share_image?->original_url,
             ],
         ], 200, ['Cache-Control' => 'no-store']);
     }

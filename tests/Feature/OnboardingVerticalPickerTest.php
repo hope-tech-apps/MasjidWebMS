@@ -272,6 +272,52 @@ class OnboardingVerticalPickerTest extends TestCase
         $this->assertStringContainsString('org_type: form.org_type', $source);
     }
 
+    /**
+     * Manara Studio, the wizard's successor, reads the same packs from the same
+     * endpoint, so it is held to the same rule (docs/manara-studio-w1.md S5):
+     * no terminology label and no worship key typed into any Studio file.
+     * WIZARD_VIEW stays above because the wizard still exists until S12.
+     */
+    #[Test]
+    public function studio_does_not_retype_the_vertical_configuration(): void
+    {
+        $roots = [
+            'resources/vue-app/views/dashboard/super/studio',
+            'resources/vue-app/components/super/studio',
+            'resources/vue-app/core/studio',
+            'resources/vue-app/stores/super/studioDraftStore.ts',
+        ];
+        $scanned = 0;
+
+        foreach ($roots as $root) {
+            $absolute = base_path($root);
+            $this->assertFileExists($absolute, "{$root} is missing");
+
+            $files = is_dir($absolute)
+                ? iterator_to_array(new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($absolute, \FilesystemIterator::SKIP_DOTS)))
+                : [new \SplFileInfo($absolute)];
+
+            foreach ($files as $file) {
+                if (! preg_match('/\.(ts|vue)$/', $file->getFilename())) {
+                    continue;
+                }
+                $scanned++;
+                $source = file_get_contents($file->getPathname());
+
+                foreach (['Congregants', 'Halaqat', 'Families', 'Classrooms', 'Imams', 'Faculty'] as $label) {
+                    $this->assertStringNotContainsString($label, $source, "'{$label}' is hardcoded in {$file->getFilename()}; the terminology pack must come from /onboarding/options");
+                }
+
+                foreach (self::WORSHIP_KEYS as $key) {
+                    $this->assertStringNotContainsString("'{$key}'", $source, "{$file->getFilename()} hardcodes the '{$key}' feature key");
+                    $this->assertStringNotContainsString("\"{$key}\"", $source, "{$file->getFilename()} hardcodes the '{$key}' feature key");
+                }
+            }
+        }
+
+        $this->assertGreaterThan(0, $scanned, 'no Studio files were found to scan');
+    }
+
     /** Feature keys the tenant ended up with, in catalog order. */
     private function enabledKeys(Masjid $masjid): array
     {

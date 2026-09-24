@@ -269,3 +269,16 @@ export type BackendApiRoute =
     | `/api/admin/masjids/${string}/domains/${string}/refresh`
     | `/api/admin/masjids/${string}/domains/${string}`
     | '/api/admin/studio/domains/check'
+    // Manara Studio (docs/manara-studio-w1.md S1-S5), all under the SuperAdmin
+    // `studio` prefix (R18). Drafts are listed with `?status=` so the list can
+    // show provisioned drafts beside open ones; the logo is fetched as a blob
+    // with the bearer, never from a public URL (.claude/rules/private-uploads.md).
+    | `/api/admin/studio/catalogue?org_type=${string}`
+    | '/api/admin/studio/drafts'
+    | `/api/admin/studio/drafts?status=${string}`
+    | `/api/admin/studio/drafts/${number}`
+    | `/api/admin/studio/drafts/${number}/logo`
+    | `/api/admin/studio/drafts/${number}/preview`
+    // Step 3 (S8): the draft becomes an organisation, once.
+    | `/api/admin/studio/drafts/${number}/provision`
+    | `/api/admin/studio/layout-presets?org_type=${string}`

@@ -3,6 +3,7 @@
 namespace Tests\Feature\Studio;
 
 use App\Models\Masjid;
+use App\Models\MasjidMobileAppFeature;
 use App\Models\MobileAppFeature;
 use App\Support\AppFeaturePivot;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -59,5 +60,32 @@ class AppFeaturePivotTest extends TestCase
         $off = new Masjid(['name' => 'A Masjid', 'org_type' => 'masjid']);
         $off->forceFill(['capability_overrides' => ['quran' => false]]);
         $this->assertFalse(AppFeaturePivot::rowsFor($off)[$quranId]);
+    }
+
+    /**
+     * seedFromSwitches (S8) writes a NEW organisation's rows, and refuses an
+     * organisation that already has any: an installed app reads them, and
+     * replacing them is the app-features cutover's decision, not provisioning's.
+     */
+    #[Test]
+    public function seeding_writes_the_derived_rows_once_and_refuses_an_org_that_has_rows(): void
+    {
+        $org = Masjid::create([
+            'name' => 'Seeded School', 'email' => 'seeded@test.local', 'phone' => '+15550003333', 'org_type' => 'school',
+            'country_id' => '1', 'city_id' => '1', 'address' => '1 Test St', 'latitude' => 0.0, 'longitude' => 0.0,
+        ]);
+
+        $this->assertSame(AppFeaturePivot::rowsFor($org), AppFeaturePivot::seedFromSwitches($org));
+        $this->assertSame(
+            AppFeaturePivot::rowsFor($org),
+            MasjidMobileAppFeature::where('masjid_id', $org->id)->orderBy('feature_id')->pluck('is_available', 'feature_id')->map(fn ($v) => (bool) $v)->all(),
+        );
+
+        try {
+            AppFeaturePivot::seedFromSwitches($org);
+            $this->fail('a second seed was accepted');
+        } catch (\LogicException) {
+            $this->assertSame(11, MasjidMobileAppFeature::where('masjid_id', $org->id)->count(), 'nothing was added or replaced');
+        }
     }
 }
