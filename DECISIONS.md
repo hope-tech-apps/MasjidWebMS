@@ -2084,3 +2084,48 @@ tests live in `tests/Feature/Studio/`; StudioAccessTest finds every
 its SuperAdmin call to `StudioAccessTest::calls()` or the test names it.
 Rationale: each follows the nearest existing pattern (MasjidsController::capabilities
 for entry fields); recorded because the plan left them open.
+
+## 2026-09-24 — Live preview: a signed preview mode on a host that serves no tenant
+Decision: the page tool's preview is the real renderer in an iframe, loaded from
+the renderer project's own `*.pages.dev` host at `/__manara/preview/<path>?mp=<token>`.
+The prefix is covered by no cache rule, so Nitro routes it to the uncached
+catch-all renderer; a `render:before` hook verifies a five-minute HMAC token
+Laravel signs (org, surface, path, admin origin), takes the tenant from the token,
+rewrites the path and stamps no-store, noindex and `frame-ancestors <admin origin>`.
+Unsaved edits reach it only by `postMessage` from that admin origin and are laid
+over the Pinia store in the browser. Save purges the org's `MANARA_PAGE_CACHE`
+keys through a signed `POST /__manara/purge` on the renderer, called after the
+response. Contract: `docs/live-preview.md`.
+Alternatives: (a) `?preview=` on the tenant's own URL — rejected, a cached route
+stores every distinct query under its own key and `shouldBypassCache` cannot be
+passed through JSON route rules; (b) preview on the tenant's own domain — rejected,
+the tenant would come from the Host (W1's code), the admin would need every
+tenant host in `frame-src`, and a Studio draft with no host could not be shown;
+(c) server-side draft storage read by the renderer — rejected, it needs a new
+authenticated read path and persists unsaved content; (d) giving Laravel KV
+credentials — rejected by the brief; (e) purging the whole cache on every save —
+rejected, it hands every client admin a lever over every other tenant's cold renders.
+Rationale: every live tenant host keeps exactly today's code path, the uncached
+path is chosen by Nitro's own routing rather than by a flag, and one preview
+origin is one entry in the admin CSP and one in the postMessage allowlist.
+
+## 2026-09-24 — Preview gates are the save routes' gates, one mint route per surface
+Decision: `pages/preview-session` sits inside the `capability:web_pages` +
+`capability:website` group, `theme/preview-session` beside the theme save
+(admin + tenant only), `splash-announcements/preview-session` inside
+`capability:splash`. The token names its surface and the renderer accepts only
+that surface's overrides.
+Alternatives: one mint route under the pages gate — rejected, a MasjidAdmin who
+may edit the theme but not the pages (web_pages off, e.g. Burlington) could not
+preview the theme they can save; one ungated mint route — rejected, the brief asks
+for tokens issued only to people allowed to edit.
+Rationale: whoever may save a surface may preview it, and no one else; placing the
+route in the save route's group makes that true by construction.
+
+## 2026-09-24 — Renderer preview/purge work merges to `main` only
+Decision: follow W1 — `manara-renderer` (branch `main`) gets preview and purge;
+`cloudflare-migration` / `mec-web` is not touched, so `mec-web.pages.dev` keeps its
+5-minute window.
+Alternatives: port to both branches as the payload fix was — rejected, W1 fixed
+`cloudflare-migration` as a control that is not redeployed.
+Rationale: one live renderer to reason about; MEC's Manara host is on `main`.
