@@ -17,17 +17,22 @@ use Throwable;
  *     timestamp  X-Manara-Timestamp: <unix seconds>   (refused beyond ±300 s)
  *     signature  X-Manara-Signature: v1=<hex HMAC-SHA256(secret, "manara-purge|v1|<ts>|<body>")>
  *
- * The renderer answers {ok, scanned, deleted, remaining}; while `remaining` is true it
- * is called again (at most MAX_CALLS), which is safe because a purge is idempotent.
+ * The renderer answers {ok, scanned, deleted, remaining, cursor}; while `remaining` is
+ * true it is called again with `after: cursor` (at most MAX_CALLS).
  *
- * NEVER FAILS A SAVE. It runs after the response has been sent (the
- * `renderer.purge` middleware's terminate()), and every failure is caught and logged at
+ * NEVER FAILS A SAVE. It runs on the queue (PurgeRendererCache, PurgeRendererCacheAgain,
+ * scheduled by RendererPurgeScheduler), and every failure is caught and logged at
  * `warning` — production runs LOG_LEVEL=warning, so anything quieter is discarded
  * (.claude/rules/shipping.md). With no configuration it does nothing at all.
  */
 final class RendererCachePurge
 {
-    public const MAX_CALLS = 5;
+    /**
+     * Calls per pass. The renderer deletes at most 800 keys a call and pages by cursor, so
+     * one pass reaches 1,600 keys of one organisation; production held 45 page keys in its
+     * live build on 2026-09-24. A pass cannot spend more than this however many keys exist.
+     */
+    public const MAX_CALLS = 2;
 
     public static function signature(string $secret, string $timestamp, string $body): string
     {
@@ -58,10 +63,16 @@ final class RendererCachePurge
     /** @return array{ok: bool, deleted: int, calls: int} */
     private function purgeOrigin(string $origin, string $secret, int $organisationId): array
     {
-        $body = json_encode(['v' => 1, 'org' => $organisationId], JSON_THROW_ON_ERROR);
         $deleted = 0;
+        $after = null;
 
         for ($call = 1; $call <= self::MAX_CALLS; $call++) {
+            // The cursor from the previous call rides in the SIGNED body, so the renderer
+            // resumes after the last key it deleted instead of re-listing from the start.
+            $body = json_encode(
+                $after === null ? ['v' => 1, 'org' => $organisationId] : ['v' => 1, 'org' => $organisationId, 'after' => $after],
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+            );
             $timestamp = (string) now()->getTimestamp();
 
             try {
@@ -95,7 +106,8 @@ final class RendererCachePurge
             }
 
             $deleted += (int) ($answer['deleted'] ?? 0);
-            if (($answer['remaining'] ?? false) !== true) {
+            $after = is_string($answer['cursor'] ?? null) ? $answer['cursor'] : null;
+            if (($answer['remaining'] ?? false) !== true || $after === null) {
                 return ['ok' => true, 'deleted' => $deleted, 'calls' => $call];
             }
         }
@@ -106,6 +118,6 @@ final class RendererCachePurge
             'deleted' => $deleted,
         ]);
 
-        return ['ok' => false, 'deleted' => $deleted, 'calls' => self::MAX_CALLS];
+        return ['ok' => false, 'deleted' => $deleted, 'calls' => $call - 1];
     }
 }

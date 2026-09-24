@@ -293,11 +293,23 @@ class LivePreviewSessionTest extends TestCase
         $masjid = $this->org();
         $admin = $this->admin($masjid);
 
-        foreach (['//evil.example/x', '/a/../b', 'about', '/about?x=1', '/a\\b', ['/about']] as $path) {
+        foreach (['//evil.example/x', '/a/../b', 'about', '/about?x=1', '/a\\b', ['/about'], '/50%off', "/a\u{00a0}b"] as $path) {
             $this->ask($admin, $masjid, 'theme', ['path' => $path])->assertStatus(422)
                 ->assertJsonPath('status', 'failed')
                 ->assertJsonStructure(['data' => ['path']]);
         }
+    }
+
+    #[Test]
+    public function an_arabic_slug_is_signed_decoded_and_sent_encoded(): void
+    {
+        $masjid = $this->org();
+        $this->set($masjid, 'web_pages', true);
+
+        $url = $this->ask($this->admin($masjid), $masjid, 'pages', ['path' => '/حول'])->assertOk()->json('data.url');
+
+        $this->assertStringStartsWith(self::PREVIEW.'/__manara/preview/%D8%AD%D9%88%D9%84?mp=v1.', $url);
+        $this->assertSame('/حول', $this->claims($url)['p']);
     }
 
     #[Test]

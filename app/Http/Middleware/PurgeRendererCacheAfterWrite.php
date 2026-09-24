@@ -2,9 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Jobs\PurgeRendererCacheAgain;
-use App\Support\Renderer\RendererCachePurge;
-use App\Support\Renderer\RendererConfig;
+use App\Support\Renderer\RendererPurgeScheduler;
 use App\Support\TenantContext;
 use Closure;
 use Illuminate\Http\Request;
@@ -17,12 +15,13 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * Route middleware rather than a line in each controller so the list of writes that
  * purge is the list of route groups that carry it — pages, the section library, page
- * sections, theme and general settings — and a new write in those groups purges
- * without anyone remembering to.
+ * sections, theme, general settings, and what SectionContentBinder reads into pages
+ * (details, about, donation link, contact reasons, forms, offerings, fee plans) — and a
+ * new write in those groups purges without anyone remembering to.
  *
- * The work happens in terminate(): after the response has been sent, so an admin never
- * waits on the renderer, and a failure can never turn a save into an error. A second
- * pass follows on the queue (PurgeRendererCacheAgain) for pages KV had not yet listed.
+ * terminate() only QUEUES the purge (RendererPurgeScheduler): a burst of writes becomes
+ * one first pass a few seconds later and one second pass after the last write. No PHP
+ * worker waits on the renderer, and a failure can never turn a save into an error.
  * Reads (GET, HEAD, OPTIONS) and failed writes purge nothing.
  */
 class PurgeRendererCacheAfterWrite
@@ -46,15 +45,7 @@ class PurgeRendererCacheAfterWrite
         $organisationId = (int) (app(TenantContext::class)->get()
             ?? $request->route('masjid_id'));
 
-        if ($organisationId < 1 || ! RendererConfig::purgeEnabled()) {
-            return;
-        }
-
-        app(RendererCachePurge::class)->purge($organisationId);
-
-        // KV lists are eventually consistent: a page warmed elsewhere seconds before this
-        // save can be missing from the listing the first pass read. See the job.
-        PurgeRendererCacheAgain::dispatch($organisationId)
-            ->delay(now()->addSeconds(PurgeRendererCacheAgain::FOLLOW_UP_SECONDS));
+        // Queue only: nothing here calls the renderer, so no PHP worker is held on it.
+        RendererPurgeScheduler::afterSave($organisationId);
     }
 }

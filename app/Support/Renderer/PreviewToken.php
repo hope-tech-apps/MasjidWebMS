@@ -54,29 +54,49 @@ final class PreviewToken
     }
 
     /**
-     * A path the renderer may be asked to render: absolute, not protocol-relative, no
-     * backslash, no dot segment (plain or percent-encoded), no query, fragment,
-     * whitespace or control character, at most 512 characters. The renderer applies the
-     * same rule (isSafePreviewPath) before it touches the request path.
+     * A path the renderer may be asked to render. It becomes the renderer's request path,
+     * so anything looser is a request-smuggling surface.
+     *
+     * The canonical form is the DECODED path, as the page's slug reads (`/حول`): that is
+     * what is signed, and h3 decodes the request path before the renderer compares them.
+     * The URL carries an encoded copy (encodePath()).
+     *
+     * CHARACTER FOR CHARACTER THE RENDERER'S RULE (shared/previewToken.ts
+     * isSafePreviewPath): absolute, not protocol-relative, at most 512 UTF-16 code units
+     * (JavaScript's length), no dot segment, and none of `\ ? # %`, ASCII controls, or the
+     * Unicode whitespace JavaScript's `\s` matches, written out: PCRE's `\s` is ASCII-only,
+     * and the two sides once disagreed on U+00A0. `%` is refused because h3 keeps an encoded
+     * `%25` encoded while decoding the rest, so such a slug has no form both sides agree on.
      */
+    public const FORBIDDEN = '/[\\\\?#%\x{0000}-\x{0020}\x{007f}\x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]/u';
+
     public static function isSafePath(mixed $path): bool
     {
-        if (! is_string($path) || $path === '' || strlen($path) > 512) {
+        if (! is_string($path) || $path === '' || ! mb_check_encoding($path, 'UTF-8')) {
+            return false;
+        }
+        if (strlen(mb_convert_encoding($path, 'UTF-16LE', 'UTF-8')) / 2 > 512) {
             return false;
         }
         if (! str_starts_with($path, '/') || str_starts_with($path, '//')) {
             return false;
         }
-        if (preg_match('/[\\\\?#\s\x00-\x1f\x7f]/', $path) === 1) {
+        if (preg_match(self::FORBIDDEN, $path) !== 0) {
             return false;
         }
         foreach (explode('/', $path) as $segment) {
-            if (in_array(strtolower($segment), ['.', '..', '%2e', '%2e%2e', '.%2e', '%2e.'], true)) {
+            if ($segment === '.' || $segment === '..') {
                 return false;
             }
         }
 
         return true;
+    }
+
+    /** The URL form of a safe path: every segment percent-encoded, the slashes kept. */
+    public static function encodePath(string $path): string
+    {
+        return implode('/', array_map('rawurlencode', explode('/', $path)));
     }
 
     private static function base64Url(string $bytes): string

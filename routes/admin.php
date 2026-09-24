@@ -203,7 +203,8 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid related details control (phone, email, socialmedia links)
-            Route::prefix('{masjid_id}/details')->controller(MasjidDetailsController::class)->group(function () {
+            // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+            Route::prefix('{masjid_id}/details')->middleware('renderer.purge')->controller(MasjidDetailsController::class)->group(function () {
                 Route::get('/', 'getDetails');
                 Route::post('/', 'updateDetails');
             });
@@ -297,13 +298,15 @@ Route::prefix('admin')->group(function () {
 
             // Masjid donation link. Outside `crm`: an external URL, no money passes
             // through Manara.
-            Route::prefix('{masjid_id}/donation-link')->middleware('capability:donation_link')->controller(MasjidDonationLinkController::class)->group((function () {
+            // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+            Route::prefix('{masjid_id}/donation-link')->middleware(['capability:donation_link', 'renderer.purge'])->controller(MasjidDonationLinkController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
 
             // Masjid about
-            Route::prefix('{masjid_id}/about')->middleware('capability:about_us')->controller(MasjidAboutUsController::class)->group((function () {
+            // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+            Route::prefix('{masjid_id}/about')->middleware(['capability:about_us', 'renderer.purge'])->controller(MasjidAboutUsController::class)->group((function () {
                 Route::get('/', 'index');
                 Route::post('/', 'save');
             }));
@@ -527,7 +530,8 @@ Route::prefix('admin')->group(function () {
 
             // Sign-up Forms Management (event RSVPs, membership, camp registration).
             // Open to MasjidAdmin as well as SuperAdmin — a masjid builds its own forms.
-            Route::prefix('{masjid_id}/forms')->controller(FormsController::class)->group(function () {
+            // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+            Route::prefix('{masjid_id}/forms')->middleware('renderer.purge')->controller(FormsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::get('/options', 'options');        // literal paths first, so they
                 Route::get('/field-types', 'fieldTypes'); // are not captured as {form_id}
@@ -647,7 +651,8 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid contact reasons
-            Route::prefix('{masjid_id}/contact-reasons')->middleware('capability:contact_requests')->controller(ContactReasonsController::class)->group(function () {
+            // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+            Route::prefix('{masjid_id}/contact-reasons')->middleware(['capability:contact_requests', 'renderer.purge'])->controller(ContactReasonsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
                 Route::get('/{contact_reason_id}', 'show');
@@ -1448,7 +1453,8 @@ Route::prefix('admin')->group(function () {
                 // All three prefixes also take `capability:programs` (a module), on
                 // top of `crm`: switching Programs off leaves the member directory.
                 // Never gated by Giving: a program fee is not a gift.
-                Route::prefix('{masjid_id}/offerings')->middleware('capability:programs')->controller(OfferingsController::class)->group(function () {
+                // `renderer.purge`: SectionContentBinder reads this into public pages at serve time.
+                Route::prefix('{masjid_id}/offerings')->middleware(['capability:programs', 'renderer.purge'])->controller(OfferingsController::class)->group(function () {
                     Route::get('/', 'index')->middleware('permission:view contacts');
                     // Literal path BEFORE /{offering_id}, or it is captured as
                     // an id — the same ordering routes/admin.php already keeps
@@ -1467,8 +1473,9 @@ Route::prefix('admin')->group(function () {
                 // live plan would retroactively restate what somebody agreed to
                 // pay. `update` exists solely to REFUSE with a clear 422 rather
                 // than accept an edit and silently ignore the fields.
+                // `renderer.purge`: an offering section shows its fee plans on public pages.
                 Route::prefix('{masjid_id}/offerings/{offering_id}/fee-plans')
-                    ->middleware('capability:programs')
+                    ->middleware(['capability:programs', 'renderer.purge'])
                     ->controller(FeePlansController::class)
                     ->group(function () {
                         Route::get('/', 'index')->middleware('permission:view donations');

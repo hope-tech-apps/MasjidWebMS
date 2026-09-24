@@ -29,6 +29,19 @@ class PreviewTokenVectorTest extends TestCase
     }
 
     #[Test]
+    public function an_arabic_slug_token_is_the_cross_language_vector(): void
+    {
+        // The canonical path is the DECODED one; the renderer's tests/preview-token.test.ts
+        // asserts this same token.
+        $this->assertSame(
+            'v1.eyJvIjoxMywicyI6InBhZ2VzIiwicCI6Ii_YrdmI2YQiLCJhIjoiaHR0cHM6Ly9tYXNqaWQuaG9wZXRlY2hhcHBzLmNvbSIsImUiOjE3OTAwMDAwMDB9.o_5sH32adRZicmHnViMI7aaRHWYIMS1fL4s0BzRMiW4',
+            PreviewToken::mint(self::SECRET, 13, 'pages', '/حول', 'https://masjid.hopetechapps.com', 1790000000),
+        );
+        $this->assertSame('/%D8%AD%D9%88%D9%84', PreviewToken::encodePath('/حول'));
+        $this->assertSame('/faq%7B2%7D/o%27neil', PreviewToken::encodePath("/faq{2}/o'neil"));
+    }
+
+    #[Test]
     public function the_purge_signature_for_fixed_inputs_is_the_cross_language_vector(): void
     {
         $this->assertSame(
@@ -52,10 +65,11 @@ class PreviewTokenVectorTest extends TestCase
     #[Test]
     public function paths_follow_the_renderers_rule(): void
     {
-        foreach (['/', '/about', '/services/12', '/%D8%B9'] as $path) {
+        // The same lists as the renderer's tests/preview-token.test.ts.
+        foreach (['/', '/about', '/services/12', '/a-b_c.d~e', '/حول', '/faq{2}', "/o'neil", '/'.str_repeat('ح', 511)] as $path) {
             $this->assertTrue(PreviewToken::isSafePath($path), $path);
         }
-        foreach (['', 'about', '//evil.example', '/a/../b', '/a/./b', '/%2e%2e/x', '/.%2E/x', '/a\\b', '/a?b', '/a#b', "/a\tb", '/'.str_repeat('x', 512), null, 13] as $path) {
+        foreach (['', 'about', '//evil.example', '/a/../b', '/a/./b', '/%2e%2e/x', '/.%2E/x', '/%D8%B9', '/50%off', '/a%2Fb', '/a\\b', '/a?b', '/a#b', "/a\tb", '/a b', "/a\u{00a0}b", "/a\u{2028}b", "/a\u{feff}b", "/a\xffb", '/'.str_repeat('x', 512), '/'.str_repeat('😀', 256), null, 13] as $path) {
             $this->assertFalse(PreviewToken::isSafePath($path), var_export($path, true));
         }
     }

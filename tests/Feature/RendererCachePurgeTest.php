@@ -2,11 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\PurgeRendererCache;
 use App\Jobs\PurgeRendererCacheAgain;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
 use App\Support\Renderer\RendererCachePurge;
+use App\Support\Renderer\RendererPurgeScheduler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request as ClientRequest;
@@ -19,10 +21,11 @@ use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * Save goes live immediately (docs/live-preview.md §4.6): every successful write that
- * changes what an organisation's public site shows asks the renderer, with a signed
- * request, to drop that organisation's cached pages. After the response; never failing
- * the save; nothing when unconfigured; nothing on reads or failed writes.
+ * Save goes live (docs/live-preview.md §4.6): a successful write that changes what an
+ * organisation's public site shows QUEUES a purge of that organisation's cached pages —
+ * one first pass a few seconds after a burst, one second pass after its last save — and
+ * the queued jobs make the signed call. Nothing is sent from the request itself; nothing
+ * when unconfigured; nothing on reads or failed writes.
  */
 class RendererCachePurgeTest extends TestCase
 {
@@ -52,21 +55,8 @@ class RendererCachePurgeTest extends TestCase
             'timeout' => 5,
         ]]);
 
-        // The second pass is asserted as QUEUED; run synchronously it would double
-        // every count below.
         Queue::fake();
-    }
-
-    private function assertFollowUpQueued(Masjid $masjid, int $times = 1): void
-    {
-        Queue::assertPushed(PurgeRendererCacheAgain::class, $times);
-        Queue::assertPushed(PurgeRendererCacheAgain::class, function (PurgeRendererCacheAgain $job) use ($masjid) {
-            $seconds = now()->diffInSeconds($job->delay, false);
-
-            return $job->organisationId === $masjid->id
-                && $seconds >= PurgeRendererCacheAgain::FOLLOW_UP_SECONDS - 5
-                && $seconds <= PurgeRendererCacheAgain::FOLLOW_UP_SECONDS;
-        });
+        Http::fake();
     }
 
     private function org(): Masjid
@@ -92,91 +82,139 @@ class RendererCachePurgeTest extends TestCase
         return $user;
     }
 
+    private function assertQueuedFor(Masjid $masjid): void
+    {
+        Queue::assertPushed(PurgeRendererCache::class, 1);
+        Queue::assertPushed(PurgeRendererCache::class, fn (PurgeRendererCache $job) => $job->organisationId === $masjid->id
+            && now()->diffInSeconds($job->delay, false) <= RendererPurgeScheduler::FIRST_PASS_DELAY
+            && now()->diffInSeconds($job->delay, false) >= RendererPurgeScheduler::FIRST_PASS_DELAY - 2);
+        Queue::assertPushed(PurgeRendererCacheAgain::class, 1);
+        Queue::assertPushed(PurgeRendererCacheAgain::class, fn (PurgeRendererCacheAgain $job) => $job->organisationId === $masjid->id);
+    }
+
     private function fakeRenderer(array ...$answers): void
     {
+        Http::swap(new \Illuminate\Http\Client\Factory());
         $sequence = Http::sequence();
-        foreach ($answers ?: [['ok' => true, 'scanned' => 4, 'deleted' => 2, 'remaining' => false]] as $answer) {
+        foreach ($answers ?: [['ok' => true, 'scanned' => 4, 'deleted' => 2, 'remaining' => false, 'cursor' => null]] as $answer) {
             $sequence->push($answer, 200);
         }
         Http::fake([self::ENDPOINT => $sequence]);
     }
 
-    private function assertPurgedOnce(Masjid $masjid): void
+    private function assertSignedPurge(ClientRequest $request, array $body): bool
     {
-        Http::assertSentCount(1);
-        Http::assertSent(function (ClientRequest $request) use ($masjid) {
-            $timestamp = $request->header('X-Manara-Timestamp')[0] ?? '';
+        $timestamp = $request->header('X-Manara-Timestamp')[0] ?? '';
 
-            return $request->url() === self::ENDPOINT
-                && $request->method() === 'POST'
-                && $request->body() === json_encode(['v' => 1, 'org' => $masjid->id])
-                && abs((int) $timestamp - now()->getTimestamp()) <= 5
-                && ($request->header('X-Manara-Signature')[0] ?? '') === RendererCachePurge::signature(self::SECRET, $timestamp, $request->body());
-        });
+        return $request->url() === self::ENDPOINT
+            && $request->method() === 'POST'
+            && $request->body() === json_encode($body, JSON_UNESCAPED_SLASHES)
+            && abs((int) $timestamp - now()->getTimestamp()) <= 5
+            && ($request->header('X-Manara-Signature')[0] ?? '') === RendererCachePurge::signature(self::SECRET, $timestamp, $request->body());
     }
 
     #[Test]
-    public function saving_a_page_purges_that_organisation_once_with_a_signed_request(): void
+    public function a_save_queues_both_passes_and_sends_nothing_from_the_request(): void
     {
-        $this->fakeRenderer();
         $masjid = $this->org();
         $this->actAsAdmin($masjid);
 
         $this->postJson("/api/admin/masjids/{$masjid->id}/pages", ['slug' => 'ramadan', 'title' => 'Ramadan'])->assertSuccessful();
 
-        $this->assertPurgedOnce($masjid);
-        $this->assertFollowUpQueued($masjid);
+        $this->assertQueuedFor($masjid);
+        Http::assertNothingSent();
     }
 
     #[Test]
-    public function updating_reordering_and_deleting_pages_each_purge(): void
+    public function a_burst_of_writes_queues_one_first_pass_and_one_second_pass(): void
     {
         $masjid = $this->org();
         $this->actAsAdmin($masjid);
-        Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 1, 'remaining' => false])]);
 
         $id = $this->postJson("/api/admin/masjids/{$masjid->id}/pages", ['slug' => 'about', 'title' => 'About'])->assertSuccessful()->json('data.id');
-        $this->putJson("/api/admin/masjids/{$masjid->id}/pages/{$id}", ['slug' => 'about', 'title' => 'About us', 'show_in_menu' => false])->assertSuccessful();
+        $this->putJson("/api/admin/masjids/{$masjid->id}/pages/{$id}", ['title' => 'About us'])->assertSuccessful();
         $this->postJson("/api/admin/masjids/{$masjid->id}/pages/reorder", ['pages' => [['id' => $id, 'order' => 3]]])->assertSuccessful();
         $this->deleteJson("/api/admin/masjids/{$masjid->id}/pages/{$id}")->assertSuccessful();
 
-        Http::assertSentCount(4);
-        // Four saves, ONE follow-up: the job is unique per organisation for its delay,
-        // which is what keeps a reorder burst from queueing a pass per request.
-        $this->assertFollowUpQueued($masjid, 1);
+        // Four writes (a reorder is one request per row): one purge of each kind, not four.
+        $this->assertQueuedFor($masjid);
+        Http::assertNothingSent();
     }
 
     #[Test]
-    public function saving_the_theme_purges_and_previewing_it_does_not(): void
+    public function the_first_pass_makes_one_signed_call_for_its_organisation(): void
     {
         $this->fakeRenderer();
-        $masjid = $this->org();
-        $this->actAsAdmin($masjid);
 
-        $this->postJson("/api/admin/masjids/{$masjid->id}/theme/preview", ['primary_color' => '#123456'])->assertOk();
+        (new PurgeRendererCache(13))->handle(app(RendererCachePurge::class));
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn (ClientRequest $request) => $this->assertSignedPurge($request, ['v' => 1, 'org' => 13]));
+    }
+
+    #[Test]
+    public function the_second_pass_trails_the_last_save_not_the_first(): void
+    {
+        $this->fakeRenderer();
+        $this->travelTo(now()->startOfMinute());
+        $t0 = now()->getTimestamp();
+
+        RendererPurgeScheduler::afterSave(13);                       // t0: first save queues the job
+        $this->travel(70)->seconds();
+        RendererPurgeScheduler::afterSave(13);                       // t0+70: a later save in the window
+        Queue::assertPushed(PurgeRendererCacheAgain::class, 1);      // still one job
+
+        $this->travel(5)->seconds();                                 // t0+75: the job's first run
+        $job = (new PurgeRendererCacheAgain(13))->withFakeQueueInteractions();
+        $job->handle(app(RendererCachePurge::class));
+        $job->assertReleased(delay: 70);                             // waits for t0+145
         Http::assertNothingSent();
 
-        $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#123456'])->assertOk();
-        $this->assertPurgedOnce($masjid);
-        $this->assertFollowUpQueued($masjid);
+        $this->travelTo(\Illuminate\Support\Carbon::createFromTimestamp($t0 + 145));
+        $job = (new PurgeRendererCacheAgain(13))->withFakeQueueInteractions();
+        $job->handle(app(RendererCachePurge::class));
+        $job->assertNotReleased();
+        Http::assertSentCount(1);                                    // purged at t0+145, 75 s after the last save
     }
 
     #[Test]
-    public function a_superadmin_save_purges_the_organisation_in_the_route(): void
+    public function the_second_pass_lock_outlives_a_whole_editing_session_and_releases_do_not_exhaust_it(): void
     {
-        $this->fakeRenderer();
+        $job = new PurgeRendererCacheAgain(13);
+        $this->assertSame('renderer-purge-again-13', $job->uniqueId());
+        $this->assertNotSame($job->uniqueId(), (new PurgeRendererCacheAgain(14))->uniqueId());
+        $this->assertGreaterThanOrEqual(1800, $job->uniqueFor);
+        $this->assertGreaterThan(now()->addMinutes(29)->getTimestamp(), $job->retryUntil()->getTimestamp());
+        $this->assertSame('renderer-purge-first-13', (new PurgeRendererCache(13))->uniqueId());
+    }
+
+    #[Test]
+    public function a_super_admin_save_purges_the_organisation_in_the_route(): void
+    {
         $masjid = $this->org();
         Sanctum::actingAs(User::factory()->create(['type' => 'SuperAdmin', 'phone' => '+15550000001'])->fresh());
 
         $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#123456'])->assertOk();
 
-        $this->assertPurgedOnce($masjid);
+        $this->assertQueuedFor($masjid);
     }
 
     #[Test]
-    public function reads_and_failed_writes_purge_nothing(): void
+    public function saving_the_theme_queues_a_purge_and_previewing_it_does_not(): void
     {
-        Http::fake();
+        $masjid = $this->org();
+        $this->actAsAdmin($masjid);
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/theme/preview", ['primary_color' => '#123456'])->assertOk();
+        Queue::assertNothingPushed();
+
+        $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#123456'])->assertOk();
+        $this->assertQueuedFor($masjid);
+    }
+
+    #[Test]
+    public function reads_and_failed_writes_queue_nothing(): void
+    {
         $masjid = $this->org();
         $this->actAsAdmin($masjid);
 
@@ -185,14 +223,13 @@ class RendererCachePurgeTest extends TestCase
         $this->postJson("/api/admin/masjids/{$masjid->id}/pages", ['title' => 'No slug'])->assertStatus(422);
         $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => 'red'])->assertStatus(422);
 
-        Http::assertNothingSent();
         Queue::assertNothingPushed();
+        Http::assertNothingSent();
     }
 
     #[Test]
-    public function unconfigured_a_save_sends_nothing_and_still_succeeds(): void
+    public function unconfigured_a_save_queues_nothing_and_still_succeeds(): void
     {
-        Http::fake();
         $masjid = $this->org();
         $this->actAsAdmin($masjid);
 
@@ -202,101 +239,103 @@ class RendererCachePurgeTest extends TestCase
             config(['services.renderer.secret' => self::SECRET, 'services.renderer.purge_origins' => self::RENDERER]);
         }
 
-        Http::assertNothingSent();
         Queue::assertNothingPushed();
+        Http::assertNothingSent();
     }
 
     #[Test]
-    public function the_follow_up_job_purges_the_same_organisation_and_is_unique_per_organisation(): void
+    public function a_renderer_that_refuses_or_is_down_is_logged_at_warning(): void
     {
-        Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 1, 'remaining' => false])]);
-        $job = new PurgeRendererCacheAgain(13);
-
-        $job->handle(app(RendererCachePurge::class));
-
-        Http::assertSentCount(1);
-        Http::assertSent(fn (ClientRequest $request) => $request->body() === '{"v":1,"org":13}');
-        $this->assertSame('renderer-purge-13', $job->uniqueId());
-        $this->assertNotSame($job->uniqueId(), (new PurgeRendererCacheAgain(14))->uniqueId());
-        $this->assertSame(PurgeRendererCacheAgain::FOLLOW_UP_SECONDS, $job->uniqueFor);
-    }
-
-    #[Test]
-    public function a_renderer_that_refuses_or_is_down_is_logged_at_warning_and_the_save_stands(): void
-    {
-        $masjid = $this->org();
-        $this->actAsAdmin($masjid);
         Log::spy();
 
+        Http::swap(new \Illuminate\Http\Client\Factory());
         Http::fake([self::ENDPOINT => Http::response(['ok' => false], 401)]);
-        $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#111111'])->assertOk()->assertJsonPath('status', 'success');
+        $this->assertFalse(app(RendererCachePurge::class)->purge(13)[self::RENDERER]['ok']);
 
+        Http::swap(new \Illuminate\Http\Client\Factory());
         // A Guzzle connect failure, which the HTTP client raises as ConnectionException.
         Http::fake([self::ENDPOINT => fn () => throw new \GuzzleHttp\Exception\ConnectException('timed out', new \GuzzleHttp\Psr7\Request('POST', self::ENDPOINT))]);
-        $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#222222'])->assertOk()->assertJsonPath('status', 'success');
+        $this->assertFalse(app(RendererCachePurge::class)->purge(13)[self::RENDERER]['ok']);
 
-        Log::shouldHaveReceived('warning')->with('Renderer cache purge refused', \Mockery::on(fn ($c) => $c['masjid_id'] === $masjid->id && $c['status'] === 401))->once();
+        Log::shouldHaveReceived('warning')->with('Renderer cache purge refused', \Mockery::on(fn ($c) => $c['masjid_id'] === 13 && $c['status'] === 401))->once();
         Log::shouldHaveReceived('warning')->with('Renderer cache purge failed', \Mockery::on(fn ($c) => $c['exception'] === ConnectionException::class))->once();
-        $this->assertSame('#222222', $masjid->themeSettings()->first()->primary_color);
     }
 
     #[Test]
-    public function remaining_entries_are_followed_up_to_the_cap(): void
+    public function remaining_entries_are_fetched_by_cursor_in_the_signed_body(): void
     {
         $this->fakeRenderer(
-            ['ok' => true, 'deleted' => 800, 'remaining' => true],
-            ['ok' => true, 'deleted' => 800, 'remaining' => true],
-            ['ok' => true, 'deleted' => 12, 'remaining' => false],
+            ['ok' => true, 'deleted' => 800, 'remaining' => true, 'cursor' => 'nitro:routes:b1:p.x:host.y.json'],
+            ['ok' => true, 'deleted' => 12, 'remaining' => false, 'cursor' => null],
         );
+
         $this->assertSame(
-            [self::RENDERER => ['ok' => true, 'deleted' => 1612, 'calls' => 3]],
+            [self::RENDERER => ['ok' => true, 'deleted' => 812, 'calls' => 2]],
             app(RendererCachePurge::class)->purge(13),
         );
+        Http::assertSentCount(2);
+        Http::assertSent(fn (ClientRequest $request) => $this->assertSignedPurge($request, ['v' => 1, 'org' => 13, 'after' => 'nitro:routes:b1:p.x:host.y.json']));
     }
 
     #[Test]
-    public function a_renderer_that_always_has_more_is_called_at_most_max_calls_times_and_logged(): void
+    public function a_renderer_that_always_has_more_is_called_exactly_max_calls_times_and_logged(): void
     {
-        // Its own test: a second Http::fake() for the same URL would be shadowed by the
-        // first one's (exhausted) sequence.
         Log::spy();
-        Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 800, 'remaining' => true])]);
+        Http::swap(new \Illuminate\Http\Client\Factory());
+        Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 800, 'remaining' => true, 'cursor' => 'nitro:routes:b1:z.json'])]);
+
         $result = app(RendererCachePurge::class)->purge(13);
+
+        Http::assertSentCount(RendererCachePurge::MAX_CALLS);
         $this->assertSame(RendererCachePurge::MAX_CALLS, $result[self::RENDERER]['calls']);
+        $this->assertSame(800 * RendererCachePurge::MAX_CALLS, $result[self::RENDERER]['deleted']);
         Log::shouldHaveReceived('warning')->with('Renderer cache purge stopped with entries remaining', \Mockery::any())->once();
     }
 
     #[Test]
-    public function the_writes_that_purge_are_exactly_the_site_editors_writes(): void
+    public function the_writes_that_purge_are_exactly_the_site_editors_writes_and_their_bound_sources(): void
     {
+        $prefix = 'api/admin/masjids/{masjid_id}/';
+        // Route groups whose every write purges, and the writes inside them that must not.
+        $groups = ['pages', 'sections', 'general-settings', 'details', 'about', 'donation-link',
+            'contact-reasons', 'forms', 'offerings'];
+        $exempt = ['pages/preview-session', 'forms/{form_id}/responses', 'forms/{form_id}/staff-codes',
+            'offerings/{offering_id}/registrations'];
+
         $purging = [];
+        $expected = [];
         foreach (Route::getRoutes() as $route) {
-            if (in_array('renderer.purge', $route->gatherMiddleware(), true)) {
-                foreach (array_diff($route->methods(), ['GET', 'HEAD']) as $method) {
-                    $purging[] = $method.' '.$route->uri();
+            $writes = array_diff($route->methods(), ['GET', 'HEAD']);
+            if ($writes === [] || ! str_starts_with($route->uri(), $prefix)) {
+                continue;
+            }
+            $rest = substr($route->uri(), strlen($prefix));
+            $inGroup = false;
+            foreach ($groups as $group) {
+                $inGroup = $inGroup || $rest === $group || str_starts_with($rest, $group.'/');
+            }
+            foreach ($exempt as $skip) {
+                $inGroup = $inGroup && $rest !== $skip && ! str_starts_with($rest, $skip.'/') && ! str_starts_with($rest, $skip);
+            }
+            $inGroup = $inGroup || $rest === 'theme';
+
+            foreach ($writes as $method) {
+                if (in_array('renderer.purge', $route->gatherMiddleware(), true)) {
+                    $purging[] = "{$method} {$rest}";
+                }
+                if ($inGroup) {
+                    $expected[] = "{$method} {$rest}";
                 }
             }
         }
         sort($purging);
-
-        $prefix = 'api/admin/masjids/{masjid_id}';
-        $expected = [
-            "DELETE {$prefix}/pages/{page_id}",
-            "DELETE {$prefix}/pages/{page_id}/sections/{section_id}",
-            "DELETE {$prefix}/sections/{section_id}",
-            "POST {$prefix}/general-settings",
-            "POST {$prefix}/pages",
-            "POST {$prefix}/pages/reorder",
-            "POST {$prefix}/pages/{page_id}/sections",
-            "POST {$prefix}/pages/{page_id}/sections/attach",
-            "POST {$prefix}/sections",
-            "POST {$prefix}/theme",
-            "PUT {$prefix}/pages/{page_id}",
-            "PUT {$prefix}/pages/{page_id}/sections/{section_id}",
-            "PUT {$prefix}/sections/{section_id}",
-        ];
         sort($expected);
 
         $this->assertSame($expected, $purging);
+        $this->assertContains('POST pages/{page_id}/sections', $purging, 'control: page sections purge');
+        $this->assertContains('POST offerings/{offering_id}/fee-plans', $purging, 'control: fee plans purge');
+        $this->assertNotContains('POST theme/preview', $purging);
+        $this->assertNotContains('POST theme/preview-session', $purging);
+        $this->assertNotContains('POST splash-announcements', $purging, 'splash is fetched in the browser; its cache is Laravel\'s');
     }
 }

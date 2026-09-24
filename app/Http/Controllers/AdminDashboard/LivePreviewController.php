@@ -102,7 +102,9 @@ class LivePreviewController extends Controller
             'status' => 'success',
             'data' => [
                 'enabled' => true,
-                'url' => $previewOrigin.'/__manara/preview'.$path.'?mp='.$token,
+                // The token signs the decoded path; the URL carries it percent-encoded, which
+                // h3 decodes back before the renderer compares them (an Arabic slug included).
+                'url' => $previewOrigin.'/__manara/preview'.PreviewToken::encodePath($path).'?mp='.$token,
                 'origin' => $previewOrigin,
                 'surface' => $surface,
                 'path' => $path,
