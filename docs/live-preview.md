@@ -388,9 +388,16 @@ Branches: MasjidWebMS `feat/live-preview`; renderer `feat/live-preview` (merges 
   guard still 404s.
 - Browser (local sandbox): unsaved section, theme and splash repaint without reload; a theme sent
   under a pages token is ignored; an unlisted origin is refused by `frame-ancestors`.
-- Laravel full suite on the droplet CI copy at `2de3a9de`: 4322 passed, 1 skipped, 2 failed — both
-  failures were the new tests' own mistakes, fixed in `ecb00efd` and re-run green with the
-  route-table pins (148 passed). Final full run at the branch head: see LOG / hand-back.
+- Laravel full suite on the droplet CI copy: at `2de3a9de` 4322 passed, 1 skipped, 2 failed; at
+  `0b648b50` 4325 passed, 1 skipped, 1 failed. Every failure was a new test's own mistake
+  (persisting headers; a shadowed HTTP fake; expecting four follow-ups where the job's uniqueness
+  correctly queues one), fixed in `ecb00efd` and `61e0375c`; the preview, purge, CSP and
+  route-table pin files were re-run green after each fix.
+- Live tenants unchanged, before production: the renderer's `scripts/compare-builds-public.mjs`
+  served `origin/main` and this branch under workerd against one stub API — 10/10 identical
+  (visible text, cached re-read, status and header names; two tenants; `/`, `/about`,
+  `/services`, the payload guard's 404 and an unknown path). Production RBI on the five hosts
+  remains the point session's, at deploy.
 - Staging, real Cloudflare and MySQL: renderer alias `https://live-preview.manara-renderer-staging.pages.dev`
   (build `b4561a2b`); Laravel `https://masjid-staging.hopetechapps.com` at `ecb00efd`. Admin CSP
   frames the preview origin; MEC's client admin is refused a pages session while `web_pages` is off
