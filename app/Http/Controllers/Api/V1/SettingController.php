@@ -73,6 +73,13 @@ class SettingController extends Controller
             'copyright_text' => $masjid->copyright_text ?? null,
             'app_store_link' => $masjid->app_store_link ?? null,
             'google_play_link' => $masjid->google_play_link ?? null,
+            // Public on purpose, unlike the mobile directory (which denylists
+            // it): the website renderer loads this tenant's styled Maps
+            // JavaScript API map with it, so the key reaches every visitor's
+            // browser whatever this endpoint does. A browser key is protected
+            // by its Google Cloud restrictions (HTTP referrers + API), not by
+            // hiding it here; removing it would drop Burlington to the keyless
+            // embed. Only ever the requesting tenant's own key.
             'google_maps_key' => $masjid->google_maps_key ?? null,
             'social_media' =>  $masjid->socialMediaLinks->map(fn($item) => array(
                 'type' => $item->type,

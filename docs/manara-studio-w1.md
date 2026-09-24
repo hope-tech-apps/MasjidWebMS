@@ -1929,8 +1929,17 @@ Walk the first real client, with the owner:
 
 These are not W1 work. Each needs its own ticket.
 
-- `/api/v1/settings` returns `google_maps_key` to unauthenticated callers
-  (`SettingController.php:76`), while the mobile directory denylists it.
+- `/api/v1/settings` returning `google_maps_key` to unauthenticated callers
+  (`SettingController.php`) is **intended, not a leak**. The renderer
+  (`app/utils/mapEmbed.ts`, `MasjidMap.vue`, `getGoogleMapsKey`) loads a
+  tenant's styled Maps JavaScript API map with it, so the key reaches every
+  visitor's browser whatever the API does; only org 1 (Burlington) sets one on
+  production. Removing it would drop Burlington's live map to the keyless
+  embed and protect nothing. The mobile directory still denylists it
+  (`PublicMasjidDirectoryTest`), and `WebsiteSettingsMapsKeyTest` pins that a
+  tenant's site gets only its own key. The remaining action is the owner's:
+  check in Google Cloud that the key is restricted by HTTP referrer and to the
+  Maps JavaScript API.
 - **Fixed on `fix/quran-key-and-maps-key-note`:** the legacy wizard gave new
   masjids Qur'an OFF on production. The production key is `qur’an` (U+2019),
   and both the wizard and `OnboardingController@provision` matched features by
