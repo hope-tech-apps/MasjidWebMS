@@ -76,6 +76,25 @@
 | `listed_when_off` => false keeps a grant off the Team & Access chips while it
 | is off, so adding a grant does not add an "off" chip to every organisation.
 |
+| Three optional keys serve Manara Studio's feature step, which reads them
+| through App\Support\CapabilityCatalogue (GET /api/admin/studio/catalogue).
+| Nothing else reads them, so the switch panel and every gate are unchanged:
+|
+|   `turns_on`              One plain sentence saying what switching the entry
+|                           ON gives. Studio asks what a new organisation should
+|                           have, and a description written for switching a
+|                           screen off answers the wrong question. Falls back to
+|                           `description`.
+|
+|   `provision_default`     Column-backed grants only: the value a newly
+|                           provisioned organisation's column is born with. The
+|                           column defaults (false) are not what provisioning
+|                           writes: an organisation is born with its CRM on.
+|
+|   `studio_preselect_with` Platforms (ios, android, tvos, web) whose choice in
+|                           Studio ticks this entry for the operator, who can
+|                           still untick it.
+|
 */
 
 return [
@@ -92,6 +111,9 @@ return [
         // Web Pages Management was SuperAdmin-only in the menu for every
         // organisation, so no organisation has it until it is switched on.
         'defaults' => ['masjid' => false, 'school' => false, 'community' => false],
+        // Studio starts a web client's pages as placeholders its own admins
+        // fill in, which they cannot do without this grant.
+        'studio_preselect_with' => ['web'],
     ],
 
     'jummah_lunch' => [
@@ -121,6 +143,9 @@ return [
         'label' => 'Members, classes & giving',
         'description' => 'Member directory, groups and classes, teachers, programs, donations and funds.',
         'column' => 'crm_enabled',
+        // OnboardingController::provision creates every organisation with its
+        // CRM on unless the request says otherwise.
+        'provision_default' => true,
     ],
 
     'assistant' => [
@@ -129,6 +154,8 @@ return [
         'label' => 'Manara Assistant',
         'description' => 'The AI assistant for admins, and form insights.',
         'column' => 'assistant_enabled',
+        // Provisioning never writes it, so it is born at the column default.
+        'provision_default' => false,
     ],
 
     'form_editing' => [
@@ -186,6 +213,7 @@ return [
         'group' => 'content',
         'label' => 'Web Pages Management',
         'description' => 'The screen where the website\'s pages and sections are built. Switch it off for an organisation with no website: nobody sees the screen, a SuperAdmin only from the switched-off list. The public website keeps serving.',
+        'turns_on' => 'A screen for building the website\'s pages and sections.',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
     ],
 
@@ -289,6 +317,7 @@ return [
         'group' => 'prayer',
         'label' => 'Prayer times',
         'description' => 'Set how prayer times are calculated, the iqama times and Jumu\'ah. Switched off, the website, apps and TV board keep showing the last saved times. Manara stops its backup reminders to phones that have not opened the app for 5 days, and its daily background refresh. Android phones re-arm their own adhan and iqama alerts every day; an iPhone re-arms them when the app is opened, so one left unopened for about 6 days can stop alerting, and iqama times saved while this is off reach iPhones only when the app is next opened.',
+        'turns_on' => 'Set how prayer times are calculated, the iqama times and Jumu\'ah, for the website, the apps and the TV board.',
         // No sidebar item of its own: three tabs on the Details screen.
         'where' => 'Prayer Calculation, Iqama Settings and Jumaa Settings tabs',
         'defaults' => ['masjid' => true, 'school' => true, 'community' => true],
@@ -323,6 +352,7 @@ return [
         'group' => 'registration_money',
         'label' => 'Giving',
         'description' => 'Gifts, funds, monthly giving and year-end statements. Also needs Members, classes & giving. Stripe setup is not part of this switch. Switched off, the giving screens are hidden; a member\'s record still shows their giving history, and the Impact Report still totals gifts for admins who can view donations. The app stops taking new gifts. Gifts already paid are still recorded and receipted.',
+        'turns_on' => 'Gifts, funds, monthly giving and year-end statements, and giving in the app. Also needs Members, classes & giving.',
         'defaults' => ['masjid' => true, 'school' => false, 'community' => false],
     ],
 

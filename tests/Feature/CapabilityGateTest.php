@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Requests\Admin\Onboarding\ProvisionMasjidRequest;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
@@ -425,5 +426,72 @@ class CapabilityGateTest extends TestCase
             $this->assertNotSame(403, $status, "a SuperAdmin was refused /{$path}");
             $this->assertLessThan(500, $status, "/{$path} errored for a SuperAdmin");
         }
+    }
+
+    #[Test]
+    public function a_turns_on_line_when_present_is_a_non_empty_string(): void
+    {
+        // Studio prints it as the reason to switch an entry on; a blank one
+        // would silently fall back to a description written for switching off.
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (array_key_exists('turns_on', $definition)) {
+                $this->assertIsString($definition['turns_on'], "{$key}'s turns_on is not a string");
+                $this->assertNotSame('', trim($definition['turns_on']), "{$key} has an empty turns_on");
+            }
+        }
+
+        // Their descriptions talk about switching off.
+        foreach (['website', 'prayer_times', 'giving'] as $key) {
+            $this->assertArrayHasKey('turns_on', config("capabilities.{$key}"), "{$key} has no turns_on");
+        }
+    }
+
+    #[Test]
+    public function every_column_backed_grant_has_a_boolean_provision_default(): void
+    {
+        $columnBacked = [];
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (empty($definition['column'])) {
+                // Only a column has a value provisioning writes apart from `defaults`.
+                $this->assertArrayNotHasKey('provision_default', $definition, "{$key} is not column-backed");
+
+                continue;
+            }
+
+            $columnBacked[] = $key;
+            $this->assertIsBool($definition['provision_default'] ?? null, "{$key} has no boolean provision_default");
+        }
+
+        $this->assertSame(['crm', 'assistant'], $columnBacked);
+        // What OnboardingController::provision gives a new organisation.
+        $this->assertTrue(config('capabilities.crm.provision_default'));
+        $this->assertFalse(config('capabilities.assistant.provision_default'));
+    }
+
+    #[Test]
+    public function studio_preselect_with_names_real_platforms(): void
+    {
+        // The platforms provisioning accepts are the real ones.
+        $rule = collect((new ProvisionMasjidRequest())->rules()['platforms.*'])
+            ->first(fn ($rule) => str_starts_with((string) $rule, 'in:'));
+        $platforms = str_getcsv(substr((string) $rule, 3));
+        $this->assertContains('web', $platforms);
+
+        foreach (config('capabilities', []) as $key => $definition) {
+            if (! array_key_exists('studio_preselect_with', $definition)) {
+                continue;
+            }
+
+            $this->assertIsList($definition['studio_preselect_with'], "{$key}'s studio_preselect_with is not a list");
+            $this->assertNotEmpty($definition['studio_preselect_with'], "{$key} preselects with nothing");
+
+            foreach ($definition['studio_preselect_with'] as $platform) {
+                $this->assertContains($platform, $platforms, "{$key} preselects with '{$platform}'");
+            }
+        }
+
+        // Without it a web client's admins cannot fill a single starter page.
+        $this->assertSame(['web'], config('capabilities.web_pages.studio_preselect_with'));
     }
 }
