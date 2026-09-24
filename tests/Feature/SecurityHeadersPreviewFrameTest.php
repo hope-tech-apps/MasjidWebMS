@@ -62,6 +62,34 @@ class SecurityHeadersPreviewFrameTest extends TestCase
     }
 
     #[Test]
+    public function a_second_host_names_this_apps_own_origin_and_keeps_the_preview_frame(): void
+    {
+        // manara.hopetechapps.com serves this app beside APP_URL's host. Its logos,
+        // bundle and API are absolute URLs to APP_URL, so the policy must name that
+        // origin there, exactly as on the proxied pages, and must still carry the
+        // preview frame the page editors need.
+        config([
+            'app.url' => 'https://masjid.hopetechapps.com',
+            'services.renderer.secret' => str_repeat('k', 40),
+            'services.renderer.preview_origin' => 'https://preview.manara.hopetechapps.com',
+        ]);
+
+        $second = (string) $this->get('https://manara.hopetechapps.com/robots.txt')->headers->get('Content-Security-Policy');
+        foreach (['script-src', 'style-src', 'font-src', 'img-src', 'connect-src'] as $directive) {
+            $this->assertMatchesRegularExpression("#{$directive} [^;]* https://masjid\\.hopetechapps\\.com(;| )#", $second, "{$directive} names the app's own origin on the second host");
+        }
+        $this->assertStringContainsString('https://fonts.bunny.net', $second);
+        $this->assertStringContainsString("frame-src 'self' https://www.google.com https://maps.google.com https://preview.manara.hopetechapps.com;", $second);
+
+        $own = (string) $this->get('https://masjid.hopetechapps.com/robots.txt')->headers->get('Content-Security-Policy');
+        $this->assertStringNotContainsString('img-src \'self\' data: blob: https://masjid.hopetechapps.com', $own, 'APP_URL\'s own host keeps the unwidened policy');
+        $this->assertSame(
+            str_replace("frame-src 'self' https://www.google.com https://maps.google.com;", "frame-src 'self' https://www.google.com https://maps.google.com https://preview.manara.hopetechapps.com;", self::BASELINE),
+            $own,
+        );
+    }
+
+    #[Test]
     public function a_malformed_preview_origin_is_never_written_into_the_policy(): void
     {
         config([

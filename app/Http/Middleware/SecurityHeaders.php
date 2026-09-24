@@ -103,6 +103,19 @@ class SecurityHeaders
             }
         }
 
+        // A SECOND HOST serving this same app (manara.hopetechapps.com, admitted by
+        // TRUSTED_HOSTS) has the proxied pages' problem on every path: the document
+        // origin is not config('app.url')'s, while every media, bundle and API URL the
+        // Blade and the API emit is pinned to it, so 'self' covers none of them. That
+        // host was unblocked with a Cloudflare response-header rule that REPLACES this
+        // whole policy with a frozen copy, which then missed every later change (the
+        // Figtree CDN, the live-preview frame). Naming our own origin here is the
+        // durable form of that rule, so the rule can be deleted.
+        $appHost = strtolower((string) parse_url((string) config('app.url'), PHP_URL_HOST));
+        if (! $isProxied && $appHost !== '' && strtolower($request->getHost()) !== $appHost) {
+            $isProxied = true;
+        }
+
         if ($isProxied) {
             $app = rtrim((string) config('app.url'), '/');
             $ownOrigin = " {$app}";
