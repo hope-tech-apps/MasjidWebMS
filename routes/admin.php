@@ -74,6 +74,7 @@ use App\Http\Controllers\AdminDashboard\TeamController;
 use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
+use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
@@ -1575,6 +1576,13 @@ Route::prefix('admin')->group(function () {
             // GOOGLE_MAPS_GEOCODING_KEY isn't provisioned, so the wizard keeps
             // its manual latitude/longitude inputs as the fallback.
             Route::post('/intake/geocode', [OnboardingIntakeController::class, 'geocode']);
+        });
+
+        // Manara Studio, the wizard's successor (docs/manara-studio-w1.md).
+        // SuperAdmin-only, and every Studio endpoint lives under this one
+        // prefix so StudioAccessTest can find them all from the router.
+        Route::prefix('studio')->middleware('super')->group(function () {
+            Route::get('/catalogue', [StudioCatalogueController::class, 'show']);
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {
