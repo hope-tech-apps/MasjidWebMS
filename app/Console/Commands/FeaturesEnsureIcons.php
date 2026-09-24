@@ -71,7 +71,7 @@ class FeaturesEnsureIcons extends Command
                 continue;
             }
 
-            $key = preg_replace('/[^a-z0-9]/', '', strtolower((string) $feature->key));
+            $key = MobileAppFeature::normaliseKey($feature->key);
             $file = self::ICON_FILES[$key] ?? null;
             $path = $file !== null ? storage_path('app/public/icons/'.$file) : null;
 

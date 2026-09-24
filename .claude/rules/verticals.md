@@ -63,6 +63,12 @@ wording (`Letterhead::religiousOrg`), and the Donations menu item reads the
 
 Every key listed in a bundle MUST exist in `mobile_app_features.key`, or
 provisioning silently enables nothing for it. `OrgTypeTest` asserts this.
+Match a bundle key to the catalogue with `MobileAppFeature::normaliseKey()`
+(the wizard: `catalogueKeysFor()` in `core/helpers/featureKey.ts`), never by
+the raw key: production's Qur'an row is keyed `qur’an` (U+2019) while the
+bundle says `quran`, and the exact match gave every new masjid Qur'an off.
+`QuranFeatureKeySpellingTest` seeds the production spelling and, with no JS
+test runner here, reads the wizard's source to pin its matching.
 
 `OnboardingController@provision` seeds from `$masjid->defaultFeatureKeys()`, and
 an explicit wizard selection (`feature_keys_provided` + `feature_keys`) still

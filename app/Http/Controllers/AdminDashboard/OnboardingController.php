@@ -249,15 +249,23 @@ class OnboardingController extends Controller
                 // modules switched on. For a masjid that bundle is the whole
                 // seeded catalog, which is the previous "everything on"
                 // behaviour unchanged.
+                //
+                // Matched by MobileAppFeature::normaliseKey, never the raw key:
+                // production's Qur'an row is keyed `qur’an` (U+2019) while the
+                // bundle says `quran`, and an exact match provisioned every new
+                // masjid with Qur'an off.
                 $explicitFeatures = $request->has('feature_keys_provided');
-                $selected = $explicitFeatures
-                    ? $request->input('feature_keys', [])
-                    : $masjid->defaultFeatureKeys();
+                $selected = array_map(
+                    fn ($key) => MobileAppFeature::normaliseKey($key),
+                    $explicitFeatures
+                        ? ($request->input('feature_keys') ?? [])
+                        : $masjid->defaultFeatureKeys()
+                );
                 foreach (MobileAppFeature::all() as $feature) {
                     MasjidMobileAppFeature::create([
                         'masjid_id' => $masjid->id,
                         'feature_id' => $feature->id,
-                        'is_available' => in_array($feature->key, $selected, true),
+                        'is_available' => in_array(MobileAppFeature::normaliseKey($feature->key), $selected, true),
                     ]);
                 }
 

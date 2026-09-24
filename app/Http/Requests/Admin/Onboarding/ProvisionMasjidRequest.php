@@ -8,6 +8,7 @@ use App\Enums\PrayerCalculationMethod;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\City;
 use App\Models\Masjid;
+use App\Models\MobileAppFeature;
 use App\Models\User;
 use Illuminate\Validation\Rule;
 
@@ -39,6 +40,13 @@ class ProvisionMasjidRequest extends BaseFormRequest
     {
         if (! $this->filled('org_type')) {
             $this->merge(['org_type' => Masjid::ORG_TYPE_MASJID]);
+        }
+
+        // Accept a posted key in any spelling the catalogue normalises to
+        // (`quran` for production's `qur’an`), so the key config/verticals.php
+        // documents works everywhere; `exists` below still rejects the rest.
+        if (is_array($this->input('feature_keys'))) {
+            $this->merge(['feature_keys' => MobileAppFeature::toCatalogueKeys($this->input('feature_keys'))]);
         }
     }
 

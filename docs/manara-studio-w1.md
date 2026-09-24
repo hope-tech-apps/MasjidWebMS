@@ -1929,13 +1929,29 @@ Walk the first real client, with the owner:
 
 These are not W1 work. Each needs its own ticket.
 
-- `/api/v1/settings` returns `google_maps_key` to unauthenticated callers
-  (`SettingController.php:76`), while the mobile directory denylists it.
-- **The legacy wizard gives new masjids Qur'an OFF on production.** The
-  production key is `qur’an` (U+2019), and the wizard matches features by key
-  (`OnboardingWizardView.vue:728-730`, `OnboardingController.php:258`).
-  `OrgTypeTest` passes on SQLite while the assumption is false on production.
-  Studio avoids the bug by matching on id.
+- `/api/v1/settings` returning `google_maps_key` to unauthenticated callers
+  (`SettingController.php`) is **intended, not a leak**. The renderer
+  (`app/utils/mapEmbed.ts`, `MasjidMap.vue`, `getGoogleMapsKey`) loads a
+  tenant's styled Maps JavaScript API map with it; only org 1 (Burlington)
+  sets one on production. Removing it would drop Burlington's live map to the
+  keyless embed. The exposure is wider than the rendered site: the endpoint is
+  anonymous, serves whichever tenant the caller's `masjid-id` header names,
+  and masjid ids are public, so anyone can collect every tenant's key, even a
+  tenant whose website is off or not yet live (the endpoint does not check the
+  `website` module). The key's Google Cloud restrictions are therefore the
+  only protection for every tenant that sets one. The mobile directory still
+  denylists it (`PublicMasjidDirectoryTest`), and `WebsiteSettingsMapsKeyTest`
+  pins only that the header selects the row: each tenant id gets that
+  tenant's key, never a neighbour's. The remaining action is the owner's:
+  check in Google Cloud that every stored key is restricted by HTTP referrer
+  and to the Maps JavaScript API. Serving the key only when the tenant's
+  `website` module is on would narrow the exposure; it is not done here.
+- **Fixed on `fix/quran-key-and-maps-key-note`:** the legacy wizard gave new
+  masjids Qur'an OFF on production. The production key is `qur’an` (U+2019),
+  and both the wizard and `OnboardingController@provision` matched features by
+  the raw key. Both now match by `MobileAppFeature::normaliseKey()`, and an
+  explicit `quran` post maps to the production row
+  (`QuranFeatureKeySpellingTest`). Studio avoids the bug by matching on id.
 - **Possible:** a client-sent `X-Forwarded-Host: localhost` may render
   Burlington on `mec-web.pages.dev`. The git map sends `localhost`→1, and h3
   falls back to `localhost` (renderer-lookup risk [1]). This is unverified.
