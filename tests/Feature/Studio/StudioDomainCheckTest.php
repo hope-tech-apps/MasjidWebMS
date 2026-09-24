@@ -126,7 +126,7 @@ class StudioDomainCheckTest extends TestCase
     #[Test]
     public function a_managed_label_must_be_one_dns_label_and_not_reserved(): void
     {
-        foreach (['-bad', 'bad-', 'two.labels', str_repeat('a', 64), 'under_score', '', 'www', 'api', 'alrazi'] as $label) {
+        foreach (['-bad', 'bad-', 'two.labels', str_repeat('a', 64), 'under_score', '', 'www', 'api', 'alrazi', 'preview', 'PREVIEW'] as $label) {
             $this->postJson(self::URL, ['kind' => 'managed_subdomain', 'label' => $label])
                 ->assertStatus(422)->assertJsonStructure(['data' => ['label']]);
         }

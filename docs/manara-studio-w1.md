@@ -638,7 +638,7 @@ the live hosts are recorded. Nothing consumes any of it yet.
 - `managed_zone` (`hopetechapps.com`), `managed_zone_id`
   (`859eddb9bce48f4f35e6197f6c0b8e15`, `deploy/staging/cloudflare-dns.sh:15-25`),
   `managed_suffix` (`manara.hopetechapps.com`);
-- `reserved_labels`: `['www','api','admin','app','staging','portal','mail','manara','mec','alrazi']`;
+- `reserved_labels`: `['www','api','admin','app','staging','portal','mail','manara','mec','alrazi','preview']` (`preview` added 2026-09-24: the live-preview host);
 - `pages_domain_ceiling` 100, `api_base`, `timeout` 15.
 
 In the same change:

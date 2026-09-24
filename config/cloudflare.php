@@ -46,7 +46,10 @@ return [
     // Labels no organisation may take as its managed subdomain: our own
     // infrastructure names, and the two live tenants whose labels predate
     // Studio (mec, alrazi) so a new org cannot be handed a look-alike claim.
-    'reserved_labels' => ['www', 'api', 'admin', 'app', 'staging', 'portal', 'mail', 'manara', 'mec', 'alrazi'],
+    // `preview` is the live-preview host (preview.manara.hopetechapps.com,
+    // owner decision 2026-09-24): it serves no tenant, and an org holding that
+    // label would turn every editor's preview pane into its site.
+    'reserved_labels' => ['www', 'api', 'admin', 'app', 'staging', 'portal', 'mail', 'manara', 'mec', 'alrazi', 'preview'],
 
     // Custom domains one Pages project may carry, as the plan records it
     // (docs/manara-studio-w1.md, S3). Studio reports how close the project is
