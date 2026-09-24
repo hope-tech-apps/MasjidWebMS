@@ -329,6 +329,21 @@ class CapabilityCatalogueEndpointTest extends TestCase
     }
 
     #[Test]
+    public function preselect_with_serves_only_platform_names(): void
+    {
+        Sanctum::actingAs($this->superAdmin());
+
+        // The plan types the field string[]; Studio matches it against the chosen
+        // platforms, so a blank or non-string value from an overridden or cached
+        // config must not reach the SPA.
+        config(['capabilities.web_pages.studio_preselect_with' => ['web', '', null, 7]]);
+        $this->assertSame(['web'], $this->entries($this->catalogue('masjid'))['web_pages']['preselect_with']);
+
+        config(['capabilities.web_pages.studio_preselect_with' => 'web']);
+        $this->assertSame([], $this->entries($this->catalogue('masjid'))['web_pages']['preselect_with']);
+    }
+
+    #[Test]
     public function a_new_config_entry_appears_with_no_code_change(): void
     {
         Sanctum::actingAs($this->superAdmin());
