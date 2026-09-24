@@ -713,6 +713,17 @@ export const SUPER_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin']
     },
     {
+        // Beside "Onboard Masjid", which stays until Studio can provision (S12).
+        title: "Manara Studio",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="3" y="4" width="18" height="13" rx="2" stroke="white" stroke-width="1.5"/>
+            <path d="M8 21h8M12 17v4" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M7 13l3-3 2 2 4-4" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>`,
+        to: '/dashboard/super/studio',
+        allowed_types: ['SuperAdmin']
+    },
+    {
         title: "App Version",
         svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" stroke="white" stroke-width="1.5"/>

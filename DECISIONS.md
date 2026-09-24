@@ -2319,3 +2319,25 @@ apex is told to add the domain to Cloudflare and move its nameservers (with the 
 Rationale: each closes a way the operator's instructions or the `cf_*` record could stop
 matching what exists in Cloudflare. A cleared cache degrades the zone marker to "found",
 the state before it existed.
+
+## 2026-09-24 — Studio W1 S5 (stage A): calls made where the plan was silent
+Decision: the drafts list asks for `?status=all`, because the Status column links a provisioned
+draft to its organisation and the endpoint defaults to open drafts only. The Identity panel's
+organisation types, terminology and prayer choices come from `GET /onboarding/options`, the
+endpoint the wizard reads, so Studio holds no copy of `config/verticals.php`. Nothing is
+pre-chosen on a new draft: no colours (R25), no calculation method, no iqama offsets, no
+timezone; a platform starts on the Managed account mode, as in the wizard. Next from
+Foundation needs the organisation type, the name, four colours, one platform, and the logo when
+web is chosen (the plan names only the logo rule; the rest are what Steps 1 and 2 read). The
+autosave sends each changed section whole and drops blanks (`''`, null, empty objects), which the
+server reads as absent; a step change is saved at once with any pending sections. A 409 disarms
+the autosave until "Reload draft"; a 422 or network failure waits for the next edit or Retry.
+The logo sampler's candidates are saved to `brand.extracted` only on upload, never on load, so
+opening a draft never writes. `prepareLogo` redraws an over-cap PNG or JPEG as PNG too (the plan
+says "any other type"), and draws an SVG at the 2048 px cap. `appLabels.ts` copies iOS from
+`origin/main` 8e5191f and Android from `feat/r1-owner-answers` aeac265, the only branch with the
+R1 tab bar `StudioPreview::ANDROID_TABS` cites.
+Rationale: each keeps a draft to what the operator entered and keeps Studio off an eighth copy of
+the feature list; recorded because the plan left them open.
+Measured: `vue-tsc --noEmit` at b81980da reports 105 errors (vue-tsc 2.2.12 on the repo's
+TypeScript 5.7.3), not the 29 the plan cites; this slice adds none.

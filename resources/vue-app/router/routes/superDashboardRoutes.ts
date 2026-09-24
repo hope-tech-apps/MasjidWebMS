@@ -109,6 +109,32 @@ const dashboardRoutes: RouteRecordRaw[] = [
                 },
                 component: () => import("@/views/dashboard/super/OnboardingWizardView.vue")
             },
+            // Manara Studio, the onboarding wizard's successor
+            // (docs/manara-studio-w1.md S5). The wizard's route above stays until
+            // S12, because it is the working provisioning tool until Studio's
+            // Step 3 can provision.
+            {
+                path: 'studio',
+                name: 'studio.drafts',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin'],
+                    pageTitle: 'Manara Studio',
+                    dashboardType: 'super'
+                },
+                component: () => import("@/views/dashboard/super/studio/StudioDraftsView.vue")
+            },
+            {
+                path: 'studio/drafts/:draft_id(\\d+)',
+                name: 'studio.draft',
+                meta: {
+                    auth: true,
+                    allowedUsers: ['SuperAdmin'],
+                    pageTitle: 'Manara Studio',
+                    dashboardType: 'super'
+                },
+                component: () => import("@/views/dashboard/super/studio/StudioView.vue")
+            },
             {
                 path: 'app-config',
                 name: 'appConfig',
