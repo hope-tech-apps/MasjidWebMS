@@ -4,7 +4,8 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "build:prod": "VITE_APP_URL=https://masjid.hopetechapps.com vite build"
+        "build:prod": "VITE_APP_URL=https://masjid.hopetechapps.com vite build",
+        "test:spa": "node --experimental-strip-types --test resources/vue-app/tests/*.test.ts"
     },
     "devDependencies": {
         "@types/bootstrap": "^5.2.10",

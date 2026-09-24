@@ -42,8 +42,10 @@
                 :key="src"
                 :src="src"
                 :style="frameStyle"
+                :sandbox="PREVIEW_FRAME_SANDBOX"
                 title="Live preview of the public site"
                 referrerpolicy="no-referrer"
+                @load="onFrameLoad"
             ></iframe>
         </div>
         <div class="card-footer small text-muted py-1">
@@ -70,13 +72,8 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMasjidStore } from '@/stores/masjidStore';
-import {
-    ADMIN_MESSAGE_SOURCE,
-    PREVIEW_MESSAGE_SOURCE,
-    requestPreviewSession,
-    toPlainJson,
-    type PreviewSurface,
-} from '@/composables/useLivePreview';
+import { requestPreviewSession, type PreviewSurface } from '@/composables/useLivePreview';
+import { PREVIEW_FRAME_SANDBOX, isReadyFromFrame, overridesMessage, postTargetFor } from '@/core/helpers/previewFrame';
 
 const props = withDefaults(defineProps<{
     surface: PreviewSurface;
@@ -115,6 +112,7 @@ const viewportHeight = ref(0);
 
 let readyTimer: ReturnType<typeof setTimeout> | undefined;
 let sendTimer: ReturnType<typeof setTimeout> | undefined;
+let lastAutoReopen = 0;
 let resizeObserver: ResizeObserver | undefined;
 let generation = 0;
 
@@ -163,17 +161,35 @@ async function open() {
 
 function send() {
     const target = frame.value?.contentWindow;
-    if (state.value !== 'ready' || !target || !origin.value) return;
-    target.postMessage(
-        { source: ADMIN_MESSAGE_SOURCE, v: 1, type: 'overrides', overrides: toPlainJson(props.overrides) },
-        origin.value,
-    );
+    const targetOrigin = postTargetFor(origin.value);
+    if (state.value !== 'ready' || !target || !targetOrigin) return;
+    target.postMessage(overridesMessage(props.overrides), targetOrigin);
+}
+
+/**
+ * A full load after the site said `ready` means the frame reloaded or navigated (a reload,
+ * a chunk-error reload after a renderer deploy, a link). Its preview pass was single-use
+ * in the URL, so the reloaded page is not a preview: expect a fresh `ready`, and if none
+ * comes, open a new session once rather than leave a dead pane.
+ */
+function onFrameLoad() {
+    if (state.value !== 'ready') return;
+    state.value = 'loading';
+    const mine = generation;
+    clearTimeout(readyTimer);
+    readyTimer = setTimeout(() => {
+        if (mine !== generation || state.value !== 'loading') return;
+        if (Date.now() - lastAutoReopen > 30000) {
+            lastAutoReopen = Date.now();
+            void open();
+        } else {
+            state.value = 'error';
+        }
+    }, 8000);
 }
 
 function onMessage(event: MessageEvent) {
-    if (!frame.value || event.source !== frame.value.contentWindow || event.origin !== origin.value) return;
-    const data = event.data;
-    if (!data || data.source !== PREVIEW_MESSAGE_SOURCE || data.v !== 1 || data.type !== 'ready') return;
+    if (!isReadyFromFrame(event, frame.value?.contentWindow, origin.value)) return;
     clearTimeout(readyTimer);
     const first = state.value !== 'ready';
     state.value = 'ready';

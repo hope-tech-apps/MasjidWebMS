@@ -11,7 +11,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
  * preview mode and sends it the editor's UNSAVED values by postMessage. Nothing unsaved
  * is ever sent to the API.
  *
- * Message contract (renderer: shared/previewMessage.ts):
+ * Message contract (renderer: shared/previewMessage.ts; admin: core/helpers/previewFrame.ts):
  *   admin → preview  {source:'manara-admin',   v:1, type:'overrides', overrides}
  *   preview → admin  {source:'manara-preview', v:1, type:'ready', path, org, surface}
  */
@@ -27,9 +27,6 @@ export interface PreviewSession {
     path?: string;
     expires_at?: string;
 }
-
-export const PREVIEW_MESSAGE_SOURCE = 'manara-preview';
-export const ADMIN_MESSAGE_SOURCE = 'manara-admin';
 
 const endpoint = (masjidId: string | number, surface: PreviewSurface) => {
     switch (surface) {
@@ -77,14 +74,6 @@ export function usePreviewAvailability(surface: PreviewSurface): ComputedRef<boo
         const masjidId = masjidStore.masjid?.id;
         return masjidId ? (availability[`${masjidId}:${surface}`] ?? null) : null;
     });
-}
-
-/**
- * Makes a value safe to post: a plain JSON copy. Vue's reactive proxies cannot be
- * structured-cloned, and the renderer rejects anything that is not plain JSON anyway.
- */
-export function toPlainJson<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value ?? {})) as T;
 }
 
 /** The public path the renderer serves a page-builder page at. */

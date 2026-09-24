@@ -82,26 +82,26 @@
                         <div class="row">
                             <div class="col-12 col-md-6 mb-3">
                                 <label class="form-label fw-semibold" for="theme-heading-font">Heading font</label>
-                                <select id="theme-heading-font" v-model="styleModel.heading" class="form-select" @change="styleTouched = true">
+                                <select id="theme-heading-font" v-model="styleModel.heading" class="form-select" @change="touched.fonts = true">
                                     <option v-for="f in fontChoices('heading')" :key="f.key" :value="f.key">{{ f.label }}</option>
                                 </select>
                             </div>
                             <div class="col-12 col-md-6 mb-3">
                                 <label class="form-label fw-semibold" for="theme-body-font">Body font</label>
-                                <select id="theme-body-font" v-model="styleModel.body" class="form-select" @change="styleTouched = true">
+                                <select id="theme-body-font" v-model="styleModel.body" class="form-select" @change="touched.fonts = true">
                                     <option v-for="f in fontChoices('body')" :key="f.key" :value="f.key">{{ f.label }}</option>
                                 </select>
                             </div>
                             <div class="col-12 col-md-6 mb-3">
                                 <label class="form-label fw-semibold" for="theme-header-style">Header style</label>
-                                <select id="theme-header-style" v-model="styleModel.header" class="form-select" @change="styleTouched = true">
+                                <select id="theme-header-style" v-model="styleModel.header" class="form-select" @change="touched.layout = true">
                                     <option value="default">Standard</option>
                                     <option value="overlay">Over the page's top image</option>
                                 </select>
                             </div>
                             <div class="col-12 col-md-6 mb-3">
                                 <label class="form-label fw-semibold" for="theme-footer-style">Footer style</label>
-                                <select id="theme-footer-style" v-model="styleModel.footer" class="form-select" @change="styleTouched = true">
+                                <select id="theme-footer-style" v-model="styleModel.footer" class="form-select" @change="touched.layout = true">
                                     <option value="default">Standard</option>
                                     <option value="columns">Columns</option>
                                 </select>
@@ -186,6 +186,14 @@ import type { AxiosError } from 'axios';
 import type { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import type { ThemeSetting } from '@/core/types/data/masjid-related/ThemeSetting';
 import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
+import {
+    fontChoices as themeFontChoices,
+    styleFromTokens,
+    themePayload as buildThemePayload,
+    type StyleModel,
+    type Tokens,
+    type Touched,
+} from '@/core/helpers/themeTokens';
 import { usePreviewAvailability } from '@/composables/useLivePreview';
 
 // Stores
@@ -209,93 +217,22 @@ const settingsModel = ref({
 });
 
 /*
- * Website fonts and header/footer style. They live in the theme's `tokens` override
- * tree, which the save REPLACES whole — so the tree is loaded, edited in place and sent
- * back complete, and it is sent at all only once one of these controls has been changed:
- * an admin who only touches colours posts exactly what this screen always posted.
+ * Website fonts and header/footer style: the `tokens` the renderer reads. All the rules
+ * (what is kept, what is rebuilt, when anything is sent) are core/helpers/themeTokens.ts.
  */
-type FontChoice = { key: string; label: string; stack: string | null; google: string | null };
-const FONTS: FontChoice[] = [
-    { key: '', label: 'Site default', stack: null, google: null },
-    { key: 'poppins', label: 'Poppins', stack: "'Poppins', sans-serif", google: 'Poppins:wght@400;500;600;700' },
-    { key: 'inter', label: 'Inter', stack: "'Inter', sans-serif", google: 'Inter:wght@400;500;600;700' },
-    { key: 'lato', label: 'Lato', stack: "'Lato', sans-serif", google: 'Lato:wght@400;700' },
-    { key: 'montserrat', label: 'Montserrat', stack: "'Montserrat', sans-serif", google: 'Montserrat:wght@400;500;600;700' },
-    { key: 'open-sans', label: 'Open Sans', stack: "'Open Sans', sans-serif", google: 'Open Sans:wght@400;600;700' },
-    { key: 'merriweather', label: 'Merriweather', stack: "'Merriweather', serif", google: 'Merriweather:wght@400;700' },
-    { key: 'playfair', label: 'Playfair Display', stack: "'Playfair Display', serif", google: 'Playfair Display:wght@400;600;700' },
-    { key: 'amiri', label: 'Amiri (Arabic)', stack: "'Amiri', serif", google: 'Amiri:wght@400;700' },
-    { key: 'noto-naskh', label: 'Noto Naskh Arabic', stack: "'Noto Naskh Arabic', serif", google: 'Noto Naskh Arabic:wght@400;600;700' },
-    { key: 'cairo', label: 'Cairo (Arabic)', stack: "'Cairo', sans-serif", google: 'Cairo:wght@400;600;700' },
-];
-const CURRENT = '__current';
-const savedTokens = ref<Record<string, any> | null>(null);
-const styleModel = ref({ heading: '', body: '', header: 'default', footer: 'default' });
-const styleTouched = ref(false);
+const savedTokens = ref<Tokens | null>(null);
+const styleModel = ref<StyleModel>(styleFromTokens(null));
+const touched = ref<Touched>({ fonts: false, layout: false });
+const fontChoices = (face: 'heading' | 'body') => themeFontChoices(savedTokens.value, face);
 
-/** The saved font, kept as a choice when it is not one of ours (e.g. set by Studio). */
-const fontChoices = (which: 'heading' | 'body'): FontChoice[] => {
-    const saved = savedTokens.value?.typography?.[which === 'heading' ? 'headingFamily' : 'bodyFamily'];
-    if (typeof saved === 'string' && saved !== 'system' && !FONTS.some((f) => f.stack === saved)) {
-        return [...FONTS, { key: CURRENT, label: `Current: ${saved}`, stack: saved, google: null }];
-    }
-    return FONTS;
-};
-
-const loadStyle = (tokens: Record<string, any> | null | undefined) => {
+const loadStyle = (tokens: Tokens | null | undefined) => {
     savedTokens.value = tokens && typeof tokens === 'object' ? tokens : null;
-    const pick = (stack: unknown) => {
-        if (typeof stack !== 'string' || stack === 'system') return '';
-        return FONTS.find((f) => f.stack === stack)?.key ?? CURRENT;
-    };
-    styleModel.value = {
-        heading: pick(savedTokens.value?.typography?.headingFamily),
-        body: pick(savedTokens.value?.typography?.bodyFamily),
-        header: savedTokens.value?.layout?.header === 'overlay' ? 'overlay' : 'default',
-        footer: savedTokens.value?.layout?.footer === 'columns' ? 'columns' : 'default',
-    };
-    styleTouched.value = false;
-};
-
-/** The complete override tree with this screen's choices applied. */
-const buildTokens = (): Record<string, any> => {
-    const tree: Record<string, any> = JSON.parse(JSON.stringify(savedTokens.value ?? {}));
-    const typography: Record<string, any> = { ...(tree.typography ?? {}) };
-    const layout: Record<string, any> = { ...(tree.layout ?? {}) };
-    const chosen = (which: 'heading' | 'body') => fontChoices(which).find((f) => f.key === styleModel.value[which]) ?? FONTS[0];
-    const heading = chosen('heading');
-    const body = chosen('body');
-
-    for (const [key, font] of [['headingFamily', heading], ['bodyFamily', body]] as const) {
-        if (font.stack) typography[key] = font.stack;
-        else delete typography[key];
-    }
-    const families = [...new Set([heading.google, body.google].filter((g): g is string => !!g))];
-    if (families.length) {
-        typography.fontsUrl = 'https://fonts.googleapis.com/css2?'
-            + families.map((f) => `family=${f.replace(/ /g, '+')}`).join('&') + '&display=swap';
-    } else if (heading.key !== CURRENT && body.key !== CURRENT) {
-        delete typography.fontsUrl;
-    }
-
-    if (styleModel.value.header === 'overlay') layout.header = 'overlay';
-    else delete layout.header;
-    if (styleModel.value.footer === 'columns') layout.footer = 'columns';
-    else delete layout.footer;
-
-    if (Object.keys(typography).length) tree.typography = typography;
-    else delete tree.typography;
-    if (Object.keys(layout).length) tree.layout = layout;
-    else delete tree.layout;
-
-    return tree;
+    styleModel.value = styleFromTokens(savedTokens.value);
+    touched.value = { fonts: false, layout: false };
 };
 
 /** What Save posts, and what the preview is derived from. */
-const themePayload = () => ({
-    ...settingsModel.value,
-    ...(styleTouched.value ? { tokens: buildTokens() } : {}),
-});
+const themePayload = () => buildThemePayload(settingsModel.value, savedTokens.value, styleModel.value, touched.value);
 
 // Validation — a hex color (#RGB, #RRGGBB or #RRGGBBAA), or empty to fall back.
 const hexRule = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
