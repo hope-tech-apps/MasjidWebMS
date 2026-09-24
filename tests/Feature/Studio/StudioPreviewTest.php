@@ -10,6 +10,7 @@ use App\Support\WcagColor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\SeedsAppFeatureCatalogue;
 use Tests\Feature\Studio\Concerns\StudioDraftFixtures;
@@ -160,6 +161,7 @@ class StudioPreviewTest extends TestCase
         // The web button and Android's header read the auto-ink the palette
         // chose, as the provisioned theme will serve it.
         $this->assertSame($webTokens['onPrimary'], $rows['web.primary_button']['foreground']);
+        $this->assertSame($webTokens['onPrimary'], $rows['android.home_header']['foreground']);
         $this->assertSame('#111827', $webTokens['onPrimary']);
     }
 
@@ -172,35 +174,190 @@ class StudioPreviewTest extends TestCase
             'layout' => ['preset' => 'school.prospectus', 'approved_at' => '2026-09-24T10:00:00Z'],
         ]);
 
-        // Old enough that any write touching the timestamp would show.
-        StudioDraft::whereKey($id)->update(['updated_at' => now()->subDay()]);
-        $draft = StudioDraft::findOrFail($id);
-
-        $tables = ['masjids', 'theme_settings', 'studio_drafts', 'pages', 'sections', 'page_section', 'masjid_mobile_app_features', 'masjid_domains', 'forms'];
-        $counts = array_combine($tables, array_map(fn ($t) => DB::table($t)->count(), $tables));
-
-        $writes = [];
-        DB::listen(function ($query) use (&$writes) {
-            if (preg_match('/^\s*(insert|update|delete|replace)\b/i', $query->sql)) {
-                $writes[] = $query->sql;
-            }
-        });
-
-        $data = $this->preview($id, ['features' => ['capabilities' => ['events' => false]]])->assertOk()->json('data');
-
-        $this->assertSame([], $writes, 'the preview wrote to the database');
-        $this->assertSame($counts, array_combine($tables, array_map(fn ($t) => DB::table($t)->count(), $tables)));
-
-        $after = StudioDraft::findOrFail($id);
-        $this->assertSame($draft->updated_at->toIso8601String(), $after->updated_at->toIso8601String());
-        $this->assertSame($draft->lock_version, $after->lock_version);
-        $this->assertSame($draft->answers, $after->answers);
+        $data = $this->previewWritingNothing($id, ['features' => ['capabilities' => ['events' => false]]]);
 
         // It did compute the draft's own choice.
         $this->assertSame('school.prospectus', $data['web']['preset']);
         $this->assertSame('draft', $data['web']['preset_source']);
         $this->assertTrue($data['web']['approved']);
         $this->assertSame('alnoor.' . config('cloudflare.managed_suffix'), $data['org']['host']);
+    }
+
+    /**
+     * The other branches the preview takes, each watched for writes: a write
+     * added on any one of them (a lazily seeded row, a touched draft) would
+     * make another tab's autosave look stale.
+     *
+     * @return array<string, array{0: array<string, mixed>, 1: array<string, mixed>|null}>
+     */
+    public static function previewInputs(): array
+    {
+        return [
+            'a masjid with no colours yet' => [['identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid']], null],
+            'the client\'s own domain' => [[
+                'identity' => ['org_type' => 'community', 'name' => 'Al-Noor Centre', 'slug' => 'alnoor'],
+                'domain' => ['custom' => ['host' => 'WWW.AlNoor.org.']],
+            ], null],
+            'a preset from another vertical' => [[
+                'identity' => ['org_type' => 'school', 'name' => 'Al-Noor Academy'],
+                'brand' => self::BRAND,
+                'layout' => ['preset' => 'masjid.classic', 'approved_at' => '2026-09-24T10:00:00Z'],
+            ], null],
+            'unsaved answers that change the org type' => [
+                ['identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid'], 'brand' => self::BRAND],
+                ['identity' => ['org_type' => 'school', 'name' => 'Al-Noor Academy']],
+            ],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('previewInputs')]
+    public function no_input_makes_the_preview_write(array $saved, ?array $unsaved): void
+    {
+        $this->previewWritingNothing($this->draft($saved), $unsaved);
+    }
+
+    #[Test]
+    public function a_preset_from_another_vertical_falls_back_to_the_default_and_is_not_approved(): void
+    {
+        // Autosave holds layout.preset as free text, so a school draft can carry
+        // a masjid preset the operator approved before changing the org type.
+        $id = $this->draft([
+            'identity' => ['org_type' => 'school', 'name' => 'Al-Noor Academy'],
+            'layout' => ['preset' => 'masjid.classic', 'approved_at' => '2026-09-24T10:00:00Z'],
+        ]);
+
+        $data = $this->preview($id)->assertOk()->json('data');
+
+        $this->assertSame('school.essentials', $data['web']['preset']);
+        $this->assertSame('default', $data['web']['preset_source']);
+        // R27: nobody approved school.essentials.
+        $this->assertFalse($data['web']['approved']);
+
+        // The same through unsaved answers: approved as a masjid, previewed as a school.
+        $masjid = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid'],
+            'layout' => ['preset' => 'masjid.classic', 'approved_at' => '2026-09-24T10:00:00Z'],
+        ]);
+        $this->assertTrue($this->preview($masjid)->assertOk()->json('data.web.approved'));
+
+        $switched = $this->preview($masjid, ['identity' => ['org_type' => 'school', 'name' => 'Al-Noor Academy']])
+            ->assertOk()
+            ->json('data.web');
+
+        $this->assertSame('school.essentials', $switched['preset']);
+        $this->assertSame('default', $switched['preset_source']);
+        $this->assertFalse($switched['approved']);
+    }
+
+    #[Test]
+    public function ink_overrides_reach_the_palette_the_web_colours_and_the_android_header(): void
+    {
+        // The auto-ink on this green is dark (#111827); the operator picks white.
+        $id = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid'],
+            'brand' => self::BRAND + ['ink_overrides' => ['onPrimary' => '#FFFFFF']],
+        ]);
+
+        $data = $this->preview($id)->assertOk()->json('data');
+
+        // The preview's palette is the gate's: the draft resource's own report.
+        $gate = $this->getJson(self::DRAFTS . "/{$id}")->assertOk()->json('data.palette');
+        $this->assertSame($gate, $data['palette']);
+        $this->assertSame('#FFFFFF', $data['palette']['tokens']['color']['onPrimary']);
+
+        $this->assertSame('#FFFFFF', $data['web_tokens']['onPrimary']);
+
+        $rows = array_column($data['platform_contrast'], null, 'key');
+        $this->assertSame('#FFFFFF', $rows['web.primary_button']['foreground']);
+        $this->assertSame('#FFFFFF', $rows['android.home_header']['foreground']);
+    }
+
+    #[Test]
+    public function a_wide_logo_is_flagged_as_the_gate_flags_it(): void
+    {
+        $id = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid'],
+            'brand' => self::BRAND,
+        ]);
+
+        $gate = $this->uploadLogo($id, $this->realUpload('wide.png', $this->pngBytes(1000, 250)))
+            ->assertOk()
+            ->json('data.palette');
+        $this->assertTrue($gate['aspect_warning']);
+
+        $data = $this->previewWritingNothing($id);
+
+        $this->assertTrue($data['palette']['aspect_warning']);
+        $this->assertSame($gate, $data['palette']);
+    }
+
+    #[Test]
+    public function each_draft_previews_its_own_answers(): void
+    {
+        $first = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'FIRST-DRAFT-9c1d'],
+            'brand' => self::BRAND,
+        ]);
+        $discarded = $this->draft(['identity' => ['org_type' => 'masjid', 'name' => 'DISCARDED-DRAFT-9c1d']]);
+        $last = $this->draft([
+            'identity' => ['org_type' => 'school', 'name' => 'LAST-DRAFT-9c1d'],
+            'brand' => ['primary_color' => '#7A1FA2'] + self::BRAND,
+        ]);
+
+        $this->deleteJson(self::DRAFTS . "/{$discarded}")->assertOk();
+
+        // The lower id is previewed after the higher one exists.
+        $data = $this->preview($first)->assertOk()->json('data');
+        $this->assertSame('FIRST-DRAFT-9c1d', $data['org']['name']);
+        $this->assertSame('masjid', $data['org']['org_type']);
+        $this->assertSame('#01B151', $data['web_tokens']['primary']);
+        $this->assertSame('FIRST-DRAFT-9c1d', $data['tvos']['header_title']);
+
+        $data = $this->preview($last)->assertOk()->json('data');
+        $this->assertSame('LAST-DRAFT-9c1d', $data['org']['name']);
+        $this->assertSame('school', $data['org']['org_type']);
+        $this->assertSame('#7A1FA2', $data['web_tokens']['primary']);
+        $this->assertSame('LAST-DRAFT-9c1d', $data['tvos']['header_title']);
+
+        // A discarded draft previews as nothing, never as its neighbour.
+        $this->preview($discarded)->assertNotFound();
+    }
+
+    #[Test]
+    public function the_clients_own_domain_is_the_host_over_the_managed_one(): void
+    {
+        $id = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid', 'slug' => 'alnoor'],
+            'domain' => ['custom' => ['host' => 'WWW.AlNoor.org.']],
+        ]);
+
+        $this->preview($id)->assertOk()->assertJsonPath('data.org.host', 'www.alnoor.org');
+    }
+
+    #[Test]
+    public function a_phone_with_no_digit_gets_no_call_button(): void
+    {
+        // Autosave takes any phone text; only a dialable one has a tel: link,
+        // and provisioning refuses the rest, so the site will never have this button.
+        $id = $this->draft([
+            'identity' => ['org_type' => 'masjid', 'name' => 'Al-Noor Masjid', 'phone' => 'ask at the desk', 'email' => 'info@alnoor.example'],
+            'layout' => ['preset' => 'masjid.gathering'],
+        ]);
+
+        $data = $this->preview($id)->assertOk()->json('data');
+
+        $connect = null;
+        foreach ($data['web']['pages'] as $page) {
+            foreach ($page['sections'] as $section) {
+                if ($section['slot'] === 'home/connect') {
+                    $connect = $section;
+                }
+            }
+        }
+
+        $this->assertNotNull($connect, 'masjid.gathering writes home/connect when the client gave an email');
+        $this->assertSame(['mailto:info@alnoor.example'], array_column($connect['content']['links'], 'url'));
     }
 
     #[Test]
@@ -269,6 +426,43 @@ class StudioPreviewTest extends TestCase
     private function preview(int $id, ?array $answers = null): TestResponse
     {
         return $this->postJson(self::DRAFTS . "/{$id}/preview", $answers === null ? [] : ['answers' => $answers]);
+    }
+
+    /**
+     * The preview's data, having checked it wrote nothing: no insert, update or
+     * delete, no row count moved, and the draft's updated_at, lock_version and
+     * answers are as they were, so previewing can never make another tab's
+     * autosave look stale.
+     *
+     * @return array<string, mixed>
+     */
+    private function previewWritingNothing(int $id, ?array $answers = null): array
+    {
+        // Old enough that any write touching the timestamp would show.
+        StudioDraft::whereKey($id)->update(['updated_at' => now()->subDay()]);
+        $draft = StudioDraft::findOrFail($id);
+
+        $tables = ['masjids', 'theme_settings', 'studio_drafts', 'pages', 'sections', 'page_section', 'masjid_mobile_app_features', 'masjid_domains', 'forms'];
+        $counts = array_combine($tables, array_map(fn ($t) => DB::table($t)->count(), $tables));
+
+        $writes = [];
+        DB::listen(function ($query) use (&$writes) {
+            if (preg_match('/^\s*(insert|update|delete|replace)\b/i', $query->sql)) {
+                $writes[] = $query->sql;
+            }
+        });
+
+        $data = $this->preview($id, $answers)->assertOk()->json('data');
+
+        $this->assertSame([], $writes, 'the preview wrote to the database');
+        $this->assertSame($counts, array_combine($tables, array_map(fn ($t) => DB::table($t)->count(), $tables)));
+
+        $after = StudioDraft::findOrFail($id);
+        $this->assertSame($draft->updated_at->toIso8601String(), $after->updated_at->toIso8601String());
+        $this->assertSame($draft->lock_version, $after->lock_version);
+        $this->assertSame($draft->answers, $after->answers);
+
+        return $data;
     }
 
     /** @return list<string> every section type in the web plan */

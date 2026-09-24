@@ -238,6 +238,61 @@ class StudioLayoutPresetsTest extends TestCase
     }
 
     #[Test]
+    public function a_contact_button_is_written_only_when_its_link_is(): void
+    {
+        // The gate and the href read the same fact, so they cannot disagree: a
+        // phone with no digit is a phone, but it has no tel: link.
+        foreach (config('studio_layouts.blocks') as $name => $block) {
+            foreach ((array) ($block['content']['links'] ?? []) as $item) {
+                if (isset($item['url']['fact'])) {
+                    $this->assertSame($item['url']['fact'], $item['when'], "a {$name} link is gated on {$item['when']} but links to {$item['url']['fact']}");
+                }
+            }
+        }
+
+        // A client who gave a name, an email, a phone with no digit and an
+        // Instagram handle instead of a URL: only the email makes a working link.
+        $sparse = [
+            'name' => 'FACT-NAME-7f3a',
+            'email' => 'fact-email-7f3a@example.test',
+            'phone' => 'ask at the desk',
+            'instagram_url' => '@alnoor',
+        ];
+
+        $links = StarterSite::plan($this->unsavedOrg('masjid'), 'masjid.gathering', StarterFacts::fromArray($sparse))
+            ->section('home/connect')['content']['links'];
+        $this->assertSame(['mailto:fact-email-7f3a@example.test'], array_column($links, 'url'));
+        $this->assertSame(['email'], array_column($links, 'icon'));
+
+        // With no contact fact at all, the section is not written.
+        $this->assertNull(
+            StarterSite::plan($this->unsavedOrg('masjid'), 'masjid.gathering', StarterFacts::fromArray(['name' => 'FACT-NAME-7f3a']))
+                ->section('home/connect'),
+        );
+
+        // And no preset, from any fixture, writes a link item that goes nowhere.
+        $seen = 0;
+        foreach (['minimal' => self::MINIMAL, 'sparse' => $sparse, 'maximal' => self::MAXIMAL] as $fixture => $input) {
+            foreach (Masjid::ORG_TYPES as $orgType) {
+                foreach (LayoutPresets::keysFor($orgType) as $key) {
+                    $plan = StarterSite::plan($this->unsavedOrg($orgType), $key, StarterFacts::fromArray($input));
+
+                    foreach ($plan->pages as $page) {
+                        foreach ($page['sections'] as $section) {
+                            foreach ((array) ($section['content']['links'] ?? []) as $item) {
+                                $seen++;
+                                $this->assertNotSame('', $item['url'] ?? '', "{$key} ({$fixture}) writes a {$section['slot']} button with no link");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $this->assertGreaterThan(0, $seen, 'no preset wrote a link item, so the walk above checked nothing');
+    }
+
+    #[Test]
     public function labels_have_every_key_contain_no_digits_and_match_the_pinned_snapshot(): void
     {
         // R15: English only in W1.

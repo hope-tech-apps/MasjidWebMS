@@ -285,6 +285,9 @@ return [
 
         // One button per contact fact the client gave; an item whose fact is
         // empty is dropped, and with no items the section is not written.
+        // Each item is gated on the fact its url reads, not the raw answer: a
+        // phone with no digit ("ask at the desk") has no tel: link, and a Call
+        // button with an empty href is a broken link the system made.
         'connect' => [
             'type' => 'link_list',
             'title' => ['label' => 'heading.connect'],
@@ -292,8 +295,8 @@ return [
                 'heading' => ['label' => 'heading.connect'],
                 'description' => '',
                 'links' => [
-                    ['when' => 'phone', 'label' => ['label' => 'link.call'], 'url' => ['fact' => 'phone_tel'], 'icon' => 'phone', 'style' => 'outline'],
-                    ['when' => 'email', 'label' => ['label' => 'link.email'], 'url' => ['fact' => 'email_mailto'], 'icon' => 'email', 'style' => 'outline'],
+                    ['when' => 'phone_tel', 'label' => ['label' => 'link.call'], 'url' => ['fact' => 'phone_tel'], 'icon' => 'phone', 'style' => 'outline'],
+                    ['when' => 'email_mailto', 'label' => ['label' => 'link.email'], 'url' => ['fact' => 'email_mailto'], 'icon' => 'email', 'style' => 'outline'],
                     ['when' => 'facebook_url', 'label' => ['label' => 'link.facebook'], 'url' => ['fact' => 'facebook_url'], 'icon' => 'external', 'style' => 'outline'],
                     ['when' => 'instagram_url', 'label' => ['label' => 'link.instagram'], 'url' => ['fact' => 'instagram_url'], 'icon' => 'external', 'style' => 'outline'],
                     ['when' => 'youtube_url', 'label' => ['label' => 'link.youtube'], 'url' => ['fact' => 'youtube_url'], 'icon' => 'youtube', 'style' => 'outline'],
