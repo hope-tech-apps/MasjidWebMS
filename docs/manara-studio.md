@@ -158,6 +158,62 @@ iOS.
 **D16 — Build order: (1) Steps 0–2 and a real website, (2) the tvOS template,
 (3) the repo/export machinery.**
 
+**D17 — Studio attaches the domain itself, on Cloudflare.** The owner holds DNS
+there. Checked 2026-09-23 against account `86cec9c5e0efe76fedb5698a2be91beb`:
+
+- Zones already in the account: `alrazischool.org`, `burlingtonmasjid.com`,
+  `hopetechapps.com`, `al-aqsaclinic.org`, `joinwird.com`, `aiinnovation.dev`,
+  `mizanfintech.app`, `tapcraft.tech`. **`meccharlotte.org` is not** — MEC's
+  domain is still with their registrar.
+- The renderer Pages project `manara-renderer` has five custom domains, all
+  active: `burlingtonmasjid.com`, `www.burlingtonmasjid.com`,
+  `sundayschool.burlingtonmasjid.com`, `mec.manara.hopetechapps.com`,
+  `alrazi.manara.hopetechapps.com`.
+
+So "attach automatically" is three cases, and only one of them has a human in it:
+
+1. **A Manara subdomain** (`<slug>.manara.hopetechapps.com`, the default for a
+   new client): fully automatic. Create the proxied CNAME in `hopetechapps.com`,
+   add the custom domain to `manara-renderer`, write the `domains` row, poll
+   until the certificate is active.
+2. **The client's own domain, already a zone in the account**: fully automatic,
+   same three writes against that zone.
+3. **The client's own domain, not yet on Cloudflare**: Studio creates the zone
+   through the API and shows the two nameservers Cloudflare assigns. Changing
+   nameservers at the registrar is the one step that belongs to whoever holds the
+   registrar login — no API of ours can do it. Studio polls the zone to `active`
+   and then finishes case 2 on its own. The site is live on its Manara subdomain
+   in the meantime, so the client is never waiting on DNS to see it.
+
+Studio creates the CNAME itself rather than trusting the domain API to do it:
+Cloudflare's own docs state that its custom-domain APIs do not create the DNS
+record, and a write that is idempotent (create if absent, verify if present) is
+correct either way.
+
+**What it needs that does not exist yet:**
+
+- **A dedicated Cloudflare API token on the server.** The only credential on
+  this machine is a developer OAuth login whose scopes include `pages (write)`
+  but only `zone (read)` — it cannot write a DNS record. The owner creates a
+  scoped token in the Cloudflare dashboard (Account › Cloudflare Pages: Edit;
+  Zone › DNS: Edit; Zone › Zone: Edit for case 3, limited to this account) and
+  it goes in the server `.env` as `CLOUDFLARE_STUDIO_TOKEN`. Creating credentials
+  is the owner's job, not an agent's.
+- **The host map as data (landmine 2).** The renderer reads its host→tenant map
+  from `NUXT_TENANT_HOSTS` (`nuxt.config.ts:111`), which Cloudflare binds at
+  deploy time — so today every new client website needs a redeploy of the
+  renderer that serves every other client. W1 moves the map to a `domains` table
+  with a host lookup the renderer caches in KV, so attaching a client touches
+  DNS and data and never the running deploy.
+
+**The ceiling to know about.** Cloudflare caps custom domains per Pages project:
+100 on Free, 250 on Pro, 500 on Business (developers.cloudflare.com/pages/
+platform/limits, updated 2026-09-05). The renderer holds 5 today; a client with
+an apex and a `www` uses two. That is roughly 47 more clients on the Free plan
+before one renderer project is full. Past that the answer is a plan upgrade or
+Cloudflare for SaaS custom hostnames — a decision for when there are forty
+clients, recorded here so it is not a surprise at the forty-eighth.
+
 ## 5. Build order
 
 ### W1 — Steps 0–2 and a live website
@@ -175,8 +231,8 @@ The shortest path to walking a client end to end.
 - **Step 2.** A small set of layout presets per vertical; device mockups for the
   four platforms rendered from theme + features + layout; approval writes real
   pages and sections with starter content (D8).
-- **Step 3, web only.** Provision the tenant, attach the hostname, seed the pages,
-  send the invite, open the live URL.
+- **Step 3, web only.** Provision the tenant, attach the hostname (D17), seed the
+  pages, send the invite, open the live URL.
 
 ### W2 — tvOS
 Templatise `MasjidTV` into a per-org signage app (D11), add `tvos` to
@@ -190,9 +246,6 @@ store toggles (D10).
 
 ## 6. Open
 
-- **DNS.** Who owns the client's domain, and should Studio call the Cloudflare
-  API to attach the hostname, or stop at "add this CNAME"? W1 cannot finish
-  without an answer.
 - **How many layout presets** per vertical is enough to feel like a choice
   without becoming a page builder?
 - **Managed Apple/Play accounts.** Do clients ship under Hope Tech's accounts by
