@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\PurgeRendererCacheAgain;
 use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\User;
@@ -11,6 +12,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
@@ -49,6 +51,22 @@ class RendererCachePurgeTest extends TestCase
             'admin_origins' => 'https://masjid.hopetechapps.com',
             'timeout' => 5,
         ]]);
+
+        // The second pass is asserted as QUEUED; run synchronously it would double
+        // every count below.
+        Queue::fake();
+    }
+
+    private function assertFollowUpQueued(Masjid $masjid, int $times = 1): void
+    {
+        Queue::assertPushed(PurgeRendererCacheAgain::class, $times);
+        Queue::assertPushed(PurgeRendererCacheAgain::class, function (PurgeRendererCacheAgain $job) use ($masjid) {
+            $seconds = now()->diffInSeconds($job->delay, false);
+
+            return $job->organisationId === $masjid->id
+                && $seconds >= PurgeRendererCacheAgain::FOLLOW_UP_SECONDS - 5
+                && $seconds <= PurgeRendererCacheAgain::FOLLOW_UP_SECONDS;
+        });
     }
 
     private function org(): Masjid
@@ -107,6 +125,7 @@ class RendererCachePurgeTest extends TestCase
         $this->postJson("/api/admin/masjids/{$masjid->id}/pages", ['slug' => 'ramadan', 'title' => 'Ramadan'])->assertSuccessful();
 
         $this->assertPurgedOnce($masjid);
+        $this->assertFollowUpQueued($masjid);
     }
 
     #[Test]
@@ -122,6 +141,7 @@ class RendererCachePurgeTest extends TestCase
         $this->deleteJson("/api/admin/masjids/{$masjid->id}/pages/{$id}")->assertSuccessful();
 
         Http::assertSentCount(4);
+        $this->assertFollowUpQueued($masjid, 4);
     }
 
     #[Test]
@@ -136,6 +156,7 @@ class RendererCachePurgeTest extends TestCase
 
         $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => '#123456'])->assertOk();
         $this->assertPurgedOnce($masjid);
+        $this->assertFollowUpQueued($masjid);
     }
 
     #[Test]
@@ -163,6 +184,7 @@ class RendererCachePurgeTest extends TestCase
         $this->postJson("/api/admin/masjids/{$masjid->id}/theme", ['primary_color' => 'red'])->assertStatus(422);
 
         Http::assertNothingSent();
+        Queue::assertNothingPushed();
     }
 
     #[Test]
@@ -179,6 +201,22 @@ class RendererCachePurgeTest extends TestCase
         }
 
         Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function the_follow_up_job_purges_the_same_organisation_and_is_unique_per_organisation(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['ok' => true, 'deleted' => 1, 'remaining' => false])]);
+        $job = new PurgeRendererCacheAgain(13);
+
+        $job->handle(app(RendererCachePurge::class));
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn (ClientRequest $request) => $request->body() === '{"v":1,"org":13}');
+        $this->assertSame('renderer-purge-13', $job->uniqueId());
+        $this->assertNotSame($job->uniqueId(), (new PurgeRendererCacheAgain(14))->uniqueId());
+        $this->assertSame(PurgeRendererCacheAgain::FOLLOW_UP_SECONDS, $job->uniqueFor);
     }
 
     #[Test]
