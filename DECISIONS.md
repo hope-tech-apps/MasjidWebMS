@@ -2098,3 +2098,34 @@ the S3 spec and runbook now say so, and the runbook reserves `www.alrazischool.o
 controller's answers. HostName anchors its regexes with `\z`, so a newline inside a host
 never passes as part of a label.
 Rationale: each came from the S3 review; recorded because the plan did not decide them.
+
+## 2026-09-24 — Studio W1 S6: calls made where the plan was silent
+Decision: `ProvisionContext` (the plan names it but never defines it) carries one
+field, `actorId`, typed `int|string|null` and taken from `Auth::id()` uncast, because
+it is written to `masjids.created_by` and echoed in the response the extraction must
+not change. The controller calls the provisioner from a full closure with
+`use (&$invitations)`, not the plan's `fn () =>`: an arrow function captures by value,
+so the literal form would drop every invitation without an error. The byte-identity
+pin is `ProvisionResponseSnapshotTest`, whose fixtures in
+`tests/fixtures/provision-snapshot/` were recorded from the unrefactored controller
+(commit 90e4d182) and are re-recorded only with `PROVISION_SNAPSHOT_RECORD=1`, a run
+that always fails so it cannot pass for a check.
+Rationale: each keeps the legacy endpoint's rows, mail and response identical, which
+is the slice's whole contract.
+
+## 2026-09-24 — Studio W1 S6 review: what the byte-identity pin could not see
+Decision: the snapshot's id labels keep a key's JSON type (`users#1` for an int,
+`users#1:string` otherwise), and every case provisions next to an existing organisation
+that has a row in each per-organisation table, so the new org is `masjids#2`. The
+fixtures were re-recorded with 90e4d182's controller swapped into the CI tree, not from
+the refactored code, and the refactored code then matched them unchanged. The promises
+one recording cannot show (only a SuperAdmin reaches `/onboarding/*`, the invited
+admin's stored credential is unguessable, a supplied `user_id` beats `admin.email`,
+BYO secrets are kept only for a selected platform, invitations leave only after commit
+and never for a rolled-back provision) are explicit tests in
+`ProvisionWizardGuaranteesTest`, each killed by its mutation. The path-scoped rules for
+the provisioning body (`directory-listing.md`, `verticals.md`) now load for
+`app/Support/Studio/`.
+Rationale: the type-blind labels filed 5 and "5" under one key, so the `actorId`-uncast
+promise above had no test; with only one organisation, "the new org" and "the first
+org" got the same label; and a session editing only the provisioner loaded neither rule.

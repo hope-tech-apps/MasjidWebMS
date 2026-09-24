@@ -1,0 +1,429 @@
+{
+    "status": 201,
+    "body": {
+        "status": "success",
+        "data": {
+            "masjid_id": "masjids#2",
+            "masjid": {
+                "name": "Snapshot Org",
+                "org_type": "masjid",
+                "email": "org@snapshot.example.test",
+                "phone": "+15551234567",
+                "address": "1 Test St",
+                "latitude": 43.32,
+                "longitude": -79.79,
+                "timezone": "America/Toronto",
+                "country_id": "countries#1",
+                "city_id": "cities#1",
+                "user_id": "users#2",
+                "crm_enabled": true,
+                "created_by": "users#1",
+                "updated_at": "<timestamp>",
+                "created_at": "<timestamp>",
+                "id": "masjids#2",
+                "vertical": {
+                    "org_type": "masjid",
+                    "label": "Masjid",
+                    "plural": "Masjids",
+                    "terminology": {
+                        "organization": "Masjid",
+                        "members": "Congregants",
+                        "staff": "Imams & Staff",
+                        "programs": "Programs",
+                        "groups": "Halaqat",
+                        "giving": "Donations"
+                    }
+                },
+                "capabilities": {
+                    "web_pages": false,
+                    "jummah_lunch": true,
+                    "school_calendar": false,
+                    "crm": true,
+                    "assistant": false,
+                    "form_editing": false,
+                    "report_card_core_subjects": false,
+                    "short_lesson_plan": false,
+                    "simple_marking": false
+                },
+                "modules_off": [],
+                "modules_on": [],
+                "logo": null,
+                "footer_logo": null,
+                "country": {
+                    "id": "countries#1",
+                    "name": "Canada",
+                    "code": "CA",
+                    "created_at": null,
+                    "updated_at": null
+                },
+                "city": {
+                    "id": "cities#1",
+                    "name": "Burlington",
+                    "country_id": "countries#1",
+                    "created_at": null,
+                    "updated_at": null
+                },
+                "app_publishing": {
+                    "id": "masjid_app_publishing#2",
+                    "masjid_id": "masjids#2",
+                    "ios_account_mode": "byo",
+                    "android_account_mode": "byo",
+                    "web_account_mode": "managed",
+                    "created_at": "<timestamp>",
+                    "updated_at": "<timestamp>",
+                    "onesignal_app_id": null,
+                    "development_team": null,
+                    "enabled_platforms": [
+                        "ios",
+                        "android",
+                        "tvos",
+                        "web"
+                    ],
+                    "has_asc_key": true,
+                    "has_play_service_account": true,
+                    "has_onesignal_key": false
+                }
+            },
+            "app_publishing": {
+                "enabled_platforms": [
+                    "ios",
+                    "android",
+                    "tvos",
+                    "web"
+                ],
+                "ios_account_mode": "byo",
+                "android_account_mode": "byo",
+                "web_account_mode": "managed",
+                "has_asc_key": true,
+                "has_play_service_account": true
+            }
+        }
+    },
+    "written": {
+        "account_invite_tokens": [
+            {
+                "email": "office@masjid.example.test",
+                "token": "<token>",
+                "created_at": "<timestamp>"
+            }
+        ],
+        "donation_links": [
+            {
+                "id": "donation_links#2",
+                "masjid_id": "masjids#2",
+                "link": "https://give.example.test/masjid",
+                "title": "Support us",
+                "message": "Give today",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "iqama_time_settings": [
+            {
+                "id": "iqama_time_settings#1",
+                "masjid_id": "masjids#2",
+                "fajr": 25,
+                "dhuhr": 15,
+                "asr": 12,
+                "maghrib": 7,
+                "isha": 14,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "iqama_type": "minutes_after_adhan",
+                "show_iqama_times": 1
+            }
+        ],
+        "jumaa_settings": [
+            {
+                "id": "jumaa_settings#1",
+                "masjid_id": "masjids#2",
+                "iqama": "13:15",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "athans": "[]",
+                "shifts": null
+            }
+        ],
+        "masjid_abouts": [
+            {
+                "id": "masjid_abouts#1",
+                "masjid_id": "masjids#2",
+                "about": "A community masjid.",
+                "mission": "Serve.",
+                "vision": "Grow.",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjid_app_publishing": [
+            {
+                "id": "masjid_app_publishing#2",
+                "masjid_id": "masjids#2",
+                "ios_account_mode": "byo",
+                "android_account_mode": "byo",
+                "web_account_mode": "managed",
+                "asc_key_p8": "<encrypted>-----BEGIN PRIVATE KEY-----\nMIGT\n-----END PRIVATE KEY-----",
+                "asc_key_id": "<encrypted>ABC123DEFG",
+                "asc_issuer_id": "<encrypted>69a6de70-0000-0000-0000-000000000000",
+                "play_service_account_json": "<encrypted>{\"type\":\"service_account\",\"project_id\":\"snapshot\"}",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "onesignal_app_id": null,
+                "onesignal_rest_api_key": null,
+                "development_team": null,
+                "enabled_platforms": "[\"ios\",\"android\",\"tvos\",\"web\"]"
+            }
+        ],
+        "masjid_mobile_app_features": [
+            {
+                "id": "masjid_mobile_app_features#12",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#1",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#13",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#2",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#14",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#3",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#15",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#4",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#16",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#5",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#17",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#6",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#18",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#7",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#19",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#8",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#20",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#9",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#21",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#10",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#22",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#11",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjid_social_media_links": [
+            {
+                "id": "masjid_social_media_links#2",
+                "masjid_id": "masjids#2",
+                "type": "Facebook",
+                "value": "https://facebook.example.test/masjid",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_social_media_links#3",
+                "masjid_id": "masjids#2",
+                "type": "YouTube",
+                "value": "https://youtube.example.test/masjid",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_social_media_links#4",
+                "masjid_id": "masjids#2",
+                "type": "Instagram",
+                "value": "https://instagram.example.test/masjid",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_social_media_links#5",
+                "masjid_id": "masjids#2",
+                "type": "WhatsApp_URL",
+                "value": "https://wa.example.test/masjid",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_social_media_links#6",
+                "masjid_id": "masjids#2",
+                "type": "WhatsApp_Number",
+                "value": "+15550001111",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjid_user": [
+            {
+                "id": "masjid_user#1",
+                "masjid_id": "masjids#2",
+                "user_id": "users#2",
+                "role": "masjid-admin",
+                "is_default": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjids": [
+            {
+                "id": "masjids#2",
+                "user_id": "users#2",
+                "name": "Snapshot Org",
+                "email": "org@snapshot.example.test",
+                "email_verified_at": null,
+                "phone": "+15551234567",
+                "phone_verified_at": null,
+                "country_id": "countries#1:string",
+                "city_id": "cities#1:string",
+                "address": "1 Test St",
+                "latitude": 43.32,
+                "longitude": -79.79,
+                "website_link": null,
+                "created_by": "users#1",
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "deleted_at": null,
+                "timezone": "America/Toronto",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": 0,
+                "stripe_payouts_enabled": 0,
+                "crm_enabled": 1,
+                "assistant_enabled": 0,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "masjid",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": null,
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null
+            }
+        ],
+        "model_has_roles": [
+            {
+                "role_id": "roles#2",
+                "model_type": "App\\Models\\User",
+                "model_id": "users#2"
+            }
+        ],
+        "prayer_calculation_settings": [
+            {
+                "id": "prayer_calculation_settings#1",
+                "masjid_id": "masjids#2",
+                "method": "MuslimWorldLeague",
+                "madhab": "Shafi",
+                "high_latitude_rule": "MiddleOfTheNight",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "theme_settings": [
+            {
+                "id": "theme_settings#1",
+                "masjid_id": "masjids#2",
+                "primary_color": "#0A5C36",
+                "secondary_color": "#F2E8CF",
+                "accent_color": "#C9A227",
+                "background_color": "#FFFFFF",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "tokens": null
+            }
+        ],
+        "users": [
+            {
+                "id": "users#2",
+                "name": "Masjid Office",
+                "email": "office@masjid.example.test",
+                "email_verified_at": null,
+                "password": "<password>",
+                "remember_token": null,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "phone": "+15550002222",
+                "phone_verified_at": null,
+                "type": "MasjidAdmin",
+                "deleted_at": null,
+                "two_factor_secret": null,
+                "two_factor_confirmed_at": null,
+                "two_factor_recovery_codes": null,
+                "two_factor_last_code_hash": null,
+                "two_factor_last_used_at": null,
+                "two_factor_failed_attempts": 0,
+                "two_factor_locked_until": null
+            }
+        ]
+    },
+    "removed": [],
+    "mail": [
+        {
+            "to": "office@masjid.example.test",
+            "mode": "invite",
+            "org_name": "Snapshot Org",
+            "expires_in_minutes": 10080,
+            "url": "http://localhost/auth/reset-password#token=<token>&email=office%40masjid.example.test&kind=invite"
+        }
+    ]
+}

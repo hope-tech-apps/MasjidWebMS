@@ -3,6 +3,7 @@ paths:
   - "config/verticals.php"
   - "app/Models/Masjid.php"
   - "app/Http/Controllers/AdminDashboard/**"
+  - "app/Support/Studio/**"
   - "app/Http/Requests/Admin/**"
   - "app/Http/Controllers/Api/**"
   - "resources/vue-app/core/types/data/Vertical.ts"
@@ -70,7 +71,8 @@ bundle says `quran`, and the exact match gave every new masjid Qur'an off.
 `QuranFeatureKeySpellingTest` seeds the production spelling and, with no JS
 test runner here, reads the wizard's source to pin its matching.
 
-`OnboardingController@provision` seeds from `$masjid->defaultFeatureKeys()`, and
+`OrganisationProvisioner::create` (the body `OnboardingController@provision`
+runs) seeds from `$masjid->defaultFeatureKeys()`, and
 an explicit wizard selection (`feature_keys_provided` + `feature_keys`) still
 overrides it — a school admin may deliberately switch a worship module on. It
 writes a `masjid_mobile_app_features` row for EVERY catalog feature, just with
@@ -87,7 +89,7 @@ day the two diverge, existing-tenant behaviour silently changes. Add a new
 
 `masjids.crm_enabled` defaults **false** at the column
 (`2026_07_12_000011_add_crm_enabled_to_masjids_table`). Since 2026-08-26
-`OnboardingController@provision` writes it **true** unless the request sends
+`OrganisationProvisioner::create` writes it **true** unless the request sends
 `crm_enabled` false. Three of five production tenants had been created dark
 through the wizard before that. Its other writers are
 `MasjidsController::setCrmAccess` (**SuperAdmin only**, and recorded in
@@ -221,7 +223,7 @@ rather than inventing one by trimming an "s".
 `config/form_templates.php` seeds starter FORMS at provisioning time, exactly
 as `feature_keys` seeds toggles: templates are data keyed by org_type, applied
 by `App\Support\FormTemplates::applyTo()` inside
-`OnboardingController@provision`. Schools get Admissions Interest / Careers
+`OrganisationProvisioner::create`. Schools get Admissions Interest / Careers
 Application / Withdrawal Request; masjid and community list NONE — their
 provisioning path must stay byte-identical (`FormTemplateTest` pins it, along
 with every template validating against `ValidFormSchema`). A seeded form is an

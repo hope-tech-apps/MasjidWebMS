@@ -1,0 +1,369 @@
+{
+    "status": 201,
+    "body": {
+        "status": "success",
+        "data": {
+            "masjid_id": "masjids#2",
+            "masjid": {
+                "name": "Snapshot Org",
+                "org_type": "school",
+                "email": "org@snapshot.example.test",
+                "phone": "+15551234567",
+                "address": "1 Test St",
+                "latitude": 43.32,
+                "longitude": -79.79,
+                "timezone": "America/Toronto",
+                "country_id": "countries#1",
+                "city_id": "cities#1",
+                "user_id": "users#1",
+                "crm_enabled": false,
+                "created_by": "users#2",
+                "updated_at": "<timestamp>",
+                "created_at": "<timestamp>",
+                "id": "masjids#2",
+                "vertical": {
+                    "org_type": "school",
+                    "label": "School",
+                    "plural": "Schools",
+                    "terminology": {
+                        "organization": "School",
+                        "members": "Families",
+                        "staff": "Faculty & Staff",
+                        "programs": "Programs",
+                        "groups": "Classrooms",
+                        "giving": "Giving"
+                    }
+                },
+                "capabilities": {
+                    "web_pages": false,
+                    "jummah_lunch": false,
+                    "school_calendar": false,
+                    "crm": false,
+                    "assistant": false,
+                    "form_editing": false,
+                    "report_card_core_subjects": false,
+                    "short_lesson_plan": false,
+                    "simple_marking": false
+                },
+                "modules_off": [],
+                "modules_on": [],
+                "logo": null,
+                "footer_logo": null,
+                "country": {
+                    "id": "countries#1",
+                    "name": "Canada",
+                    "code": "CA",
+                    "created_at": null,
+                    "updated_at": null
+                },
+                "city": {
+                    "id": "cities#1",
+                    "name": "Burlington",
+                    "country_id": "countries#1",
+                    "created_at": null,
+                    "updated_at": null
+                },
+                "app_publishing": {
+                    "id": "masjid_app_publishing#2",
+                    "masjid_id": "masjids#2",
+                    "ios_account_mode": "managed",
+                    "android_account_mode": "managed",
+                    "web_account_mode": "managed",
+                    "created_at": "<timestamp>",
+                    "updated_at": "<timestamp>",
+                    "onesignal_app_id": null,
+                    "development_team": null,
+                    "enabled_platforms": [
+                        "web",
+                        "android"
+                    ],
+                    "has_asc_key": false,
+                    "has_play_service_account": false,
+                    "has_onesignal_key": false
+                }
+            },
+            "app_publishing": {
+                "enabled_platforms": [
+                    "web",
+                    "android"
+                ],
+                "ios_account_mode": "managed",
+                "android_account_mode": "managed",
+                "web_account_mode": "managed",
+                "has_asc_key": false,
+                "has_play_service_account": false
+            }
+        }
+    },
+    "written": {
+        "forms": [
+            {
+                "id": "forms#1",
+                "masjid_id": "masjids#2",
+                "slug": "admissions-interest",
+                "name": "Admissions Interest",
+                "description": "Tell us about your child and we will follow up with next steps for enrollment.",
+                "schema": "{\"sections\":[{\"id\":\"student\",\"title\":\"Student\",\"fields\":[{\"name\":\"studentFirstName\",\"label\":\"Student first name\",\"type\":\"text\",\"required\":true},{\"name\":\"studentLastName\",\"label\":\"Student last name\",\"type\":\"text\",\"required\":true},{\"name\":\"studentDateOfBirth\",\"label\":\"Student date of birth\",\"type\":\"date\",\"required\":true},{\"name\":\"gradeApplyingFor\",\"label\":\"Grade applying for\",\"type\":\"select\",\"required\":true,\"options\":[{\"value\":\"pre-k\",\"label\":\"Pre-K\"},{\"value\":\"kindergarten\",\"label\":\"Kindergarten\"},{\"value\":\"grade-1\",\"label\":\"Grade 1\"},{\"value\":\"grade-2\",\"label\":\"Grade 2\"},{\"value\":\"grade-3\",\"label\":\"Grade 3\"},{\"value\":\"grade-4\",\"label\":\"Grade 4\"},{\"value\":\"grade-5\",\"label\":\"Grade 5\"},{\"value\":\"grade-6\",\"label\":\"Grade 6\"},{\"value\":\"grade-7\",\"label\":\"Grade 7\"},{\"value\":\"grade-8\",\"label\":\"Grade 8\"},{\"value\":\"other\",\"label\":\"Other \\/ not sure yet\"}]}]},{\"id\":\"parent\",\"title\":\"Parent \\/ Guardian\",\"fields\":[{\"name\":\"parentName\",\"label\":\"Parent or guardian name\",\"type\":\"text\",\"required\":true},{\"name\":\"parentEmail\",\"label\":\"Email address\",\"type\":\"email\",\"required\":true},{\"name\":\"parentPhone\",\"label\":\"Phone number\",\"type\":\"tel\",\"required\":true},{\"name\":\"howHeard\",\"label\":\"How did you hear about us?\",\"type\":\"select\",\"options\":[{\"value\":\"friend-family\",\"label\":\"A friend or family member\"},{\"value\":\"current-family\",\"label\":\"A current school family\"},{\"value\":\"masjid\",\"label\":\"Our masjid or community\"},{\"value\":\"social-media\",\"label\":\"Social media\"},{\"value\":\"search\",\"label\":\"Online search\"},{\"value\":\"event\",\"label\":\"A school or community event\"},{\"value\":\"other\",\"label\":\"Other\"}]},{\"name\":\"questions\",\"label\":\"Anything you would like us to know?\",\"type\":\"textarea\"}]}]}",
+                "settings": "{\"identity\":{\"name\":\"parentName\",\"email\":\"parentEmail\",\"phone\":\"parentPhone\"}}",
+                "is_active": 1,
+                "opens_at": null,
+                "closes_at": null,
+                "capacity": null,
+                "response_count": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "deleted_at": null
+            },
+            {
+                "id": "forms#2",
+                "masjid_id": "masjids#2",
+                "slug": "careers-application",
+                "name": "Careers Application",
+                "description": "Apply to join our faculty and staff.",
+                "schema": "{\"sections\":[{\"id\":\"applicant\",\"title\":\"About you\",\"fields\":[{\"name\":\"fullName\",\"label\":\"Full name\",\"type\":\"text\",\"required\":true},{\"name\":\"email\",\"label\":\"Email address\",\"type\":\"email\",\"required\":true},{\"name\":\"phone\",\"label\":\"Phone number\",\"type\":\"tel\",\"required\":true}]},{\"id\":\"application\",\"title\":\"Your application\",\"fields\":[{\"name\":\"roleAppliedFor\",\"label\":\"Role you are applying for\",\"type\":\"select\",\"required\":true,\"options\":[{\"value\":\"teacher\",\"label\":\"Teacher\"},{\"value\":\"assistant-teacher\",\"label\":\"Assistant teacher\"},{\"value\":\"substitute-teacher\",\"label\":\"Substitute teacher\"},{\"value\":\"administration\",\"label\":\"Administration\"},{\"value\":\"support-staff\",\"label\":\"Support staff\"},{\"value\":\"other\",\"label\":\"Other\"}]},{\"name\":\"resume\",\"label\":\"R\\u00e9sum\\u00e9\",\"type\":\"file\",\"required\":true},{\"name\":\"coverLetter\",\"label\":\"Cover letter\",\"type\":\"textarea\"}]}]}",
+                "settings": "{\"identity\":{\"name\":\"fullName\",\"email\":\"email\",\"phone\":\"phone\"}}",
+                "is_active": 1,
+                "opens_at": null,
+                "closes_at": null,
+                "capacity": null,
+                "response_count": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "deleted_at": null
+            },
+            {
+                "id": "forms#3",
+                "masjid_id": "masjids#2",
+                "slug": "withdrawal-request",
+                "name": "Withdrawal Request",
+                "description": "Request the withdrawal of a student and tell us about your experience.",
+                "schema": "{\"sections\":[{\"id\":\"student\",\"title\":\"Student being withdrawn\",\"fields\":[{\"name\":\"studentName\",\"label\":\"Student name\",\"type\":\"text\",\"required\":true},{\"name\":\"lastDay\",\"label\":\"Last day of attendance\",\"type\":\"date\",\"required\":true},{\"name\":\"reason\",\"label\":\"Reason for withdrawal\",\"type\":\"select\",\"required\":true,\"options\":[{\"value\":\"relocation\",\"label\":\"Relocating \\/ moving away\"},{\"value\":\"tuition\",\"label\":\"Tuition or financial reasons\"},{\"value\":\"transportation\",\"label\":\"Transportation\"},{\"value\":\"another-school\",\"label\":\"Transferring to another school\"},{\"value\":\"homeschooling\",\"label\":\"Homeschooling\"},{\"value\":\"other\",\"label\":\"Other\"}]},{\"name\":\"exitFeedback\",\"label\":\"Is there anything we could have done better?\",\"type\":\"textarea\"}]},{\"id\":\"contact\",\"title\":\"Parent \\/ Guardian\",\"fields\":[{\"name\":\"parentName\",\"label\":\"Parent or guardian name\",\"type\":\"text\",\"required\":true},{\"name\":\"parentEmail\",\"label\":\"Email address\",\"type\":\"email\",\"required\":true},{\"name\":\"parentPhone\",\"label\":\"Phone number\",\"type\":\"tel\"}]}]}",
+                "settings": "{\"identity\":{\"name\":\"studentName\",\"email\":\"parentEmail\",\"phone\":\"parentPhone\"}}",
+                "is_active": 1,
+                "opens_at": null,
+                "closes_at": null,
+                "capacity": null,
+                "response_count": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "deleted_at": null
+            }
+        ],
+        "iqama_time_settings": [
+            {
+                "id": "iqama_time_settings#1",
+                "masjid_id": "masjids#2",
+                "fajr": 20,
+                "dhuhr": 10,
+                "asr": 10,
+                "maghrib": 5,
+                "isha": 10,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "iqama_type": "minutes_after_adhan",
+                "show_iqama_times": 1
+            }
+        ],
+        "jumaa_settings": [
+            {
+                "id": "jumaa_settings#1",
+                "masjid_id": "masjids#2",
+                "iqama": "13:30",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "athans": "[]",
+                "shifts": null
+            }
+        ],
+        "masjid_app_publishing": [
+            {
+                "id": "masjid_app_publishing#2",
+                "masjid_id": "masjids#2",
+                "ios_account_mode": "managed",
+                "android_account_mode": "managed",
+                "web_account_mode": "managed",
+                "asc_key_p8": null,
+                "asc_key_id": null,
+                "asc_issuer_id": null,
+                "play_service_account_json": null,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "onesignal_app_id": null,
+                "onesignal_rest_api_key": null,
+                "development_team": null,
+                "enabled_platforms": "[\"web\",\"android\"]"
+            }
+        ],
+        "masjid_mobile_app_features": [
+            {
+                "id": "masjid_mobile_app_features#12",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#1",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#13",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#2",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#14",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#3",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#15",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#4",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#16",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#5",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#17",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#6",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#18",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#7",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#19",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#8",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#20",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#9",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#21",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#10",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#22",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#11",
+                "is_available": 0,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjid_user": [
+            {
+                "id": "masjid_user#1",
+                "masjid_id": "masjids#2",
+                "user_id": "users#1",
+                "role": "masjid-admin",
+                "is_default": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "masjids": [
+            {
+                "id": "masjids#2",
+                "user_id": "users#1",
+                "name": "Snapshot Org",
+                "email": "org@snapshot.example.test",
+                "email_verified_at": null,
+                "phone": "+15551234567",
+                "phone_verified_at": null,
+                "country_id": "countries#1:string",
+                "city_id": "cities#1:string",
+                "address": "1 Test St",
+                "latitude": 43.32,
+                "longitude": -79.79,
+                "website_link": null,
+                "created_by": "users#2",
+                "updated_by": null,
+                "deleted_by": null,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "deleted_at": null,
+                "timezone": "America/Toronto",
+                "copyright_text": null,
+                "app_store_link": null,
+                "google_play_link": null,
+                "google_maps_key": null,
+                "stripe_account_id": null,
+                "stripe_charges_enabled": 0,
+                "stripe_payouts_enabled": 0,
+                "crm_enabled": 0,
+                "assistant_enabled": 0,
+                "tax_id": null,
+                "statement_signatory": null,
+                "mailing_locale": null,
+                "org_type": "school",
+                "listed_at": null,
+                "parent_id": null,
+                "capability_overrides": null,
+                "forms_card_via_masjid_id": null,
+                "forms_card_via_set_at": null,
+                "forms_card_via_set_by": null,
+                "stripe_deauthorized_at": null
+            }
+        ],
+        "prayer_calculation_settings": [
+            {
+                "id": "prayer_calculation_settings#1",
+                "masjid_id": "masjids#2",
+                "method": "MuslimWorldLeague",
+                "madhab": "Shafi",
+                "high_latitude_rule": "MiddleOfTheNight",
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            }
+        ],
+        "theme_settings": [
+            {
+                "id": "theme_settings#1",
+                "masjid_id": "masjids#2",
+                "primary_color": "#123456",
+                "secondary_color": null,
+                "accent_color": null,
+                "background_color": null,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>",
+                "tokens": null
+            }
+        ]
+    },
+    "removed": [],
+    "mail": []
+}

@@ -63,7 +63,8 @@ see `.claude/rules/verticals.md` and `DECISIONS.md` (2026-08-10).
   A School/Community tenant is now actually creatable: `ProvisionMasjidRequest`
   takes an optional `org_type` (absent ⇒ `masjid`, normalized in
   `prepareForValidation`; invalid ⇒ the legacy `{status:'failed'}` 422),
-  `OnboardingController@provision` persists it and seeds the feature toggles
+  `OrganisationProvisioner::create` (moved out of `OnboardingController@provision`
+  in Studio S6) persists it and seeds the feature toggles
   from `$masjid->defaultFeatureKeys()` instead of "everything on" — an explicit
   `feature_keys_provided` selection still wins. The admin payload
   (`MasjidsController@index/@show`, the provision echo) appends

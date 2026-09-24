@@ -1,0 +1,10 @@
+{
+    "status": 500,
+    "body": {
+        "status": "error",
+        "data": "An error occurred while processing your request."
+    },
+    "written": [],
+    "removed": [],
+    "mail": []
+}

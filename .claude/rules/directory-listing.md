@@ -3,6 +3,7 @@ paths:
   - "app/Http/Controllers/Mobile/MasjidsController.php"
   - "app/Http/Controllers/AdminDashboard/MasjidsController.php"
   - "app/Http/Controllers/AdminDashboard/OnboardingController.php"
+  - "app/Support/Studio/OrganisationProvisioner.php"
   - "app/Models/Masjid.php"
   - "database/migrations/*_add_listed_at_to_masjids_table.php"
   - "resources/vue-app/views/dashboard/super/masjid/MasjidDetailsView.vue"
