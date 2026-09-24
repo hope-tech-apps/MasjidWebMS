@@ -916,7 +916,7 @@
                                v-model.trim="composeTitle">
                         <textarea class="form-control mb-2" rows="3" placeholder="Share what happened today…"
                                   v-model.trim="composeBody"></textarea>
-                        <TeacherPhotoPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
+                        <GroupMediaPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
                         <p v-if="storyPhotos.length" class="text-muted small mb-2">
                             Photos are shown only to families who have given photo consent.
                         </p>
@@ -945,7 +945,9 @@
                             <p class="mb-2" style="white-space: pre-wrap;">{{ post.body }}</p>
                             <div v-if="post.attachments?.length" class="d-flex flex-wrap gap-2">
                                 <TeacherPhoto v-for="a in post.attachments" :key="a.id"
-                                              :src="a.download_path" :name="a.file_name" />
+                                              :src="a.download_path" :name="a.file_name"
+                                              :mime="a.mime_type" :is-video="a.is_video"
+                                              :playback-path="a.playback_ticket_path" />
                             </div>
                         </div>
                     </article>
@@ -986,7 +988,7 @@
                             <textarea v-model="composeForm.body" rows="3" maxlength="5000"
                                       class="form-control form-control-sm mt-2"
                                       placeholder="Your first message…"></textarea>
-                            <TeacherPhotoPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
+                            <GroupMediaPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
 
                             <p class="text-muted small mt-2 mb-2">
                                 <template v-if="composeForm.about_membership_id">
@@ -1054,7 +1056,9 @@
                             <div v-if="m.attachments?.length" class="d-flex flex-wrap gap-2 mt-1"
                                  :class="m.is_mine ? 'justify-content-end' : ''">
                                 <TeacherPhoto v-for="a in m.attachments" :key="a.id"
-                                              :src="a.download_path" :name="a.file_name" />
+                                              :src="a.download_path" :name="a.file_name"
+                                              :mime="a.mime_type" :is-video="a.is_video"
+                                              :playback-path="a.playback_ticket_path" />
                             </div>
                             <div v-else-if="m.media_withheld" class="text-muted small fst-italic mt-1">
                                 A photo in this message is hidden.
@@ -1078,7 +1082,7 @@
                                     <span v-else>Send</span>
                                 </button>
                             </div>
-                            <TeacherPhotoPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
+                            <GroupMediaPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
                             <p v-if="replyPhotos.length && openedThread.scope === 'group'" class="text-muted small mb-0 mt-1">
                                 This conversation is with the whole class. Photos are shown only to families who have given photo consent.
                             </p>
@@ -1970,7 +1974,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
-import TeacherPhotoPicker from '@/views/teacher/TeacherPhotoPicker.vue';
+import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useAuthStore } from '@/stores/authStore';
@@ -3841,13 +3845,23 @@ const removeHifz = async (entry: any) => {
     }
 };
 
-// ============================================================ PHOTOS
-// Shared by the class story and messages. Photos go as multipart, in the same
-// top-level `images` bag the server reads for both.
-const withPhotos = (fields: Record<string, string | number>, photos: File[]): FormData => {
+// ============================================================ PHOTOS + VIDEO
+// Shared by the class story and messages. Media goes as multipart, in the two
+// top-level bags the server reads for both surfaces.
+//
+// TWO BAGS, and the split happens HERE rather than in the picker: `images` and
+// `videos` are validated against different allowlists, different size ceilings
+// (8MB against 100MB) and different counts, so putting a clip in the `images`
+// bag is a 422 the teacher cannot act on. The picker holds one list because a
+// teacher choosing "three photos and the recital" should not need two buttons.
+const withPhotos = (fields: Record<string, string | number>, media: File[]): FormData => {
     const form = new FormData();
     Object.entries(fields).forEach(([key, value]) => form.append(key, String(value)));
-    photos.forEach((photo) => form.append('images[]', photo, photo.name));
+    media.forEach((file) => form.append(
+        (file.type || '').startsWith('video/') ? 'videos[]' : 'images[]',
+        file,
+        file.name,
+    ));
     return form;
 };
 
@@ -3855,7 +3869,7 @@ const withPhotos = (fields: Record<string, string | number>, photos: File[]): Fo
 // only have axios's "status code 413" to show.
 const photoErrorText = (e: any, fallback: string): string =>
     e?.response?.status === 413
-        ? 'Those photos are too large to send together. Try sending fewer at a time.'
+        ? 'That is too large to send together. Try fewer photos, or a shorter video.'
         : apiErrorText(e, fallback);
 
 // ============================================================ STORY

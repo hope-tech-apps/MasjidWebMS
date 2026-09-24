@@ -1209,6 +1209,14 @@ Route::prefix('admin')->group(function () {
                         Route::get('/{post_id}', 'show')->middleware('permission:view contacts');
                         Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment')
                             ->middleware('permission:view contacts');
+                        // A VIDEO cannot be fetched as a blob behind this token
+                        // — <video> issues its own ranged requests and cannot
+                        // send a header — so this mints a short-lived, viewer-
+                        // bound signed URL whose handler re-runs the whole check.
+                        // POST so the minted URL never lands in a history entry.
+                        // See App\Http\Controllers\GroupMediaPlaybackController.
+                        Route::post('/{post_id}/attachments/{attachment_id}/playback', 'playbackTicket')
+                            ->middleware('permission:view contacts');
                         Route::put('/{post_id}', 'update')->middleware('permission:manage contacts');
                         Route::delete('/{post_id}', 'destroy')->middleware('permission:manage contacts');
                     });
@@ -1258,6 +1266,9 @@ Route::prefix('admin')->group(function () {
                         Route::put('/{thread_id}/messages/{message_id}/reactions/{reaction}', 'react')->middleware('permission:manage contacts');
                         Route::delete('/{thread_id}/messages/{message_id}/reactions/{reaction}', 'unreact')->middleware('permission:manage contacts');
                         Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment')
+                            ->middleware('permission:view contacts');
+                        // The conversation twin of the story's playback ticket.
+                        Route::post('/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback', 'playbackTicket')
                             ->middleware('permission:view contacts');
                         Route::post('/{thread_id}/close', 'close')->middleware('permission:manage contacts');
                         Route::post('/{thread_id}/reopen', 'reopen')->middleware('permission:manage contacts');

@@ -104,7 +104,7 @@ class TeacherRealmTest extends TestCase
     #[Test]
     public function the_teacher_realm_exposes_exactly_these_writes(): void
     {
-        // Counting the write verbs, family-realm style: adding a twenty-seventh —
+        // Counting the write verbs, family-realm style: adding a twenty-ninth —
         // a roster mutation, a donation, a thread lifecycle verb — has to be a
         // DELIBERATE edit here, not a silent widening of what a teacher can do.
         //
@@ -167,10 +167,21 @@ class TeacherRealmTest extends TestCase
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/hifz/{entry_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts',
+            // Two VIDEO playback tickets, 2026-09-24, and they are the only
+            // entries on this list that write NOTHING — no row, no file, no
+            // state. Each mints a computed, expiring, viewer-bound signed URL so
+            // a <video> element can issue its own ranged requests, which it
+            // cannot do behind a bearer token. They are POSTs so the minted URL
+            // is never cached or bookmarkable, and they are counted here because
+            // this list counts VERBS rather than rows. Neither widens what a
+            // teacher may reach: both re-ask the same disclosure the download
+            // beside them asks, and the URL is re-checked in full on every range.
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback',
             'PUT /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
             'DELETE /api/teacher/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            'POST /api/teacher/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',
             // A reaction (🤲 👍 💯 ❓) and its removal, 2026-09-21. The reply's
             // own gate — `teacher.leads`, then mayReceiveThread() and "not
             // closed" — so it reaches exactly the conversations a teacher can

@@ -19,6 +19,6 @@ class UpdateGroupPostRequest extends GroupPostFormRequest
             'title' => 'sometimes|nullable|string|max:255',
             'body' => 'sometimes|required|string|max:' . (int) config('groups.feed.max_body_length', 5000),
             'retained_until' => 'sometimes|nullable|date',
-        ], $this->imageRules());
+        ], $this->mediaRules());
     }
 }

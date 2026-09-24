@@ -22,6 +22,10 @@ import { GroupFeedMeta, GroupPost, GroupPostPayload } from "@/core/types/data/ma
  *    only way to read one is the authenticated `download_path` on the
  *    attachment. `attachmentObjectUrl` below is that fetch; a plain `<img src>`
  *    pointed at the path would 401, and that is the design, not a bug.
+ *    VIDEO is the one exception and takes a different route entirely — a
+ *    short-lived signed ticket — because a <video> element cannot send the token
+ *    and a 100MB blob fetch is not playback. Never blob-fetch one; see
+ *    core/helpers/videoPlayback.
  */
 export const useGroupFeedStore = defineStore('groupFeedStore', () => {
 
@@ -50,12 +54,12 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
     }
 
     /**
-     * Publish a post, with any images in the SAME multipart request — the server
+     * Publish a post, with any media in the SAME multipart request — the server
      * writes the row and the bytes in one transaction, so a half-published story
      * never exists.
      *
-     * The upload field name comes from `meta.upload_key` rather than a literal,
-     * so the client cannot drift from `GroupPostFormRequest::UPLOAD_KEY`.
+     * `images` here is "the chosen files", photos and video together: they are
+     * split into the server's two bags below, by mime.
      */
     async function createPost(
         groupId: number | string,
@@ -67,11 +71,20 @@ export const useGroupFeedStore = defineStore('groupFeedStore', () => {
         }
 
         const uploadKey = feedMeta.value?.upload_key ?? 'images';
+        const videoKey = feedMeta.value?.video_upload_key ?? 'videos';
 
         const body = new FormData();
         if (payload.title) body.append('title', payload.title);
         body.append('body', payload.body);
-        images.forEach((image) => body.append(`${uploadKey}[]`, image));
+        // TWO BAGS. The server validates them against different allowlists,
+        // different size ceilings (8MB against 100MB) and different counts, so a
+        // clip put in the images bag is a 422 the admin cannot act on. Both
+        // field names still come from `meta` rather than a literal, so the
+        // client cannot drift from GroupPostFormRequest's constants.
+        images.forEach((file) => body.append(
+            `${(file.type || '').startsWith('video/') ? videoKey : uploadKey}[]`,
+            file,
+        ));
 
         const res: AxiosResponse = await ApiService.post(
             `/api/admin/masjids/${masjidStore.masjid.id}/groups/${groupId}/posts` as BackendApiRoute,

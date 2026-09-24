@@ -152,7 +152,9 @@
 
                             <div v-if="post.attachments?.length" class="d-flex flex-wrap gap-2">
                                 <FamilyAttachment v-for="a in post.attachments" :key="a.id"
-                                                  :src="attachmentUrl(post.id, a.id)" :name="a.name" />
+                                                  :src="attachmentUrl(post.id, a.id)" :name="a.name"
+                                                  :mime="a.mime_type" :is-video="a.is_video"
+                                                  :playback-path="postPlaybackUrl(post.id, a.id)" />
                             </div>
 
                             <!-- The API says so explicitly rather than serving a shorter list. -->
@@ -278,7 +280,9 @@
                                  on a class-wide conversation gets none, and is told. -->
                             <div v-if="m.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
                                 <FamilyAttachment v-for="a in m.attachments" :key="a.id"
-                                                  :src="messagePhotoUrl(m, a.id)" :name="a.file_name" />
+                                                  :src="messagePhotoUrl(m, a.id)" :name="a.file_name"
+                                                  :mime="a.mime_type" :is-video="a.is_video"
+                                                  :playback-path="messagePlaybackUrl(m, a.id)" />
                             </div>
                             <p v-else-if="m.media_withheld" class="text-muted small fst-italic mb-0 mt-1">
                                 {{ t('message_media_withheld') }}
@@ -1187,6 +1191,16 @@ const attachmentUrl = (postId: number, attachmentId: number) =>
     `${base.value}/posts/${postId}/attachments/${attachmentId}`;
 const messagePhotoUrl = (message: any, attachmentId: number) =>
     `${base.value}/threads/${message.thread_id}/messages/${message.id}/attachments/${attachmentId}`;
+
+// Where to ASK for a playback ticket for a VIDEO — built from the ids the way
+// the download paths above are, rather than read off the payload, because this
+// portal has always built its own paths and one attachment carrying a path
+// while its neighbour does not is how two conventions start. The tile only
+// calls it when the attachment is a video.
+const postPlaybackUrl = (postId: number, attachmentId: number) =>
+    `${attachmentUrl(postId, attachmentId)}/playback`;
+const messagePlaybackUrl = (message: any, attachmentId: number) =>
+    `${messagePhotoUrl(message, attachmentId)}/playback`;
 
 const fail = (e: any) => {
     if (familyStore.handleAuthFailure(e?.response?.status)) {

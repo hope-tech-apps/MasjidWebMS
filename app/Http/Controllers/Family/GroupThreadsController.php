@@ -12,6 +12,7 @@ use App\Models\GroupMessageReaction;
 use App\Models\GroupThread;
 use App\Models\GroupThreadRead;
 use App\Models\Masjid;
+use App\Support\GroupMedia;
 use App\Support\GroupMessageSignals;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -204,6 +205,45 @@ class GroupThreadsController extends FamilyController
                 'Cache-Control' => 'private, no-store, max-age=0',
             ],
         );
+    }
+
+    /**
+     * POST .../threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback
+     *
+     * A parent's playback ticket for a conversation video. Same chain and same
+     * decision as downloadAttachment, re-asked by the playback route on every
+     * ranged request.
+     */
+    public function playbackTicket($masjid_id, $group_id, $thread_id, $message_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+
+        $group = $this->group($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+        $message = $thread->messages()->findOrFail($message_id);
+        $attachment = $message->attachments()->findOrFail($attachment_id);
+
+        if (! $this->audience->mayReceiveThreadMedia($this->contact(), $group, $thread)) {
+            abort(Response::HTTP_FORBIDDEN, 'You are not entitled to the photos in this conversation.');
+        }
+
+        if (! GroupMedia::isPlayable($attachment)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'That attachment is not a video.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'url' => GroupMedia::messageTicket(
+                    $masjid_id, $group_id, $thread->id, $message->id, $attachment->id,
+                    GroupMedia::VIEWER_FAMILY, (int) $this->contact()->id,
+                ),
+                'expires_in' => GroupMedia::playbackTtlMinutes() * 60,
+            ],
+        ], Response::HTTP_OK);
     }
 
     // ------------------------------------------------------------- internals
@@ -513,6 +553,12 @@ class GroupThreadsController extends FamilyController
             'attachments' => $mayReceiveMedia
                 ? $attachments->map(fn ($attachment) => $attachment->toAudienceArray())->values()->all()
                 : [],
+            // The portal builds the download path from the ids (see
+            // FamilyClass.vue) and builds the PLAYBACK path the same way, from
+            // `is_video` on each attachment. Nothing new is emitted here on
+            // purpose: adding a per-attachment path to this one serializer and
+            // not the three around it is how two conventions start.
+            //
             'media_withheld' => ! $mayReceiveMedia && $attachments->isNotEmpty(),
             // A name, not an id. `users.id` is an internal staff identifier and
             // a parent has nothing to do with it; the teacher's name is what the

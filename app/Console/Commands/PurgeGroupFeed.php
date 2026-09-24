@@ -61,7 +61,7 @@ class PurgeGroupFeed extends Command
                             {--masjid= : Limit the sweep to one organization}
                             {--dry-run : Report what would go without deleting anything}';
 
-    protected $description = 'Force-delete group feed posts, messaging threads and behaviour awards past their retention date, including feed images on the private disk.';
+    protected $description = 'Force-delete group feed posts, messaging threads, behaviour awards and videos past their retention date, including media on the private disk.';
 
     public function handle(): int
     {
@@ -153,6 +153,40 @@ class PurgeGroupFeed extends Command
             }
         });
 
+        // VIDEO (2026-09-24). A fourth sweep, over the ATTACHMENT rows rather
+        // than their parents, because video carries its own shorter window (90
+        // days against the post's or thread's 365) and the parent sweeps above
+        // would not reach it for another nine months.
+        //
+        // Deleted THROUGH THE MODEL, which is the only thing that matters here:
+        // each attachment's own `deleting` hook is what removes the bytes, and
+        // a `DELETE FROM group_post_attachments WHERE retained_until <= ?` would
+        // leave every 100MB video on the droplet forever while reporting a
+        // successful purge. Rows with a null `retained_until` — every photograph
+        // — are not selected at all, so this sweep cannot touch them.
+        //
+        // The two tables are swept by the same closure rather than by two copied
+        // blocks: they are the same policy over the same kind of file, and the
+        // one that got copied is the one that would stop being updated.
+        $videos = 0;
+
+        foreach ([\App\Models\GroupPostAttachment::class, \App\Models\GroupMessageAttachment::class] as $model) {
+            $model::withoutMasjidScope()
+                ->dueForPurge($before)
+                ->when($narrowToMasjid, fn ($q) => $q->where('masjid_id', (int) $masjidId))
+                ->orderBy('id')
+                ->chunkById(100, function ($due) use (&$videos, $dryRun) {
+                    foreach ($due as $attachment) {
+                        if (! $dryRun) {
+                            // purge() -> delete() -> the deleting hook -> the bytes.
+                            $attachment->purge();
+                        }
+
+                        $videos++;
+                    }
+                });
+        }
+
         // `hifz_entries` (T-014) is ABSENT FROM THIS SWEEP ON PURPOSE, and the
         // absence is a decision rather than an oversight — do not "finish the
         // job" by adding it. A feed post and a behaviour point describe a
@@ -165,13 +199,14 @@ class PurgeGroupFeed extends Command
         // with the student. See config/groups.php and .claude/rules/groups.md.
 
         $this->info(sprintf(
-            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s)%s.',
+            '%s %d post(s) and %d image(s), %d thread(s) and %d message(s), %d behaviour award(s), %d video(s)%s.',
             $dryRun ? 'Would purge' : 'Purged',
             $posts,
             $images,
             $threads,
             $messages,
             $awards,
+            $videos,
             $masjidId ? " for masjid {$masjidId}" : ''
         ));
 
@@ -189,6 +224,11 @@ class PurgeGroupFeed extends Command
             'threads' => $threads,
             'messages' => $messages,
             'behavior_awards' => $awards,
+            // Counted separately from `images`, which counts attachments taken
+            // by a parent's purge. A video removed on its OWN window leaves its
+            // post standing, so rolling the two together would make a working
+            // video sweep indistinguishable from a post sweep that got busier.
+            'videos' => $videos,
         ]);
 
         return self::SUCCESS;

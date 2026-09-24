@@ -19,7 +19,7 @@
 
                     <div class="d-flex flex-wrap align-items-center gap-2">
                         <label class="btn btn-sm btn-outline-secondary mb-0">
-                            <i class="bi bi-image me-1"></i> Add photos
+                            <i class="bi bi-image me-1"></i> {{ addMediaLabel }}
                             <input
                                 type="file"
                                 class="d-none"
@@ -96,16 +96,35 @@
                         .claude/rules/private-uploads.md.
                     -->
                     <div v-if="post.attachments.length" class="d-flex flex-wrap gap-2">
-                        <div v-for="attachment in post.attachments" :key="attachment.id" class="story-thumb">
-                            <img
-                                v-if="imageUrls[attachment.id]"
-                                :src="imageUrls[attachment.id]"
-                                :alt="attachment.file_name"
-                            >
-                            <div v-else class="story-thumb-placeholder">
-                                <span class="spinner-border spinner-border-sm text-secondary"></span>
+                        <template v-for="attachment in post.attachments" :key="attachment.id">
+                            <!--
+                                A VIDEO is its own component: it plays from a
+                                short-lived signed ticket rather than the
+                                bearer-token blob a photo uses, because a <video>
+                                element makes its own ranged requests and cannot
+                                send a header. Rendered by <img> — as every
+                                attachment was until 2026-09-24 — it is a silent
+                                broken image.
+                            -->
+                            <GroupMessagePhoto
+                                v-if="attachment.is_video"
+                                :src="attachment.download_path"
+                                :name="attachment.file_name"
+                                :mime="attachment.mime_type"
+                                :is-video="true"
+                                :playback-path="attachment.playback_ticket_path"
+                            />
+                            <div v-else class="story-thumb">
+                                <img
+                                    v-if="imageUrls[attachment.id]"
+                                    :src="imageUrls[attachment.id]"
+                                    :alt="attachment.file_name"
+                                >
+                                <div v-else class="story-thumb-placeholder">
+                                    <span class="spinner-border spinner-border-sm text-secondary"></span>
+                                </div>
                             </div>
-                        </div>
+                        </template>
                     </div>
 
                     <!--
@@ -130,6 +149,9 @@
 import { ref, computed, onBeforeMount, onBeforeUnmount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
+// The same tile the conversation tab uses for a video: one renderer for the
+// ticket-and-<video> arrangement rather than a second copy of it here.
+import GroupMessagePhoto from './GroupMessagePhoto.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupPost } from '@/core/types/data/masjid-related/GroupPost';
 import { useGroupFeedStore } from '@/stores/masjid/groupFeedStore';
@@ -182,13 +204,40 @@ const paginationOptions = computed<PaginationOptions | undefined>(() => {
     };
 });
 
-/** The file picker's accept list, from the server's own allowlist. */
-const acceptAttribute = computed<string>(() => (feedStore.feedMeta?.accepted_image_types ?? []).join(','));
+/**
+ * The file picker's accept list, from the server's own TWO allowlists.
+ *
+ * Still built from `meta` rather than a literal, so the control offers exactly
+ * what the server will take. Video is a SECOND list because the server holds it
+ * to a second set of rules — a different allowlist, a 100MB ceiling instead of
+ * 8MB, and one file instead of eight.
+ */
+const acceptAttribute = computed<string>(() => [
+    ...(feedStore.feedMeta?.accepted_image_types ?? []),
+    ...(feedStore.feedMeta?.accepted_video_types ?? []),
+].join(','));
+
+const addMediaLabel = computed<string>(() =>
+    (feedStore.feedMeta?.max_videos_per_post ?? 0) > 0 ? 'Add photos or video' : 'Add photos');
 
 const uploadHint = computed<string>(() => {
     const meta = feedStore.feedMeta;
     if (!meta || !meta.max_images_per_post) return '';
-    return `Up to ${meta.max_images_per_post} images, ${meta.max_image_size_kb}KB each`;
+
+    const parts = [`Up to ${meta.max_images_per_post} images, ${meta.max_image_size_kb}KB each`];
+
+    if (meta.max_videos_per_post) {
+        // MB, not the rule's KB: 102400KB is arithmetic nobody should do while
+        // holding a phone. The retention difference is stated because it is a
+        // real difference a teacher should know before posting — a clip is kept
+        // for a shorter time than the photos beside it.
+        parts.push(
+            `${meta.max_videos_per_post} video up to ${Math.round((meta.max_video_size_kb ?? 0) / 1024)}MB`
+            + (meta.video_retention_days ? `, kept ${meta.video_retention_days} days` : '')
+        );
+    }
+
+    return parts.join(' · ');
 });
 
 // Lifecycle
@@ -232,7 +281,12 @@ const loadPosts = async (page: number) => {
  * placeholder already says the image did not arrive.
  */
 const hydrateImages = async () => {
-    const attachments = posts.value.flatMap((post) => post.attachments);
+    // Images only. A video is NOT blob-fetched — 100MB behind a bearer token is
+    // exactly what the ticket arrangement exists to avoid — so it is filtered
+    // out here rather than quietly downloaded in full behind the page.
+    const attachments = posts.value
+        .flatMap((post) => post.attachments)
+        .filter((attachment) => !attachment.is_video);
 
     await Promise.all(attachments.map(async (attachment) => {
         try {

@@ -60,15 +60,21 @@ class GroupMessageAttachments
 
                 $written[] = $path;
 
+                $mimeType = Str::limit((string) $file->getMimeType(), 190, '');
+
                 $records[] = GroupMessageAttachment::create([
                     'group_message_id' => $message->id,
                     // Server-derived from the message, never from the payload.
                     'masjid_id' => $message->masjid_id,
                     'original_name' => GroupPostAttachments::safeOriginalName($file),
-                    'mime_type' => Str::limit((string) $file->getMimeType(), 190, ''),
+                    'mime_type' => $mimeType,
                     'size_bytes' => (int) $file->getSize(),
                     'disk' => $diskName,
                     'path' => $path,
+                    // The same shorter window video carries on the story side —
+                    // one definition, in GroupMedia, because a video of a child
+                    // is the same thing in a conversation as in a class story.
+                    'retained_until' => GroupMedia::retainedUntilFor($mimeType),
                 ]);
             }
         } catch (\Throwable $e) {

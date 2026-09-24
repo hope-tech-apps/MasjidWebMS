@@ -102,10 +102,12 @@
                             <div v-if="message.body" class="message-body">{{ message.body }}</div>
                             <div v-if="message.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
                                 <GroupMessagePhoto v-for="a in message.attachments" :key="a.id"
-                                                   :src="a.download_path" :name="a.file_name" />
+                                                   :src="a.download_path" :name="a.file_name"
+                                                   :mime="a.mime_type" :is-video="a.is_video"
+                                                   :playback-path="a.playback_ticket_path" />
                             </div>
                             <div v-else-if="message.media_withheld" class="small text-muted fst-italic mt-1">
-                                A photo in this message is hidden from you.
+                                An attachment in this message is hidden from you.
                             </div>
                             <!--
                                 Read status on EVERY message here, not only the
@@ -137,11 +139,36 @@
                                     placeholder="Write a message…"
                                     :maxlength="maxMessageLength"
                                 >
-                                <button class="btn btn-success" type="submit" :disabled="sending || !messageBody">
+                                <!--
+                                    Send is enabled by TEXT **or** an attachment:
+                                    the server's rule is
+                                    `required_without_all:images,videos`, so a
+                                    photo- or video-only message is legal, and a
+                                    button gated on `messageBody` alone would
+                                    have made the picker look broken.
+                                -->
+                                <button class="btn btn-success" type="submit"
+                                        :disabled="sending || !canSend">
                                     <span v-if="sending" class="spinner-border spinner-border-sm"></span>
                                     <i v-else class="bi bi-send"></i>
                                 </button>
                             </div>
+                            <!--
+                                The same control the teacher screens use, not a
+                                second copy of it: photos and one video through
+                                one picker. Limits come from the server's own
+                                `meta`, so the office is never offered something
+                                the request would refuse.
+                            -->
+                            <GroupMediaPicker
+                                v-model="replyMedia"
+                                class="mt-2"
+                                :disabled="sending"
+                                :accept="acceptImages"
+                                :video-accept="acceptVideos"
+                                :max="maxImages"
+                                :max-videos="maxVideos"
+                            />
                         </form>
                         <div v-else class="small text-muted text-center">
                             This conversation is closed. Reopen it to continue.
@@ -189,6 +216,22 @@
                                 <div class="mb-1">
                                     <label class="form-label">First message</label>
                                     <textarea class="form-control" rows="3" v-model.trim="threadForm.body"></textarea>
+                                    <!--
+                                        A conversation may open WITH a photo or a
+                                        clip — the thread and its first message
+                                        are written in one transaction server
+                                        side, so there is no half-opened state to
+                                        design around.
+                                    -->
+                                    <GroupMediaPicker
+                                        v-model="threadMedia"
+                                        class="mt-2"
+                                        :disabled="creating"
+                                        :accept="acceptImages"
+                                        :video-accept="acceptVideos"
+                                        :max="maxImages"
+                                        :max-videos="maxVideos"
+                                    />
                                 </div>
                             </div>
                             <div class="modal-footer">
@@ -211,6 +254,7 @@ import { ref, computed, onBeforeMount, watch } from 'vue';
 import Pagination from '@/components/partials/Pagination.vue';
 import GroupForbiddenNotice from './GroupForbiddenNotice.vue';
 import GroupMessagePhoto from './GroupMessagePhoto.vue';
+import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import { GroupMembership } from '@/core/types/data/masjid-related/Group';
@@ -243,6 +287,9 @@ const showThreadModal = ref(false);
 const creating = ref(false);
 const sending = ref(false);
 const messageBody = ref('');
+/** Chosen attachments for the reply box and for a new conversation's first message. */
+const replyMedia = ref<File[]>([]);
+const threadMedia = ref<File[]>([]);
 /** Kept apart from `threadForm` so switching back to a group-wide scope cannot leave a stale subject. */
 const aboutMembershipId = ref<number | null>(null);
 
@@ -265,6 +312,20 @@ const participants = computed<GroupMembership[]>(
 );
 
 const maxMessageLength = computed<number>(() => threadsStore.threadsMeta?.max_message_length || 5000);
+
+/**
+ * Upload limits, from the server's own `meta` rather than literals — the office
+ * must never be offered a file the request would then refuse. The two sets are
+ * separate because the server holds them to separate rules: a different
+ * allowlist, a 100MB ceiling instead of 8MB, and one file instead of eight.
+ */
+const acceptImages = computed<string>(() => (threadsStore.threadsMeta?.accepted_image_types ?? []).join(','));
+const acceptVideos = computed<string>(() => (threadsStore.threadsMeta?.accepted_video_types ?? []).join(','));
+const maxImages = computed<number>(() => threadsStore.threadsMeta?.max_images_per_message ?? 8);
+const maxVideos = computed<number>(() => threadsStore.threadsMeta?.max_videos_per_message ?? 0);
+
+/** Text OR an attachment is enough; the server refuses a message that is neither. */
+const canSend = computed<boolean>(() => !!messageBody.value || replyMedia.value.length > 0);
 
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
     if (!threadsStore.threadsPaginated) return undefined;
@@ -321,6 +382,10 @@ const selectThread = async (thread: GroupThread) => {
     try {
         await threadsStore.fetchThread(props.groupId, thread.id);
         messageBody.value = '';
+        // Switching conversations clears the staged attachments with the draft
+        // text, for the same reason: a photo chosen for one family's thread must
+        // not be sitting in the box when the next one opens.
+        replyMedia.value = [];
     } catch (error) {
         Swal.fire({ icon: 'error', title: 'Error!', text: apiErrorText(error, 'Failed to open the conversation.') });
     }
@@ -333,7 +398,8 @@ const submitThread = async () => {
         const thread = await threadsStore.createThread(props.groupId, {
             ...threadForm.value,
             about_membership_id: threadForm.value.scope === 'participant' ? aboutMembershipId.value : null
-        });
+        }, threadMedia.value);
+        threadMedia.value = [];
         showThreadModal.value = false;
         await loadThreads(1);
         await selectThread(thread);
@@ -347,18 +413,26 @@ const submitThread = async () => {
 
 const submitMessage = async () => {
     const thread = openThread.value;
-    if (!thread || !messageBody.value) return;
+    if (!thread || !canSend.value) return;
     sending.value = true;
     try {
-        await threadsStore.postMessage(props.groupId, thread.id, messageBody.value);
+        await threadsStore.postMessage(props.groupId, thread.id, messageBody.value, replyMedia.value);
         messageBody.value = '';
+        // Cleared only after the send SUCCEEDS, so a refused message (a closed
+        // conversation, a caller off the roster) does not silently discard the
+        // photo the office had just chosen.
+        replyMedia.value = [];
         await threadsStore.fetchThread(props.groupId, thread.id);
         await loadThreads(paginationOptions.value?.currentPage || 1);
     } catch (error) {
         Swal.fire({
             icon: 'error',
             title: 'Not sent',
-            text: apiErrorText(error, 'Failed to send the message.')
+            // nginx answers an oversized request itself, as HTML, so apiErrorText
+            // would only have axios's "status code 413" to show.
+            text: (error as any)?.response?.status === 413
+                ? 'That is too large to send together. Try fewer photos, or a shorter video.'
+                : apiErrorText(error, 'Failed to send the message.')
         });
     } finally {
         sending.value = false;
@@ -392,6 +466,10 @@ const toggleClosed = async () => {
 const openThreadModal = () => {
     threadForm.value = emptyThreadForm();
     aboutMembershipId.value = null;
+    // A clip chosen for a conversation that was then abandoned must not ride
+    // along into the next one — the picker keeps File objects, not a form field
+    // the reset above would clear.
+    threadMedia.value = [];
     showThreadModal.value = true;
 };
 
@@ -406,6 +484,10 @@ const formatDateTime = (iso: string | null): string => {
 // A different group means a different set of conversations.
 watch(() => props.groupId, async () => {
     threadsStore.clearOpenThread();
+    // Staged attachments belong to the conversation they were chosen for. A
+    // photo of one class must never be carried into another's compose box.
+    replyMedia.value = [];
+    threadMedia.value = [];
     await loadThreads(1);
 });
 

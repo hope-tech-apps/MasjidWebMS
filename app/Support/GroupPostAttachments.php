@@ -69,15 +69,22 @@ class GroupPostAttachments
 
                 $written[] = $path;
 
+                $mimeType = Str::limit((string) $file->getMimeType(), 190, '');
+
                 $records[] = GroupPostAttachment::create([
                     'group_post_id' => $post->id,
                     // Server-derived from the post, never from the payload.
                     'masjid_id' => $post->masjid_id,
                     'original_name' => self::safeOriginalName($file),
-                    'mime_type' => Str::limit((string) $file->getMimeType(), 190, ''),
+                    'mime_type' => $mimeType,
                     'size_bytes' => (int) $file->getSize(),
                     'disk' => $diskName,
                     'path' => $path,
+                    // Video carries a SHORTER window than the post it hangs on
+                    // (90 days against 365), so it is stamped here, on the row
+                    // that owns the bytes. Null for an image, which still dies
+                    // exactly when its post does and has no window of its own.
+                    'retained_until' => GroupMedia::retainedUntilFor($mimeType),
                 ]);
             }
         } catch (\Throwable $e) {
@@ -101,6 +108,12 @@ class GroupPostAttachments
      *
      * Public because GroupMessageAttachments stores the same kind of file and
      * must sanitize it the same way, not with a second copy of this.
+     *
+     * The FALLBACK — for a name that was empty, or was nothing but separators
+     * and control characters — is named after the file's own sniffed kind. It
+     * used to be the literal `'image.'.$ext`, which for a video produced
+     * `image.mp4`: a filename shown to the parent, used as the download name,
+     * and flatly wrong about what the file is.
      */
     public static function safeOriginalName(UploadedFile $file): string
     {
@@ -114,7 +127,8 @@ class GroupPostAttachments
         $name = trim($name);
 
         if ($name === '' || $name === '.' || $name === '..') {
-            $name = 'image.' . ($file->extension() ?: 'bin');
+            $stem = GroupMedia::isVideo($file->getMimeType()) ? 'video' : 'image';
+            $name = $stem . '.' . ($file->extension() ?: 'bin');
         }
 
         return Str::limit($name, 200, '');

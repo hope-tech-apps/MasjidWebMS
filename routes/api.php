@@ -23,6 +23,7 @@ use App\Http\Controllers\Mobile\SignageController;
 use App\Http\Controllers\Mobile\SplashAnnouncementsController;
 use App\Http\Controllers\Mobile\TasabihController;
 use App\Http\Controllers\Mobile\TvConfigController;
+use App\Http\Controllers\GroupMediaPlaybackController;
 use App\Http\Controllers\ProvisioningCallbackController;
 use App\Http\Controllers\StripeWebhookController;
 use Illuminate\Support\Facades\Route;
@@ -375,5 +376,54 @@ Route::prefix('provisioning')->group(function () {
  * Production still has BROADCAST_CONNECTION=pusher and PUSHER_* credentials in
  * its .env; nothing reads them any more, so they can be retired at leisure.
  */
+
+/*
+|--------------------------------------------------------------------------
+| Group video playback (2026-09-24)
+|--------------------------------------------------------------------------
+|
+| The ONE way group media is reachable without an Authorization header, and it
+| exists because a <video> element cannot be given one. Everything that makes
+| that safe is in App\Http\Controllers\GroupMediaPlaybackController's docblock;
+| what belongs here is why the middleware list is what it is.
+|
+|   signed:relative   The ticket is validated against the PATH AND QUERY only,
+|                     not the host. This app answers to more than one hostname
+|                     (SecurityHeaders names the second one), and an absolute
+|                     signature would pin playback to config('app.url') — which
+|                     for the SPA served on the other host is a cross-origin
+|                     media load into a CSP and a CORS allowlist that have
+|                     already cost this project two outages. Relative keeps the
+|                     ticket same-origin wherever the SPA is served from.
+|   throttle:240,1    Seeking a video is many small ranged requests from one
+|                     viewer, so the ordinary API limiter would throttle normal
+|                     use. 240/min still bounds a scraper walking ticket
+|                     parameters — which the signature already refuses.
+|
+| NOT here, deliberately: `auth:*`, `tenant`, `crm`, `permission:`. There is no
+| token on this request to authenticate, so the controller re-derives every one
+| of those decisions itself — the tenant from the URL, the CRM gate from the
+| masjid row, the viewer from the SIGNED parameters, and the disclosure from
+| App\Support\GroupAudience. Read it before adding a route to this group.
+|
+| These routes are mounted OUTSIDE the `mobile` prefix on purpose: no native app
+| reads group media today (nothing under app/Http/Controllers/Mobile touches a
+| group), and putting them under a prefix named for a consumer that does not
+| exist would be a claim rather than a path.
+*/
+Route::prefix('group-media')
+    ->middleware(['signed:relative', 'throttle:240,1'])
+    ->group(function () {
+        Route::get(
+            'masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/stream',
+            [GroupMediaPlaybackController::class, 'post']
+        )->name(\App\Support\GroupMedia::ROUTE_POST);
+
+        Route::get(
+            'masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}'
+                . '/attachments/{attachment_id}/stream',
+            [GroupMediaPlaybackController::class, 'message']
+        )->name(\App\Support\GroupMedia::ROUTE_MESSAGE);
+    });
 
 require 'api_v1.php';

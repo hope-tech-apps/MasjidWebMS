@@ -2521,3 +2521,107 @@ the listing where they used to get a 403, because their rows are retained so the
 are still `in_group`. What they can SEE is unchanged — nothing.
 `withdrawing_a_student_ends_their_claim_and_widens_nothing` was updated to assert
 the empty 200, deliberately.
+## 2026-09-24 — Video gets its own config block, its own upload bag, its own everything
+Decision: `config('groups.media.video')` — a separate mime allowlist
+(`video/mp4,video/quicktime,video/webm`), size ceiling (100 MB), per-post count (1),
+retention window (90 days) and playback TTL (10 min) — plus a second top-level upload bag,
+`GroupPostFormRequest::VIDEO_UPLOAD_KEY = 'videos'`, validated by `videoRules()` beside the
+untouched `imageRules()`.
+Alternatives: widen `groups.media.mime_types` and raise `max_size_kb` (one bag, one rule, far
+less code); a `kind` column on the attachment tables to tell the two apart.
+Rationale: the four image keys are a SINGLE SHARED DEFINITION read by the class story, the
+conversations *and* — by name, in its own comment — the resource library's sibling block.
+Adding `video/mp4` and 100 MB there would have made a **100 MB image** legal on every one of
+those surfaces, on a 2 GB droplet. `GroupVideoAttachmentsTest::a_video_sent_in_the_image_bag_
+is_refused` and `::a_photo_sent_in_the_video_bag_is_refused` are the two halves of that
+guarantee. No `kind` column: `mime_type` is sniffed from the bytes and is already
+authoritative, and a second column could disagree with it.
+
+## 2026-09-24 — Playback is a short-lived, viewer-bound, RELATIVE signed ticket
+Decision: video is played through `GroupMediaPlaybackController` behind
+`signed:relative` + `throttle:240,1`. An authenticated `POST .../attachments/{id}/playback`
+on each realm's own controller mints the URL; the signed handler then **re-binds the tenant
+from the URL, re-resolves the whole ownership chain link by link, re-applies the CRM gate,
+re-resolves the named viewer from the database and re-asks `GroupAudience`** before a byte
+leaves. It answers with a manual `Range`-aware stream (`App\Support\PrivateMediaStream`).
+Alternatives, and why not:
+  - **Keep `Storage::download()`.** It is a `StreamedResponse` with `attachment` disposition
+    and no `Accept-Ranges`, so `<video>` cannot seek and must buffer the whole file. At
+    100 MB that is not slow, it is broken.
+  - **Keep the bearer-token blob fetch the photos use.** A `<video>` element issues its own
+    requests and cannot be given an `Authorization` header; fetching 100 MB into memory
+    before the first frame is the same failure by another route.
+  - **A permanent private URL behind a session cookie.** The realms are token-based; there is
+    no cookie, and a durable URL is exactly what `.claude/rules/private-uploads.md` forbids.
+  - **Mint the ticket inside the list payload.** Its ten minutes would start when the page
+    rendered rather than when somebody pressed play, and a playable URL would sit in whatever
+    holds that payload. The payload carries a `playback_ticket_path` — a path to ASK — instead.
+  - **An ABSOLUTE signed URL.** Built from `config('app.url')`, which is not the origin the
+    SPA is served from on the second host (see `SecurityHeaders`), so playback would be a
+    cross-origin media load into the CSP and CORS allowlists that have already cost this
+    project two outages. Relative signatures are host-independent, and they match what the
+    SPA already does: `VITE_APP_URL` is deliberately left EMPTY at build time
+    (`resources/vue-app/core/types/declarations/env.d.ts`, and the build is run as
+    `env -u VITE_APP_URL npm run build`) so every API call is same-origin on whichever host
+    serves the page. A relative ticket is the only form that keeps that true, and
+    `default-src 'self'` in `SecurityHeaders` — which `media-src` falls back to — then covers
+    it on every host without another allowlist entry.
+  - **Symfony's `BinaryFileResponse`** for the range arithmetic: it needs a local path, so it
+    would be one code path in production and a hand-written fallback for any other disk —
+    meaning the one the suite exercises is not the one that ships. One path, tested.
+Rationale: this is the minimum that keeps all three private-upload guarantees (no permanent
+public URL, chain re-resolved, consent re-checked **at access time**) while letting a browser
+seek. `::withdrawing_consent_stops_the_next_range_on_a_ticket_already_minted` is the proof.
+**The cost, stated:** within the ticket's lifetime the URL is a bearer credential — anyone
+holding the string can watch. That is why the window is ten minutes and why IMAGES WERE NOT
+MOVED ONTO IT: a photo loads fine as a blob and gains nothing from a weaker arrangement.
+
+## 2026-09-24 — Video retention is a column on the ATTACHMENT, not a second parent window
+Decision: `group_post_attachments.retained_until` / `group_message_attachments.retained_until`,
+nullable, stamped only for video (90 days) by `App\Support\GroupMedia::retainedUntilFor()`,
+swept by a fourth pass in `groups:purge-feed` that deletes THROUGH THE MODEL.
+Alternatives: shorten the whole post's window when it carries a video (takes the words and
+the photos with it); a separate `groups:purge-video` command.
+Rationale: retention lived only on the parent, so a clip inside a post inherited the post's
+365 days. Null stays the default, so every existing and future photograph is untouched and
+still dies exactly when its parent does — the change is additive rather than a policy applied
+retroactively. One sweep, not two, for the reason the threads and the behaviour awards were
+folded in: retention over a group's content is one policy.
+
+## 2026-09-24 — The picker holds one list; the CALLER splits the two bags
+Decision: `TeacherPhotoPicker` (and the office story tab) accept photos and video through one
+control and one `File[]`; the upload helpers split by `file.type` into `images[]` / `videos[]`.
+Every renderer branches on `mime_type` to `<video controls preload="metadata">`.
+Alternatives: two pickers; one bag and a server-side sort.
+Rationale: a teacher choosing "three photos and the recital" should not have to find two
+buttons, but the server must keep two rules. Nothing transcodes or thumbnails anything —
+there is no ffmpeg on the droplet, so `preload="metadata"` is the only poster there is.
+
+## 2026-09-24 — The office conversations box takes photos and one video too, and the picker moved
+Decision (owner, same day): the office/admin conversations compose box gets the same attachment
+control the teacher screens have — photos AND one video, one picker. `TeacherPhotoPicker.vue`
+moved to `components/partials/GroupMediaPicker.vue` and is now used by both realms;
+`groupThreadsStore` sends multipart with the two bags, keyed from `meta` rather than literals.
+Alternatives: a second picker component in the dashboard tree (rejected — the copy is the one
+that stops getting the fix); importing `@/views/teacher/...` into a dashboard view (rejected —
+a cross-realm import that reads as an accident).
+Rationale: **no server change was needed, and that was verified rather than assumed** —
+`AdminDashboard\GroupThreadsController::storeMessage` already calls `$this->uploads($request)`,
+which reads both bags, and `StoreGroupMessageRequest`/`StoreGroupThreadRequest` already carry
+`mediaRules()`. The office box was text-only because no client ever sent files, not because the
+server refused them. Parents still attach NOTHING: `StoreFamilyMessageRequest` validates `body`
+only, and that is untouched. Send is enabled by text OR an attachment, matching the server's
+`required_without_all`; staged files are cleared on a successful send, on a thread switch, on a
+group switch and when the new-conversation modal reopens, and NOT on a failed send.
+
+## 2026-09-24 — Playback admits a masjid OWNER, not only a `masjid_user` row
+Decision: `GroupMediaPlaybackController::viewer()`'s staff branch accepts either
+`masjids.user_id === $user->id` or a `masjid_user` membership.
+Alternatives: require the pivot row (what it did first); synthesise a membership.
+Rationale: a BUG, found by building the office path and pinned by
+`office_staff_attach_a_video_to_a_conversation_message_and_play_it`. `App\Support\TenantResolver`
+has two ways in, and its own docblock records that `masjids.user_id` is set by factories, seeders
+and two provisioning controllers that write no membership — so "every organisation provisioned
+since" has an owner with no row. Checking only the pivot let an office admin list a video, open
+the download endpoint and mint a ticket, and then be refused the bytes for owning the school.
+Removing the ownership arm fails that test with a 403 where 206 is expected.

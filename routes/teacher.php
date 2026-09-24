@@ -232,6 +232,10 @@ Route::prefix('teacher')
                         Route::post('/posts', [GroupPostsController::class, 'store']);
                         Route::get('/posts/{post_id}', [GroupPostsController::class, 'show']);
                         Route::get('/posts/{post_id}/attachments/{attachment_id}', [GroupPostsController::class, 'downloadAttachment']);
+                        // Playback ticket for a class-story VIDEO — the teacher
+                        // realm's copy of the admin route. POST, so the minted
+                        // URL never lands in a history entry.
+                        Route::post('/posts/{post_id}/attachments/{attachment_id}/playback', [GroupPostsController::class, 'playbackTicket']);
                         Route::put('/posts/{post_id}', [GroupPostsController::class, 'update']);
                         Route::delete('/posts/{post_id}', [GroupPostsController::class, 'destroy']);
 
@@ -269,6 +273,7 @@ Route::prefix('teacher')
                         Route::put('/threads/{thread_id}/messages/{message_id}/reactions/{reaction}', [GroupThreadsController::class, 'react']);
                         Route::delete('/threads/{thread_id}/messages/{message_id}/reactions/{reaction}', [GroupThreadsController::class, 'unreact']);
                         Route::get('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}', [GroupThreadsController::class, 'downloadAttachment']);
+                        Route::post('/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback', [GroupThreadsController::class, 'playbackTicket']);
 
                         // Student avatar OVERRIDE — group-scoped (solves the
                         // ContactAvatarController {contact_id} reverse-lookup: the
