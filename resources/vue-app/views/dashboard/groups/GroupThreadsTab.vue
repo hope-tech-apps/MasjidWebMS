@@ -102,10 +102,12 @@
                             <div v-if="message.body" class="message-body">{{ message.body }}</div>
                             <div v-if="message.attachments?.length" class="d-flex flex-wrap gap-2 mt-1">
                                 <GroupMessagePhoto v-for="a in message.attachments" :key="a.id"
-                                                   :src="a.download_path" :name="a.file_name" />
+                                                   :src="a.download_path" :name="a.file_name"
+                                                   :mime="a.mime_type" :is-video="a.is_video"
+                                                   :playback-path="a.playback_ticket_path" />
                             </div>
                             <div v-else-if="message.media_withheld" class="small text-muted fst-italic mt-1">
-                                A photo in this message is hidden from you.
+                                An attachment in this message is hidden from you.
                             </div>
                             <!--
                                 Read status on EVERY message here, not only the

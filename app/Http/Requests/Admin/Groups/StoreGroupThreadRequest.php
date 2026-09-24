@@ -48,7 +48,7 @@ class StoreGroupThreadRequest extends GroupPostFormRequest
             ],
             'body' => 'nullable|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
             'retained_until' => 'nullable|date|after_or_equal:today',
-        ], $this->imageRules());
+        ], $this->mediaRules());
     }
 
     protected function uploadNoun(): string

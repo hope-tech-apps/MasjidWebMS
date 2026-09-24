@@ -18,6 +18,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Support\Errors;
 use App\Support\GroupAudience;
+use App\Support\GroupMedia;
 use App\Support\GroupMessageAttachments;
 use App\Support\GroupMessageSignals;
 use App\Support\TenantContext;
@@ -415,6 +416,44 @@ class GroupThreadsController extends Controller
     }
 
     /**
+     * POST .../threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback
+     *
+     * Mint a playback ticket for ONE conversation video. Same chain and same
+     * disclosure question as downloadAttachment, asked here at MINT time and
+     * asked again by GroupMediaPlaybackController on every ranged request.
+     */
+    public function playbackTicket(Request $request, $masjid_id, $group_id, $thread_id, $message_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+        $group = Group::findOrFail($group_id);
+        $thread = $group->threads()->findOrFail($thread_id);
+        $message = $thread->messages()->findOrFail($message_id);
+        $attachment = $message->attachments()->findOrFail($attachment_id);
+
+        if (! $this->audience->mayReceiveThreadMedia($request->user(), $group, $thread)) {
+            abort(403, 'You are not entitled to the photos in this conversation.');
+        }
+
+        if (! GroupMedia::isPlayable($attachment)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'That attachment is not a video.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'url' => GroupMedia::messageTicket(
+                    $masjid_id, $group_id, $thread->id, $message->id, $attachment->id,
+                    GroupMedia::VIEWER_STAFF, (int) $request->user()->id,
+                ),
+                'expires_in' => GroupMedia::playbackTtlMinutes() * 60,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * POST .../groups/{group_id}/threads/{thread_id}/close
      *
      * State, not deletion: the conversation stays readable, it just takes no
@@ -669,6 +708,15 @@ class GroupThreadsController extends Controller
                         $this->realm($request), $masjid_id, $group_id,
                         $message->group_thread_id, $message->id, $attachment->id
                     ),
+                    // Video only: where to ASK for a playback ticket, not a
+                    // ticket itself. See GroupPostsController::serialize.
+                    'playback_ticket_path' => GroupMedia::isPlayable($attachment)
+                        ? sprintf(
+                            '/api/%s/masjids/%s/groups/%s/threads/%d/messages/%d/attachments/%d/playback',
+                            $this->realm($request), $masjid_id, $group_id,
+                            $message->group_thread_id, $message->id, $attachment->id
+                        )
+                        : null,
                 ])->values()->all()
                 : [],
             'media_withheld' => ! $mayReceiveMedia && $attachments->isNotEmpty(),
@@ -718,7 +766,9 @@ class GroupThreadsController extends Controller
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_message' => (int) config('groups.media.max_per_post', 0),
             'reactions' => GroupMessageReaction::catalogue(),
-        ];
+            // ADDITIVE, exactly as on the story side — the image-named keys are
+            // a wire contract two native apps and the admin SPA read.
+        ] + GroupMedia::videoMeta('max_videos_per_message');
     }
 
     /**
@@ -738,7 +788,23 @@ class GroupThreadsController extends Controller
      */
     private function uploads(Request $request): array
     {
-        $files = $request->file(GroupPostFormRequest::UPLOAD_KEY);
+        // Two bags, one list — images and video are validated separately (their
+        // own allowlist, ceiling and count) and stored identically. See
+        // GroupPostsController::uploads for the same note.
+        return array_merge(
+            $this->bag($request, GroupPostFormRequest::UPLOAD_KEY),
+            $this->bag($request, GroupPostFormRequest::VIDEO_UPLOAD_KEY),
+        );
+    }
+
+    /**
+     * One upload bag, normalised to a list.
+     *
+     * @return array<int,\Illuminate\Http\UploadedFile>
+     */
+    private function bag(Request $request, string $key): array
+    {
+        $files = $request->file($key);
 
         if ($files === null) {
             return [];

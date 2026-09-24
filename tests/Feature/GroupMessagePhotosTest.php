@@ -200,7 +200,10 @@ class GroupMessagePhotosTest extends TestCase
             ->post($this->teacherUrl("/threads/{$thread->id}/messages"), ['body' => ''])
             ->assertStatus(422);
 
-        $this->assertSame('Write a message or attach a photo.', $response->json('data.body.0'));
+        // The sentence names video since 2026-09-24: a message may now carry one,
+        // and the rule became required_without_ALL so a video-only message (which
+        // sends no `images` bag at all) is not refused as empty.
+        $this->assertSame('Write a message or attach a photo or video.', $response->json('data.body.0'));
         $this->assertSame(0, GroupMessage::withoutMasjidScope()->count());
     }
 

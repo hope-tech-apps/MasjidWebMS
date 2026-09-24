@@ -41,13 +41,34 @@ export type GroupThread = {
     updated_at: string | null;
 };
 
-/** A photo sent with a message. Fetched through `download_path` with the token. */
+/**
+ * An attachment sent with a message. A PHOTO is fetched through `download_path`
+ * with the token; a VIDEO is played from a ticket minted at
+ * `playback_ticket_path`. Branch on `is_video`.
+ */
 export type GroupMessageAttachment = {
     id: number;
     file_name: string;
     mime_type: string;
     size_bytes: number;
     download_path: string;
+    /**
+     * Whether these bytes are a VIDEO, stated by the server from the stored
+     * `mime_type` rather than re-derived per client. A video must NOT be
+     * rendered by <img> (a silent broken image) and must NOT be blob-fetched
+     * through `download_path` (100MB behind a bearer token, which is what the
+     * playback ticket exists to avoid).
+     */
+    is_video?: boolean;
+    /**
+     * Where to POST for a short-lived playback ticket. Present for video only,
+     * null for a photograph. It is a path to ASK for a signed URL, never a
+     * signed URL itself — a playable link in a list payload would start its
+     * clock when the page rendered rather than when somebody pressed play.
+     */
+    playback_ticket_path?: string | null;
+    /** The attachment's OWN retention date (video only); null means it dies with its parent. */
+    retained_until?: string | null;
 };
 
 export type GroupMessage = {
@@ -94,4 +115,10 @@ export type GroupThreadsMeta = {
     group_label: string;
     thread_scopes: ThreadScope[];
     max_message_length: number;
+    /** ADDITIVE video constraints — see GroupFeedMeta for why they are separate. */
+    video_upload_key?: string;
+    accepted_video_types?: string[];
+    max_video_size_kb?: number;
+    max_videos_per_message?: number;
+    video_retention_days?: number;
 };

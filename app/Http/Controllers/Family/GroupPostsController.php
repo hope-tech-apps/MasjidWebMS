@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Family;
 use App\Models\GroupPost;
 use App\Models\Masjid;
 use App\Support\GroupAudience;
+use App\Support\GroupMedia;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -135,6 +136,43 @@ class GroupPostsController extends FamilyController
     }
 
     /**
+     * POST .../posts/{post_id}/attachments/{attachment_id}/playback
+     *
+     * A parent's playback ticket. The same chain and the same media disclosure
+     * downloadAttachment re-resolves, asked here at MINT time and asked AGAIN by
+     * GroupMediaPlaybackController on every ranged request the ticket buys — so
+     * a consent withdrawn mid-video stops it mid-video.
+     */
+    public function playbackTicket($masjid_id, $group_id, $post_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+
+        $group = $this->group($group_id);
+        $post = $group->posts()->findOrFail($post_id);
+        $attachment = $post->attachments()->findOrFail($attachment_id);
+
+        $this->authorizeDisclosure($group, GroupAudience::DISCLOSURE_MEDIA);
+
+        if (! GroupMedia::isPlayable($attachment)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'That attachment is not a video.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'url' => GroupMedia::postTicket(
+                    $masjid_id, $group_id, $post->id, $attachment->id,
+                    GroupMedia::VIEWER_FAMILY, (int) $this->contact()->id,
+                ),
+                'expires_in' => GroupMedia::playbackTtlMinutes() * 60,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * One post as an entitled parent sees it.
      *
      * @return array<string,mixed>
@@ -151,6 +189,16 @@ class GroupPostsController extends FamilyController
                     '/api/family/masjids/%s/groups/%s/posts/%d/attachments/%d',
                     $masjid_id, $group_id, $post->id, $attachment->id
                 ),
+                // Video only, and the FAMILY path: where the portal asks for a
+                // playback ticket. A parent uploads nothing, but must be able to
+                // WATCH — that is the whole reason this path exists on the
+                // family side. Null for a photograph, which loads as a blob.
+                'playback_ticket_path' => GroupMedia::isPlayable($attachment)
+                    ? sprintf(
+                        '/api/family/masjids/%s/groups/%s/posts/%d/attachments/%d/playback',
+                        $masjid_id, $group_id, $post->id, $attachment->id
+                    )
+                    : null,
             ])->values()->all()
             : [];
 

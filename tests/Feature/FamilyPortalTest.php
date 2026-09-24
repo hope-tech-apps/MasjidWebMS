@@ -1657,6 +1657,18 @@ class FamilyPortalTest extends TestCase
         // "toggle" so that a double-tap or a second tab cannot flip the answer
         // back. Read receipts added NOTHING here: marking read is still the GET
         // that opens a thread, never a route of its own.
+        //
+        // 2026-09-24 (video attachments): the list grows by TWO, and they are
+        // the only entries on it that write NOTHING — no row, no cache key, no
+        // credential. Each mints a computed, expiring, viewer-bound signed URL
+        // so a parent can WATCH a clip their teacher posted; a <video> element
+        // issues its own ranged requests and cannot send a bearer token, which
+        // is the whole reason the photo arrangement does not stretch to video.
+        // They are counted here because this list counts VERBS rather than
+        // rows, and a POST in this realm should always have to be argued for.
+        // Each is gated by the same media disclosure the download beside it
+        // asks, and the URL it returns is re-checked again, in full, on every
+        // range — see App\Http\Controllers\GroupMediaPlaybackController.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1682,8 +1694,10 @@ class FamilyPortalTest extends TestCase
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student-session',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads',
             'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages',
+            'POST /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback',
             'POST /api/family/masjids/{masjid_id}/translations',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/avatar',
             'PUT /api/family/masjids/{masjid_id}/groups/{group_id}/members/{membership_id}/student/avatar',

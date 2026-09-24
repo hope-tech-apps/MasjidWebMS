@@ -304,6 +304,116 @@ return [
          */
         'max_per_post' => (int) env('GROUP_MEDIA_MAX_PER_POST', 8),
 
+        /*
+        |----------------------------------------------------------------------
+        | Video (2026-09-24)
+        |----------------------------------------------------------------------
+        |
+        | A SEPARATE BLOCK, not a widening of the four keys above, and that is
+        | the whole point of it. Those four are a SINGLE SHARED DEFINITION read
+        | by both surfaces AND by the resource library's sibling block — adding
+        | `video/mp4` to `mime_types` and raising `max_size_kb` to 100MB would
+        | have made a 100MB *image* legal everywhere too, on a 2GB droplet.
+        | Video gets its own allowlist, its own ceiling, its own per-post count,
+        | its own retention window and its own upload bag (`videos`).
+        |
+        | The one thing it does NOT get is its own disk or its own way out: a
+        | video of a child is the same kind of file as a photograph of one, so
+        | it lands on the same private disk under the same tenant-scoped tree,
+        | is recorded in the same table, is disclosed by the same
+        | App\Support\GroupAudience decision and dies by the same purge. See
+        | .claude/rules/private-uploads.md.
+        |
+        | THERE IS NO TRANSCODING AND NO THUMBNAILING. The production droplet
+        | has no ffmpeg, so whatever the teacher's phone produced is what is
+        | stored and what the browser must play. That is why the allowlist is
+        | the three container types every current browser plays natively, and
+        | why `video/quicktime` is on it: an iPhone records .mov, and refusing
+        | it would mean refusing the most common video this app will ever see.
+        */
+        'video' => [
+
+            /*
+             * Allowed types, matched by `mimetypes:` against the type SNIFFED
+             * from the file's own bytes — not the extension, not the
+             * Content-Type header the client claims.
+             *
+             * Deliberately three containers and no more. Absent on purpose:
+             * `video/x-msvideo`, `video/mpeg` and the rest of the long tail,
+             * which browsers do not reliably play and which we cannot convert.
+             * A type the parent's browser cannot play is worse than a refusal
+             * at upload, because the refusal happens while the teacher is still
+             * holding the phone.
+             */
+            'mime_types' => array_values(array_filter(array_map('trim', explode(',', (string) env(
+                'GROUP_MEDIA_VIDEO_MIME_TYPES',
+                'video/mp4,video/quicktime,video/webm'
+            ))))),
+
+            /*
+             * Ceiling per video, in kilobytes. 100MB, the owner's decision
+             * (2026-09-24): long enough for a couple of minutes of a class
+             * recital off a phone, short of the point where one upload holds
+             * the droplet's memory and disk hostage.
+             *
+             * PHP's own upload_max_filesize / post_max_size and nginx's
+             * client_max_body_size still apply and are all LOWER than this on
+             * production today (2M / 8M / 25M) — a request over those is
+             * refused before PHP ever validates it, so they must be raised or
+             * this ceiling is fiction. See STATE.md.
+             */
+            'max_size_kb' => (int) env('GROUP_MEDIA_VIDEO_MAX_SIZE_KB', 102400),
+
+            /*
+             * How many videos one post — or one message — may carry. ONE.
+             *
+             * Not timidity: the bound multiplies straight into the request body
+             * PHP and nginx must accept, and the images allowance (8 × 8MB)
+             * already rides in the same request. At one video the worst legal
+             * body is ~164MB; at two it is ~264MB, which is a different
+             * conversation with the droplet than the one this feature is worth.
+             */
+            'max_per_post' => (int) env('GROUP_MEDIA_VIDEO_MAX_PER_POST', 1),
+
+            /*
+             * Retention window, in days, stamped on the ATTACHMENT itself when
+             * it is written — 90, where a post or a thread keeps 365.
+             *
+             * The owner's decision, and it needs a column of its own because
+             * retention lived only on the PARENT: `group_posts.retained_until`
+             * and `group_threads.retained_until` bound the words, and a video
+             * inside a post that keeps a year would have kept a year too.
+             * `group_post_attachments.retained_until` /
+             * `group_message_attachments.retained_until` is nullable and is
+             * stamped ONLY for video, so a photograph still has no window of
+             * its own and still dies exactly when its parent does.
+             *
+             * Set to 0 (or negative) to leave video on the parent's window.
+             */
+            'retention_days' => (int) env('GROUP_MEDIA_VIDEO_RETENTION_DAYS', 90),
+
+            /*
+             * How long a playback ticket is good for, in minutes.
+             *
+             * A video cannot be fetched as a blob behind a bearer token the way
+             * a photo is — <video> has to issue its own ranged requests and a
+             * 100MB buffer is not a playback experience — so the ONE place in
+             * this codebase where group media is reachable without an
+             * Authorization header is App\Http\Controllers\GroupMediaPlaybackController,
+             * behind a relative signed URL that NAMES ITS VIEWER and whose
+             * handler re-runs the entire ownership + consent check before a byte
+             * leaves. This is the lifetime of that URL, and it is the residual
+             * exposure: within the window, anyone holding the URL can watch.
+             *
+             * Ten minutes is long enough to watch a class recital and short
+             * enough that a link pasted into a group chat is dead before anyone
+             * clicks it. The client re-mints on expiry, so raising it buys
+             * nothing but exposure.
+             */
+            'playback_ttl_minutes' => (int) env('GROUP_MEDIA_VIDEO_PLAYBACK_TTL_MINUTES', 10),
+
+        ],
+
     ],
 
     /*

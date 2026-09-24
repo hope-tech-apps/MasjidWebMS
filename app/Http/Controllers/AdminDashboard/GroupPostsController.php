@@ -14,6 +14,7 @@ use App\Models\Masjid;
 use App\Models\User;
 use App\Support\Errors;
 use App\Support\GroupAudience;
+use App\Support\GroupMedia;
 use App\Support\GroupPostAttachments;
 use App\Support\TenantContext;
 use Illuminate\Http\Request;
@@ -272,6 +273,52 @@ class GroupPostsController extends Controller
     }
 
     /**
+     * POST .../groups/{group_id}/posts/{post_id}/attachments/{attachment_id}/playback
+     *
+     * Mint a playback ticket for ONE video: a short-lived, viewer-bound, relative
+     * signed URL the <video> element can use, because it cannot send a bearer
+     * token and a 100MB blob fetch is not playback.
+     *
+     * The same chain and the same disclosure question as downloadAttachment,
+     * asked here at MINT time and then asked AGAIN by
+     * GroupMediaPlaybackController on every ranged request the ticket buys. This
+     * endpoint is not the gate; it is the first of two.
+     *
+     * POST rather than GET, so the URL it returns cannot end up in a browser
+     * history entry, a proxy access log line or a bookmark of its own.
+     */
+    public function playbackTicket(Request $request, $masjid_id, $group_id, $post_id, $attachment_id)
+    {
+        Masjid::findOrFail($masjid_id);
+        $group = Group::findOrFail($group_id);
+        $post = $group->posts()->findOrFail($post_id);
+        $attachment = $post->attachments()->findOrFail($attachment_id);
+
+        $this->authorizeDisclosure($request->user(), $group, GroupAudience::DISCLOSURE_MEDIA);
+
+        // Photos keep the bearer-token blob fetch. Refusing here rather than
+        // quietly minting a ticket that the playback route would refuse anyway
+        // keeps the answer in one place.
+        if (! GroupMedia::isPlayable($attachment)) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => 'That attachment is not a video.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'url' => GroupMedia::postTicket(
+                    $masjid_id, $group_id, $post->id, $attachment->id,
+                    GroupMedia::VIEWER_STAFF, (int) $request->user()->id,
+                ),
+                'expires_in' => GroupMedia::playbackTtlMinutes() * 60,
+            ],
+        ], Response::HTTP_OK);
+    }
+
+    /**
      * Refuse a disclosure this caller is not entitled to.
      *
      * 403, not 404: the group itself is addressable by this admin (they can see
@@ -318,6 +365,18 @@ class GroupPostsController extends Controller
                     request()->is('api/teacher/*') ? 'teacher' : 'admin',
                     $masjid_id, $group_id, $post->id, $attachment->id
                 ),
+                // Video only, and it is a path to ASK for a ticket, not a
+                // ticket: a playable URL in a list payload would start its
+                // ten-minute clock when the page rendered rather than when
+                // somebody pressed play, and would sit in whatever holds that
+                // payload. Null for a photograph, which needs neither.
+                'playback_ticket_path' => GroupMedia::isPlayable($attachment)
+                    ? sprintf(
+                        '/api/%s/masjids/%s/groups/%s/posts/%d/attachments/%d/playback',
+                        request()->is('api/teacher/*') ? 'teacher' : 'admin',
+                        $masjid_id, $group_id, $post->id, $attachment->id
+                    )
+                    : null,
             ])->values()->all()
             : [];
 
@@ -357,17 +416,41 @@ class GroupPostsController extends Controller
             'accepted_image_types' => (array) config('groups.media.mime_types', []),
             'max_image_size_kb' => (int) config('groups.media.max_size_kb', 0),
             'max_images_per_post' => (int) config('groups.media.max_per_post', 0),
-        ];
+            // ADDITIVE. The four keys above are the wire contract the admin SPA
+            // builds its `accept` attribute from; video gets its own five rather
+            // than a widening of theirs, for the same reason the config block
+            // does. See App\Support\GroupMedia::videoMeta().
+        ] + GroupMedia::videoMeta('max_videos_per_post');
     }
 
     /**
-     * The uploaded images, as a plain list.
+     * The uploaded media, as one plain list: images first, then video.
+     *
+     * TWO BAGS, ONE LIST. They arrive separately because they are validated
+     * separately — different allowlist, different ceiling, different count — but
+     * once past the boundary they are the same thing: a file to write to the
+     * private disk and record as an attachment. GroupPostAttachments stamps the
+     * shorter retention window on the video ones from their own sniffed type,
+     * so nothing downstream has to remember which bag a file came out of.
      *
      * @return array<int,\Illuminate\Http\UploadedFile>
      */
     private function uploads(Request $request): array
     {
-        $files = $request->file(GroupPostFormRequest::UPLOAD_KEY);
+        return array_merge(
+            $this->bag($request, GroupPostFormRequest::UPLOAD_KEY),
+            $this->bag($request, GroupPostFormRequest::VIDEO_UPLOAD_KEY),
+        );
+    }
+
+    /**
+     * One upload bag, normalised to a list.
+     *
+     * @return array<int,\Illuminate\Http\UploadedFile>
+     */
+    private function bag(Request $request, string $key): array
+    {
+        $files = $request->file($key);
 
         if ($files === null) {
             return [];

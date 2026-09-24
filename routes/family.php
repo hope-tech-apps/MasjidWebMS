@@ -89,8 +89,16 @@ use Illuminate\Support\Facades\Route;
 | removal. Everything else is a GET. Withdrawing their own
 | consent is still T-015h — absent rather than half-built.
 |
+| Two more (2026-09-24) are the VIDEO PLAYBACK TICKETS, and they are the only
+| entries on this list that write NOTHING — no row, no cache key, no credential
+| stored anywhere. They mint a computed, expiring, viewer-bound URL so a parent
+| can WATCH a clip their teacher posted, which is the one thing a <video> element
+| cannot do behind a bearer token. They are counted here because this list counts
+| verbs rather than rows, and a POST in this realm should always have had to be
+| argued for.
+|
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them (thirteen routes since 2026-09-21) and fails on any other. Adding a route here without
+| every one of them (fifteen routes since 2026-09-24) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -211,15 +219,29 @@ Route::prefix('family')
             Route::get('/groups', [GroupsController::class, 'index']);
             Route::get('/groups/{group_id}', [GroupsController::class, 'show']);
 
-            // The class story. Consent-gated exactly like the staff feed, and
-            // the attachment route serves BYTES rather than a signed URL, on
-            // purpose — see the controller.
+            // The class story. Consent-gated exactly like the staff feed, and a
+            // PHOTO's attachment route serves BYTES rather than a signed URL, on
+            // purpose — see the controller. VIDEO is the one exception, and it
+            // is bounded rather than granted: a <video> element cannot send a
+            // bearer token, so it gets a ticket that expires in minutes, names
+            // this parent, and is re-checked against consent on every range.
             Route::prefix('groups/{group_id}/posts')
                 ->controller(GroupPostsController::class)
                 ->group(function () {
                     Route::get('/', 'index');
                     Route::get('/{post_id}', 'show');
                     Route::get('/{post_id}/attachments/{attachment_id}', 'downloadAttachment');
+
+                    // A VIDEO. A parent uploads nothing and this changes none of
+                    // that — it mints a short-lived, viewer-bound signed URL so
+                    // the <video> element can issue its own ranged requests,
+                    // which it cannot do behind a bearer token. It writes NO
+                    // row: nothing about a family, a child or a credential is
+                    // created, and the ticket is a computed string. It is a POST
+                    // only so the minted URL is never cached by a proxy or
+                    // parked in a history entry, and it is on the counted-writes
+                    // list below because the list counts VERBS, not rows.
+                    Route::post('/{post_id}/attachments/{attachment_id}/playback', 'playbackTicket');
                 });
 
             // Handouts the class has chosen to share. BOTH are GETs — nothing
@@ -245,6 +267,11 @@ Route::prefix('family')
                     // A photo a teacher sent. A GET, so the realm's counted
                     // writes are unchanged; the controller asks consent again.
                     Route::get('/{thread_id}/messages/{message_id}/attachments/{attachment_id}', 'downloadAttachment');
+
+                    // The conversation twin of the story's playback ticket, on
+                    // exactly the same terms: no row is written, and the verb is
+                    // a POST so the minted URL is not cached or bookmarkable.
+                    Route::post('/{thread_id}/messages/{message_id}/attachments/{attachment_id}/playback', 'playbackTicket');
 
                     // A parent OPENS a conversation. The SECOND write this realm
                     // has, and deliberately narrower than the staff one: scope is

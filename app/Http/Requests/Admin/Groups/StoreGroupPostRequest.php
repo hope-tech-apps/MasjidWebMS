@@ -19,6 +19,6 @@ class StoreGroupPostRequest extends GroupPostFormRequest
             'title' => 'nullable|string|max:255',
             'body' => 'required|string|max:' . (int) config('groups.feed.max_body_length', 5000),
             'retained_until' => 'nullable|date|after_or_equal:today',
-        ], $this->imageRules());
+        ], $this->mediaRules());
     }
 }

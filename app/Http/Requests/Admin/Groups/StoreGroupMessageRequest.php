@@ -24,9 +24,12 @@ class StoreGroupMessageRequest extends GroupPostFormRequest
     public function rules(): array
     {
         return array_merge([
-            'body' => 'nullable|required_without:' . self::UPLOAD_KEY
+            // required_without_ALL, not required_without: a message carrying
+            // only a video sends no `images` bag, and `required_without:images`
+            // would have refused it as empty.
+            'body' => 'nullable|required_without_all:' . self::UPLOAD_KEY . ',' . self::VIDEO_UPLOAD_KEY
                 . '|string|max:' . (int) config('groups.messaging.max_message_length', 5000),
-        ], $this->imageRules());
+        ], $this->mediaRules());
     }
 
     protected function uploadNoun(): string
@@ -37,7 +40,7 @@ class StoreGroupMessageRequest extends GroupPostFormRequest
     public function messages(): array
     {
         return array_merge(parent::messages(), [
-            'body.required_without' => 'Write a message or attach a photo.',
+            'body.required_without_all' => 'Write a message or attach a photo or video.',
         ]);
     }
 }
