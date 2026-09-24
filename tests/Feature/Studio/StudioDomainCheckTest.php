@@ -8,6 +8,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Feature\Studio\Concerns\FakesCloudflare;
 use Tests\Feature\Studio\Concerns\MakesStudioDomains;
 use Tests\TestCase;
 
@@ -18,6 +19,7 @@ use Tests\TestCase;
  */
 class StudioDomainCheckTest extends TestCase
 {
+    use FakesCloudflare;
     use MakesStudioDomains;
     use RefreshDatabase;
 
@@ -132,5 +134,37 @@ class StudioDomainCheckTest extends TestCase
         }
 
         $this->postJson(self::URL, ['kind' => 'nameservers', 'label' => 'ok'])->assertStatus(422)->assertJsonStructure(['data' => ['kind']]);
+    }
+
+    #[Test]
+    public function with_the_token_each_zone_case_is_read_from_cloudflare_by_gets_only(): void
+    {
+        $this->withStudioToken();
+        $this->fakeCloudflare([
+            'GET /zones/859eddb9bce48f4f35e6197f6c0b8e15' => $this->cfOk($this->zoneBody('hopetechapps.com', 'active', '859eddb9bce48f4f35e6197f6c0b8e15')),
+            'GET /zones?name=on-cloudflare.org*' => $this->cfOk([$this->zoneBody('on-cloudflare.org', 'pending', 'zone-on')]),
+            'GET /zones?name=elsewhere.org*' => $this->cfOk([]),
+            'GET /zones?name=broken.org*' => $this->cfError(503, 10000, 'Service unavailable'),
+            'GET /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk([], ['total_count' => 7]),
+        ]);
+
+        $cases = [
+            [['kind' => 'managed_subdomain', 'label' => 'al-noor'], 'managed_subdomain', 'active'],
+            [['kind' => 'custom', 'host' => 'www.on-cloudflare.org', 'zone_apex' => 'on-cloudflare.org'], 'zone_in_account', 'pending'],
+            [['kind' => 'custom', 'host' => 'www.elsewhere.org', 'zone_apex' => 'elsewhere.org'], 'zone_not_in_account', null],
+            [['kind' => 'custom', 'host' => 'www.broken.org', 'zone_apex' => 'broken.org'], 'unknown', null],
+        ];
+
+        foreach ($cases as [$body, $case, $zoneStatus]) {
+            $data = $this->postJson(self::URL, $body)->assertOk()->json('data');
+
+            $this->assertSame($case, $data['case'], json_encode($body));
+            $this->assertSame($zoneStatus, $data['zone_status'], json_encode($body));
+            $this->assertTrue($data['token_configured']);
+            $this->assertSame(7, $data['pages_domains_used']);
+            $this->assertTrue($data['available']);
+        }
+
+        $this->assertSame(['GET'], array_values(array_unique(array_map(fn ($line) => strtok($line, ' '), $this->sent()))));
     }
 }

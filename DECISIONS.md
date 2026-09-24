@@ -2129,3 +2129,29 @@ the provisioning body (`directory-listing.md`, `verticals.md`) now load for
 Rationale: the type-blind labels filed 5 and "5" under one key, so the `actorId`-uncast
 promise above had no test; with only one organisation, "the new org" and "the first
 org" got the same label; and a session editing only the provisioner loaded neither rule.
+
+## 2026-09-24 — Studio W1 S7: calls made where the plan was silent
+Decision: `masjid_domains` gains one nullable `stage_started_at` timestamp, stamped when a
+row enters `awaiting_nameservers` or `provisioning`; the 28-day and 72-hour clocks run
+from it, because `created_at` would fail a row added before the token landed on its first
+tick with one. The six-hour activation-check limit and the once-only Pages retry are
+`Cache::add` markers per row, not columns. A managed or already-active zone's id is
+recorded only once the CNAME is created or adopted, so a row refused by a DNS conflict
+keeps no `cf_*` id and stays deletable (the DELETE rule is the plan's: any `cf_*` id,
+`cf_zone_created` or `source = imported` is a 409). `ensureCname` judges only A, AAAA and
+CNAME records at the name (TXT/MX/CAA neither conflict nor get touched), filters with
+`name.exact` per the current API reference, and treats codes 81053/81057/81058 or the
+words "already exists" as the create race. With a token, `imported` and `manual` rows are
+promoted by one Pages GET and are never failed or written for, whatever Cloudflare says;
+`reserved` and `failed` rows are never advanced (no probe either). `domains:reconcile`
+also picks up `active` rows not yet seen serving, for the probe. "No-op without a token"
+means no Cloudflare request and no selection of imported/manual/reserved rows; a
+Studio row still moving is probed on its own host, which is how a hand-attached host
+goes live. The domain routes live under `api/admin/masjids/{masjid_id}/domains` as the
+plan names them, so StudioAccessTest (which walks `api/admin/studio/*`) does not cover
+them; `MasjidDomainsAdminRoutesTest` walks them from the router instead. The domain check
+adds `zone_status` only when the token is configured, so its tokenless answer stays
+byte-identical to S3's. phpunit.xml pins `CLOUDFLARE_STUDIO_TOKEN` blank with
+`force="true"`, so no CI tree's `.env` can hand the suite a real token.
+Rationale: each keeps S7's two promises (honest without the token, and never a write for
+a live tenant's row) where the plan did not say how.

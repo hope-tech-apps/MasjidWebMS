@@ -250,3 +250,10 @@ export type BackendApiRoute =
     // 404 on a screen whose empty state reads "no register was taken".
     | `/api/admin/masjids/${string}/attendance?${string}`
     | `/api/admin/masjids/${string}/attendance/members/${string}?${string}`
+    // An organisation's web addresses (Manara Studio W1, S7), SuperAdmin-only:
+    // the list and POST share the bare shape; "Check now" and the DELETE name
+    // the row. The domain check is Studio's, under its own prefix.
+    | `/api/admin/masjids/${string}/domains`
+    | `/api/admin/masjids/${string}/domains/${string}/refresh`
+    | `/api/admin/masjids/${string}/domains/${string}`
+    | '/api/admin/studio/domains/check'
