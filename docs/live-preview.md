@@ -693,7 +693,48 @@ Two things this pass found:
   `load` after `ready` as a reload. A frame's first `load` can follow hydration when images finish
   late, which would have looped the pane. It now counts loads per frame element.
 
-### 10.2 Before the review (8fff6bf8 / fa59bc4)
+### 10.2 Verification of the fixed branches (2026-09-24)
+
+MasjidWebMS `9057ef8b` and renderer `9862509` (code). Later commits on both branches are docs only.
+
+**Verified**
+
+- **Laravel full suite** on the droplet's CI tree, one suite at a time: **4,360 passed, 1 skipped,
+  0 failed** (48,535 assertions, 536 s).
+- **Admin SPA:** `npm run test:spa` 15/15. The Vite build is green. `tsc --noEmit` stays at its
+  baseline of 54 errors.
+- **Renderer:** `npm test` **520/520**. The workerd gate at `9862509` is **28/28**. Public output
+  against `origin/main` is **10/10 identical**.
+  - Two gate failures on the way were harness races, not renderer faults. A warm-up baseline was
+    listed before a public write landed, and a stale keep-alive socket was reused. Both are fixed
+    in the script, and the renderer doc records them.
+- **Staging, real Cloudflare and MySQL** (Laravel `9057ef8b` via `scripts/ship.sh staging`,
+  renderer alias from `9862509`):
+  - An unsigned `POST /__manara/purge` on the alias answers **401**.
+  - A SuperAdmin session for `/حول` returned `…/__manara/preview/%D8%AD%D9%88%D9%84?mp=…`. The
+    real renderer answered it as a preview: 200, `x-manara-preview: 1`, tenant 13, `no-store`,
+    `frame-ancestors https://masjid-staging.hopetechapps.com`. So h3 decodes the path on Cloudflare
+    as it does locally.
+  - MEC's client admin was refused a pages session (403, `web_pages` off) and granted a theme
+    session. Its preview carried `noindex`.
+  - Two same-values theme saves, 40 s apart, watched in the `jobs` table:
+    - each first pass ran within about 3 s;
+    - the one second-pass job came due 75 s after save #1, released itself and reappeared (attempts
+      1) due 40 s later, which is 75 s after save #2, then ran;
+    - `failed_jobs` stayed 0, and no renderer warning was logged.
+  - The served `LivePreviewPane` chunk carries the sandbox list and no `allow-top-navigation`.
+  - QA tokens revoked afterwards (0 left); no staging data changed.
+
+**Assumed / not verified**
+
+- **Not driven in a browser:** the frame's address after the `mp` strip, and the pane's reload
+  self-heal. Both are unit-tested, with source pins on the wiring. Driving them needs an admin
+  session in the browser, which this pass did not use.
+- **Unknown:** the KV plan, and what a quota refusal looks like in practice (ASSUMPTIONS 8–9).
+- **Unknown until §8 step 0:** production links with a non-`_blank` target (ASSUMPTIONS 10).
+- **Not set yet:** the production configuration and the CORS addition (the point session's, §8).
+
+### 10.3 Before the review (8fff6bf8 / fa59bc4)
 
 **Verified**
 - Renderer `npm test` 492/492 (the three existing isolation tests unedited); 16 mutations of the
