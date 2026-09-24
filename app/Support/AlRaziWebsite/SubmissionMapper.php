@@ -677,10 +677,21 @@ class SubmissionMapper
         return $files;
     }
 
-    /** Whether a storage path's final segment contains "ssn", in any case. */
+    /**
+     * Whether a storage path's final segment names a Social Security number or card.
+     *
+     * "ssn" must stand as its own token — bounded by a non-letter or an end — so
+     * `ssn.jpg`, `ssn_card`, `-ssn_card-` and `SSN-front.png` are caught, while a
+     * child called Hassna or Hassnain, or a teacher called Jessner, is not. A raw
+     * substring match silently dropped those families' birth certificates. Any
+     * spelling of "social security" is caught as well. The rule MUST stay
+     * identical to `pathNamesSsn()` in the site's export function.
+     */
     private static function namesAnSsnCard(string $path): bool
     {
-        return stripos(basename(str_replace('\\', '/', $path)), 'ssn') !== false;
+        $name = basename(str_replace('\\', '/', $path));
+
+        return preg_match('/(?:^|[^a-z])ssn(?:[^a-z]|$)|social[^a-z]*security/i', $name) === 1;
     }
 
     /**

@@ -1366,7 +1366,7 @@ class AlRaziWebsiteSyncTest extends TestCase
     /** @return list<string> */
     private function alraziTempFiles(): array
     {
-        $files = glob(sys_get_temp_dir() . '/alrazi-*') ?: [];
+        $files = glob(\App\Support\AlRaziWebsite\ExportClient::tempDirectory() . '/alrazi-*') ?: [];
         sort($files);
 
         return $files;

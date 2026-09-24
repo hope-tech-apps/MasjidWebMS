@@ -329,11 +329,12 @@ class AlRaziSubmissionMapperTest extends TestCase
             $this->assertSame('text', $type, "{$name} holds a sentence");
             $this->assertArrayNotHasKey($name, $mapped['data'], "{$name} is the sync's to write, not the mapper's");
         }
-        $this->assertEquals(
-            array_fill_keys(array_keys($declared['written']), 'x'),
-            FormSchema::for($form)->only(array_fill_keys(array_keys($declared['written']), 'x')),
-            'only() keeps what the sync writes'
-        );
+        // Each written key must SURVIVE only(). Not an exact match: only() always adds the
+        // repeatable section's key (emergencyContacts => []) on the registration form.
+        $kept = FormSchema::for($form)->only(array_fill_keys(array_keys($declared['written']), 'x'));
+        foreach (array_keys($declared['written']) as $name) {
+            $this->assertSame('x', $kept[$name] ?? null, "only() keeps {$name}, which the sync writes");
+        }
 
         // And only() keeps all of it: this is the silent drop the test exists for.
         $this->assertEquals($mapped['data'], FormSchema::for($form)->only($mapped['data']));
@@ -419,6 +420,33 @@ class AlRaziSubmissionMapperTest extends TestCase
         $this->assertArrayNotHasKey('docPriorRecordsRef', $mapped['data']);
         // Only the category outside the list is reported, by position.
         $this->assertSame(['documents.*'], $mapped['unknown']);
+    }
+
+    #[Test]
+    public function a_childs_name_that_merely_contains_ssn_is_not_mistaken_for_an_ssn_card(): void
+    {
+        // "Hassna", "Hassnain" and "Jessner" all contain the letters s-s-n. A raw
+        // substring rule silently withheld these families' documents; the rule is a
+        // letter-bounded TOKEN, so only a filename that actually says "ssn" is held.
+        $row = $this->fullRegistration();
+        $doc = fn (string $category, string $path) => [
+            'category' => $category, 'path' => $path,
+            'original_filename' => 'test.pdf', 'size_bytes' => 1000, 'content_type' => 'application/pdf',
+        ];
+
+        $row['documents'] = [
+            $doc('birth_certificate', 'incoming/00000000-0000-4000-8000-0000000000c1-birth_certificate-Hassna-birth.pdf'),
+            $doc('immunization', 'incoming/00000000-0000-4000-8000-0000000000c2-immunization-Hassnain_shots.pdf'),
+            $doc('custody', 'incoming/00000000-0000-4000-8000-0000000000c3-custody-ssn.jpg'),
+            $doc('prior_records', 'incoming/00000000-0000-4000-8000-0000000000c4-prior_records-social_security_card.jpg'),
+        ];
+
+        $fields = array_column(SubmissionMapper::registration($row)['files'], 'field');
+
+        $this->assertContains('docBirthCertificate', $fields, 'a child named Hassna keeps her birth certificate');
+        $this->assertContains('docImmunization', $fields, 'a child named Hassnain keeps his immunization record');
+        $this->assertNotContains('docCustody', $fields, 'a file literally named ssn is held back');
+        $this->assertNotContains('docPriorRecords', $fields, 'a file named social_security_card is held back');
     }
 
     #[Test]

@@ -161,7 +161,7 @@ Schedule::command('studio:purge-drafts')->dailyAt('03:53')->withoutOverlapping()
 // call: the bare form holds its lock for 24 hours, so one killed run would stop
 // every attach for a day. Ten minutes outlasts a run (each Cloudflare call has a
 // 15 s timeout) and expires two ticks later.
-Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(30);
+Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(10);
 
 /*
 |--------------------------------------------------------------------------

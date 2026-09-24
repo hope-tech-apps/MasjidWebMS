@@ -184,8 +184,16 @@ class ExportClient
             return [self::DOWNLOAD_UNAVAILABLE, null];
         }
 
-        // tempnam() creates the file 0600, so no other local user can read it.
-        $tmp = tempnam(sys_get_temp_dir(), 'alrazi-');
+        // A child's document sits here for the length of one download. It goes in a
+        // dedicated 0700 directory on the private storage path rather than the shared
+        // system /tmp, and tempnam() creates the file itself 0600. The dedicated
+        // directory also lets a test prove nothing is left behind without reading a
+        // /tmp that other processes on the box write to.
+        $dir = self::tempDirectory();
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0700, true);
+        }
+        $tmp = tempnam($dir, 'alrazi-');
 
         if ($tmp === false) {
             throw new ExportFailed('No temporary file could be created for a document download.');
@@ -305,5 +313,11 @@ class ExportClient
         if (! $this->isConfigured()) {
             throw new ExportFailed('The school website export is not configured.');
         }
+    }
+
+    /** Where a download waits between arriving and being stored. Private, never served. */
+    public static function tempDirectory(): string
+    {
+        return storage_path('app/private/alrazi-sync-tmp');
     }
 }

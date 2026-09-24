@@ -766,7 +766,9 @@ class SyncAlRaziWebsiteSubmissions extends Command
             ->get(['id', 'external_ref', 'data']);
 
         if ($seen === []) {
-            if ($imported->isNotEmpty()) {
+            // Once a day per table, not every five minutes: an export that stays empty
+            // would otherwise write this line 288 times a day at warning level.
+            if ($imported->isNotEmpty() && ($dryRun || Cache::add("alrazi-sync:empty-export:{$table}", true, now()->addDay()))) {
                 Log::warning('alrazi:sync-website: the export returned no rows at all while Manara holds imported ones. That is far likelier a broken export than an empty school, so nothing was marked removed.', [
                     'table' => $table,
                     'form_id' => $form->id,
