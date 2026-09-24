@@ -12,6 +12,7 @@ import {
     emptyAnswers,
     fingerprints,
     normaliseAnswers,
+    presetPreviewBody,
     previewBody,
     sectionFingerprint,
 } from "@/core/studio/draftAnswers";
@@ -402,6 +403,26 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         }
     }
 
+    /**
+     * One layout preset's preview for its card on Step 2: this draft, unsaved
+     * edits included, planned with that preset instead of its own. Kept out of
+     * `preview`, which always describes the draft's own choice.
+     */
+    async function previewPreset(preset: string): Promise<Outcome<StudioPreview>> {
+        const current = draft.value;
+        if (!current) return { ok: false, message: 'No draft is open.' };
+
+        const gen = generation;
+        try {
+            const body = presetPreviewBody(answers, changedSections(answers, saved.value), preset);
+            const res = await ApiService.post(`/api/admin/studio/drafts/${current.id}/preview`, body);
+            if (gen !== generation) return { ok: false, message: 'The draft was closed.' };
+            return { ok: true, data: res.data.data as StudioPreview };
+        } catch (error) {
+            return { ok: false, message: messageOf(error, 'This layout could not be previewed.') };
+        }
+    }
+
     // Any edit: queue the sections that now differ, and refresh the mockups.
     // hydrate() replaces the answers and the saved fingerprints together, so
     // loading a draft is never itself a change and never saves.
@@ -554,7 +575,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         } catch (error) {
             if (gen !== generation) return;
             catalogue.value = null;
-            catalogueError.value = messageOf(error, 'The feature catalogue could not be loaded.');
+            catalogueError.value = messageOf(error, 'The server gave no reason.');
         } finally {
             if (gen === generation) catalogueLoading.value = false;
         }
@@ -572,7 +593,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         } catch (error) {
             if (gen !== generation) return;
             presets.value = null;
-            presetsError.value = messageOf(error, 'The layouts could not be loaded.');
+            presetsError.value = messageOf(error, 'The server gave no reason.');
         } finally {
             if (gen === generation) presetsLoading.value = false;
         }
@@ -594,7 +615,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         // draft
         draft, answers, options, catalogue, presets, preview, saveState, savedAt, loadError,
         loading, currentStep, saveError, conflictMessage, readOnly, armed, unsavedSections, hasUnsavedWork,
-        load, reload, reset, patchSection, flush, setStep, refreshPreview,
+        load, reload, reset, patchSection, flush, setStep, refreshPreview, previewPreset,
         // logo
         logoUrl, logoBusy, logoError, fetchLogo, uploadLogo, removeLogo,
         // reference

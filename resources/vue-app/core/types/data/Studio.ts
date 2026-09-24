@@ -267,6 +267,42 @@ export type StudioPlatformContrastRow = {
     blocking: false;
 };
 
+/** One placeholder of a planned section (StarterSite::placeholder). `hint_text` is admin-facing and never published. */
+export type StudioPlanPlaceholder = {
+    field: string;
+    kind: string;
+    hint: string;
+    hint_text: string;
+    essential: boolean;
+    source?: string;
+    open: boolean;
+};
+
+/** One section of a starter plan (StarterSite::section, the `links` key removed by plan()). */
+export type StudioPlanSection = {
+    slot: string;
+    section_type: string;
+    /** The name an admin sees in the page builder. */
+    title: string;
+    is_active: boolean;
+    has_renderer: boolean;
+    content: Record<string, unknown>;
+    placeholders: StudioPlanPlaceholder[];
+    refs: { field: string; page?: string; form_template?: string }[];
+};
+
+/** One page of a starter plan (StarterSite::plan). */
+export type StudioPlanPage = {
+    slug: string;
+    title: string;
+    order: number;
+    is_active: boolean;
+    show_in_menu: boolean;
+    show_as_button: boolean;
+    meta_description: string | null;
+    sections: StudioPlanSection[];
+};
+
 /** `StudioPreview::build()` (app/Support/Studio/StudioPreview.php). */
 export type StudioPreview = {
     org: { name: string; org_type: OrgType; host: string | null };
@@ -277,14 +313,15 @@ export type StudioPreview = {
     app: {
         ios: {
             tabs: string[];
-            sections: { key: string; items: { key: string; legacy_feature_id: number | null; parts?: string[] }[] }[];
+            /** `parts`: which of an item's modules are on (AppMenu::sections, `parts: array<string, bool>`). */
+            sections: { key: string; items: { key: string; legacy_feature_id: number | null; parts?: Record<string, boolean> }[] }[];
         };
         android: { tabs: string[] };
     };
     web: {
         preset: string;
         locale: string;
-        pages: Record<string, unknown>[];
+        pages: StudioPlanPage[];
         theme_layout: Record<string, unknown> | null;
         preset_source: 'draft' | 'default';
         approved: boolean;

@@ -66,3 +66,21 @@ export const ANDROID_TAB_TITLES: Record<string, string> = {
     contact: "Contact",
     donate: "Donate",
 };
+
+/**
+ * The colours the apps hard-code, which no stored token can change (R16). The
+ * server holds the same values for its advisory contrast rows, and
+ * StudioSpaSourceTest holds each of these equal to its StudioPreview constant.
+ */
+
+/** ios: Masjid/Views/Main/Home/HomeView.swift:174 (StudioPreview::IOS_HOME_HEADER_INK). */
+export const IOS_HOME_HEADER_INK = '#FFFFFF';
+
+/** android: ui/views/bottomBar/BottomBar.kt:38-100 (StudioPreview::ANDROID_SELECTED_TAB). */
+export const ANDROID_SELECTED_TAB = '#00AA55';
+
+/** MasjidTV's fixed board background (StudioPreview::TVOS_BACKGROUND). */
+export const TVOS_BACKGROUND = '#0F0F0F';
+
+/** MasjidTV's header text on that background (StudioPreview::TVOS_HEADER_INK). */
+export const TVOS_HEADER_INK = '#FFFFFF';

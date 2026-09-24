@@ -71,3 +71,26 @@ test('the preview posts the unsaved sections, or nothing when all are saved', ()
     assert.deepEqual(previewBody(answers, ['brand']), { answers: { brand: { primary_color: '#000000' } } });
     assert.deepEqual(previewBody(answers, []), {});
 });
+
+test("a preset's thumbnail previews the unsaved sections with only the preset swapped", async () => {
+    const { presetPreviewBody } = await import('../core/studio/draftAnswers.ts');
+    const answers = normaliseAnswers({ identity: { name: 'Al-Noor' }, layout: { preset: 'mine', approved_at: '2026-09-24T10:00:00.000Z' } });
+
+    assert.deepEqual(presetPreviewBody(answers, ['identity'], 'other'), {
+        answers: { identity: { name: 'Al-Noor' }, layout: { preset: 'other', approved_at: '2026-09-24T10:00:00.000Z' } },
+    });
+    assert.deepEqual(presetPreviewBody(normaliseAnswers({}), [], 'other'), { answers: { layout: { preset: 'other' } } });
+    // The draft itself is not touched.
+    assert.equal(answers.layout.preset, 'mine');
+});
+
+test('choosing a preset clears an approval; approving writes the preset and the time together', async () => {
+    const { approvedLayout, chosenLayout, sectionBody } = await import('../core/studio/draftAnswers.ts');
+    const answers = normaliseAnswers({ layout: { preset: 'mine', approved_at: '2026-09-24T10:00:00.000Z' } });
+
+    Object.assign(answers.layout, chosenLayout('other'));
+    assert.deepEqual(sectionBody(answers.layout), { preset: 'other' });
+
+    Object.assign(answers.layout, approvedLayout('other', new Date(Date.UTC(2026, 8, 24, 12, 30))));
+    assert.deepEqual(sectionBody(answers.layout), { preset: 'other', approved_at: '2026-09-24T12:30:00.000Z' });
+});

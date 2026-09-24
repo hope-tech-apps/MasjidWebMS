@@ -45,18 +45,12 @@
  * the same watch the wizard keeps drops tvOS whenever iOS is taken away.
  */
 import StudioPanel from '@/components/super/studio/foundation/StudioPanel.vue';
+import { PLATFORM_OPTIONS } from '@/core/studio/platforms';
 import { StudioAccountMode, StudioPlatform } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, watch } from 'vue';
 
 type AccountApp = 'ios' | 'android' | 'web';
-
-const PLATFORM_OPTIONS: { slug: StudioPlatform; label: string }[] = [
-    { slug: 'ios', label: 'iOS' },
-    { slug: 'android', label: 'Android' },
-    { slug: 'tvos', label: 'tvOS' },
-    { slug: 'web', label: 'Web' },
-];
 
 const ACCOUNT_APPS: { slug: AccountApp; title: string }[] = [
     { slug: 'ios', title: 'iOS, Apple App Store' },

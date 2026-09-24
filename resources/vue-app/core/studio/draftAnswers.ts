@@ -154,3 +154,28 @@ export function previewBody(answers: StudioAnswers, sections: StudioSectionKey[]
 
     return { answers: body };
 }
+
+/**
+ * The preview body for one layout preset's thumbnail (Step 2's cards): the
+ * draft as the operator has it, unsaved sections included, with only the
+ * preset swapped. The server then plans that preset against this client's
+ * own switches and facts (StudioPreview, StarterSite::plan), so a card shows
+ * the site the client would actually get, not the preset in the abstract.
+ * Nothing is saved: a preview never writes.
+ */
+export function presetPreviewBody(answers: StudioAnswers, sections: StudioSectionKey[], preset: string): { answers: Partial<Record<StudioSectionKey, Record<string, unknown>>> } {
+    const body = previewBody(answers, sections).answers ?? {};
+    body.layout = { ...sectionBody(answers.layout), preset };
+
+    return { answers: body };
+}
+
+/** The layout section once a preset is chosen for the preview but not approved: any approval was for another choice. */
+export function chosenLayout(preset: string): { preset: string; approved_at: null } {
+    return { preset, approved_at: null };
+}
+
+/** The layout section once a preset is approved (R27: Generate needs the website's approved preset). */
+export function approvedLayout(preset: string, at: Date): { preset: string; approved_at: string } {
+    return { preset, approved_at: at.toISOString() };
+}

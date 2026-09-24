@@ -158,6 +158,9 @@ const nextStep = computed(() => STUDIO_STEPS[currentIndex.value + 1] ?? null);
 
 const foundationReasons = computed(() => foundationBlockers(store.answers, !!store.draft?.logo));
 
+/** The feature step's catalogue is loaded, and is this organisation type's. */
+const featuresReady = computed(() => !!store.catalogue && store.catalogue.org_type === store.answers.identity.org_type);
+
 const savedTime = computed(() => {
     const date = store.savedAt ? new Date(store.savedAt) : null;
     if (!date || isNaN(date.getTime())) return '';
@@ -167,10 +170,17 @@ const savedTime = computed(() => {
         : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 });
 
-/** Why a step cannot be opened, or '' when it can. */
+/**
+ * Why a step cannot be opened, or '' when it can. Leaving Features forward
+ * needs its catalogue: without it the draft has no feature choices (the step
+ * blocks behind Retry rather than falling back to a list of its own).
+ */
 function stepBlockedReason(step: StudioStepKey): string {
     if (step === 'generate' && !GENERATE_AVAILABLE) return 'Generate is not available yet.';
     if (step !== 'foundation' && foundationReasons.value.length) return foundationReasons.value.join(' ');
+    if (store.currentStep === 'features' && stepIndex(step) > currentIndex.value && !featuresReady.value) {
+        return 'The feature list has not loaded.';
+    }
     return '';
 }
 
@@ -183,7 +193,7 @@ const nextBlockers = computed(() => {
     if (!nextStep.value) return [];
     const reason = stepBlockedReason(nextStep.value.key);
     if (!reason) return [];
-    return nextStep.value.key === 'generate' ? [reason] : foundationReasons.value;
+    return foundationReasons.value.length && nextStep.value.key !== 'generate' ? foundationReasons.value : [reason];
 });
 
 function go(step: StudioStepKey) {

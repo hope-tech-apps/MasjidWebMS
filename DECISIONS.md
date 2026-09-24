@@ -2341,3 +2341,29 @@ Rationale: each keeps a draft to what the operator entered and keeps Studio off 
 the feature list; recorded because the plan left them open.
 Measured: `vue-tsc --noEmit` at b81980da reports 105 errors (vue-tsc 2.2.12 on the repo's
 TypeScript 5.7.3), not the 29 the plan cites; this slice adds none.
+
+## 2026-09-24 — Studio W1 S5 (stage B): calls made where the plan was silent
+Decision: the feature step writes the full map of served keys (R9) as soon as its catalogue is
+there on an armed draft: a stored boolean is kept, an unset key starts on `default_at_creation`, or
+on when a `preselect_with` platform is chosen, and a stored key the catalogue no longer serves is
+dropped. Preselect therefore applies to keys the operator has not set; a platform added later does
+not flip a stored switch, and the row says "Suggested with …" instead. Leaving Features forward is
+blocked until its catalogue has loaded (StudioView), because the step is blocked behind Retry. Each
+layout card's thumbnail is the preview endpoint's plan of THIS draft with that preset swapped in
+(`studioDraftStore.previewPreset`, `presetPreviewBody`), not the preset payload, so cards show the
+sections the client's switches keep and the client's own words; nothing is saved by it. "Show in
+preview" writes `layout.preset` and clears `approved_at`; "Approve this layout" writes both, and a
+preset from another organisation type is not treated as chosen. The website frame reads section
+words by content field (title/heading, subtitle/description, text, button_text, links' labels),
+never by section type, draws the first section of a page as its banner, shows each open
+placeholder's admin hint, and follows `theme_layout` through `themeTokens.styleFromTokens`. The
+frames draw in greys until the four colours exist (R25). The app colours the apps hard-code live in
+`appLabels.ts` beside the words and are held equal to StudioPreview's constants by a test. Phone
+frames draw at no more than 0.6 scale so the sticky column fits a laptop screen. The platform list
+moved from the Platforms panel to `core/studio/platforms.ts` so the panel, the feature step and the
+preview name platforms alike.
+Rationale: each keeps the SPA on the server's one derivation (R19) with no copy of keys, labels,
+presets or section types; recorded because the plan left them open.
+Deviations from the plan's wording, following the code: iOS menu items' `parts` is an object of
+module => bool (`AppMenu::sections`, app/Support/AppMenu.php:359), not a list, and Studio.ts now
+says so.

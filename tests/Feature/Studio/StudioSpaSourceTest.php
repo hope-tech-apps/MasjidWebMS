@@ -6,6 +6,7 @@ use App\Models\StudioDraft;
 use App\Support\AppMenu;
 use App\Support\Studio\StudioPreview;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Feature\Studio\Concerns\ReadsStudioSource;
 use Tests\TestCase;
 
 /**
@@ -22,6 +23,10 @@ use Tests\TestCase;
  *    rendering blank;
  *  - no store credential can reach the autosave: no Studio file names one (R7);
  *  - both routes and the sidebar entry exist, SuperAdmin-only;
+ *  - the device frames draw exactly the tabs the server's preview serves, in
+ *    the app's own hard-coded colours (held equal to StudioPreview's), at
+ *    each device's size, and the stage that scales them measures as it mounts
+ *    rather than waiting for a callback a hidden pane may never fire;
  *  - the logo is prepared by prepareLogo, never by preparePhoto (which flattens
  *    onto white as JPEG), and the wizard's palette sampler was moved, not copied.
  *
@@ -30,6 +35,8 @@ use Tests\TestCase;
  */
 class StudioSpaSourceTest extends TestCase
 {
+    use ReadsStudioSource;
+
     private const SPA = 'resources/vue-app';
 
     /** Every file that is Studio's, relative to the SPA root. */
@@ -162,6 +169,98 @@ class StudioSpaSourceTest extends TestCase
         $this->assertStringNotContainsString('function rgbToHex(', $wizard);
     }
 
+    #[Test]
+    public function the_app_frames_draw_exactly_the_tabs_the_preview_serves(): void
+    {
+        $files = $this->studioFiles();
+        $tabKeys = array_unique(array_merge(AppMenu::DEFAULT_REGISTRY['tabs'], ['home'], array_values(StudioPreview::ANDROID_TABS)));
+
+        foreach (['IosFrame' => 'preview.app.ios.tabs', 'AndroidFrame' => 'preview.app.android.tabs'] as $frame => $source) {
+            $code = $files["components/super/studio/preview/{$frame}.vue"] ?? null;
+            $this->assertNotNull($code, "{$frame}.vue is missing");
+
+            $this->assertStringContainsString($source, $code, "{$frame} must draw its tab bar from {$source}");
+            $this->assertDoesNotMatchRegularExpression('/\[\s*[\'"`]/', $code, "{$frame} holds a list of strings; its tabs come from the preview");
+
+            foreach ($tabKeys as $key) {
+                $this->assertFalse($this->quotes($code, $key), "{$frame} types in the tab key '{$key}'; the preview serves the tabs");
+            }
+        }
+
+        // The frames draw the server's preview and nothing else: none of them calls the API.
+        foreach ($files as $relative => $code) {
+            if (str_starts_with($relative, 'components/super/studio/preview/')) {
+                $this->assertStringNotContainsString('ApiService', $code, "{$relative} calls the API; the frames read only the store's preview");
+            }
+        }
+    }
+
+    #[Test]
+    public function the_colours_the_apps_hard_code_are_the_servers(): void
+    {
+        foreach ([
+            'IOS_HOME_HEADER_INK' => StudioPreview::IOS_HOME_HEADER_INK,
+            'ANDROID_SELECTED_TAB' => StudioPreview::ANDROID_SELECTED_TAB,
+            'TVOS_BACKGROUND' => StudioPreview::TVOS_BACKGROUND,
+            'TVOS_HEADER_INK' => StudioPreview::TVOS_HEADER_INK,
+        ] as $constant => $server) {
+            $this->assertSame(strtoupper($server), strtoupper($this->stringConstant($constant)), "{$constant} must equal StudioPreview's value");
+        }
+
+        $files = $this->studioFiles();
+        $this->assertStringContainsString('ANDROID_SELECTED_TAB', $files['components/super/studio/preview/AndroidFrame.vue']);
+        $this->assertStringContainsString('IOS_HOME_HEADER_INK', $files['components/super/studio/preview/IosFrame.vue']);
+        $this->assertStringContainsString('TVOS_BACKGROUND', $files['components/super/studio/preview/TvFrame.vue']);
+    }
+
+    #[Test]
+    public function each_frame_is_drawn_at_its_devices_size_and_the_tv_board_says_what_waits_for_w2(): void
+    {
+        $files = $this->studioFiles();
+
+        $web = $files['components/super/studio/preview/WebFrame.vue'];
+        $this->assertMatchesRegularExpression('/desktop: \{ width: 1280, height: 800 \}/', $web);
+        $this->assertMatchesRegularExpression('/mobile: \{ width: 390, height: 844 \}/', $web);
+        $this->assertStringContainsString('section.has_renderer', $web, 'a section the renderer cannot draw must be marked');
+        $this->assertStringContainsString('logoMissing', $web, 'a missing logo must be marked');
+
+        foreach (['IosFrame' => [393, 852], 'AndroidFrame' => [412, 915], 'TvFrame' => [1920, 1080]] as $frame => [$width, $height]) {
+            $this->assertMatchesRegularExpression(
+                '/<DeviceStage :width="' . $width . '" :height="' . $height . '"/',
+                $files["components/super/studio/preview/{$frame}.vue"],
+                "{$frame} is not drawn at {$width}×{$height}"
+            );
+        }
+
+        $this->assertStringContainsString('Events calendar arrives with the tvOS template (W2)', $files['components/super/studio/preview/TvFrame.vue']);
+    }
+
+    #[Test]
+    public function the_device_stage_measures_as_it_mounts_before_it_observes(): void
+    {
+        $stage = $this->studioFiles()['components/super/studio/preview/DeviceStage.vue'];
+
+        // rAF and ResizeObserver may not fire in a hidden pane, so the first
+        // measurement cannot wait for either.
+        $this->assertStringNotContainsString('requestAnimationFrame', $stage);
+        $this->assertMatchesRegularExpression(
+            '/onMounted\(\(\) => \{\s*measure\(\);.*?new ResizeObserver\(/s',
+            $stage,
+            'DeviceStage must measure synchronously in onMounted, then observe'
+        );
+    }
+
+    #[Test]
+    public function the_preview_panel_has_one_tab_per_platform_the_preview_serves_and_its_caption(): void
+    {
+        $panel = $this->studioFiles()['components/super/studio/preview/StudioPreviewPanel.vue'];
+
+        $this->assertStringContainsString("'The apps look the same for every organisation; only colours, logo, name, tabs and menu change.'", $panel);
+        $this->assertStringContainsString('preview.value?.platforms', $panel);
+        $this->assertMatchesRegularExpression('/v-for="platform in platforms"/', $panel);
+        $this->assertStringContainsString('<PlatformContrastList :rows="preview.platform_contrast" />', $panel);
+    }
+
     /** The keys of `export const NAME ... = { ... };` in core/studio/appLabels.ts. */
     private function objectKeys(string $constant): array
     {
@@ -172,6 +271,16 @@ class StudioSpaSourceTest extends TestCase
         preg_match_all('/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/m', $body[1], $keys);
 
         return $keys[1];
+    }
+
+    /** The value of `export const NAME = '…';` in core/studio/appLabels.ts. */
+    private function stringConstant(string $constant): string
+    {
+        $source = $this->read(self::SPA . '/core/studio/appLabels.ts');
+        $this->assertMatchesRegularExpression('/export const ' . $constant . ' = \'([^\']*)\';/', $source, "appLabels.ts has no {$constant}");
+        preg_match('/export const ' . $constant . ' = \'([^\']*)\';/', $source, $match);
+
+        return $match[1];
     }
 
     /** @return array<string, string> relative path => code with comments removed */
@@ -201,21 +310,5 @@ class StudioSpaSourceTest extends TestCase
         ksort($files);
 
         return $files;
-    }
-
-    /** Block, line and HTML comments out; a `//` inside a string such as https:// is kept. */
-    private function withoutComments(string $source): string
-    {
-        $source = preg_replace('~/\*.*?\*/|<!--.*?-->~s', '', $source);
-
-        return preg_replace('~(?<![:"\'`\\\\])//[^\n]*~', '', $source);
-    }
-
-    private function read(string $relative): string
-    {
-        $path = base_path($relative);
-        $this->assertFileExists($path);
-
-        return file_get_contents($path);
     }
 }
