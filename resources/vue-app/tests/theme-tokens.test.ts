@@ -5,6 +5,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { buildTokens, CURRENT, fontChoices, googleCss2Families, styleFromTokens, themePayload } from '../core/helpers/themeTokens.ts';
 
 const LORA_URL = 'https://fonts.googleapis.com/css2?family=Lora:wght@300;400;800&family=Inter:wght@400;500;600;700&display=optional';
@@ -60,3 +63,16 @@ test('colours alone post no tokens at all; a font or layout change posts the who
     assert.deepEqual(themePayload(colours, saved, style, { fonts: false, layout: false }), colours);
     assert.ok('tokens' in themePayload(colours, saved, { ...style, footer: 'default' }, { fonts: false, layout: true }));
 });
+
+test('Brand Studio marks fonts only from the font selects and layout only from the style selects', () => {
+    const view = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../views/dashboard/ThemeSettingsView.vue'), 'utf8');
+    for (const [id, flag] of [['theme-heading-font', 'fonts'], ['theme-body-font', 'fonts'], ['theme-header-style', 'layout'], ['theme-footer-style', 'layout']]) {
+        assert.match(view, new RegExp(`<select id="${id}"[^>]*@change="touched\\.${flag} = true"`), id);
+    }
+    // Save and the preview post the same thing, built by the rules above.
+    assert.match(view, /const themePayload = \(\) => buildThemePayload\(settingsModel\.value, savedTokens\.value, styleModel\.value, touched\.value\);/);
+    assert.match(view, /ApiService\.post\(`\/api\/admin\/masjids\/\$\{masjidStore\.masjid\?\.id\}\/theme`, themePayload\(\)\)/);
+    // A fresh load starts untouched, so a later save posts no tokens unless a choice changed.
+    assert.match(view, /styleModel\.value = styleFromTokens\(savedTokens\.value\);\s*touched\.value = \{ fonts: false, layout: false \};/);
+});
+

@@ -44,3 +44,30 @@ export const overridesMessage = (overrides: unknown) => ({
 /** The origin to post to, or null when there is no valid one (then nothing is posted). */
 export const postTargetFor = (previewOrigin: string | null | undefined): string | null =>
     typeof previewOrigin === 'string' && /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/.test(previewOrigin) ? previewOrigin : null;
+
+/**
+ * How long a reloaded frame has to say `ready` again, and how often the pane may open a
+ * new session by itself before it gives up and shows the error.
+ */
+export const RELOAD_READY_TIMEOUT_MS = 8000;
+export const AUTO_REOPEN_INTERVAL_MS = 30000;
+
+/**
+ * Whether this `load` is a RELOAD (or a navigation) of the frame, rather than its first
+ * document. The pane keys the iframe on its URL, so every session gets a new element, and
+ * that element's first `load` is always the preview itself — even when it fires AFTER the
+ * site said `ready` (hydration can finish before the last image does). Only a later
+ * `load` means a new document, and that document is not a preview: the token was
+ * single-use in the URL.
+ */
+export const isReloadOfFrame = (loadsOfThisFrame: number): boolean => loadsOfThisFrame > 1;
+
+/** After a reload, once RELOAD_READY_TIMEOUT_MS passes: open a new session, show the error, or nothing. */
+export const afterReloadWait = (
+    stillWaiting: boolean,
+    now: number,
+    lastAutoReopen: number,
+): 'reopen' | 'error' | 'none' => {
+    if (!stillWaiting) return 'none';
+    return now - lastAutoReopen > AUTO_REOPEN_INTERVAL_MS ? 'reopen' : 'error';
+};

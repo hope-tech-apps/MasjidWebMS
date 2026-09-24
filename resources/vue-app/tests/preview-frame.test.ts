@@ -7,7 +7,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { PREVIEW_FRAME_SANDBOX, isReadyFromFrame, overridesMessage, postTargetFor } from '../core/helpers/previewFrame.ts';
+import {
+    AUTO_REOPEN_INTERVAL_MS,
+    PREVIEW_FRAME_SANDBOX,
+    afterReloadWait,
+    isReadyFromFrame,
+    isReloadOfFrame,
+    overridesMessage,
+    postTargetFor,
+} from '../core/helpers/previewFrame.ts';
 
 const ORIGIN = 'https://preview.manara.hopetechapps.com';
 const frameWindow = { name: 'the pane\'s frame' };
@@ -50,4 +58,26 @@ test('LivePreviewPane sandboxes the frame and uses these rules', () => {
     assert.match(pane, /const targetOrigin = postTargetFor\(origin\.value\)/);
     assert.match(pane, /target\.postMessage\(overridesMessage\(props\.overrides\), targetOrigin\)/);
     assert.doesNotMatch(pane, /postMessage\([^)]*'\*'/);
+});
+
+test('only a SECOND load of a frame is a reload; the first is the preview, even after ready', () => {
+    assert.equal(isReloadOfFrame(1), false, 'first document: images may finish after the site said ready');
+    assert.equal(isReloadOfFrame(2), true);
+    assert.equal(isReloadOfFrame(3), true);
+});
+
+test('after a reload the pane reopens once, then shows the error rather than looping', () => {
+    const now = 1_000_000;
+    assert.equal(afterReloadWait(false, now, 0), 'none', 'a ready arrived in time');
+    assert.equal(afterReloadWait(true, now, 0), 'reopen');
+    assert.equal(afterReloadWait(true, now, now - AUTO_REOPEN_INTERVAL_MS + 1), 'error', 'reopened moments ago');
+    assert.equal(afterReloadWait(true, now, now - AUTO_REOPEN_INTERVAL_MS - 1), 'reopen');
+});
+
+test('LivePreviewPane counts loads per frame and decides with these rules', () => {
+    assert.match(pane, /:key="src"/);
+    assert.match(pane, /@load="onFrameLoad"/);
+    assert.match(pane, /loadsOfThisFrame \+= 1;\s*if \(!isReloadOfFrame\(loadsOfThisFrame\)\) return;/);
+    assert.match(pane, /loadsOfThisFrame = 0;[^\n]*\n\s*src\.value = session\.url;/);
+    assert.match(pane, /afterReloadWait\(mine === generation && state\.value === 'loading', Date\.now\(\), lastAutoReopen\)/);
 });

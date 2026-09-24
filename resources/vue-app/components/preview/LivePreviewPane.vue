@@ -73,7 +73,15 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useMasjidStore } from '@/stores/masjidStore';
 import { requestPreviewSession, type PreviewSurface } from '@/composables/useLivePreview';
-import { PREVIEW_FRAME_SANDBOX, isReadyFromFrame, overridesMessage, postTargetFor } from '@/core/helpers/previewFrame';
+import {
+    PREVIEW_FRAME_SANDBOX,
+    RELOAD_READY_TIMEOUT_MS,
+    afterReloadWait,
+    isReadyFromFrame,
+    isReloadOfFrame,
+    overridesMessage,
+    postTargetFor,
+} from '@/core/helpers/previewFrame';
 
 const props = withDefaults(defineProps<{
     surface: PreviewSurface;
@@ -113,6 +121,7 @@ const viewportHeight = ref(0);
 let readyTimer: ReturnType<typeof setTimeout> | undefined;
 let sendTimer: ReturnType<typeof setTimeout> | undefined;
 let lastAutoReopen = 0;
+let loadsOfThisFrame = 0;
 let resizeObserver: ResizeObserver | undefined;
 let generation = 0;
 
@@ -135,6 +144,7 @@ async function open() {
     clearTimeout(readyTimer);
     state.value = 'loading';
     src.value = '';
+    loadsOfThisFrame = 0;
 
     if (!masjidId) {
         state.value = 'disabled';
@@ -150,6 +160,7 @@ async function open() {
             return;
         }
         origin.value = session.origin;
+        loadsOfThisFrame = 0; // the new URL mounts a new iframe (:key="src")
         src.value = session.url;
         readyTimer = setTimeout(() => {
             if (mine === generation && state.value === 'loading') state.value = 'error';
@@ -167,25 +178,27 @@ function send() {
 }
 
 /**
- * A full load after the site said `ready` means the frame reloaded or navigated (a reload,
- * a chunk-error reload after a renderer deploy, a link). Its preview pass was single-use
- * in the URL, so the reloaded page is not a preview: expect a fresh `ready`, and if none
- * comes, open a new session once rather than leave a dead pane.
+ * A second (or later) load of the same frame element means it reloaded or navigated (a
+ * reload, Nuxt's chunk-error reload after a renderer deploy, a link). That document is
+ * not a preview, since the token was single-use in the URL: expect a fresh `ready`, and if
+ * none comes, open a new session once rather than leave a dead pane. The FIRST load is the
+ * preview itself, whenever it fires relative to `ready` (isReloadOfFrame).
  */
 function onFrameLoad() {
-    if (state.value !== 'ready') return;
+    loadsOfThisFrame += 1;
+    if (!isReloadOfFrame(loadsOfThisFrame)) return;
     state.value = 'loading';
     const mine = generation;
     clearTimeout(readyTimer);
     readyTimer = setTimeout(() => {
-        if (mine !== generation || state.value !== 'loading') return;
-        if (Date.now() - lastAutoReopen > 30000) {
+        const next = afterReloadWait(mine === generation && state.value === 'loading', Date.now(), lastAutoReopen);
+        if (next === 'reopen') {
             lastAutoReopen = Date.now();
             void open();
-        } else {
+        } else if (next === 'error') {
             state.value = 'error';
         }
-    }, 8000);
+    }, RELOAD_READY_TIMEOUT_MS);
 }
 
 function onMessage(event: MessageEvent) {
