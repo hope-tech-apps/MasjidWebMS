@@ -161,6 +161,9 @@ function setDashboardMainTopMargin() {
             let remValue = parseFloat(getComputedStyle(document.documentElement).fontSize)
             const mainTopMargin = (headerHeight / remValue)
             dashboardMain.value.style.marginTop = mainTopMargin + 'rem'
+            // The same height for anything sticky, which has to stop below the
+            // fixed header rather than under it (Manara Studio's preview column).
+            document.documentElement.style.setProperty('--dash-header-height', mainTopMargin + 'rem')
         }
     })
 

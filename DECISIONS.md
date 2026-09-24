@@ -2625,3 +2625,83 @@ and two provisioning controllers that write no membership — so "every organisa
 since" has an owner with no row. Checking only the pivot let an office admin list a video, open
 the download endpoint and mint a ticket, and then be refused the bytes for owning the school.
 Removing the ownership arm fails that test with a 403 where 206 is expected.
+
+## 2026-09-24 — Studio W1 S5 (stage A): calls made where the plan was silent
+Decision: the drafts list asks for `?status=all`, because the Status column links a provisioned
+draft to its organisation and the endpoint defaults to open drafts only. The Identity panel's
+organisation types, terminology and prayer choices come from `GET /onboarding/options`, the
+endpoint the wizard reads, so Studio holds no copy of `config/verticals.php`. Nothing is
+pre-chosen on a new draft: no colours (R25), no calculation method, no iqama offsets, no
+timezone; a platform starts on the Managed account mode, as in the wizard. Next from
+Foundation needs the organisation type, the name, four colours, one platform, and the logo when
+web is chosen (the plan names only the logo rule; the rest are what Steps 1 and 2 read). The
+autosave sends each changed section whole and drops blanks (`''`, null, empty objects), which the
+server reads as absent; a step change is saved at once with any pending sections. A 409 disarms
+the autosave until "Reload draft"; a 422 or network failure waits for the next edit or Retry.
+The logo sampler's candidates are saved to `brand.extracted` only on upload, never on load, so
+opening a draft never writes. `prepareLogo` redraws an over-cap PNG or JPEG as PNG too (the plan
+says "any other type"), and draws an SVG at the 2048 px cap. `appLabels.ts` copies iOS from
+`origin/main` 8e5191f and Android from `feat/r1-owner-answers` aeac265, the only branch with the
+R1 tab bar `StudioPreview::ANDROID_TABS` cites.
+Rationale: each keeps a draft to what the operator entered and keeps Studio off an eighth copy of
+the feature list; recorded because the plan left them open.
+Measured: `vue-tsc --noEmit` at b81980da reports 105 errors (vue-tsc 2.2.12 on the repo's
+TypeScript 5.7.3), not the 29 the plan cites; this slice adds none.
+
+## 2026-09-24 — Studio W1 S5 (stage B): calls made where the plan was silent
+Decision: the feature step writes the full map of served keys (R9) as soon as its catalogue is
+there on an armed draft: a stored boolean is kept, an unset key starts on `default_at_creation`, or
+on when a `preselect_with` platform is chosen, and a stored key the catalogue no longer serves is
+dropped. Preselect therefore applies to keys the operator has not set; a platform added later does
+not flip a stored switch, and the row says "Suggested with …" instead. Leaving Features forward is
+blocked until its catalogue has loaded (StudioView), because the step is blocked behind Retry. Each
+layout card's thumbnail is the preview endpoint's plan of THIS draft with that preset swapped in
+(`studioDraftStore.previewPreset`, `presetPreviewBody`), not the preset payload, so cards show the
+sections the client's switches keep and the client's own words; nothing is saved by it. "Show in
+preview" writes `layout.preset` and clears `approved_at`; "Approve this layout" writes both, and a
+preset from another organisation type is not treated as chosen. The website frame reads section
+words by content field (title/heading, subtitle/description, text, button_text, links' labels),
+never by section type, draws the first section of a page as its banner, shows each open
+placeholder's admin hint, and follows `theme_layout` through `themeTokens.styleFromTokens`. The
+frames draw in greys until the four colours exist (R25). The app colours the apps hard-code live in
+`appLabels.ts` beside the words and are held equal to StudioPreview's constants by a test. Phone
+frames draw at no more than 0.6 scale so the sticky column fits a laptop screen. The platform list
+moved from the Platforms panel to `core/studio/platforms.ts` so the panel, the feature step and the
+preview name platforms alike.
+Rationale: each keeps the SPA on the server's one derivation (R19) with no copy of keys, labels,
+presets or section types; recorded because the plan left them open.
+Deviations from the plan's wording, following the code: iOS menu items' `parts` is an object of
+module => bool (`AppMenu::sections`, app/Support/AppMenu.php:359), not a list, and Studio.ts now
+says so.
+
+## 2026-09-24 — Studio W1 S5 review: the feature map follows the draft, and the autosave is its own module
+Decision: the stored feature map is carried, not frozen (supersedes stage B's "a platform added
+later does not flip a stored switch"). The draft still stores the full map of served keys (R9)
+and the server has no field for which keys the operator touched, so they are told apart by where
+they sit: `carryChoices` (core/studio/featureChoices.ts) empties the map when the organisation
+type changes (a masjid's worship switches are not a school's; the new type starts from its own
+defaults), and when the platforms change it moves every switch still on the starting value the
+old platforms gave it onto the new platforms' starting value, keeping any switch the operator
+moved. The store does this (`syncFeatureChoices`), not the feature step, because both answers
+change on Foundation where the step is not mounted; when the platforms move under a stored map
+without this type's catalogue loaded, the store fetches it. The one choice this cannot keep is an
+operator's "off" for a Web-suggested switch after Web is removed and added again: it then looks
+untouched and comes back on, suggested. The autosave's timing and rules moved to
+core/studio/autosave.ts (the store keeps the answers, the lock version and the one PATCH) so
+node can test them; a step change now names the step the operator is on when they move back
+before the previous step's save answers. The website mockup lists only active pages in its menu
+and footer (core/studio/sitePages.ts), as PagesController serves them. `prepareLogo` keeps a
+wide logo's short side at the server's 96 px, letting the long side pass 2048 up to the server's
+8000, and refuses a logo too thin for both with a sentence; the two limits are held equal to
+`config('studio.logo.min_px')` and StoreStudioDraftLogoRequest by StudioSpaSourceTest. The
+sticky preview column stops below the fixed header through `--dash-header-height`, which
+DashboardLayout now publishes from the height it already measures (FlyerStudioView's sticky
+column has the same `top: 1rem` and is left as it is, outside this slice). Rebased onto
+8b5787da: BackendApiRoutes keeps S7's domain routes and S5's Studio routes with the domain check
+listed once, and `StudioDomainCheck`/`StudioDomainCheckRequest` are now S7's
+`MasjidDomainCheck`/`MasjidDomainRequest`, which carry the Cloudflare cases and `zone_status`.
+Rationale: each closes a way the draft, the preview or the upload could say something other
+than what Step 3 will create or the server will take; recorded because the first cut chose
+otherwise.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 105 errors at
+8b5787da and 105 at this commit, the same set.

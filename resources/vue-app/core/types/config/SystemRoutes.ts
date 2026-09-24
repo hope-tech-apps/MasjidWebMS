@@ -96,6 +96,8 @@ export type SuperDashboardRoute =
     '/dashboard/super/masjids' |
     `/dashboard/super/masjids/${number}` |
     '/dashboard/super/onboarding' |
+    '/dashboard/super/studio' |
+    `/dashboard/super/studio/drafts/${number}` |
     '/dashboard/super/users' |
     `/dashboard/super/users/${number}` |
     '/dashboard/super/profile'
