@@ -102,6 +102,13 @@ class DomainProbe
      * `manual` verified by the probe. It never writes `active`, and it never
      * touches a row on a miss beyond `last_checked_at`.
      *
+     * A `reserved` row gets `last_checked_at` and nothing else, match or not:
+     * it is never advanced (R4), so a held host such as meccharlotte.org cannot
+     * become served or CORS-admitted because it started answering. A `failed`
+     * row that matches does become `manual`: our own site answering with this
+     * organisation's id is the proof a pending row needs (R24), whatever went
+     * wrong while it was being set up.
+     *
      * @return array{matched: bool, seen: string}
      */
     public function confirm(MasjidDomain $domain): array
@@ -110,6 +117,10 @@ class DomainProbe
         $now = now();
 
         $domain->last_checked_at = $now;
+
+        if ($domain->status === MasjidDomain::STATUS_RESERVED) {
+            return $result;
+        }
 
         if ($result['matched']) {
             $domain->serving_confirmed_at = $now;

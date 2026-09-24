@@ -601,7 +601,9 @@ the live hosts are recorded. Nothing consumes any of it yet.
   strip a trailing `.`.
 - Returns `null` for: an empty result, more than 253 characters, an IPv4 or IPv6
   literal, a non-ASCII host (R14), or any label failing
-  `/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/`.
+  `/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/` (`\z`, not `$`: PCRE's `$` also
+  matches before a final newline, so `www\n` would pass as a label; the
+  `:port` strip is anchored the same way).
 - The fixture `tests/fixtures/host-normalization.json` holds `{input, expected}`
   pairs. S10 commits a byte-identical copy to the renderer.
 
@@ -623,6 +625,8 @@ the live hosts are recorded. Nothing consumes any of it yet.
 - `liveUrl()` returns `'https://'.host` if and only if `serving_confirmed_at` is set.
 - A `saving` invariant: `status = active` requires `verified_by = 'cloudflare'`
   and `verified_at` to be set, otherwise it throws `LogicException`.
+- A second one: a stored `reserved` row cannot change status (`LogicException`).
+  A reservation that should go live is removed and the host added again.
 - `TenantScopingCoverageTest` DECLINED entry: `has_masjid_id_column=true`,
   reason "Host→org map read by the unauthenticated renderer lookup and written
   only by SuperAdmin Studio routes; unbound by design".
@@ -654,6 +658,9 @@ attach domains against the production Pages project (domains-cloudflare fact [15
   The renderer sets that header on every response
   (`renderer:server/middleware/tenant.ts:37-44`).
 - It never sets `active`.
+- `confirm()` stamps a match: `serving_confirmed_at`, and `manual` for a row
+  Cloudflare has not verified (a `failed` row included). A `reserved` row gets
+  only `last_checked_at`, match or not (R4).
 - **SSRF guard** (domains-cloudflare risk: the probe fetches a SuperAdmin-typed
   host). It resolves the host through an injected resolver, refuses to fetch when
   any address is loopback, private, link-local or reserved
@@ -698,9 +705,12 @@ fixture, and the renderer's map holds `localhost`.
   - a custom host does not end with `managed_suffix`;
   - the zone-apex suffix rule.
 
-**`php artisan domains:import-host-map {map} {--apex=*} {--dry-run}`.**
+**`php artisan domains:import-host-map {map} {--apex=*} {--dry-run} {--execute}`.**
 
-- `map` is a JSON object `host => id`, the same shape as `NUXT_TENANT_HOSTS`.
+- It is a dry run unless `--execute` is given, and `--dry-run` always wins.
+- `map` is a JSON object `host => id`, the same shape as `NUXT_TENANT_HOSTS`:
+  each value is a bare id or an object carrying one (`{"id": "13", ...}`), as
+  the renderer's `toRecord` reads it. Only the id is used.
 - `--apex=HOST:APEX` states the zone of each custom host. A custom host without
   one is refused.
 - For each host:
@@ -718,17 +728,24 @@ fixture, and the renderer's map holds `localhost`.
 1. Do the §4 read of `NUXT_TENANT_HOSTS`. Merge it with the in-git map
    (`renderer:nuxt.config.ts:20-58`).
 2. Add Al-Razi's hosts served outside the renderer, so Studio can never give them
-   to another org: `alrazischool.org` → 14 (the `al-razi-school-web` project,
-   domains-cloudflare live impact (d)) and `portal.alrazischool.org` → 14
-   (`PORTAL_HOSTS`, live impact (c)). Neither answers `x-manara-tenant`, so both
-   land `reserved`.
-3. Run the import with `--dry-run`, then without it.
+   to another org: `alrazischool.org` and `www.alrazischool.org` → 14 (the
+   `al-razi-school-web` project, domains-cloudflare live impact (d); the apex
+   307s to `www`, so `www` is the host the public lands on),
+   `portal.alrazischool.org` → 14 (`PORTAL_HOSTS`, live impact (c)) and
+   `parents.alrazischool.org` → 14 (the `alrazi-parent-guide` Worker,
+   docs/tenant-host-map.md). None answers `x-manara-tenant`, so all four land
+   `reserved`. The lookup matches exact hosts only, so a host left out here is
+   one Studio reports as available.
+3. Run the import with `--dry-run` and an `--apex=HOST:APEX` for every custom
+   host (for example `--apex=www.alrazischool.org:alrazischool.org`). Check the
+   plan against the table below, then run the same command with `--execute`.
 
 | Expected (verify with the dry-run) | Status |
 |---|---|
 | `www.burlingtonmasjid.com`→1, `sundayschool.burlingtonmasjid.com`→18, `mec.manara.hopetechapps.com`→13, `alrazi.manara.hopetechapps.com`→14 | `manual` |
 | `burlingtonmasjid.com`→1 | `manual` or `reserved`. Its 307 to www is answered outside the renderer code (domains-cloudflare fact [26]), and the probe does not follow redirects. Either outcome is correct |
-| `mec.hopetechapps.com`, `meccharlotte.org`, `www.meccharlotte.org`→13; `alrazischool.org`, `portal.alrazischool.org`→14 | `reserved` |
+| `mec.hopetechapps.com`, `meccharlotte.org`, `www.meccharlotte.org`→13; `alrazischool.org`, `www.alrazischool.org`, `portal.alrazischool.org`, `parents.alrazischool.org`→14 | `reserved` |
+| `new.burlingtonmasjid.com`→1 | `reserved`. It is in the live map but is not a custom domain on the project (OQ1), so the probe cannot match it |
 | `mec-web.pages.dev`, `localhost`, `127.0.0.1` | skipped |
 
 **Tests.**

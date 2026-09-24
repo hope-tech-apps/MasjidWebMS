@@ -60,16 +60,25 @@ class DomainProbeTest extends TestCase
     public function another_organisations_id_does_not_match(): void
     {
         $this->resolveTo([self::PUBLIC_ADDRESS]);
-        Http::fake(['*' => Http::response('', 200, ['x-manara-tenant' => '14'])]);
 
-        $domain = $this->row();
-        $result = $this->probe()->confirm($domain);
+        $header = null;
+        Http::fake(function () use (&$header) {
+            return Http::response('', 200, ['x-manara-tenant' => $header]);
+        });
 
-        $this->assertFalse($result['matched']);
-        $this->assertStringContainsString('14', $result['seen']);
-        $this->assertSame(MasjidDomain::STATUS_PENDING, $domain->status);
-        $this->assertNull($domain->serving_confirmed_at);
-        $this->assertNull($domain->liveUrl());
+        // Another organisation, and near misses for 13 that a prefix, a loose
+        // `==` or an (int) cast would take for it: organisation 130's site
+        // must never confirm organisation 13's host.
+        foreach (['14', '130', '1', '013', '+13', '13.0', '13,14'] as $header) {
+            $domain = $this->row();
+            $result = $this->probe()->confirm($domain);
+
+            $this->assertFalse($result['matched'], "header {$header} matched masjid 13");
+            $this->assertStringContainsString($header, $result['seen']);
+            $this->assertSame(MasjidDomain::STATUS_PENDING, $domain->status);
+            $this->assertNull($domain->serving_confirmed_at);
+            $this->assertNull($domain->liveUrl());
+        }
     }
 
     #[Test]
@@ -129,7 +138,10 @@ class DomainProbeTest extends TestCase
             $domain = $this->row(status: $status);
             $this->probe()->confirm($domain);
 
-            $this->assertNotSame(MasjidDomain::STATUS_ACTIVE, $domain->status, "a {$status} row became active");
+            // Every matched row Cloudflare has not verified is `manual`, a
+            // failed one included, except `reserved`, which nothing advances.
+            $expected = $status === MasjidDomain::STATUS_RESERVED ? MasjidDomain::STATUS_RESERVED : MasjidDomain::STATUS_MANUAL;
+            $this->assertSame($expected, $domain->status, "a matched {$status} row became {$domain->status}");
         }
 
         // A row Cloudflare already verified keeps Cloudflare's word for it; the
@@ -142,6 +154,35 @@ class DomainProbeTest extends TestCase
         $this->assertSame(MasjidDomain::STATUS_ACTIVE, $active->status);
         $this->assertSame(MasjidDomain::VERIFIED_BY_CLOUDFLARE, $active->verified_by);
         $this->assertNotNull($active->serving_confirmed_at);
+    }
+
+    #[Test]
+    public function a_reserved_row_is_never_advanced_even_when_it_answers(): void
+    {
+        $this->resolveTo([self::PUBLIC_ADDRESS]);
+        Http::fake(['*' => Http::response('', 200, ['x-manara-tenant' => '13'])]);
+
+        $domain = $this->row(status: MasjidDomain::STATUS_RESERVED);
+        $result = $this->probe()->confirm($domain);
+
+        // The answer is still reported, so an operator can see the host is
+        // live, but the row is only stamped as checked.
+        $this->assertTrue($result['matched']);
+        $this->assertSame(MasjidDomain::STATUS_RESERVED, $domain->status);
+        $this->assertNull($domain->serving_confirmed_at);
+        $this->assertNull($domain->verified_by);
+        $this->assertNull($domain->verified_at);
+        $this->assertNotNull($domain->last_checked_at);
+        $this->assertNull($domain->liveUrl());
+    }
+
+    #[Test]
+    public function an_ipv4_mapped_address_is_judged_by_the_address_it_carries(): void
+    {
+        $this->assertTrue(DomainProbe::isPublicAddress('::ffff:' . self::PUBLIC_ADDRESS));
+        $this->assertTrue(DomainProbe::isPublicAddress('::FFFF:' . self::PUBLIC_ADDRESS));
+        $this->assertFalse(DomainProbe::isPublicAddress('::ffff:169.254.169.254'));
+        $this->assertFalse(DomainProbe::isPublicAddress('::ffff:10.0.0.1'));
     }
 
     #[Test]

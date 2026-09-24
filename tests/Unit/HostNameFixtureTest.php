@@ -46,6 +46,7 @@ class HostNameFixtureTest extends TestCase
         $this->assertNull($inputs['[::1]:443']);
         $this->assertNull($inputs['bücher.example']);
         $this->assertNull($inputs['-bad.example.org']);
+        $this->assertNull($inputs["www\n.example.org"], 'a newline inside a host must not pass as part of a label');
 
         $long = array_filter(array_keys($inputs), fn ($input) => strlen((string) $input) === 254);
         $this->assertCount(1, $long, 'the fixture needs one 254-character host');

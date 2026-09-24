@@ -6,8 +6,10 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\Feature\Studio\Concerns\MakesStudioDomains;
 use Tests\TestCase;
 
@@ -204,6 +206,64 @@ class ImportHostMapCommandTest extends TestCase
         $this->import(['--execute' => true])->assertExitCode(0);
 
         $this->assertSame(MasjidDomain::STATUS_RESERVED, $this->recorded()['new.burlingtonmasjid.com']);
+    }
+
+    #[Test]
+    public function the_renderers_object_valued_map_is_read_by_its_id(): void
+    {
+        // DEFAULT_TENANT_HOSTS as renderer:nuxt.config.ts writes it: objects
+        // carrying the id as a string, some with a name, next to a bare id.
+        $map = json_encode([
+            'www.burlingtonmasjid.com' => ['id' => (string) $this->burlington->id],
+            'burlingtonmasjid.com' => ['id' => (string) $this->burlington->id],
+            'mec.hopetechapps.com' => ['id' => (string) $this->mec->id, 'name' => 'Muslim Education Center'],
+            'mec-web.pages.dev' => ['id' => (string) $this->mec->id, 'name' => 'Muslim Education Center'],
+            'localhost' => ['id' => (string) $this->burlington->id],
+            '127.0.0.1' => ['id' => (string) $this->burlington->id],
+            'mec.manara.hopetechapps.com' => $this->mec->id,
+        ]);
+
+        $this->import(['--execute' => true, '--apex' => [...self::APEXES, 'mec.hopetechapps.com:hopetechapps.com']], $map)
+            ->assertExitCode(0);
+
+        $this->assertSame([
+            'burlingtonmasjid.com' => $this->burlington->id,
+            'mec.hopetechapps.com' => $this->mec->id,
+            'mec.manara.hopetechapps.com' => $this->mec->id,
+            'www.burlingtonmasjid.com' => $this->burlington->id,
+        ], MasjidDomain::query()->orderBy('host')->pluck('masjid_id', 'host')->map(fn ($id) => (int) $id)->all());
+
+        // An object with no usable id still refuses the whole run.
+        $this->import(['--execute' => true], json_encode(['www.lost.org' => ['name' => 'Lost']]))
+            ->expectsOutputToContain('The id for www.lost.org is not an organisation id')
+            ->assertExitCode(1);
+    }
+
+    #[Test]
+    public function a_write_that_fails_part_way_leaves_nothing_written(): void
+    {
+        // The second row is changed underneath the command as it is created,
+        // so its read-back no longer matches the plan. The run must say so and
+        // take the first row back with it.
+        $created = 0;
+        MasjidDomain::created(function (MasjidDomain $domain) use (&$created) {
+            if (++$created === 2) {
+                DB::table('masjid_domains')->where('id', $domain->id)->update(['status' => MasjidDomain::STATUS_PENDING]);
+            }
+        });
+
+        $thrown = null;
+        try {
+            $this->import(['--execute' => true])->run();
+        } catch (RuntimeException $e) {
+            $thrown = $e;
+        }
+
+        $this->assertNotNull($thrown, 'the import reported success after a read-back mismatch');
+        $this->assertStringContainsString('did not match the plan', $thrown->getMessage());
+
+        $this->assertSame(2, $created, 'the failure must come part way through the run');
+        $this->assertSame(0, MasjidDomain::query()->count());
     }
 
     #[Test]

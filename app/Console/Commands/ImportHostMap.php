@@ -17,8 +17,11 @@ use RuntimeException;
  *   php artisan domains:import-host-map '{"mec.manara.hopetechapps.com":13}' \
  *       --apex=www.burlingtonmasjid.com:burlingtonmasjid.com
  *
- * `map` is the same JSON object as the renderer's NUXT_TENANT_HOSTS (host => id),
- * given inline or as the path of a file holding it.
+ * `map` is the same JSON object as the renderer's NUXT_TENANT_HOSTS, given
+ * inline or as the path of a file holding it. As in the renderer
+ * (renderer:shared/tenant.ts toRecord), each value is a bare id or an object
+ * carrying one (`{"id": "13", "name": ...}`), which is how the in-git map is
+ * written; only the id is read.
  *
  * Every host is recorded (R4), so Studio can never hand a live client's host to
  * another organisation. What each becomes is decided by asking the host itself
@@ -50,7 +53,7 @@ use RuntimeException;
 class ImportHostMap extends Command
 {
     protected $signature = 'domains:import-host-map
-        {map : The host => organisation id JSON object (NUXT_TENANT_HOSTS), inline or a file path}
+        {map : The host => organisation id JSON object (NUXT_TENANT_HOSTS: a bare id or {"id": ...} per host), inline or a file path}
         {--apex=* : HOST:APEX, the zone of a custom host; required for each one}
         {--dry-run : Print the plan and write nothing (the default without --execute)}
         {--execute : Write the planned rows}';
@@ -173,9 +176,12 @@ class ImportHostMap extends Command
         }
 
         $map = [];
-        foreach ($decoded as $host => $id) {
+        foreach ($decoded as $host => $entry) {
+            $id = is_array($entry) && ! array_is_list($entry) ? ($entry['id'] ?? null) : $entry;
+            $id = is_string($id) ? trim($id) : $id;
+
             if (! is_int($id) && ! (is_string($id) && ctype_digit($id))) {
-                throw new RuntimeException("The id for {$host} is not an organisation id: " . json_encode($id));
+                throw new RuntimeException("The id for {$host} is not an organisation id: " . json_encode($entry));
             }
 
             $map[(string) $host] = (int) $id;

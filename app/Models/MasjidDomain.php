@@ -148,6 +148,18 @@ class MasjidDomain extends Model
                 throw new LogicException("Unknown masjid_domains kind [{$domain->kind}].");
             }
 
+            // `reserved` holds a live host for an organisation without trusting
+            // it (R4), and nothing advances it. A reservation that should go
+            // live is removed and the host added again (manualSteps() says so),
+            // so the new row goes through every check a new host does.
+            if ($domain->exists
+                && $domain->getOriginal('status') === self::STATUS_RESERVED
+                && $domain->isDirty('status')) {
+                throw new LogicException(
+                    "masjid_domains row for {$domain->host} is reserved and cannot become {$domain->status}."
+                );
+            }
+
             // `active` means Cloudflare told us the domain and its certificate
             // are live. A probe proves only that our site answered, so a probed
             // host is `manual`; letting anything else write `active` would make

@@ -180,6 +180,23 @@ class OrganizationByHostTest extends TestCase
     }
 
     #[Test]
+    public function a_throttled_answer_is_no_store_too(): void
+    {
+        // The limiter answers before the controller runs, so the header has to
+        // come from the limiter's own refusal.
+        for ($i = 0; $i < 600; $i++) {
+            $this->lookup(null);
+        }
+
+        $refused = $this->lookup('www.example.org');
+
+        $this->assertSame(429, $refused->status());
+        $this->assertStringContainsString('no-store', (string) $refused->headers->get('Cache-Control'), 'a 429 is cacheable');
+        $this->assertNotNull($refused->headers->get('Retry-After'), 'the refusal lost the limiter\'s own headers');
+        $this->assertSame('error', $refused->json('status'));
+    }
+
+    #[Test]
     public function the_route_is_throttled_by_its_own_limiter_and_needs_no_tenant_or_login(): void
     {
         $route = collect(Route::getRoutes())->first(

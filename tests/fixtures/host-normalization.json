@@ -164,6 +164,14 @@
     "expected": null
   },
   {
+    "input": "www\n.example.org",
+    "expected": null
+  },
+  {
+    "input": "www.example.org\n:443",
+    "expected": null
+  },
+  {
     "input": "example.org/path",
     "expected": null
   },

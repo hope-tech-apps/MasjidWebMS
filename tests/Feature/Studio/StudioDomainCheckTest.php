@@ -108,6 +108,18 @@ class StudioDomainCheckTest extends TestCase
         $this->postJson(self::URL, ['kind' => 'custom', 'host' => 'x.manara.hopetechapps.com', 'zone_apex' => 'hopetechapps.com'])
             ->assertStatus(422)->assertJsonStructure(['data' => ['host']]);
 
+        // Our managed suffix itself is not a custom host either.
+        $this->postJson(self::URL, ['kind' => 'custom', 'host' => 'manara.hopetechapps.com', 'zone_apex' => 'hopetechapps.com'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['host']]);
+
+        // A zone the write-side rule refuses is refused as the zone, even when
+        // the host is fine: "org" would make every later step about the TLD.
+        $this->postJson(self::URL, ['kind' => 'custom', 'host' => 'www.example.org', 'zone_apex' => 'org'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['zone_apex']]);
+
+        $this->postJson(self::URL, ['kind' => 'custom', 'host' => 'a.localhost', 'zone_apex' => 'localhost'])
+            ->assertStatus(422)->assertJsonStructure(['data' => ['zone_apex']]);
+
         $this->postJson(self::URL, ['kind' => 'custom', 'host' => 'example.org', 'zone_apex' => 'example.org'])->assertOk();
     }
 

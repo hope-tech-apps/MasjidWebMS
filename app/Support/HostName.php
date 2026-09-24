@@ -28,7 +28,11 @@ final class HostName
 {
     public const MAX_LENGTH = 253;
 
-    private const LABEL = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/';
+    // Anchored with \z, not $: PCRE's $ also matches just before a final
+    // newline, so "www\n" would pass as a label here while the renderer's JS
+    // regex refuses it, and "www\n.example.org" would be stored as a host no
+    // lookup can ever match.
+    private const LABEL = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/';
 
     /**
      * The normalised host, or null when the input names no host we could serve.
@@ -57,7 +61,7 @@ final class HostName
             return null;
         }
 
-        $host = preg_replace('/:\d*$/', '', $host);
+        $host = preg_replace('/:\d*\z/', '', $host);
 
         if (str_ends_with($host, '.')) {
             $host = substr($host, 0, -1);
