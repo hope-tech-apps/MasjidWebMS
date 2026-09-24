@@ -141,7 +141,9 @@ class RendererCachePurgeTest extends TestCase
         $this->deleteJson("/api/admin/masjids/{$masjid->id}/pages/{$id}")->assertSuccessful();
 
         Http::assertSentCount(4);
-        $this->assertFollowUpQueued($masjid, 4);
+        // Four saves, ONE follow-up: the job is unique per organisation for its delay,
+        // which is what keeps a reorder burst from queueing a pass per request.
+        $this->assertFollowUpQueued($masjid, 1);
     }
 
     #[Test]
