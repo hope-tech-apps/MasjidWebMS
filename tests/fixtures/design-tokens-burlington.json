@@ -1,0 +1,64 @@
+{
+    "theme": {
+        "primary_color": "#01b151",
+        "secondary_color": "#1b1b2e",
+        "accent_color": "#ffba63",
+        "background_color": "#f3f8fb"
+    },
+    "tokens": {
+        "color": {
+            "primary": "#01B151",
+            "secondary": "#1B1B2E",
+            "accent": "#FFBA63",
+            "background": "#F3F8FB",
+            "surface": "#FFFFFF",
+            "text": "#111827",
+            "textMuted": "#6B7280",
+            "border": "#E5E7EB",
+            "onPrimary": "#FFFFFF",
+            "onSecondary": "#FFFFFF",
+            "onAccent": "#111827",
+            "success": "#16A34A",
+            "warning": "#D97706",
+            "error": "#DC2626"
+        },
+        "typography": {
+            "fontFamily": "system",
+            "scale": {
+                "display": 32,
+                "title": 24,
+                "heading": 20,
+                "body": 16,
+                "caption": 12
+            },
+            "weight": {
+                "regular": 400,
+                "medium": 500,
+                "semibold": 600,
+                "bold": 700
+            }
+        },
+        "shape": {
+            "radius": {
+                "sm": 8,
+                "md": 12,
+                "lg": 16,
+                "pill": 999
+            },
+            "borderWidth": 1
+        },
+        "spacing": {
+            "unit": 4,
+            "scale": [
+                0,
+                4,
+                8,
+                12,
+                16,
+                24,
+                32,
+                48
+            ]
+        }
+    }
+}

@@ -132,6 +132,15 @@ Schedule::command('family:prune-login-codes')->dailyAt('03:25')->withoutOverlapp
 */
 Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 
+// Abandoned Manara Studio drafts: the client admin's contact details and an
+// unannounced logo on the private disk, which no backup covers. See
+// App\Console\Commands\PurgeStudioDrafts.
+//
+// 03:53 UTC: clear of the quarter-hourly reaper (:00/:15/:30/:45), the :47
+// canary, the :17 media sweep and the 03:10/03:15/03:25/03:35 jobs.
+// withoutOverlapping() so two sweeps never delete the same draft's bytes.
+Schedule::command('studio:purge-drafts')->dailyAt('03:53')->withoutOverlapping();
+
 /*
 |--------------------------------------------------------------------------
 | Cross-tenant canary

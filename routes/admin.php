@@ -75,6 +75,7 @@ use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
+use App\Http\Controllers\AdminDashboard\StudioDraftsController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
@@ -1583,6 +1584,18 @@ Route::prefix('admin')->group(function () {
         // prefix so StudioAccessTest can find them all from the router.
         Route::prefix('studio')->middleware('super')->group(function () {
             Route::get('/catalogue', [StudioCatalogueController::class, 'show']);
+
+            // Drafts (S2): a new client between "New client" and Step 3.
+            Route::controller(StudioDraftsController::class)->group(function () {
+                Route::get('/drafts', 'index');
+                Route::post('/drafts', 'store');
+                Route::get('/drafts/{draft_id}', 'show')->whereNumber('draft_id');
+                Route::patch('/drafts/{draft_id}', 'update')->whereNumber('draft_id');
+                Route::delete('/drafts/{draft_id}', 'destroy')->whereNumber('draft_id');
+                Route::post('/drafts/{draft_id}/logo', 'storeLogo')->whereNumber('draft_id');
+                Route::get('/drafts/{draft_id}/logo', 'showLogo')->whereNumber('draft_id');
+                Route::delete('/drafts/{draft_id}/logo', 'destroyLogo')->whereNumber('draft_id');
+            });
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

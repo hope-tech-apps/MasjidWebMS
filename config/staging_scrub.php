@@ -149,6 +149,7 @@ return [
         'sms_suppressions' => 'SAFE ON STAGING ONLY. In production the opt-out deliberately outlives the contact row (.claude/rules/broadcasts.md) and must never be truncated. It is expendable here solely because staging cannot send SMS: no A2P sender, SMS_DRIVER=none, masjid_sms_senders forced to `unregistered` below. If staging ever gains a real provider, MOVE THIS TABLE TO KEEP.',
         'stripe_webhook_events' => 'An idempotency ledger only (stripe_event_id UNIQUE, type, processed_at) — it has no payload column. Dropping is desirable: staging wants its test webhooks processed, not swallowed as duplicates.',
         'provisioning_jobs' => 'callback_token is a live shared secret; github_repo and artifact_url point at real build infrastructure.',
+        'studio_drafts' => 'Manara Studio drafts: a prospective client\'s admin name, email and phone, and a logo path on the private disk, which is never copied to staging. Nothing references the table.',
 
         // Framework runtime state. All of it is regenerated on demand and all of
         // it can hold a snapshot of the very data being scrubbed.
