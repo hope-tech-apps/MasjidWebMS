@@ -1218,6 +1218,10 @@ truthful no-op until the owner's token lands.
     untouched, and the owner confirms in the Cloudflare audit log that no write
     was made.
 
+**As built (2026-09-24).** One additive column the plan did not name:
+`masjid_domains.stage_started_at` (nullable timestamp), the start of the 28-day and
+72-hour clocks. DECISIONS.md records it and the other calls S7 made.
+
 **Size.** ~3 sessions, ~18 files (estimate).
 
 ---

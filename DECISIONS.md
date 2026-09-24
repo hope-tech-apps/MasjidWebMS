@@ -2273,3 +2273,49 @@ controller at 9a412074, before its constants became public, and is re-recorded o
 Rationale: each keeps the preview, the gate and S8's writer on one derivation and keeps a
 new client's site from publishing a dead link or a word nobody gave; recorded because the
 plan left them open.
+
+## 2026-09-24 — Studio W1 S7: calls made where the plan was silent
+Decision: `masjid_domains` gains one nullable `stage_started_at` timestamp, stamped when a
+row enters `awaiting_nameservers` or `provisioning`; the 28-day and 72-hour clocks run
+from it, because `created_at` would fail a row added before the token landed on its first
+tick with one. The six-hour activation-check limit and the once-only Pages retry are
+`Cache::add` markers per row, not columns. A managed or already-active zone's id is
+recorded only once the CNAME is created or adopted, so a row refused by a DNS conflict
+keeps no `cf_*` id and stays deletable (the DELETE rule is the plan's: any `cf_*` id,
+`cf_zone_created` or `source = imported` is a 409). `ensureCname` judges only A, AAAA and
+CNAME records at the name (TXT/MX/CAA neither conflict nor get touched), filters with
+`name.exact` per the current API reference, and treats codes 81053/81057/81058 or the
+words "already exists" as the create race. With a token, `imported` and `manual` rows are
+promoted by one Pages GET and are never failed or written for, whatever Cloudflare says;
+`reserved` and `failed` rows are never advanced (no probe either). `domains:reconcile`
+also picks up `active` rows not yet seen serving, for the probe. "No-op without a token"
+means no Cloudflare request and no selection of imported/manual/reserved rows; a
+Studio row still moving is probed on its own host, which is how a hand-attached host
+goes live. The domain routes live under `api/admin/masjids/{masjid_id}/domains` as the
+plan names them, so StudioAccessTest (which walks `api/admin/studio/*`) does not cover
+them; `MasjidDomainsAdminRoutesTest` walks them from the router instead. The domain check
+adds `zone_status` only when the token is configured, so its tokenless answer stays
+byte-identical to S3's. phpunit.xml pins `CLOUDFLARE_STUDIO_TOKEN` blank with
+`force="true"`, so no CI tree's `.env` can hand the suite a real token.
+Rationale: each keeps S7's two promises (honest without the token, and never a write for
+a live tenant's row) where the plan did not say how.
+
+## 2026-09-24 — Studio W1 S7 review: dead ends and races the first cut left
+Decision: a failed row is always told to fix the cause and press Check now (which starts
+it again from pending); "remove this domain" is offered only when `deletableThroughStudio()`
+is true, and the attacher's failure texts name the cause only, so none of them sends an
+operator to a DELETE that answers 409 or a re-add that answers 422. DELETE takes the
+attacher's own lock (`DomainAttacher::lockFor`) and judges the row re-read inside it; while
+a step holds the lock it answers 409 "try again", because a step keeps what it made in
+Cloudflare in memory until its one save. Check now (`DomainAttacher::restart`) resets the
+row under the same lock, judged on the row re-read inside it, and forgets the row's
+Pages-retry and activation-check markers, so a new stage gets its own retry. A zone
+POST that got no answer or a 5xx is remembered per row (a `Cache::add` marker, kept up to 28
+days); a zone found on a later tick that was made no earlier than that attempt (five
+minutes' clock allowance) is recorded as `cf_zone_created`. Without the token, a custom
+apex is told to add the domain to Cloudflare and move its nameservers (with the MX and
+28-day warnings), not to use a CNAME or ALIAS elsewhere: the Pages custom-domains page
+(read 2026-09-24, last updated 2026-04-21) says an apex must be a zone on the account.
+Rationale: each closes a way the operator's instructions or the `cf_*` record could stop
+matching what exists in Cloudflare. A cleared cache degrades the zone marker to "found",
+the state before it existed.

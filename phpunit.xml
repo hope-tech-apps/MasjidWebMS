@@ -23,6 +23,12 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="sqlite"/>
+        <!-- No test may reach the Cloudflare API with a real token, whatever the
+             CI tree's .env or the shell carries: a blank token makes every
+             CloudflareService method answer not_configured and send nothing.
+             A test that wants the token-present paths sets one in config and
+             fakes every request (Http::preventStrayRequests). -->
+        <env name="CLOUDFLARE_STUDIO_TOKEN" value="" force="true"/>
         <!-- No outbound HTTP from the suite: Password::uncompromised() would
              call Have I Been Pwned. A test that reaches the public internet is
              a test that fails on a train. See config/family.php. -->

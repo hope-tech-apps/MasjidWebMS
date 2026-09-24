@@ -141,6 +141,19 @@ Schedule::command('app:legacy-features-report')->dailyAt('03:35');
 // withoutOverlapping() so two sweeps never delete the same draft's bytes.
 Schedule::command('studio:purge-drafts')->dailyAt('03:53')->withoutOverlapping();
 
+// Manara Studio's web addresses: attach, poll and confirm each host that is
+// still on its way (App\Console\Commands\ReconcileDomains). Cloudflare sends no
+// callbacks, so this is how a certificate being issued or a nameserver change
+// landing is noticed. Without CLOUDFLARE_STUDIO_TOKEN it sends nothing to
+// Cloudflare; it only probes rows that are waiting, on their own host.
+//
+// 3-59/5: every five minutes, clear of the quarter-hourly reaper
+// (:00/:15/:30/:45) and the :47 canary. withoutOverlapping(10), not the bare
+// call: the bare form holds its lock for 24 hours, so one killed run would stop
+// every attach for a day. Ten minutes outlasts a run (each Cloudflare call has a
+// 15 s timeout) and expires two ticks later.
+Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(10);
+
 /*
 |--------------------------------------------------------------------------
 | Cross-tenant canary

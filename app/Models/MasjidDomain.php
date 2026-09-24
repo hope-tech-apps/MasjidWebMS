@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Domains\DomainAttacher;
 use App\Support\HostName;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -62,7 +63,7 @@ class MasjidDomain extends Model
         self::STATUS_MANUAL,
     ];
 
-    /** Still moving: the attach job (S7) re-checks these. */
+    /** Still moving: the attacher (S7) re-checks these. */
     public const NON_TERMINAL = [
         self::STATUS_PENDING,
         self::STATUS_AWAITING_NAMESERVERS,
@@ -84,6 +85,9 @@ class MasjidDomain extends Model
 
     public const VERIFIED_BY_CLOUDFLARE = 'cloudflare';
     public const VERIFIED_BY_PROBE = 'probe';
+
+    /** What a row is waiting on (`waiting_on`), set by App\Services\Domains\DomainAttacher. */
+    public const WAITING_ON = ['token', 'token_scope', 'nameservers', 'certificate', 'capacity'];
 
     /**
      * ONE fixed key for the CORS origin list. Production's cache store is the
@@ -119,6 +123,7 @@ class MasjidDomain extends Model
         'last_error',
         'last_checked_at',
         'next_check_at',
+        'stage_started_at',
         'verified_at',
         'serving_confirmed_at',
         'verified_by',
@@ -132,6 +137,7 @@ class MasjidDomain extends Model
             'nameservers' => 'array',
             'last_checked_at' => 'datetime',
             'next_check_at' => 'datetime',
+            'stage_started_at' => 'datetime',
             'verified_at' => 'datetime',
             'serving_confirmed_at' => 'datetime',
         ];
@@ -272,6 +278,22 @@ class MasjidDomain extends Model
      * What an operator does by hand for this row, in order, built here so the
      * SPA never restates Cloudflare's instructions and cannot drift from them.
      *
+     * Without CLOUDFLARE_STUDIO_TOKEN these are the whole job: the DNS record
+     * and the Pages custom domain made in the dashboard, then "Check now",
+     * whose probe is the only thing that can mark the host live. With the
+     * token they shrink to what only a person can do (the registrar's
+     * nameservers, the token's scopes, the project's domain limit), because the
+     * attacher does the rest and saying otherwise would send an operator to
+     * make records Studio is about to make.
+     *
+     * A custom apex has no CNAME or ALIAS route without the token: Cloudflare
+     * Pages serves an apex only from a zone on the account that holds the
+     * project, reached by moving the domain's nameservers, and makes the DNS
+     * record itself once the domain is added in Pages
+     * (https://developers.cloudflare.com/pages/configuration/custom-domains/,
+     * read 2026-09-24, page last updated 2026-04-21). A subdomain can stay at
+     * any DNS provider with a CNAME.
+     *
      * @return list<string>
      */
     public function manualSteps(): array
@@ -285,10 +307,17 @@ class MasjidDomain extends Model
             ];
         }
 
+        // Check now is the way forward for every failed row (it starts the
+        // row again from pending). Removing it is offered only when Studio
+        // would allow it: a row Cloudflare holds records for is refused a
+        // DELETE (409) and its host a new POST (422), so telling the operator
+        // to remove and re-add it would be a dead end.
         if ($this->status === self::STATUS_FAILED) {
             return [
                 "Setting up {$this->host} failed" . ($this->last_error ? ": {$this->last_error}" : '.'),
-                'Remove this domain and add it again once the cause is fixed.',
+                $this->deletableThroughStudio()
+                    ? "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted."
+                    : "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
             ];
         }
 
@@ -297,31 +326,161 @@ class MasjidDomain extends Model
         }
 
         $confirm = "Press Check now. The site is confirmed once https://{$this->host} answers for this organisation.";
+        $nameservers = "At the registrar for {$this->zone_apex}, replace its nameservers with: "
+            . implode(', ', (array) $this->nameservers) . '. This can take up to a day to take effect.';
+
+        if (filled(config('cloudflare.studio_token'))) {
+            if ($this->waiting_on === 'token_scope') {
+                return [
+                    'Cloudflare refused CLOUDFLARE_STUDIO_TOKEN for this step. Give the token Account › Cloudflare Pages: Edit, Zone › Zone: Edit and Zone › DNS: Edit, on all zones in the account. Studio tries again every half hour.',
+                ];
+            }
+
+            if ($this->waiting_on === 'capacity') {
+                return [
+                    "The {$project} Pages project has reached its limit of " . config('cloudflare.pages_domain_ceiling')
+                    . ' custom domains. Raise the limit on the Cloudflare plan, or remove a custom domain nobody uses. Studio tries again every hour.',
+                ];
+            }
+
+            if ($this->waiting_on === 'nameservers' && ! empty($this->nameservers)) {
+                return [$nameservers, 'Studio checks the zone every half hour and attaches the site itself once the nameservers are live.'];
+            }
+
+            if ($this->status === self::STATUS_ACTIVE) {
+                return ["Cloudflare reports {$this->host} as attached. {$confirm}"];
+            }
+
+            if (in_array($this->status, self::NON_TERMINAL, true)) {
+                return [
+                    "Nothing to do by hand: Studio is attaching {$this->host} through Cloudflare and checks it every five minutes.",
+                    $confirm,
+                ];
+            }
+        }
 
         if ($this->kind === self::KIND_MANAGED_SUBDOMAIN) {
             $zone = (string) config('cloudflare.managed_zone');
             $name = substr($this->host, 0, -strlen('.' . $zone));
 
-            return [
+            $steps = [
                 "In Cloudflare, open the {$zone} zone, then DNS, and add a CNAME record named {$name} pointing to {$target}, proxied.",
                 "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}.",
                 $confirm,
             ];
+        } else {
+            $steps = [];
+
+            if ($this->waiting_on === 'nameservers' && ! empty($this->nameservers)) {
+                $steps[] = $nameservers;
+            }
+
+            if ($this->host !== $this->zone_apex) {
+                $steps[] = "In the DNS for {$this->zone_apex}, add a CNAME record for {$this->host} pointing to {$target}.";
+                $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}.";
+            } else {
+                if (empty($steps)) {
+                    $steps[] = "Pages serves an apex only from a zone on the Cloudflare account that holds the {$project} project: in Cloudflare, add {$this->zone_apex} as a domain, then at its registrar replace the nameservers with the two Cloudflare gives. This can take up to a day to take effect.";
+                    $steps[] = "Changing nameservers moves all of {$this->zone_apex}'s DNS to Cloudflare, email (MX) included: check the records Cloudflare imported before the registrar switches. Cloudflare deletes a zone left pending for "
+                        . DomainAttacher::ZONE_PENDING_LIMIT_DAYS . ' days.';
+                }
+
+                $steps[] = "Once the zone is active, in Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}. Cloudflare makes its DNS record itself.";
+            }
+
+            $steps[] = $confirm;
         }
 
-        $steps = [];
-
-        if ($this->waiting_on === 'nameservers' && ! empty($this->nameservers)) {
-            $steps[] = "At the registrar for {$this->zone_apex}, replace its nameservers with: "
-                . implode(', ', (array) $this->nameservers) . '. This can take up to a day to take effect.';
+        if (blank(config('cloudflare.studio_token')) && $this->source !== self::SOURCE_IMPORTED) {
+            $steps[] = 'Or, instead of the steps above: once CLOUDFLARE_STUDIO_TOKEN is on the server, Studio makes the DNS record and the custom domain itself within five minutes.';
         }
-
-        $steps[] = $this->host === $this->zone_apex
-            ? "In the DNS for {$this->zone_apex}, point the apex at {$target} with a CNAME (Cloudflare flattens it) or the provider's ALIAS/ANAME record."
-            : "In the DNS for {$this->zone_apex}, add a CNAME record for {$this->host} pointing to {$target}.";
-        $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}.";
-        $steps[] = $confirm;
 
         return $steps;
+    }
+
+    /**
+     * Whether Studio may delete this row (DELETE .../domains/{id}): only when
+     * nothing about it lives anywhere but this table. A row that carries a
+     * Cloudflare id, whose zone Studio created, or that was imported from the
+     * live host map is refused (R28): the first two would leave records in
+     * Cloudflare nobody tracks any more, and an imported row is how a live
+     * organisation is looked up today (and, from S9, admitted by CORS).
+     */
+    public function deletableThroughStudio(): bool
+    {
+        return $this->source !== self::SOURCE_IMPORTED
+            && ! $this->cf_zone_created
+            && $this->cf_zone_id === null
+            && $this->cf_dns_record_id === null
+            && $this->cf_pages_domain_id === null;
+    }
+
+    /**
+     * What an operator does by hand before this row can go, for the 409 that
+     * refuses its deletion. Studio never removes anything from Cloudflare
+     * (CloudflareService has no delete), so this is the only way it happens.
+     *
+     * @return list<string>
+     */
+    public function removalSteps(): array
+    {
+        if ($this->source === self::SOURCE_IMPORTED) {
+            return [
+                "{$this->host} was imported from the live host map: it is how this organisation is reached today, so Studio does not remove it.",
+                'If it really must go, the platform owner removes it with the renderer map and the CORS list in mind; it is not a Studio action in W1.',
+            ];
+        }
+
+        $project = (string) config('cloudflare.pages_project');
+        $steps = [];
+
+        if ($this->cf_pages_domain_id !== null) {
+            $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and remove {$this->host}.";
+        }
+
+        if ($this->cf_dns_record_id !== null) {
+            $steps[] = "In Cloudflare, open the {$this->zone_apex} zone, then DNS, and delete the CNAME record for {$this->host}.";
+        }
+
+        if ($this->cf_zone_created) {
+            $steps[] = "Studio added the {$this->zone_apex} zone to Cloudflare. It holds all of that domain's DNS, email included: remove it only after its owner agrees.";
+        } elseif ($this->cf_zone_id !== null) {
+            $steps[] = "Studio found the {$this->zone_apex} zone on Cloudflare and did not create it; leave the zone itself alone.";
+        }
+
+        $steps[] = 'Then ask the platform owner to remove this row. Detaching a host is not a Studio action in W1.';
+
+        return $steps;
+    }
+
+    /**
+     * The row as the SuperAdmin domain screens read it. An explicit list, so a
+     * column added later is not published by accident, and `live_url` and
+     * `manual_steps` are computed here rather than in the SPA.
+     *
+     * @return array<string, mixed>
+     */
+    public function toAdminArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'masjid_id' => (int) $this->masjid_id,
+            'host' => $this->host,
+            'kind' => $this->kind,
+            'zone_apex' => $this->zone_apex,
+            'status' => $this->status,
+            'waiting_on' => $this->waiting_on,
+            'source' => $this->source,
+            'nameservers' => $this->nameservers,
+            'last_error' => $this->last_error,
+            'last_checked_at' => $this->last_checked_at?->toIso8601String(),
+            'next_check_at' => $this->next_check_at?->toIso8601String(),
+            'verified_at' => $this->verified_at?->toIso8601String(),
+            'verified_by' => $this->verified_by,
+            'serving_confirmed_at' => $this->serving_confirmed_at?->toIso8601String(),
+            'live_url' => $this->liveUrl(),
+            'manual_steps' => $this->manualSteps(),
+            'deletable' => $this->deletableThroughStudio(),
+        ];
     }
 }

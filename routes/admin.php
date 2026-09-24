@@ -456,6 +456,18 @@ Route::prefix('admin')->group(function () {
             // name. Nothing here calls a provider — registration is a human step
             // with days of latency, and this records its outcome so the sending
             // path can refuse until it says `approved`.
+            // The organisation's web addresses (Manara Studio W1, S7): list, add,
+            // "Check now" and remove. SuperAdmin-only: attaching a host acts on
+            // the platform's Cloudflare account, and the host -> organisation map
+            // it writes is what the renderer's lookup (and, from S9, CORS) reads.
+            // MasjidDomainsAdminRoutesTest walks these for the refusals.
+            Route::prefix('{masjid_id}/domains')->middleware('super')->controller(\App\Http\Controllers\AdminDashboard\MasjidDomainsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::post('/', 'store');
+                Route::post('/{domain_id}/refresh', 'refresh')->whereNumber('domain_id');
+                Route::delete('/{domain_id}', 'destroy')->whereNumber('domain_id');
+            });
+
             Route::prefix('{masjid_id}/sms-sender')->middleware('super')
                 ->controller(\App\Http\Controllers\AdminDashboard\MasjidSmsSenderController::class)
                 ->group(function () {
