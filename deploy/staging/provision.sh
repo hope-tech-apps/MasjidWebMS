@@ -384,7 +384,9 @@ DENY_PREFIXES="STRIPE_ RESEND_ ANTHROPIC_ ONESIGNAL_ PUSHER_ GITHUB_"
 # VITE_PUSHER_ — the same Pusher app, under a prefix `^PUSHER_` does not match.
 # MAIL_PASSWORD/MAIL_USERNAME — the transport credential; inert while MAIL_MAILER
 #                is `log`, but a single edited line would make it live again.
-DENY_PREFIXES="${DENY_PREFIXES} AWS_ VITE_PUSHER_"
+# CLOUDFLARE_  — Manara Studio's token edits production's one Pages project
+#                (config/cloudflare.php); a staging copy would move live domains.
+DENY_PREFIXES="${DENY_PREFIXES} AWS_ VITE_PUSHER_ CLOUDFLARE_"
 DENY_EXACT="MAIL_PASSWORD MAIL_USERNAME"
 
 DENIED=0

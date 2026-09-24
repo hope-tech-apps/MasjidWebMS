@@ -75,6 +75,7 @@ use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
+use App\Http\Controllers\AdminDashboard\StudioDomainCheckController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
@@ -1583,6 +1584,7 @@ Route::prefix('admin')->group(function () {
         // prefix so StudioAccessTest can find them all from the router.
         Route::prefix('studio')->middleware('super')->group(function () {
             Route::get('/catalogue', [StudioCatalogueController::class, 'show']);
+            Route::post('/domains/check', [StudioDomainCheckController::class, 'check']);
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

@@ -60,6 +60,10 @@ class Masjid extends Model implements HasMedia
         'tax_id',
         'statement_signatory',
         'mailing_locale',
+        // Manara Studio identity (docs/manara-studio-w1.md, S3): the managed
+        // host's label and the organisation's public description.
+        'slug',
+        'description',
         'created_by',
         'updated_by',
         'deleted_by'
@@ -158,6 +162,14 @@ class Masjid extends Model implements HasMedia
         // platform act for it (account.application.deauthorized, or a 403 on a
         // pinned page). Internal payment-health state, not public identity.
         'stripe_deauthorized_at',
+        // Manara Studio identity (S3). `slug` names the managed host and is
+        // not something either app decodes. `description` IS public copy, but
+        // its one public reader is the renderer's by-host lookup, which
+        // publishes it from an allowlist; adding it here keeps the directory and
+        // show payloads byte-identical to what the installed apps decode today
+        // (PublicPayloadKeysUnchangedTest).
+        'slug',
+        'description',
     ];
 
     protected $searchableFields = ['name', 'email', 'address'];
@@ -866,6 +878,14 @@ class Masjid extends Model implements HasMedia
     /** Per-masjid app-publishing config (managed vs BYO per platform). */
     public function appPublishing() {
         return $this->hasOne(MasjidAppPublishing::class);
+    }
+
+    /**
+     * The website hosts recorded for this organisation (Manara Studio, S3).
+     * See App\Models\MasjidDomain for which of them are served and trusted.
+     */
+    public function domains() {
+        return $this->hasMany(MasjidDomain::class);
     }
 
     /**

@@ -46,6 +46,7 @@ class StudioAccessTest extends TestCase
     {
         return [
             'GET ' . self::PREFIX . '/catalogue' => ['GET', '/' . self::PREFIX . '/catalogue?org_type=school', []],
+            'POST ' . self::PREFIX . '/domains/check' => ['POST', '/' . self::PREFIX . '/domains/check', ['kind' => 'managed_subdomain', 'label' => 'studio-access']],
         ];
     }
 

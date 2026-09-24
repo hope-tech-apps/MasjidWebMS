@@ -226,6 +226,13 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // The renderer's by-host lookup (GET /api/v1/organizations/by-host).
+        // Per IP, and generous on purpose: every renderer isolate reaches us
+        // from Cloudflare's shared egress addresses, so one bucket stands for
+        // many visitors on many sites. A 429 only makes an unmapped host with no
+        // stale record answer 503 at the renderer; it never serves the wrong org.
+        RateLimiter::for('tenant-host', fn (Request $request) => Limit::perMinute(600)->by('tenant-host:' . $request->ip()));
+
         RateLimiter::for('login', function (Request $request) {
             $key = strtolower((string) $request->input('email')) . '|' . $request->ip();
             return Limit::perMinute(5)->by($key)->response(function () {
