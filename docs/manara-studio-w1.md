@@ -1931,11 +1931,12 @@ These are not W1 work. Each needs its own ticket.
 
 - `/api/v1/settings` returns `google_maps_key` to unauthenticated callers
   (`SettingController.php:76`), while the mobile directory denylists it.
-- **The legacy wizard gives new masjids Qur'an OFF on production.** The
-  production key is `qur’an` (U+2019), and the wizard matches features by key
-  (`OnboardingWizardView.vue:728-730`, `OnboardingController.php:258`).
-  `OrgTypeTest` passes on SQLite while the assumption is false on production.
-  Studio avoids the bug by matching on id.
+- **Fixed on `fix/quran-key-and-maps-key-note`:** the legacy wizard gave new
+  masjids Qur'an OFF on production. The production key is `qur’an` (U+2019),
+  and both the wizard and `OnboardingController@provision` matched features by
+  the raw key. Both now match by `MobileAppFeature::normaliseKey()`, and an
+  explicit `quran` post maps to the production row
+  (`QuranFeatureKeySpellingTest`). Studio avoids the bug by matching on id.
 - **Possible:** a client-sent `X-Forwarded-Host: localhost` may render
   Burlington on `mec-web.pages.dev`. The git map sends `localhost`→1, and h3
   falls back to `localhost` (renderer-lookup risk [1]). This is unverified.

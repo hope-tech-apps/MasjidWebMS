@@ -511,6 +511,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import LoadingButton from '@/components/form/LoadingButton.vue';
+import { normaliseFeatureKey } from '@/core/helpers/featureKey';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
@@ -721,13 +722,16 @@ const selectedVertical = computed<VerticalOption | null>(
 const verticalLabel = computed(() => selectedVertical.value?.label || 'Organization');
 
 /**
- * Feature keys this vertical seeds BY DEFAULT, narrowed to keys the catalog
- * actually ships — so the wizard can never post a key the backend's
- * `exists:mobile_app_features,key` rule would reject.
+ * Feature keys this vertical seeds BY DEFAULT, as the CATALOG spells them — so
+ * the wizard can never post a key the backend's `exists:mobile_app_features,key`
+ * rule would reject. Matched by normalised key: production's Qur'an row is
+ * `qur’an` (U+2019) where the bundle says `quran`, and an exact match left
+ * Qur'an unchecked for every new masjid.
  */
-const bundledKeys = computed(() =>
-    (selectedVertical.value?.feature_keys ?? []).filter(k => features.value.some(f => f.key === k))
-);
+const bundledKeys = computed(() => {
+    const wanted = new Set((selectedVertical.value?.feature_keys ?? []).map(normaliseFeatureKey));
+    return features.value.filter(f => wanted.has(normaliseFeatureKey(f.key))).map(f => f.key);
+});
 
 const includedFeatures = computed(() => features.value.filter(f => bundledKeys.value.includes(f.key)));
 const excludedFeatures = computed(() => features.value.filter(f => !bundledKeys.value.includes(f.key)));
