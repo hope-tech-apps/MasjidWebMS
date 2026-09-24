@@ -15,6 +15,13 @@ paths:
   - "app/Models/GroupMessage.php"
   - "app/Models/GroupThreadRead.php"
   - "app/Support/GroupAudience.php"
+  - "app/Models/GroupResource.php"
+  - "app/Models/GroupResourceRecipient.php"
+  - "app/Http/Controllers/Teacher/ResourcesController.php"
+  - "app/Http/Controllers/Family/ResourcesController.php"
+  - "app/Support/GroupResourceFiles.php"
+  - "database/migrations/*_create_group_resources_table.php"
+  - "database/migrations/*_create_group_resource_recipients_table.php"
   - "app/Support/GroupPostAttachments.php"
   - "app/Support/GroupMessageAttachments.php"
   - "app/Console/Commands/PurgeGroupFeed.php"
@@ -586,6 +593,66 @@ Proven by `tests/Feature/GroupMessagingTest.php` +
 `tests/Feature/GroupMessagingTenantIsolationTest.php` +
 `tests/Feature/GroupMessagePhotosTest.php` +
 `tests/Feature/GroupMessageReactionsTest.php`.
+
+## Class files — a handout is ADDRESSED (2026-09-24)
+
+`group_resources` is a file a teacher keeps for a class, and
+`group_resource_recipients` names the students one was addressed to. The
+audiences are `GroupResource::VISIBILITIES` — PHP constants, plain string column,
+for the reason `ROLES` is:
+
+- **`staff`** — the class's leaders and the office. THE DEFAULT and the
+  fail-closed direction. A parent is never told such a row exists.
+- **`families`** — the whole class, gated by FEED consent exactly as the class
+  story is.
+- **`students`** — only the guardians of the children named in
+  `group_resource_recipients`, feed consent still required.
+
+What a follow-on slice must not re-decide:
+
+- **`GroupAudience::readableResourcesQuery()` is the only place an audience
+  becomes rows**, and `mayReceiveResource()` asks it rather than re-deriving. A
+  controller that filters for itself is the drift this class exists to prevent —
+  `Family\ResourcesController` used to apply `visibleToFamilies()` and could not
+  be taught the third audience without learning guardianship a second time.
+- **Enforced at QUERY level in the LISTING and in the DOWNLOAD.** A filename and
+  a size are themselves a disclosure ("Progress reports Sept.pdf, 2.1 MB" says
+  plenty), so a forbidden row is never FETCHED rather than merely hidden, and a
+  guessed id is a 404 whose body names nothing.
+- **A recipient is a MEMBERSHIP**, as an award's and a ḥifẓ entry's subject is,
+  so it cannot name a child who is not on this roster and the guardian edges
+  answer "whose child is this" once. `ResourcesController::resolveRecipients()`
+  re-reads every id through `$group->memberships()->participants()->current()`
+  and refuses the WHOLE request on any miss.
+- **THE EMPTY SET IS THE EMPTY AUDIENCE.** `group_membership_id` CASCADES (as
+  `behavior_awards` does, where `group_threads.about_membership_id` nulls),
+  because a recipient row's entire meaning is the roster row it names. A
+  `students` file whose last recipient has left the roster reaches STAFF ONLY.
+  There is deliberately no "no recipients means everyone" branch; widening an
+  audience as a side effect of a roster edit is the one direction this feature
+  must never move in. A withdrawal (`left_on`) does the same thing by a different
+  route: the guardian edge leaves with the child, so the family's standing ends
+  and the recipient row is simply moot.
+- **Two serializers, and the difference is the point.** `toAudienceArray()` is
+  the FAMILY shape and must never learn who else a handout went to;
+  `toStaffArray()` adds `recipient_membership_ids` + `recipient_count` and is
+  what the teacher and the office read. Anything added to the first is published
+  to parents.
+- **A targeted file nudges the named child's CONSENTED guardians**
+  (`GroupNotificationRecipientResolver::consentedWardGuardians()`), never the
+  class: a class-wide nudge would tell every family that something had been filed
+  for somebody. `wardGuardians()` is the wrong one here — it is not
+  consent-gated, and a targeted file is.
+- **Consent gates a targeted handout, unlike a participant thread, an award or a
+  ḥifẓ entry.** Those are records ABOUT a child; a handout is something the
+  school SENDS. Said out loud because it is the one place this surface departs
+  from the "consent gates broadcasts, not a parent's view of their own child"
+  call the three slices above all made. See DECISIONS.md, 2026-09-24.
+
+Proven by `tests/Feature/GroupResourceAudienceTest.php` (two families in ONE
+classroom — a one-family fixture cannot express a single property above) plus
+the resource half of `TeacherLessonsGradebookResourcesTest` and
+`AdminSchoolOfficeReadsTest`.
 
 ## Behaviour / recognition — the Classroom module (T-013)
 

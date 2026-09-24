@@ -224,9 +224,10 @@ Route::prefix('family')
 
             // Handouts the class has chosen to share. BOTH are GETs — nothing
             // here widens what a parent may write, so the realm's counted-
-            // exceptions docblock above is untouched. Visibility is applied as a
-            // SCOPE, so a staff-only file is a 404 rather than a 403 that would
-            // confirm it exists.
+            // exceptions docblock above is untouched. The audience is applied as
+            // a query CONSTRAINT (GroupAudience::readableResourcesQuery), so a
+            // staff-only file — or one addressed to another family's child — is
+            // a 404 rather than a 403 that would confirm it exists.
             Route::prefix('groups/{group_id}/resources')
                 ->controller(ResourcesController::class)
                 ->group(function () {

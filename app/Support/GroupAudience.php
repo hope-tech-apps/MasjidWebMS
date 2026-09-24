@@ -6,6 +6,7 @@ use App\Models\BehaviorAward;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupResource;
 use App\Models\GroupStaff;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
@@ -705,6 +706,117 @@ class GroupAudience
                 // because that guardian's own contact is in the target list.
                 ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);
         });
+    }
+
+    /**
+     * The FILES of `$group` this caller may read, as a constrained query — or
+     * null when they have no standing in the group at all. (Files audience,
+     * 2026-09-24)
+     *
+     * A class file has THREE audiences, and this is the only place that turns
+     * one into a set of rows:
+     *
+     *   - `staff`    -> the class's leaders and nobody else. A parent is never
+     *                   told such a row exists, which is why this is a query
+     *                   constraint and not a response filter: the filename and
+     *                   the size are themselves a disclosure ("Progress reports
+     *                   Sept.pdf, 2.1 MB" says plenty), so the row is never
+     *                   FETCHED rather than merely hidden.
+     *   - `families` -> the whole class, gated by FEED standing exactly as the
+     *                   class story is. Unchanged.
+     *   - `students` -> only the children named in `group_resource_recipients`,
+     *                   reached through the caller's OWN participant rows and
+     *                   guardian edges — the same two lists
+     *                   `constrainToOwnStudents()` uses for an award and a ḥifẓ
+     *                   entry. ANOTHER GUARDIAN IN THE SAME CLASS IS EXACTLY WHO
+     *                   THIS EXCLUDES, for the reason guardianship was made an
+     *                   explicit edge in the first place.
+     *
+     * WHY NOT `constrainToOwnStudents()` ITSELF. That method constrains a model
+     * whose subject is ONE membership (`$model->membership`). A file names a
+     * SET, so the clause is a `whereHas` over `recipients`, and the `staff` and
+     * `families` branches have no counterpart there at all. The DECISION is
+     * still shared — the same `standingIn()` call, the same two contact-id
+     * lists, the same participant-role belt-and-braces clause — so the two
+     * cannot drift about who a caller's children are.
+     *
+     * FEED STANDING IS REQUIRED FOR BOTH FAMILY BRANCHES, targeted included.
+     * The controllers also 403 on it, and this restates it rather than trusting
+     * them: .claude/rules/groups.md requires the endpoint refusal and the query
+     * constraint both, and a listing that is correct on its own is what makes
+     * that true if a controller ever forgets to ask.
+     *
+     * Null (rather than an empty query) distinguishes "not in this group" —
+     * which the controller answers with 403 — from "in the group with nothing to
+     * see", which is an empty 200.
+     */
+    public function readableResourcesQuery(?Authenticatable $principal, Group $group): ?Builder
+    {
+        $standing = $this->standingIn($principal, $group);
+
+        if (! $standing['in_group']) {
+            return null;
+        }
+
+        // getQuery(): the relation's underlying Eloquent builder, group
+        // constraint already applied — this method promises a Builder.
+        $query = $group->resources()->getQuery();
+
+        // A leader is the teacher of the room and reads every file in it,
+        // including the staff-only ones they filed themselves.
+        if ($standing['leader']) {
+            return $query;
+        }
+
+        if (! $standing['feed']) {
+            // In the group, but with no class-wide standing: a guardian who has
+            // never consented, or a family whose child has left. An
+            // unconstrained WHERE would grant everything, so it is pinned shut
+            // rather than assumed unreachable.
+            return $query->whereRaw('1 = 0');
+        }
+
+        $targets = array_merge(
+            $standing['participant_contact_ids'],
+            $standing['ward_contact_ids']
+        );
+
+        return $query->where(function (Builder $audience) use ($targets): void {
+            $audience->where('visibility', GroupResource::VISIBILITY_FAMILIES);
+
+            if ($targets === []) {
+                return;
+            }
+
+            $audience->orWhere(function (Builder $targeted) use ($targets): void {
+                $targeted->where('visibility', GroupResource::VISIBILITY_STUDENTS)
+                    ->whereHas('recipients', function (Builder $recipient) use ($targets): void {
+                        $recipient->whereHas('membership', function (Builder $membership) use ($targets): void {
+                            $membership->whereIn('contact_id', $targets)
+                                // Belt and braces with the audience rule above: a
+                                // recipient row mis-pointed at a GUARDIAN edge must
+                                // not become readable because that guardian's own
+                                // contact is in the target list.
+                                ->whereIn('role', GroupMembership::PARTICIPANT_ROLES);
+                        });
+                    });
+            });
+        });
+    }
+
+    /**
+     * May this caller receive ONE file? Delegates to the query above, so a
+     * listing and a download cannot disagree about the same row.
+     *
+     * Asked of the row's own id through the constrained query rather than
+     * re-derived, which is what makes "it was in my list" and "I may fetch its
+     * bytes" the same sentence.
+     */
+    public function mayReceiveResource(?Authenticatable $principal, Group $group, GroupResource $resource): bool
+    {
+        $query = $this->readableResourcesQuery($principal, $group);
+
+        return $query !== null && $query->whereKey($resource->getKey())->exists();
     }
 
     /**

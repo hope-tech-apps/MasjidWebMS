@@ -1555,6 +1555,32 @@
                                        v-model="fileForm.visibility">
                                 <label class="form-check-label small" for="vis-fam">Families in this class</label>
                             </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" id="vis-students" value="students"
+                                       v-model="fileForm.visibility">
+                                <label class="form-check-label small" for="vis-students">Specific students</label>
+                            </div>
+                        </div>
+
+                        <!-- The roster, only when it is the answer to a question
+                             that has been asked. The server re-reads every id
+                             against this class, so a stale list here is a 422
+                             and never a file addressed to the wrong child. -->
+                        <div v-if="fileForm.visibility === 'students'" class="mt-2">
+                            <label class="form-label small text-muted mb-1">Who is this for?</label>
+                            <div class="border rounded p-2" style="max-height:12rem; overflow-y:auto">
+                                <p v-if="!students.length" class="text-muted small mb-0">
+                                    This class has no students on its roster yet.
+                                </p>
+                                <div v-for="s in students" :key="s.membership_id" class="form-check">
+                                    <input class="form-check-input" type="checkbox"
+                                           :id="`file-recipient-${s.membership_id}`"
+                                           :value="s.membership_id" v-model="fileForm.recipientIds">
+                                    <label class="form-check-label small" :for="`file-recipient-${s.membership_id}`">
+                                        {{ studentName(s) }}
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Named at the moment of the choice, with the count in it.
@@ -1566,9 +1592,23 @@
                             Do not upload anything that names another child.
                         </div>
 
+                        <!-- Named at the moment of the choice here too, and with
+                             the count, because "specific students" is the option
+                             a teacher reaches for when the file names a child. -->
+                        <div v-else-if="fileForm.visibility === 'students'" class="alert alert-warning small py-2 mt-2 mb-0">
+                            <template v-if="fileForm.recipientIds.length">
+                                Only the families of the {{ fileForm.recipientIds.length }}
+                                {{ fileForm.recipientIds.length === 1 ? 'student' : 'students' }}
+                                ticked above will be able to download this file. Nobody else in the class will see
+                                that it exists.
+                            </template>
+                            <template v-else>Tick at least one student.</template>
+                        </div>
+
                         <div class="d-flex align-items-center gap-2 mt-2">
                             <button class="btn btn-sm btn-success"
-                                    :disabled="uploading || !fileForm.file || !fileForm.title.trim()"
+                                    :disabled="uploading || !fileForm.file || !fileForm.title.trim()
+                                        || (fileForm.visibility === 'students' && !fileForm.recipientIds.length)"
                                     @click="uploadFile">
                                 {{ uploading ? 'Uploading…' : 'Upload' }}
                             </button>
@@ -1588,9 +1628,12 @@
                                 {{ r.original_name }} · {{ Math.max(1, Math.round(r.size_bytes / 1024)) }} KB
                             </div>
                         </div>
-                        <span class="badge" :class="r.visibility === 'families' ? 'bg-warning-subtle text-warning-emphasis' : 'bg-light text-muted'">
-                            {{ r.visibility === 'families' ? 'Shared with families' : 'Only me' }}
-                        </span>
+                        <!-- WHO CAN SEE THIS, on every row. "Only you" has to be
+                             a thing this list SAYS rather than a thing it leaves
+                             out, and a targeted file has to say how many — a
+                             file addressed to one child and a file addressed to
+                             the whole class must never look alike here. -->
+                        <span class="badge" :class="audienceBadgeClass(r)">{{ audienceLabel(r) }}</span>
                         <button class="btn btn-sm btn-outline-secondary" @click="downloadResource(r)">
                             <i class="bi bi-download"></i>
                         </button>
@@ -2753,11 +2796,40 @@ const createThread = async () => {
 // ---------- class files ----------
 const resources = ref<any[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
-const fileForm = ref<{ title: string; visibility: string; file: File | null }>({
-    title: '', visibility: 'staff', file: null,
+const fileForm = ref<{ title: string; visibility: string; file: File | null; recipientIds: number[] }>({
+    title: '', visibility: 'staff', file: null, recipientIds: [],
 });
 const uploading = ref(false);
 const filesError = ref('');
+
+const studentName = (s: any): string =>
+    `${s?.contact?.first_name ?? ''} ${s?.contact?.last_name ?? ''}`.trim() || 'Unnamed student';
+
+/**
+ * What a row's audience is, in words.
+ *
+ * `recipient_count` is served for EVERY visibility (0 on a whole-class or
+ * staff-only file), so this never has to special-case an absent key — the shape
+ * shown must not depend on the value being shown.
+ */
+const audienceLabel = (r: any): string => {
+    if (r?.visibility === 'families') return 'Whole class';
+    if (r?.visibility !== 'students') return 'Only you';
+
+    const n = Number(r?.recipient_count ?? 0);
+
+    // Zero is reachable and is not "everyone": every student the file named has
+    // come off the roster, so it reaches staff and nobody else.
+    if (n === 0) return 'No students left';
+
+    return `${n} ${n === 1 ? 'student' : 'students'}`;
+};
+
+const audienceBadgeClass = (r: any): string => (r?.visibility === 'families'
+    ? 'bg-warning-subtle text-warning-emphasis'
+    : r?.visibility === 'students'
+        ? 'bg-info-subtle text-info-emphasis'
+        : 'bg-light text-muted');
 
 const loadResources = async () => {
     filesError.value = '';
@@ -2783,16 +2855,30 @@ const uploadFile = async () => {
         form.append('title', fileForm.value.title);
         form.append('visibility', fileForm.value.visibility);
 
+        // Only when the audience is the one that has recipients: the server
+        // REFUSES names on any other visibility, so sending an empty array on a
+        // whole-class file would be a 422 rather than a harmless no-op.
+        if (fileForm.value.visibility === 'students') {
+            for (const id of fileForm.value.recipientIds) {
+                form.append('recipient_membership_ids[]', String(id));
+            }
+        }
+
         // postForm, never put/post: this is the one write that must NOT declare
         // application/json — the browser has to write the multipart boundary.
         await TeacherApiService.postForm(`${base.value}/resources`, form);
 
-        fileForm.value = { title: '', visibility: 'staff', file: null };
+        fileForm.value = { title: '', visibility: 'staff', file: null, recipientIds: [] };
         if (fileInput.value) fileInput.value.value = '';
         await loadResources();
     } catch (e: any) {
+        // The recipient refusal is read too. Without it, a teacher who ticked a
+        // child the roster no longer holds would be told "that file could not be
+        // uploaded" and never learn which half of the form the server objected
+        // to — a 422 whose reason the screen throws away.
         filesError.value = e?.response?.data?.data?.file?.[0]
             ?? e?.response?.data?.data?.title?.[0]
+            ?? e?.response?.data?.data?.recipient_membership_ids?.[0]
             ?? 'That file could not be uploaded.';
     } finally {
         uploading.value = false;

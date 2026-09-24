@@ -96,10 +96,25 @@ class SendGroupNotificationJob implements ShouldQueue
                         'message',
                     ],
 
-                // A handout shared with families reaches the same audience as
-                // the class story, and is gated by the same feed consent.
+                // A handout shared with the whole class reaches the same
+                // audience as the class story, and is gated by the same feed
+                // consent. A handout addressed to ONE child reaches that child's
+                // guardians — the split GRADE_POSTED makes below, for the same
+                // reason: a class-wide nudge would tell every family that
+                // something had been filed for somebody.
+                //
+                // `consentedWardGuardians`, not `wardGuardians`: a targeted
+                // handout is still gated on FEED consent by
+                // GroupAudience::readableResourcesQuery(), so nudging a guardian
+                // who has not consented would mail them about a file the portal
+                // will not show them.
                 GroupNotificationEvent::RESOURCE_SHARED =>
-                    [$resolver->feedGuardians($group, $authorAddress), 'update'],
+                    [
+                        $this->aboutContactId !== null
+                            ? $resolver->consentedWardGuardians($group, $this->aboutContactId, $authorAddress)
+                            : $resolver->feedGuardians($group, $authorAddress),
+                        'update',
+                    ],
 
                 // A mark reaches ONE child's guardians. aboutContactId is always
                 // set for this event; falling back to the feed audience would

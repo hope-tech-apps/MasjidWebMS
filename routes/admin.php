@@ -1100,19 +1100,23 @@ Route::prefix('admin')->group(function () {
                 // could mail a class's parents over a teacher's signature.
                 //
                 // VISIBILITY, DECIDED HERE AND ON PURPOSE: this list includes
-                // STAFF-ONLY files as well as the ones shared with families,
-                // because ResourcesController::index applies no visibility scope
-                // — and that is right for this realm. The office IS the school's
+                // STAFF-ONLY files and files addressed to NAMED STUDENTS as well
+                // as the ones shared with the whole class, because
+                // ResourcesController::index applies no audience constraint —
+                // and that is right for this realm. The office IS the school's
                 // staff; a principal who cannot see the handout their own
-                // teacher filed has to ring the teacher to ask for it.
+                // teacher filed has to ring the teacher to ask for it. It is the
+                // SAME answer GroupAudience gives a leader, which is what makes
+                // it one rule rather than an exemption.
                 //
-                // Read that against the FAMILY mount, which applies
-                // GroupResource::visibleToFamilies() as a query SCOPE so a
-                // staff-only file is a 404 rather than a 403 that confirms it
-                // exists. Two mounts of one controller, two different answers,
-                // and the difference is a decision rather than an oversight on
-                // this side. AdminSchoolOfficeReadsTest downloads a staff-only
-                // file through this route so that nobody later "fixes" it.
+                // Read that against the FAMILY mount, which narrows by
+                // GroupAudience::readableResourcesQuery() as a query CONSTRAINT
+                // so a file that family may not have is a 404 rather than a 403
+                // that confirms it exists. Two mounts of one controller, two
+                // different answers, and the difference is a decision rather
+                // than an oversight on this side. AdminSchoolOfficeReadsTest
+                // downloads a staff-only file through this route so that nobody
+                // later "fixes" it.
                 Route::prefix('{masjid_id}/groups/{group_id}')
                     ->controller(\App\Http\Controllers\Teacher\ResourcesController::class)
                     ->group(function () {

@@ -38,13 +38,11 @@
                          shared ones. The office is the desk that fields the
                          phone call about what a parent saw, and "staff only"
                          has to be a thing this screen SAYS rather than a thing
-                         it leaves out. -->
-                    <span class="badge"
-                          :class="file.visibility === 'families'
-                              ? 'bg-warning-subtle text-warning-emphasis'
-                              : 'bg-light text-muted'">
-                        {{ file.visibility === 'families' ? 'Shared with families' : 'Staff only' }}
-                    </span>
+                         it leaves out. A file addressed to NAMED STUDENTS says
+                         how many, never who: the office can see the row and can
+                         fetch the bytes, and the names of the children a handout
+                         went to are the teacher's screen, not a badge. -->
+                    <span class="badge" :class="audienceBadgeClass(file)">{{ audienceLabel(file) }}</span>
 
                     <button type="button" class="btn btn-sm btn-outline-secondary"
                             :disabled="downloadingId === file.id" @click="download(file)">
@@ -74,9 +72,11 @@ import { computed, onMounted, ref } from 'vue';
  * bytes off the disk with the row (GroupResource's `deleting` hook). None of
  * those are the office's to perform on a teacher's behalf. See routes/admin.php.
  *
- * The rows are `GroupResource::toAudienceArray()`, the same serializer the
- * teacher and the FAMILY realms read. Nothing here asks it for another key:
- * anything added to it is published to parents.
+ * The rows are `GroupResource::toStaffArray()`, the serializer the TEACHER realm
+ * reads — this mount is the same controller, and the office is staff. It is
+ * deliberately NOT `toAudienceArray()`, which the FAMILY realm reads: anything
+ * added to that one is published to parents, which is why who a file was
+ * addressed to lives on the staff shape instead.
  */
 const props = defineProps<{ groupId: number; masjidId: number }>();
 
@@ -106,6 +106,33 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const typeText = (mime: string | null): string => (mime ? TYPE_LABELS[mime] ?? mime : 'Unknown type');
+
+/**
+ * Who a file reaches, in words — the three audiences, on every row.
+ *
+ * `recipient_count` comes from `GroupResource::toStaffArray()` and is served for
+ * EVERY visibility (0 on a whole-class or staff-only file), so this never has to
+ * special-case an absent key. Zero on a TARGETED file is reachable and is not
+ * "everyone": every student it named has come off the roster, so it reaches
+ * staff and nobody else — which is exactly the state the desk fielding the phone
+ * call needs named.
+ */
+const audienceLabel = (file: any): string => {
+    if (file?.visibility === 'families') return 'Shared with families';
+    if (file?.visibility !== 'students') return 'Staff only';
+
+    const n = Number(file?.recipient_count ?? 0);
+
+    if (n === 0) return 'No students left';
+
+    return `${n} ${n === 1 ? 'student' : 'students'}`;
+};
+
+const audienceBadgeClass = (file: any): string => (file?.visibility === 'families'
+    ? 'bg-warning-subtle text-warning-emphasis'
+    : file?.visibility === 'students'
+        ? 'bg-info-subtle text-info-emphasis'
+        : 'bg-light text-muted');
 
 // Rounded up to a whole KB, as the teacher's and the family's lists do. A file
 // measured in bytes is a file nobody can compare to another one at a glance.

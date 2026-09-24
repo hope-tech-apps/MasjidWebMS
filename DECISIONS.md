@@ -2245,3 +2245,57 @@ Decision: no preview step for menu order. A drop saves at once, as before, and t
 Alternatives: a staged reorder with its own Save button.
 Rationale: the owner kept today's behaviour (decided through the point session, 2026-09-24), and the
 doc now says so instead of claiming menu order is previewed (review finding 12).
+
+## 2026-09-24 — A class file is addressed: whole class, named students, or staff only
+Decision: `group_resources.visibility` gains a third value, `students`, and
+`group_resource_recipients` (masjid_id, group_resource_id, group_membership_id)
+names the set. `App\Support\GroupAudience::readableResourcesQuery()` /
+`mayReceiveResource()` is the ONE place that turns an audience into rows, and
+both the family LISTING and the family DOWNLOAD go through it — a query
+constraint, never a response filter, so a forbidden row is never fetched and its
+filename and size never enter a payload. The office console mounts the teacher
+controller and therefore gets the leader answer (every file), which is the same
+rule rather than an exemption.
+
+**NO BACKFILL, and this deliberately contradicts the brief.** The brief said
+today's behaviour is "visible to everyone who can see the class" and asked for
+every existing row to be backfilled to whole-class. That premise is wrong about
+this codebase: `visibility` has been `staff | families` since
+`2026_09_08_120300_create_group_resources_table`, defaults to `staff`, and every
+existing row already records a deliberate choice. Backfilling to `families`
+would PUBLISH every file a teacher had marked private — the exact leak that
+migration's docblock names three guards against. So: the column default stays
+`staff`, no row is rewritten, and `students` is purely additive. Alternative
+considered and rejected: honour the brief literally. Rationale: a migration that
+widens an audience it cannot read cannot be undone by the people it exposed.
+
+**A TARGETED FILE IS STILL FEED-CONSENT-GATED**, where a participant thread, a
+behaviour award and a ḥifẓ entry about the same child are not. The three of those
+are records ABOUT a child that the parent is obviously entitled to; a handout is
+something the school SENDS, and the family resources surface has been gated on
+`DISCLOSURE_FEED` since it shipped. Making targeted files consent-free would mean
+`Family\ResourcesController` granting reads where it currently 403s — a widening
+nobody asked for. `GroupNotificationRecipientResolver::consentedWardGuardians()`
+exists so the nudge matches: a guardian who has not consented is neither mailed
+about a targeted file nor shown one. **Open for the owner:** if a report card for
+one child should reach a non-consenting parent, this is the line to move, and it
+is one clause in `readableResourcesQuery()` plus the controller's gate.
+
+**Removing or withdrawing a student NARROWS, never widens.** Two paths, both
+tested: (a) `left_on` (withdrawal) — the recipient row survives, but the guardian
+edge leaves with the child (`GroupMembership::updated`), so the family's standing
+ends and no other family gains anything; (b) `delete()` (removal from the roster)
+— `group_membership_id` CASCADES, so the claim goes with the row. A `students`
+file whose last recipient has gone reaches STAFF ONLY. There is deliberately no
+"no recipients means everyone" branch anywhere; the empty set is the empty
+audience, and the office screen says "No students left" rather than a blank.
+Alternative rejected: `nullOnDelete()`, which leaves a row naming nobody.
+
+**Recipients are memberships, not contacts**, exactly as `behavior_awards` and
+`hifz_entries` name their subject: a membership is (person, group), so a
+recipient cannot name a child who is not on THIS roster, and the "is this parent
+this child's?" question resolves from the guardian edges that already answer it.
+`ResourcesController::resolveRecipients()` re-reads every id through
+`$group->memberships()->participants()->current()` and refuses the WHOLE request
+on any miss — a dropped element would let a teacher believe a file had been
+addressed to somebody it had not.
