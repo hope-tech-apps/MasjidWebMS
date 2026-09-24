@@ -136,7 +136,7 @@
         v-if="showModal"
         :section="selectedSection"
         :pageId="pageId"
-        :preview-page="currentPage ? { id: currentPage.id, slug: currentPage.slug } : undefined"
+        :preview-page="currentPage ? { id: currentPage.id, slug: currentPage.slug, title: currentPage.title, is_active: currentPage.is_active, sections } : undefined"
         @close="closeModal"
         @saved="handleSectionSaved"
     />

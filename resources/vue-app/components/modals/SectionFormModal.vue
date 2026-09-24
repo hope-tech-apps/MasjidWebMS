@@ -387,8 +387,12 @@ import OfferingSectionEditor from '@/components/sections/editors/OfferingSection
 const props = defineProps<{
     section?: PageSection;
     pageId: number;
-    /** The page being edited, for the live preview. Without it no preview is offered. */
-    previewPage?: { id: number; slug: string };
+    /**
+     * The page being edited, for the live preview. Without it no preview is offered.
+     * `sections` (the page's saved sections) matter only for a page that is not active yet:
+     * the site has no copy of it, so the whole page is sent.
+     */
+    previewPage?: { id: number; slug: string; title?: string; is_active?: boolean; sections?: PageSection[] };
 }>();
 
 // Emits
@@ -510,23 +514,46 @@ const previewOn = computed(() => previewOffered.value && showPreview.value);
  * it; a pending image is its data: URL, which is exactly what the editor holds. A new
  * section has no id yet, so it travels as -1 and is appended to the page.
  */
+const asOverride = (s: any, id: number) => {
+    const onWeb = !Array.isArray(s.platforms) || s.platforms.length === 0 || s.platforms.includes('web');
+
+    return {
+        id,
+        section_type: s.section_type,
+        title: s.title || null,
+        // PHP serialises an empty array as [], and the site accepts only an object here.
+        content: s.content && typeof s.content === 'object' && !Array.isArray(s.content) ? s.content : {},
+        order: Number(s.order) || 1,
+        is_active: !!s.is_active && onWeb,
+        settings: s.settings && typeof s.settings === 'object' && !Array.isArray(s.settings) && Object.keys(s.settings).length
+            ? s.settings
+            : null,
+    };
+};
+
 const sectionOverrides = computed(() => {
+    const page = props.previewPage;
     const f = formData.value;
-    if (!props.previewPage || !f.section_type) return {};
-    const onWeb = !Array.isArray(f.platforms) || f.platforms.length === 0 || f.platforms.includes('web');
+    if (!page || !f.section_type) return {};
+    const edited = asOverride(f, props.section?.id ?? -1);
+
+    // An active page is on the site already: send only the section being edited, and
+    // the site merges it over the saved one. A page not yet active is not on the site
+    // at all, so send all of it — shown as it will look once it is switched on.
+    if (page.is_active !== false) {
+        return { pages: [{ id: page.id, sections: [edited] }] };
+    }
+    const others = (page.sections ?? [])
+        .filter((s) => s.id !== props.section?.id)
+        .map((s) => asOverride(s, s.id));
 
     return {
         pages: [{
-            id: props.previewPage.id,
-            sections: [{
-                id: props.section?.id ?? -1,
-                section_type: f.section_type,
-                title: f.title || null,
-                content: f.content ?? {},
-                order: Number(f.order) || 1,
-                is_active: !!f.is_active && onWeb,
-                settings: f.settings && Object.keys(f.settings).length ? f.settings : null,
-            }],
+            id: page.id,
+            slug: page.slug,
+            title: page.title || page.slug,
+            is_active: true,
+            sections: [...others, edited],
         }],
     };
 });
