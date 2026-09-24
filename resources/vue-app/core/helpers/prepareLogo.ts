@@ -19,6 +19,12 @@
  * cap: the favicon and share image are cut from this file, and the sharper the
  * source the sharper they are. A raster is never enlarged.
  *
+ * The cap never takes the short side below the server's minimum (LOGO_MIN_EDGE):
+ * a wide wordmark is drawn with its short side at the minimum instead, its long
+ * side then past the cap, up to the largest edge the server takes. A logo too
+ * long and thin for both is refused here with a sentence, before an upload the
+ * server would refuse without one.
+ *
  * This is NOT preparePhoto(): that one flattens onto white and re-encodes as
  * JPEG (core/helpers/preparePhoto.ts), which would put a white box behind every
  * transparent logo.
@@ -27,8 +33,16 @@
  * have no imports, so tests/prepare-logo.test.ts runs them under node.
  */
 
-/** Longest side, in pixels, of a logo Studio sends. */
+/** Longest side, in pixels, of a logo Studio sends, unless LOGO_MIN_EDGE needs more. */
 export const LOGO_MAX_EDGE = 2048;
+
+/**
+ * The server's shortest and longest accepted edge: `config('studio.logo.min_px')`
+ * and the `max_width`/`max_height` of StoreStudioDraftLogoRequest. Held equal to
+ * them by tests/Feature/Studio/StudioSpaSourceTest.php.
+ */
+export const LOGO_MIN_EDGE = 96;
+export const LOGO_LARGEST_EDGE = 8000;
 
 const PASSTHROUGH_TYPES = ['image/png', 'image/jpeg'];
 
@@ -65,7 +79,28 @@ export function planLogo(type: string, width: number, height: number, maxEdge: n
         return { action: 'keep' };
     }
 
-    return { action: 'redraw', ...fitWithin(width, height, maxEdge, type === SVG_TYPE) };
+    const vector = type === SVG_TYPE;
+    const fitted = fitWithin(width, height, maxEdge, vector);
+    const shortest = Math.min(width, height);
+
+    // Fitting the long side took the short one under the server's minimum. A
+    // raster that was never that tall stays as it is (it is not enlarged, and
+    // the server says why it is too small); anything else keeps the minimum.
+    if (Math.min(fitted.width, fitted.height) < LOGO_MIN_EDGE && (vector || shortest >= LOGO_MIN_EDGE)) {
+        const scale = LOGO_MIN_EDGE / shortest;
+        const longest = Math.round(Math.max(width, height) * scale);
+        if (longest > LOGO_LARGEST_EDGE) {
+            throw new LogoPreparationError(
+                `That logo is too long and thin to use: at ${LOGO_MIN_EDGE} px on its short side it would be over ${LOGO_LARGEST_EDGE} px long. Use a version that is less wide, or crop it, and try again.`,
+            );
+        }
+
+        return width >= height
+            ? { action: 'redraw', width: longest, height: LOGO_MIN_EDGE }
+            : { action: 'redraw', width: LOGO_MIN_EDGE, height: longest };
+    }
+
+    return { action: 'redraw', ...fitted };
 }
 
 /**

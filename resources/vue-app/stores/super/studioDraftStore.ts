@@ -6,6 +6,8 @@ import { getMessageFromObj } from "@/assets/ts/swalMethods";
 import { BackendResponseData } from "@/core/types/config/AxiosCustom";
 import { extractDominantColors } from "@/core/helpers/extractPalette";
 import { LogoPreparationError, prepareLogo } from "@/core/helpers/prepareLogo";
+import { createAutosave, SaveRequest } from "@/core/studio/autosave";
+import { carryChoices, ChoiceContext, sameChoices } from "@/core/studio/featureChoices";
 import {
     autosaveBody,
     changedSections,
@@ -79,15 +81,17 @@ function statusOf(error: unknown): number | undefined {
  *    nothing is ever saved, so a blank form can never overwrite a real draft.
  *    A provisioned draft is the record of what Step 3 created and is never
  *    armed at all.
- *  - Every PATCH names the lock_version it read. A 409 means another tab saved
- *    (or the draft was provisioned) first: the state becomes `conflict`, the
- *    autosave disarms, and the operator is offered "Reload draft". It is never
- *    retried, because a retry would either fail the same way or, with a fresh
- *    version, overwrite the other tab's work.
- *  - One PATCH at a time. An edit made while one is in flight waits for it and
- *    goes next, naming the version that save returned.
- *  - A step change is saved at once (`current_step`), so a reload resumes on
- *    the same step.
+ *  - Every PATCH names the lock_version it read. When and how often it is sent
+ *    is core/studio/autosave.ts: one PATCH at a time, a step change at once
+ *    with the last choice winning, and a 409 (another tab saved, or the draft
+ *    was provisioned, first) disarming it until "Reload draft", never retried.
+ *
+ * THE FEATURE MAP
+ *  Step 1's switches are stored as the full map of served keys (R9), set for
+ *  one organisation type and one set of platforms. syncFeatureChoices() keeps
+ *  it in step when either changes, wherever the operator changes it
+ *  (core/studio/featureChoices.ts carryChoices): a new type starts again from
+ *  that type's defaults, and a switch nobody moved follows the platforms.
  *
  * THE PREVIEW
  *  refreshPreview() posts the UNSAVED sections to /preview PREVIEW_DEBOUNCE_MS
@@ -170,11 +174,10 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
 
     let generation = 0;
     let lockVersion = 0;
-    let pendingStep: StudioStepKey | null = null;
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
     let previewTimer: ReturnType<typeof setTimeout> | null = null;
     let previewSeq = 0;
-    let inFlight: Promise<void> | null = null;
+    /** The organisation type and platforms the stored feature map was last set for. */
+    let choicesContext: ChoiceContext = { orgType: null, platforms: [] };
 
     /** The sections the server does not have yet: edited, or on their way. */
     const unsavedSections = computed<StudioSectionKey[]>(() => changedSections(answers, saved.value));
@@ -188,14 +191,12 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
      * guards ask at the moment of leaving.
      */
     function hasUnsavedWork(): boolean {
-        return saveState.value === 'saving' || inFlight !== null
-            || (armed.value && (changedSections(answers, saved.value).length > 0 || pendingStep !== null));
+        return saveState.value === 'saving' || autosave.busy()
+            || (armed.value && (changedSections(answers, saved.value).length > 0 || autosave.stepUnsent()));
     }
 
-    function clearTimers() {
-        if (saveTimer) clearTimeout(saveTimer);
+    function clearPreviewTimer() {
         if (previewTimer) clearTimeout(previewTimer);
-        saveTimer = null;
         previewTimer = null;
     }
 
@@ -208,9 +209,8 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
     function reset() {
         generation++;
         armed.value = false;
-        clearTimers();
-        pendingStep = null;
-        inFlight = null;
+        autosave.reset();
+        clearPreviewTimer();
         draft.value = null;
         Object.assign(answers, emptyAnswers());
         saved.value = fingerprints(emptyAnswers());
@@ -239,6 +239,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         lockVersion = payload.lock_version;
         savedAt.value = payload.updated_at;
         currentStep.value = payload.current_step;
+        choicesContext = currentChoiceContext();
     }
 
     /** Open a draft. Autosave is armed only once this has succeeded. */
@@ -271,37 +272,15 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
     }
 
     /**
-     * Schedule the autosave for a section that changed: AUTOSAVE_DEBOUNCE_MS
-     * after the last call, every section that then differs from the server's
-     * copy is sent whole, as it stands at that moment. A section that has come
-     * back to what the server holds (typed, then undone) schedules nothing.
+     * The PATCH for everything the server does not have yet: each changed
+     * section whole, as it stands at this moment, and the step when it moved.
      */
-    function patchSection(section: StudioSectionKey) {
-        if (!armed.value || !changedSections(answers, saved.value).includes(section)) return;
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => { saveTimer = null; void flush(); }, AUTOSAVE_DEBOUNCE_MS);
-    }
-
-    /** Save now: every changed section, and the step when it moved. */
-    async function flush(): Promise<void> {
-        if (saveTimer) {
-            clearTimeout(saveTimer);
-            saveTimer = null;
-        }
-        if (!armed.value || !draft.value) return;
-
-        if (inFlight) {
-            // One PATCH at a time; this one goes next, with the version the
-            // current one returns.
-            await inFlight;
-            return flush();
-        }
+    function saveRequest(step: StudioStepKey | null): SaveRequest<StudioDraft> | null {
+        if (!draft.value) return null;
 
         const sections = changedSections(answers, saved.value);
-        const step = pendingStep;
-        if (!sections.length && !step) return;
+        if (!sections.length && !step) return null;
 
-        const gen = generation;
         const id = draft.value.id;
         const body = autosaveBody(lockVersion, answers, sections, step ?? undefined);
         const sent: Partial<Record<StudioSectionKey, string>> = {};
@@ -309,71 +288,62 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
             sent[section] = sectionFingerprint(answers[section]);
         }
 
-        saveState.value = 'saving';
-        let succeeded = false;
-
-        inFlight = (async () => {
-            try {
-                const res = await ApiService.patch(`/api/admin/studio/drafts/${id}`, body);
-                if (gen !== generation) return;
-
-                const payload = res.data.data as StudioDraft;
+        return {
+            send: async () => (await ApiService.patch(`/api/admin/studio/drafts/${id}`, body)).data.data as StudioDraft,
+            confirm: (payload) => {
                 // The answers stay this tab's: the operator may have typed while
                 // this was in flight. Everything else is the server's.
                 draft.value = payload;
                 lockVersion = payload.lock_version;
                 saved.value = { ...saved.value, ...sent };
-                if (pendingStep === step) pendingStep = null;
                 savedAt.value = payload.updated_at;
-                saveError.value = null;
-                saveState.value = 'saved';
-                succeeded = true;
-            } catch (error) {
-                if (gen !== generation) return;
+            },
+        };
+    }
 
-                if (statusOf(error) === 409) {
-                    armed.value = false;
-                    clearTimers();
-                    // The 409 body carries the draft as it now stands under
-                    // `data`, which getMessageFromObj would flatten into the
-                    // message; the sentence is `message` alone.
-                    const conflict = (error as AxiosError<{ message?: string; data?: StudioDraft }>).response?.data;
-                    conflictMessage.value = conflict?.message || 'This draft was saved somewhere else since you loaded it.';
-                    const current = conflict?.data;
-                    if (current && draft.value) {
-                        // Shown, never merged: the operator decides by reloading.
-                        draft.value = { ...draft.value, status: current.status, provisioned_masjid_id: current.provisioned_masjid_id };
-                    }
-                    saveState.value = 'conflict';
-                    return;
-                }
-
-                saveError.value = messageOf(error, 'The draft could not be saved.');
-                saveState.value = 'error';
+    const autosave = createAutosave<StudioDraft>({
+        debounceMs: AUTOSAVE_DEBOUNCE_MS,
+        armed,
+        saveState,
+        saveError,
+        request: saveRequest,
+        dirty: () => changedSections(answers, saved.value).length > 0,
+        serverStep: () => draft.value?.current_step ?? null,
+        isConflict: (error) => statusOf(error) === 409,
+        onConflict: (error) => {
+            clearPreviewTimer();
+            // The 409 body carries the draft as it now stands under `data`,
+            // which getMessageFromObj would flatten into the message; the
+            // sentence is `message` alone.
+            const conflict = (error as AxiosError<{ message?: string; data?: StudioDraft }>).response?.data;
+            conflictMessage.value = conflict?.message || 'This draft was saved somewhere else since you loaded it.';
+            const current = conflict?.data;
+            if (current && draft.value) {
+                // Shown, never merged: the operator decides by reloading.
+                draft.value = { ...draft.value, status: current.status, provisioned_masjid_id: current.provisioned_masjid_id };
             }
-        })();
+        },
+        failureMessage: (error) => messageOf(error, 'The draft could not be saved.'),
+    });
 
-        try {
-            await inFlight;
-        } finally {
-            inFlight = null;
-        }
+    /**
+     * Schedule the autosave for a section that changed. A section that has come
+     * back to what the server holds (typed, then undone) schedules nothing.
+     */
+    function patchSection(section: StudioSectionKey) {
+        if (!armed.value || !changedSections(answers, saved.value).includes(section)) return;
+        autosave.schedule();
+    }
 
-        // Edits made during the save are still unsent; they go after a pause
-        // like any other edit. After a failure they wait for the next edit or
-        // for Retry, so a refused save is not repeated on a loop.
-        if (succeeded && gen === generation && armed.value
-            && (changedSections(answers, saved.value).length || pendingStep)) {
-            saveTimer = setTimeout(() => { saveTimer = null; void flush(); }, AUTOSAVE_DEBOUNCE_MS);
-        }
+    /** Save now: every changed section, and the step when it moved. */
+    function flush(): Promise<void> {
+        return autosave.flush();
     }
 
     /** Move to a step and record it at once, so a reload resumes there. */
     function setStep(step: StudioStepKey) {
         currentStep.value = step;
-        if (!armed.value || draft.value?.current_step === step) return;
-        pendingStep = step;
-        void flush();
+        autosave.queueStep(step);
     }
 
     /** Re-derive the mockups from the saved draft plus this tab's unsaved sections. */
@@ -433,6 +403,42 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         }
         refreshPreview();
     }, { deep: true });
+
+    function currentChoiceContext(): ChoiceContext {
+        return { orgType: answers.identity.org_type ?? null, platforms: [...(answers.platforms.platforms ?? [])] };
+    }
+
+    /**
+     * Keep Step 1's map in step with the organisation type and platforms, the
+     * moment either changes and on whichever step (core/studio/featureChoices.ts
+     * carryChoices). Only an armed draft is written: a provisioned one is the
+     * record of what Step 3 created, and a failed load never saves. When the
+     * platforms moved under a stored map and this type's catalogue is not here,
+     * it is fetched, and the map follows when it arrives.
+     */
+    function syncFeatureChoices() {
+        if (!armed.value) return;
+
+        const now = currentChoiceContext();
+        const { choices, settled } = carryChoices(catalogue.value, answers.features.capabilities, choicesContext, now);
+
+        if (settled) {
+            choicesContext = now;
+        } else if (answers.identity.org_type && !catalogueLoading.value) {
+            void fetchCatalogue(answers.identity.org_type);
+        }
+
+        if (!sameChoices(answers.features.capabilities, choices)) {
+            answers.features.capabilities = (choices as Record<string, boolean> | null) ?? null;
+        }
+    }
+
+    watch([
+        () => answers.identity.org_type,
+        () => (answers.platforms.platforms ?? []).join(','),
+        catalogue,
+        armed,
+    ], syncFeatureChoices);
 
     // ----------------------------------------------------------------- logo
     /** The draft's logo as a blob URL: the endpoint is authenticated, so an <img src> cannot fetch it. */

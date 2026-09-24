@@ -1,7 +1,7 @@
 <template>
     <section class="studio-features d-flex flex-column gap-3" aria-labelledby="studio-features-title">
         <header class="d-flex flex-column gap-1">
-            <h5 id="studio-features-title" class="fw-semibold mb-0">Features</h5>
+            <h5 id="studio-features-title" class="fw-semibold mb-0" tabindex="-1">Features</h5>
             <p class="studio-hint mb-0">
                 What {{ orgName }} is born with. Each switch starts where a new {{ verticalLabel || 'organisation' }}
                 starts, and you can change any of them.
@@ -68,17 +68,20 @@
  * offer a different set of switches from the one the writer applies.
  *
  * Once the catalogue is here the draft holds the full map of served keys
- * (R9, core/studio/featureChoices.ts fullChoiceMap): a switch the operator
- * set keeps its value, one not yet set starts on its default for a new
- * organisation, or on when a platform it is preselected with is chosen, which
- * the row says. The store autosaves the section like any other edit.
+ * (R9). The store fills and keeps it (studioDraftStore syncFeatureChoices,
+ * core/studio/featureChoices.ts carryChoices), not this step, because the
+ * organisation type and the platforms change on Foundation, where this step is
+ * not mounted: a switch nobody moved sits on its default for a new
+ * organisation of this type, or on when a platform it is preselected with is
+ * chosen, which the row says. This step only records what the operator sets,
+ * and the store autosaves it like any other edit.
  */
 import FeatureRow from '@/components/super/studio/steps/FeatureRow.vue';
-import { featureGroups, fullChoiceMap, preselectMatches, sameChoices } from '@/core/studio/featureChoices';
+import { featureGroups, preselectMatches } from '@/core/studio/featureChoices';
 import { platformLabel } from '@/core/studio/platforms';
 import { StudioCatalogueEntry } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted } from 'vue';
 
 const store = useStudioDraftStore();
 
@@ -115,16 +118,6 @@ function set(key: string, on: boolean) {
 function load() {
     if (orgType.value) void store.fetchCatalogue(orgType.value);
 }
-
-// Fill the draft's map once the catalogue is here (R9). Only an armed draft
-// is written: a provisioned one is a record, and a failed load never saves.
-watch([catalogue, platforms], () => {
-    if (!catalogue.value || !store.armed) return;
-    const full = fullChoiceMap(catalogue.value, store.answers.features.capabilities, platforms.value);
-    if (!sameChoices(store.answers.features.capabilities, full)) {
-        store.answers.features.capabilities = full;
-    }
-}, { immediate: true });
 
 onMounted(() => {
     if (!catalogue.value) load();

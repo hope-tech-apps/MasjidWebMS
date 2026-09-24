@@ -7,13 +7,23 @@
  */
 import type { StudioStepKey } from "@/core/types/data/Studio";
 
-export type StudioStep = { key: StudioStepKey; title: string };
+export type StudioStep = {
+    key: StudioStepKey;
+    title: string;
+    /**
+     * The heading keyboard focus moves to when the step opens (it carries
+     * tabindex="-1"), so a screen reader announces the new step and Tab goes on
+     * from its top rather than from the page body. Null while nothing renders.
+     */
+    headingId: string | null;
+};
 
 export const STUDIO_STEPS: StudioStep[] = [
-    { key: 'foundation', title: 'Foundation' },
-    { key: 'features', title: 'Features' },
-    { key: 'layout', title: 'Layout' },
-    { key: 'generate', title: 'Generate' },
+    // StudioPanel names its heading after its title: the Identity panel opens Foundation.
+    { key: 'foundation', title: 'Foundation', headingId: 'studio-panel-identity' },
+    { key: 'features', title: 'Features', headingId: 'studio-features-title' },
+    { key: 'layout', title: 'Layout', headingId: 'studio-layout-title' },
+    { key: 'generate', title: 'Generate', headingId: null },
 ];
 
 /**
@@ -25,6 +35,11 @@ export const GENERATE_AVAILABLE = false;
 
 export function stepTitle(key: string | null | undefined): string {
     return STUDIO_STEPS.find((step) => step.key === key)?.title ?? STUDIO_STEPS[0].title;
+}
+
+/** The id of the heading to focus when `key` opens, or null. */
+export function stepHeadingId(key: string | null | undefined): string | null {
+    return STUDIO_STEPS.find((step) => step.key === key)?.headingId ?? null;
 }
 
 export function stepIndex(key: string | null | undefined): number {

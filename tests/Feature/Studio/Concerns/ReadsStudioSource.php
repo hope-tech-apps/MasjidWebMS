@@ -40,6 +40,20 @@ trait ReadsStudioSource
         return preg_match('/([\'"`])' . preg_quote($value, '/') . '\1/', $code) === 1;
     }
 
+    /**
+     * Whether `$key` is written into `$code` in any form a copied list takes:
+     * a quoted string ('events'), an object key (`events: true`), or a member
+     * read (`flags.events`). A catalogue read such as `entry.key` names no key.
+     */
+    private function namesKey(string $code, string $key): bool
+    {
+        $quoted = preg_quote($key, '/');
+
+        return $this->quotes($code, $key)
+            || preg_match('/(?<![\w.$-])' . $quoted . '\s*:/', $code) === 1
+            || preg_match('/\.' . $quoted . '(?![\w-])/', $code) === 1;
+    }
+
     /** Whether `$words` appears in `$code` as whole words, in any context (template text included). */
     private function saysWords(string $code, string $words): bool
     {

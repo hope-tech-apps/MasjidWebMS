@@ -47,7 +47,7 @@
                         </td>
                         <td class="border-0">
                             <div class="d-flex flex-wrap gap-2">
-                                <router-link :to="`/dashboard/super/studio/drafts/${row.id}`" class="btn btn-sm btn-success">
+                                <router-link :to="{ name: 'studio.draft', params: { draft_id: row.id } }" class="btn btn-sm btn-success">
                                     {{ row.status === 'provisioned' ? 'Open' : 'Resume' }}
                                 </router-link>
                                 <button v-if="row.status === 'draft'" type="button" class="btn btn-sm btn-outline-danger"
@@ -69,6 +69,8 @@
  * (docs/manara-studio-w1.md S5). A draft becomes an organisation only at
  * Step 3, so this list is where abandoned work is found and discarded; a
  * provisioned draft stays as the record of what was created and links to it.
+ * A draft is opened by its route's name (`studio.draft`), never a typed path,
+ * so the router refuses a link to a route that does not exist.
  */
 import PageDataContainer from '@/components/PageDataContainer.vue';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
@@ -120,7 +122,7 @@ async function newClient() {
         await MSwal.fire({ icon: 'error', title: 'Not created', text: outcome.message });
         return;
     }
-    await router.push(`/dashboard/super/studio/drafts/${outcome.data.id}`);
+    await router.push({ name: 'studio.draft', params: { draft_id: outcome.data.id } });
 }
 
 async function discard(row: StudioDraftRow) {

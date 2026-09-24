@@ -36,7 +36,7 @@ class StudioFeatureStepSourceTest extends TestCase
 
         foreach ($this->files() as $relative => $code) {
             foreach ($keys as $key) {
-                $this->assertFalse($this->quotes($code, $key), "{$relative} types in the capability key '{$key}'; the catalogue serves the keys");
+                $this->assertFalse($this->namesKey($code, $key), "{$relative} types in the capability key '{$key}'; the catalogue serves the keys");
             }
         }
     }
@@ -73,7 +73,7 @@ class StudioFeatureStepSourceTest extends TestCase
             $this->assertStringNotContainsString('feature_keys', $code, "{$relative} reads the wizard's feature_keys");
 
             foreach ($legacy as $key) {
-                $this->assertFalse($this->quotes($code, $key), "{$relative} types in the legacy key '{$key}'");
+                $this->assertFalse($this->namesKey($code, $key), "{$relative} types in the legacy key '{$key}'");
             }
         }
     }
@@ -92,6 +92,31 @@ class StudioFeatureStepSourceTest extends TestCase
             $step,
             'a failed catalogue GET must block the step behind Retry'
         );
+    }
+
+    #[Test]
+    public function the_step_writes_only_what_the_operator_sets_and_the_store_keeps_the_map(): void
+    {
+        $step = $this->files()['components/super/studio/steps/StudioFeatureStep.vue'];
+
+        // The operator's toggle is the step's only write to the map.
+        $this->assertSame(1, substr_count($step, 'store.answers.features.capabilities ='), 'the feature step may write the map only in set()');
+        $this->assertMatchesRegularExpression('/function set\(key: string, on: boolean\) \{\s*if \(store\.readOnly\) return;\s*store\.answers\.features\.capabilities = /', $step);
+
+        // The store fills and carries it, on an armed draft only, whenever the
+        // organisation type, the platforms or the catalogue change.
+        $store = $this->spaCode('stores/super/studioDraftStore.ts');
+        $this->assertMatchesRegularExpression(
+            '/function syncFeatureChoices\(\) \{\s*if \(!armed\.value\) return;\s*const now = currentChoiceContext\(\);\s*const \{ choices, settled \} = carryChoices\(catalogue\.value, answers\.features\.capabilities, choicesContext, now\);/',
+            $store,
+            'a provisioned draft (never armed) must not have its map rewritten'
+        );
+        $this->assertMatchesRegularExpression(
+            '/watch\(\[\s*\(\) => answers\.identity\.org_type,\s*\(\) => \(answers\.platforms\.platforms \?\? \[\]\)\.join\(\',\'\),\s*catalogue,\s*armed,\s*\], syncFeatureChoices\);/',
+            $store,
+            'the map must follow the organisation type and the platforms wherever they change'
+        );
+        $this->assertStringContainsString('choicesContext = currentChoiceContext();', $store, 'a loaded draft\'s map is taken as set for its own type and platforms');
     }
 
     /** @return array<string, string> relative path => code with comments removed */

@@ -80,6 +80,8 @@
  *    mockup never fills a gap with words nobody gave (D8).
  *  - A section whose type the public website cannot draw (`has_renderer`
  *    false) is a red block, because the live site would show nothing there.
+ *  - The header menu and the footer list only the pages the live site will
+ *    serve (core/studio/sitePages.ts): a page planned inactive is left out.
  *  - A missing logo is a red notice where the logo goes: the website needs one
  *    (the logo rule).
  *  - The header and footer follow the preset's `theme_layout`, read the way
@@ -91,6 +93,7 @@
  */
 import DeviceStage from '@/components/super/studio/preview/DeviceStage.vue';
 import { styleFromTokens } from '@/core/helpers/themeTokens';
+import { buttonPages as siteButtonPages, menuPages as siteMenuPages } from '@/core/studio/sitePages';
 import { StudioPlanPage, StudioPlanPlaceholder, StudioPlanSection } from '@/core/types/data/Studio';
 import { computed, ref, watch } from 'vue';
 
@@ -149,8 +152,8 @@ const style = computed(() => styleFromTokens({ layout: props.themeLayout ?? {} }
 const headerOver = computed(() => style.value.header !== 'default');
 const footerColumns = computed(() => style.value.footer !== 'default');
 
-const menuPages = computed(() => props.pages.filter((page) => page.show_in_menu && !page.show_as_button));
-const buttonPages = computed(() => props.pages.filter((page) => page.show_as_button));
+const menuPages = computed(() => siteMenuPages(props.pages));
+const buttonPages = computed(() => siteButtonPages(props.pages));
 
 const shownSlug = ref<string | null>(null);
 const shownPage = computed(() => props.pages.find((page) => page.slug === shownSlug.value) ?? props.pages[0] ?? null);

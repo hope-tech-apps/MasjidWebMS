@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fitWithin, LOGO_MAX_EDGE, LogoPreparationError, planLogo, prepareLogo, svgIntrinsicSize } from '../core/helpers/prepareLogo.ts';
+import { fitWithin, LOGO_LARGEST_EDGE, LOGO_MAX_EDGE, LOGO_MIN_EDGE, LogoPreparationError, planLogo, prepareLogo, svgIntrinsicSize } from '../core/helpers/prepareLogo.ts';
 
 test('a PNG or JPEG within 2048 px is kept exactly as chosen', () => {
     assert.deepEqual(planLogo('image/png', 2048, 900), { action: 'keep' });
@@ -25,6 +25,22 @@ test('an SVG is drawn with its longest side at the cap', () => {
     assert.deepEqual(planLogo('image/svg+xml', 100, 50), { action: 'redraw', width: LOGO_MAX_EDGE, height: 1024 });
 });
 
+test('a wide wordmark keeps the server minimum on its short side, going past the cap to do it', () => {
+    // 3000x120 fitted to 2048 would be 2048x82, which the server's 96 px minimum refuses.
+    assert.deepEqual(planLogo('image/png', 3000, 120), { action: 'redraw', width: 2400, height: LOGO_MIN_EDGE });
+    assert.deepEqual(planLogo('image/svg+xml', 2000, 80), { action: 'redraw', width: 2400, height: LOGO_MIN_EDGE });
+    assert.deepEqual(planLogo('image/svg+xml', 40, 1000), { action: 'redraw', width: LOGO_MIN_EDGE, height: 2400 });
+});
+
+test('a logo too long and thin for both server limits is refused here, with a sentence', () => {
+    assert.throws(() => planLogo('image/svg+xml', 100, 1), (error: unknown) =>
+        error instanceof LogoPreparationError && error.message.includes(`${LOGO_LARGEST_EDGE} px`));
+});
+
+test('a raster never that tall is not enlarged to reach the minimum', () => {
+    assert.deepEqual(planLogo('image/webp', 300, 50), { action: 'redraw', width: 300, height: 50 });
+});
+
 test('an image with no readable size is refused with a sentence, not sent', () => {
     assert.throws(() => planLogo('image/svg+xml', 0, 0), LogoPreparationError);
 });
@@ -42,7 +58,7 @@ test('an SVG size comes from its viewBox, else its numeric width and height', ()
 
 /** Stubs Image, object URLs and the canvas; returns what was drawn and exported. */
 function stubBrowser(natural: { width: number; height: number }) {
-    const calls: { drawn?: number[]; exported?: string; filled: boolean } = { filled: false };
+    const calls: { drawn?: number[]; exported?: string; filled: boolean; contextOptions?: unknown } = { filled: false };
     (globalThis as any).Image = class {
         naturalWidth = natural.width;
         naturalHeight = natural.height;
@@ -56,10 +72,14 @@ function stubBrowser(natural: { width: number; height: number }) {
         createElement: () => ({
             width: 0,
             height: 0,
-            getContext: () => ({
-                drawImage: (_image: unknown, _x: number, _y: number, width: number, height: number) => { calls.drawn = [width, height]; },
-                fillRect: () => { calls.filled = true; },
-            }),
+            getContext: (_kind: string, options?: unknown) => {
+                calls.contextOptions = options;
+                return {
+                    drawImage: (_image: unknown, _x: number, _y: number, width: number, height: number) => { calls.drawn = [width, height]; },
+                    fillRect: () => { calls.filled = true; },
+                    fill: () => { calls.filled = true; },
+                };
+            },
             toBlob: (resolve: (blob: Blob) => void, type: string) => { calls.exported = type; resolve(new Blob(['png'], { type })); },
         }),
     };
@@ -77,6 +97,21 @@ test('an SVG upload leaves as a PNG named after it, drawn from its viewBox, with
     assert.equal(calls.exported, 'image/png');
     assert.deepEqual(calls.drawn, [2048, 683]);
     assert.equal(calls.filled, false, 'a transparent logo must stay transparent');
+    assert.notEqual((calls.contextOptions as { alpha?: boolean } | undefined)?.alpha, false, 'an opaque canvas turns a transparent background black');
+});
+
+test('a PNG over the cap is redrawn as a PNG, on a canvas that keeps transparency', async () => {
+    const calls = stubBrowser({ width: 4096, height: 1024 });
+    const png = new File(['png'], 'wide.png', { type: 'image/png' });
+
+    const out = await prepareLogo(png);
+
+    assert.equal(calls.exported, 'image/png', 'a JPEG would lose the transparency and mismatch its .png name');
+    assert.deepEqual(calls.drawn, [2048, 512]);
+    assert.equal(out.type, 'image/png');
+    assert.match(out.name, /\.png$/);
+    assert.equal(calls.filled, false);
+    assert.notEqual((calls.contextOptions as { alpha?: boolean } | undefined)?.alpha, false);
 });
 
 test('a small PNG is the very file chosen', async () => {

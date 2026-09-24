@@ -24,10 +24,12 @@
 
         <template v-else>
             <ul class="nav nav-tabs" role="tablist" aria-label="Platforms">
-                <li v-for="platform in platforms" :key="platform" class="nav-item" role="presentation">
-                    <button :id="`studio-preview-tab-${platform}`" type="button" class="nav-link" role="tab"
+                <li v-for="(platform, index) in platforms" :key="platform" class="nav-item" role="presentation">
+                    <button :id="`studio-preview-tab-${platform}`" ref="tabButtons" type="button" class="nav-link" role="tab"
                         :class="{ active: platform === activePlatform }" :aria-selected="platform === activePlatform"
-                        :aria-controls="`studio-preview-pane-${platform}`" @click="chosen = platform">
+                        :aria-controls="platform === activePlatform ? `studio-preview-pane-${platform}` : undefined"
+                        :tabindex="platform === activePlatform ? 0 : -1"
+                        @click="chosen = platform" @keydown="onTabKey($event, index)">
                         {{ platformLabel(platform) }}
                     </button>
                 </li>
@@ -75,16 +77,21 @@
  * the platforms that derivation says the draft has, so the column never shows a
  * platform the answers do not. The contrast rows under the frames are advisory
  * (R16); the Brand panel's report is the one that gates.
+ *
+ * The tabs follow the ARIA tabs pattern: only the chosen tab is a Tab stop,
+ * Left, Right, Home and End move between them (core/helpers/tabKeys.ts), and
+ * only the chosen tab names a panel, because only its panel is rendered.
  */
 import AndroidFrame from '@/components/super/studio/preview/AndroidFrame.vue';
 import IosFrame from '@/components/super/studio/preview/IosFrame.vue';
 import PlatformContrastList from '@/components/super/studio/preview/PlatformContrastList.vue';
 import TvFrame from '@/components/super/studio/preview/TvFrame.vue';
 import WebFrame from '@/components/super/studio/preview/WebFrame.vue';
+import { tabIndexForKey } from '@/core/helpers/tabKeys';
 import { platformLabel } from '@/core/studio/platforms';
 import { StudioPlatform } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 
 const CAPTION = 'The apps look the same for every organisation; only colours, logo, name, tabs and menu change.';
 
@@ -102,6 +109,19 @@ const platforms = computed<StudioPlatform[]>(() => preview.value?.platforms ?? [
 const chosen = ref<StudioPlatform | null>(null);
 const activePlatform = computed<StudioPlatform | null>(() =>
     chosen.value && platforms.value.includes(chosen.value) ? chosen.value : platforms.value[0] ?? null);
+
+const tabButtons = ref<HTMLButtonElement[]>([]);
+
+/** Arrow keys, Home and End choose another tab and move focus to it. */
+async function onTabKey(event: KeyboardEvent, index: number) {
+    const target = tabIndexForKey(event.key, index, platforms.value.length);
+    if (target === null) return;
+
+    event.preventDefault();
+    chosen.value = platforms.value[target];
+    await nextTick();
+    tabButtons.value.find((button) => button.id === `studio-preview-tab-${platforms.value[target]}`)?.focus();
+}
 
 const viewport = ref<'desktop' | 'mobile'>('desktop');
 

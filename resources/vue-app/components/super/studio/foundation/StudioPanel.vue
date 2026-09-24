@@ -1,7 +1,7 @@
 <template>
     <section class="studio-panel" :aria-labelledby="headingId">
         <header class="studio-panel-head">
-            <h5 :id="headingId" class="studio-panel-title">{{ title }}</h5>
+            <h5 :id="headingId" class="studio-panel-title" tabindex="-1">{{ title }}</h5>
             <p v-if="note" class="studio-panel-note">{{ note }}</p>
         </header>
         <div class="studio-panel-body">
@@ -15,6 +15,10 @@
  * One titled panel of Studio's Foundation step, so the seven panels read as one
  * form: the wizard's bordered subsection, with an optional one-line note under
  * the title for the rule that governs what goes in it.
+ *
+ * The heading takes focus from script only (tabindex="-1"): the Identity
+ * panel's is where StudioView puts focus when Foundation opens (core/studio/
+ * steps.ts headingId).
  */
 const props = defineProps<{ title: string; note?: string }>();
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Studio;
 
+use App\Http\Requests\Admin\Studio\StoreStudioDraftLogoRequest;
 use App\Models\StudioDraft;
 use App\Support\AppMenu;
 use App\Support\Studio\StudioPreview;
@@ -59,9 +60,18 @@ class StudioSpaSourceTest extends TestCase
         $worshipKeys = AppMenu::DEFAULT_REGISTRY['sections']['worship'];
         $this->assertNotEmpty($worshipKeys, 'the registry has no worship section to guard');
 
+        // Each organisation type's own label too ("where a new Masjid starts"):
+        // the step reads it from /onboarding/options.
+        $verticalLabels = array_values(array_filter(array_map(fn ($vertical) => is_array($vertical) ? ($vertical['label'] ?? null) : null, config('verticals'))));
+        $this->assertContains('Masjid', $verticalLabels);
+
         foreach ($this->studioFiles() as $relative => $code) {
             foreach (self::TERMINOLOGY_LABELS as $label) {
                 $this->assertStringNotContainsString($label, $code, "{$relative} types in the terminology label '{$label}'; it comes from /onboarding/options");
+            }
+
+            foreach ($verticalLabels as $label) {
+                $this->assertFalse($this->saysWords($code, $label), "{$relative} types in the organisation type label '{$label}'; it comes from /onboarding/options");
             }
 
             foreach ($worshipKeys as $key) {
@@ -133,7 +143,7 @@ class StudioSpaSourceTest extends TestCase
             'studio.draft' => ["path: 'studio/drafts/:draft_id(\\\\d+)'", 'views/dashboard/super/studio/StudioView.vue'],
         ] as $name => [$path, $component]) {
             $this->assertMatchesRegularExpression(
-                '/\{\s*' . preg_quote($path, '/') . ',\s*name: \'' . preg_quote($name, '/') . '\',\s*meta: \{[^}]*allowedUsers: \[\'SuperAdmin\'\][^}]*pageTitle: \'Manara Studio\'[^}]*\},\s*component: \(\) => import\("@\/' . preg_quote($component, '/') . '"\)/s',
+                '/\{\s*' . preg_quote($path, '/') . ',\s*name: \'' . preg_quote($name, '/') . '\',\s*meta: \{[^}]*allowedUsers: \[\'SuperAdmin\'\][^}]*pageTitle: \'Manara Studio\'[^}]*dashboardType: \'super\'[^}]*\},\s*component: \(\) => import\("@\/' . preg_quote($component, '/') . '"\)/s',
                 $routes,
                 "the route {$name} is missing, or is not SuperAdmin-only"
             );
@@ -257,8 +267,131 @@ class StudioSpaSourceTest extends TestCase
 
         $this->assertStringContainsString("'The apps look the same for every organisation; only colours, logo, name, tabs and menu change.'", $panel);
         $this->assertStringContainsString('preview.value?.platforms', $panel);
-        $this->assertMatchesRegularExpression('/v-for="platform in platforms"/', $panel);
+        $this->assertMatchesRegularExpression('/v-for="\(platform, index\) in platforms"/', $panel);
         $this->assertStringContainsString('<PlatformContrastList :rows="preview.platform_contrast" />', $panel);
+    }
+
+    #[Test]
+    public function studio_opens_its_drafts_by_route_name(): void
+    {
+        $files = $this->studioFiles();
+        $list = $files['views/dashboard/super/studio/StudioDraftsView.vue'];
+
+        // Resume/Open on each row, and the draft "New client" creates.
+        $this->assertStringContainsString(":to=\"{ name: 'studio.draft', params: { draft_id: row.id } }\"", $list);
+        $this->assertStringContainsString("router.push({ name: 'studio.draft', params: { draft_id: outcome.data.id } })", $list);
+        $this->assertStringContainsString(":to=\"{ name: 'studio.drafts' }\"", $files['views/dashboard/super/studio/StudioView.vue']);
+
+        // No Studio file types a path into Studio, which no test could check against the router.
+        foreach ($files as $relative => $code) {
+            $this->assertStringNotContainsString('/dashboard/super/studio', $code, "{$relative} types a Studio path; navigate by route name");
+        }
+    }
+
+    #[Test]
+    public function the_sticky_preview_stops_below_the_fixed_header_and_fits_the_window(): void
+    {
+        $view = $this->read(self::SPA . '/views/dashboard/super/studio/StudioView.vue');
+        $this->assertMatchesRegularExpression(
+            '/\.studio-preview-column \{\s*position: sticky;\s*top: calc\(var\(--dash-header-height, 4rem\) \+ 1rem\);\s*max-height: calc\(100vh - var\(--dash-header-height, 4rem\) - 2rem\);\s*overflow-y: auto;\s*\}/',
+            $view,
+            'the preview column must stick below the fixed header and scroll within the window'
+        );
+
+        $layout = $this->read(self::SPA . '/layouts/DashboardLayout.vue');
+        $this->assertStringContainsString("document.documentElement.style.setProperty('--dash-header-height', mainTopMargin + 'rem')", $layout, 'the layout must publish the header height it measures');
+    }
+
+    #[Test]
+    public function each_step_moves_focus_to_its_own_heading(): void
+    {
+        $files = $this->studioFiles();
+
+        $view = $files['views/dashboard/super/studio/StudioView.vue'];
+        $this->assertMatchesRegularExpression(
+            '/async function go\(step: StudioStepKey\) \{\s*if \(!canOpen\(step\)\) return;\s*store\.setStep\(step\);.*?await nextTick\(\);\s*const heading = stepHeadingId\(step\);\s*if \(heading\) document\.getElementById\(heading\)\?\.focus\(/s',
+            $view,
+            'opening a step must move focus to its heading once it renders'
+        );
+
+        $steps = $files['core/studio/steps.ts'];
+        foreach ([
+            'features' => ['studio-features-title', 'components/super/studio/steps/StudioFeatureStep.vue'],
+            'layout' => ['studio-layout-title', 'components/super/studio/steps/StudioLayoutStep.vue'],
+        ] as $key => [$id, $component]) {
+            $this->assertStringContainsString("key: '{$key}', title: ", $steps);
+            $this->assertMatchesRegularExpression("/key: '{$key}',[^}]*headingId: '{$id}'/", $steps);
+            $this->assertMatchesRegularExpression('/<h5 id="' . $id . '"[^>]*tabindex="-1"/', $files[$component], "{$component}'s heading cannot take focus");
+        }
+
+        // Foundation's is the Identity panel's, named by StudioPanel from its title.
+        $this->assertMatchesRegularExpression("/key: 'foundation',[^}]*headingId: 'studio-panel-identity'/", $steps);
+        $this->assertStringContainsString('<StudioPanel title="Identity">', $files['components/super/studio/foundation/IdentityPanel.vue']);
+        $panel = $files['components/super/studio/foundation/StudioPanel.vue'];
+        $this->assertStringContainsString('<h5 :id="headingId" class="studio-panel-title" tabindex="-1">', $panel);
+        $this->assertStringContainsString("const headingId = `studio-panel-\${props.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;", $panel);
+    }
+
+    #[Test]
+    public function the_preview_tabs_follow_the_aria_tabs_pattern(): void
+    {
+        $panel = $this->studioFiles()['components/super/studio/preview/StudioPreviewPanel.vue'];
+
+        $this->assertStringContainsString(':aria-controls="platform === activePlatform ? `studio-preview-pane-${platform}` : undefined"', $panel, 'only the tab whose panel is rendered may name it');
+        $this->assertStringContainsString(':tabindex="platform === activePlatform ? 0 : -1"', $panel, 'only the chosen tab is a Tab stop');
+        $this->assertStringContainsString('@keydown="onTabKey($event, index)"', $panel);
+        $this->assertStringContainsString('const target = tabIndexForKey(event.key, index, platforms.value.length);', $panel);
+        $this->assertSame(1, substr_count($panel, 'role="tabpanel"'));
+    }
+
+    #[Test]
+    public function the_mockup_menu_lists_only_the_pages_the_site_serves(): void
+    {
+        $web = $this->studioFiles()['components/super/studio/preview/WebFrame.vue'];
+
+        $this->assertStringContainsString('const menuPages = computed(() => siteMenuPages(props.pages));', $web);
+        $this->assertStringContainsString('const buttonPages = computed(() => siteButtonPages(props.pages));', $web);
+        $this->assertSame(0, preg_match('/props\.pages\.filter\(/', $web), 'the menu is chosen by core/studio/sitePages.ts, which drops inactive pages');
+    }
+
+    #[Test]
+    public function the_logo_limits_prepare_logo_keeps_are_the_servers(): void
+    {
+        $prepare = $this->read(self::SPA . '/core/helpers/prepareLogo.ts');
+        $rules = (new StoreStudioDraftLogoRequest())->rules()['logo'];
+        $dimensions = collect($rules)->first(fn ($rule) => is_string($rule) && str_starts_with($rule, 'dimensions:'));
+        $this->assertNotNull($dimensions, 'the logo request has no dimensions rule');
+        parse_str(str_replace(',', '&', substr($dimensions, strlen('dimensions:'))), $limits);
+
+        $this->assertSame((int) config('studio.logo.min_px'), (int) $limits['min_width']);
+        $this->assertSame((int) $limits['max_width'], (int) $limits['max_height']);
+        $this->assertStringContainsString('export const LOGO_MIN_EDGE = ' . (int) $limits['min_width'] . ';', $prepare);
+        $this->assertStringContainsString('export const LOGO_LARGEST_EDGE = ' . (int) $limits['max_width'] . ';', $prepare);
+    }
+
+    #[Test]
+    public function the_domain_check_is_typed_once_with_the_cases_s7_answers(): void
+    {
+        // S7's controller answers zone_in_account / zone_not_in_account and a
+        // zone_status with a token; one type, where S7 keeps it, says so.
+        $studio = $this->studioFiles()['core/types/data/Studio.ts'];
+        $this->assertStringContainsString('export type StudioDomainCheck = MasjidDomainCheck;', $studio);
+        $this->assertStringContainsString('export type StudioDomainCheckRequest = MasjidDomainRequest;', $studio);
+
+        $domain = $this->withoutComments($this->read(self::SPA . '/core/types/data/MasjidDomain.ts'));
+        $this->assertStringContainsString("case: 'managed_subdomain' | 'zone_in_account' | 'zone_not_in_account' | 'unknown';", $domain);
+        $this->assertStringContainsString('zone_status?: string | null;', $domain);
+    }
+
+    #[Test]
+    public function the_store_saves_through_the_autosave_rules(): void
+    {
+        $store = $this->studioFiles()['stores/super/studioDraftStore.ts'];
+
+        $this->assertStringContainsString('const autosave = createAutosave<StudioDraft>({', $store);
+        $this->assertStringContainsString('isConflict: (error) => statusOf(error) === 409,', $store, 'a 409 must reach the autosave as a conflict, which it never retries');
+        $this->assertMatchesRegularExpression('/function setStep\(step: StudioStepKey\) \{\s*currentStep\.value = step;\s*autosave\.queueStep\(step\);\s*\}/', $store);
+        $this->assertMatchesRegularExpression('/function reset\(\) \{\s*generation\+\+;\s*armed\.value = false;\s*autosave\.reset\(\);/', $store);
     }
 
     /** The keys of `export const NAME ... = { ... };` in core/studio/appLabels.ts. */

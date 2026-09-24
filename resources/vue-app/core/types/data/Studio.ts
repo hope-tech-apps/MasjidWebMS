@@ -8,6 +8,7 @@
  * section may hold is listed, because the server refuses any key it does not
  * know rather than storing it where nothing reads it.
  */
+import type { MasjidDomainCheck, MasjidDomainRequest } from "@/core/types/data/MasjidDomain";
 import type { OrgType, Terminology } from "@/core/types/data/Vertical";
 
 /** `StudioDraft::STEPS` (app/Models/StudioDraft.php). */
@@ -172,16 +173,11 @@ export type StudioDraftRow = {
     updated_at: string | null;
 };
 
-/** `StudioDomainCheckController::check()`. */
-export type StudioDomainCheck = {
-    host: string;
-    available: boolean;
-    taken_by_masjid_id: number | null;
-    case: 'managed_subdomain' | 'unknown';
-    token_configured: boolean;
-    pages_domains_used: number | null;
-    pages_domains_ceiling: number;
-};
+/**
+ * `StudioDomainCheckController::check()`, typed once, where S7 typed it with its
+ * Cloudflare cases and `zone_status` (core/types/data/MasjidDomain.ts).
+ */
+export type StudioDomainCheck = MasjidDomainCheck;
 
 /** The Identity panel's live answer about the Manara address, shared with the Domain panel. */
 export type StudioSlugCheck = {
@@ -191,9 +187,8 @@ export type StudioSlugCheck = {
     message: string | null;
 };
 
-export type StudioDomainCheckRequest =
-    | { kind: 'managed_subdomain'; label: string }
-    | { kind: 'custom'; host: string; zone_apex: string };
+/** The domain check's body (`StudioDomainCheckRequest`), the same as S7's add-a-domain body. */
+export type StudioDomainCheckRequest = MasjidDomainRequest;
 
 /** `OnboardingController::options()`, the parts Studio reads. */
 export type StudioOptionValue = { value: string; label: string };

@@ -1,7 +1,7 @@
 <template>
     <section class="studio-layout d-flex flex-column gap-3" aria-labelledby="studio-layout-title">
         <header class="d-flex flex-column gap-1">
-            <h5 id="studio-layout-title" class="fw-semibold mb-0">Layout</h5>
+            <h5 id="studio-layout-title" class="fw-semibold mb-0" tabindex="-1">Layout</h5>
             <p class="studio-hint mb-0">
                 The starter website {{ orgName }} gets. Each card is this client's site with that layout: their name,
                 their switches and what they told you, with a marked space wherever something is still to come.

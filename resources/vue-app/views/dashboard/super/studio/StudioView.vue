@@ -3,7 +3,7 @@
         <div class="card-header bg-white border-0 d-flex flex-column gap-3">
             <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
                 <div class="min-w-0">
-                    <router-link to="/dashboard/super/studio" class="small text-decoration-none">
+                    <router-link :to="{ name: 'studio.drafts' }" class="small text-decoration-none">
                         <i class="bi bi-arrow-left me-1"></i>Manara Studio
                     </router-link>
                     <div class="card-title fs-4 fw-semibold mb-0 text-break">
@@ -129,7 +129,12 @@
  * and stays disabled until S8 builds it.
  *
  * The step body takes `col-xl-7`; the preview takes `col-xl-5`, sticky, and
- * below xl it folds away behind a button so the form keeps the screen.
+ * below xl it folds away behind a button so the form keeps the screen. The
+ * sticky column stops below the fixed dashboard header (`--dash-header-height`,
+ * which DashboardLayout keeps equal to the header's height) and is never taller
+ * than the window under it: the preview with its contrast list is taller than
+ * a laptop screen, and a sticky column taller than the window cannot show its
+ * bottom until the whole form has scrolled past.
  *
  * Leaving while a save is in flight, or with edits not yet sent, is guarded:
  * the browser's own prompt for a reload or a closed tab, and for a route
@@ -141,10 +146,10 @@ import StudioLayoutStep from '@/components/super/studio/steps/StudioLayoutStep.v
 import StudioPreviewPanel from '@/components/super/studio/preview/StudioPreviewPanel.vue';
 import { QSwal } from '@/core/plugins/SweetAlerts2';
 import { foundationBlockers } from '@/core/studio/foundationGate';
-import { GENERATE_AVAILABLE, STUDIO_STEPS, stepIndex } from '@/core/studio/steps';
+import { GENERATE_AVAILABLE, STUDIO_STEPS, stepHeadingId, stepIndex } from '@/core/studio/steps';
 import { StudioStepKey } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute } from 'vue-router';
 
 const store = useStudioDraftStore();
@@ -196,10 +201,20 @@ const nextBlockers = computed(() => {
     return foundationReasons.value.length && nextStep.value.key !== 'generate' ? foundationReasons.value : [reason];
 });
 
-function go(step: StudioStepKey) {
+/**
+ * Open a step, and move keyboard focus to its heading once it renders. The
+ * button pressed may be gone or disabled on the new step (Next on Layout
+ * becomes the blocked "Next: Generate"), which would drop focus to the page
+ * body; the heading also tells a screen reader which step opened.
+ */
+async function go(step: StudioStepKey) {
     if (!canOpen(step)) return;
     store.setStep(step);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    await nextTick();
+    const heading = stepHeadingId(step);
+    if (heading) document.getElementById(heading)?.focus({ preventScroll: true });
 }
 
 async function loadDraft() {
@@ -305,7 +320,9 @@ onBeforeRouteLeave(async () => {
 @media (min-width: 1200px) {
     .studio-preview-column {
         position: sticky;
-        top: 1rem;
+        top: calc(var(--dash-header-height, 4rem) + 1rem);
+        max-height: calc(100vh - var(--dash-header-height, 4rem) - 2rem);
+        overflow-y: auto;
     }
 }
 </style>

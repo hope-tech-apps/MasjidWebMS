@@ -2367,3 +2367,35 @@ presets or section types; recorded because the plan left them open.
 Deviations from the plan's wording, following the code: iOS menu items' `parts` is an object of
 module => bool (`AppMenu::sections`, app/Support/AppMenu.php:359), not a list, and Studio.ts now
 says so.
+
+## 2026-09-24 — Studio W1 S5 review: the feature map follows the draft, and the autosave is its own module
+Decision: the stored feature map is carried, not frozen (supersedes stage B's "a platform added
+later does not flip a stored switch"). The draft still stores the full map of served keys (R9)
+and the server has no field for which keys the operator touched, so they are told apart by where
+they sit: `carryChoices` (core/studio/featureChoices.ts) empties the map when the organisation
+type changes (a masjid's worship switches are not a school's; the new type starts from its own
+defaults), and when the platforms change it moves every switch still on the starting value the
+old platforms gave it onto the new platforms' starting value, keeping any switch the operator
+moved. The store does this (`syncFeatureChoices`), not the feature step, because both answers
+change on Foundation where the step is not mounted; when the platforms move under a stored map
+without this type's catalogue loaded, the store fetches it. The one choice this cannot keep is an
+operator's "off" for a Web-suggested switch after Web is removed and added again: it then looks
+untouched and comes back on, suggested. The autosave's timing and rules moved to
+core/studio/autosave.ts (the store keeps the answers, the lock version and the one PATCH) so
+node can test them; a step change now names the step the operator is on when they move back
+before the previous step's save answers. The website mockup lists only active pages in its menu
+and footer (core/studio/sitePages.ts), as PagesController serves them. `prepareLogo` keeps a
+wide logo's short side at the server's 96 px, letting the long side pass 2048 up to the server's
+8000, and refuses a logo too thin for both with a sentence; the two limits are held equal to
+`config('studio.logo.min_px')` and StoreStudioDraftLogoRequest by StudioSpaSourceTest. The
+sticky preview column stops below the fixed header through `--dash-header-height`, which
+DashboardLayout now publishes from the height it already measures (FlyerStudioView's sticky
+column has the same `top: 1rem` and is left as it is, outside this slice). Rebased onto
+8b5787da: BackendApiRoutes keeps S7's domain routes and S5's Studio routes with the domain check
+listed once, and `StudioDomainCheck`/`StudioDomainCheckRequest` are now S7's
+`MasjidDomainCheck`/`MasjidDomainRequest`, which carry the Cloudflare cases and `zone_status`.
+Rationale: each closes a way the draft, the preview or the upload could say something other
+than what Step 3 will create or the server will take; recorded because the first cut chose
+otherwise.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 105 errors at
+8b5787da and 105 at this commit, the same set.
