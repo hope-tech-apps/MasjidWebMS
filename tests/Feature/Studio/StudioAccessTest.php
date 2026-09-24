@@ -4,9 +4,12 @@ namespace Tests\Feature\Studio;
 
 use App\Models\Masjid;
 use App\Models\MasjidUser;
+use App\Models\StudioDraft;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -23,6 +26,8 @@ class StudioAccessTest extends TestCase
 
     private const PREFIX = 'api/admin/studio';
 
+    private ?array $fixtures = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -34,6 +39,8 @@ class StudioAccessTest extends TestCase
         ]]);
 
         $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+
+        Storage::fake((string) config('studio.logo.disk'));
     }
 
     /**
@@ -44,9 +51,64 @@ class StudioAccessTest extends TestCase
      */
     private function calls(): array
     {
+        $drafts = '/' . self::PREFIX . '/drafts';
+        $f = $this->fixtures();
+
         return [
             'GET ' . self::PREFIX . '/catalogue' => ['GET', '/' . self::PREFIX . '/catalogue?org_type=school', []],
+            'GET ' . self::PREFIX . '/drafts' => ['GET', "{$drafts}?status=all", []],
+            'POST ' . self::PREFIX . '/drafts' => ['POST', $drafts, ['org_type' => 'masjid', 'name' => 'Access Check']],
+            'GET ' . self::PREFIX . '/drafts/{draft_id}' => ['GET', "{$drafts}/{$f['working']}", []],
+            'PATCH ' . self::PREFIX . '/drafts/{draft_id}' => ['PATCH', "{$drafts}/{$f['working']}", ['lock_version' => 0, 'answers' => ['content' => ['about' => 'x']]]],
+            'DELETE ' . self::PREFIX . '/drafts/{draft_id}' => ['DELETE', "{$drafts}/{$f['discard']}", []],
+            'POST ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['POST', "{$drafts}/{$f['working']}/logo", ['logo' => $f['upload']]],
+            'GET ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['GET', "{$drafts}/{$f['with_logo']}/logo", []],
+            'DELETE ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['DELETE', "{$drafts}/{$f['with_logo_to_remove']}/logo", []],
         ];
+    }
+
+    /**
+     * Drafts for the id-bearing calls, one per route that changes or needs
+     * state, so the order the routes are walked in cannot matter (DELETE sorts
+     * before GET). Made once per test.
+     *
+     * @return array{working: int, discard: int, with_logo: int, with_logo_to_remove: int, upload: UploadedFile}
+     */
+    private function fixtures(): array
+    {
+        if ($this->fixtures !== null) {
+            return $this->fixtures;
+        }
+
+        $disk = Storage::disk((string) config('studio.logo.disk'));
+        $withLogo = function () use ($disk): int {
+            $draft = StudioDraft::create(['status' => StudioDraft::STATUS_DRAFT]);
+            $path = "studio-drafts/{$draft->id}/" . str_repeat('a', 40) . '.png';
+            $disk->put($path, $this->png());
+            $draft->update(['logo_disk' => (string) config('studio.logo.disk'), 'logo_path' => $path, 'logo_mime_type' => 'image/png']);
+
+            return $draft->id;
+        };
+
+        $upload = tempnam(sys_get_temp_dir(), 'studio-access-');
+        file_put_contents($upload, $this->png());
+
+        return $this->fixtures = [
+            'working' => StudioDraft::create(['status' => StudioDraft::STATUS_DRAFT])->id,
+            'discard' => StudioDraft::create(['status' => StudioDraft::STATUS_DRAFT])->id,
+            'with_logo' => $withLogo(),
+            'with_logo_to_remove' => $withLogo(),
+            'upload' => new UploadedFile($upload, 'logo.png', null, null, true),
+        ];
+    }
+
+    private function png(): string
+    {
+        $image = imagecreatetruecolor(120, 120);
+        ob_start();
+        imagepng($image);
+
+        return (string) ob_get_clean();
     }
 
     /** @return list<string> "METHOD uri" for every route under the Studio prefix */
@@ -127,7 +189,7 @@ class StudioAccessTest extends TestCase
                 $this->actAs($user);
                 $response = $this->json($method, $url, $body);
 
-                $this->assertSame(401, $response->status(), "{$route} answered {$who} with {$response->status()}");
+                $this->assertSame(401, $response->getStatusCode(), "{$route} answered {$who} with {$response->getStatusCode()}");
 
                 // A signed-in non-super gets the admin gates' envelope; a guest
                 // is refused by the token guard before either runs.
@@ -152,7 +214,7 @@ class StudioAccessTest extends TestCase
             [$method, $url, $body] = $this->callFor($route);
             $response = $this->json($method, $url, $body);
 
-            $this->assertTrue($response->isSuccessful(), "{$route} answered a SuperAdmin with {$response->status()}");
+            $this->assertTrue($response->isSuccessful(), "{$route} answered a SuperAdmin with {$response->getStatusCode()}");
         }
     }
 }
