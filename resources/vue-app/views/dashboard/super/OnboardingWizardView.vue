@@ -511,7 +511,7 @@
 <script setup lang="ts">
 import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import LoadingButton from '@/components/form/LoadingButton.vue';
-import { normaliseFeatureKey } from '@/core/helpers/featureKey';
+import { catalogueKeysFor } from '@/core/helpers/featureKey';
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2';
 import ApiService from '@/core/services/ApiService';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
@@ -728,10 +728,9 @@ const verticalLabel = computed(() => selectedVertical.value?.label || 'Organizat
  * `qur’an` (U+2019) where the bundle says `quran`, and an exact match left
  * Qur'an unchecked for every new masjid.
  */
-const bundledKeys = computed(() => {
-    const wanted = new Set((selectedVertical.value?.feature_keys ?? []).map(normaliseFeatureKey));
-    return features.value.filter(f => wanted.has(normaliseFeatureKey(f.key))).map(f => f.key);
-});
+const bundledKeys = computed(() =>
+    catalogueKeysFor(selectedVertical.value?.feature_keys ?? [], features.value.map(f => f.key))
+);
 
 const includedFeatures = computed(() => features.value.filter(f => bundledKeys.value.includes(f.key)));
 const excludedFeatures = computed(() => features.value.filter(f => !bundledKeys.value.includes(f.key)));
