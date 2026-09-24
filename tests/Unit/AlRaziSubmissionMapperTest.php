@@ -16,7 +16,10 @@ use Tests\TestCase;
  * differently here and in database/forms/*.json would import as nothing, forever,
  * while every run reported success. It runs both directions — nothing emitted is
  * undeclared, and nothing declared is unreachable — over a row that fills every
- * field the site's RegistrationFormData type has.
+ * field the site's RegistrationFormData type has. The fields the SYNC writes
+ * itself (`<file>Status`, `websiteRemoved`) are proven declared the same way:
+ * canonical() drops an undeclared one just as silently, and the sync would then
+ * write — and warn — again on every run.
  *
  * Every value below is obviously fake. None is a real person's.
  */
@@ -231,15 +234,23 @@ class AlRaziSubmissionMapperTest extends TestCase
     /**
      * The form's declared answer keys: flat field names, and the repeatable
      * section's id with its own field names. File fields are listed apart,
-     * because their values are written by the import, not the mapper.
+     * because their values are written by the import, not the mapper; so are the
+     * text fields only the sync writes (each file's Status, and websiteRemoved),
+     * with their types.
      *
-     * @return array{flat: list<string>, repeatable: array<string,list<string>>, files: list<string>}
+     * @return array{flat: list<string>, repeatable: array<string,list<string>>, files: list<string>, written: array<string,string>}
      */
     private function declared(Form $form): array
     {
         $flat = [];
         $repeatable = [];
         $files = [];
+        $written = [];
+
+        $syncWritten = array_merge(
+            [SubmissionMapper::REMOVED_FIELD],
+            array_map(fn (string $f) => SubmissionMapper::statusField($f), array_keys(FormSchema::for($form)->fileFields()))
+        );
 
         foreach ($form->sections() as $section) {
             foreach ($section['fields'] as $field) {
@@ -247,13 +258,15 @@ class AlRaziSubmissionMapperTest extends TestCase
                     $repeatable[$section['id']][] = $field['name'];
                 } elseif ($field['type'] === 'file') {
                     $files[] = $field['name'];
+                } elseif (in_array($field['name'], $syncWritten, true)) {
+                    $written[$field['name']] = $field['type'];
                 } else {
                     $flat[] = $field['name'];
                 }
             }
         }
 
-        return ['flat' => $flat, 'repeatable' => $repeatable, 'files' => $files];
+        return ['flat' => $flat, 'repeatable' => $repeatable, 'files' => $files, 'written' => $written];
     }
 
     /**
@@ -297,6 +310,30 @@ class AlRaziSubmissionMapperTest extends TestCase
             $this->assertContains($file['field'], $declared['files'], "{$file['field']} is fetched but is not a file question");
         }
         $this->assertEqualsCanonicalizing($declared['files'], array_column($mapped['files'], 'field'), 'every file question has a document to fill it');
+
+        // Each document's source reference is emitted by the mapper (so it is in
+        // `flat`, checked both ways above), and is the hash of its path, never the path.
+        foreach ($mapped['files'] as $file) {
+            $ref = SubmissionMapper::refField($file['field']);
+            $this->assertContains($ref, $declared['flat'], "{$ref} is emitted but not declared");
+            $this->assertSame(hash('sha256', $file['path']), $mapped['data'][$ref]);
+        }
+
+        // What the sync writes itself: declared, as text, and never by the mapper.
+        $expected = array_merge(
+            [SubmissionMapper::REMOVED_FIELD],
+            array_map(fn (string $f) => SubmissionMapper::statusField($f), $declared['files'])
+        );
+        $this->assertEqualsCanonicalizing($expected, array_keys($declared['written']), 'every field the sync writes is declared');
+        foreach ($declared['written'] as $name => $type) {
+            $this->assertSame('text', $type, "{$name} holds a sentence");
+            $this->assertArrayNotHasKey($name, $mapped['data'], "{$name} is the sync's to write, not the mapper's");
+        }
+        $this->assertEquals(
+            array_fill_keys(array_keys($declared['written']), 'x'),
+            FormSchema::for($form)->only(array_fill_keys(array_keys($declared['written']), 'x')),
+            'only() keeps what the sync writes'
+        );
 
         // And only() keeps all of it: this is the silent drop the test exists for.
         $this->assertEquals($mapped['data'], FormSchema::for($form)->only($mapped['data']));
@@ -348,6 +385,40 @@ class AlRaziSubmissionMapperTest extends TestCase
         $this->assertSame([], array_filter($mapped['files'], fn ($f) => str_contains($f['path'], 'ssn_card')), 'the SSN card path is never handed on to be signed');
         // Dropped on purpose, so not reported as an unknown field either.
         $this->assertSame([], $mapped['unknown']);
+    }
+
+    #[Test]
+    public function the_ssn_card_is_recognised_by_its_label_in_any_form_and_by_its_file_name(): void
+    {
+        $row = $this->fullRegistration();
+        $card = fn (string $category, string $path) => [
+            'category' => $category,
+            'path' => $path,
+            'original_filename' => 'test-card.pdf',
+            'size_bytes' => 1000,
+            'content_type' => 'application/pdf',
+        ];
+
+        $row['documents'] = [
+            $card('SSN_CARD', 'incoming/00000000-0000-4000-8000-0000000000a1-test.pdf'),
+            $card(' ssn_card ', 'incoming/00000000-0000-4000-8000-0000000000a2-test.pdf'),
+            $card('social_security_card', 'incoming/00000000-0000-4000-8000-0000000000a3-test.pdf'),
+            $card('custody', 'incoming/x-ssn_card-card.jpg'),
+            $card('prior_records', 'incoming/x-SSN-scan.pdf'),
+            // Trimmed and lowercased, an allowed label is still allowed.
+            $card(' Birth_Certificate ', 'incoming/00000000-0000-4000-8000-0000000000b1-birth_certificate-test.pdf'),
+        ];
+
+        $mapped = SubmissionMapper::registration($row);
+
+        $this->assertSame(
+            [['field' => 'docBirthCertificate', 'path' => 'incoming/00000000-0000-4000-8000-0000000000b1-birth_certificate-test.pdf']],
+            array_map(fn (array $f) => ['field' => $f['field'], 'path' => $f['path']], $mapped['files'])
+        );
+        $this->assertArrayNotHasKey('docCustodyRef', $mapped['data']);
+        $this->assertArrayNotHasKey('docPriorRecordsRef', $mapped['data']);
+        // Only the category outside the list is reported, by position.
+        $this->assertSame(['documents.*'], $mapped['unknown']);
     }
 
     #[Test]

@@ -22,8 +22,13 @@ use Carbon\CarbonImmutable;
  *
  *  - Any key named like an SSN, anywhere in the row (`student.ssn` is the one the
  *    site has). The export already strips it; this is the second belt.
- *  - A document in the `ssn_card` category. It is never returned as a file to
- *    fetch, so its path is never even sent to be signed.
+ *  - Any document that is not in one of the six categories below, compared
+ *    trimmed and lowercased ("SSN_CARD", " ssn_card " and "social_security_card"
+ *    are all simply not on the list), and any document whose file name contains
+ *    "ssn" in any case, whatever category it claims. The category is typed by the
+ *    family's browser and the site never checks it; the site's own upload path
+ *    names the card `incoming/<uuid>-ssn_card-<file>`. Neither is returned as a
+ *    file to fetch, so its path is never even sent to be signed.
  *  - `medical.insurance_policy_number`, unless the caller opts in
  *    (ALRAZI_EXPORT_INCLUDE_INSURANCE).
  *  - `stripe_session_id`: no use to staff.
@@ -51,7 +56,10 @@ class SubmissionMapper
     /** A key with one of these names is dropped wherever it appears, compared case-insensitively. */
     private const NEVER_KEYS = ['ssn', 'social_security_number', 'social_security'];
 
-    /** Document category => the form's file field. `ssn_card` is deliberately absent. */
+    /**
+     * Document category => the form's file field. An ALLOW-list: a category that
+     * is not here is never fetched. `ssn_card` is deliberately absent.
+     */
     public const DOCUMENT_FIELDS = [
         'birth_certificate' => 'docBirthCertificate',
         'immunization' => 'docImmunization',
@@ -65,6 +73,39 @@ class SubmissionMapper
     public const SSN_CARD_CATEGORY = 'ssn_card';
 
     public const INSURANCE_POLICY_PATH = 'medical.insurance_policy_number';
+
+    /**
+     * Written by the sync, never by this class: "Removed from the website on
+     * YYYY-MM-DD" on a row the export stopped returning. Declared in both forms.
+     */
+    public const REMOVED_FIELD = 'websiteRemoved';
+
+    /**
+     * The text field that holds a SHA-256 of the website's storage path for the
+     * document in $fileField. The path itself is the family's words (a child's
+     * name is a common filename), so only its hash is kept; a new hash means the
+     * family replaced the document on the website.
+     */
+    public static function refField(string $fileField): string
+    {
+        return $fileField . 'Ref';
+    }
+
+    /**
+     * The text field where the sync says, for staff, why a document that is on
+     * the website is not here ("On the website, not importable here (HEIC image)").
+     * Written by the sync, never by this class.
+     */
+    public static function statusField(string $fileField): string
+    {
+        return $fileField . 'Status';
+    }
+
+    /** The reference stored for one storage path. */
+    public static function pathRef(string $path): string
+    {
+        return hash('sha256', $path);
+    }
 
     /**
      * registration_applications columns => form field. Applied AFTER the `data`
@@ -348,11 +389,17 @@ class SubmissionMapper
             $data[$field] = self::dollars((int) $cents);
         }
 
+        $files = self::documentFiles($row['documents'] ?? null, $unknown);
+
+        foreach ($files as $file) {
+            $data[self::refField($file['field'])] = self::pathRef($file['path']);
+        }
+
         return [
             'external_ref' => self::externalRef($row),
             'submitted_at' => self::submittedAt($row),
             'data' => $data,
-            'files' => self::documentFiles($row['documents'] ?? null, $unknown),
+            'files' => $files,
             'unknown' => self::normalisePaths($unknown),
         ];
     }
@@ -390,6 +437,7 @@ class SubmissionMapper
         $path = $row['resume_path'] ?? null;
 
         if (is_string($path) && trim($path) !== '') {
+            $data[self::refField(self::RESUME_FIELD)] = self::pathRef($path);
             $files[] = [
                 'field' => self::RESUME_FIELD,
                 'bucket' => self::RESUME_BUCKET,
@@ -552,7 +600,7 @@ class SubmissionMapper
     }
 
     /**
-     * The documents to fetch: one per known category, ssn_card never.
+     * The documents to fetch: one per allowed category, and nothing else.
      *
      * @param  list<string>  $unknown
      * @return list<array{field: string, bucket: string, path: string, original_name: string, content_type: ?string, size_bytes: ?int}>
@@ -574,17 +622,30 @@ class SubmissionMapper
 
         foreach ($documents as $i => $document) {
             $category = is_array($document) ? ($document['category'] ?? null) : null;
+            $category = is_string($category) ? strtolower(trim($category)) : null;
 
-            // Before ANY other test, so nothing below can so much as read its path.
-            if (is_string($category) && strtolower($category) === self::SSN_CARD_CATEGORY) {
+            // The allow-list before ANY other test, so nothing below can so much as
+            // read the path of a document outside it. The card is not reported: it
+            // is dropped on purpose.
+            if ($category === null || ! isset(self::DOCUMENT_FIELDS[$category])) {
+                if ($category !== self::SSN_CARD_CATEGORY) {
+                    $unknown[] = "documents.{$i}";
+                }
+
                 continue;
             }
 
-            $path = is_array($document) ? ($document['path'] ?? null) : null;
+            $path = $document['path'] ?? null;
 
-            if (! is_string($category) || ! isset(self::DOCUMENT_FIELDS[$category]) || ! is_string($path) || trim($path) === '') {
+            if (! is_string($path) || trim($path) === '') {
                 $unknown[] = "documents.{$i}";
 
+                continue;
+            }
+
+            // Filed under an allowed category, but named as the card by the site's
+            // own upload path. The category is the browser's word; the name is not.
+            if (self::namesAnSsnCard($path)) {
                 continue;
             }
 
@@ -614,6 +675,12 @@ class SubmissionMapper
         }
 
         return $files;
+    }
+
+    /** Whether a storage path's final segment contains "ssn", in any case. */
+    private static function namesAnSsnCard(string $path): bool
+    {
+        return stripos(basename(str_replace('\\', '/', $path)), 'ssn') !== false;
     }
 
     /**

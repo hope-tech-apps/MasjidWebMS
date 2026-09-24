@@ -1,5 +1,5 @@
 {
-  "$comment": "Al-Razi School website registrations, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-registration.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email families, because the website already emailed them when they applied. Every value is the website's own, stored verbatim: grade and program are text, not options, so nothing here can drift from the site's list. The student's SSN and the SSN card are never imported, and the insurance policy number only when ALRAZI_EXPORT_INCLUDE_INSURANCE is true. Payment fields prefixed `website` are the SITE's Stripe state, for reference; they never touch Manara's own payment columns. Imported rows cannot be deleted, only cancelled, or the next run would write them back.",
+  "$comment": "Al-Razi School website registrations, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-registration.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email families, because the website already emailed them when they applied. Every value is the website's own, stored verbatim: grade and program are text, not options, so nothing here can drift from the site's list. The student's SSN and the SSN card are never imported, and the insurance policy number only when ALRAZI_EXPORT_INCLUDE_INSURANCE is true. Payment fields prefixed `website` are the SITE's Stripe state, for reference; they never touch Manara's own payment columns. Imported rows cannot be deleted from the admin, only cancelled, or the next run would write them back. A row the website stops returning is marked in `websiteRemoved` (never deleted by the sync); `php artisan alrazi:purge-website-removed` deletes marked rows. A document removed or replaced on the website is removed or replaced here. Each document slot has a `…Status` text field (why a document on the website is not importable here) and a `…Ref` text field (a SHA-256 of the website's storage path, never the path).",
   "slug": "alrazi-website-registration",
   "name": "Al-Razi School — Website Registrations",
   "description": "Applications submitted on alrazischool.org, copied here every five minutes. Read-only: edit status and notes only.",
@@ -34,6 +34,12 @@
           {
             "name": "program",
             "label": "Program",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteRemoved",
+            "label": "Removed from the website",
             "type": "text",
             "required": false
           }
@@ -918,9 +924,33 @@
             "required": false
           },
           {
+            "name": "docBirthCertificateStatus",
+            "label": "Birth certificate — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docBirthCertificateRef",
+            "label": "Birth certificate — website reference",
+            "type": "text",
+            "required": false
+          },
+          {
             "name": "docImmunization",
             "label": "Immunization records",
             "type": "file",
+            "required": false
+          },
+          {
+            "name": "docImmunizationStatus",
+            "label": "Immunization records — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docImmunizationRef",
+            "label": "Immunization records — website reference",
+            "type": "text",
             "required": false
           },
           {
@@ -930,9 +960,33 @@
             "required": false
           },
           {
+            "name": "docPriorRecordsStatus",
+            "label": "Previous school records — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docPriorRecordsRef",
+            "label": "Previous school records — website reference",
+            "type": "text",
+            "required": false
+          },
+          {
             "name": "docCustody",
             "label": "Custody documents",
             "type": "file",
+            "required": false
+          },
+          {
+            "name": "docCustodyStatus",
+            "label": "Custody documents — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docCustodyRef",
+            "label": "Custody documents — website reference",
+            "type": "text",
             "required": false
           },
           {
@@ -942,9 +996,33 @@
             "required": false
           },
           {
+            "name": "docToiletTrainingStatus",
+            "label": "Toilet training confirmation — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docToiletTrainingRef",
+            "label": "Toilet training confirmation — website reference",
+            "type": "text",
+            "required": false
+          },
+          {
             "name": "docFoodAllergyPlan",
             "label": "Food allergy action plan",
             "type": "file",
+            "required": false
+          },
+          {
+            "name": "docFoodAllergyPlanStatus",
+            "label": "Food allergy action plan — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "docFoodAllergyPlanRef",
+            "label": "Food allergy action plan — website reference",
+            "type": "text",
             "required": false
           }
         ]

@@ -1,5 +1,5 @@
 {
-  "$comment": "Al-Razi School website careers applications, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-careers.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email applicants. `role` is text holding the website's role title as-is. The résumé is optional because an applicant may give a link instead. Imported rows cannot be deleted, only cancelled, or the next run would write them back.",
+  "$comment": "Al-Razi School website careers applications, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-careers.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email applicants. `role` is text holding the website's role title as-is. The résumé is optional because an applicant may give a link instead. Imported rows cannot be deleted from the admin, only cancelled, or the next run would write them back. A row the website stops returning is marked in `websiteRemoved` (never deleted by the sync); `php artisan alrazi:purge-website-removed` deletes marked rows. A document removed or replaced on the website is removed or replaced here. Each document slot has a `…Status` text field (why a document on the website is not importable here) and a `…Ref` text field (a SHA-256 of the website's storage path, never the path).",
   "slug": "alrazi-website-careers",
   "name": "Al-Razi School — Website Job Applications",
   "description": "Applications submitted on alrazischool.org/careers, copied here every five minutes. Read-only: edit status and notes only.",
@@ -60,6 +60,12 @@
             "label": "Available to start",
             "type": "text",
             "required": false
+          },
+          {
+            "name": "websiteRemoved",
+            "label": "Removed from the website",
+            "type": "text",
+            "required": false
           }
         ]
       },
@@ -71,6 +77,18 @@
             "name": "resume",
             "label": "Résumé",
             "type": "file",
+            "required": false
+          },
+          {
+            "name": "resumeStatus",
+            "label": "Résumé — import status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "resumeRef",
+            "label": "Résumé — website reference",
+            "type": "text",
             "required": false
           },
           {

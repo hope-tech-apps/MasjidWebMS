@@ -341,7 +341,8 @@ return [
     // what every box but PRODUCTION must be: these are children's records, and
     // staging must never pull them. Set both in production's .env only.
     'alrazi_export' => [
-        // https://<ref>.supabase.co/functions/v1/export-submissions
+        // https://<ref>.supabase.co/functions/v1/export-submissions — https only;
+        // an http URL counts as not configured.
         'url' => env('ALRAZI_EXPORT_URL'),
         // The Edge Function's EXPORT_TOKEN, sent as a bearer token.
         'token' => env('ALRAZI_EXPORT_TOKEN'),

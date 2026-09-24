@@ -21,7 +21,9 @@ use Illuminate\Support\Facades\Http;
  *
  * Built on ANY configuration and never throws for a blank one
  * (.claude/rules/environments.md): `isConfigured()` is the question a caller
- * asks, and it is false on every box but production.
+ * asks, and it is false on every box but production. A URL that is not https is
+ * NOT configured: the bearer token and children's records never cross the wire in
+ * the clear. `hasInsecureUrl()` lets the caller say why.
  *
  * Failures throw ExportFailed, whose message is written here and carries an HTTP
  * status at most — never a response body, which could echo a child's record into
@@ -34,6 +36,15 @@ class ExportClient
 
     /** The export signs at most this many paths per request. */
     public const SIGN_BATCH = 50;
+
+    /** download(): the callback ran on the file; its result is the second element. */
+    public const DOWNLOAD_OK = 'ok';
+
+    /** download(): the file is larger than the ceiling. It was never read. */
+    public const DOWNLOAD_TOO_LARGE = 'too_large';
+
+    /** download(): refused (another origin), not 200, or empty. Worth retrying. */
+    public const DOWNLOAD_UNAVAILABLE = 'unavailable';
 
     public function __construct(
         private readonly ?string $url,
@@ -55,9 +66,16 @@ class ExportClient
 
     public function isConfigured(): bool
     {
-        return $this->url !== null && $this->url !== ''
-            && $this->token !== null && $this->token !== ''
-            && preg_match('#^https?://#i', $this->url) === 1;
+        return $this->hasUrlAndToken() && preg_match('#^https://#i', (string) $this->url) === 1;
+    }
+
+    /**
+     * Both are set, but the URL is not https — so isConfigured() is false and
+     * nothing is requested. The caller warns: this is a mistake, not a staging box.
+     */
+    public function hasInsecureUrl(): bool
+    {
+        return $this->hasUrlAndToken() && ! $this->isConfigured();
     }
 
     /**
@@ -135,16 +153,24 @@ class ExportClient
     }
 
     /**
-     * Download one signed URL, refusing anything larger than $maxBytes.
+     * Download one signed URL to a private temporary file and hand that file to
+     * $use, refusing anything larger than $maxBytes.
      *
      * Only a URL on the export's own origin is fetched (a signed Storage URL lives
      * on the same Supabase host as the function), so a compromised or confused
      * export cannot point this server at an arbitrary address. The bearer token is
      * NOT sent: the signature is the credential.
      *
-     * @return string|null  the bytes, or null when refused (wrong origin, too large, not 200)
+     * The body streams to disk (Http::sink), never into memory, and its size is
+     * checked BEFORE anything reads or sniffs it; $use never sees an oversized
+     * file. The temporary file — a child's document — is deleted in `finally`
+     * whatever happens, including when $use throws, so the caller never owns it.
+     *
+     * @template T
+     * @param  callable(string $path, int $bytes): T  $use
+     * @return array{0: string, 1: T|null}  [DOWNLOAD_OK, $use's result] | [DOWNLOAD_TOO_LARGE|DOWNLOAD_UNAVAILABLE, null]
      */
-    public function download(string $signedUrl, int $maxBytes): ?string
+    public function download(string $signedUrl, int $maxBytes, callable $use): array
     {
         $this->assertConfigured();
 
@@ -155,29 +181,46 @@ class ExportClient
         }
 
         if (! $this->sameOrigin($signedUrl)) {
-            return null;
+            return [self::DOWNLOAD_UNAVAILABLE, null];
+        }
+
+        // tempnam() creates the file 0600, so no other local user can read it.
+        $tmp = tempnam(sys_get_temp_dir(), 'alrazi-');
+
+        if ($tmp === false) {
+            throw new ExportFailed('No temporary file could be created for a document download.');
         }
 
         try {
-            $response = Http::timeout($this->timeout)
-                ->connectTimeout(min(10, $this->timeout))
-                ->withOptions(['allow_redirects' => false])
-                ->get($signedUrl);
-        } catch (ConnectionException) {
-            throw new ExportFailed('A document download could not connect.');
+            try {
+                $response = Http::timeout($this->timeout)
+                    ->connectTimeout(min(10, $this->timeout))
+                    ->withOptions(['allow_redirects' => false])
+                    ->sink($tmp)
+                    ->get($signedUrl);
+            } catch (ConnectionException) {
+                throw new ExportFailed('A document download could not connect.');
+            }
+
+            if ($response->status() !== 200) {
+                return [self::DOWNLOAD_UNAVAILABLE, null];
+            }
+
+            clearstatcache(true, $tmp);
+            $bytes = @filesize($tmp);
+
+            if ($bytes === false || $bytes === 0) {
+                return [self::DOWNLOAD_UNAVAILABLE, null];
+            }
+
+            if ($bytes > $maxBytes) {
+                return [self::DOWNLOAD_TOO_LARGE, null];
+            }
+
+            return [self::DOWNLOAD_OK, $use($tmp, $bytes)];
+        } finally {
+            @unlink($tmp);
         }
-
-        if ($response->status() !== 200) {
-            return null;
-        }
-
-        $body = $response->body();
-
-        if ($body === '' || strlen($body) > $maxBytes) {
-            return null;
-        }
-
-        return $body;
     }
 
     /** The key the export uses for one object in its "urls" map. */
@@ -249,6 +292,12 @@ class ExportClient
             && ($a['port'] ?? null) === ($b['port'] ?? null)
             && ! isset($b['user'])
             && ! isset($b['pass']);
+    }
+
+    private function hasUrlAndToken(): bool
+    {
+        return $this->url !== null && $this->url !== ''
+            && $this->token !== null && $this->token !== '';
     }
 
     private function assertConfigured(): void

@@ -645,7 +645,9 @@ class FormResponsesController extends Controller
      *
      * Nor is a row imported from the school website (`external_ref`, alrazi:sync-website):
      * the next five-minute run would write it straight back, files and all. It is
-     * cancelled instead, like a paid one.
+     * cancelled instead, like a paid one. The one path that deletes an imported row
+     * is `alrazi:purge-website-removed`, and only once the website itself no longer
+     * returns it (the sync's `websiteRemoved` marker).
      */
     public function destroy($masjid_id, $form_id, $response_id)
     {

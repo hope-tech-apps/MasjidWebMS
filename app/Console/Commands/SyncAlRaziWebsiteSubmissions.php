@@ -11,6 +11,7 @@ use App\Support\AlRaziWebsite\SubmissionMapper;
 use App\Support\FormAttachments;
 use App\Support\FormSchema;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -26,12 +27,27 @@ use Illuminate\Support\Facades\Storage;
  * every later run picks up what the site changed since — in practice a payment
  * status — because each website row is matched to its copy by
  * (form_id, external_ref) and updated in place. A run that changes nothing writes
- * nothing.
+ * nothing: stored and new answers are compared with object keys sorted, because
+ * MySQL returns a JSON column's keys in its own order, not the order written.
+ *
+ * ## Removals follow the website
+ *
+ *  - **A document** the website no longer lists for a row (or lists under a new
+ *    storage path: the family replaced it) is deleted here THROUGH THE MODEL, so
+ *    its bytes leave the private disk, and the new one is fetched. Each slot keeps
+ *    a SHA-256 of the source path in `<field>Ref` to notice the change.
+ *  - **A row** the export stops returning is only MARKED, in
+ *    `data.websiteRemoved` ("Removed from the website on YYYY-MM-DD"), and only
+ *    after a complete, error-free export of that table. A complete export of ZERO
+ *    rows marks nothing: that is far likelier a broken export than an empty
+ *    school. A marked row that comes back is unmarked. Deleting marked rows is a
+ *    deliberate act: `alrazi:purge-website-removed`.
  *
  * ## What it will not do
  *
- *  - **Run unconfigured.** No URL or token: an info line, exit 0, no request. That
- *    is every box but production; staging must never pull children's records.
+ *  - **Run unconfigured.** No URL or token, or a URL that is not https: exit 0,
+ *    no request. That is every box but production; staging must never pull
+ *    children's records.
  *  - **Write into the wrong form.** Each form is looked up by (configured
  *    organisation, slug) and must be switched OFF with receipts OFF. A live form
  *    would take anonymous submissions under the school's name, and a form with
@@ -45,17 +61,20 @@ use Illuminate\Support\Facades\Storage;
  *    payment state lives in `data.website*` fields, for reference.
  *  - **Import an SSN or the SSN card**, whatever the export sends
  *    (SubmissionMapper), or a file of a type or size the upload path would refuse
- *    (FormAttachments::storeFromPath).
+ *    (FormAttachments::storeFromPath). A refused document is described for staff
+ *    in `<field>Status` and is not fetched again until its source path changes.
  *
  * ## Logging
  *
  * Production logs at `warning` and cron discards this command's output
  * (.claude/rules/shipping.md, backups.md), so every failure, skipped file and
- * unknown field is logged at warning or above. No log line carries a record's
- * contents: fields are named by path, rows by their Manara id, and only
- * ExportFailed's message (written by ExportClient, HTTP status at most) is logged
- * verbatim — any other exception by class alone, because a database error's
- * message carries the child's details it failed to write.
+ * unknown field is logged at warning or above — ONCE: a refused document when its
+ * status changes, an unknown field path at most once per 30 days per form, not
+ * 288 times a day. No log line carries a record's contents: fields are named by
+ * path, rows by their Manara id, and only ExportFailed's message (written by
+ * ExportClient, HTTP status at most) is logged verbatim — any other exception by
+ * class alone, because a database error's message carries the child's details it
+ * failed to write.
  */
 class SyncAlRaziWebsiteSubmissions extends Command
 {
@@ -69,8 +88,26 @@ class SyncAlRaziWebsiteSubmissions extends Command
         'careers' => self::CAREERS_SLUG,
     ];
 
+    /** The start of the `data.websiteRemoved` marker; the date follows. */
+    public const REMOVED_PREFIX = 'Removed from the website on ';
+
+    /** An unknown field path is logged at most once per this many days per form. */
+    public const UNKNOWN_KEY_QUIET_DAYS = 30;
+
     /** A cursor that keeps advancing past this many pages (100,000 rows) is not trusted. */
     private const MAX_PAGES = 500;
+
+    /** Types the website accepts and Manara does not, named for staff. */
+    private const TYPE_LABELS = [
+        'image/heic' => 'HEIC image',
+        'image/heif' => 'HEIF image',
+        'image/webp' => 'WEBP image',
+        'image/gif' => 'GIF image',
+        'image/tiff' => 'TIFF image',
+    ];
+
+    /** Counts shown only on a dry run. */
+    private const DRY_RUN_COUNTS = ['files_to_fetch', 'files_to_remove', 'rows_to_mark_removed'];
 
     protected $signature = 'alrazi:sync-website
                             {--dry-run : Read the export and report what would change, without writing anything or fetching documents}';
@@ -87,6 +124,11 @@ class SyncAlRaziWebsiteSubmissions extends Command
         $client = ExportClient::fromConfig();
 
         if (! $client->isConfigured()) {
+            // Once a day, not every five minutes: it is a mistake to fix, not an alarm.
+            if ($client->hasInsecureUrl() && Cache::add('alrazi-sync:insecure-url', true, now()->addDay())) {
+                Log::warning('alrazi:sync-website: ALRAZI_EXPORT_URL is not https, so the export is treated as not configured and nothing is requested.');
+            }
+
             Log::info('alrazi:sync-website: not configured (ALRAZI_EXPORT_URL / ALRAZI_EXPORT_TOKEN); nothing to do.');
             $this->line('The school website export is not configured. Nothing to do.');
 
@@ -119,9 +161,14 @@ class SyncAlRaziWebsiteSubmissions extends Command
             'updated' => 0,
             'unchanged' => 0,
             'rows_failed' => 0,
+            'rows_marked_removed' => 0,
+            'rows_to_mark_removed' => 0,
             'files_stored' => 0,
+            'files_refused' => 0,
             'files_skipped' => 0,
+            'files_removed' => 0,
             'files_to_fetch' => 0,
+            'files_to_remove' => 0,
             'unknown_keys' => 0,
         ];
         $this->failed = false;
@@ -137,7 +184,9 @@ class SyncAlRaziWebsiteSubmissions extends Command
         }
 
         $summary = collect($this->counts)
-            ->reject(fn (int $n, string $key) => $key === 'files_to_fetch' && ! $dryRun)
+            ->reject(fn (int $n, string $key) => $dryRun
+                ? in_array($key, ['rows_marked_removed', 'files_stored', 'files_refused', 'files_skipped', 'files_removed'], true)
+                : in_array($key, self::DRY_RUN_COUNTS, true))
             ->map(fn (int $n, string $key) => "{$key}={$n}")
             ->implode(' ');
 
@@ -175,12 +224,50 @@ class SyncAlRaziWebsiteSubmissions extends Command
         return null;
     }
 
+    /**
+     * Whether a response's `data` carries the removed-from-the-website marker.
+     * alrazi:purge-website-removed deletes only rows for which this is true.
+     */
+    public static function isMarkedRemoved(mixed $data): bool
+    {
+        $marker = is_array($data) ? ($data[SubmissionMapper::REMOVED_FIELD] ?? null) : null;
+
+        return is_string($marker) && str_starts_with($marker, self::REMOVED_PREFIX);
+    }
+
+    /**
+     * An array with every OBJECT's keys sorted, at any depth, and every list left
+     * in its order. Two answers that differ only in key order — which is all MySQL's
+     * JSON column changes on the way back — normalise to the same value.
+     */
+    public static function normalised(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $out = array_map(fn (mixed $inner) => self::normalised($inner), $value);
+
+        if (! array_is_list($out)) {
+            ksort($out, SORT_STRING);
+        }
+
+        return $out;
+    }
+
     private function syncTable(ExportClient $client, string $table, Form $form, bool $dryRun, bool $includeInsurance): void
     {
         $after = null;
         $pages = 0;
         $unknown = [];
         $fileFields = FormSchema::for($form)->fileFields();
+
+        // external_ref => true for every row this export returned. Only a
+        // complete answer may say a row is gone, so a row with no usable id makes
+        // this run's answer incomplete, and an ExportFailed (a failed page, a
+        // cursor that stalls) leaves this method before the removals are decided.
+        $seen = [];
+        $complete = true;
 
         do {
             $page = $client->page($table, $after, $table === 'registrations' && $includeInsurance);
@@ -196,6 +283,7 @@ class SyncAlRaziWebsiteSubmissions extends Command
                 }
 
                 if ($mapped['external_ref'] === null || $mapped['submitted_at'] === null) {
+                    $complete = false;
                     $this->counts['rows_failed']++;
                     Log::warning('alrazi:sync-website: a row had no usable id or created_at and was skipped.', [
                         'table' => $table,
@@ -206,8 +294,10 @@ class SyncAlRaziWebsiteSubmissions extends Command
                     continue;
                 }
 
+                $seen[$mapped['external_ref']] = true;
+
                 try {
-                    [$outcome, $response] = $this->upsert($form, $mapped, $fileFields, $dryRun);
+                    [$outcome, $response, $toFetch, $removed] = $this->upsert($form, $mapped, $fileFields, $dryRun);
                 } catch (\Throwable $e) {
                     $this->counts['rows_failed']++;
                     Log::error('alrazi:sync-website: a row could not be saved.', [
@@ -222,7 +312,26 @@ class SyncAlRaziWebsiteSubmissions extends Command
 
                 $this->counts[$outcome]++;
 
-                foreach ($this->missingFiles($response, $mapped['files'], $fileFields) as $file) {
+                foreach ($removed as $field => $why) {
+                    if ($dryRun) {
+                        $this->counts['files_to_remove']++;
+
+                        continue;
+                    }
+
+                    $this->counts['files_removed']++;
+
+                    // The question, never the filename or the path.
+                    Log::warning($why === 'replaced'
+                        ? 'alrazi:sync-website: a document was replaced on the website; the old copy was deleted here and the new one is fetched.'
+                        : 'alrazi:sync-website: a document is no longer on the website; its copy was deleted here.', [
+                            'form_id' => $form->id,
+                            'response_id' => $response->id,
+                            'field' => $field,
+                        ]);
+                }
+
+                foreach ($toFetch as $file) {
                     if ($dryRun) {
                         $this->counts['files_to_fetch']++;
 
@@ -251,27 +360,21 @@ class SyncAlRaziWebsiteSubmissions extends Command
             $after = $next;
         } while ($after !== null);
 
-        if ($unknown !== []) {
-            $paths = array_keys($unknown);
-            sort($paths);
-            $this->counts['unknown_keys'] += count($paths);
+        $this->reportUnknown($table, $form, array_keys($unknown), $dryRun);
 
-            // Paths only. The site has grown (or renamed) a field this import does not
-            // know; its values are NOT imported until the mapper and the form learn it.
-            Log::warning('alrazi:sync-website: the website sent fields this import does not map; they were not imported.', [
-                'table' => $table,
-                'form_id' => $form->id,
-                'paths' => $paths,
-            ]);
+        if ($complete) {
+            $this->markRemoved($table, $form, $seen, $dryRun);
         }
     }
 
     /**
-     * Create or update the one response for this website row.
+     * Create or update the one response for this website row, and settle its
+     * documents against what the website lists now.
      *
      * @param  array<string,mixed>  $mapped  SubmissionMapper's result
      * @param  array<string,array<string,mixed>>  $fileFields
-     * @return array{0: string, 1: FormResponse}  ['created'|'updated'|'unchanged', the row]
+     * @return array{0: string, 1: FormResponse, 2: list<array<string,mixed>>, 3: array<string,string>}
+     *         ['created'|'updated'|'unchanged', the row, the files to fetch, field => 'removed'|'replaced']
      */
     private function upsert(Form $form, array $mapped, array $fileFields, bool $dryRun): array
     {
@@ -298,56 +401,94 @@ class SyncAlRaziWebsiteSubmissions extends Command
             $response->masjid_id = $form->masjid_id;
 
             $schema = FormSchema::for($form);
+            // The website's answers, and a <field>Ref per listed document. Nothing
+            // else survives from the last run unless it is put back below — which
+            // is how a websiteRemoved marker clears when its row comes back.
             $data = $schema->only($mapped['data']);
+            $stored = $isNew ? [] : self::storedData($response);
 
-            // A file question's cell holds the stored file's name, which only()
-            // just dropped; put back the names of the files already here.
-            if (! $isNew) {
-                foreach ($response->attachments()->orderBy('id')->get() as $attachment) {
-                    if (isset($fileFields[$attachment->field])) {
-                        $data[$attachment->field] = $attachment->original_name;
+            $attachments = $isNew
+                ? collect()
+                : $response->attachments()->orderBy('id')->get()->keyBy('field');
+            $listed = collect($mapped['files'])->keyBy('field');
+
+            /** @var array<string,array{0: FormResponseAttachment, 1: string}> $toRemove */
+            $toRemove = [];
+            $toFetch = [];
+
+            foreach (array_keys($fileFields) as $field) {
+                $file = $listed->get($field);
+                $attachment = $attachments->get($field);
+                $refField = SubmissionMapper::refField($field);
+                $sameSource = $file !== null
+                    && ! $isNew
+                    && ($stored[$refField] ?? null) === ($data[$refField] ?? null);
+
+                if ($attachment !== null) {
+                    if ($file === null) {
+                        $toRemove[$field] = [$attachment, 'removed'];
+                    } elseif (! $sameSource) {
+                        $toRemove[$field] = [$attachment, 'replaced'];
+                        $toFetch[] = $file;
+                    } else {
+                        // A file question's cell holds the stored file's name,
+                        // which only() just dropped; put it back.
+                        $data[$field] = $attachment->original_name;
                     }
+
+                    continue;
                 }
+
+                if ($file === null) {
+                    continue;
+                }
+
+                // Refused before for its type or size, and unchanged on the website
+                // since: the row already says so, and it is not fetched again.
+                $statusField = SubmissionMapper::statusField($field);
+                $status = $stored[$statusField] ?? null;
+
+                if ($sameSource && is_string($status) && $status !== '') {
+                    $data[$statusField] = $status;
+
+                    continue;
+                }
+
+                $toFetch[] = $file;
             }
 
             $data = self::canonical($form, $data);
 
-            $response->data = $data;
+            // Assigned only when it really differs: the array cast compares with
+            // ===, which is key-order sensitive, and MySQL hands JSON keys back in
+            // its own order — so a plain assignment would mark every row dirty on
+            // every run.
+            if ($isNew || self::normalised($stored) !== self::normalised($data)) {
+                $response->data = $data;
+            }
+
             $response->fill($schema->identity($data));
             $response->submitted_at = $mapped['submitted_at']->setTimezone((string) config('app.timezone', 'UTC'));
 
-            if (! $isNew && ! $response->isDirty()) {
-                return ['unchanged', $response];
+            $removed = array_map(fn (array $pair) => $pair[1], $toRemove);
+
+            if (! $isNew && ! $response->isDirty() && $toRemove === []) {
+                return ['unchanged', $response, $toFetch, []];
             }
 
             if (! $dryRun) {
                 $response->external_synced_at = now();
                 $response->save();
+
+                // Through the model, so its `deleting` hook takes the bytes off the
+                // private disk; a query delete would leave the file there, unowned.
+                foreach ($toRemove as $pair) {
+                    $pair[0]->delete();
+                }
             }
 
-            return [$isNew ? 'created' : 'updated', $response];
+            return [$isNew ? 'created' : 'updated', $response, $toFetch, $removed];
         });
-    }
-
-    /**
-     * The website's documents this response does not hold yet. One file per
-     * question per response, so a field that has an attachment is never fetched
-     * again — each document is downloaded once.
-     *
-     * @param  list<array<string,mixed>>  $files
-     * @param  array<string,array<string,mixed>>  $fileFields
-     * @return list<array<string,mixed>>
-     */
-    private function missingFiles(FormResponse $response, array $files, array $fileFields): array
-    {
-        $held = $response->exists
-            ? $response->attachments()->pluck('field')->all()
-            : [];
-
-        return array_values(array_filter(
-            $files,
-            fn (array $file) => isset($fileFields[$file['field']]) && ! in_array($file['field'], $held, true)
-        ));
     }
 
     /**
@@ -366,10 +507,16 @@ class SyncAlRaziWebsiteSubmissions extends Command
 
         foreach ($pending as $i => $item) {
             $file = $item['file'];
+            $refusal = null;
 
-            if (($file['size_bytes'] !== null && $file['size_bytes'] > $maxBytes)
-                || ($file['content_type'] !== null && ! in_array($file['content_type'], $allowed, true))) {
-                $this->skipFile($form, $item, 'its type or size is not one Manara accepts for an attachment');
+            if ($file['size_bytes'] !== null && $file['size_bytes'] > $maxBytes) {
+                $refusal = self::tooLargeStatus($maxBytes);
+            } elseif ($file['content_type'] !== null && ! in_array($file['content_type'], $allowed, true)) {
+                $refusal = self::wrongTypeStatus($file['content_type']);
+            }
+
+            if ($refusal !== null) {
+                $this->refuseFile($form, $item, $refusal);
                 unset($pending[$i]);
 
                 continue;
@@ -398,60 +545,73 @@ class SyncAlRaziWebsiteSubmissions extends Command
             }
 
             try {
-                $bytes = $client->download($url, $maxBytes);
+                [$state, $outcome] = $client->download(
+                    $url,
+                    $maxBytes,
+                    fn (string $path) => $this->storeFile($form, $item, $path)
+                );
             } catch (ExportFailed $e) {
                 $this->skipFile($form, $item, $e->getMessage());
 
                 continue;
             }
 
-            if ($bytes === null) {
-                $this->skipFile($form, $item, 'it could not be downloaded, or is larger than the attachment ceiling');
+            if ($state === ExportClient::DOWNLOAD_TOO_LARGE) {
+                $this->refuseFile($form, $item, self::tooLargeStatus($maxBytes));
 
                 continue;
             }
 
-            $this->storeFile($form, $item, $bytes);
+            if ($state !== ExportClient::DOWNLOAD_OK) {
+                $this->skipFile($form, $item, 'it could not be downloaded');
+
+                continue;
+            }
+
+            [$result, $detail] = $outcome;
+
+            if ($result === 'stored') {
+                $this->counts['files_stored']++;
+            } elseif ($result === 'refused') {
+                $this->refuseFile($form, $item, self::wrongTypeStatus($detail));
+            } elseif ($result === 'failed') {
+                $this->skipFile($form, $item, "storing it failed ({$detail})");
+            }
         }
     }
 
     /**
+     * Store one downloaded document. The file at $path belongs to
+     * ExportClient::download(), which deletes it however this returns.
+     *
      * @param  array{response_id: int, file: array<string,mixed>}  $item
+     * @return array{0: 'stored'|'held'|'refused'|'failed', 1: ?string}  with the sniffed type when refused, the exception class when failed
      */
-    private function storeFile(Form $form, array $item, string $bytes): void
+    private function storeFile(Form $form, array $item, string $path): array
     {
         $file = $item['file'];
-        $tmp = tempnam(sys_get_temp_dir(), 'alrazi-');
-
-        if ($tmp === false) {
-            $this->skipFile($form, $item, 'no temporary file could be created');
-
-            return;
-        }
 
         try {
-            if (file_put_contents($tmp, $bytes) !== strlen($bytes)) {
-                $this->skipFile($form, $item, 'the temporary file could not be written');
-
-                return;
-            }
-
-            $stored = DB::transaction(function () use ($form, $item, $file, $tmp): ?bool {
+            return DB::transaction(function () use ($form, $item, $file, $path): array {
                 $response = FormResponse::query()->whereKey($item['response_id'])->lockForUpdate()->first();
 
                 if ($response === null || $response->attachments()->where('field', $file['field'])->exists()) {
-                    return false;
+                    return ['held', null];
                 }
 
-                $name = FormAttachments::storeFromPath($response, $file['field'], $tmp, (string) $file['original_name']);
+                $name = FormAttachments::storeFromPath($response, $file['field'], $path, (string) $file['original_name']);
 
                 if ($name === null) {
-                    return null;
+                    // The size was checked before this was called, so it is the type.
+                    $sniffed = (new \finfo(FILEINFO_MIME_TYPE))->file($path);
+
+                    return ['refused', is_string($sniffed) ? $sniffed : null];
                 }
 
                 try {
                     $data = $response->data ?? [];
                     $data[$file['field']] = $name;
+                    unset($data[SubmissionMapper::statusField($file['field'])]);
                     $response->data = self::canonical($form, $data);
                     $response->external_synced_at = now();
                     $response->save();
@@ -470,22 +630,74 @@ class SyncAlRaziWebsiteSubmissions extends Command
                     throw $e;
                 }
 
-                return true;
+                return ['stored', null];
             });
-
-            if ($stored === true) {
-                $this->counts['files_stored']++;
-            } elseif ($stored === null) {
-                $this->skipFile($form, $item, 'its type or size is not one Manara accepts for an attachment');
-            }
         } catch (\Throwable $e) {
-            $this->skipFile($form, $item, 'storing it failed (' . get_class($e) . ')');
-        } finally {
-            @unlink($tmp);
+            return ['failed', get_class($e)];
         }
     }
 
     /**
+     * A document Manara will not accept (type or size). Said for staff on the row,
+     * in `<field>Status`, and in the log only when that sentence changes; the next
+     * run sees the status and does not fetch it again until its path changes.
+     *
+     * @param  array{response_id: int, file: array<string,mixed>}  $item
+     */
+    private function refuseFile(Form $form, array $item, string $status): void
+    {
+        $this->counts['files_refused']++;
+        $field = $item['file']['field'];
+
+        try {
+            $changed = DB::transaction(function () use ($form, $item, $field, $status): bool {
+                $response = FormResponse::query()->whereKey($item['response_id'])->lockForUpdate()->first();
+
+                if ($response === null) {
+                    return false;
+                }
+
+                $data = $response->data ?? [];
+                $statusField = SubmissionMapper::statusField($field);
+
+                if (($data[$statusField] ?? null) === $status) {
+                    return false;
+                }
+
+                $data[$statusField] = $status;
+                $response->data = self::canonical($form, $data);
+                $response->external_synced_at = now();
+                $response->save();
+
+                return true;
+            });
+        } catch (\Throwable $e) {
+            Log::error('alrazi:sync-website: a refused document\'s status could not be saved.', [
+                'form_id' => $form->id,
+                'response_id' => $item['response_id'],
+                'field' => $field,
+                'exception' => get_class($e),
+            ]);
+
+            return;
+        }
+
+        if ($changed) {
+            // `status` is one of this class's own fixed sentences, never the
+            // family's words.
+            Log::warning('alrazi:sync-website: a document was not stored because Manara does not accept its type or size. The row says so, and it is not fetched again until it changes on the website.', [
+                'form_id' => $form->id,
+                'response_id' => $item['response_id'],
+                'field' => $field,
+                'status' => $status,
+            ]);
+        }
+    }
+
+    /**
+     * A document that could not be fetched this time (not signed, not downloaded,
+     * not saved). Retried on the next run, so warned each time: it should not last.
+     *
      * @param  array{response_id: int, file: array<string,mixed>}  $item
      */
     private function skipFile(Form $form, array $item, string $why): void
@@ -499,6 +711,163 @@ class SyncAlRaziWebsiteSubmissions extends Command
             'response_id' => $item['response_id'],
             'field' => $item['file']['field'],
         ]);
+    }
+
+    /**
+     * Unknown field paths, at most once per UNKNOWN_KEY_QUIET_DAYS per (form, path).
+     * Paths only: the site has grown (or renamed) a field this import does not
+     * know, and its values are NOT imported until the mapper and the form learn it.
+     *
+     * @param  list<string>  $paths
+     */
+    private function reportUnknown(string $table, Form $form, array $paths, bool $dryRun): void
+    {
+        if ($paths === []) {
+            return;
+        }
+
+        sort($paths);
+        $this->counts['unknown_keys'] += count($paths);
+
+        // A dry run is someone at a terminal: tell them everything, and do not
+        // spend the scheduled run's one warning.
+        $fresh = $dryRun ? $paths : array_values(array_filter(
+            $paths,
+            fn (string $path) => Cache::add(
+                'alrazi-sync:unknown-key:' . $form->id . ':' . sha1($path),
+                true,
+                now()->addDays(self::UNKNOWN_KEY_QUIET_DAYS)
+            )
+        ));
+
+        if ($fresh === []) {
+            return;
+        }
+
+        Log::warning('alrazi:sync-website: the website sent fields this import does not map; they were not imported.', [
+            'table' => $table,
+            'form_id' => $form->id,
+            'paths' => $fresh,
+        ]);
+    }
+
+    /**
+     * Mark (never delete) each imported row of this form that a complete,
+     * error-free export did not return.
+     *
+     * @param  array<string,true>  $seen
+     */
+    private function markRemoved(string $table, Form $form, array $seen, bool $dryRun): void
+    {
+        $imported = FormResponse::query()
+            ->where('form_id', $form->id)
+            ->whereNotNull('external_ref')
+            ->orderBy('id')
+            ->get(['id', 'external_ref', 'data']);
+
+        if ($seen === []) {
+            if ($imported->isNotEmpty()) {
+                Log::warning('alrazi:sync-website: the export returned no rows at all while Manara holds imported ones. That is far likelier a broken export than an empty school, so nothing was marked removed.', [
+                    'table' => $table,
+                    'form_id' => $form->id,
+                    'held' => $imported->count(),
+                ]);
+                $this->warn("The export returned no {$table} at all; nothing was marked removed.");
+            }
+
+            return;
+        }
+
+        $marked = [];
+
+        foreach ($imported as $row) {
+            if (isset($seen[$row->external_ref]) || self::isMarkedRemoved($row->data)) {
+                continue;
+            }
+
+            if ($dryRun) {
+                $this->counts['rows_to_mark_removed']++;
+
+                continue;
+            }
+
+            try {
+                $done = DB::transaction(function () use ($form, $row): bool {
+                    $locked = FormResponse::query()->whereKey($row->id)->lockForUpdate()->first();
+
+                    if ($locked === null || self::isMarkedRemoved($locked->data)) {
+                        return false;
+                    }
+
+                    $data = $locked->data ?? [];
+                    $data[SubmissionMapper::REMOVED_FIELD] = self::REMOVED_PREFIX . now()->toDateString();
+                    $locked->data = self::canonical($form, $data);
+                    $locked->external_synced_at = now();
+                    $locked->save();
+
+                    return true;
+                });
+            } catch (\Throwable $e) {
+                $this->counts['rows_failed']++;
+                Log::error('alrazi:sync-website: a row the website no longer returns could not be marked.', [
+                    'form_id' => $form->id,
+                    'response_id' => $row->id,
+                    'exception' => get_class($e),
+                ]);
+
+                continue;
+            }
+
+            if ($done) {
+                $marked[] = (int) $row->id;
+            }
+        }
+
+        if ($marked !== []) {
+            $this->counts['rows_marked_removed'] += count($marked);
+
+            Log::warning('alrazi:sync-website: rows the website no longer returns were marked removed, not deleted. `php artisan alrazi:purge-website-removed` deletes them.', [
+                'table' => $table,
+                'form_id' => $form->id,
+                'response_ids' => $marked,
+            ]);
+        }
+    }
+
+    /**
+     * The row's `data` exactly as the database holds it, decoded — not through the
+     * cast, so nothing here depends on how the cast compares.
+     *
+     * @return array<string,mixed>
+     */
+    private static function storedData(FormResponse $response): array
+    {
+        $raw = $response->getRawOriginal('data');
+
+        if (is_string($raw)) {
+            $raw = json_decode($raw, true);
+        }
+
+        return is_array($raw) ? $raw : [];
+    }
+
+    private static function tooLargeStatus(int $maxBytes): string
+    {
+        $mb = 1024 * 1024;
+        $limit = $maxBytes >= $mb && $maxBytes % $mb === 0
+            ? intdiv($maxBytes, $mb) . ' MB'
+            : max(1, intdiv($maxBytes, 1024)) . ' KB';
+
+        return "On the website, not importable here (larger than {$limit})";
+    }
+
+    private static function wrongTypeStatus(?string $mime): string
+    {
+        // Only this class's own labels reach the row: the declared type is the
+        // browser's word.
+        $label = self::TYPE_LABELS[strtolower(trim((string) $mime))] ?? 'unsupported file type';
+
+        return "On the website, not importable here ({$label})";
     }
 
     /**

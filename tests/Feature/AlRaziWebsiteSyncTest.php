@@ -7,6 +7,8 @@ use App\Models\Form;
 use App\Models\FormResponse;
 use App\Models\FormResponseAttachment;
 use App\Models\Masjid;
+use App\Support\AlRaziWebsite\ExportClient;
+use App\Support\AlRaziWebsite\SubmissionMapper;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
@@ -46,7 +48,19 @@ use Tests\TestCase;
  *       written, and a form outside the configured organisation is refused;
  *   (i) a live form is refused;
  *   (j) unknown fields are logged by path, and no log line carries a value;
- *   (k) the unique index refuses a second copy of one website row.
+ *   (k) the unique index refuses a second copy of one website row;
+ *   (l) MySQL's JSON key order: a row read back with its keys reordered is
+ *       unchanged, not rewritten every five minutes;
+ *   (m) the SSN card is refused by label (trimmed, any case, allow-list) and by
+ *       its file name under any label;
+ *   (n) a refused document and an unknown field warn once, not every run;
+ *   (o) removals: a document removed or replaced on the website is removed or
+ *       replaced here, bytes and all; a row the website stops returning is marked,
+ *       never deleted, and only after a complete, non-empty export;
+ *   (p) alrazi:purge-website-removed deletes only marked rows of the two forms of
+ *       the configured organisation;
+ *   (q) an http export URL is not configured, and a download never outlives its
+ *       temporary file.
  *
  * The export is faked at the HTTP layer with the contract's own shapes. Every
  * value below is obviously fake; none is a real person's.
@@ -87,6 +101,9 @@ class AlRaziWebsiteSyncTest extends TestCase
 
     /** Rows per page the fake export answers with. */
     private int $pageSize = 200;
+
+    /** The fake export answers HTTP 500 to the page requested with this cursor. */
+    private ?string $failAfter = null;
 
     protected function setUp(): void
     {
@@ -336,6 +353,10 @@ class AlRaziWebsiteSyncTest extends TestCase
 
                 if ($rows === null) {
                     return Http::response(['error' => 'unknown table'], 400);
+                }
+
+                if ($this->failAfter !== null && ($query['after'] ?? null) === $this->failAfter) {
+                    return Http::response(['error' => 'test failure'], 500);
                 }
 
                 $offset = isset($query['after']) ? (int) substr($query['after'], strlen('cursor-')) : 0;
@@ -883,7 +904,8 @@ class AlRaziWebsiteSyncTest extends TestCase
         $this->assertNotNull($event, 'alrazi:sync-website is not on the schedule');
         $this->assertSame('*/5 * * * *', $event->expression);
         $this->assertTrue($event->withoutOverlapping);
-        $this->assertSame(10, $event->expiresAt);
+        // Longer than a backfill of documents can take, so two runs never overlap.
+        $this->assertSame(30, $event->expiresAt);
     }
 
     #[Test]
@@ -896,5 +918,457 @@ class AlRaziWebsiteSyncTest extends TestCase
         $this->assertSame(0, $this->registrationForm()->response_count);
         $this->assertSame([], $this->signRequests());
         $this->assertCount(0, $this->allFilesOnDisk());
+    }
+
+    // ------------------------------------------------ (l) MySQL JSON key order
+
+    #[Test]
+    public function a_row_read_back_with_its_json_keys_reordered_is_unchanged(): void
+    {
+        $this->assertSame(0, $this->sync());
+
+        $id = $this->registration()->id;
+        $raw = json_decode((string) DB::table('form_responses')->where('id', $id)->value('data'), true, 512, JSON_THROW_ON_ERROR);
+        $reordered = $this->reverseKeys($raw);
+
+        // The premise: the same answers, in another order — at the top level and
+        // inside each emergency contact — which is what MySQL 8 hands back.
+        $this->assertEquals($raw, $reordered);
+        $this->assertNotSame(array_keys($raw), array_keys($reordered));
+        $this->assertNotSame(array_keys($raw['emergencyContacts'][0]), array_keys($reordered['emergencyContacts'][0]));
+
+        DB::table('form_responses')->where('id', $id)->update(['data' => json_encode($reordered, JSON_THROW_ON_ERROR)]);
+        $before = (array) DB::table('form_responses')->where('id', $id)->first(['updated_at', 'external_synced_at']);
+
+        $this->travel(10)->minutes();
+
+        $this->assertSame(0, $this->sync());
+        $this->assertStringContainsString('created=0 updated=0 unchanged=2', Artisan::output());
+        $this->assertSame($before, (array) DB::table('form_responses')->where('id', $id)->first(['updated_at', 'external_synced_at']));
+    }
+
+    // ------------------------------------------ (m) the SSN card, by any name
+
+    #[Test]
+    public function an_ssn_card_is_never_signed_whatever_its_label_or_under_an_allowed_label(): void
+    {
+        $cards = [
+            ['category' => 'SSN_CARD', 'path' => 'incoming/00000000-0000-4000-8000-0000000000a1-ssn_card-test.pdf'],
+            ['category' => ' ssn_card ', 'path' => 'incoming/00000000-0000-4000-8000-0000000000a2-ssn_card-test.pdf'],
+            ['category' => 'social_security_card', 'path' => 'incoming/00000000-0000-4000-8000-0000000000a3-test.pdf'],
+            // An allowed label on a file the site's own upload path named as the card.
+            ['category' => 'custody', 'path' => 'incoming/x-ssn_card-card.jpg'],
+        ];
+
+        $row = $this->registrationRow();
+
+        foreach ($cards as $card) {
+            $row['documents'][] = $card + ['original_filename' => 'test-card.pdf', 'size_bytes' => strlen(self::PDF), 'content_type' => 'application/pdf'];
+            // The export holds each object, and would sign it if asked.
+            $this->objects['application-documents/' . $card['path']] = self::PDF;
+        }
+
+        $this->registrations = [$row];
+
+        $this->assertSame(0, $this->sync());
+
+        $refused = array_column($cards, 'path');
+
+        foreach ($this->signRequests() as $request) {
+            foreach ($request->data()['paths'] ?? [] as $object) {
+                $this->assertNotContains($object['path'], $refused, 'an SSN card was sent to be signed');
+            }
+        }
+
+        foreach ($refused as $path) {
+            Http::assertNotSent(fn (Request $r) => str_contains($r->url(), md5('application-documents/' . $path)));
+        }
+
+        $registration = $this->registration();
+        $this->assertEqualsCanonicalizing(['docBirthCertificate', 'docImmunization'], $registration->attachments()->pluck('field')->all());
+        $this->assertArrayNotHasKey('docCustody', $registration->data);
+        $this->assertArrayNotHasKey('docCustodyRef', $registration->data);
+        $this->assertCount(3, $this->allFilesOnDisk());
+    }
+
+    // ------------------------------------------------ (n) warn once, not always
+
+    #[Test]
+    public function a_refused_document_is_described_on_the_row_and_warned_about_once(): void
+    {
+        Log::spy();
+
+        $row = $this->registrationRow();
+        $row['documents'] = [$this->doc('birth_certificate'), $this->doc('immunization', 'image/heic')];
+        $this->registrations = [$row];
+
+        // A résumé over the ceiling, which the site recorded no size for, so only
+        // the download can tell.
+        config(['forms.attachments.max_size_kb' => 1]);
+        $resumeKey = 'resumes/' . $this->resumePath();
+        $this->objects[$resumeKey] = self::PDF . str_repeat('%', 2048);
+
+        $this->assertSame(0, $this->sync());
+        $this->travel(10)->minutes();
+        $this->assertSame(0, $this->sync());
+        $this->assertStringContainsString('created=0 updated=0 unchanged=2', Artisan::output());
+
+        $this->assertSame('On the website, not importable here (HEIC image)', $this->registration()->data['docImmunizationStatus']);
+        $this->assertSame('On the website, not importable here (larger than 1 KB)', $this->careersResponse()->data['resumeStatus']);
+
+        foreach (['docImmunization', 'resume'] as $field) {
+            Log::shouldHaveReceived('warning')->withArgs(
+                fn ($message, $context = []) => str_contains((string) $message, 'was not stored')
+                    && ($context['field'] ?? null) === $field
+            )->once();
+        }
+
+        // Not downloaded again either: the row already says why.
+        $downloads = collect(Http::recorded())->filter(fn (array $pair) => str_contains($pair[0]->url(), md5($resumeKey)))->count();
+        $this->assertSame(1, $downloads);
+
+        // The family replaces the photo with a PDF: fetched, and the status goes.
+        $pdf = $this->doc('immunization');
+        $pdf['path'] = $this->docPath('immunization', '0002');
+        $this->objects['application-documents/' . $pdf['path']] = self::PDF;
+        $row['documents'] = [$this->doc('birth_certificate'), $pdf];
+        $this->registrations = [$row];
+
+        $this->assertSame(0, $this->sync());
+
+        $registration = $this->registration();
+        $this->assertArrayNotHasKey('docImmunizationStatus', $registration->data);
+        $this->assertSame('immunization-test.pdf', $registration->data['docImmunization']);
+    }
+
+    #[Test]
+    public function an_unknown_field_is_warned_about_once_not_every_run(): void
+    {
+        Log::spy();
+
+        $row = $this->registrationRow();
+        $row['data']['student']['shoe_size'] = 'TEST-SECRET-VALUE-1';
+        $this->registrations = [$row];
+
+        $this->assertSame(0, $this->sync());
+        $this->travel(10)->minutes();
+        $this->assertSame(0, $this->sync());
+
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn ($message, $context = []) => str_contains((string) $message, 'does not map')
+                && ($context['paths'] ?? null) === ['data.student.shoe_size']
+        )->once();
+    }
+
+    // --------------------------------------------------------- (o) removals
+
+    #[Test]
+    public function a_document_removed_on_the_website_is_deleted_here_bytes_and_all(): void
+    {
+        $this->assertSame(0, $this->sync());
+
+        $gone = $this->registration()->attachments()->where('field', 'docImmunization')->sole();
+        $disk = Storage::disk($gone->disk);
+        $this->assertTrue($disk->exists($gone->path));
+
+        Log::spy();
+        $this->registrations = [$this->registrationRow(['documents' => [$this->doc('birth_certificate')]])];
+
+        $this->assertSame(0, $this->sync());
+
+        $registration = $this->registration();
+        $this->assertFalse($disk->exists($gone->path), 'the bytes left the private disk');
+        $this->assertSame(['docBirthCertificate'], $registration->attachments()->pluck('field')->all());
+        $this->assertSame(0, FormResponseAttachment::query()->where('field', 'docImmunization')->count());
+        $this->assertArrayNotHasKey('docImmunization', $registration->data);
+        $this->assertArrayNotHasKey('docImmunizationRef', $registration->data);
+        $this->assertCount(2, $this->allFilesOnDisk());
+
+        // Named by the question only.
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn ($message, $context = []) => str_contains((string) $message, 'no longer on the website')
+                && $context == ['form_id' => $this->registrationForm()->id, 'response_id' => $registration->id, 'field' => 'docImmunization']
+        )->once();
+    }
+
+    #[Test]
+    public function a_document_replaced_on_the_website_is_replaced_here(): void
+    {
+        $this->assertSame(0, $this->sync());
+
+        $old = $this->registration()->attachments()->where('field', 'docImmunization')->sole();
+        $disk = Storage::disk($old->disk);
+
+        $replacement = $this->doc('immunization');
+        $replacement['path'] = $this->docPath('immunization', '0002');
+        $replacement['original_filename'] = 'immunization-new-test.pdf';
+        $newBytes = self::PDF . "%test replacement\n";
+        $this->objects['application-documents/' . $replacement['path']] = $newBytes;
+        $this->registrations = [$this->registrationRow(['documents' => [$this->doc('birth_certificate'), $replacement]])];
+
+        $this->assertSame(0, $this->sync());
+
+        $registration = $this->registration();
+        $new = $registration->attachments()->where('field', 'docImmunization')->sole();
+
+        $this->assertNotSame($old->path, $new->path);
+        $this->assertFalse($disk->exists($old->path), 'the old copy left the disk');
+        $this->assertSame($newBytes, $disk->get($new->path));
+        $this->assertSame('immunization-new-test.pdf', $registration->data['docImmunization']);
+        $this->assertSame(hash('sha256', $replacement['path']), $registration->data['docImmunizationRef']);
+        $this->assertCount(3, $this->allFilesOnDisk());
+
+        // And that settles it: the next run fetches nothing.
+        $signs = count($this->signRequests());
+        $this->assertSame(0, $this->sync());
+        $this->assertSame($signs, count($this->signRequests()));
+    }
+
+    #[Test]
+    public function a_row_the_website_stops_returning_is_marked_not_deleted_and_unmarked_when_it_returns(): void
+    {
+        $second = $this->registrationRow([
+            'id' => '00000000-0000-4000-8000-000000000002',
+            'created_at' => '2026-09-01T11:00:00+00:00',
+            'documents' => [],
+        ]);
+        $this->registrations = [$this->registrationRow(), $second];
+        $this->assertSame(0, $this->sync());
+
+        $this->registrations = [$this->registrationRow()];
+        $this->travel(1)->days();
+        $this->assertSame(0, $this->sync());
+
+        $gone = $this->byRef($second['id']);
+        $this->assertSame('Removed from the website on ' . now()->toDateString(), $gone->data['websiteRemoved']);
+        $this->assertSame(2, FormResponse::query()->where('form_id', $this->registrationForm()->id)->count(), 'marked, never deleted');
+        $this->assertSame(2, $this->registrationForm()->response_count);
+        $this->assertArrayNotHasKey('websiteRemoved', $this->byRef(self::REG_ID)->data);
+        $this->assertSame(2, $this->byRef(self::REG_ID)->attachments()->count());
+
+        $this->registrations = [$this->registrationRow(), $second];
+        $this->assertSame(0, $this->sync());
+
+        $this->assertArrayNotHasKey('websiteRemoved', $this->byRef($second['id'])->data);
+    }
+
+    #[Test]
+    public function an_incomplete_export_marks_nothing(): void
+    {
+        $this->pageSize = 1;
+        $rows = [
+            $this->registrationRow(['documents' => []]),
+            $this->registrationRow(['id' => '00000000-0000-4000-8000-000000000002', 'created_at' => '2026-09-01T11:00:00+00:00', 'documents' => []]),
+            $this->registrationRow(['id' => '00000000-0000-4000-8000-000000000003', 'created_at' => '2026-09-01T12:00:00+00:00', 'documents' => []]),
+        ];
+        $this->registrations = $rows;
+        $this->assertSame(0, $this->sync());
+
+        // The second row is gone from the site, and the export fails on its
+        // second page — so it never said anything about the third either.
+        $this->registrations = [$rows[0], $rows[2]];
+        $this->failAfter = 'cursor-1';
+        $this->assertSame(1, $this->sync());
+        $this->assertSame(0, $this->markedCount());
+
+        // A row with no usable id makes the answer incomplete too.
+        $this->failAfter = null;
+        $this->registrations = [$rows[0], $rows[2], $this->registrationRow(['id' => null, 'documents' => []])];
+        $this->assertSame(1, $this->sync());
+        $this->assertSame(0, $this->markedCount());
+
+        // A complete answer: now, and only now, the missing row is marked.
+        $this->registrations = [$rows[0], $rows[2]];
+        $this->assertSame(0, $this->sync());
+        $this->assertSame(1, $this->markedCount());
+        $this->assertTrue(SyncAlRaziWebsiteSubmissions::isMarkedRemoved($this->byRef($rows[1]['id'])->data));
+    }
+
+    #[Test]
+    public function an_empty_export_marks_nothing_and_says_so(): void
+    {
+        $this->assertSame(0, $this->sync());
+
+        Log::spy();
+        $this->registrations = [];
+        $this->assertSame(0, $this->sync());
+
+        $this->assertSame(0, $this->markedCount());
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn ($message, $context = []) => str_contains((string) $message, 'no rows at all')
+                && ($context['table'] ?? null) === 'registrations'
+        )->once();
+
+        // Any non-empty complete answer is believed.
+        $this->registrations = [$this->registrationRow(['id' => '00000000-0000-4000-8000-000000000002', 'documents' => []])];
+        $this->assertSame(0, $this->sync());
+        $this->assertTrue(SyncAlRaziWebsiteSubmissions::isMarkedRemoved($this->byRef(self::REG_ID)->data));
+    }
+
+    // ------------------------------------------------------------ (p) purge
+
+    #[Test]
+    public function the_purge_deletes_only_marked_rows_of_the_two_forms_of_the_configured_organisation(): void
+    {
+        $removedDoc = $this->doc('birth_certificate');
+        $removedDoc['path'] = $this->docPath('birth_certificate', '0002');
+        $this->objects['application-documents/' . $removedDoc['path']] = self::PDF;
+        $second = $this->registrationRow([
+            'id' => '00000000-0000-4000-8000-000000000002',
+            'created_at' => '2026-09-01T11:00:00+00:00',
+            'documents' => [$removedDoc],
+        ]);
+
+        $this->registrations = [$this->registrationRow(), $second];
+        $this->assertSame(0, $this->sync());
+        $this->registrations = [$this->registrationRow()];
+        $this->assertSame(0, $this->sync());
+
+        $marked = $this->byRef($second['id']);
+        $this->assertTrue(SyncAlRaziWebsiteSubmissions::isMarkedRemoved($marked->data));
+        $markedFile = $marked->attachments()->sole();
+
+        // Decoys that carry the very same marker, and must survive.
+        $marker = [SubmissionMapper::REMOVED_FIELD => SyncAlRaziWebsiteSubmissions::REMOVED_PREFIX . '2026-09-01'];
+        $this->importForms($this->other);
+        $theirs = $this->makeResponse($this->form(SyncAlRaziWebsiteSubmissions::REGISTRATION_SLUG, $this->other), 'test-decoy-other-org', $marker);
+        $unrelatedForm = Form::create([
+            'masjid_id' => $this->school->id,
+            'slug' => 'test-unrelated-' . uniqid(),
+            'name' => 'Test Unrelated Form',
+            'is_active' => false,
+            'schema' => ['sections' => [['id' => 'a', 'title' => 'A', 'fields' => [['name' => 'fullName', 'label' => 'Full name', 'type' => 'text']]]]],
+        ]);
+        $unrelated = $this->makeResponse($unrelatedForm, 'test-decoy-unrelated-form', $marker);
+        $notImported = $this->makeResponse($this->registrationForm(), null, $marker);
+
+        $disk = Storage::disk($markedFile->disk);
+        $survivors = [$this->byRef(self::REG_ID)->id, $this->careersResponse()->id, $theirs->id, $unrelated->id, $notImported->id];
+
+        // A dry run counts and deletes nothing.
+        $this->assertSame(0, Artisan::call('alrazi:purge-website-removed', ['--dry-run' => true]));
+        $this->assertStringContainsString('rows=1 documents=1', Artisan::output());
+        $this->assertNotNull(FormResponse::query()->find($marked->id));
+        $this->assertTrue($disk->exists($markedFile->path));
+
+        $this->assertSame(0, Artisan::call('alrazi:purge-website-removed'));
+        $this->assertStringContainsString('rows=1 documents=1 failed=0', Artisan::output());
+
+        $this->assertNull(FormResponse::query()->find($marked->id));
+        $this->assertFalse($disk->exists($markedFile->path), 'the document left the private disk with its row');
+        $this->assertSame(0, FormResponseAttachment::query()->where('form_response_id', $marked->id)->count());
+
+        foreach ($survivors as $id) {
+            $this->assertNotNull(FormResponse::query()->find($id), "response {$id} must not be purged");
+        }
+        $this->assertSame(2, $this->byRef(self::REG_ID)->attachments()->count());
+    }
+
+    // --------------------------------------------- (q) transport and temp files
+
+    #[Test]
+    public function an_http_export_url_is_not_configured_and_is_warned_about_once(): void
+    {
+        Log::spy();
+        config(['services.alrazi_export.url' => 'http://test-project.supabase.co/functions/v1/export-submissions']);
+
+        $this->assertSame(0, $this->sync());
+        $this->assertSame(0, $this->sync());
+
+        Http::assertNothingSent();
+        $this->assertSame(0, FormResponse::query()->count());
+        Log::shouldHaveReceived('warning')->withArgs(fn ($message) => str_contains((string) $message, 'not https'))->once();
+    }
+
+    #[Test]
+    public function a_download_is_sized_before_it_is_read_and_its_temporary_file_never_outlives_the_call(): void
+    {
+        $client = ExportClient::fromConfig();
+        $key = 'resumes/' . $this->resumePath();
+        $this->signed['test-token'] = $key;
+        $url = self::ORIGIN . '/storage/v1/object/sign/test-token?token=test-token';
+        $tempBefore = $this->alraziTempFiles();
+        $seen = null;
+
+        [$state, $result] = $client->download($url, 1024 * 1024, function (string $path, int $bytes) use (&$seen) {
+            $seen = $path;
+            $this->assertSame(strlen(self::PDF), $bytes);
+            $this->assertSame(self::PDF, file_get_contents($path));
+
+            return 'used';
+        });
+        $this->assertSame([ExportClient::DOWNLOAD_OK, 'used'], [$state, $result]);
+        $this->assertFileDoesNotExist($seen);
+
+        // Larger than the ceiling: never handed on to be read or sniffed.
+        [$state] = $client->download($url, 16, fn () => $this->fail('an oversized download must never be read'));
+        $this->assertSame(ExportClient::DOWNLOAD_TOO_LARGE, $state);
+
+        // The caller throws: the exception reaches it, and the file still goes.
+        $thrown = null;
+        try {
+            $client->download($url, 1024 * 1024, function (string $path) use (&$seen) {
+                $seen = $path;
+                throw new \DomainException('test failure');
+            });
+        } catch (\DomainException $e) {
+            $thrown = $e->getMessage();
+        }
+        $this->assertSame('test failure', $thrown);
+        $this->assertFileDoesNotExist($seen);
+
+        // Another origin: nothing is fetched at all.
+        [$state] = $client->download('https://elsewhere.invalid/object', 1024 * 1024, fn () => $this->fail('never fetched'));
+        $this->assertSame(ExportClient::DOWNLOAD_UNAVAILABLE, $state);
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'elsewhere.invalid'));
+
+        $this->assertSame($tempBefore, $this->alraziTempFiles());
+    }
+
+    // ------------------------------------------------------------ helpers
+
+    private function reverseKeys(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $out = array_map(fn (mixed $inner) => $this->reverseKeys($inner), $value);
+
+        return array_is_list($out) ? $out : array_reverse($out, true);
+    }
+
+    private function byRef(string $ref): FormResponse
+    {
+        return FormResponse::query()->where('external_ref', $ref)->sole();
+    }
+
+    private function markedCount(): int
+    {
+        return FormResponse::query()->get()->filter(fn (FormResponse $r) => SyncAlRaziWebsiteSubmissions::isMarkedRemoved($r->data))->count();
+    }
+
+    /** @param  array<string,mixed>  $data */
+    private function makeResponse(Form $form, ?string $ref, array $data): FormResponse
+    {
+        $row = new FormResponse([
+            'form_id' => $form->id,
+            'masjid_id' => $form->masjid_id,
+            'data' => $data,
+            'submitted_at' => now(),
+        ]);
+        $row->external_ref = $ref;
+        $row->save();
+
+        return $row;
+    }
+
+    /** @return list<string> */
+    private function alraziTempFiles(): array
+    {
+        $files = glob(sys_get_temp_dir() . '/alrazi-*') ?: [];
+        sort($files);
+
+        return $files;
     }
 }

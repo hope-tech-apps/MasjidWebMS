@@ -94,10 +94,11 @@ Schedule::command('registrations:reap-expired')->everyFifteenMinutes()->withoutO
 // The Al-Razi school website's registrations and job applications, copied into
 // two switched-off forms so the school works from one list. A no-op (no request
 // at all) wherever ALRAZI_EXPORT_URL / _TOKEN are blank, which is every box but
-// production. withoutOverlapping(10): a run that downloads a backlog of documents
-// can outlast five minutes, and two runs would fetch the same file twice; the
-// ten-minute lock expiry means a killed run cannot wedge the schedule for a day.
-Schedule::command('alrazi:sync-website')->everyFiveMinutes()->withoutOverlapping(10);
+// production. withoutOverlapping(30): a run that downloads a backlog of documents
+// (the first backfill: every family's files, 30 s timeout each) can outlast five
+// and even ten minutes, and two runs would fetch the same file twice; the
+// half-hour lock expiry still means a killed run cannot wedge the schedule.
+Schedule::command('alrazi:sync-website')->everyFiveMinutes()->withoutOverlapping(30);
 
 // Spent and expired family sign-in codes. Scheduled for exactly the reason the
 // two sweeps above are: a retention policy that nothing executes is not a
@@ -160,7 +161,7 @@ Schedule::command('studio:purge-drafts')->dailyAt('03:53')->withoutOverlapping()
 // call: the bare form holds its lock for 24 hours, so one killed run would stop
 // every attach for a day. Ten minutes outlasts a run (each Cloudflare call has a
 // 15 s timeout) and expires two ticks later.
-Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(10);
+Schedule::command('domains:reconcile')->cron('3-59/5 * * * *')->withoutOverlapping(30);
 
 /*
 |--------------------------------------------------------------------------
