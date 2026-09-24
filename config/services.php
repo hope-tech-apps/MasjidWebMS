@@ -317,18 +317,21 @@ return [
         'secret' => env('RENDERER_SHARED_SECRET'),
 
         // The origin the preview iframe loads (a host that serves no tenant):
-        // production https://manara-renderer.pages.dev.
+        // production https://preview.manara.hopetechapps.com (owner decision
+        // 2026-09-24; `preview` is a reserved Studio label so no org can hold it).
         'preview_origin' => env('RENDERER_PREVIEW_ORIGIN'),
 
-        // Comma list of renderer deployments whose page cache a save purges.
+        // Comma list of renderer deployments whose page cache a save purges:
+        // production https://manara-renderer.pages.dev, kept off the custom host
+        // so the hopetechapps.com zone's WAF/bot rules never challenge it.
         'purge_origins' => env('RENDERER_PURGE_ORIGINS'),
 
         // Comma list of admin SPA origins a preview token may name. Blank =
         // this deployment's own APP_URL origin only.
         'admin_origins' => env('RENDERER_PREVIEW_ADMIN_ORIGINS'),
 
-        // Seconds per purge call. The call runs after the response is sent, so
-        // this bounds how long a PHP worker is held, never how long an admin waits.
+        // Seconds per purge HTTP call. Purges run in queued jobs, so this bounds
+        // how long one job holds the queue worker, never how long an admin waits.
         'timeout' => (int) env('RENDERER_TIMEOUT', 5),
     ],
 
