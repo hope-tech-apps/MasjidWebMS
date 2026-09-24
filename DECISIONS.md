@@ -2046,3 +2046,41 @@ Alternatives: a second admin controller per feature — rejected, two
 implementations of one read drift; admin writes — rejected, a lesson plan
 carries `author_user_id` and a file set to `families` mails every guardian in
 the class.
+
+## 2026-09-24 — Feature keys are matched by their normalised form, never raw
+Decision: anything that matches a configured feature key (config/verticals.php
+bundles, a posted `feature_keys`) against `mobile_app_features.key` compares
+`MobileAppFeature::normaliseKey()` (lower-case ASCII letters and digits only), and
+a posted key is rewritten to the catalogue's own spelling before `exists`
+validation. The SPA wizard mirrors it in `core/helpers/featureKey.ts`.
+Alternatives: rename production's `qur’an` (U+2019) key to `quran` (a production
+data change; the Play build routes features by NAME and other readers were not
+audited); or match by id (Studio's approach, but the wizard and config speak keys).
+Rationale: production's Qur'an key is curly-quoted because the 2025-12-09 backfill
+missed that one row, so exact matching provisioned every new masjid with Qur'an
+off while every test (seeded with `quran`) passed. The mobile endpoint already
+normalised this way; one shared normaliser makes every path agree. No data fix:
+a read-only check found no masjid-vertical org unambiguously affected (MEC's row
+was changed on 2026-08-07, after creation).
+
+## 2026-09-24 — /api/v1/settings keeps serving `google_maps_key`
+Decision: keep it, documented and pinned (`WebsiteSettingsMapsKeyTest`), rather than
+remove it as the Studio W1 plan's §7 first suggested.
+Alternatives: drop it from the public payload like the mobile directory does.
+Rationale: the renderer loads Burlington's styled Maps JavaScript API map with it,
+so the key reaches every visitor's browser regardless; removing it would switch a
+live tenant to the keyless embed and hide nothing. Protection is the key's Google
+Cloud restriction (HTTP referrers + Maps JavaScript API), an owner check outside
+this repo. Only org 1 sets a key on production.
+
+## 2026-09-24 — Studio W1 S1: calls made where the plan was silent
+Decision: `CapabilityCatalogue::visibility(key, def, orgType)` returns one of
+HIDDEN / NOT_OFFERED / DEFAULT / OPTIONAL, and hidden entries are never served;
+`resolve()` accepts only real PHP booleans (string coercion stays with the request,
+per shipping.md, in S8); the real platforms for `studio_preselect_with` are read from
+`ProvisionMasjidRequest`'s `platforms.*` rule (no shared constant exists); Studio
+tests live in `tests/Feature/Studio/`; StudioAccessTest finds every
+`api/admin/studio` route from the router for the 401 checks, and a new route must add
+its SuperAdmin call to `StudioAccessTest::calls()` or the test names it.
+Rationale: each follows the nearest existing pattern (MasjidsController::capabilities
+for entry fields); recorded because the plan left them open.
