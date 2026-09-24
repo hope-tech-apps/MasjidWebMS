@@ -5,6 +5,7 @@ namespace App\Services\Domains;
 use App\Models\MasjidDomain;
 use App\Services\Cloudflare\CloudflareResult;
 use App\Services\Cloudflare\CloudflareService;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -49,13 +50,18 @@ use Illuminate\Support\Facades\Cache;
  *    READS only: if Cloudflare's Pages project already lists the host as
  *    active, the row becomes `active`. Nothing is created, changed or retried
  *    for them, whatever Cloudflare says, and they are never failed.
- *  - `failed` rows are left alone; "Check now" resets one to pending first.
+ *  - `failed` rows are left alone; "Check now" resets one to pending first
+ *    (restart()), which is also the only way forward for a failed row that
+ *    Cloudflare holds records for, since Studio cannot delete that row (R28).
  *
  * ## One writer at a time
  *
- * Each row is advanced under Cache::lock('masjid-domain:<id>', 120), and the row
- * is re-read inside the lock. If the lock is held (the job and the schedule
- * reached the same row), this call does nothing: the holder is doing the work.
+ * Each row is advanced under Cache::lock('masjid-domain:<id>', 120) (lockFor()),
+ * and the row is re-read inside the lock. If the lock is held (the job and the
+ * schedule reached the same row), this call does nothing: the holder is doing
+ * the work. DELETE takes the same lock, because a step keeps what it made in
+ * Cloudflare in memory until its one save at the end: a row deleted mid-step
+ * would leave a CNAME, a Pages domain or a whole zone that nothing records.
  *
  * `serving_confirmed_at` is set by every probe match and never cleared by a
  * later miss in W1 (plan §6).
@@ -79,6 +85,18 @@ class DomainAttacher
     /** How long an imported or manual row waits before its next read-only look. */
     public const READ_ONLY_RECHECK_HOURS = 6;
 
+    /** Per row: the one Pages retry of a provisioning stage has been sent. */
+    private const PAGES_RETRY_KEY = 'masjid-domain:pages-retry:';
+
+    /** Per row: an activation check went in the last ACTIVATION_CHECK_EVERY_HOURS. */
+    private const ACTIVATION_CHECK_KEY = 'masjid-domain:activation-check:';
+
+    /** Per row: when a zone POST went out whose answer never came back. */
+    private const ZONE_CREATE_SENT_KEY = 'masjid-domain:zone-create-sent:';
+
+    /** Allowance between this server's clock and Cloudflare's created_on. */
+    private const CLOCK_ALLOWANCE_MINUTES = 5;
+
     private const PAGES_FAILED = ['error', 'blocked', 'deactivated'];
 
     private const ZONE_WAITING = ['initializing', 'pending'];
@@ -89,13 +107,69 @@ class DomainAttacher
     ) {
     }
 
+    /** The lock every writer of one row's Cloudflare state holds: advance() and DELETE. */
+    public static function lockFor(int $domainId): Lock
+    {
+        return Cache::lock('masjid-domain:' . $domainId, self::LOCK_SECONDS);
+    }
+
+    /**
+     * "Check now" on a failed row: back to pending with its clocks cleared, so
+     * the next advance() starts a fresh stage. The stage markers go with it.
+     * The Pages-retry marker lives four days, longer than the 72-hour stage it
+     * was set in, so one left behind would swallow the new stage's only retry.
+     * The zone-create marker stays: it records a zone Cloudflare may already
+     * hold for this row, which the next look must still count as Studio's.
+     *
+     * Under the row's lock, on the row re-read inside it, like every other
+     * writer: the caller's copy may be one another Check now or a DELETE has
+     * already moved on from.
+     */
+    public function restart(MasjidDomain $domain): void
+    {
+        if (! $domain->exists) {
+            return;
+        }
+
+        $lock = self::lockFor($domain->id);
+
+        if (! $lock->get()) {
+            return;
+        }
+
+        try {
+            try {
+                $domain->refresh();
+            } catch (ModelNotFoundException) {
+                return;
+            }
+
+            if ($domain->status !== MasjidDomain::STATUS_FAILED) {
+                return;
+            }
+
+            $domain->forceFill([
+                'status' => MasjidDomain::STATUS_PENDING,
+                'waiting_on' => null,
+                'last_error' => null,
+                'stage_started_at' => null,
+                'next_check_at' => null,
+            ])->save();
+
+            Cache::forget(self::PAGES_RETRY_KEY . $domain->id);
+            Cache::forget(self::ACTIVATION_CHECK_KEY . $domain->id);
+        } finally {
+            $lock->release();
+        }
+    }
+
     public function advance(MasjidDomain $domain): MasjidDomain
     {
         if (! $domain->exists) {
             return $domain;
         }
 
-        $lock = Cache::lock('masjid-domain:' . $domain->id, self::LOCK_SECONDS);
+        $lock = self::lockFor($domain->id);
 
         if (! $lock->get()) {
             return $domain;
@@ -222,11 +296,21 @@ class DomainAttacher
 
         // createZone() looks first and adds the zone only when the account does
         // not have it, so one call covers "found" (adopted) and "added"
-        // (created); only the second is a zone Studio made.
+        // (created); only the second is a zone Studio made. A POST whose
+        // answer was lost may have made it all the same, so that attempt is
+        // remembered and a zone found on a later tick is judged against it.
+        $attemptedAt = now();
         $zone = $this->cloudflare->createZone($domain->zone_apex);
 
-        if ($zone->is(CloudflareResult::CREATED)) {
+        if ($zone->is(CloudflareResult::CREATED)
+            || ($zone->is(CloudflareResult::ADOPTED) && $this->madeByLostCreate($domain, $zone))) {
             $domain->cf_zone_created = true;
+        }
+
+        if ($zone->is(CloudflareResult::CREATED, CloudflareResult::ADOPTED)) {
+            Cache::forget(self::ZONE_CREATE_SENT_KEY . $domain->id);
+        } elseif ($zone->data['create_sent'] ?? false) {
+            Cache::add(self::ZONE_CREATE_SENT_KEY . $domain->id, $attemptedAt->getTimestamp(), now()->addDays(self::ZONE_PENDING_LIMIT_DAYS));
         }
 
         if ($this->stopped($domain, $zone)) {
@@ -262,7 +346,7 @@ class DomainAttacher
 
         if ($zone->is(CloudflareResult::ABSENT)) {
             $this->fail($domain, "The {$domain->zone_apex} zone is no longer on Cloudflare (a zone left waiting for its nameservers for "
-                . self::ZONE_PENDING_LIMIT_DAYS . ' days is deleted). Add the domain again to start over.');
+                . self::ZONE_PENDING_LIMIT_DAYS . ' days is deleted).');
 
             return;
         }
@@ -291,7 +375,7 @@ class DomainAttacher
 
         if ($since->lte(now()->subDays(self::ZONE_PENDING_LIMIT_DAYS))) {
             $this->fail($domain, "The {$domain->zone_apex} zone was still waiting for its nameservers after "
-                . self::ZONE_PENDING_LIMIT_DAYS . ' days. Cloudflare deletes a zone left pending that long; add the domain again once the registrar has the nameservers.');
+                . self::ZONE_PENDING_LIMIT_DAYS . ' days. Cloudflare deletes a zone left pending that long; start again once the registrar is ready to change the nameservers.');
 
             return;
         }
@@ -299,7 +383,7 @@ class DomainAttacher
         $domain->nameservers = $zone->data['name_servers'] ?: $domain->nameservers;
         $domain->waiting_on = 'nameservers';
 
-        if (Cache::add('masjid-domain:activation-check:' . $domain->id, true, now()->addHours(self::ACTIVATION_CHECK_EVERY_HOURS))) {
+        if (Cache::add(self::ACTIVATION_CHECK_KEY . $domain->id, true, now()->addHours(self::ACTIVATION_CHECK_EVERY_HOURS))) {
             $check = $this->cloudflare->requestActivationCheck((string) $domain->cf_zone_id);
 
             if ($check->is(CloudflareResult::UNAUTHORIZED)) {
@@ -317,7 +401,7 @@ class DomainAttacher
 
         if ($pages->is(CloudflareResult::ABSENT)) {
             $this->fail($domain, "{$domain->host} is no longer a custom domain on the " . config('cloudflare.pages_project')
-                . ' Pages project. Add the domain again to start over.');
+                . ' Pages project.');
 
             return;
         }
@@ -359,13 +443,13 @@ class DomainAttacher
 
         if ($since->lte(now()->subHours(self::CERTIFICATE_LIMIT_HOURS))) {
             $this->fail($domain, "Cloudflare had not issued a certificate for {$domain->host} "
-                . self::CERTIFICATE_LIMIT_HOURS . " hours after it was added (Pages status \"{$status}\"). Check its DNS and CAA records, then add the domain again.");
+                . self::CERTIFICATE_LIMIT_HOURS . " hours after it was added (Pages status \"{$status}\"). Check its DNS and CAA records.");
 
             return;
         }
 
         if ($since->lte(now()->subHours(self::CERTIFICATE_RETRY_AFTER_HOURS))
-            && Cache::add('masjid-domain:pages-retry:' . $domain->id, true, now()->addDays(4))) {
+            && Cache::add(self::PAGES_RETRY_KEY . $domain->id, true, now()->addDays(4))) {
             $this->cloudflare->retryPagesDomain($domain->host);
         }
 
@@ -377,9 +461,13 @@ class DomainAttacher
     }
 
     /**
-     * The DNS step, then the Pages step. The zone id is recorded only once the
-     * CNAME is Studio's or adopted, so a row that fails on a record it may not
-     * touch keeps no Cloudflare id and can still be removed through Studio.
+     * The DNS step, then the Pages step. The zone id is recorded here only once
+     * the CNAME is Studio's or adopted, so a managed host, or one whose zone was
+     * already active, that fails on a record it may not touch keeps no
+     * Cloudflare id and can still be removed through Studio. A custom host that
+     * waited for its nameservers already carries its zone id (and perhaps
+     * cf_zone_created), so it cannot: the failure text names the cause only,
+     * and MasjidDomain::manualSteps() says which way forward the row has.
      */
     private function attach(MasjidDomain $domain, string $zoneId): void
     {
@@ -387,7 +475,7 @@ class DomainAttacher
 
         if ($cname->is(CloudflareResult::CONFLICT)) {
             $this->fail($domain, "{$domain->host} already has a DNS record ({$cname->data['type']} {$cname->data['content']}). "
-                . 'Studio will not overwrite a DNS record it did not create: change or remove it in Cloudflare, then add the domain again.');
+                . 'Studio will not overwrite a DNS record it did not create: change or remove it in Cloudflare.');
 
             return;
         }
@@ -477,6 +565,37 @@ class DomainAttacher
             $domain->last_error = null;
         } elseif ($domain->serving_confirmed_at === null) {
             $domain->last_error = 'Not serving this organisation yet: ' . $result['seen'];
+        }
+    }
+
+    /**
+     * Whether a zone found now is the one Studio's own earlier POST made, when
+     * that POST's answer was lost (a timeout, or a 5xx after Cloudflare had
+     * acted). The read before that POST found no zone, so a zone made no
+     * earlier than the attempt is Studio's; one made before it is not. A zone
+     * without created_on is counted as Studio's, since the absent read and the
+     * POST are the evidence. With the cache cleared the zone reads as found,
+     * which is the state before this marker existed.
+     */
+    private function madeByLostCreate(MasjidDomain $domain, CloudflareResult $zone): bool
+    {
+        $sentAt = Cache::get(self::ZONE_CREATE_SENT_KEY . $domain->id);
+
+        if ($sentAt === null) {
+            return false;
+        }
+
+        $createdOn = $zone->data['created_on'] ?? null;
+
+        if (blank($createdOn)) {
+            return true;
+        }
+
+        try {
+            return Carbon::parse($createdOn)
+                ->gte(Carbon::createFromTimestamp((int) $sentAt)->subMinutes(self::CLOCK_ALLOWANCE_MINUTES));
+        } catch (\Throwable) {
+            return true;
         }
     }
 

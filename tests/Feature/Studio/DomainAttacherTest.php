@@ -5,6 +5,7 @@ namespace Tests\Feature\Studio;
 use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Services\Domains\DomainAttacher;
+use GuzzleHttp\Exception\ConnectException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
@@ -141,7 +142,14 @@ class DomainAttacherTest extends TestCase
         $this->assertSame(1, count(array_filter($this->cloudflareVerbs(), fn ($verb) => $verb === 'PATCH')));
         $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $domain->fresh()->status);
 
-        $this->travel(47)->hours();
+        // A minute short of 72 hours the row is still waiting: a certificate
+        // that is merely slow is not failed early.
+        $this->travel(45 * 60 + 59)->minutes();
+        $this->attacher()->advance($domain);
+        $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $domain->fresh()->status, 'failed before 72 hours');
+        $this->assertStringNotContainsString('72 hours', (string) $domain->fresh()->last_error);
+
+        $this->travel(2)->minutes();
         $this->attacher()->advance($domain);
         $domain->refresh();
 
@@ -325,7 +333,14 @@ class DomainAttacherTest extends TestCase
         $this->attacher()->advance($domain);
         $this->assertSame(1, count(array_filter($this->cloudflareVerbs(), fn ($verb) => $verb === 'PUT')), 'the activation check went more than once in six hours');
 
-        $this->travel(28)->days();
+        // An hour short of 28 days the zone is still waited for: a registrar
+        // that takes days to switch nameservers is not failed early.
+        $this->travel(27 * 24 * 60 + 23 * 60 - 30)->minutes();
+        $this->attacher()->advance($domain);
+        $this->assertSame(MasjidDomain::STATUS_AWAITING_NAMESERVERS, $domain->fresh()->status, 'failed before 28 days');
+        $this->assertSame('nameservers', $domain->fresh()->waiting_on);
+
+        $this->travel(2)->hours();
         $this->attacher()->advance($domain);
         $domain->refresh();
 
@@ -386,6 +401,198 @@ class DomainAttacherTest extends TestCase
         $this->assertSame(MasjidDomain::STATUS_MANUAL, $broken->status, 'an imported row is never failed by what Cloudflare says');
         $this->assertNull($broken->last_error);
 
+        $this->assertSame(['GET', 'GET'], $this->cloudflareVerbs());
+        $this->assertSame([], array_values(array_filter($this->sent(), fn ($line) => ! str_starts_with($line, 'GET '))));
+    }
+
+    #[Test]
+    public function a_custom_host_that_waited_for_its_nameservers_and_meets_a_dns_conflict_is_sent_to_check_now(): void
+    {
+        $this->withStudioToken();
+        $domain = $this->makeDomain($this->makeOrg(), 'www.new-masjid.org', MasjidDomain::STATUS_AWAITING_NAMESERVERS, [
+            'zone_apex' => 'new-masjid.org', 'cf_zone_id' => 'zone-new', 'cf_zone_created' => true,
+            'waiting_on' => 'nameservers', 'stage_started_at' => now()->subDay(),
+        ]);
+        $this->fakeCloudflare([
+            'GET /zones/zone-new' => $this->cfOk($this->zoneBody('new-masjid.org', 'active', 'zone-new')),
+            'GET /zones/zone-new/dns_records?*' => $this->cfOk([$this->dnsRecord('www.new-masjid.org', 'A', '192.0.2.10')]),
+        ]);
+
+        $this->attacher()->advance($domain);
+        $domain->refresh();
+
+        // The zone it waited for is still recorded, so Studio cannot delete
+        // the row and cannot take the host again: remove-and-add is no way out.
+        $this->assertSame(MasjidDomain::STATUS_FAILED, $domain->status);
+        $this->assertSame('zone-new', $domain->cf_zone_id);
+        $this->assertFalse($domain->deletableThroughStudio());
+        $this->assertStringContainsString('already has a DNS record (A 192.0.2.10)', (string) $domain->last_error);
+        $this->assertStringNotContainsString('add the domain again', (string) $domain->last_error);
+
+        $steps = $domain->manualSteps();
+        $this->assertStringContainsString('press Check now', $steps[1]);
+        $this->assertStringNotContainsString('add it again', implode(' ', $steps));
+        $this->assertSame(['GET', 'GET'], $this->cloudflareVerbs());
+    }
+
+    #[Test]
+    public function a_zone_whose_create_answer_was_lost_is_still_recorded_as_one_studio_added(): void
+    {
+        $this->withStudioToken();
+        $domain = $this->makeDomain($this->makeOrg(), 'www.new-masjid.org', MasjidDomain::STATUS_PENDING, ['zone_apex' => 'new-masjid.org']);
+        $made = array_replace($this->zoneBody('new-masjid.org', 'pending', 'zone-new'), ['created_on' => now()->utc()->format('Y-m-d\TH:i:s\Z')]);
+        $this->fakeCloudflare([
+            'GET /zones?*' => Http::sequence()->pushResponse($this->cfOk([]))->pushResponse($this->cfOk([$made])),
+            // Cloudflare makes the zone, and the answer never arrives.
+            'POST /zones' => fn (Request $r) => throw new ConnectException('cURL error 28: Operation timed out', $r->toPsrRequest()),
+        ]);
+
+        $this->attacher()->advance($domain);
+        $domain->refresh();
+        $this->assertSame(MasjidDomain::STATUS_PENDING, $domain->status);
+        $this->assertStringContainsString('did not answer', (string) $domain->last_error);
+
+        $this->travel(5)->minutes();
+        $this->attacher()->advance($domain);
+        $domain->refresh();
+
+        $this->assertSame(MasjidDomain::STATUS_AWAITING_NAMESERVERS, $domain->status);
+        $this->assertSame('zone-new', $domain->cf_zone_id);
+        $this->assertTrue($domain->cf_zone_created, 'the zone Studio added was recorded as one it only found');
+        $this->assertStringContainsString('Studio added the new-masjid.org zone', implode(' ', $domain->removalSteps()));
+        $this->assertSame(['GET', 'POST', 'GET'], $this->cloudflareVerbs());
+    }
+
+    #[Test]
+    public function a_zone_found_after_a_lost_create_but_made_long_before_it_is_not_claimed(): void
+    {
+        $this->withStudioToken();
+        $domain = $this->makeDomain($this->makeOrg(), 'www.new-masjid.org', MasjidDomain::STATUS_PENDING, ['zone_apex' => 'new-masjid.org']);
+        $older = array_replace($this->zoneBody('new-masjid.org', 'pending', 'zone-old'), ['created_on' => now()->subDays(3)->utc()->format('Y-m-d\TH:i:s\Z')]);
+        $this->fakeCloudflare([
+            'GET /zones?*' => Http::sequence()->pushResponse($this->cfOk([]))->pushResponse($this->cfOk([$older])),
+            'POST /zones' => $this->cfError(503, 10000, 'Service unavailable'),
+        ]);
+
+        $this->attacher()->advance($domain);
+        $this->travel(5)->minutes();
+        $this->attacher()->advance($domain);
+        $domain->refresh();
+
+        $this->assertSame('zone-old', $domain->cf_zone_id);
+        $this->assertFalse($domain->cf_zone_created);
+    }
+
+    #[Test]
+    public function without_a_token_an_apex_is_told_to_move_its_nameservers_not_to_add_an_alias(): void
+    {
+        config(['cloudflare.studio_token' => null]);
+        $org = $this->makeOrg();
+        $apex = $this->makeDomain($org, 'new-masjid.org', MasjidDomain::STATUS_PENDING, ['zone_apex' => 'new-masjid.org', 'waiting_on' => 'token']);
+
+        $steps = implode(' ', $apex->manualSteps());
+
+        // Pages serves an apex only from a zone on the account (see manualSteps()).
+        $this->assertStringNotContainsString('ALIAS', $steps);
+        $this->assertStringContainsString('add new-masjid.org as a domain', $steps);
+        $this->assertStringContainsString('replace the nameservers', $steps);
+        $this->assertStringContainsString('email (MX)', $steps);
+        $this->assertStringContainsString('28 days', $steps);
+        $this->assertStringContainsString('Custom domains, and add new-masjid.org', $steps);
+        $this->assertStringContainsString('Press Check now', $steps);
+
+        // A subdomain keeps its CNAME at whatever DNS provider it has.
+        $www = $this->makeDomain($org, 'www.other-masjid.org', MasjidDomain::STATUS_PENDING, ['waiting_on' => 'token']);
+        $this->assertStringContainsString('add a CNAME record for www.other-masjid.org pointing to manara-renderer.pages.dev', $www->manualSteps()[0]);
+    }
+
+    #[Test]
+    public function a_row_changed_after_the_caller_loaded_it_is_judged_by_what_is_stored_now(): void
+    {
+        $this->withStudioToken();
+        $stale = $this->managed($this->makeOrg());
+
+        // The job failed the row while domains:reconcile still held its pending copy.
+        MasjidDomain::query()->whereKey($stale->id)->update(['status' => MasjidDomain::STATUS_FAILED, 'last_error' => 'The job failed it first.']);
+        $before = MasjidDomain::findOrFail($stale->id)->getAttributes();
+        $this->assertSame(MasjidDomain::STATUS_PENDING, $stale->status, 'the premise: the caller holds a stale copy');
+
+        $this->fakeCloudflare([
+            'GET /zones/*/dns_records?*' => $this->cfOk([]),
+            'POST /zones/*/dns_records' => $this->cfOk($this->dnsRecord(self::MANAGED, 'CNAME', 'manara-renderer.pages.dev', 'rec-new')),
+            self::PAGES . self::MANAGED => $this->cfError(404, 8000007, 'Domain not found.'),
+            'GET /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk([], ['total_count' => 5]),
+            'POST /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk($this->pagesDomainBody(self::MANAGED, 'initializing')),
+        ]);
+
+        $this->attacher()->advance($stale);
+
+        $this->assertSame($before, MasjidDomain::findOrFail($stale->id)->getAttributes());
+        $this->assertSame([], $this->sent());
+    }
+
+    #[Test]
+    public function check_now_restarts_only_a_row_that_is_still_failed_and_not_held(): void
+    {
+        $this->withStudioToken();
+        $this->fakeCloudflare([]);
+        $org = $this->makeOrg();
+
+        // Another Check now already moved the row on; this caller holds the failed copy.
+        $stale = $this->managed($org, MasjidDomain::STATUS_FAILED, ['last_error' => 'The first attempt failed.']);
+        MasjidDomain::query()->whereKey($stale->id)->update([
+            'status' => MasjidDomain::STATUS_PROVISIONING, 'last_error' => null, 'cf_zone_id' => 'zone-managed',
+            'cf_dns_record_id' => 'rec-1', 'cf_pages_domain_id' => 'pd-1', 'waiting_on' => 'certificate', 'stage_started_at' => now(),
+        ]);
+        $before = MasjidDomain::findOrFail($stale->id)->getAttributes();
+        $this->assertSame(MasjidDomain::STATUS_FAILED, $stale->status, 'the premise: the caller holds a stale copy');
+
+        $this->attacher()->restart($stale);
+        $this->assertSame($before, MasjidDomain::findOrFail($stale->id)->getAttributes(), 'a stale failed copy reset a row that had moved on');
+
+        // A row whose lock is held is left to the holder.
+        $held = $this->makeDomain($org, 'www.held-masjid.org', MasjidDomain::STATUS_FAILED, ['last_error' => 'It failed.']);
+        $lock = DomainAttacher::lockFor($held->id);
+        $this->assertTrue($lock->get());
+        $this->attacher()->restart($held);
+        $this->assertSame(MasjidDomain::STATUS_FAILED, $held->fresh()->status, 'Check now reset a row while another writer held it');
+        $lock->release();
+
+        // Free and still failed: back to pending, clocks cleared.
+        $this->attacher()->restart($held);
+        $this->assertSame(MasjidDomain::STATUS_PENDING, $held->fresh()->status);
+        $this->assertNull($held->fresh()->last_error);
+        $this->assertSame([], $this->sent());
+    }
+
+    #[Test]
+    public function an_imported_row_in_a_moving_status_is_still_only_read(): void
+    {
+        $this->withStudioToken();
+        $org = $this->makeOrg();
+        $pending = $this->makeDomain($org, 'www.imported-one.org', MasjidDomain::STATUS_PENDING, ['source' => MasjidDomain::SOURCE_IMPORTED]);
+        $provisioning = $this->makeDomain($org, 'www.imported-two.org', MasjidDomain::STATUS_PROVISIONING, [
+            'source' => MasjidDomain::SOURCE_IMPORTED, 'stage_started_at' => now()->subHours(80),
+        ]);
+
+        // Every write the attach path could make is answered, so a row sent
+        // down it shows up as a write rather than as a stray request.
+        $this->fakeCloudflare([
+            self::PAGES . 'www.imported-one.org' => $this->cfOk($this->pagesDomainBody('www.imported-one.org', 'pending')),
+            self::PAGES . 'www.imported-two.org' => $this->cfOk($this->pagesDomainBody('www.imported-two.org', 'pending')),
+            'GET /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk([], ['total_count' => 5]),
+            'GET /zones?*' => $this->cfOk([$this->zoneBody('imported-one.org', 'active', 'zone-imported')]),
+            'GET /zones/*/dns_records?*' => $this->cfOk([]),
+            'POST *' => $this->cfOk(['id' => 'made']),
+            'PATCH *' => $this->cfOk(['id' => 'made']),
+            'PUT *' => $this->cfOk(['id' => 'made']),
+        ]);
+
+        $this->attacher()->advance($pending);
+        $this->attacher()->advance($provisioning);
+
+        $this->assertSame(MasjidDomain::STATUS_PENDING, $pending->fresh()->status);
+        $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $provisioning->fresh()->status, 'an imported row is never failed by the 72-hour clock');
         $this->assertSame(['GET', 'GET'], $this->cloudflareVerbs());
         $this->assertSame([], array_values(array_filter($this->sent(), fn ($line) => ! str_starts_with($line, 'GET '))));
     }

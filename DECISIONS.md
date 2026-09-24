@@ -2155,3 +2155,23 @@ byte-identical to S3's. phpunit.xml pins `CLOUDFLARE_STUDIO_TOKEN` blank with
 `force="true"`, so no CI tree's `.env` can hand the suite a real token.
 Rationale: each keeps S7's two promises (honest without the token, and never a write for
 a live tenant's row) where the plan did not say how.
+
+## 2026-09-24 — Studio W1 S7 review: dead ends and races the first cut left
+Decision: a failed row is always told to fix the cause and press Check now (which starts
+it again from pending); "remove this domain" is offered only when `deletableThroughStudio()`
+is true, and the attacher's failure texts name the cause only, so none of them sends an
+operator to a DELETE that answers 409 or a re-add that answers 422. DELETE takes the
+attacher's own lock (`DomainAttacher::lockFor`) and judges the row re-read inside it; while
+a step holds the lock it answers 409 "try again", because a step keeps what it made in
+Cloudflare in memory until its one save. Check now (`DomainAttacher::restart`) resets the
+row under the same lock, judged on the row re-read inside it, and forgets the row's
+Pages-retry and activation-check markers, so a new stage gets its own retry. A zone
+POST that got no answer or a 5xx is remembered per row (a `Cache::add` marker, kept up to 28
+days); a zone found on a later tick that was made no earlier than that attempt (five
+minutes' clock allowance) is recorded as `cf_zone_created`. Without the token, a custom
+apex is told to add the domain to Cloudflare and move its nameservers (with the MX and
+28-day warnings), not to use a CNAME or ALIAS elsewhere: the Pages custom-domains page
+(read 2026-09-24, last updated 2026-04-21) says an apex must be a zone on the account.
+Rationale: each closes a way the operator's instructions or the `cf_*` record could stop
+matching what exists in Cloudflare. A cleared cache degrades the zone marker to "found",
+the state before it existed.

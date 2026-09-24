@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Domains\DomainAttacher;
 use App\Support\HostName;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -285,6 +286,14 @@ class MasjidDomain extends Model
      * attacher does the rest and saying otherwise would send an operator to
      * make records Studio is about to make.
      *
+     * A custom apex has no CNAME or ALIAS route without the token: Cloudflare
+     * Pages serves an apex only from a zone on the account that holds the
+     * project, reached by moving the domain's nameservers, and makes the DNS
+     * record itself once the domain is added in Pages
+     * (https://developers.cloudflare.com/pages/configuration/custom-domains/,
+     * read 2026-09-24, page last updated 2026-04-21). A subdomain can stay at
+     * any DNS provider with a CNAME.
+     *
      * @return list<string>
      */
     public function manualSteps(): array
@@ -298,10 +307,17 @@ class MasjidDomain extends Model
             ];
         }
 
+        // Check now is the way forward for every failed row (it starts the
+        // row again from pending). Removing it is offered only when Studio
+        // would allow it: a row Cloudflare holds records for is refused a
+        // DELETE (409) and its host a new POST (422), so telling the operator
+        // to remove and re-add it would be a dead end.
         if ($this->status === self::STATUS_FAILED) {
             return [
                 "Setting up {$this->host} failed" . ($this->last_error ? ": {$this->last_error}" : '.'),
-                'Remove this domain and add it again once the cause is fixed.',
+                $this->deletableThroughStudio()
+                    ? "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. Or remove this domain if it is not wanted."
+                    : "Once the cause is fixed, press Check now: it starts setting up {$this->host} again. It cannot be removed through Studio, because Cloudflare holds records Studio made or found for it.",
             ];
         }
 
@@ -359,10 +375,19 @@ class MasjidDomain extends Model
                 $steps[] = $nameservers;
             }
 
-            $steps[] = $this->host === $this->zone_apex
-                ? "In the DNS for {$this->zone_apex}, point the apex at {$target} with a CNAME (Cloudflare flattens it) or the provider's ALIAS/ANAME record."
-                : "In the DNS for {$this->zone_apex}, add a CNAME record for {$this->host} pointing to {$target}.";
-            $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}.";
+            if ($this->host !== $this->zone_apex) {
+                $steps[] = "In the DNS for {$this->zone_apex}, add a CNAME record for {$this->host} pointing to {$target}.";
+                $steps[] = "In Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}.";
+            } else {
+                if (empty($steps)) {
+                    $steps[] = "Pages serves an apex only from a zone on the Cloudflare account that holds the {$project} project: in Cloudflare, add {$this->zone_apex} as a domain, then at its registrar replace the nameservers with the two Cloudflare gives. This can take up to a day to take effect.";
+                    $steps[] = "Changing nameservers moves all of {$this->zone_apex}'s DNS to Cloudflare, email (MX) included: check the records Cloudflare imported before the registrar switches. Cloudflare deletes a zone left pending for "
+                        . DomainAttacher::ZONE_PENDING_LIMIT_DAYS . ' days.';
+                }
+
+                $steps[] = "Once the zone is active, in Cloudflare, open Workers & Pages, then the {$project} project, then Custom domains, and add {$this->host}. Cloudflare makes its DNS record itself.";
+            }
+
             $steps[] = $confirm;
         }
 

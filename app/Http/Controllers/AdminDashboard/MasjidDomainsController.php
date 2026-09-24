@@ -118,16 +118,7 @@ class MasjidDomainsController extends Controller
     {
         $domain = $this->domain($masjid_id, $domain_id);
 
-        if ($domain->status === MasjidDomain::STATUS_FAILED) {
-            $domain->forceFill([
-                'status' => MasjidDomain::STATUS_PENDING,
-                'waiting_on' => null,
-                'last_error' => null,
-                'stage_started_at' => null,
-                'next_check_at' => null,
-            ])->save();
-        }
-
+        $attacher->restart($domain);
         $attacher->advance($domain);
 
         return response()->json([
@@ -141,22 +132,43 @@ class MasjidDomainsController extends Controller
      * no Cloudflare id, no zone Studio created, not imported. Otherwise 409
      * with what to remove by hand, because Studio never deletes anything in
      * Cloudflare.
+     *
+     * Judged under the attacher's own lock, on the row re-read inside it: a
+     * step in flight holds what it made in Cloudflare only in memory until its
+     * save, so the stored row still looks deletable while its CNAME, Pages
+     * domain or zone is being made. While the lock is held the answer is a 409
+     * to try again; once released, the row says what it now holds.
      */
     public function destroy($masjid_id, $domain_id)
     {
         $domain = $this->domain($masjid_id, $domain_id);
+        $lock = DomainAttacher::lockFor($domain->id);
 
-        if (! $domain->deletableThroughStudio()) {
+        if (! $lock->get()) {
             return response()->json([
                 'status' => 'error',
-                'message' => $domain->source === MasjidDomain::SOURCE_IMPORTED
-                    ? "{$domain->host} was imported from the live host map and cannot be removed through Studio."
-                    : "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
-                'manual_steps' => $domain->removalSteps(),
+                'message' => "Studio is setting up {$domain->host} in Cloudflare right now. Try again in a minute or two.",
+                'manual_steps' => [],
             ], Response::HTTP_CONFLICT);
         }
 
-        $domain->delete();
+        try {
+            $domain->refresh();
+
+            if (! $domain->deletableThroughStudio()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $domain->source === MasjidDomain::SOURCE_IMPORTED
+                        ? "{$domain->host} was imported from the live host map and cannot be removed through Studio."
+                        : "{$domain->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.",
+                    'manual_steps' => $domain->removalSteps(),
+                ], Response::HTTP_CONFLICT);
+            }
+
+            $domain->delete();
+        } finally {
+            $lock->release();
+        }
 
         return response()->noContent();
     }

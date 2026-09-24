@@ -7,6 +7,7 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Models\MasjidUser;
 use App\Models\User;
+use App\Services\Domains\DomainAttacher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -252,6 +253,119 @@ class MasjidDomainsAdminRoutesTest extends TestCase
         $withPages = MasjidDomain::query()->where('cf_pages_domain_id', 'pd-1')->firstOrFail();
         $this->assertStringContainsString('Custom domains, and remove ' . $withPages->host, implode(' ', $withPages->removalSteps()));
         Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function delete_answers_409_while_the_attacher_holds_the_row_and_deletes_nothing(): void
+    {
+        $this->actAsSuper();
+        $org = $this->makeOrg();
+        $row = $this->makeDomain($org, 'al-nor.manara.hopetechapps.com', MasjidDomain::STATUS_PENDING, [
+            'kind' => MasjidDomain::KIND_MANAGED_SUBDOMAIN, 'zone_apex' => 'hopetechapps.com',
+        ]);
+
+        // A step is in flight: what it has made in Cloudflare is still only in
+        // its memory, so the stored row reads as deletable.
+        $step = DomainAttacher::lockFor($row->id);
+        $this->assertTrue($step->get());
+        $this->assertTrue($row->fresh()->deletableThroughStudio(), 'the premise: the stored row looks deletable');
+
+        $this->deleteJson($this->url($org, "/{$row->id}"))
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('manual_steps', []);
+        $this->assertNotNull(MasjidDomain::find($row->id), 'a row was deleted while its Cloudflare records were being made');
+
+        // The step saves what it made and lets go: the row now says why it stays.
+        $row->forceFill(['cf_zone_id' => 'zone-managed', 'cf_dns_record_id' => 'rec-1'])->save();
+        $step->release();
+
+        $this->deleteJson($this->url($org, "/{$row->id}"))->assertStatus(409);
+        $this->assertNotNull(MasjidDomain::find($row->id));
+
+        // DELETE lets go of the lock whichever way it answers.
+        $clean = $this->makeDomain($org, 'www.example.org');
+        $this->deleteJson($this->url($org, "/{$clean->id}"))->assertNoContent();
+        $this->assertTrue(DomainAttacher::lockFor($row->id)->get());
+        $this->assertTrue(DomainAttacher::lockFor($clean->id)->get());
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function a_failed_row_cloudflare_holds_records_for_is_sent_to_check_now_not_to_remove_and_add_again(): void
+    {
+        $this->actAsSuper();
+        $org = $this->makeOrg();
+        $this->makeDomain($org, 'www.held.org', MasjidDomain::STATUS_FAILED, [
+            'cf_zone_id' => 'zone-1', 'cf_dns_record_id' => 'rec-1', 'cf_pages_domain_id' => 'pd-1',
+            'last_error' => 'Cloudflare had not issued a certificate for www.held.org 72 hours after it was added.',
+        ]);
+        $this->makeDomain($org, 'www.free.org', MasjidDomain::STATUS_FAILED, [
+            'last_error' => 'www.free.org already has a DNS record (A 192.0.2.10).',
+        ]);
+
+        $rows = collect($this->getJson($this->url($org))->assertOk()->json('data.domains'))->keyBy('host');
+
+        $held = $rows['www.held.org'];
+        $this->assertFalse($held['deletable']);
+        $this->assertStringContainsString('press Check now', $held['manual_steps'][1]);
+        $this->assertStringNotContainsString('add it again', implode(' ', $held['manual_steps']));
+        $this->assertStringNotContainsString('remove this domain', strtolower(implode(' ', $held['manual_steps'])));
+
+        // What the step points at works, and what it no longer says does not.
+        $this->deleteJson($this->url($org, "/{$held['id']}"))->assertStatus(409);
+        $this->postJson($this->url($org, "/{$held['id']}/refresh"))
+            ->assertOk()
+            ->assertJsonPath('data.domain.status', MasjidDomain::STATUS_PENDING);
+
+        // A row Studio may still delete is offered both ways.
+        $free = $rows['www.free.org'];
+        $this->assertTrue($free['deletable']);
+        $this->assertStringContainsString('press Check now', $free['manual_steps'][1]);
+        $this->assertStringContainsString('remove this domain', $free['manual_steps'][1]);
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function check_now_on_a_row_that_failed_at_72_hours_gives_its_new_stage_its_own_pages_retry(): void
+    {
+        $this->actAsSuper();
+        $this->withStudioToken();
+        $org = $this->makeOrg();
+        $host = 'al-noor.manara.hopetechapps.com';
+        $row = $this->makeDomain($org, $host, MasjidDomain::STATUS_PROVISIONING, [
+            'kind' => MasjidDomain::KIND_MANAGED_SUBDOMAIN, 'zone_apex' => 'hopetechapps.com',
+            'cf_zone_id' => 'zone-managed', 'cf_dns_record_id' => 'rec-1', 'cf_pages_domain_id' => 'pd-1',
+            'waiting_on' => 'certificate', 'stage_started_at' => now(),
+        ]);
+        $this->fakeCloudflare([
+            'GET /zones/*/dns_records?*' => $this->cfOk([$this->dnsRecord($host, 'CNAME', 'manara-renderer.pages.dev', 'rec-1')]),
+            'GET /accounts/*/pages/projects/manara-renderer/domains/' . $host => $this->cfOk($this->pagesDomainBody($host, 'pending')),
+            'PATCH /accounts/*/pages/projects/manara-renderer/domains/' . $host => $this->cfOk($this->pagesDomainBody($host, 'pending')),
+        ]);
+        $attacher = $this->app->make(DomainAttacher::class);
+        $patches = fn () => count(array_filter($this->sentToCloudflare(), fn (string $line) => str_starts_with($line, 'PATCH ')));
+
+        // The first stage: retried once after a day, failed at 73 hours.
+        $this->travel(25)->hours();
+        $attacher->advance($row);
+        $this->assertSame(1, $patches());
+        $this->travel(48)->hours();
+        $attacher->advance($row);
+        $this->assertSame(MasjidDomain::STATUS_FAILED, $row->fresh()->status);
+
+        // Check now straight away starts a new stage.
+        $this->postJson($this->url($org, "/{$row->id}/refresh"))
+            ->assertOk()
+            ->assertJsonPath('data.domain.status', MasjidDomain::STATUS_PROVISIONING);
+
+        // Its own day passes while the first stage's retry is under four days old.
+        $this->travel(25)->hours();
+        $attacher->advance($row);
+
+        $this->assertSame(2, $patches(), 'the new stage never got its one retry at 24 hours');
+        $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $row->fresh()->status);
+        $this->assertNotContains('DELETE', array_map(fn (string $line) => strtok($line, ' '), $this->sent()));
     }
 
     #[Test]

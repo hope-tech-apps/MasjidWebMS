@@ -127,6 +127,10 @@ class CloudflareService
      * Add the apex to the account as a full-setup zone, unless it is already
      * there (`adopted`, nothing sent but the read). `created` carries the
      * nameservers the registrar must be given.
+     *
+     * A POST that got no answer or a 5xx (`transient`) carries
+     * data.create_sent: Cloudflare may have made the zone all the same, and
+     * the caller must not later take that zone for one Studio only found.
      */
     public function createZone(string $apex): CloudflareResult
     {
@@ -145,6 +149,10 @@ class CloudflareService
             'account' => ['id' => (string) config('cloudflare.account_id')],
             'type' => 'full',
         ]);
+
+        if ($created->is(CloudflareResult::TRANSIENT)) {
+            return CloudflareResult::of($created->outcome, $created->data + ['create_sent' => true], $created->error, $created->http_status);
+        }
 
         if (! $created->is(CloudflareResult::OK)) {
             return $created;

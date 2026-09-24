@@ -155,6 +155,34 @@ class CloudflareServiceTest extends TestCase
     }
 
     #[Test]
+    public function ensure_cname_judges_only_records_at_exactly_the_host_whatever_the_filter_returned(): void
+    {
+        $this->withStudioToken();
+        $post = 'POST /zones/zone-managed-1/dns_records';
+        $made = $this->cfOk($this->dnsRecord('www.example.org', 'CNAME', 'manara-renderer.pages.dev', 'rec-new'));
+
+        // Another host's CNAME to the renderer is not this host's to adopt.
+        $this->fakeCloudflare([
+            self::RECORDS => $this->cfOk([$this->dnsRecord('mec.example.org', 'CNAME', 'manara-renderer.pages.dev', 'rec-other')]),
+            $post => $made,
+        ]);
+        $other = $this->service()->ensureCname(self::ZONE, 'www.example.org');
+        $this->assertSame(CloudflareResult::CREATED, $other->outcome);
+        $this->assertSame('rec-new', $other->data['id']);
+
+        // The apex's own A record is not a conflict for www.
+        $this->fakeCloudflare([
+            self::RECORDS => $this->cfOk([$this->dnsRecord('example.org', 'A', '192.0.2.10', 'rec-apex')]),
+            $post => $made,
+        ]);
+        $apex = $this->service()->ensureCname(self::ZONE, 'www.example.org');
+        $this->assertSame(CloudflareResult::CREATED, $apex->outcome);
+
+        Http::assertSentCount(4);
+        Http::assertSent(fn (Request $r) => $r->method() === 'POST' && $r['name'] === 'www.example.org');
+    }
+
+    #[Test]
     public function ensure_pages_domain_adds_an_absent_host(): void
     {
         $this->withStudioToken();
