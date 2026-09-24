@@ -32,7 +32,12 @@ use Throwable;
  *
  * IN ONE TRANSACTION: the draft is locked FOR UPDATE and must still be a
  * draft (two clicks, two tabs or a retry after a timeout all meet here, and
- * only the first provisions: StudioDraftConflict, 409); then the organisation,
+ * only the first provisions: StudioDraftConflict, 409), and must still be the
+ * draft that was read and validated: the same lock_version and the same logo
+ * (StudioDraftChanged, 409). An autosave or a logo upload that commits while
+ * this one validates and makes images would otherwise be ignored, and the
+ * draft marked provisioned would hold answers the organisation was not made
+ * from. Then the organisation,
  * the inks, the logo and its three derivatives, and the draft marked
  * provisioned. Any failure unwinds every row, and the files a rollback cannot
  * reach (medialibrary saves a Media row before copying its file, the temporary
@@ -50,12 +55,19 @@ class StudioProvisioning
 {
     /**
      * @param  array{ios?: array<string, string>, android?: array<string, string>}  $secrets  BYO store credentials, typed at Step 3 and never stored on the draft (R7)
+     * @param  ?int  $lockVersion  the version Step 3 reviewed; when given, a draft saved since is refused rather than provisioned
      *
      * @throws \Illuminate\Http\Exceptions\HttpResponseException 422 from the request's rules or the brand gate
      * @throws StudioDraftConflict when the draft was provisioned first
+     * @throws StudioDraftChanged when the draft is not the one reviewed or read
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException when the draft was discarded meanwhile
      */
-    public function provision(StudioDraft $draft, array $secrets = []): StudioProvisionResult
+    public function provision(StudioDraft $draft, array $secrets = [], ?int $lockVersion = null): StudioProvisionResult
     {
+        if ($lockVersion !== null && $lockVersion !== $draft->lock_version) {
+            throw new StudioDraftChanged($draft);
+        }
+
         // A Studio organisation is always born through the switches: without a
         // Step 1 map the defaults stand, but the pivot is still derived from
         // them, and the response always says what was applied.
@@ -83,6 +95,14 @@ class StudioProvisioning
 
                 if ($locked->status !== StudioDraft::STATUS_DRAFT) {
                     throw new StudioDraftConflict($locked);
+                }
+
+                // The logo does not move lock_version (StudioDraftsController::storeLogo),
+                // so it is compared on its own.
+                if ($locked->lock_version !== $draft->lock_version
+                    || $locked->logo_path !== $draft->logo_path
+                    || $locked->logo_sha256 !== $draft->logo_sha256) {
+                    throw new StudioDraftChanged($locked);
                 }
 
                 $masjid = null;

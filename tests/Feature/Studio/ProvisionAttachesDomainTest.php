@@ -55,6 +55,25 @@ class ProvisionAttachesDomainTest extends TestCase
         $this->assertSame('www.client-masjid.example', $second['web']['host']);
     }
 
+    /**
+     * The draft always sends its slug, and the request accepts one without
+     * web. An app-only organisation must still get no public host: no row,
+     * and nothing asked of Cloudflare.
+     */
+    #[Test]
+    public function a_slug_without_the_web_platform_writes_no_host_and_starts_no_attach(): void
+    {
+        $answers = $this->studioAnswers(sections: ['platforms' => ['platforms' => ['ios', 'android']]]);
+        $this->assertNotEmpty($answers['identity']['slug'], 'the premise: Foundation chose a subdomain');
+
+        $data = $this->provision($this->draftWith($answers)->id)->assertCreated()->json('data');
+
+        $this->assertSame(0, MasjidDomain::count());
+        $this->assertNull($data['web']);
+        $this->assertSame([], $data['domains']);
+        Queue::assertNotPushed(AttachMasjidDomain::class);
+    }
+
     #[Test]
     public function rollback_leaves_no_row_and_no_job(): void
     {

@@ -8,7 +8,15 @@ import { extractDominantColors } from "@/core/helpers/extractPalette";
 import { LogoPreparationError, prepareLogo } from "@/core/helpers/prepareLogo";
 import { createAutosave, SaveRequest } from "@/core/studio/autosave";
 import { carryChoices, ChoiceContext, sameChoices } from "@/core/studio/featureChoices";
-import { ProvisionOutcome, ProvisionSecrets, provisionBody, readProvisionOutcome } from "@/core/studio/provision";
+import {
+    Invitee,
+    inviteeOf,
+    ProvisionOutcome,
+    ProvisionSecrets,
+    provisionBody,
+    readProvisionOutcome,
+    saveThenPost,
+} from "@/core/studio/provision";
 import {
     autosaveBody,
     changedSections,
@@ -102,12 +110,19 @@ function statusOf(error: unknown): number | undefined {
  *
  * STEP 3 (S8)
  *  provision() saves anything unsent first, because the server provisions the
- *  draft it holds, then posts the BYO credentials it is handed and nothing
- *  else. The credentials are an argument, never state here: the step keeps
- *  them in its own memory and they are never autosaved (R7). A created
- *  organisation disarms the autosave for good (the draft is now the record of
- *  what was made); a 409 reloads the draft, which arrives read-only, and shows
- *  the organisation that already exists instead of offering a retry.
+ *  draft it holds (core/studio/provision.ts saveThenPost), then posts the
+ *  lock_version this tab reviewed and the BYO credentials it is handed, and
+ *  nothing else. The credentials are an argument, never state here: the step
+ *  keeps them in its own memory and they are never autosaved (R7). While it
+ *  runs nothing can be edited (`editable`), and leaving asks first, because
+ *  the results are reported only in its answer. A created organisation
+ *  disarms the autosave for good (the draft is now the record of what was
+ *  made); a 409 reloads the draft: read-only with the organisation that
+ *  already exists, or, when the draft changed since this tab reviewed it, the
+ *  latest answers to review again.
+ *
+ *  A provisioned draft's logo is not fetched: its private bytes are deleted
+ *  once the organisation has its own copy, and the endpoint would answer 404.
  *
  * Opening another draft bumps `generation`; any answer still arriving for the
  * previous one is ignored, so it can never land in the wrong draft.
@@ -197,13 +212,23 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
     const readOnly = computed(() => draft.value?.status === 'provisioned');
 
     /**
+     * Whether the answers may be edited: not a provisioned draft, and not while
+     * a provision runs. An edit then would be autosaved while the server builds
+     * the organisation from the version before it; the step controls, the
+     * stepper and the logo all follow this.
+     */
+    const editable = computed(() => !readOnly.value && !provisioning.value);
+
+    /**
      * True while leaving would lose work: a save in flight, or edits and a step
      * change not yet sent. A function, not a computed, because the step and the
      * in-flight save are bookkeeping rather than reactive state; the leave
      * guards ask at the moment of leaving.
      */
     function hasUnsavedWork(): boolean {
-        return saveState.value === 'saving' || autosave.busy()
+        // A provision in flight: leaving loses its answer, the only report
+        // of whether the invitation went.
+        return provisioning.value || saveState.value === 'saving' || autosave.busy()
             || (armed.value && (changedSections(answers, saved.value).length > 0 || autosave.stepUnsent()));
     }
 
@@ -459,7 +484,8 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
     async function fetchLogo(): Promise<void> {
         const current = draft.value;
         revokeLogoUrl();
-        if (!current?.logo) return;
+        // Provisioned: the organisation has the logo and the draft's copy is deleted.
+        if (!current?.logo || current.status === 'provisioned') return;
 
         const gen = generation;
         try {
@@ -498,7 +524,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
      */
     async function uploadLogo(file: File): Promise<boolean> {
         const current = draft.value;
-        if (!current || readOnly.value) return false;
+        if (!current || !editable.value) return false;
 
         const gen = generation;
         logoBusy.value = true;
@@ -539,7 +565,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
 
     async function removeLogo(): Promise<boolean> {
         const current = draft.value;
-        if (!current || readOnly.value) return false;
+        if (!current || !editable.value) return false;
 
         const gen = generation;
         logoBusy.value = true;
@@ -577,35 +603,43 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         provisionOutcome.value = null;
 
         try {
-            // The server provisions what it has saved, so the latest edits go first.
-            await flush();
-            if (gen !== generation) return null;
+            let invitee: Invitee = inviteeOf(answers);
+            const sent = await saveThenPost({
+                flush,
+                stillOpen: () => gen === generation,
+                save: () => ({
+                    saveState: saveState.value,
+                    unsaved: changedSections(answers, saved.value).length,
+                    conflictMessage: conflictMessage.value,
+                    saveError: saveError.value,
+                }),
+                post: async (): Promise<{ status: number | undefined; body: unknown }> => {
+                    // The answers as saved, which is what the server provisions.
+                    invitee = inviteeOf(answers);
+                    try {
+                        const res = await ApiService.post(`/api/admin/studio/drafts/${current.id}/provision`, provisionBody(answers, secrets, lockVersion));
+                        return { status: res.status, body: res.data };
+                    } catch (error) {
+                        return {
+                            status: isAxiosError(error) ? error.response?.status : undefined,
+                            body: isAxiosError(error) ? error.response?.data : undefined,
+                        };
+                    }
+                },
+            });
 
-            if (saveState.value === 'error' || saveState.value === 'conflict' || changedSections(answers, saved.value).length) {
-                const reason = saveState.value === 'conflict' ? conflictMessage.value : saveError.value;
-                provisionOutcome.value = {
-                    kind: 'failed',
-                    message: `The latest answers are not saved, so nothing was created.${reason ? ` ${reason}` : ''}`,
-                };
+            if (sent.kind === 'closed' || gen !== generation) return null;
+            if (sent.kind === 'unsaved') {
+                provisionOutcome.value = { kind: 'failed', message: sent.message };
                 return provisionOutcome.value;
             }
 
-            let status: number | undefined;
-            let body: unknown;
-            try {
-                const res = await ApiService.post(`/api/admin/studio/drafts/${current.id}/provision`, provisionBody(answers, secrets));
-                status = res.status;
-                body = res.data;
-            } catch (error) {
-                status = isAxiosError(error) ? error.response?.status : undefined;
-                body = isAxiosError(error) ? error.response?.data : undefined;
-            }
-            if (gen !== generation) return null;
+            const outcome = readProvisionOutcome(sent.answer.status, sent.answer.body, invitee);
 
-            const outcome = readProvisionOutcome(status, body);
-
-            if (outcome.kind === 'conflict') {
-                // Show what exists, never a retry: the reloaded draft is read only.
+            if (outcome.kind === 'conflict' || outcome.kind === 'changed') {
+                // Show what exists, never a retry: the reloaded draft is read
+                // only. Or, when the draft changed since this tab reviewed it,
+                // the answers the server holds now, to review before pressing again.
                 await load(current.id);
                 if (draft.value?.id !== current.id) return null;
                 provisionOutcome.value = outcome;
@@ -620,6 +654,9 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
                 armed.value = false;
                 autosave.reset();
                 clearPreviewTimer();
+                saveState.value = 'idle';
+                saveError.value = null;
+                conflictMessage.value = null;
                 const masjidId = outcome.kind === 'created' ? outcome.result.masjid_id : outcome.masjidId;
                 draft.value = { ...current, ...draft.value, status: 'provisioned', provisioned_masjid_id: masjidId };
                 // The list, if it was loaded, says Live straight away rather than after its next fetch.
@@ -708,7 +745,7 @@ export const useStudioDraftStore = defineStore("studioDraftStore", () => {
         drafts, draftsLoading, draftsError, fetchDrafts, createDraft, discardDraft,
         // draft
         draft, answers, options, catalogue, presets, preview, saveState, savedAt, loadError,
-        loading, currentStep, saveError, conflictMessage, readOnly, armed, unsavedSections, hasUnsavedWork,
+        loading, currentStep, saveError, conflictMessage, readOnly, editable, armed, unsavedSections, hasUnsavedWork,
         load, reload, reset, patchSection, flush, setStep, refreshPreview, previewPreset,
         // logo
         logoUrl, logoBusy, logoError, fetchLogo, uploadLogo, removeLogo,

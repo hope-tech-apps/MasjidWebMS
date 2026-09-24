@@ -68,11 +68,11 @@
 
                         <div class="d-flex flex-wrap gap-2 mt-auto pt-1">
                             <button type="button" class="btn btn-sm btn-outline-success"
-                                :disabled="store.readOnly || preset.key === chosenKey" @click="choose(preset.key)">
+                                :disabled="!store.editable || preset.key === chosenKey" @click="choose(preset.key)">
                                 Show in preview
                             </button>
                             <button type="button" class="btn btn-sm btn-success"
-                                :disabled="store.readOnly || preset.key === approvedKey" @click="approve(preset.key)">
+                                :disabled="!store.editable || preset.key === approvedKey" @click="approve(preset.key)">
                                 Approve this layout
                             </button>
                         </div>
@@ -157,12 +157,12 @@ function load() {
 }
 
 function choose(key: string) {
-    if (store.readOnly || key === chosenKey.value) return;
+    if (!store.editable || key === chosenKey.value) return;
     Object.assign(store.answers.layout, chosenLayout(key));
 }
 
 function approve(key: string) {
-    if (store.readOnly) return;
+    if (!store.editable) return;
     Object.assign(store.answers.layout, approvedLayout(key, new Date()));
 }
 

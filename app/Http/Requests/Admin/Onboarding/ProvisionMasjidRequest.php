@@ -41,6 +41,9 @@ use Illuminate\Validation\Rule;
  */
 class ProvisionMasjidRequest extends BaseFormRequest
 {
+    /** The iqama offsets, keyed as the request and `iqama_time_settings` name them, with the names an operator reads. */
+    public const IQAMA_PRAYERS = ['fajr' => 'Fajr', 'dhuhr' => 'Dhuhr', 'asr' => 'Asr', 'maghrib' => 'Maghrib', 'isha' => 'Isha'];
+
     /**
      * An omitted vertical means `masjid`.
      *
@@ -100,6 +103,20 @@ class ProvisionMasjidRequest extends BaseFormRequest
     private static function bool(mixed $value): ?bool
     {
         return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    }
+
+    /**
+     * The posted org_type as a string, or '' when it is not one. rules() is
+     * built before anything is validated, so a malformed value (`org_type[]=…`)
+     * reaches it; cast with `(string)` it is PHP's "Array to string conversion"
+     * warning, which Laravel turns into a 500 where the `string` rule answers
+     * 422.
+     */
+    private function orgType(): string
+    {
+        $orgType = $this->input('org_type');
+
+        return is_string($orgType) ? $orgType : '';
     }
 
     public function rules(): array
@@ -238,7 +255,10 @@ class ProvisionMasjidRequest extends BaseFormRequest
             // and, in W3, its repositories' name. The label rules are the
             // domain check's own, and a host some row already holds (reserved
             // ones included) is refused as the check would call it taken.
+            // `bail`, so a value that is not a string stops at `string` (422)
+            // before the closure casts it (a 500); likewise the domain keys.
             'slug' => [
+                'bail',
                 'nullable',
                 'string',
                 function (string $attribute, mixed $value, Closure $fail) {
@@ -269,15 +289,17 @@ class ProvisionMasjidRequest extends BaseFormRequest
             'capabilities.*' => ['required', 'boolean'],
 
             // A starter website: one of this org type's presets, web only.
-            'layout_preset' => ['nullable', 'string', Rule::in(LayoutPresets::keysFor((string) $this->input('org_type')))],
+            'layout_preset' => ['nullable', 'string', Rule::in(LayoutPresets::keysFor($this->orgType()))],
 
             // Written instead of the wizard's hard-coded `true`: Studio shows
-            // iqama only when the client gave times.
+            // iqama only when the client gave times, and then all five
+            // (withValidator), because a missing one would be invented.
             'show_iqama_times' => ['sometimes', 'boolean'],
 
             // The client's own domain, beside the managed subdomain.
             'web_domain' => ['nullable', 'array'],
             'web_domain.custom_host' => [
+                'bail',
                 'nullable',
                 'string',
                 function (string $attribute, mixed $value, Closure $fail) {
@@ -295,11 +317,13 @@ class ProvisionMasjidRequest extends BaseFormRequest
                 },
             ],
             'web_domain.custom_zone_apex' => [
+                'bail',
                 'nullable',
                 'required_with:web_domain.custom_host',
                 'string',
                 function (string $attribute, mixed $value, Closure $fail) {
-                    $refusal = StudioDomainCheckRequest::zoneApexRefusal((string) $value, (string) $this->input('web_domain.custom_host'));
+                    $host = $this->input('web_domain.custom_host');
+                    $refusal = StudioDomainCheckRequest::zoneApexRefusal((string) $value, is_string($host) ? $host : '');
 
                     if ($refusal !== null) {
                         $fail($refusal);
@@ -344,6 +368,21 @@ class ProvisionMasjidRequest extends BaseFormRequest
                 }
             }
 
+            // Studio says to show iqama only when the client gave times, and
+            // the provisioner fills a missing offset with nothing it could
+            // show; so shown means all five were given.
+            if ($this->input('show_iqama_times') === true) {
+                $missing = array_values(array_filter(
+                    self::IQAMA_PRAYERS,
+                    fn (string $salah) => blank($this->input("iqama.{$salah}")),
+                    ARRAY_FILTER_USE_KEY,
+                ));
+
+                if ($missing !== []) {
+                    $validator->errors()->add('iqama', self::iqamaIncomplete($missing));
+                }
+            }
+
             // Hidden or unknown keys are refused, never ignored: the operator
             // chose them, and dropping one would provision a different org
             // from the one they approved.
@@ -355,16 +394,37 @@ class ProvisionMasjidRequest extends BaseFormRequest
                     $validator->errors()->add('capabilities', 'Send either the capabilities map or the wizard\'s feature fields, not both.');
                 }
 
+                // A catalogue key is a top-level key of config/capabilities.php,
+                // looked up as one: config("capabilities.{$key}") reads a dot as
+                // a path, so `web_pages.defaults` would find a nested array,
+                // pass, and then be ignored by the writer, which walks only the
+                // real keys (as UpdateStudioDraftRequest checks them).
+                $catalogue = config('capabilities', []);
+
                 foreach (array_keys($this->input('capabilities')) as $key) {
-                    $definition = config("capabilities.{$key}");
+                    $definition = array_key_exists($key, $catalogue) ? $catalogue[$key] : null;
 
                     if (! is_array($definition)
-                        || CapabilityCatalogue::visibility((string) $key, $definition, (string) $this->input('org_type')) === CapabilityCatalogue::HIDDEN) {
+                        || CapabilityCatalogue::visibility((string) $key, $definition, $this->orgType()) === CapabilityCatalogue::HIDDEN) {
                         $validator->errors()->add("capabilities.{$key}", "\"{$key}\" is not offered to this kind of organisation.");
                     }
                 }
             }
         });
+    }
+
+    /**
+     * The refusal for a partial set of iqama offsets, naming what is missing.
+     * Step 3 says the same sentence before the button is pressed
+     * (core/studio/provision.ts iqamaBlockers).
+     *
+     * @param  list<string>  $missing  display names, in prayer order
+     */
+    public static function iqamaIncomplete(array $missing): string
+    {
+        return 'The iqama times are incomplete: ' . implode(', ', $missing) . ' '
+            . (count($missing) === 1 ? 'is' : 'are')
+            . ' missing. Enter all five in Foundation, or tick "Client has not given iqama times".';
     }
 
     public function attributes(): array

@@ -3,7 +3,9 @@
  * disabled (R27 and the BYO credentials), the body that carries the credentials
  * and nothing else (R7), how the answer is read (a 201 without
  * `capabilities_applied` is not success; a 409 is the organisation that
- * exists), and when an invitation may be called sent.
+ * exists, or a draft that changed; "not created" only on the controller's
+ * word), when an invitation may be called sent, the order the store must keep
+ * (flush, check, post), iqama's truth, and where focus goes.
  * Run: npm run test:spa
  */
 import { test } from 'node:test';
@@ -11,14 +13,22 @@ import assert from 'node:assert/strict';
 import {
     byoPlatforms,
     clearSecrets,
+    clearsSecrets,
     emptySecrets,
     featureSummary,
     generateBlockers,
+    inviteeOf,
     inviteOutcome,
+    iqamaBlockers,
+    iqamaStatus,
+    outcomeFocusId,
     provisionBody,
     readProvisionOutcome,
+    saveThenPost,
+    unsavedReason,
     webGateBlockers,
 } from '../core/studio/provision.ts';
+import type { ProvisionOutcome, SaveSnapshot } from '../core/studio/provision.ts';
 import { autosaveBody, normaliseAnswers, STUDIO_SECTIONS } from '../core/studio/draftAnswers.ts';
 
 const LOGO = 'A website needs the client\'s logo. Upload it in Foundation.';
@@ -111,6 +121,18 @@ test('the body carries only the selected BYO platforms\' credentials, trimmed', 
     assert.deepEqual(provisionBody(ready(), filledSecrets()), {});
 });
 
+test('the body names the version of the draft reviewed, beside any credentials', () => {
+    assert.deepEqual(provisionBody(ready(), filledSecrets(), 7), { lock_version: 7 });
+    assert.deepEqual(provisionBody(ready(), filledSecrets(), 0), { lock_version: 0 }, 'version 0 is a version');
+
+    const answers = ready(['android', 'web']);
+    answers.platforms.apps = { android: { account_mode: 'byo' } };
+    assert.deepEqual(provisionBody(answers, filledSecrets(), 3), {
+        lock_version: 3,
+        secrets: { android: { play_service_account_json: '{"type":"service_account"}' } },
+    });
+});
+
 test('the credentials never reach the autosave body, and are blanked after use', () => {
     const answers = ready(['ios', 'web']);
     answers.platforms.apps = { ios: { account_mode: 'byo' } };
@@ -137,10 +159,13 @@ const created = (extra: Record<string, unknown> = {}) => ({
     },
 });
 
-test('a 201 with capabilities_applied is created', () => {
-    const outcome = readProvisionOutcome(201, created());
+const INVITEE = { email: 'office@alnoor.example', existingUserId: null };
+
+test('a 201 with capabilities_applied is created, carrying who was invited', () => {
+    const outcome = readProvisionOutcome(201, created(), INVITEE);
     assert.equal(outcome.kind, 'created');
     assert.equal(outcome.kind === 'created' && outcome.result.masjid_id, 42);
+    assert.deepEqual(outcome.kind === 'created' && outcome.invitee, INVITEE);
 });
 
 test('a 201 without capabilities_applied is an error naming the organisation, never success', () => {
@@ -161,6 +186,15 @@ test('a 409 is the organisation that already exists', () => {
     );
 });
 
+test('a 409 with no organisation is a draft that changed since it was reviewed, in the server\'s words', () => {
+    const message = 'This draft changed while it was being provisioned, so nothing was created. Review the latest answers and press Provision again.';
+    assert.deepEqual(
+        readProvisionOutcome(409, { status: 'conflict', message, data: { draft_id: 7, provisioned_masjid_id: null } }),
+        { kind: 'changed', message },
+    );
+    assert.equal(readProvisionOutcome(409, { status: 'conflict', data: { draft_id: 7, provisioned_masjid_id: null } }).kind, 'changed');
+});
+
 test('a 422 lists every message of the legacy envelope once', () => {
     const outcome = readProvisionOutcome(422, {
         status: 'failed',
@@ -169,31 +203,157 @@ test('a 422 lists every message of the legacy envelope once', () => {
     assert.deepEqual(outcome, { kind: 'invalid', messages: [LOGO, 'Choose this colour as #RRGGBB.'] });
 });
 
-test('a 500 and a lost answer are failures that say nothing was, or may have been, created', () => {
+test('only the controller\'s own 500 says nothing was created; a lost or unexplained answer is unknown', () => {
     const failed = readProvisionOutcome(500, { status: 'error', data: 'Something went wrong.' });
     assert.deepEqual(failed, { kind: 'failed', message: 'The organisation was not created. Something went wrong.' });
 
     const lost = readProvisionOutcome(undefined, undefined);
-    assert.equal(lost.kind, 'failed');
-    assert.match(lost.kind === 'failed' ? lost.message : '', /Trying again is safe/);
+    assert.equal(lost.kind, 'unknown');
+    assert.match(lost.kind === 'unknown' ? lost.message : '', /No answer came back.*if the organisation was created, the server says so/);
+
+    // A proxy's timeout page, and Laravel's own 500 for a failure after the commit.
+    for (const [status, body] of [[504, '<html>Gateway Time-out</html>'], [502, undefined], [500, { message: 'Server Error' }]] as const) {
+        const outcome = readProvisionOutcome(status, body);
+        assert.equal(outcome.kind, 'unknown', `${status}`);
+        assert.doesNotMatch(outcome.kind === 'unknown' ? outcome.message : '', /was not created/, `${status}`);
+        assert.match(outcome.kind === 'unknown' ? outcome.message : '', new RegExp(`HTTP ${status}.*Press Provision again`));
+    }
+
+    assert.deepEqual(readProvisionOutcome(404, { status: 'error', message: 'Not found' }),
+        { kind: 'failed', message: 'This draft no longer exists: it was discarded, so nothing was created.' });
 });
 
 test('an invitation is called sent only when one went and none failed', () => {
-    const answers = ready();
+    const invitee = inviteeOf(ready());
+    assert.deepEqual(invitee, INVITEE);
 
-    assert.deepEqual(inviteOutcome({ invites_sent: 1, invites_failed: 0, warnings: [] }, answers),
+    assert.deepEqual(inviteOutcome({ invites_sent: 1, invites_failed: 0, warnings: [] }, invitee),
         { sent: true, text: 'Invitation sent to office@alnoor.example.' });
 
-    assert.deepEqual(inviteOutcome({ invites_sent: 0, invites_failed: 1, warnings: ['x'] }, answers),
+    assert.deepEqual(inviteOutcome({ invites_sent: 0, invites_failed: 1, warnings: ['x'] }, invitee),
         { sent: false, text: 'The invitation was not sent.' });
 
-    assert.equal(inviteOutcome({ invites_sent: 1, invites_failed: 1, warnings: [] }, answers).sent, false);
-    assert.equal(inviteOutcome(undefined, answers).sent, false);
+    assert.equal(inviteOutcome({ invites_sent: 1, invites_failed: 1, warnings: [] }, invitee).sent, false);
+    assert.equal(inviteOutcome(undefined, invitee).sent, false);
 
     const existing = ready();
     existing.identity.user_id = 9;
-    assert.deepEqual(inviteOutcome({ invites_sent: 0, invites_failed: 0, warnings: [] }, existing),
+    assert.deepEqual(inviteOutcome({ invites_sent: 0, invites_failed: 0, warnings: [] }, inviteeOf(existing)),
         { sent: false, text: 'No invitation was sent: an existing account was made the administrator.' });
+});
+
+test('the invitation names who the draft held when Provision was pressed, not what the answers say later', () => {
+    const answers = ready();
+    const outcome = readProvisionOutcome(201, created(), inviteeOf(answers));
+    answers.identity.admin = { email: 'changed-later@alnoor.example' };
+
+    assert.equal(outcome.kind, 'created');
+    if (outcome.kind === 'created') {
+        assert.equal(inviteOutcome(outcome.result.after_commit, outcome.invitee).text, 'Invitation sent to office@alnoor.example.');
+    }
+});
+
+const IQAMA_SENTENCE = 'The iqama times are incomplete: Dhuhr, Asr, Maghrib, Isha are missing. Enter all five in Foundation, or tick "Client has not given iqama times".';
+
+test('iqama is shown only with all five times; some is a blocker in the server\'s words, none is hidden', () => {
+    const masjid = (prayer: Record<string, unknown>) => normaliseAnswers({ identity: { org_type: 'masjid' }, prayer });
+    const five = { fajr: 20, dhuhr: 0, asr: 10, maghrib: 5, isha: 15 };
+
+    assert.deepEqual(iqamaStatus(masjid({}), true), { state: 'none' });
+    assert.deepEqual(iqamaStatus(masjid({ iqama: { fajr: null } }), true), { state: 'none' });
+    assert.deepEqual(iqamaStatus(masjid({ iqama: five }), true), { state: 'given' }, 'a zero is a time');
+    assert.deepEqual(iqamaStatus(masjid({ iqama: five, iqama_given: false }), true), { state: 'not_given' });
+    assert.deepEqual(iqamaStatus(masjid({ iqama: five }), false), { state: 'not_asked' });
+    assert.deepEqual(iqamaStatus(masjid({ iqama: { fajr: 25, isha: 10 } }), true), { state: 'partial', missing: ['Dhuhr', 'Asr', 'Maghrib'] });
+
+    assert.deepEqual(iqamaBlockers(masjid({ iqama: { fajr: 25 } }), true), [IQAMA_SENTENCE]);
+    assert.deepEqual(iqamaBlockers(masjid({ iqama: { fajr: 25, dhuhr: 1, asr: 1, maghrib: 1 } }), true),
+        ['The iqama times are incomplete: Isha is missing. Enter all five in Foundation, or tick "Client has not given iqama times".']);
+    for (const prayer of [{}, { iqama: five }, { iqama: { fajr: 25 }, iqama_given: false }]) {
+        assert.deepEqual(iqamaBlockers(masjid(prayer), true), []);
+    }
+    assert.deepEqual(iqamaBlockers(masjid({ iqama: { fajr: 25 } }), false), [], 'a school is never asked');
+});
+
+test('the credentials are cleared once an organisation exists, and kept for a retry otherwise', () => {
+    const exists: ProvisionOutcome[] = [
+        { kind: 'created', result: created().data as never, invitee: INVITEE },
+        { kind: 'unconfirmed', masjidId: 42, message: 'x' },
+        { kind: 'conflict', masjidId: 42 },
+    ];
+    for (const outcome of exists) assert.equal(clearsSecrets(outcome), true, outcome.kind);
+
+    const retry: (ProvisionOutcome | null)[] = [
+        { kind: 'invalid', messages: ['x'] },
+        { kind: 'failed', message: 'x' },
+        { kind: 'unknown', message: 'x' },
+        { kind: 'changed', message: 'x' },
+        null,
+    ];
+    for (const outcome of retry) assert.equal(clearsSecrets(outcome), false, outcome?.kind ?? 'null');
+});
+
+const savedCleanly: SaveSnapshot = { saveState: 'saved', unsaved: 0, conflictMessage: null, saveError: null };
+
+test('the answers are saved only when the autosave neither failed nor conflicted and nothing is left unsent', () => {
+    assert.equal(unsavedReason(savedCleanly), null);
+    assert.equal(unsavedReason({ ...savedCleanly, saveState: 'idle' }), null);
+    assert.match(unsavedReason({ ...savedCleanly, unsaved: 1 }) ?? '', /^The latest answers are not saved, so nothing was created\.$/);
+    assert.equal(unsavedReason({ ...savedCleanly, saveState: 'conflict', conflictMessage: 'Saved in another tab.' }),
+        'The latest answers are not saved, so nothing was created. Saved in another tab.');
+    assert.equal(unsavedReason({ ...savedCleanly, saveState: 'error', saveError: 'Network down.' }),
+        'The latest answers are not saved, so nothing was created. Network down.');
+});
+
+test('the store\'s order: flush, then check the save, then post; and no post when the save did not land', async () => {
+    const run = async (save: SaveSnapshot, open = true) => {
+        const calls: string[] = [];
+        const result = await saveThenPost({
+            flush: async () => { calls.push('flush'); },
+            stillOpen: () => { calls.push('open?'); return open; },
+            save: () => { calls.push('save?'); return save; },
+            post: async () => { calls.push('post'); return 'answer'; },
+        });
+        return { calls, result };
+    };
+
+    const ok = await run(savedCleanly);
+    assert.deepEqual(ok.calls, ['flush', 'open?', 'save?', 'post']);
+    assert.deepEqual(ok.result, { kind: 'posted', answer: 'answer' });
+
+    for (const save of [
+        { ...savedCleanly, saveState: 'conflict' as const, conflictMessage: 'Saved in another tab.' },
+        { ...savedCleanly, saveState: 'error' as const },
+        { ...savedCleanly, unsaved: 2 },
+    ]) {
+        const refused = await run(save);
+        assert.deepEqual(refused.calls, ['flush', 'open?', 'save?'], `no POST for ${JSON.stringify(save)}`);
+        assert.equal(refused.result.kind, 'unsaved');
+    }
+
+    const closed = await run(savedCleanly, false);
+    assert.deepEqual(closed.calls, ['flush', 'open?']);
+    assert.deepEqual(closed.result, { kind: 'closed' });
+
+    // The save is read after the flush has finished, not before.
+    let flushed = false;
+    const late = await saveThenPost({
+        flush: async () => { await Promise.resolve(); flushed = true; },
+        stillOpen: () => true,
+        save: () => (flushed ? savedCleanly : { ...savedCleanly, unsaved: 1 }),
+        post: async () => 'answer',
+    });
+    assert.equal(late.kind, 'posted');
+});
+
+test('the answer takes focus: the Created or Already provisioned heading, otherwise the outcome\'s alert', () => {
+    assert.equal(outcomeFocusId({ kind: 'created', result: created().data as never, invitee: INVITEE }), 'studio-panel-created');
+    assert.equal(outcomeFocusId({ kind: 'conflict', masjidId: 42 }), 'studio-panel-already-provisioned');
+    for (const kind of ['unconfirmed', 'changed', 'invalid', 'failed', 'unknown'] as const) {
+        const outcome = (kind === 'invalid' ? { kind, messages: [] } : kind === 'unconfirmed' ? { kind, masjidId: 1, message: '' } : { kind, message: '' }) as ProvisionOutcome;
+        assert.equal(outcomeFocusId(outcome), 'studio-generate-outcome', kind);
+    }
+    assert.equal(outcomeFocusId(null), null);
 });
 
 test('the review counts the switches on and the departures from the catalogue defaults', () => {

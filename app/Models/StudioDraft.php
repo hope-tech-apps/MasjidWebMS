@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Http\Requests\Admin\Onboarding\ProvisionMasjidRequest;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
@@ -251,6 +252,13 @@ class StudioDraft extends Model
      * only for a platform whose account_mode is `byo`: a managed platform's
      * credentials are Hope Tech's, and anything typed for it is discarded.
      *
+     * An account mode is sent only for a platform still selected. The Platforms
+     * panel keeps a mode when its platform is unticked (ticking it again brings
+     * the choice back), and the request's `required_if:…,byo` rules would
+     * otherwise demand credentials for a platform nobody ordered, which Step 3
+     * has no field for. The provisioner uses a mode only for a selected
+     * platform anyway.
+     *
      * @param  array{ios?: array<string, string>, android?: array<string, string>}  $secrets
      * @return array<string, mixed>
      */
@@ -273,9 +281,11 @@ class StudioDraft extends Model
             $payload['brand'] = $brand;
         }
 
+        $selected = (array) ($this->section('platforms')['platforms'] ?? []);
+
         $apps = [];
         foreach ((array) ($this->section('platforms')['apps'] ?? []) as $platform => $app) {
-            if (is_array($app) && array_key_exists('account_mode', $app)) {
+            if (in_array($platform, $selected, true) && is_array($app) && array_key_exists('account_mode', $app)) {
                 $apps[$platform] = ['account_mode' => $app['account_mode']];
             }
         }
@@ -292,13 +302,10 @@ class StudioDraft extends Model
             $payload['apps'] = $apps;
         }
 
-        // Studio's request keys (S8). The tick "client has not given iqama
-        // times" is `iqama_given: false`; an unticked panel leaves it unset,
-        // and the request's own default (shown) stands.
-        $iqamaGiven = $this->section('prayer')['iqama_given'] ?? null;
-        if (is_bool($iqamaGiven)) {
-            $payload['show_iqama_times'] = $iqamaGiven;
-        }
+        // Studio's request keys (S8). Always sent: without it the provisioner
+        // keeps the wizard's `true` and fills every missing offset with its
+        // invented 20/10/10/5/10.
+        $payload['show_iqama_times'] = $this->showsIqama();
 
         $capabilities = $this->section('features')['capabilities'] ?? null;
         if (is_array($capabilities)) {
@@ -325,5 +332,35 @@ class StudioDraft extends Model
         }
 
         return $payload;
+    }
+
+    /**
+     * Whether the organisation shows iqama times (DECISIONS, S8 "Iqama"): only
+     * a masjid whose client gave times, and never with the "client has not
+     * given iqama times" tick. An untouched panel gave none, so iqama is
+     * hidden. A panel with SOME offsets answers true on purpose: the request
+     * then refuses the missing ones by name, rather than hiding times the
+     * client did give or showing ones they did not.
+     */
+    private function showsIqama(): bool
+    {
+        $prayer = $this->section('prayer');
+        $orgType = $this->section('identity')['org_type'] ?? null;
+
+        // The request reads an absent type as a masjid (ProvisionMasjidRequest::prepareForValidation).
+        if ((is_string($orgType) && $orgType !== '' ? $orgType : Masjid::ORG_TYPE_MASJID) !== Masjid::ORG_TYPE_MASJID
+            || ($prayer['iqama_given'] ?? null) === false) {
+            return false;
+        }
+
+        $offsets = is_array($prayer['iqama'] ?? null) ? $prayer['iqama'] : [];
+
+        foreach (array_keys(ProvisionMasjidRequest::IQAMA_PRAYERS) as $salah) {
+            if (filled($offsets[$salah] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

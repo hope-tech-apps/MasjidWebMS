@@ -5,6 +5,8 @@
             <div class="d-flex flex-column flex-sm-row gap-3 align-items-start">
                 <div class="logo-frame" :class="{ empty: !store.logoUrl }">
                     <img v-if="store.logoUrl" :src="store.logoUrl" alt="The draft's logo" />
+                    <!-- Provisioned: the draft's private copy is deleted, and the store does not ask for it. -->
+                    <span v-else-if="store.readOnly && store.draft?.logo" class="small text-muted text-center px-1">On the organisation</span>
                     <span v-else-if="store.draft?.logo && !store.logoError" class="spinner-border spinner-border-sm text-muted" role="status">
                         <span class="visually-hidden">Loading logo…</span>
                     </span>
@@ -12,13 +14,13 @@
                 </div>
                 <div class="d-flex flex-column gap-2">
                     <div class="d-flex flex-wrap gap-2">
-                        <label class="btn btn-outline-success btn-sm mb-0" :class="{ disabled: store.logoBusy || store.readOnly }">
+                        <label class="btn btn-outline-success btn-sm mb-0" :class="{ disabled: store.logoBusy || !store.editable }">
                             {{ store.logoBusy ? 'Working…' : store.draft?.logo ? 'Replace logo' : 'Upload logo' }}
                             <input type="file" class="visually-hidden" accept="image/*,.svg"
-                                :disabled="store.logoBusy || store.readOnly" @change="onFile" />
+                                :disabled="store.logoBusy || !store.editable" @change="onFile" />
                         </label>
                         <button v-if="store.draft?.logo" type="button" class="btn btn-outline-danger btn-sm"
-                            :disabled="store.logoBusy || store.readOnly" @click="remove">
+                            :disabled="store.logoBusy || !store.editable" @click="remove">
                             Remove
                         </button>
                     </div>
@@ -27,6 +29,10 @@
                         <template v-if="store.draft.logo.width && store.draft.logo.height">
                             · {{ store.draft.logo.width }}×{{ store.draft.logo.height }} px
                         </template>
+                    </p>
+                    <p v-if="store.readOnly && store.draft?.logo" class="studio-hint">
+                        This logo, its icons and its share image now belong to the organisation; open it to see or
+                        change them.
                     </p>
                     <p class="studio-hint">
                         PNG or JPEG is sent as it is. SVG, WebP, GIF and other images are converted to PNG here,
@@ -44,7 +50,7 @@
 
         <div class="d-flex flex-wrap gap-4">
             <BrandColourField v-for="field in COLOUR_FIELDS" :key="field.key" :id="field.key" :label="field.label"
-                :model-value="brand[field.key]" :candidates="candidates" :disabled="store.readOnly"
+                :model-value="brand[field.key]" :candidates="candidates" :disabled="!store.editable"
                 empty-note="Not chosen yet." @update:model-value="brand[field.key] = $event" />
         </div>
 
@@ -58,11 +64,11 @@
                 <div v-for="ink in INK_FIELDS" :key="ink.key" class="d-flex flex-column gap-1">
                     <div class="form-check">
                         <input :id="`studio-ink-${ink.key}`" class="form-check-input" type="checkbox" :checked="!!inks[ink.key]"
-                            :disabled="store.readOnly || (!inks[ink.key] && !report)" @change="toggleInk(ink.key, ($event.target as HTMLInputElement).checked)" />
+                            :disabled="!store.editable || (!inks[ink.key] && !report)" @change="toggleInk(ink.key, ($event.target as HTMLInputElement).checked)" />
                         <label class="form-check-label" :for="`studio-ink-${ink.key}`">{{ ink.label }} by hand</label>
                     </div>
                     <BrandColourField v-if="inks[ink.key]" :id="`ink-${ink.key}`" :label="ink.label"
-                        :model-value="inks[ink.key]" :disabled="store.readOnly" @update:model-value="setInk(ink.key, $event)" />
+                        :model-value="inks[ink.key]" :disabled="!store.editable" @update:model-value="setInk(ink.key, $event)" />
                     <p v-else class="studio-hint">
                         Theme: <span v-if="autoInk(ink.key)" class="mini-swatch" :style="{ backgroundColor: autoInk(ink.key) ?? undefined }"></span>
                         {{ autoInk(ink.key) ?? 'once the colours are chosen' }}

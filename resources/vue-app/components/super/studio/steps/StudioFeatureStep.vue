@@ -22,7 +22,7 @@
             <button type="button" class="btn btn-sm btn-outline-danger" @click="load">Retry</button>
         </div>
 
-        <fieldset v-else class="feature-groups" :disabled="store.readOnly">
+        <fieldset v-else class="feature-groups" :disabled="!store.editable">
             <legend class="visually-hidden">Features for {{ orgName }}</legend>
 
             <div v-for="group in groups" :key="group.key" class="switch-group">
@@ -31,7 +31,7 @@
                 <ul v-if="group.offered.length" class="list-unstyled d-flex flex-column gap-3 m-0">
                     <li v-for="entry in group.offered" :key="entry.key" class="switch-row">
                         <FeatureRow :entry="entry" :on="isOn(entry.key)" :suggested="suggestedWith(entry)"
-                            :disabled="store.readOnly" @toggle="set(entry.key, $event)" />
+                            :disabled="!store.editable" @toggle="set(entry.key, $event)" />
                     </li>
                 </ul>
 
@@ -42,7 +42,7 @@
                     <ul class="list-unstyled d-flex flex-column gap-3 mt-3 mb-0">
                         <li v-for="entry in group.notOffered" :key="entry.key" class="switch-row">
                             <FeatureRow :entry="entry" :on="isOn(entry.key)" :suggested="suggestedWith(entry)"
-                                :disabled="store.readOnly" @toggle="set(entry.key, $event)" />
+                                :disabled="!store.editable" @toggle="set(entry.key, $event)" />
                         </li>
                     </ul>
                 </details>
@@ -111,7 +111,7 @@ function suggestedWith(entry: StudioCatalogueEntry): string {
 }
 
 function set(key: string, on: boolean) {
-    if (store.readOnly) return;
+    if (!store.editable) return;
     store.answers.features.capabilities = { ...choices.value, [key]: on };
 }
 

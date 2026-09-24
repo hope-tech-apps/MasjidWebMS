@@ -207,6 +207,56 @@ class StudioProvisionCapabilitiesTest extends TestCase
         $this->assertSame(0, MasjidCapabilityChange::count());
     }
 
+    /**
+     * A key with a dot names a path inside the config, not a catalogue key:
+     * `web_pages.defaults` is web_pages' defaults array. Read through
+     * config("capabilities.{$key}") it passed as a key and the writer, which
+     * walks only real keys, dropped it without a word.
+     */
+    #[Test]
+    public function a_dotted_key_that_names_a_nested_config_array_is_refused_not_dropped(): void
+    {
+        $this->assertIsArray(config('capabilities.web_pages.defaults'), 'the premise: the path resolves to an array');
+
+        $payload = $this->draftWith($this->studioAnswers(), logo: false)->toProvisionPayload();
+        unset($payload['layout_preset']);
+
+        foreach (['web_pages.defaults', 'gallery.defaults'] as $key) {
+            $this->postJson('/api/admin/onboarding/provision', array_replace($payload, ['capabilities' => [$key => true] + $payload['capabilities']]))
+                ->assertStatus(422)
+                ->assertJsonFragment(["\"{$key}\" is not offered to this kind of organisation."]);
+        }
+
+        $this->assertSame(0, Masjid::count());
+    }
+
+    /**
+     * Studio always sends `capabilities`, even for a draft with no Step 1 map
+     * (a direct POST, or an SPA that no longer stops it): the organisation is
+     * born through the switches at their defaults, and the 201 says so. Without
+     * the map it would take the wizard's key-matched pivot loop, and the
+     * missing `capabilities_applied` would read in the SPA as unconfirmed.
+     */
+    #[Test]
+    public function a_draft_without_a_feature_map_is_born_through_the_switches_at_their_defaults(): void
+    {
+        $answers = $this->studioAnswers('school');
+        unset($answers['features']);
+
+        $data = $this->provision($this->draftWith($answers)->id)->assertCreated()->json('data');
+
+        $this->assertSame([], $data['capabilities_applied']['changed']);
+        $this->assertEqualsCanonicalizing(array_keys(CapabilityCatalogue::resolve('school', [])), $data['capabilities_applied']['unchanged']);
+
+        $masjid = Masjid::findOrFail($data['masjid_id']);
+        $pivot = MasjidMobileAppFeature::where('masjid_id', $masjid->id)->orderBy('feature_id')
+            ->pluck('is_available', 'feature_id')->map(fn ($v) => (bool) $v)->all();
+        $this->assertSame(AppFeaturePivot::rowsFor($masjid), $pivot);
+        // Where the two paths differ: the school bundle lists Donate, the switches leave it off.
+        $this->assertFalse($pivot[6], 'Donate follows the switches, not the wizard\'s school bundle');
+        $this->assertSame([], $masjid->capability_overrides ?? []);
+    }
+
     #[Test]
     public function the_multipart_strings_true_and_false_are_read_as_booleans(): void
     {

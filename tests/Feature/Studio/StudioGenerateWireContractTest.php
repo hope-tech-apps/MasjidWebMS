@@ -127,6 +127,25 @@ class StudioGenerateWireContractTest extends TestCase
     }
 
     /**
+     * The Platforms panel keeps iOS's "Bring your own" when iOS is unticked,
+     * and Step 3 asks for no credentials for it. The provision must not
+     * demand them either: the request's `required_if:…,byo` had no field on
+     * Step 3 to satisfy.
+     */
+    #[Test]
+    public function a_bring_your_own_mode_left_on_an_unselected_platform_asks_for_nothing(): void
+    {
+        $draft = $this->draftWith($this->studioAnswers(sections: [
+            'platforms' => ['platforms' => ['android', 'web'], 'apps' => ['ios' => ['account_mode' => 'byo'], 'android' => ['account_mode' => 'managed']]],
+        ]));
+
+        $data = $this->provision($draft->id)->assertCreated()->json('data');
+
+        $this->assertFalse($data['app_publishing']['has_asc_key']);
+        $this->assertSame('managed', MasjidAppPublishing::where('masjid_id', $data['masjid_id'])->value('ios_account_mode'), 'an unselected platform keeps the default mode');
+    }
+
+    /**
      * The top-level keys of `export type NAME = { … };` in Studio.ts, or of the
      * object typed under `$member` inside it. Keys are read by indentation, as
      * the file is formatted: four spaces for a type's own keys.

@@ -2717,7 +2717,8 @@ Decision (the four the plan asks this slice to record):
 - **Iqama.** On the Studio path iqama is displayed only when the client gave times: the draft's
   "client has not given iqama times" tick (`prayer.iqama_given = false`) is sent as
   `show_iqama_times = false`. The wizard's invented 20/10/10/5/10 schedule, shown by default,
-  stays on the wizard's path only (`OrganisationProvisioner`, iqama block).
+  stays on the wizard's path only (`OrganisationProvisioner`, iqama block). (Tightened by the S8
+  review fixes below: an untouched panel is hidden too, and a partial set is refused.)
 - **Donation labels.** "Donation Link" / "Donate Now" (written when a donation link comes without
   wording) stay: they are interface words, not facts about a congregation, and D8's list is
   history, scholars, programmes and numbers. `StudioStarterSiteServedProvenanceTest` allows exactly
@@ -2811,3 +2812,61 @@ have exactly one path out of the browser, and a provision can only ever be offer
 Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 106 errors at ce3e945e
 (stage A; stage A changed no SPA file, so 106 is this tree's base, not the 105 recorded at
 8b5787da) and the same 106, line for line, with this slice.
+
+## 2026-09-24 — Studio W1 S8 review fixes: iqama's truth, a draft that changes under Provision, and Step 3's answer
+Decision:
+- **Iqama, completed.** Studio always sends `show_iqama_times` (`StudioDraft::showsIqama`): true
+  only for a masjid (an absent type reads as one, as the request reads it) with at least one offset
+  and no "not given" tick. The request then requires all five (`ProvisionMasjidRequest::
+  iqamaIncomplete`, 422 naming the missing prayers), and Step 3 says the same sentence as a
+  blocker (`provision.ts iqamaBlockers`). So an untouched panel is hidden, Fajr alone is refused
+  rather than shown beside four invented times or hidden with the one the client gave, and all
+  five are shown. On Studio's path (`show_iqama_times` sent) an offset nobody gave is the column's
+  own 0, never 20/10/10/5/10; it is never shown, because iqama is then hidden. The wizard never
+  sends the key and keeps its `true` and its fallbacks (ProvisionIqamaTruthTest::the_legacy_path_is_unchanged).
+- **Jumu'ah stays as recorded.** The 13:30 default is still stored on both paths: the S8 contract
+  records that call (docs/manara-studio-w1.md, "Jumu'ah"), so the review's suggestion to extend
+  the iqama rule to it was not taken here.
+- **A draft that changed is refused, not provisioned.** Under the lock the draft must still have
+  the `lock_version`, `logo_path` and `logo_sha256` it was read with (a logo upload does not move
+  the version), and Step 3 sends the `lock_version` it reviewed (optional in
+  `StudioProvisionRequest`). Otherwise `StudioDraftChanged`: 409 `{status:'conflict', message,
+  data:{draft_id, provisioned_masjid_id: null}}`, nothing written, and the SPA reloads the draft
+  and says to review and press again. A null `provisioned_masjid_id` is how the SPA tells it from
+  "already provisioned".
+- **Races answer what is true.** A 422 from validation or the brand gate re-reads the draft: now
+  provisioned (a twin committed after the pre-check) is the 409 naming the organisation; gone is
+  a 404. A draft discarded before the lock is a 404, not a 500.
+- **Account modes only for selected platforms.** `toProvisionPayload` sends `apps[p]` only for a
+  platform in `platforms.platforms`; a "Bring your own" left on an unticked platform made the
+  wizard's `required_if` demand credentials Step 3 has no field for. The provisioner then stores
+  the default `managed` mode for the unselected platform.
+- **Capability keys are top-level config keys.** Looked up with `array_key_exists` on
+  `config('capabilities')`, as `UpdateStudioDraftRequest` does; `config("capabilities.{$key}")`
+  read a dotted key as a path.
+- **Malformed wizard input is a 422.** `org_type` is read as a string only when it is one before
+  rules() uses it, and `slug` and the web-domain keys `bail` at `string`, so an array never reaches
+  a `(string)` cast (PHP's warning, Laravel's 500).
+- **Step 3's answer.** "Not created" only on the controller's own 500 envelope; a 404 says the
+  draft is gone; no answer, a proxy's 502/504 or any other status is `unknown` ("press Provision
+  again to find out": a created organisation answers 409). While a provision runs the steps, the
+  stepper, Back/Next and the logo are locked (`store.editable`), and leaving asks first (the
+  browser's prompt, and a route-leave dialog), because the results exist only in that answer. The
+  invitation line names the administrator the draft held when Provision was pressed
+  (`Invitee`, carried in the outcome). The answer takes focus (`outcomeFocusId`). Pages are
+  "switched on", never "live", until the domain panel confirms serving. A provisioned draft's logo
+  is not fetched (its bytes are deleted after the commit); the Brand panel says it is on the
+  organisation.
+- **The store's order is testable.** `saveThenPost` (flush, then check the save, then post) and
+  `clearsSecrets` are pure functions in `provision.ts`, unit-tested; the source test pins that the
+  store posts only through the one and the step clears by the other, and the credential guard now
+  removes the two allowed expressions exactly instead of skipping their lines.
+Alternatives: hiding iqama silently whenever any offset is missing (drops times the client gave);
+rebuilding the payload from the locked row (would provision answers nobody reviewed); returning a
+bare 201 when the response body fails after the commit (the SPA's wording now covers it, and a
+partial body would need its own type).
+Rationale: the organisation is made only from answers someone reviewed and saved, a Studio org
+never shows a time the congregation did not give, and every sentence on Step 3 is one the server's
+answer supports.
+Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12, TypeScript 5.7.3) reports 106 errors at fe390d7d and
+at 41ea90d3 in this environment, and the same 106, line for line, with these fixes.

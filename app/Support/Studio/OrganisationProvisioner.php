@@ -142,18 +142,23 @@ final class OrganisationProvisioner
         ]);
 
         // ---- Iqama time settings (minutes-after-adhan offsets) ----
+        // Studio sends show_iqama_times (iqama is shown only when the client
+        // gave all five times, which the request enforces); the wizard never
+        // did, and keeps its `true` and its invented 20/10/10/5/10 for any
+        // offset left blank. On Studio's path nothing is invented: an offset
+        // the client did not give is the column's own 0, and is never shown,
+        // because iqama is then hidden.
         $iqama = $request->input('iqama', []);
+        $studioIqama = $request->has('show_iqama_times');
         IqamaTimeSetting::create([
             'masjid_id' => $masjid->id,
             'iqama_type' => $request->input('iqama_type', 'minutes_after_adhan'),
-            // Studio sends it (iqama is shown only when the client gave
-            // times); the wizard never did, and keeps its `true`.
-            'show_iqama_times' => $request->has('show_iqama_times') ? $request->boolean('show_iqama_times') : true,
-            'fajr' => $iqama['fajr'] ?? 20,
-            'dhuhr' => $iqama['dhuhr'] ?? 10,
-            'asr' => $iqama['asr'] ?? 10,
-            'maghrib' => $iqama['maghrib'] ?? 5,
-            'isha' => $iqama['isha'] ?? 10,
+            'show_iqama_times' => $studioIqama ? $request->boolean('show_iqama_times') : true,
+            'fajr' => $iqama['fajr'] ?? ($studioIqama ? 0 : 20),
+            'dhuhr' => $iqama['dhuhr'] ?? ($studioIqama ? 0 : 10),
+            'asr' => $iqama['asr'] ?? ($studioIqama ? 0 : 10),
+            'maghrib' => $iqama['maghrib'] ?? ($studioIqama ? 0 : 5),
+            'isha' => $iqama['isha'] ?? ($studioIqama ? 0 : 10),
         ]);
 
         // ---- Jumaa settings (fixed iqama time; sensible default) ----

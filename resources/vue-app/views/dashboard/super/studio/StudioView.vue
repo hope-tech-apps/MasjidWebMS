@@ -92,7 +92,7 @@
                                 <li v-for="reason in nextBlockers" :key="reason">{{ reason }}</li>
                             </ul>
                             <div class="d-flex justify-content-between gap-2">
-                                <button type="button" class="btn btn-outline-secondary" :disabled="currentIndex === 0"
+                                <button type="button" class="btn btn-outline-secondary" :disabled="currentIndex === 0 || store.provisioning"
                                     @click="go(STUDIO_STEPS[currentIndex - 1].key)">
                                     Back
                                 </button>
@@ -141,6 +141,9 @@
  * Leaving while a save is in flight, or with edits not yet sent, is guarded:
  * the browser's own prompt for a reload or a closed tab, and for a route
  * change the pending save is sent first, with a prompt only if it failed.
+ * While a provision runs no step can be opened (its answers are what the
+ * server is building from), and leaving asks first: the organisation is made
+ * either way, but whether its invitation went is reported only in the answer.
  */
 import StepFoundation from '@/components/super/studio/steps/StepFoundation.vue';
 import StudioFeatureStep from '@/components/super/studio/steps/StudioFeatureStep.vue';
@@ -192,7 +195,7 @@ function stepBlockedReason(step: StudioStepKey): string {
 }
 
 function canOpen(step: StudioStepKey): boolean {
-    return stepBlockedReason(step) === '';
+    return !store.provisioning && stepBlockedReason(step) === '';
 }
 
 /** Shown under Next, so a blocked Next always says why. */
@@ -248,6 +251,19 @@ onBeforeUnmount(() => {
 });
 
 onBeforeRouteLeave(async () => {
+    if (store.provisioning) {
+        const answer = await QSwal.fire({
+            icon: 'warning',
+            title: 'Leave while provisioning?',
+            text: 'The organisation is still being created and will be, whether you stay or not. Leaving loses its '
+                + 'report: whether the invitation went, and anything that needs attention.',
+            confirmButtonText: 'Leave',
+            cancelButtonText: 'Stay',
+        });
+        if (answer.isConfirmed) store.reset();
+        return answer.isConfirmed;
+    }
+
     if (store.hasUnsavedWork()) await store.flush();
     if (store.saveState !== 'error' && store.saveState !== 'conflict') {
         store.reset();

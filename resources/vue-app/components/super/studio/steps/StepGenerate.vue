@@ -11,11 +11,12 @@
 
         <!-- This tab provisioned it: the server's report. -->
         <StudioPanel v-if="outcome?.kind === 'created'" title="Created">
-            <ProvisionResults :result="outcome.result" />
+            <ProvisionResults :result="outcome.result" :invitee="outcome.invitee" />
         </StudioPanel>
 
         <!-- Created, but the server did not confirm the feature choices (catalogue risk [2]). -->
-        <div v-else-if="outcome?.kind === 'unconfirmed'" class="alert alert-danger d-flex flex-column gap-2 mb-0" role="alert">
+        <div v-else-if="outcome?.kind === 'unconfirmed'" id="studio-generate-outcome" tabindex="-1"
+            class="alert alert-danger d-flex flex-column gap-2 mb-0" role="alert">
             <span><i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ outcome.message }}</span>
             <span v-if="outcome.masjidId">
                 <router-link :to="`/dashboard/super/masjids/${outcome.masjidId}`" class="btn btn-sm btn-outline-danger">
@@ -53,13 +54,21 @@
                     @update="updateSecret" />
             </StudioPanel>
 
-            <div v-if="outcome?.kind === 'invalid'" class="alert alert-danger mb-0" role="alert">
+            <div v-if="outcome?.kind === 'invalid'" id="studio-generate-outcome" tabindex="-1" class="alert alert-danger mb-0" role="alert">
                 <div class="fw-semibold mb-1">Nothing was created. The server refused the draft:</div>
                 <ul class="mb-0 ps-3">
                     <li v-for="message in outcome.messages" :key="message">{{ message }}</li>
                 </ul>
             </div>
-            <div v-else-if="outcome?.kind === 'failed'" class="alert alert-danger mb-0" role="alert">
+            <div v-else-if="outcome?.kind === 'failed'" id="studio-generate-outcome" tabindex="-1" class="alert alert-danger mb-0" role="alert">
+                {{ outcome.message }}
+            </div>
+            <!-- The draft changed since it was reviewed; the step now shows the latest answers. -->
+            <div v-else-if="outcome?.kind === 'changed'" id="studio-generate-outcome" tabindex="-1" class="alert alert-warning mb-0" role="alert">
+                {{ outcome.message }}
+            </div>
+            <!-- No answer that says: the organisation may exist, and pressing again finds out (a 409 if it does). -->
+            <div v-else-if="outcome?.kind === 'unknown'" id="studio-generate-outcome" tabindex="-1" class="alert alert-warning mb-0" role="alert">
                 {{ outcome.message }}
             </div>
 
@@ -92,7 +101,12 @@
  * The credentials are this component's own `reactive`, never the store's
  * answers, so the autosave cannot see them (R7). They are handed to
  * store.provision(), which puts them in the provision body and nowhere else,
- * and blanked once an organisation exists. Leaving the page drops them.
+ * and blanked once an organisation exists (provision.ts clearsSecrets).
+ * Leaving the page drops them.
+ *
+ * The answer takes keyboard focus (provision.ts outcomeFocusId): the button
+ * pressed is disabled while it runs and gone once the draft is provisioned,
+ * and focus dropped to the page body would announce nothing.
  *
  * After: the server's report (ProvisionResults). A 201 without
  * `capabilities_applied` is an error, not success. A draft already
@@ -105,10 +119,19 @@ import ByoCredentialsFields from '@/components/super/studio/generate/ByoCredenti
 import ProvisionResults from '@/components/super/studio/generate/ProvisionResults.vue';
 import ReviewGrid from '@/components/super/studio/generate/ReviewGrid.vue';
 import { QSwal } from '@/core/plugins/SweetAlerts2';
-import { foundationBlockers, webSelected } from '@/core/studio/foundationGate';
-import { byoPlatforms, ByoPlatform, clearSecrets, emptySecrets, generateBlockers } from '@/core/studio/provision';
+import { asksPrayer, foundationBlockers, webSelected } from '@/core/studio/foundationGate';
+import {
+    byoPlatforms,
+    ByoPlatform,
+    clearSecrets,
+    clearsSecrets,
+    emptySecrets,
+    generateBlockers,
+    iqamaBlockers,
+    outcomeFocusId,
+} from '@/core/studio/provision';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
-import { computed, onMounted, reactive } from 'vue';
+import { computed, nextTick, onMounted, reactive } from 'vue';
 
 const store = useStudioDraftStore();
 
@@ -122,6 +145,7 @@ const byo = computed(() => byoPlatforms(store.answers));
 const blockers = computed(() => [
     ...foundationBlockers(store.answers, !!store.draft?.logo),
     ...generateBlockers(store.answers, !!store.draft?.logo, secrets),
+    ...iqamaBlockers(store.answers, asksPrayer(store.answers)),
 ].filter((reason, index, all) => all.indexOf(reason) === index));
 
 const canProvision = computed(() => !store.readOnly && !store.provisioning && blockers.value.length === 0);
@@ -146,10 +170,11 @@ async function provision() {
     if (!answer.isConfirmed || !canProvision.value) return;
 
     const result = await store.provision(secrets);
-    if (result && result.kind !== 'invalid' && result.kind !== 'failed') {
-        clearSecrets(secrets);
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (clearsSecrets(result)) clearSecrets(secrets);
+
+    await nextTick();
+    const target = outcomeFocusId(result);
+    if (target) document.getElementById(target)?.focus();
 }
 
 onMounted(() => {

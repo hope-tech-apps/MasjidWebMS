@@ -1,5 +1,5 @@
 <template>
-    <fieldset class="step-foundation" :disabled="store.readOnly">
+    <fieldset class="step-foundation" :disabled="!store.editable">
         <IdentityPanel @slug-check="slugCheck = $event" />
         <PrayerPanel v-if="asksPrayer(store.answers)" />
         <BrandPanel />

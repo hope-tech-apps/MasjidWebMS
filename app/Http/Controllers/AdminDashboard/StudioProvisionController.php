@@ -8,9 +8,11 @@ use App\Models\Masjid;
 use App\Models\MasjidDomain;
 use App\Models\StudioDraft;
 use App\Support\Errors;
+use App\Support\Studio\StudioDraftChanged;
 use App\Support\Studio\StudioDraftConflict;
 use App\Support\Studio\StudioProvisioning;
 use App\Support\Studio\StudioProvisionResult;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,10 +27,15 @@ use Symfony\Component\HttpFoundation\Response;
  *  - 422: the legacy envelope, from the wizard's own request rules or from
  *    Studio's brand gate. Nothing was written.
  *  - 409 `{status: 'conflict', data: {draft_id, provisioned_masjid_id}}`: the
- *    draft is already an organisation. Checked BEFORE validation as well as
- *    under the lock, because a second provision of the same answers would
- *    otherwise fail validation (its email now belongs to the first org) and
- *    read as "fix your answers" instead of "this exists".
+ *    draft is already an organisation. Checked BEFORE validation, under the
+ *    lock, and again whenever validation refuses the draft, because a second
+ *    provision of the same answers fails validation once the first has
+ *    committed (its email now belongs to the first org) and would read as "fix
+ *    your answers" instead of "this exists".
+ *  - 409 `{status: 'conflict', message, data: {draft_id, provisioned_masjid_id: null}}`:
+ *    the draft changed after it was read, or since the lock_version the SPA
+ *    reviewed (StudioDraftChanged). Nothing was written.
+ *  - 404: the draft does not exist, or was discarded while this ran.
  *  - 500: only for a failure before or inside the transaction, and then
  *    nothing was committed. A failure after the commit is a 201 that says so.
  */
@@ -44,10 +51,33 @@ class StudioProvisionController extends Controller
         }
 
         try {
-            $result = $provisioning->provision($draft, $request->secrets());
+            $result = $provisioning->provision($draft, $request->secrets(), $request->lockVersion());
         } catch (StudioDraftConflict $e) {
             return self::conflict($e->draft);
+        } catch (StudioDraftChanged $e) {
+            return response()->json([
+                'status' => 'conflict',
+                'message' => StudioDraftChanged::MESSAGE,
+                'data' => ['draft_id' => $e->draft->id, 'provisioned_masjid_id' => null],
+            ], Response::HTTP_CONFLICT);
         } catch (HttpResponseException $e) {
+            // Validation and the brand gate run before the lock. A twin that
+            // committed after the check above makes this draft's email and
+            // name "taken"; the truth is that the draft is an organisation.
+            $current = StudioDraft::find($draft->id);
+
+            if ($current === null) {
+                throw (new ModelNotFoundException)->setModel(StudioDraft::class, [$draft->id]);
+            }
+
+            if ($current->isProvisioned()) {
+                return self::conflict($current);
+            }
+
+            throw $e;
+        } catch (ModelNotFoundException $e) {
+            // Discarded in another tab before the lock: the renderer's 404,
+            // as for a draft that was never there. Nothing was written.
             throw $e;
         } catch (\Throwable $e) {
             return response()->json([

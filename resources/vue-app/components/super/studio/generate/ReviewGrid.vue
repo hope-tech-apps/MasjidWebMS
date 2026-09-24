@@ -40,9 +40,18 @@
  */
 import { asksPrayer, BRAND_COLOUR_KEYS, webSelected } from '@/core/studio/foundationGate';
 import { accountModeLabel, PLATFORM_OPTIONS } from '@/core/studio/platforms';
-import { featureSummary } from '@/core/studio/provision';
+import { featureSummary, IqamaStatus, iqamaStatus } from '@/core/studio/provision';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed, ref, watch } from 'vue';
+
+/** What the organisation will show, in the order of provision.ts iqamaStatus (a partial set is also a blocker). */
+const IQAMA_REVIEW: Record<IqamaStatus['state'], string> = {
+    not_asked: '',
+    not_given: 'Not given: hidden until the client gives them',
+    none: 'None entered: hidden until the client gives them',
+    partial: 'Incomplete: all five are needed to show them',
+    given: 'Given: shown',
+};
 
 const store = useStudioDraftStore();
 const identity = computed(() => store.answers.identity);
@@ -93,10 +102,7 @@ const items = computed(() => {
         rows.push(
             { label: 'Prayer method', value: optionLabel(options?.prayer.methods, answers.prayer.method) },
             { label: 'Madhab', value: optionLabel(options?.prayer.madhabs, answers.prayer.madhab) },
-            {
-                label: 'Iqama times',
-                value: answers.prayer.iqama_given === false ? 'Not given: hidden until the client gives them' : 'Given',
-            },
+            { label: 'Iqama times', value: IQAMA_REVIEW[iqamaStatus(answers, true).state] },
         );
     }
 

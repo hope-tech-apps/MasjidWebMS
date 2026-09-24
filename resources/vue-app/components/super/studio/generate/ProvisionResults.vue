@@ -36,9 +36,10 @@
             <li v-if="site" class="result-row">
                 <i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i>
                 <div class="d-flex flex-column gap-1 min-w-0">
+                    <!-- "switched on", not "live": nothing is served until the domain panel below confirms it (S11). -->
                     <span class="fw-semibold">
                         Website pages: {{ site.created.length }} created, {{ site.sections_active }}
-                        {{ site.sections_active === 1 ? 'section' : 'sections' }} live
+                        {{ site.sections_active === 1 ? 'section' : 'sections' }} switched on
                     </span>
                     <span v-if="site.created.length" class="small">{{ site.created.map(pageTitle).join(', ') }}</span>
                     <span v-if="site.skipped.length" class="small text-muted">
@@ -85,7 +86,11 @@
  * S8). Every line restates the server's report and claims nothing more:
  *
  *  - the invitation is ticked only when the server says one went and none
- *    failed (core/studio/provision.ts inviteOutcome); otherwise the reason;
+ *    failed (core/studio/provision.ts inviteOutcome); otherwise the reason. It
+ *    names the administrator the draft held when Provision was pressed
+ *    (`invitee`), never the answers as they stand now;
+ *  - website sections are "switched on", not live: the site is not served
+ *    until the domain panel says so;
  *  - an after-commit step that failed is listed in the server's own words;
  *  - the web address is S7's panel for the new organisation, with Check now,
  *    and its "Open live site" is a link only once the server has seen the site
@@ -96,18 +101,18 @@
  * with none loaded is shown as it came.
  */
 import StudioDomainAttachPanel from '@/components/super/studio/StudioDomainAttachPanel.vue';
-import { inviteOutcome } from '@/core/studio/provision';
+import { Invitee, inviteOutcome } from '@/core/studio/provision';
 import { StudioProvisionResult } from '@/core/types/data/Studio';
 import { useStudioDraftStore } from '@/stores/super/studioDraftStore';
 import { computed } from 'vue';
 
-const props = defineProps<{ result: StudioProvisionResult }>();
+const props = defineProps<{ result: StudioProvisionResult; invitee: Invitee }>();
 
 const store = useStudioDraftStore();
 
 const applied = computed(() => props.result.capabilities_applied ?? null);
 const site = computed(() => props.result.starter_site ?? null);
-const invite = computed(() => inviteOutcome(props.result.after_commit, store.answers));
+const invite = computed(() => inviteOutcome(props.result.after_commit, props.invitee));
 const warnings = computed(() => props.result.after_commit?.warnings ?? []);
 const hasWebAddress = computed(() => !!props.result.web || (props.result.domains ?? []).length > 0);
 

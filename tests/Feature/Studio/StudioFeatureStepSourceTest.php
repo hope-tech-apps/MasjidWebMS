@@ -101,7 +101,7 @@ class StudioFeatureStepSourceTest extends TestCase
 
         // The operator's toggle is the step's only write to the map.
         $this->assertSame(1, substr_count($step, 'store.answers.features.capabilities ='), 'the feature step may write the map only in set()');
-        $this->assertMatchesRegularExpression('/function set\(key: string, on: boolean\) \{\s*if \(store\.readOnly\) return;\s*store\.answers\.features\.capabilities = /', $step);
+        $this->assertMatchesRegularExpression('/function set\(key: string, on: boolean\) \{\s*if \(!store\.editable\) return;\s*store\.answers\.features\.capabilities = /', $step);
 
         // The store fills and carries it, on an armed draft only, whenever the
         // organisation type, the platforms or the catalogue change.

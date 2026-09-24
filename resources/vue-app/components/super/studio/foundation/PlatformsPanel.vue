@@ -6,7 +6,7 @@
                 <label v-for="option in PLATFORM_OPTIONS" :key="option.slug" class="mode-pill"
                     :class="{ selected: chosen.includes(option.slug), 'pill-disabled': option.slug === 'tvos' && !chosen.includes('ios') }">
                     <input type="checkbox" :checked="chosen.includes(option.slug)"
-                        :disabled="store.readOnly || (option.slug === 'tvos' && !chosen.includes('ios'))"
+                        :disabled="!store.editable || (option.slug === 'tvos' && !chosen.includes('ios'))"
                         @change="toggle(option.slug, ($event.target as HTMLInputElement).checked)" />
                     {{ option.label }}
                 </label>
@@ -21,7 +21,7 @@
                     <label v-for="mode in ACCOUNT_MODES" :key="mode.value" class="mode-pill"
                         :class="{ selected: accountMode(app.slug) === mode.value }">
                         <input type="radio" :name="`studio-account-${app.slug}`" :value="mode.value"
-                            :checked="accountMode(app.slug) === mode.value" :disabled="store.readOnly"
+                            :checked="accountMode(app.slug) === mode.value" :disabled="!store.editable"
                             @change="setAccountMode(app.slug, mode.value)" />
                         {{ mode.label }}
                     </label>

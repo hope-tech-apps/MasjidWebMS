@@ -20,13 +20,13 @@
                 <div class="studio-field w-100">
                     <label for="studio-custom-host">Host</label>
                     <input id="studio-custom-host" :value="custom.host ?? ''" type="text" maxlength="253" placeholder="www.example.org"
-                        autocapitalize="off" spellcheck="false" class="dashboard-input" :disabled="store.readOnly"
+                        autocapitalize="off" spellcheck="false" class="dashboard-input" :disabled="!store.editable"
                         @input="setCustom('host', $event)" />
                 </div>
                 <div class="studio-field w-100">
                     <label for="studio-zone-apex">Zone</label>
                     <input id="studio-zone-apex" :value="custom.zone_apex ?? ''" type="text" maxlength="253" placeholder="example.org"
-                        autocapitalize="off" spellcheck="false" class="dashboard-input" :disabled="store.readOnly"
+                        autocapitalize="off" spellcheck="false" class="dashboard-input" :disabled="!store.editable"
                         @input="setCustom('zone_apex', $event)" />
                 </div>
             </div>

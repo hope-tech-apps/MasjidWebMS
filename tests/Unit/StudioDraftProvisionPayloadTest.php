@@ -50,11 +50,32 @@ class StudioDraftProvisionPayloadTest extends TestCase
 
         // The other way round, and a platform with no account mode chosen.
         $payload = $this->draft([
-            'platforms' => ['apps' => ['ios' => ['account_mode' => 'byo'], 'android' => []]],
+            'platforms' => ['platforms' => ['ios', 'android'], 'apps' => ['ios' => ['account_mode' => 'byo'], 'android' => []]],
         ])->toProvisionPayload(self::SECRETS);
 
         $this->assertSame(['account_mode' => 'byo'] + self::SECRETS['ios'], $payload['apps']['ios']);
         $this->assertArrayNotHasKey('android', $payload['apps'], 'no mode chosen, so no credentials either');
+    }
+
+    /**
+     * The Platforms panel keeps a platform's mode when it is unticked. Sent,
+     * a leftover `byo` would make the request demand credentials Step 3 has
+     * no field for (`required_if:apps.ios.account_mode,byo`).
+     */
+    #[Test]
+    public function an_account_mode_is_sent_only_for_a_platform_still_selected(): void
+    {
+        $payload = $this->draft([
+            'platforms' => [
+                'platforms' => ['android', 'web'],
+                'apps' => ['ios' => ['account_mode' => 'byo'], 'android' => ['account_mode' => 'managed'], 'web' => ['account_mode' => 'managed']],
+            ],
+        ])->toProvisionPayload(self::SECRETS);
+
+        $this->assertSame(['android' => ['account_mode' => 'managed'], 'web' => ['account_mode' => 'managed']], $payload['apps']);
+
+        $none = $this->draft(['platforms' => ['platforms' => ['web'], 'apps' => ['ios' => ['account_mode' => 'byo']]]])->toProvisionPayload(self::SECRETS);
+        $this->assertArrayNotHasKey('apps', $none, 'nothing selected has a mode, so no apps key at all');
     }
 
     #[Test]
@@ -87,7 +108,7 @@ class StudioDraftProvisionPayloadTest extends TestCase
         }
 
         // S8's request keys: the slug and the client's description as they
-        // are, the tick as show_iqama_times, the Step 1 map as capabilities.
+        // are, whether iqama is shown, the Step 1 map as capabilities.
         $this->assertSame('annur', $payload['slug']);
         $this->assertSame('A masjid in Burlington.', $payload['description']);
         $this->assertTrue($payload['show_iqama_times']);
@@ -117,17 +138,32 @@ class StudioDraftProvisionPayloadTest extends TestCase
         $this->assertArrayNotHasKey('web_domain', $withoutWeb);
     }
 
+    /**
+     * DECISIONS, S8 "Iqama": shown only for a masjid whose client gave times.
+     * Always sent, because the request's absent value is the wizard's `true`
+     * with its invented 20/10/10/5/10. Some offsets without the rest is sent as
+     * shown, so the request names the missing ones instead of hiding the
+     * times the client gave.
+     */
     #[Test]
-    public function only_the_not_given_tick_turns_iqama_off(): void
+    public function iqama_is_shown_only_for_a_masjid_whose_client_gave_times(): void
     {
-        $this->assertFalse($this->draft(['prayer' => ['iqama_given' => false]])->toProvisionPayload()['show_iqama_times']);
-        $this->assertArrayNotHasKey('show_iqama_times', $this->draft(['prayer' => ['iqama_given' => null]])->toProvisionPayload());
-        $this->assertArrayNotHasKey('show_iqama_times', $this->draft(['prayer' => ['method' => 'ISNA']])->toProvisionPayload());
+        $five = ['fajr' => 20, 'dhuhr' => 0, 'asr' => 10, 'maghrib' => 5, 'isha' => 15];
+        $shows = fn (array $identity, array $prayer) => $this->draft(['identity' => $identity, 'prayer' => $prayer])->toProvisionPayload()['show_iqama_times'];
+        $masjid = ['org_type' => 'masjid'];
+
+        $this->assertFalse($shows($masjid, ['method' => 'ISNA']), 'an untouched panel gave no times');
+        $this->assertFalse($shows($masjid, ['iqama_given' => null, 'iqama' => ['fajr' => null, 'dhuhr' => '']]), 'cleared fields are no times either');
+        $this->assertFalse($shows($masjid, ['iqama_given' => false, 'iqama' => $five]), 'the tick wins over offsets typed before it');
+        $this->assertTrue($shows($masjid, ['iqama' => $five]), 'all five, a zero among them');
+        $this->assertTrue($shows($masjid, ['iqama' => ['fajr' => 25]]), 'some: shown, for the request to refuse the rest by name');
+        $this->assertTrue($shows([], ['iqama' => $five]), 'no type is a masjid, as the request reads it');
+        $this->assertFalse($shows(['org_type' => 'school'], ['iqama' => $five]), 'a school is never asked for iqama');
     }
 
     #[Test]
-    public function an_empty_draft_flattens_to_nothing_even_with_secrets_typed(): void
+    public function an_empty_draft_flattens_to_hidden_iqama_and_nothing_else_even_with_secrets_typed(): void
     {
-        $this->assertSame([], $this->draft([])->toProvisionPayload(self::SECRETS));
+        $this->assertSame(['show_iqama_times' => false], $this->draft([])->toProvisionPayload(self::SECRETS));
     }
 }
