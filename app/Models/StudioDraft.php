@@ -53,16 +53,17 @@ class StudioDraft extends Model
     ];
 
     /**
-     * How each section's keys land in ProvisionMasjidRequest today. Keys not
-     * named here stay in the draft: `vibe` never leaves it (R12), `extracted`
-     * and `ink_overrides` are Studio's own, and `slug`, `description`,
-     * `iqama_given`, `features`, `layout` and `domain` become request keys only
-     * when S8 teaches the request to accept them.
+     * How each section's keys land in ProvisionMasjidRequest as they are.
+     * Keys not named here stay in the draft: `vibe` never leaves it (R12), and
+     * `extracted` and `ink_overrides` are Studio's own (the inks reach the new
+     * org through StudioProvisioning, not the request). `iqama_given`,
+     * `features`, `layout` and `domain` are renamed on the way out; see
+     * toProvisionPayload().
      */
     private const PROVISION_KEYS = [
         'identity' => [
             'org_type', 'name', 'email', 'phone', 'address', 'country_id', 'city_id',
-            'latitude', 'longitude', 'timezone', 'user_id', 'admin',
+            'latitude', 'longitude', 'timezone', 'user_id', 'admin', 'slug', 'description',
             'donation_link', 'donation_title', 'donation_message',
             'facebook_url', 'youtube_url', 'instagram_url', 'whatsapp_url', 'whatsapp_number',
         ],
@@ -289,6 +290,38 @@ class StudioDraft extends Model
 
         if ($apps !== []) {
             $payload['apps'] = $apps;
+        }
+
+        // Studio's request keys (S8). The tick "client has not given iqama
+        // times" is `iqama_given: false`; an unticked panel leaves it unset,
+        // and the request's own default (shown) stands.
+        $iqamaGiven = $this->section('prayer')['iqama_given'] ?? null;
+        if (is_bool($iqamaGiven)) {
+            $payload['show_iqama_times'] = $iqamaGiven;
+        }
+
+        $capabilities = $this->section('features')['capabilities'] ?? null;
+        if (is_array($capabilities)) {
+            $payload['capabilities'] = $capabilities;
+        }
+
+        // The starter website and the client's own domain are the web
+        // deliverable, sent only when web is selected: the request refuses
+        // them otherwise, and a draft that dropped web keeps its choices for
+        // the day it is selected again.
+        if (in_array('web', (array) ($this->section('platforms')['platforms'] ?? []), true)) {
+            $preset = $this->section('layout')['preset'] ?? null;
+            if (is_string($preset) && $preset !== '') {
+                $payload['layout_preset'] = $preset;
+            }
+
+            $custom = $this->section('domain')['custom'] ?? null;
+            if (is_array($custom) && is_string($custom['host'] ?? null) && $custom['host'] !== '') {
+                $payload['web_domain'] = [
+                    'custom_host' => $custom['host'],
+                    'custom_zone_apex' => $custom['zone_apex'] ?? null,
+                ];
+            }
         }
 
         return $payload;

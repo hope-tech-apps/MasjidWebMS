@@ -4,6 +4,7 @@ namespace App\Http\Resources\Api\V1;
 
 use App\Enums\SectionType;
 use App\Support\SectionContentBinder;
+use App\Support\Studio\StarterPlaceholders;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -41,7 +42,10 @@ class PageSectionResource extends JsonResource
             // Nuxt site filters to web+both; it never sees a null here.
             'platforms' => $this->platforms,
             'is_active' => $this->is_active,
-            'settings' => $this->settings,
+            // Studio's marker (settings.studio: which preset wrote the section and
+            // what it still needs) is for admins; everything else is served as
+            // stored. See StarterPlaceholders::publicSettings.
+            'settings' => StarterPlaceholders::publicSettings($this->settings),
             'uses_external_data' => $this->usesExternalData(),
 //            'created_at' => $this->created_at?->toISOString(),
 //            'updated_at' => $this->updated_at?->toISOString(),

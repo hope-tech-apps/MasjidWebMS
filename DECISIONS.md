@@ -2705,3 +2705,62 @@ than what Step 3 will create or the server will take; recorded because the first
 otherwise.
 Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12 on TypeScript 5.7.3) reports 105 errors at
 8b5787da and 105 at this commit, the same set.
+
+## 2026-09-24 — Studio W1 S8 (stage A): provision from a draft, and the calls the plan left open
+Decision (the four the plan asks this slice to record):
+- **Two ledger policies.** The single switch (`MasjidsController::setCapability`) still ledgers a
+  no-op flip (`CapabilityChangeLedgerTest`), because a SuperAdmin pressed a button on a live org.
+  `CapabilityWriter::applyAtCreation` ledgers only DEPARTURES from `defaultAtCreation`, because a
+  key left at its default was not decided about, and a Studio org must stay as sparse as a
+  wizard-made one (R9). A CRM choice is a departure like any other: the row is born at
+  `capabilities.crm.provision_default` and the writer ledgers the change (R26).
+- **Iqama.** On the Studio path iqama is displayed only when the client gave times: the draft's
+  "client has not given iqama times" tick (`prayer.iqama_given = false`) is sent as
+  `show_iqama_times = false`. The wizard's invented 20/10/10/5/10 schedule, shown by default,
+  stays on the wizard's path only (`OrganisationProvisioner`, iqama block).
+- **Donation labels.** "Donation Link" / "Donate Now" (written when a donation link comes without
+  wording) stay: they are interface words, not facts about a congregation, and D8's list is
+  history, scholars, programmes and numbers. `StudioStarterSiteServedProvenanceTest` allows exactly
+  these two, plus SectionContentBinder's own mission/vision card words ("Our Mission", "Our
+  Vision") and item types (`mission`, `vision`), and nothing else that is not a fact, a label, a
+  page path, a structural value or the org's own media URL.
+- **Jumu'ah.** The 13:30 default is still stored. The web does not draw it; W2/W3 must not show it
+  unless it was supplied.
+
+Calls made where the plan was silent:
+- `settings.studio` is `{version: 1, preset, slot, placeholders: [{field, kind, hint, essential,
+  source?}]}` on EVERY starter section. Whether a placeholder is open is never stored (it is a
+  function of the content and the bound rows) and neither is the hint's sentence (a key into
+  `studio_layouts.hints`). `StarterPlaceholders::publicSettings` strips it on the public path.
+- `StudioProvisioning::provision` returns a `StudioProvisionResult` (the org, the context, the
+  after-commit report) rather than a bare `Masjid`, because the 201 body needs all three. What the
+  provisioner's optional steps did travels on `ProvisionContext` (`capabilitiesApplied`,
+  `starterSite`, `domains`), leaving `create()`'s signature as the wizard and the demo fixture call it.
+- Studio always sends `capabilities` (an empty map when the draft never reached Step 1), so a
+  Studio org is always born through the switches with its pivot derived from them, and the 201
+  always carries `capabilities_applied` (the SPA treats its absence as an old backend).
+- The web deliverable (`layout_preset`, `web_domain`) is flattened from the draft only when web is
+  selected; the request refuses either without web, and a custom domain without a slug, rather
+  than dropping it.
+- A host row is written with `waiting_on = token` when the Cloudflare token is blank (what the
+  attacher writes on its first pass), so the 201 says so before the job has run. The attach job is
+  dispatched only by Studio, after the commit. A direct POST to the wizard's endpoint carrying a
+  slug gets its rows but no immediate job; `domains:reconcile` advances them within five minutes.
+- The brand gate also refuses a name another organisation has. `masjids.name` is unique in the
+  database and the wizard's rules never checked it, so a duplicate was a 500 naming nothing;
+  Studio answers 422 on `name`. The wizard's own behaviour is left as it was.
+- The logo bytes are copied from the draft's private disk into
+  `storage/app/private/studio-tmp/{draft}-{random}/` before the transaction, and medialibrary adds
+  from those copies with `preservingOriginal()` (kept as the plan requires; with copies as the
+  source it is belt and braces, not the only thing that makes a retry possible).
+- The 409 is answered before validation as well as under the lock: a second provision of the same
+  answers would otherwise fail validation (its email now belongs to the first org) and read as
+  "fix your answers" instead of "this exists".
+- `StudioDraftProvisionPayloadTest` was edited: it pinned S2's "slug, description and capabilities
+  are not yet request keys", which this slice makes them.
+Alternatives: a `config('studio.appliers')` registry (R10, rejected by the plan); storing
+`open`/`hint_text` in the marker (stale the moment an admin types the About text); a nullable
+`capabilities_applied` (indistinguishable from an old backend).
+Rationale: each keeps a Studio org identical to what the wizard would make from the same answers
+except for the draft-only writes R10 names, and keeps every live tenant's payloads byte-identical
+(`LivePublicPayloadsUnchangedTest` compares against recordings the base fe390d7d wrote).

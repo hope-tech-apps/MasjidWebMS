@@ -7,12 +7,16 @@ use App\Models\DonationLink;
 use App\Models\IqamaTimeSetting;
 use App\Models\Masjid;
 use App\Models\MasjidAppPublishing;
+use App\Models\MasjidDomain;
 use App\Models\MasjidMobileAppFeature;
 use App\Models\MasjidSocialMediaLink;
 use App\Models\MasjidUser;
 use App\Models\MobileAppFeature;
 use App\Models\User;
+use App\Support\AppFeaturePivot;
+use App\Support\CapabilityWriter;
 use App\Support\FormTemplates;
+use App\Services\Cloudflare\CloudflareService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use LogicException;
@@ -41,6 +45,24 @@ use LogicException;
  * Nothing that cannot be undone happens in here: invitations are collected into
  * `$invitations` for the caller to send AFTER its commit, because an email
  * cannot be recalled by a rollback, and cache flushes are the caller's too.
+ *
+ * STUDIO'S OPTIONAL KEYS (S8, R10) run in one fixed order, because each reads
+ * what the one before wrote:
+ *
+ *   1. the masjids row (with `slug` and `description` when sent), then every
+ *      row the wizard has always written;
+ *   2. `capabilities`: CapabilityWriter stores the departures from the
+ *      defaults, then the Mobile App Features pivot is derived from those
+ *      switches, replacing the wizard's key-matched loop;
+ *   3. the vertical's starter forms (as always);
+ *   4. `layout_preset`: the starter website, which reads the switches (a
+ *      module that is off writes no section) and the forms (the admissions
+ *      section points at the seeded form), then the preset's header and
+ *      footer into the theme's tokens;
+ *   5. the web host rows, when web is selected and a slug was given.
+ *
+ * With none of those keys sent, every step is the wizard's own, byte for byte.
+ * What the optional steps did is reported on `$ctx` for a caller that wants it.
  */
 final class OrganisationProvisioner
 {
@@ -54,7 +76,7 @@ final class OrganisationProvisioner
         }
 
         // ---- Masjid record (mirrors MasjidsController@store, + timezone) ----
-        $masjid = Masjid::create([
+        $masjid = Masjid::create(self::studioIdentity($request) + [
             'name' => $request->input('name'),
             'org_type' => $request->input('org_type'),
             'email' => $request->input('email'),
@@ -82,9 +104,15 @@ final class OrganisationProvisioner
             // Overridable, because "set it up now, switch it on later"
             // is a real request — but the DEFAULT is on, because a
             // half-provisioned org is the failure this caused.
+            //
+            // The default is config, with the old literal as the fallback a
+            // stale config cache reads (S8). A Studio request cannot send
+            // `crm_enabled` (`capabilities` prohibits it), so a Studio org is
+            // always born at this default and a CRM choice is a departure the
+            // capability writer stores and ledgers (R26).
             'crm_enabled' => $request->has('crm_enabled')
                 ? $request->boolean('crm_enabled')
-                : true,
+                : (bool) config('capabilities.crm.provision_default', true),
             'created_by' => $ctx->actorId,
         ]);
 
@@ -118,7 +146,9 @@ final class OrganisationProvisioner
         IqamaTimeSetting::create([
             'masjid_id' => $masjid->id,
             'iqama_type' => $request->input('iqama_type', 'minutes_after_adhan'),
-            'show_iqama_times' => true,
+            // Studio sends it (iqama is shown only when the client gave
+            // times); the wizard never did, and keeps its `true`.
+            'show_iqama_times' => $request->has('show_iqama_times') ? $request->boolean('show_iqama_times') : true,
             'fajr' => $iqama['fajr'] ?? 20,
             'dhuhr' => $iqama['dhuhr'] ?? 10,
             'asr' => $iqama['asr'] ?? 10,
@@ -176,19 +206,34 @@ final class OrganisationProvisioner
         // production's Qur'an row is keyed `qur’an` (U+2019) while the
         // bundle says `quran`, and an exact match provisioned every new
         // masjid with Qur'an off.
-        $explicitFeatures = $request->has('feature_keys_provided');
-        $selected = array_map(
-            fn ($key) => MobileAppFeature::normaliseKey($key),
-            $explicitFeatures
-                ? ($request->input('feature_keys') ?? [])
-                : $masjid->defaultFeatureKeys()
-        );
-        foreach (MobileAppFeature::all() as $feature) {
-            MasjidMobileAppFeature::create([
-                'masjid_id' => $masjid->id,
-                'feature_id' => $feature->id,
-                'is_available' => in_array(MobileAppFeature::normaliseKey($feature->key), $selected, true),
-            ]);
+        //
+        // Studio sends `capabilities` instead (step 2 of the order above): the
+        // switches are written first and the pivot is DERIVED from them, by
+        // feature id, so installed Android builds (/features) and /menu start
+        // out agreeing. The request refuses `capabilities` alongside the
+        // wizard's feature fields, so exactly one of these branches applies.
+        if ($request->has('capabilities')) {
+            $ctx->capabilitiesApplied = CapabilityWriter::applyAtCreation(
+                $masjid,
+                (array) $request->input('capabilities'),
+                $ctx->actorId === null ? null : (int) $ctx->actorId,
+            );
+            AppFeaturePivot::seedFromSwitches($masjid);
+        } else {
+            $explicitFeatures = $request->has('feature_keys_provided');
+            $selected = array_map(
+                fn ($key) => MobileAppFeature::normaliseKey($key),
+                $explicitFeatures
+                    ? ($request->input('feature_keys') ?? [])
+                    : $masjid->defaultFeatureKeys()
+            );
+            foreach (MobileAppFeature::all() as $feature) {
+                MasjidMobileAppFeature::create([
+                    'masjid_id' => $masjid->id,
+                    'feature_id' => $feature->id,
+                    'is_available' => in_array(MobileAppFeature::normaliseKey($feature->key), $selected, true),
+                ]);
+            }
         }
 
         // ---- Vertical form templates (T-011) ----
@@ -200,6 +245,31 @@ final class OrganisationProvisioner
         // Seeded rows are ordinary forms (same table, same schema
         // vocabulary), indistinguishable from admin-built ones.
         FormTemplates::applyTo($masjid);
+
+        // ---- Starter website (Studio, S8; D8) ----
+        // Facts are read back from the rows just written, so the site copies
+        // exactly what the client's answers stored, and Studio's preview (which
+        // reads the same answers) showed the same pages.
+        if ($request->filled('layout_preset')) {
+            $preset = (string) $request->input('layout_preset');
+
+            $ctx->starterSite = StarterSite::applyTo($masjid, $preset, StarterFacts::fromMasjid($masjid));
+
+            $theme = $masjid->themeSettings()->firstOrFail();
+            $tokens = is_array($theme->tokens) ? $theme->tokens : [];
+            $tokens['layout'] = LayoutPresets::find($preset)['theme_layout'];
+            $theme->update(['tokens' => $tokens]);
+        }
+
+        // ---- Web host rows (Studio, S8) ----
+        // Written here so they commit or vanish with the organisation. Nothing
+        // is sent to Cloudflare from inside the transaction: Studio dispatches
+        // AttachMasjidDomain for each row after its commit. (The wizard never
+        // sends a slug; a direct POST that does is picked up by
+        // domains:reconcile, which advances pending rows every five minutes.)
+        if (in_array('web', (array) $request->input('platforms', []), true) && $request->filled('slug')) {
+            $ctx->domains = self::webDomains($masjid, $request, $ctx);
+        }
 
         // ---- App-publishing config (platform selection + managed/BYO) ----
         // `platforms` (the Platforms step) is the source of truth for WHICH
@@ -274,5 +344,66 @@ final class OrganisationProvisioner
         MasjidUser::ensureOwnerMembership((int) $masjid->id, $masjid->user_id ? (int) $masjid->user_id : null);
 
         return $masjid;
+    }
+
+    /**
+     * `slug` and `description`, only when sent. A key written as null would
+     * still change the wizard's response: a created model serializes exactly
+     * the attributes it was given, so an absent key must stay absent.
+     *
+     * @return array<string, string>
+     */
+    private static function studioIdentity(ProvisionMasjidRequest $request): array
+    {
+        $out = [];
+
+        foreach (['slug', 'description'] as $key) {
+            if ($request->filled($key)) {
+                $out[$key] = (string) $request->input($key);
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The managed `{slug}.{managed_suffix}` row, plus the client's own domain
+     * when one was given. Both start `pending`; without the Cloudflare token
+     * they say so (`waiting_on = token`) from the start, which is what the
+     * attacher would write on its first pass, so the provision response is
+     * truthful before the job has run.
+     *
+     * @return list<MasjidDomain>
+     */
+    private static function webDomains(Masjid $masjid, ProvisionMasjidRequest $request, ProvisionContext $ctx): array
+    {
+        $waitingOn = app(CloudflareService::class)->isConfigured() ? null : 'token';
+        $actor = $ctx->actorId === null ? null : (int) $ctx->actorId;
+
+        $rows = [MasjidDomain::create([
+            'masjid_id' => $masjid->id,
+            'host' => $request->input('slug') . '.' . config('cloudflare.managed_suffix'),
+            'kind' => MasjidDomain::KIND_MANAGED_SUBDOMAIN,
+            'zone_apex' => (string) config('cloudflare.managed_zone'),
+            'status' => MasjidDomain::STATUS_PENDING,
+            'waiting_on' => $waitingOn,
+            'source' => MasjidDomain::SOURCE_STUDIO,
+            'created_by_user_id' => $actor,
+        ])];
+
+        if ($request->filled('web_domain.custom_host')) {
+            $rows[] = MasjidDomain::create([
+                'masjid_id' => $masjid->id,
+                'host' => (string) $request->input('web_domain.custom_host'),
+                'kind' => MasjidDomain::KIND_CUSTOM,
+                'zone_apex' => (string) $request->input('web_domain.custom_zone_apex'),
+                'status' => MasjidDomain::STATUS_PENDING,
+                'waiting_on' => $waitingOn,
+                'source' => MasjidDomain::SOURCE_STUDIO,
+                'created_by_user_id' => $actor,
+            ]);
+        }
+
+        return $rows;
     }
 }

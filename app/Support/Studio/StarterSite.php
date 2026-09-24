@@ -3,7 +3,11 @@
 namespace App\Support\Studio;
 
 use App\Enums\SectionType;
+use App\Models\Form;
 use App\Models\Masjid;
+use App\Models\Page;
+use App\Models\Section;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Turns a layout preset and a client's facts into the starter website it would
@@ -12,7 +16,7 @@ use App\Models\Masjid;
  *
  * plan() is pure: it reads config and the in-memory organisation and writes
  * nothing, so Studio's preview can call it on an unsaved Masjid and S8's
- * writer can call it on the real one and get the same answer.
+ * writer, applyTo(), calls it on the real one and writes exactly its answer.
  *
  * ACTIVATION RULES
  *
@@ -154,6 +158,129 @@ final class StarterSite
         unset($page);
 
         return new StarterPlan($presetKey, $f->locale, $pages);
+    }
+
+    /**
+     * Write the starter website `$presetKey` plans for `$org`: its pages, their
+     * sections and the `page_section` rows, exactly as plan() resolves them
+     * (docs/manara-studio-w1.md S8, D8).
+     *
+     * - `masjid_id` is set on every row by hand: Page and Section are
+     *   hand-scoped, not BelongsToMasjid (TenantScopingCoverageTest).
+     * - It never updates or restores anything. A page whose slug the
+     *   organisation already holds, trashed or not, is skipped with all its
+     *   sections, so a rerun, or a preset applied to an org that already has
+     *   pages, cannot overwrite a word anyone wrote.
+     * - Each section carries Studio's marker in `settings.studio`
+     *   (StarterPlaceholders), which the public API strips; each placement's
+     *   `platforms` is null, the web-and-mobile default.
+     * - References the plan could not know are filled in here: a page's id
+     *   once the page exists, a seeded form's id by its template slug.
+     * - All or nothing: the writes run in a transaction of their own, a
+     *   savepoint inside the provisioner's, so a failure part-way leaves no
+     *   page behind and still unwinds the caller.
+     *
+     * @return array{preset: string, created: list<string>, skipped: list<string>, sections_active: int, sections_inactive: list<array<string, mixed>>, placeholders_open: int}
+     *
+     * @throws \InvalidArgumentException when the preset does not exist or belongs to another vertical
+     */
+    public static function applyTo(Masjid $org, string $presetKey, StarterFacts $f): array
+    {
+        $plan = self::plan($org, $presetKey, $f);
+
+        return DB::transaction(function () use ($org, $plan) {
+            $taken = Page::withTrashed()->where('masjid_id', $org->id)->pluck('id', 'slug')->all();
+            $result = [
+                'preset' => $plan->preset,
+                'created' => [],
+                'skipped' => [],
+                'sections_active' => 0,
+                'sections_inactive' => [],
+                'placeholders_open' => 0,
+            ];
+
+            $written = [];
+            $pageIds = $taken;
+
+            foreach ($plan->pages as $page) {
+                if (array_key_exists($page['slug'], $taken)) {
+                    $result['skipped'][] = $page['slug'];
+
+                    continue;
+                }
+
+                $row = Page::create([
+                    'masjid_id' => $org->id,
+                    'slug' => $page['slug'],
+                    'title' => $page['title'],
+                    'page_title' => null,
+                    'is_active' => $page['is_active'],
+                    'order' => $page['order'],
+                    'show_in_menu' => $page['show_in_menu'],
+                    'show_as_button' => $page['show_as_button'],
+                    'meta_description' => $page['meta_description'],
+                ]);
+
+                $pageIds[$page['slug']] = $row->id;
+                $written[] = [$row, $page];
+                $result['created'][] = $page['slug'];
+            }
+
+            foreach ($written as [$row, $page]) {
+                foreach ($page['sections'] as $index => $section) {
+                    $content = $section['content'];
+
+                    foreach ($section['refs'] as $ref) {
+                        data_set($content, $ref['field'], isset($ref['page'])
+                            ? ($pageIds[$ref['page']] ?? null)
+                            : self::formId($org, (string) $ref['form_template']));
+                    }
+
+                    $stored = Section::create([
+                        'masjid_id' => $org->id,
+                        'section_type' => $section['section_type'],
+                        'title' => $section['title'],
+                        'content' => $content,
+                        'is_active' => $section['is_active'],
+                        'settings' => StarterPlaceholders::forSection($plan->preset, $section),
+                    ]);
+
+                    $row->sections()->attach($stored->id, ['order' => $index + 1, 'platforms' => null]);
+
+                    $open = array_values(array_filter($section['placeholders'], fn (array $p) => $p['open']));
+                    $result['placeholders_open'] += count($open);
+
+                    if ($section['is_active']) {
+                        $result['sections_active']++;
+
+                        continue;
+                    }
+
+                    $result['sections_inactive'][] = [
+                        'page' => $page['slug'],
+                        'slot' => $section['slot'],
+                        'section_type' => $section['section_type'],
+                        'title' => $section['title'],
+                        // Why it waits, in the operator's words: the open
+                        // essential placeholders, or the review a person owes.
+                        'hints' => array_values(array_unique(array_map(
+                            fn (array $p) => $p['hint_text'],
+                            array_filter($open, fn (array $p) => $p['essential']),
+                        ))),
+                    ];
+                }
+            }
+
+            return $result;
+        });
+    }
+
+    /** A seeded form's id by its template slug, or null when this org has none. */
+    private static function formId(Masjid $org, string $templateSlug): ?int
+    {
+        $id = Form::query()->where('masjid_id', $org->id)->where('slug', $templateSlug)->value('id');
+
+        return $id === null ? null : (int) $id;
     }
 
     /**

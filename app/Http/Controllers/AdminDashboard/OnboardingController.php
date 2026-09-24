@@ -141,26 +141,9 @@ class OnboardingController extends Controller
             // Newly created masjid changes the global mobile masjids list.
             MobileCache::flushGlobal(MobileCache::MASJIDS_LIST);
 
-            $masjid->load('logo', 'footer_logo', 'country', 'city', 'appPublishing');
-            $masjid->append(Masjid::ADMIN_APPENDS);
-
             return response()->json([
                 'status' => 'success',
-                'data' => [
-                    'masjid_id' => $masjid->id,
-                    'masjid' => $masjid,
-                    // Echo only non-secret app-publishing shape. $appends on the
-                    // model already reduces the secrets to presence booleans, but
-                    // we build this explicitly so the contract is unambiguous.
-                    'app_publishing' => [
-                        'enabled_platforms' => $masjid->appPublishing?->enabled_platforms,
-                        'ios_account_mode' => $masjid->appPublishing?->ios_account_mode,
-                        'android_account_mode' => $masjid->appPublishing?->android_account_mode,
-                        'web_account_mode' => $masjid->appPublishing?->web_account_mode,
-                        'has_asc_key' => (bool) $masjid->appPublishing?->has_asc_key,
-                        'has_play_service_account' => (bool) $masjid->appPublishing?->has_play_service_account,
-                    ],
-                ],
+                'data' => self::provisionedPayload($masjid),
             ], Response::HTTP_CREATED);
         } catch (\Exception $e) {
             return response()->json([
@@ -168,5 +151,35 @@ class OnboardingController extends Controller
                 'data' => \App\Support\Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * `{masjid_id, masjid, app_publishing}` for a just-provisioned organisation:
+     * the wizard's 201 body, and the head of Studio's provision-from-draft body
+     * (docs/manara-studio-w1.md S8), built in one place so the two cannot
+     * drift. BYO credentials are never echoed, only whether each is present.
+     *
+     * @return array{masjid_id: int, masjid: Masjid, app_publishing: array<string, mixed>}
+     */
+    public static function provisionedPayload(Masjid $masjid): array
+    {
+        $masjid->load('logo', 'footer_logo', 'country', 'city', 'appPublishing');
+        $masjid->append(Masjid::ADMIN_APPENDS);
+
+        return [
+            'masjid_id' => $masjid->id,
+            'masjid' => $masjid,
+            // Echo only non-secret app-publishing shape. $appends on the
+            // model already reduces the secrets to presence booleans, but
+            // we build this explicitly so the contract is unambiguous.
+            'app_publishing' => [
+                'enabled_platforms' => $masjid->appPublishing?->enabled_platforms,
+                'ios_account_mode' => $masjid->appPublishing?->ios_account_mode,
+                'android_account_mode' => $masjid->appPublishing?->android_account_mode,
+                'web_account_mode' => $masjid->appPublishing?->web_account_mode,
+                'has_asc_key' => (bool) $masjid->appPublishing?->has_asc_key,
+                'has_play_service_account' => (bool) $masjid->appPublishing?->has_play_service_account,
+            ],
+        ];
     }
 }

@@ -67,6 +67,7 @@ class StudioAccessTest extends TestCase
             'POST ' . self::PREFIX . '/domains/check' => ['POST', '/' . self::PREFIX . '/domains/check', ['kind' => 'managed_subdomain', 'label' => 'studio-access']],
             'GET ' . self::PREFIX . '/layout-presets' => ['GET', '/' . self::PREFIX . '/layout-presets?org_type=community', []],
             'POST ' . self::PREFIX . '/drafts/{draft_id}/preview' => ['POST', "{$drafts}/{$f['working']}/preview", ['answers' => ['layout' => ['preset' => 'masjid.essentials']]]],
+            'POST ' . self::PREFIX . '/drafts/{draft_id}/provision' => ['POST', "{$drafts}/{$f['provisionable']}/provision", []],
         ];
     }
 
@@ -102,7 +103,29 @@ class StudioAccessTest extends TestCase
             'with_logo' => $withLogo(),
             'with_logo_to_remove' => $withLogo(),
             'upload' => new UploadedFile($upload, 'logo.png', null, null, true),
+            'provisionable' => $this->provisionableDraft(),
         ];
+    }
+
+    /** A finished draft for the apps only (no website), so Step 3 needs no logo, slug or layout. */
+    private function provisionableDraft(): int
+    {
+        $countryId = \Illuminate\Support\Facades\DB::table('countries')->insertGetId(['name' => 'Canada', 'code' => 'CA']);
+        $cityId = \Illuminate\Support\Facades\DB::table('cities')->insertGetId(['name' => 'Burlington', 'country_id' => $countryId]);
+
+        return StudioDraft::create([
+            'status' => StudioDraft::STATUS_DRAFT,
+            'answers' => [
+                'identity' => [
+                    'org_type' => 'masjid', 'name' => 'Access Check Masjid', 'email' => 'access-check@example.test',
+                    'phone' => '+1 555 0199 00', 'address' => '1 Access St', 'country_id' => $countryId, 'city_id' => $cityId,
+                    'latitude' => 43.3, 'longitude' => -79.8, 'timezone' => 'America/Toronto',
+                ],
+                'prayer' => ['method' => 'NorthAmerica', 'madhab' => 'Shafi', 'high_latitude_rule' => 'MiddleOfTheNight'],
+                'brand' => ['primary_color' => '#1B4D3E', 'secondary_color' => '#1B1B2E', 'accent_color' => '#7A3E00', 'background_color' => '#FFFFFF'],
+                'platforms' => ['platforms' => ['ios']],
+            ],
+        ])->id;
     }
 
     private function png(): string

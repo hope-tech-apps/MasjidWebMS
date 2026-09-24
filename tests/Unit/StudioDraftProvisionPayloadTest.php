@@ -86,10 +86,43 @@ class StudioDraftProvisionPayloadTest extends TestCase
             $this->assertArrayNotHasKey($unset, $payload, $unset);
         }
 
-        // Studio's own, or not yet a request key (R12, S8).
-        foreach (['slug', 'description', 'vibe', 'iqama_given', 'extracted', 'ink_overrides', 'capabilities', 'features', 'preset', 'layout', 'custom', 'domain', 'apps'] as $kept) {
+        // S8's request keys: the slug and the client's description as they
+        // are, the tick as show_iqama_times, the Step 1 map as capabilities.
+        $this->assertSame('annur', $payload['slug']);
+        $this->assertSame('A masjid in Burlington.', $payload['description']);
+        $this->assertTrue($payload['show_iqama_times']);
+        $this->assertSame(['giving' => true], $payload['capabilities']);
+
+        // Studio's own never leave the draft (R12), and without web selected
+        // neither the starter website nor the client's domain is asked for.
+        foreach (['vibe', 'iqama_given', 'extracted', 'ink_overrides', 'features', 'preset', 'layout', 'layout_preset', 'custom', 'domain', 'web_domain', 'apps'] as $kept) {
             $this->assertArrayNotHasKey($kept, $payload, $kept);
         }
+    }
+
+    #[Test]
+    public function the_web_deliverable_is_asked_for_only_with_web_selected(): void
+    {
+        $answers = [
+            'layout' => ['preset' => 'masjid.classic', 'approved_at' => '2026-09-24T10:00:00Z'],
+            'domain' => ['custom' => ['host' => 'www.annur.test', 'zone_apex' => 'annur.test']],
+        ];
+
+        $withWeb = $this->draft($answers + ['platforms' => ['platforms' => ['ios', 'web']]])->toProvisionPayload();
+        $this->assertSame('masjid.classic', $withWeb['layout_preset']);
+        $this->assertSame(['custom_host' => 'www.annur.test', 'custom_zone_apex' => 'annur.test'], $withWeb['web_domain']);
+
+        $withoutWeb = $this->draft($answers + ['platforms' => ['platforms' => ['ios']]])->toProvisionPayload();
+        $this->assertArrayNotHasKey('layout_preset', $withoutWeb);
+        $this->assertArrayNotHasKey('web_domain', $withoutWeb);
+    }
+
+    #[Test]
+    public function only_the_not_given_tick_turns_iqama_off(): void
+    {
+        $this->assertFalse($this->draft(['prayer' => ['iqama_given' => false]])->toProvisionPayload()['show_iqama_times']);
+        $this->assertArrayNotHasKey('show_iqama_times', $this->draft(['prayer' => ['iqama_given' => null]])->toProvisionPayload());
+        $this->assertArrayNotHasKey('show_iqama_times', $this->draft(['prayer' => ['method' => 'ISNA']])->toProvisionPayload());
     }
 
     #[Test]
