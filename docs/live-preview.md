@@ -366,13 +366,9 @@ Order: renderer first (dark), then MasjidWebMS (dark), then the configuration, t
 - **A custom preview domain** (`preview.manara.hopetechapps.com`) would read better than
   `*.pages.dev`; it is DNS plus a Pages domain, so it is the owner's call. Everything here takes the
   origin from config.
-- **`scripts/set-server-secret.sh` cannot write `RENDERER_PREVIEW_ADMIN_ORIGINS` with two
-  origins**: its value check refuses a comma. Staging holds one origin. Production needs two
-  (`masjid.` and `manara.hopetechapps.com`): widen the script's character set to include `,`
-  (commas need no quoting in `.env`), or set it by a reviewed hand edit.
-- **The same script exits silently when piped a value with no trailing newline** (`read` returns
-  non-zero at EOF under `set -e`). Found setting staging's secret; the second attempt, with a
-  newline, succeeded.
+- **`scripts/set-server-secret.sh`** refused a comma and exited silently on a piped value with no
+  trailing newline; both were found here and fixed on `main` in `bb60da7f`, so production's
+  two-origin `RENDERER_PREVIEW_ADMIN_ORIGINS` can go through it.
 
 ## 10. Status and evidence (2026-09-24)
 
