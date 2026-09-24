@@ -3,7 +3,7 @@
 The SuperAdmin flow that takes a client from a name to a live, themed, feature-
 correct product set: website, iOS, Android, tvOS. Owner-only, internal.
 
-Interviewed and decided 2026-09-23. Sixteen decisions are recorded below with
+Interviewed and decided 2026-09-23. Seventeen decisions are recorded below with
 the reason each was taken; anything not decided is in **Open** at the bottom.
 
 ---
