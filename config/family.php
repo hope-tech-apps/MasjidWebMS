@@ -63,6 +63,70 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | The office's "Send portal invite" link (2026-09-24)
+    |--------------------------------------------------------------------------
+    |
+    | A one-time link that lands a parent INSIDE the portal, instead of leaving
+    | them to find the sign-in page and fetch a ten-minute code. See
+    | App\Services\Family\FamilyInviteService and the migration that created
+    | `contact_portal_invites`.
+    |
+    */
+    'invite' => [
+
+        /*
+        | How long the emailed link lasts, in DAYS. Seven, and it is the owner's
+        | number rather than a derived one.
+        |
+        | It is deliberately three orders of magnitude longer than a sign-in code
+        | (ten minutes), and the two are not comparable: a code is fetched by
+        | somebody already sitting at the sign-in page, and a link is sent to a
+        | parent who does not know the portal exists. A day would be read on a
+        | Saturday morning and dead by the time the parent had the laptop open;
+        | a month is a working key to a child's file sitting in a mailbox for a
+        | month. Seven days survives a week of not checking email and still ages
+        | out inside one school week.
+        |
+        | The exposure is bounded elsewhere rather than by this number: the link
+        | is single-use, there is only ever ONE live link per contact, it dies
+        | when the office revokes access or moves the address, and the session it
+        | opens is the ordinary family session that `login_revoked_at` can end at
+        | any moment.
+        */
+        'ttl_days' => (int) env('FAMILY_INVITE_TTL_DAYS', 7),
+
+        /*
+        | How many invites one CONTACT may be sent per hour.
+        |
+        | Enforced in the service by COUNTING ROWS, not by a cache limiter, and
+        | that is the same call `contact_login_codes.attempts` makes: a limiter
+        | in the cache is lost on a cache flush — an ordinary deploy step — and
+        | what is being bounded here is a real family's mailbox being filled with
+        | working keys to their child's records by a stuck client, a frustrated
+        | office, or a stolen staff token.
+        |
+        | Three is generous for the legitimate act ("they say it never arrived,
+        | send it again") and low enough that nobody is flooded.
+        */
+        'sends_per_hour_per_contact' => (int) env('FAMILY_INVITE_SENDS_PER_HOUR', 3),
+
+        /*
+        | Redemption attempts per hour, per IP.
+        |
+        | There is no address in an invite redemption — the token is the whole
+        | request — so there is nothing else to key on, and nothing a 429 here
+        | could disclose about a family. Guessing the token itself is not the
+        | threat this bounds (2^256 is not walked at twenty an hour); what it
+        | bounds is a client stuck in a retry loop and a scanner hammering the
+        | endpoint. Set level with `family-login`'s per-IP allowance so a school
+        | run sharing one NAT address does not lock itself out.
+        */
+        'redemptions_per_hour_per_ip' => (int) env('FAMILY_INVITE_REDEMPTIONS_PER_IP', 20),
+
+    ],
+
     'session' => [
 
         /*

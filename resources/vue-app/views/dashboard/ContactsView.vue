@@ -505,6 +505,54 @@
                                         </p>
 
                                         <!--
+                                            WHETHER ANYBODY EVER TOLD THEM.
+
+                                            "Enabled, never signed in" used to read
+                                            as a family ignoring the school. It was
+                                            usually the school never writing to the
+                                            family: enabling sends nothing, so the
+                                            parent has to be walked through the
+                                            portal by a human. Five of Al-Razi's
+                                            ten enabled logins had never been used.
+
+                                            Shown for a never-invited member too,
+                                            because "no invite has been sent" is
+                                            the reading that changes what the
+                                            registrar does next.
+                                        -->
+                                        <p v-if="familyLogin.state === 'enabled'" class="mb-2 small">
+                                            <span class="text-muted me-1">Portal invite:</span>
+                                            <template v-if="!familyLogin.invite">
+                                                <span class="text-warning-emphasis">None sent yet.</span>
+                                            </template>
+                                            <template v-else>
+                                                <span class="badge me-1" :class="inviteBadgeClass">{{ inviteLabel }}</span>
+                                                <span class="text-muted">
+                                                    sent {{ formatDate(familyLogin.invite.sent_at) }}
+                                                    <template v-if="familyLogin.invite.state === 'accepted' && familyLogin.invite.accepted_at">
+                                                        · opened {{ formatDate(familyLogin.invite.accepted_at) }}
+                                                    </template>
+                                                    <template v-else-if="familyLogin.invite.state === 'pending' && familyLogin.invite.expires_at">
+                                                        · works until {{ formatDate(familyLogin.invite.expires_at) }}
+                                                    </template>
+                                                </span>
+                                                <!-- The link went to a DIFFERENT mailbox than the
+                                                     one on the record now, which means the address
+                                                     was moved after it was sent — and moving the
+                                                     address is what killed it. -->
+                                                <span
+                                                    v-if="familyLogin.invite.login_email
+                                                        && familyLogin.login_email
+                                                        && familyLogin.invite.login_email !== familyLogin.login_email"
+                                                    class="d-block text-warning-emphasis"
+                                                >
+                                                    It went to <span class="font-monospace">{{ familyLogin.invite.login_email }}</span>,
+                                                    which is no longer this member's sign-in address.
+                                                </span>
+                                            </template>
+                                        </p>
+
+                                        <!--
                                             SAID BEFORE THE CLICK, and it is the
                                             server's own sentence.
 
@@ -548,6 +596,32 @@
                                             >
                                                 <i class="bi bi-key me-1"></i>
                                                 {{ familyLogin.state === 'enabled' ? 'Change sign-in email' : (familyLogin.state === 'revoked' ? 'Re-enable sign-in' : 'Enable sign-in') }}
+                                            </button>
+                                            <!--
+                                                THE ACT THAT WAS MISSING.
+
+                                                Offered only while the sign-in is
+                                                actually ON: a link to a portal
+                                                that refuses the holder is worse
+                                                than no link, and the server
+                                                refuses it anyway. The wording
+                                                changes on the second press,
+                                                because "Send" and "Send again"
+                                                are different decisions — the
+                                                second one silently ends the link
+                                                already sitting in the parent's
+                                                inbox, which the confirmation
+                                                says out loud.
+                                            -->
+                                            <button
+                                                v-if="familyLogin.state === 'enabled'"
+                                                type="button"
+                                                class="btn btn-outline-primary"
+                                                @click="confirmSendPortalInvite"
+                                                :disabled="familyLoginSaving"
+                                            >
+                                                <i class="bi bi-envelope-paper me-1"></i>
+                                                {{ familyLogin.invite ? 'Send invite again' : 'Send portal invite' }}
                                             </button>
                                             <button
                                                 v-if="familyLogin.state === 'enabled'"
@@ -1276,6 +1350,33 @@ const familyLoginBadgeClass = computed<string>(() => {
     }
 });
 
+/**
+ * The last portal link, in the words an office uses.
+ *
+ * Four words for four facts, none of them collapsed: "Not opened yet" is the one
+ * that means keep waiting, "Expired" means send another, "Opened" means the
+ * family arrived, and "Ended" means something on this screen killed it — a newer
+ * invite, a revocation, or the address being moved. A binary sent/not-sent would
+ * hide the only distinction a registrar acts on.
+ */
+const inviteLabel = computed<string>(() => {
+    switch (familyLogin.value?.invite?.state) {
+        case 'accepted': return 'Opened';
+        case 'expired': return 'Expired';
+        case 'superseded': return 'Ended';
+        default: return 'Not opened yet';
+    }
+});
+
+const inviteBadgeClass = computed<string>(() => {
+    switch (familyLogin.value?.invite?.state) {
+        case 'accepted': return 'bg-success-subtle text-success';
+        case 'expired': return 'bg-warning-subtle text-warning';
+        case 'superseded': return 'bg-secondary-subtle text-secondary';
+        default: return 'bg-info-subtle text-info';
+    }
+});
+
 const loadFamilyLogin = async (contactId: number | string) => {
     familyLogin.value = null;
     familyLoginLoading.value = true;
@@ -1309,6 +1410,12 @@ const eventLabel = (action: FamilyLoginEvent['action']): string => {
         // moving a login to another address started clearing the password.
         case 'password_set': return 'Password set';
         case 'password_cleared': return 'Password removed';
+        // NOT badged as a grant. Sending a link does not change what this member
+        // may do; it changes only whether they have been told. Printing
+        // "Enabled" over it — which the default arm would — would make the trail
+        // claim access was granted three times when it was granted once and
+        // advertised twice.
+        case 'invite_sent': return 'Invite emailed';
         default: return 'Enabled';
     }
 };
@@ -1321,6 +1428,7 @@ const eventBadgeClass = (action: FamilyLoginEvent['action']): string => {
         case 'address_claimed': return 'bg-warning-subtle text-warning';
         case 'password_set': return 'bg-secondary-subtle text-secondary';
         case 'password_cleared': return 'bg-secondary-subtle text-secondary';
+        case 'invite_sent': return 'bg-primary-subtle text-primary';
         default: return 'bg-success-subtle text-success';
     }
 };
@@ -1409,6 +1517,69 @@ const confirmRevokeFamilyLogin = async () => {
             icon: 'error',
             title: 'Error!',
             text: error?.response?.data?.message ?? 'Could not revoke access. Please try again.'
+        });
+    } finally {
+        familyLoginSaving.value = false;
+    }
+};
+
+/**
+ * Email the parent a 7-day link that lands them inside the portal.
+ *
+ * ## Why this is confirmed rather than a one-click send
+ *
+ * It writes a bearer credential to a child's records into somebody's inbox, and
+ * the SECOND press does something the first does not: it ends the link already
+ * sitting there. A parent who is halfway through opening the first one would
+ * find it dead with nothing explaining why, so the confirmation says which
+ * mailbox is being written to AND what happens to the previous link.
+ *
+ * The address is read off the server's payload, never off `contact.email` — the
+ * imported, frequently-shared column that this whole feature is careful never to
+ * treat as a credential.
+ */
+const confirmSendPortalInvite = async () => {
+    if (!selectedContact.value || !familyLogin.value) return;
+
+    const address = familyLogin.value.login_email ?? '';
+    const resending = !!familyLogin.value.invite;
+
+    const result = await Swal.fire({
+        title: resending ? 'Send the invite again?' : 'Send portal invite?',
+        html: `A sign-in link will be emailed to <strong>${address}</strong>. `
+            + 'It works for 7 days and can be used once.'
+            + (resending
+                ? '<br><br>The link sent earlier will stop working straight away.'
+                : ''),
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#286c56',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: resending ? 'Yes, send a new link' : 'Yes, send it'
+    });
+
+    if (!result.isConfirmed) return;
+
+    familyLoginSaving.value = true;
+    try {
+        familyLogin.value = await contactsStore.sendFamilyPortalInvite(selectedContact.value.id);
+        Swal.fire({
+            icon: 'success',
+            title: 'Invite sent',
+            text: `${address} has been emailed a link that works for 7 days.`,
+            timer: 3000,
+            showConfirmButton: false
+        });
+    } catch (error: any) {
+        // 422 is a refusal written for the person reading it; 500 means the email
+        // did not go and nothing was recorded. Both carry a message, and neither
+        // may be shown as anything other than a failure — the office acting on a
+        // tick over an email that was never sent is the whole failure shape this
+        // feature exists inside.
+        Swal.fire({
+            icon: 'error',
+            title: 'Not sent',
+            text: error?.response?.data?.message ?? 'Could not send the invite. Please try again.'
         });
     } finally {
         familyLoginSaving.value = false;

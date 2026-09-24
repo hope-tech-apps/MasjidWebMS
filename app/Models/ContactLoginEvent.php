@@ -130,8 +130,29 @@ class ContactLoginEvent extends Model
     public const ACTION_PASSWORD_CLEARED = 'password_cleared';
 
     /**
+     * A 7-day portal link was MAILED to this contact's sign-in address.
+     *
+     * The act that used to be invisible. `enabled` says an office opened the
+     * door; until 2026-09-24 nothing said whether anybody had told the family
+     * where it was, and the answer at Al-Razi was "for five of ten families,
+     * no". A link is a bearer credential to a specific child's records, so
+     * sending one is exactly the kind of act this trail exists for: who sent it,
+     * to which mailbox, and when.
+     *
+     * `login_email` is the address the mail actually went to, snapshotted the
+     * same way every other row snapshots it — the contact's column may have
+     * moved since, and "which mailbox was handed a key" is the question.
+     *
+     * Deliberately NOT written when a link is REDEEMED. A parent signing in is
+     * not an operator act and does not belong on a trail whose reader is asking
+     * who granted what; `contacts.last_login_at` already carries it, and the
+     * office panel prints it beside the invite.
+     */
+    public const ACTION_INVITE_SENT = 'invite_sent';
+
+    /**
      * A plain string column, not an enum — adding a verb must not be an
-     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The five
+     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The six
      * verbs below `revoked` are what that choice was made FOR; they cost a
      * constant each and no schema change.
      *
@@ -145,12 +166,15 @@ class ContactLoginEvent extends Model
         self::ACTION_ADDRESS_CLAIMED,
         self::ACTION_PASSWORD_SET,
         self::ACTION_PASSWORD_CLEARED,
+        self::ACTION_INVITE_SENT,
     ];
 
     /**
      * Everything is fillable because nothing here is reachable from a request
-     * body: rows are written in exactly three places, from values each derives
+     * body: rows are written in exactly four places, from values each derives
      * from the authenticated actor and the contact it just changed:
+     * App\Services\Family\FamilyInviteService::issue (`invite_sent`, naming the
+     * staff member who pressed the button),
      * App\Services\Family\FamilyAccessService::record (including
      * `password_cleared` when an operator re-addresses or releases a login),
      * App\Services\Family\FamilyPasswordService::record (`password_set` and

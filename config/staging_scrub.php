@@ -142,6 +142,7 @@ return [
         'personal_access_tokens' => 'Live Sanctum bearer tokens for real admins and real devices. Polymorphic, nothing FKs it.',
         'password_reset_tokens' => 'Live reset tokens keyed by a real email address — the email IS the primary key.',
         'account_invite_tokens' => 'Live 7-day invite tokens keyed by a real staff email address — the email IS the primary key, and a copied row is a working first-password link.',
+        'contact_portal_invites' => 'Live 7-day PARENT portal invites: a keyed digest of the link token, plus the family address it was mailed to and the issuing IP. The digest is worthless without production APP_KEY, but the address is a real parent\'s and the row names which child\'s file a link opened. One-way FK to contacts.',
 
         // Send logs and provider ledgers.
         'notifications' => 'The push send-log (title, message, onesignal_message_id). Dropped so a staging admin cannot re-fire a real OneSignal message id and so the in-app inbox starts empty.',

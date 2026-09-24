@@ -2319,3 +2319,105 @@ apex is told to add the domain to Cloudflare and move its nameservers (with the 
 Rationale: each closes a way the operator's instructions or the `cf_*` record could stop
 matching what exists in Cloudflare. A cleared cache degrades the zone marker to "found",
 the state before it existed.
+
+## 2026-09-24 — A portal invite is a family credential, not a reuse of the staff broker
+Decision: "Send portal invite" mints its own 256-bit token into a new `contact_portal_invites`
+table (HMAC-SHA256 at rest, keyed on `APP_KEY`), read by
+`App\Services\Family\FamilyInviteService`. It does NOT go through the framework password broker
+that `account_invite_tokens` and `App\Services\Auth\AccountAccessService` use.
+Alternatives: (a) add a `contacts` broker to `config/auth.php` and reuse `AccountAccessService`;
+(b) extend `account_invite_tokens` with a `masjid_id`.
+Rationale: `PasswordBroker::createToken()` takes a `CanResetPassword` and the table's PRIMARY KEY is
+the email address. A parent is a `contacts` row, not a `User`, and a family sign-in address is
+unique only PER TENANT (`contacts_masjid_login_email_unique`; a globally-unique credential address
+would answer "is this family also at that other school?"). Either reuse would make one school's
+parent collide with another's and hand the broker a principal it would look for in `users`. What IS
+copied is every property that made the staff invite safe: seven days, single use, fragment-only URL.
+
+## 2026-09-24 — The parent arrives SIGNED IN, not at a set-a-password step
+Decision: redeeming an invite mints an ordinary family session (`Contact::createFamilyToken()`,
+`FAMILY_TOKEN_ABILITIES`, the `family` guard's own expiry) and lands the parent on their portal
+home. No password is asked for, then or ever, by this path.
+Alternatives: mirror the staff invite and land on "choose a password".
+Rationale: a staff account IS a password and has no other way to exist. The family realm's premise
+is the opposite and is already written down — "200 families cannot be issued passwords and a school
+office cannot run a reset desk"; the credential is the mailbox, and a password is an optional
+convenience a parent may choose later from inside the portal (`FamilyPasswordService`, which
+deliberately has no admin twin). Making a password the price of entry re-imposes the friction this
+feature exists to remove, at the one moment a parent is most likely to give up. Nothing in
+`config/family.php` is loosened: the session is the same one `verify-code` mints, aged by the same
+guard, and refused on its next request by `family.active` the moment the office revokes.
+
+## 2026-09-24 — This is the one family email that carries a link
+Decision: `FamilyPortalInviteMail` contains a click target. `FamilyLoginCodeMail` stays link-free.
+Alternatives: mail the sign-in URL with no token and ask the parent to request a code (today's
+behaviour, done by hand).
+Rationale: the code mail's "a click target would be a phishing pattern to train families into"
+governs the ROUTINE act, repeated for years, and is untouched. An invite is sent once, by a named
+member of staff, to a parent who does not know the portal exists and has no page open to type into.
+The measured cost of not having one: ten family logins enabled at Al-Razi, five never used. The
+trade is bounded by single use, seven days, one live link, and the office's revoke switch.
+
+## 2026-09-24 — The token is bound to the contact AND to the address it was mailed to
+Decision: `contact_portal_invites.login_email` is part of the credential. Redemption re-reads
+`contacts.login_email` and refuses on any difference; `FamilyAccessService` additionally stamps
+`invalidated_at` on re-address, on revoke and on an address release.
+Alternatives: bind to the contact only and rely on revocation.
+Rationale: an office re-addresses a login exactly when the old mailbox was wrong, was a stranger's,
+or belonged to a parent who has separated from the family. Both halves stay, for the reason
+`revoke()` already gives for deleting tokens beside a middleware that would also refuse them: the
+re-read covers rows nobody remembered to stamp, and the stamp covers a future caller that reaches
+redemption by some other path. Each half is asserted alone, with the other undone
+(`the_liveness_check_alone_refuses_a_revoked_login`, `the_bound_address_alone_refuses_a_moved_login`).
+
+## 2026-09-24 — The send throttle is a row count, not a rate limiter
+Decision: `config('family.invite.sends_per_hour_per_contact')` (3) is enforced by counting
+`contact_portal_invites` rows created in the last hour for that contact, inside the service. The
+redemption endpoint additionally carries a per-IP `throttle:family-invite` (20/hour).
+Alternatives: a named rate limiter keyed on the contact, like `family-login`.
+Rationale: the same call `contact_login_codes.attempts` makes. A limiter lives in the cache, a cache
+flush is an ordinary deploy step, and what is bounded here is a real family's mailbox filling with
+working keys to their child's records. Keyed on the CONTACT rather than the actor, because two
+administrators sending five each is the same flood as one sending ten. The per-IP limiter on the
+redemption side is not what makes the token unguessable (2^256 is); it bounds a retry loop.
+
+## 2026-09-24 — Eligibility is re-checked at SEND time, and it is `enable()`'s own check
+Decision: `FamilyAccessService::assertMayHoldAFamilyLogin()` became public and
+`FamilyInviteService::issue()` calls it. A contact whose standing has lapsed keeps a working
+credential but cannot be sent a fresh link.
+Alternatives: trust the grant, since `enable()` already checked.
+Rationale: standing lapses without revoking anything — a ward deleted, a guardian edge removed by
+ordinary roster work — and this class argues at length that revoking there would burn a family's
+sign-in every term. Keeping an existing credential alive and refusing to mint a NEW key to it is
+the distinction those two arguments draw together. Sharing the method rather than copying the rule
+is what keeps the invite door from being looser or stricter than the enable door.
+
+## 2026-09-24 — A failed send is its own exception type, caught before the refusal
+Decision: `FamilyInviteService::deliver()` wraps any send failure in
+`App\Services\Family\InviteDeliveryFailed`, and `ContactFamilyLoginController::invite()` catches
+that FIRST, answers 500 with a fixed sentence, and logs the cause. The transport's own message is
+never carried to the screen.
+Alternatives: catch `Symfony\Contracts\...\TransportExceptionInterface` first; let it fall through.
+Rationale: found while reviewing this change rather than in production, and it would have shipped
+silently. `Symfony\Component\Mailer\Exception\TransportException` extends `\RuntimeException`, which
+is the type this controller answers 422-with-the-message for, because that is how the service's
+REFUSALS reach an operator. A relay outage would therefore have been reported as "something is
+wrong with this member", carrying a message that routinely quotes the recipient address and the
+relay's response — the same leak the `QueryException` catch above it already exists to prevent, and
+which was measured on that one. Catching the Symfony interface would work today and re-break the
+moment a `Mail` decorator throws something else; wrapping at the point of failure makes the
+ordering local and explicit. Pinned by
+`FamilyPortalInviteTest::a_mail_failure_is_a_500_that_leaves_the_record_untouched`, which also
+asserts the rollback: no invite row, no `invite_sent` row, and the parent's earlier link still works.
+
+## 2026-09-24 — `contact_portal_invites` is LOGIN plumbing, not an office record
+Decision: the table is in `MemberAccountDeletion::LOGIN_RECORDS`, so an invite never keeps a
+contact alive against their own "Delete account".
+Alternatives: `OFFICE_RECORDS` (the defensive choice).
+Rationale: the row holds a keyed digest, an address and three timestamps — nothing the office is
+keeping ABOUT the person. The act of granting access is office data and already sits in
+`contact_login_events`, which is in `OFFICE_RECORDS`. That also makes the classification
+outcome-neutral: a contact can only hold an invite row if somebody enabled their sign-in, and
+enabling always wrote a `contact_login_events` row, so such a contact is kept by that list whatever
+this one says. Classified honestly rather than defensively, and the pinned list in
+`MemberAccountDeletionCoverageTest` was updated in the same commit, as that file requires.

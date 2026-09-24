@@ -57,6 +57,26 @@ export const useFamilyStore = defineStore('family', {
             return this.adoptSession(masjidId, res);
         },
 
+        /**
+         * The THIRD door: the office emailed a one-time link and the parent
+         * clicked it.
+         *
+         * The token arrives here from `location.hash`, never from the query
+         * string — a fragment is not sent to any server, so it cannot be written
+         * into an access log, a `Referer` header or a proxy. The staff
+         * equivalent WAS found in this production host's nginx logs when it was
+         * a query parameter; see App\Services\Auth\AccountAccessService.
+         *
+         * Refuses with a 410 for all six of its causes (unknown, expired, used,
+         * superseded, access revoked since, address moved since). The caller
+         * shows one message for all of them — there is nothing to distinguish,
+         * and the only useful instruction is the same either way.
+         */
+        async redeemInvite(masjidId: string, token: string) {
+            const res = await FamilyApiService.post(`${this.base(masjidId)}/auth/invite`, { token });
+            return this.adoptSession(masjidId, res);
+        },
+
         /** Choose or change a password. Requires an existing session. */
         async setPassword(masjidId: string, password: string, confirmation: string) {
             return FamilyApiService.put(`${this.base(masjidId)}/password`, {

@@ -195,10 +195,13 @@ export type FamilyLoginEvent = {
      * on a record that is routinely soft-deleted and therefore on no screen at
      * all. `password_set` / `password_cleared` record a password chosen or
      * removed; an operator's name on `password_cleared` means moving the login
-     * to another address ended it. See ContactLoginEvent::ACTIONS; the column
+     * to another address ended it. `invite_sent` (2026-09-24) records the office
+     * MAILING a 7-day portal link — the act that used to be invisible, because
+     * `enabled` said the door had been opened and nothing said whether the
+     * family had ever been told where it was. See ContactLoginEvent::ACTIONS; the column
      * is a plain string precisely so verbs can be added without a migration.
      */
-    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed' | 'password_set' | 'password_cleared';
+    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed' | 'password_set' | 'password_cleared' | 'invite_sent';
     login_email: string | null;
     actor_name: string;
     actor_email: string | null;
@@ -234,5 +237,38 @@ export type FamilyLoginStatus = {
     login_enabled_at: string | null;
     login_revoked_at: string | null;
     last_login_at: string | null;
+    /**
+     * The LAST portal link the office mailed, or null if it never has.
+     *
+     * `last_login_at` answers "did they ever arrive?" and `events` answers "who
+     * granted this?". Neither answers the question that actually explains a
+     * family who is enabled and silent, which is whether anybody ever told them
+     * the portal exists — the measured case being five of Al-Razi's ten enabled
+     * logins.
+     *
+     * `state` is computed server-side (ContactPortalInvite::state) for the same
+     * reason `FamilyLoginStatus.state` is. `login_email` here is the address the
+     * link actually went to, which is NOT necessarily the one above: an office
+     * that re-addressed the sign-in afterwards needs to see that the link went
+     * somewhere else (and, by the same act, stopped working).
+     */
+    invite: FamilyPortalInvite | null;
     events: FamilyLoginEvent[];
+};
+
+/**
+ * One office-issued portal invite, as the API returns it. The token itself never
+ * appears in any payload — it exists only in the parent's inbox.
+ */
+export type FamilyPortalInvite = {
+    /**
+     * `pending` = live and unused. `accepted` = the parent clicked it.
+     * `expired` = it ran out. `superseded` = something ended it: a newer invite,
+     * the sign-in being revoked, or the address being moved.
+     */
+    state: 'pending' | 'accepted' | 'expired' | 'superseded';
+    sent_at: string | null;
+    expires_at: string | null;
+    accepted_at: string | null;
+    login_email: string | null;
 };

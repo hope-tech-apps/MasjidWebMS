@@ -1657,6 +1657,22 @@ class FamilyPortalTest extends TestCase
         // "toggle" so that a double-tap or a second tab cannot flip the answer
         // back. Read receipts added NOTHING here: marking read is still the GET
         // that opens a thread, never a route of its own.
+        //
+        // 2026-09-24: the fourteenth is REDEEMING A PORTAL INVITE, and it is
+        // admitted on the narrowest terms of any entry on this list. It is a
+        // third SIGN-IN DOOR, beside request-code/verify-code and password, and
+        // the only one an office initiates — which is the point, because
+        // `FamilyAccessService::enable()` sends a family nothing at all and five
+        // of Al-Razi's ten enabled logins had therefore never been used once.
+        //
+        // What it writes is exactly what `verify-code` already writes:
+        // `consumed_at` on the credential row it just burned, and
+        // `contacts.last_login_at`. It mints the SAME session — same abilities,
+        // same guard, same `family.active` liveness on every later request — so
+        // nothing in config/family.php is loosened by its existence. It names no
+        // record and no child: the request carries one token and nothing else,
+        // so it cannot be aimed at another family, and a wrong token is the same
+        // 410 as an expired one. See App\Services\Family\FamilyInviteService.
         $writes = [];
 
         foreach (\Illuminate\Support\Facades\Route::getRoutes()->getRoutes() as $route) {
@@ -1678,6 +1694,7 @@ class FamilyPortalTest extends TestCase
         $this->assertSame([
             'DELETE /api/family/masjids/{masjid_id}/groups/{group_id}/threads/{thread_id}/messages/{message_id}/reactions/{reaction}',
             'DELETE /api/family/masjids/{masjid_id}/password',
+            'POST /api/family/masjids/{masjid_id}/auth/invite',
             'POST /api/family/masjids/{masjid_id}/auth/password',
             'POST /api/family/masjids/{masjid_id}/auth/request-code',
             'POST /api/family/masjids/{masjid_id}/auth/verify-code',

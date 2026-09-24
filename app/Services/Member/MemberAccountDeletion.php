@@ -6,6 +6,7 @@ use App\Models\AppSignupCode;
 use App\Models\Contact;
 use App\Models\ContactLoginCode;
 use App\Models\ContactLoginEvent;
+use App\Models\ContactPortalInvite;
 use App\Models\ContactServiceInterest;
 use App\Models\MobileAppUser;
 use App\Support\TenantContext;
@@ -121,6 +122,18 @@ class MemberAccountDeletion
      */
     public const LOGIN_RECORDS = [
         'contact_login_codes' => ['contact_id'],
+        // The office's 7-day portal links (2026-09-24). Login plumbing, not an
+        // office record: the row holds a keyed digest, an address and three
+        // timestamps, and says nothing about the person that the office is
+        // keeping. The ACT of granting access is office data and is already in
+        // `contact_login_events` above, which keeps the contact.
+        //
+        // That is also why this classification changes no outcome in either
+        // direction: a contact can only have a row here if somebody enabled
+        // their sign-in, and enabling always wrote a `contact_login_events` row,
+        // so such a contact is kept by that list whatever this one says. It is
+        // classified honestly rather than defensively.
+        'contact_portal_invites' => ['contact_id'],
         'contact_service_interests' => ['contact_id'],
         'mobile_app_users' => ['contact_id'],
     ];
@@ -338,6 +351,19 @@ class MemberAccountDeletion
                     'actor_email' => null,
                     'actor_ip' => $ip,
                 ]);
+
+                // …and the 7-day portal link, if the office had sent one.
+                //
+                // Redemption would refuse it anyway — `familyLoginIsActive()`
+                // reads `login_enabled_at`, which the write above just nulled —
+                // so this is the second of the two mechanisms every other
+                // ending-a-grant path in this application pairs up
+                // (FamilyAccessService::revoke, and the address release beside
+                // it). It earns its line on the SCREEN as much as on the
+                // credential: without it the office's family-login panel would
+                // go on reporting a dead link as "Not opened yet" on a member
+                // who has erased their own account.
+                ContactPortalInvite::invalidateOutstandingFor($contact);
             }
 
             return [

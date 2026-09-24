@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Family;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Family\PasswordSignInRequest;
+use App\Http\Requests\Family\RedeemPortalInviteRequest;
 use App\Http\Requests\Family\RequestLoginCodeRequest;
 use App\Http\Requests\Family\VerifyLoginCodeRequest;
 use App\Models\Contact;
+use App\Services\Family\FamilyInviteService;
 use App\Services\Family\FamilyLoginService;
 use App\Services\Family\FamilyPasswordService;
 use Symfony\Component\HttpFoundation\Response;
@@ -64,7 +66,44 @@ class FamilyAuthController extends Controller
     public function __construct(
         private FamilyLoginService $logins,
         private FamilyPasswordService $passwords,
+        private FamilyInviteService $invites,
     ) {
+    }
+
+    /**
+     * POST /api/family/masjids/{masjid_id}/auth/invite
+     *
+     * The THIRD door (2026-09-24), and the only one an office opens rather than
+     * a parent. `FamilyAccessService::enable()` grants access and sends nothing;
+     * a parent who is not walked through the portal by a member of staff
+     * therefore never arrives, which is not a hypothesis — Al-Razi had ten
+     * enabled family logins and five that had never signed in.
+     *
+     * The token arrives in the BODY because the SPA read it out of the URL
+     * FRAGMENT, which is never transmitted to a server: not in the request line
+     * (so nginx cannot log it), not in `Referer`, and not through any proxy in
+     * between. See FamilyInviteService, and AccountAccessService, which records
+     * finding the staff equivalent in this production host's access logs when it
+     * was a query string.
+     *
+     * ONE 410 FOR SIX CAUSES, the same body the other two doors emit: unknown
+     * token, expired, already used, superseded by a newer invite, access revoked
+     * since it was sent, address moved since it was sent. Here the uniformity is
+     * not buying the anti-enumeration property the other doors need — this
+     * request carries no address and names nobody, so there is nothing a
+     * specific message could disclose. It is uniform because a parent needs to
+     * know exactly one thing, and the wording says it: ask the school for a new
+     * link. Six variations on that sentence would be six chances to say
+     * something else.
+     */
+    public function redeemInvite(RedeemPortalInviteRequest $request)
+    {
+        $result = $this->invites->redeem(
+            (string) $request->input('token'),
+            $request->ip(),
+        );
+
+        return $result === null ? $this->refuseInvite() : $this->session($result);
     }
 
     /**
@@ -192,6 +231,25 @@ class FamilyAuthController extends Controller
         return response()->json([
             'status' => 'error',
             'message' => 'That sign-in code is no longer valid. Please request a new one.',
+        ], Response::HTTP_GONE);
+    }
+
+    /**
+     * The invite door's refusal. Same status as the other two, different words.
+     *
+     * Deliberately NOT the sentence above. That one tells a parent to request a
+     * new CODE, which is a thing they can do for themselves from the sign-in
+     * page; this one is about a link only the office can re-send, so repeating
+     * the code wording would send a parent to a button that does not fix their
+     * problem. Naming both ways out is the whole content of this message.
+     */
+    private function refuseInvite()
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'That sign-in link is no longer valid — it may have been used already, '
+                . 'or it may have run out. Ask the office to send a new one, or sign in with a '
+                . 'code emailed to you.',
         ], Response::HTTP_GONE);
     }
 }

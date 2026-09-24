@@ -28,6 +28,21 @@ const familyRoutes: RouteRecordRaw[] = [
                 meta: { pageTitle: "Parent Sign In" },
             },
             {
+                // The office's emailed link lands here. NOT behind the family
+                // guard (no `meta.family`): a parent arriving from an invite has
+                // no session yet — producing one is the entire job of this
+                // screen — so guarding it would bounce them to the code-based
+                // sign-in page, which is the friction the invite exists to
+                // remove.
+                //
+                // Declared before the empty-path home route only for
+                // readability; `/invite` and `''` cannot match the same URL.
+                path: 'invite',
+                name: 'familyInvite',
+                component: () => import("@/views/family/FamilyInvite.vue"),
+                meta: { pageTitle: "Parent Portal" },
+            },
+            {
                 path: '',
                 name: 'familyHome',
                 component: () => import("@/views/family/FamilyHome.vue"),
