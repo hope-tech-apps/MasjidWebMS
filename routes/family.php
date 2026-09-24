@@ -86,11 +86,15 @@ use Illuminate\Support\Facades\Route;
 | a hash, and it is a POST solely because the text a parent wants translated does
 | not fit in a query string. Two more (2026-09-21) are a
 | reaction on a message in a thread the parent may already reply in, and its
-| removal. Everything else is a GET. Withdrawing their own
-| consent is still T-015h — absent rather than half-built.
+| removal. The fourteenth (2026-09-24) is REDEEMING A PORTAL INVITE — the third
+| sign-in door, beside the code and the password, and the only one an office
+| initiates. It writes `contact_portal_invites.consumed_at` and
+| `contacts.last_login_at`, which is exactly what `verify-code` already writes,
+| and mints exactly the session `verify-code` mints. Everything else is a GET.
+| Withdrawing their own consent is still T-015h — absent rather than half-built.
 |
 | `FamilyPortalTest::the_family_realm_writes_exactly_ten_things` enumerates
-| every one of them (thirteen routes since 2026-09-21) and fails on any other. Adding a route here without
+| every one of them (fourteen routes since 2026-09-24) and fails on any other. Adding a route here without
 | updating that list is a failing build, on purpose.
 */
 
@@ -128,6 +132,22 @@ Route::prefix('family/masjids/{masjid_id}/auth')
         // bucket keys on the submitted address, so both doors draw down one
         // shared allowance for that address.
         Route::post('/password', 'signInWithPassword')->middleware('throttle:family-verify');
+
+        // The THIRD door (2026-09-24): the office mailed this parent a one-time
+        // link and they clicked it. The SPA reads the token out of the URL
+        // FRAGMENT — never a query string, see FamilyInviteService — scrubs it,
+        // and posts it here.
+        //
+        // Its own throttle rather than `family-verify`'s bucket, and the
+        // reasoning is the reverse of the one that made the password door SHARE
+        // that bucket. Sharing exists so two doors into one ACCOUNT cannot be
+        // added together for twice the guesses against one address; this door
+        // carries no address at all and cannot be aimed at an account, so it
+        // adds nothing to that arithmetic. Putting it in the same bucket would
+        // instead mean a parent redeeming an invite spends their own
+        // sign-in-code allowance, which is the opposite of the intent.
+        // `family-invite` is per-IP only, because a token is the entire request.
+        Route::post('/invite', 'redeemInvite')->middleware('throttle:family-invite');
     });
 
 // ------------------------------------------------------------ child mode

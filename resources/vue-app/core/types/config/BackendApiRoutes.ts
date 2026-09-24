@@ -52,6 +52,12 @@ export type BackendApiRoute =
     // One shape, three verbs: GET reads the state and the audit trail, POST
     // enables/re-addresses, DELETE revokes. See ContactFamilyLoginController.
     `/api/admin/masjids/${string}/contacts/${string}/family-login` |
+    // …and the fourth verb (2026-09-24): mail this parent a 7-day link that
+    // lands them inside the portal. Its own path rather than a flag on the POST
+    // above, because enabling and inviting are different acts on different days
+    // — the invite is the one that is re-sent when a family says it never
+    // arrived, and it must not re-run an address change to do that.
+    `/api/admin/masjids/${string}/contacts/${string}/family-login/invite` |
     // Volunteer credentials on one contact (T-023) — the licences, background
     // checks and certifications a Community org tracks on a provider. The
     // `/contacts/${string}` shape above would already swallow these, but they

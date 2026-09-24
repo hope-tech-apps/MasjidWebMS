@@ -221,6 +221,22 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         signin_code_failed: "That code did not work. It may have expired or already been used — ask for a new one.",
         signin_password_failed: "That email and password did not match. You can ask for a code instead.",
 
+        // ----------------------------------------------------- FamilyInvite
+        //
+        // The screen a parent lands on from the office's emailed link. It is
+        // transient by design — it exchanges the token and redirects — so the
+        // only words it has are one line of reassurance and one failure.
+        //
+        // The failure is OUR key, never the API's sentence, for the reason
+        // FamilySignIn gives: the server answers every one of the six ways this
+        // can fail with one body, so there is nothing to render from it, and a
+        // key means a parent who switches language after failing reads the
+        // reason in the language they just asked for.
+        invite_working: "Opening your portal…",
+        invite_failed_title: "That link no longer works",
+        invite_failed: "It may have been used already, or it may have run out. Ask the school to send you a new one, or sign in with a code.",
+        invite_go_signin: "Go to sign in",
+
         // ------------------------------------------------------ StudentMode
         student_back: "Back to the family portal",
         student_greeting: "Assalamu alaikum, {x}!",
@@ -489,6 +505,12 @@ const STRINGS: Record<FamilyLang, Record<string, string>> = {
         signin_other_address: "استخدام عنوان آخر",
         signin_code_failed: "لم يعمل هذا الرمز. ربما انتهت صلاحيته أو استُخدم من قبل — اطلب رمزاً جديداً.",
         signin_password_failed: "البريد الإلكتروني وكلمة المرور غير متطابقين. ويمكنك طلب رمز بدلاً من ذلك.",
+
+        // ----------------------------------------------------- FamilyInvite
+        invite_working: "جارٍ فتح البوابة…",
+        invite_failed_title: "لم يعد هذا الرابط صالحاً",
+        invite_failed: "ربما استُخدم من قبل أو انتهت صلاحيته. اطلب من المدرسة إرسال رابط جديد، أو سجّل الدخول برمز.",
+        invite_go_signin: "الانتقال إلى تسجيل الدخول",
 
         // ------------------------------------------------------ StudentMode
         student_back: "العودة إلى بوابة الأسرة",

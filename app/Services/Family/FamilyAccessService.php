@@ -5,6 +5,7 @@ namespace App\Services\Family;
 use App\Models\Contact;
 use App\Models\GroupMembership;
 use App\Models\ContactLoginEvent;
+use App\Models\ContactPortalInvite;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -375,6 +376,22 @@ class FamilyAccessService
                 $contact->tokens()->delete();
             }
 
+            // AND THE LINK IN THE OLD MAILBOX. A portal invite is bound to the
+            // address it was mailed to, so `FamilyInviteService::redeem()` would
+            // already refuse it on the next click; this stamps it dead now, for
+            // the same reason the token delete above sits beside a middleware
+            // that would also refuse it. Two mechanisms, deliberately not one.
+            //
+            // Gated on `$readdressed` exactly like the token delete, and for the
+            // matching reason: re-typing the same address to no effect must not
+            // silently destroy a link a parent is about to click, with nothing
+            // on any screen saying so. The revoked-then-re-enabled case needs no
+            // branch here — `revoke()` already invalidated everything
+            // outstanding, so there is nothing left for this to reach.
+            if ($readdressed) {
+                ContactPortalInvite::invalidateOutstandingFor($contact);
+            }
+
             // On the record under the address the password was chosen for, and
             // before the grant, so the panel reads in the order it happened.
             if ($endsPassword) {
@@ -413,6 +430,15 @@ class FamilyAccessService
             // inert on the next request. See the class docblock: two mechanisms,
             // deliberately not one.
             $contact->tokens()->delete();
+
+            // AND THE LINK SITTING IN THEIR INBOX. An unopened portal invite is a
+            // working key with up to seven days left on it, and revocation that
+            // left it alive would be revocation in name only — the third shape of
+            // the same argument the two lines above make. `redeem()` re-reads
+            // `familyLoginIsActive()` and would refuse it anyway; this makes it
+            // not exist, which is the half that survives a future caller reaching
+            // redemption by some other path.
+            ContactPortalInvite::invalidateOutstandingFor($contact);
 
             $this->record(
                 $contact,
@@ -728,6 +754,12 @@ class FamilyAccessService
         $holder->forceFill(array_merge(['login_email' => null], self::WHAT_AN_ADDRESS_PROVED))->save();
         $holder->tokens()->delete();
 
+        // …and any portal link still in that mailbox, which is now somebody
+        // else's mailbox as far as this organisation is concerned. The bound
+        // address would already refuse it at redemption; this ends it outright,
+        // the same pairing `revoke()` makes.
+        ContactPortalInvite::invalidateOutstandingFor($holder);
+
         if ($hadPassword) {
             $this->record($holder, ContactLoginEvent::ACTION_PASSWORD_CLEARED, $released, $actor, $ip);
         }
@@ -793,7 +825,27 @@ class FamilyAccessService
         ]);
     }
 
-    private function assertMayHoldAFamilyLogin(Contact $contact): void
+    /**
+     * PUBLIC since 2026-09-24, so `FamilyInviteService` shares the rule instead
+     * of owning a second copy of it.
+     *
+     * "Send portal invite" mails a bearer credential to a specific child's
+     * records, so it must refuse exactly what `enable()` refuses and by exactly
+     * the same computation — and it must re-run it at SEND time rather than
+     * trusting the grant, because standing lapses without revoking anything (a
+     * ward deleted, a guardian edge removed by ordinary roster work; see the
+     * LOST note in this class's docblock for why that deliberately does not end
+     * a credential). A second implementation of "may this person hold a login"
+     * is one that agrees today.
+     *
+     * The public/private split here has never been about who may call it —
+     * `ineligibilityReason()` and `mayHoldAFamilyLogin()` were already public for
+     * the three surfaces that preview it. This is the throwing form, and the
+     * invite path wants the sentence thrown rather than returned.
+     *
+     * @throws RuntimeException with the sentence an operator should read.
+     */
+    public function assertMayHoldAFamilyLogin(Contact $contact): void
     {
         $reason = $this->ineligibilityReason($contact);
 

@@ -633,14 +633,17 @@ class FamilyLoginCodeTest extends TestCase
             }
         }
 
-        // Three since 2026-09-08: request-code, verify-code, and the password
-        // door. The count is asserted rather than left open on purpose — the
-        // loop above proves each route it FINDS is clean, so without this line a
-        // sign-in route that escaped the `family.guest` group would be silently
-        // unchecked rather than caught. Every assertion in the loop passed for
-        // the password route the day it landed, which is what this enumeration
-        // is for.
-        $this->assertSame(3, $checked, 'expected exactly the three sign-in routes');
+        // Three since 2026-09-08 (request-code, verify-code, the password door)
+        // and FOUR since 2026-09-24, when redeeming an office-issued portal
+        // invite became the third credential this realm accepts. The count is
+        // asserted rather than left open on purpose — the loop above proves each
+        // route it FINDS is clean, so without this line a sign-in route that
+        // escaped the `family.guest` group would be silently unchecked rather
+        // than caught. Every assertion in the loop passed for the password route
+        // the day it landed, and for the invite route the day it landed, which
+        // is exactly what this enumeration is for: it is the count, not the
+        // loop, that makes a new door announce itself.
+        $this->assertSame(4, $checked, 'expected exactly the four sign-in routes');
     }
 
     #[Test]

@@ -587,6 +587,30 @@ class AppServiceProvider extends ServiceProvider
         });
 
         /*
+         * Redeeming an office-issued portal invite (2026-09-24).
+         *
+         * PER IP ONLY, because there is nothing else in the request: the token is
+         * the whole credential, there is no address to key on and therefore
+         * nothing a 429 here could disclose about a family — which is the
+         * property the other two doors have to work for.
+         *
+         * It is NOT the thing that makes the token unguessable. That is the
+         * token: 32 bytes of CSPRNG output, which is not walked at twenty an
+         * hour or at twenty a microsecond. What this bounds is the ordinary
+         * nuisance — a client stuck in a retry loop, a mail scanner following
+         * the link repeatedly, somebody pointing a scanner at the endpoint.
+         *
+         * Level with `family-login`'s per-IP allowance so a school run sharing
+         * one NAT address, each parent opening their own invite on the same
+         * morning, does not lock itself out.
+         */
+        RateLimiter::for('family-invite', function (Request $request) {
+            return Limit::perHour((int) config('family.invite.redemptions_per_hour_per_ip', 20))
+                ->by('family-invite-ip:' . $request->ip())
+                ->response($this->tooManyLoginAttempts());
+        });
+
+        /*
          * A parent OPENING a conversation.
          *
          * Replying is deliberately not limited here — a parent mid-conversation

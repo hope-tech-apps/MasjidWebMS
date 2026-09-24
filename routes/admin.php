@@ -811,6 +811,26 @@ Route::prefix('admin')->group(function () {
                         Route::get('/', 'show')->middleware('permission:view contacts');
                         Route::post('/', 'store')->middleware('permission:manage contacts');
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
+
+                        // A FOURTH VERB (2026-09-24): mail the parent a 7-day
+                        // link that lands them inside the portal.
+                        //
+                        // It is here rather than beside the contacts CRUD
+                        // because it is an act on the SIGN-IN, not on the
+                        // member: it re-runs the same guardian-edge eligibility
+                        // `store` does, it is refused when there is no live
+                        // sign-in to invite anybody to, and it appends to the
+                        // same immutable trail (`invite_sent`).
+                        //
+                        // `manage contacts`, like the other two writes. A link
+                        // is a bearer credential to a specific child's file, so
+                        // sending one is at least as consequential as granting
+                        // the access it opens — `view contacts` would let
+                        // somebody who may not turn a login on mail out the key
+                        // to one that is already on. No permission is minted;
+                        // Permission::count() stays at 8 and StaffAuthGuardPinTest
+                        // pins it.
+                        Route::post('/invite', 'invite')->middleware('permission:manage contacts');
                     });
 
                 // Volunteer credentials (T-023, Community vertical) — a

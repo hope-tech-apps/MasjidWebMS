@@ -236,6 +236,41 @@ export const useContactsStore = defineStore('contactsStore', () => {
         throw new Error('Failed to revoke family sign-in.');
     }
 
+    /**
+     * Email this parent a 7-day link that lands them inside the portal.
+     *
+     * The missing half of `enableFamilyLogin`: enabling sends the family
+     * NOTHING, so a parent nobody walks through the portal never arrives — five
+     * of Al-Razi's ten enabled logins had never been used.
+     *
+     * Sends no body at all. There is nothing for the caller to choose: the
+     * address is the one already on the record (never `contacts.email`), the
+     * lifetime is the server's, and the eligibility rule is the same one
+     * `enableFamilyLogin` is refused by, re-checked at send time because
+     * standing lapses without revoking anything.
+     *
+     * A 422 here is a REFUSAL with a readable message — this member may not hold
+     * a sign-in, there is no live sign-in to invite them to, or this mailbox has
+     * had the hour's worth of links. A 500 means the email did not go: nothing
+     * was recorded and any earlier link still works, which is why the caller must
+     * show the failure rather than a tick.
+     */
+    async function sendFamilyPortalInvite(contactId: number | string): Promise<FamilyLoginStatus> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid.id}/contacts/${contactId}/family-login/invite`,
+            new URLSearchParams()
+        );
+
+        if (res.data?.status === 'success' && res.data?.data) {
+            return res.data.data;
+        }
+        throw new Error('Failed to send the portal invite.');
+    }
+
     return {
         contactsPaginated,
         fetchContacts,
@@ -246,6 +281,7 @@ export const useContactsStore = defineStore('contactsStore', () => {
         restoreContact,
         fetchFamilyLogin,
         enableFamilyLogin,
-        revokeFamilyLogin
+        revokeFamilyLogin,
+        sendFamilyPortalInvite
     }
 })

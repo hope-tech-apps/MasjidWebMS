@@ -109,6 +109,13 @@ class MemberAccountDeletionCoverageTest extends TestCase
 
         $this->assertSame([
             'contact_login_codes' => ['contact_id'],
+            // 2026-09-24: the office's 7-day portal invite links. Login
+            // plumbing — a keyed digest, an address and three timestamps, and
+            // nothing the office is keeping about the person. The GRANT it
+            // followed is office data and sits in `contact_login_events` above,
+            // which is what keeps the contact; a contact cannot have a row here
+            // without having one there, so this line changes no outcome.
+            'contact_portal_invites' => ['contact_id'],
             'contact_service_interests' => ['contact_id'],
             'mobile_app_users' => ['contact_id'],
         ], MemberAccountDeletion::LOGIN_RECORDS);

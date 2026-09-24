@@ -79,6 +79,12 @@ export const ES: Record<string, string> = {
     signin_code_failed: "Ese código no funcionó. Puede que haya caducado o que ya se haya usado; pida uno nuevo.",
     signin_password_failed: "Ese correo y esa contraseña no coinciden. Puede pedir un código en su lugar.",
 
+    // ------------------------------------------------- FamilyInvite (2026-09-24)
+    invite_working: "Abriendo su portal…",
+    invite_failed_title: "Ese enlace ya no sirve",
+    invite_failed: "Puede que ya se haya usado o que haya caducado. Pida a la escuela que le envíe uno nuevo, o inicie sesión con un código.",
+    invite_go_signin: "Ir a iniciar sesión",
+
     // ------------------------------------------------- StudentMode
     student_back: "Volver al portal familiar",
     student_greeting: "¡Assalamu alaikum, {x}!",
