@@ -78,6 +78,8 @@ use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
 use App\Http\Controllers\AdminDashboard\StudioDomainCheckController;
 use App\Http\Controllers\AdminDashboard\StudioDraftsController;
+use App\Http\Controllers\AdminDashboard\StudioLayoutPresetsController;
+use App\Http\Controllers\AdminDashboard\StudioPreviewController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
 use App\Http\Controllers\AdminDashboard\MasjidZakatSettingController;
@@ -1624,6 +1626,10 @@ Route::prefix('admin')->group(function () {
                 Route::delete('/drafts/{draft_id}/logo', 'destroyLogo')->whereNumber('draft_id');
             });
             Route::post('/domains/check', [StudioDomainCheckController::class, 'check']);
+
+            // Layout and preview (S4): read-only, whatever the verb.
+            Route::get('/layout-presets', [StudioLayoutPresetsController::class, 'index']);
+            Route::post('/drafts/{draft_id}/preview', [StudioPreviewController::class, 'preview'])->whereNumber('draft_id');
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

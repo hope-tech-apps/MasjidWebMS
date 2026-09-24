@@ -1,0 +1,7 @@
+{
+    "bodies": {
+        "masjid_with_donation_link": "{\"status\":\"success\",\"data\":{\"is_enabled\":true,\"header_title\":null,\"carousel_interval_seconds\":10,\"show_prayer_panel\":true,\"show_qr\":true,\"donate_url\":\"https:\\/\\/example.org\\/give\",\"donate_caption\":\"Scan to Donate\",\"announcement_selection\":\"all_active\",\"announcement_ids\":null,\"theme\":\"dark\"}}",
+        "school_without_donation_link": "{\"status\":\"success\",\"data\":{\"is_enabled\":true,\"header_title\":null,\"carousel_interval_seconds\":10,\"show_prayer_panel\":false,\"show_qr\":false,\"donate_url\":null,\"donate_caption\":\"Scan to Donate\",\"announcement_selection\":\"all_active\",\"announcement_ids\":null,\"theme\":\"dark\"}}",
+        "community_with_blank_donation_link": "{\"status\":\"success\",\"data\":{\"is_enabled\":true,\"header_title\":null,\"carousel_interval_seconds\":10,\"show_prayer_panel\":false,\"show_qr\":false,\"donate_url\":null,\"donate_caption\":\"Scan to Donate\",\"announcement_selection\":\"all_active\",\"announcement_ids\":null,\"theme\":\"dark\"}}"
+    }
+}
