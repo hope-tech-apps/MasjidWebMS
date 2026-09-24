@@ -36,6 +36,11 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
  * Choose photos — and, since 2026-09-24, one video — to send with a
  * class-story post or a message.
  *
+ * SHARED, and it lives in components/partials for that reason: the teacher
+ * screens and the office conversations tab need the same control, and the second
+ * copy of a picker is the one that stops getting the fix. It was
+ * `views/teacher/TeacherPhotoPicker.vue` until the office side needed it too.
+ *
  * Each chosen photo is shrunk and stripped of its metadata (location included)
  * before it is kept — see preparePhoto — so what the teacher previews here is
  * exactly what will be sent. The accept list mirrors the server's allowlist;

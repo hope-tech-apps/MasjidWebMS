@@ -62,6 +62,7 @@ class GroupVideoAttachmentsTest extends TestCase
     private Masjid $school;
     private Masjid $otherSchool;
     private User $teacher;
+    private User $officeAdmin;
     private Group $class;
 
     private Contact $parentA;
@@ -109,6 +110,30 @@ class GroupVideoAttachmentsTest extends TestCase
 
         [$this->parentA, $this->childA] = $this->makeFamily('Amina');
         [$this->parentB] = $this->makeFamily('Bilal');
+
+        // The OFFICE. A MasjidAdmin who OWNS the school — and deliberately with
+        // no `masjid_user` row, because that is the shape App\Support\TenantResolver
+        // documents as the common one: `masjids.user_id` is set by factories,
+        // seeders and two provisioning controllers that write no membership, so
+        // "every organisation provisioned since" has an owner without one.
+        // Standing in the GROUP is separate again, and comes from a Contact
+        // carrying this admin's login email (GroupAudience resolves identity that
+        // way) holding a leader membership.
+        $this->officeAdmin = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]);
+        $this->school->user_id = $this->officeAdmin->id;
+        $this->school->save();
+
+        $officePerson = Contact::factory()->create([
+            'masjid_id' => $this->school->id,
+            'email' => $this->officeAdmin->email,
+        ]);
+        GroupMembership::create([
+            'masjid_id' => $this->school->id, 'group_id' => $this->class->id,
+            'contact_id' => $officePerson->id, 'role' => GroupMembership::ROLE_LEADER,
+        ]);
     }
 
     // --------------------------------------------------------------- the bags
@@ -591,6 +616,208 @@ class GroupVideoAttachmentsTest extends TestCase
         $this->assertFalse(PrivateMediaStream::parseRange('bytes=-', 100));
     }
 
+    // ------------------------------------------- the office conversations box
+
+    #[Test]
+    public function office_staff_attach_a_photo_to_a_conversation_message(): void
+    {
+        // The office compose box was TEXT ONLY until 2026-09-24 — not because
+        // the server refused attachments (it never did: `storeMessage` reads the
+        // same bags the teacher route does) but because no client ever sent
+        // them. This pins the server half of that, so the screen cannot be the
+        // only thing proving it.
+        $thread = $this->privateThread();
+
+        $response = $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
+                'body' => 'Here she is at the front',
+                'images' => [UploadedFile::fake()->create('assembly.jpg', 20, 'image/jpeg')],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.attachments.0.file_name', 'assembly.jpg')
+            ->assertJsonPath('data.attachments.0.is_video', false)
+            ->assertJsonPath('data.attachments.0.playback_ticket_path', null);
+
+        // The download link points at the ADMIN realm, not the teacher one —
+        // the realms refuse each other's logins.
+        $this->assertStringStartsWith(
+            "/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}/threads/",
+            (string) $response->json('data.attachments.0.download_path')
+        );
+
+        $attachment = GroupMessageAttachment::withoutMasjidScope()->sole();
+        $this->assertSame($this->school->id, (int) $attachment->masjid_id);
+        // A photo still carries no window of its own.
+        $this->assertNull($attachment->retained_until);
+        Storage::disk($this->disk())->assertExists($attachment->path);
+
+        // And the office can open what it just sent.
+        $this->asOffice()
+            ->get((string) $response->json('data.attachments.0.download_path'))
+            ->assertOk();
+    }
+
+    #[Test]
+    public function office_staff_attach_a_video_to_a_conversation_message_and_play_it(): void
+    {
+        $thread = $this->privateThread();
+
+        $response = $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
+                'videos' => [$this->video()],
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.body', '')
+            ->assertJsonPath('data.attachments.0.mime_type', 'video/mp4')
+            ->assertJsonPath('data.attachments.0.is_video', true);
+
+        $attachment = GroupMessageAttachment::withoutMasjidScope()->sole();
+        $this->assertSame(
+            now()->addDays(90)->toDateString(),
+            $attachment->retained_until->toDateString()
+        );
+
+        // PLAYBACK FOR AN OWNER-ADMIN. This is the case the staff branch of
+        // GroupMediaPlaybackController::viewer() originally got wrong: it
+        // required a `masjid_user` row, which an owner need not have, so the
+        // office could list the video, open the download endpoint and mint a
+        // ticket — and then be refused the bytes, for owning the school.
+        $ticketPath = (string) $response->json('data.attachments.0.playback_ticket_path');
+        $this->assertStringEndsWith('/playback', $ticketPath);
+
+        $url = (string) $this->asOffice()->post($ticketPath)->assertOk()->json('data.url');
+
+        $bytes = file_get_contents($this->fixture());
+        $partial = $this->flushHeaders()->get($url, ['Range' => 'bytes=50-149']);
+        $partial->assertStatus(206);
+        $this->assertSame(substr($bytes, 50, 100), $partial->streamedContent());
+    }
+
+    #[Test]
+    public function office_staff_open_a_conversation_whose_first_message_is_a_video(): void
+    {
+        $this->asOffice()
+            ->post($this->adminUrl('/threads'), [
+                'subject' => 'Sports day',
+                'scope' => GroupThread::SCOPE_PARTICIPANT,
+                'about_membership_id' => $this->childA->id,
+                'videos' => [$this->video()],
+            ])
+            ->assertCreated();
+
+        $message = GroupMessage::withoutMasjidScope()->sole();
+        $this->assertSame('', $message->body);
+        $this->assertSame(1, GroupMessageAttachment::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function the_office_is_held_to_the_same_two_bags_as_a_teacher(): void
+    {
+        $thread = $this->privateThread();
+
+        // A video in the image bag, from the office: still refused. The rules
+        // live on the shared FormRequest, so there is one answer per file type
+        // and not one per realm.
+        $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
+                'videos' => [$this->video('a.mp4'), $this->video('b.mp4')],
+            ])
+            ->assertStatus(422)
+            ->assertJsonStructure(['data' => ['videos']]);
+
+        $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
+                'images' => [$this->video()],
+            ])
+            ->assertStatus(422)
+            ->assertJsonStructure(['data' => ['images.0']]);
+
+        $this->assertSame(0, GroupMessage::withoutMasjidScope()->count());
+        $this->assertSame([], Storage::disk($this->disk())->allFiles());
+    }
+
+    #[Test]
+    public function an_office_message_with_neither_text_nor_a_file_is_refused(): void
+    {
+        $thread = $this->privateThread();
+
+        $response = $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), ['body' => ''])
+            ->assertStatus(422);
+
+        $this->assertSame('Write a message or attach a photo or video.', $response->json('data.body.0'));
+    }
+
+    #[Test]
+    public function an_office_video_in_a_class_wide_conversation_still_needs_photo_consent(): void
+    {
+        // The office gaining an upload control changed NO disclosure rule. A
+        // class-wide conversation is a broadcast, so its media needs the same
+        // consent the class story's media needs.
+        $thread = GroupThread::create([
+            'masjid_id' => $this->school->id,
+            'group_id' => $this->class->id,
+            'created_by_user_id' => $this->officeAdmin->id,
+            'subject' => 'Our week',
+            'scope' => GroupThread::SCOPE_GROUP,
+        ]);
+
+        $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), [
+                'videos' => [$this->video()],
+            ])
+            ->assertCreated();
+
+        $attachment = GroupMessageAttachment::withoutMasjidScope()->sole();
+        $playback = $this->familyUrl(
+            "/threads/{$thread->id}/messages/{$attachment->group_message_id}"
+            ."/attachments/{$attachment->id}/playback"
+        );
+
+        // Feed consent is the words, not the pictures.
+        $this->consent($this->parentA, GroupMembership::CONSENT_FEED);
+        $this->asParent($this->parentA)->postJson($playback)->assertStatus(403);
+
+        // Another family in the class, with media consent of their own, still
+        // gets it — this is a broadcast thread, so consent is the whole gate.
+        $this->consent($this->parentA, GroupMembership::CONSENT_MEDIA);
+        $url = (string) $this->asParent($this->parentA)->postJson($playback)->assertOk()->json('data.url');
+        $this->flushHeaders()->get($url, ['Range' => 'bytes=0-9'])->assertStatus(206);
+
+        // And parentB, who has consented to nothing, is refused.
+        $this->asParent($this->parentB)->postJson($playback)->assertStatus(403);
+    }
+
+    #[Test]
+    public function another_school_cannot_reach_the_office_conversation_video(): void
+    {
+        $thread = $this->privateThread();
+        $this->asOffice()
+            ->post($this->adminUrl("/threads/{$thread->id}/messages"), ['videos' => [$this->video()]])
+            ->assertCreated();
+
+        $attachment = GroupMessageAttachment::withoutMasjidScope()->sole();
+
+        $outsider = User::factory()->create([
+            'type' => 'MasjidAdmin',
+            'phone' => '+1'.random_int(1000000000, 9999999999),
+        ]);
+        $this->otherSchool->user_id = $outsider->id;
+        $this->otherSchool->save();
+
+        Auth::forgetGuards();
+        app(TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($outsider);
+
+        // This school's ids, named under the outsider's own masjid: a MISS.
+        $this->flushHeaders()
+            ->withHeader('Accept', 'application/json')
+            ->post("/api/admin/masjids/{$this->otherSchool->id}/groups/{$this->class->id}"
+                ."/threads/{$thread->id}/messages/{$attachment->group_message_id}"
+                ."/attachments/{$attachment->id}/playback")
+            ->assertStatus(404);
+    }
+
     // --------------------------------------------------------------- helpers
 
     private function disk(): string
@@ -708,9 +935,24 @@ class GroupVideoAttachmentsTest extends TestCase
             ->withHeader('Authorization', 'Bearer '.$parent->createFamilyToken()->plainTextToken);
     }
 
+    /** Signed in as the OFFICE (a MasjidAdmin who owns the school). */
+    private function asOffice(): self
+    {
+        Auth::forgetGuards();
+        app(TenantContext::class)->forgetTenant();
+        Sanctum::actingAs($this->officeAdmin);
+
+        return $this->flushHeaders()->withHeader('Accept', 'application/json');
+    }
+
     private function teacherUrl(string $path): string
     {
         return "/api/teacher/masjids/{$this->school->id}/groups/{$this->class->id}".$path;
+    }
+
+    private function adminUrl(string $path): string
+    {
+        return "/api/admin/masjids/{$this->school->id}/groups/{$this->class->id}".$path;
     }
 
     private function familyUrl(string $path): string

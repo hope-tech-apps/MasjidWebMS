@@ -83,7 +83,7 @@ class GroupMediaPlaybackController extends Controller
      */
     public function post(Request $request, $masjid_id, $group_id, $post_id, $attachment_id): Response
     {
-        $this->bindTenant($masjid_id);
+        $masjid = $this->bindTenant($masjid_id);
 
         $group = Group::findOrFail($group_id);
         // No withTrashed(), matching downloadAttachment exactly: a post an
@@ -91,7 +91,7 @@ class GroupMediaPlaybackController extends Controller
         $post = $group->posts()->findOrFail($post_id);
         $attachment = $post->attachments()->findOrFail($attachment_id);
 
-        $viewer = $this->viewer($request, $masjid_id);
+        $viewer = $this->viewer($request, $masjid);
 
         // The SAME question GroupPostsController::downloadAttachment asks, put
         // again here rather than trusted from when the ticket was minted.
@@ -107,14 +107,14 @@ class GroupMediaPlaybackController extends Controller
      */
     public function message(Request $request, $masjid_id, $group_id, $thread_id, $message_id, $attachment_id): Response
     {
-        $this->bindTenant($masjid_id);
+        $masjid = $this->bindTenant($masjid_id);
 
         $group = Group::findOrFail($group_id);
         $thread = $group->threads()->findOrFail($thread_id);
         $message = $thread->messages()->findOrFail($message_id);
         $attachment = $message->attachments()->findOrFail($attachment_id);
 
-        $viewer = $this->viewer($request, $masjid_id);
+        $viewer = $this->viewer($request, $masjid);
 
         if (! $this->audience->mayReceiveThreadMedia($viewer, $group, $thread)) {
             abort(Response::HTTP_FORBIDDEN, 'You are not entitled to this video.');
@@ -138,7 +138,7 @@ class GroupMediaPlaybackController extends Controller
      * a group, and an organisation whose CRM was switched off this morning must
      * not keep serving video through a ticket minted yesterday.
      */
-    private function bindTenant($masjidId): void
+    private function bindTenant($masjidId): Masjid
     {
         $masjid = Masjid::findOrFail($masjidId);
 
@@ -147,6 +147,8 @@ class GroupMediaPlaybackController extends Controller
         }
 
         app(TenantContext::class)->set((int) $masjid->id);
+
+        return $masjid;
     }
 
     /**
@@ -160,7 +162,7 @@ class GroupMediaPlaybackController extends Controller
      * null that GroupAudience would quietly answer "no standing" to (the same
      * answer, by accident, which is not the same thing as by decision).
      */
-    private function viewer(Request $request, $masjidId): Authenticatable
+    private function viewer(Request $request, Masjid $masjid): Authenticatable
     {
         $type = (string) $request->query('viewer_type');
         $id = (int) $request->query('viewer_id');
@@ -183,13 +185,26 @@ class GroupMediaPlaybackController extends Controller
             $user = User::find($id);
 
             // `users` is NOT tenant-scoped (staff are global, joined to an
-            // organisation through masjid_user), so the membership is checked by
+            // organisation through masjid_user), so the standing is checked by
             // hand — the one place in this file where the global scope cannot do
             // it for us. A teacher removed from the school this morning loses
             // playback now, not in ten minutes.
-            $belongs = $user !== null && MasjidUser::where('masjid_id', (int) $masjidId)
-                ->where('user_id', $user->id)
-                ->exists();
+            //
+            // TWO WAYS IN, because App\Support\TenantResolver has two. A
+            // membership row is the ordinary one. The OWNER of an organisation
+            // is the other, and it is not a nicety: the resolver's own docblock
+            // records that `masjids.user_id` is set by factories, seeders and
+            // two provisioning controllers that write NO `masjid_user` row, so
+            // "every organisation provisioned since" has an owner with no
+            // membership at all. Checking only the pivot here would have let an
+            // office admin list a video, open the download endpoint, mint a
+            // ticket — and then be refused the bytes, for being the owner.
+            $belongs = $user !== null && (
+                (int) $masjid->user_id === (int) $user->id
+                || MasjidUser::where('masjid_id', (int) $masjid->id)
+                    ->where('user_id', $user->id)
+                    ->exists()
+            );
 
             if (! $belongs) {
                 abort(Response::HTTP_FORBIDDEN, 'This video link is no longer valid.');

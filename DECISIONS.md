@@ -2321,3 +2321,32 @@ Alternatives: two pickers; one bag and a server-side sort.
 Rationale: a teacher choosing "three photos and the recital" should not have to find two
 buttons, but the server must keep two rules. Nothing transcodes or thumbnails anything —
 there is no ffmpeg on the droplet, so `preload="metadata"` is the only poster there is.
+
+## 2026-09-24 — The office conversations box takes photos and one video too, and the picker moved
+Decision (owner, same day): the office/admin conversations compose box gets the same attachment
+control the teacher screens have — photos AND one video, one picker. `TeacherPhotoPicker.vue`
+moved to `components/partials/GroupMediaPicker.vue` and is now used by both realms;
+`groupThreadsStore` sends multipart with the two bags, keyed from `meta` rather than literals.
+Alternatives: a second picker component in the dashboard tree (rejected — the copy is the one
+that stops getting the fix); importing `@/views/teacher/...` into a dashboard view (rejected —
+a cross-realm import that reads as an accident).
+Rationale: **no server change was needed, and that was verified rather than assumed** —
+`AdminDashboard\GroupThreadsController::storeMessage` already calls `$this->uploads($request)`,
+which reads both bags, and `StoreGroupMessageRequest`/`StoreGroupThreadRequest` already carry
+`mediaRules()`. The office box was text-only because no client ever sent files, not because the
+server refused them. Parents still attach NOTHING: `StoreFamilyMessageRequest` validates `body`
+only, and that is untouched. Send is enabled by text OR an attachment, matching the server's
+`required_without_all`; staged files are cleared on a successful send, on a thread switch, on a
+group switch and when the new-conversation modal reopens, and NOT on a failed send.
+
+## 2026-09-24 — Playback admits a masjid OWNER, not only a `masjid_user` row
+Decision: `GroupMediaPlaybackController::viewer()`'s staff branch accepts either
+`masjids.user_id === $user->id` or a `masjid_user` membership.
+Alternatives: require the pivot row (what it did first); synthesise a membership.
+Rationale: a BUG, found by building the office path and pinned by
+`office_staff_attach_a_video_to_a_conversation_message_and_play_it`. `App\Support\TenantResolver`
+has two ways in, and its own docblock records that `masjids.user_id` is set by factories, seeders
+and two provisioning controllers that write no membership — so "every organisation provisioned
+since" has an owner with no row. Checking only the pivot let an office admin list a video, open
+the download endpoint and mint a ticket, and then be refused the bytes for owning the school.
+Removing the ownership arm fails that test with a 403 where 206 is expected.

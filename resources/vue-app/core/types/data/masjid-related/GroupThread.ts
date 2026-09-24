@@ -115,6 +115,16 @@ export type GroupThreadsMeta = {
     group_label: string;
     thread_scopes: ThreadScope[];
     max_message_length: number;
+    /**
+     * The server's own field names and ceilings for attachments. Typed here
+     * because the office compose boxes build their multipart body and their
+     * `accept` attribute from them rather than from literals — a client that
+     * guesses `images[]` drifts silently from GroupPostFormRequest::UPLOAD_KEY.
+     */
+    upload_key?: string;
+    accepted_image_types?: string[];
+    max_image_size_kb?: number;
+    max_images_per_message?: number;
     /** ADDITIVE video constraints — see GroupFeedMeta for why they are separate. */
     video_upload_key?: string;
     accepted_video_types?: string[];

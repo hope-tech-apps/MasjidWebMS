@@ -916,7 +916,7 @@
                                v-model.trim="composeTitle">
                         <textarea class="form-control mb-2" rows="3" placeholder="Share what happened today…"
                                   v-model.trim="composeBody"></textarea>
-                        <TeacherPhotoPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
+                        <GroupMediaPicker v-model="storyPhotos" :disabled="posting" class="mb-2" />
                         <p v-if="storyPhotos.length" class="text-muted small mb-2">
                             Photos are shown only to families who have given photo consent.
                         </p>
@@ -988,7 +988,7 @@
                             <textarea v-model="composeForm.body" rows="3" maxlength="5000"
                                       class="form-control form-control-sm mt-2"
                                       placeholder="Your first message…"></textarea>
-                            <TeacherPhotoPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
+                            <GroupMediaPicker v-model="composePhotos" :disabled="sendingCompose" class="mt-2" />
 
                             <p class="text-muted small mt-2 mb-2">
                                 <template v-if="composeForm.about_membership_id">
@@ -1082,7 +1082,7 @@
                                     <span v-else>Send</span>
                                 </button>
                             </div>
-                            <TeacherPhotoPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
+                            <GroupMediaPicker v-model="replyPhotos" :disabled="sendingReply" class="mt-2" />
                             <p v-if="replyPhotos.length && openedThread.scope === 'group'" class="text-muted small mb-0 mt-1">
                                 This conversation is with the whole class. Photos are shown only to families who have given photo consent.
                             </p>
@@ -1931,7 +1931,7 @@ import { apiErrorText } from '@/core/services/ApiErrors';
 import PersonAvatar from '@/components/common/PersonAvatar.vue';
 import TeacherPhoto from '@/views/teacher/TeacherPhoto.vue';
 import MessageSignals from '@/components/common/MessageSignals.vue';
-import TeacherPhotoPicker from '@/views/teacher/TeacherPhotoPicker.vue';
+import GroupMediaPicker from '@/components/partials/GroupMediaPicker.vue';
 import AvatarPicker from '@/components/common/AvatarPicker.vue';
 import { SchoolDayStatus, formatSchoolDay } from '@/core/types/data/masjid-related/SchoolCalendar';
 import { useAuthStore } from '@/stores/authStore';
