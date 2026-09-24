@@ -228,15 +228,25 @@ Content-Type: application/json
   and Laravel repeats while `remaining` (at most 5 calls).
 - Laravel calls it **after the response** of every successful write that changes what the site
   shows: pages (store, update, reorder, destroy), page sections (store, update, destroy, attach),
-  the section library (update, destroy), theme save, and general settings (logos, copyright). Each
-  request purges its organisation once. Timeouts from config; failures log at `warning` (production
-  runs `LOG_LEVEL=warning`) and never fail the save. Splash needs no purge: it is fetched in the
-  browser and its Laravel cache is already forgotten on save.
+  the section library (store, update, destroy), theme save, and general settings (logos,
+  copyright) — the `renderer.purge` route middleware, pinned route by route by
+  `RendererCachePurgeTest::the_writes_that_purge_are_exactly_the_site_editors_writes`. Timeouts
+  from config; failures log at `warning` (production runs `LOG_LEVEL=warning`) and never fail the
+  save. Splash needs no purge: it is fetched in the browser and its Laravel cache is already
+  forgotten on save.
+- **A second pass 75 s later** (`App\Jobs\PurgeRendererCacheAgain`, queued, unique per
+  organisation for its delay). The renderer finds keys by listing KV, and KV's list is eventually
+  consistent: measured on staging, a page warmed in another region seconds before a save was not
+  in the first pass's listing and would otherwise have been served for its whole 5-minute window.
 
-**What "immediately" means.** KV deletes are visible at once where they are made and within about
-60 s elsewhere (Cloudflare's documented eventual consistency). A saved edit is therefore live
-within seconds in the admin's region and within a minute everywhere, instead of up to five minutes
-plus a stale-while-revalidate window. **Assumed** until measured on staging (§7.4).
+**What "immediately" means — measured on staging, 2026-09-24.** After a save, the purge deletes the
+organisation's entries at once, but Cloudflare KV caches reads at each location for about 60 s, so
+a visitor elsewhere keeps the old page until that read cache lapses: the fresh render appeared **64 s
+after the save** (the entry was 3.5 minutes short of expiring, so the purge, not expiry, did it).
+Worst case with the second pass: about 75 s + 60 s. Before this work: up to 5 minutes plus one
+stale-while-revalidate request. Getting to "the next request, everywhere" would need a strongly
+consistent store for the page cache (a Durable Object, or no shared HTML cache); that is a
+separate decision for the owner (§9).
 
 ## 5. The eight hard requirements, and the test that fails without each
 
@@ -263,7 +273,7 @@ Each slice ships dark: with its config blank, nothing any visitor or admin sees 
 | L2 | MasjidWebMS | `App\Support\Renderer\RendererCachePurge` + the after-response calls in §4.6 | none while unconfigured; configured, saves go live at once | revert, or blank `RENDERER_PURGE_ORIGINS` |
 | L3 | MasjidWebMS | `SecurityHeaders` adds the preview origin to `frame-src` when configured | none while unconfigured | revert |
 | L4 | MasjidWebMS SPA | `LivePreviewPane.vue` (iframe, desktop 1280 / tablet 834 / phone 390, scaled to fit), `usePreviewBridge.ts`; wired into the section editor, page settings + menu order, Brand Studio, splash form | the pane appears only when a session says `enabled:true` | revert + rsync |
-| L5 | MasjidWebMS SPA + PHP | Brand Studio controls for the three token families the renderer already reads: heading/body font (`tokens.typography.headingFamily/bodyFamily/fontsUrl`), header style (`tokens.layout.header`), footer style (`tokens.layout.footer`) | new controls on the Brand Studio; nothing changes until an admin saves one | revert |
+| L5 | MasjidWebMS SPA | Brand Studio controls for the three token families the renderer already reads: heading/body font (`tokens.typography.headingFamily/bodyFamily/fontsUrl`), header style (`tokens.layout.header`), footer style (`tokens.layout.footer`) | new controls on the Brand Studio; nothing changes until an admin saves one | revert |
 
 L5 exists because the owner put fonts and header/footer style in scope, and no screen edits them
 today (the SPA sends only four colours, `ThemeSettingsView.vue:305`). It is a new editing
@@ -306,6 +316,14 @@ response headers and the absence of any new KV key are read directly.
 
 ## 8. What the point session does at production ship (owner's go)
 
+Order: renderer first (dark), then MasjidWebMS (dark), then the configuration, then verify.
+
+0. Merge renderer `feat/live-preview` to `main`, build from the committed tree
+   (`DEPLOY_TARGET=cloudflare`, as today) and deploy `manara-renderer`. With no configuration it is
+   dark: RBI on the five hosts must be byte-identical and the payload guard must still 404.
+   Merge MasjidWebMS `feat/live-preview` and `scripts/ship.sh production`: dark too (every preview
+   route answers `enabled:false`, no save calls anything, the CSP is unchanged).
+
 1. Generate one secret (≥ 32 random characters) and put it, without it passing through a chat,
    argv or history (`scripts/set-server-secret.sh`), into production Laravel as
    `RENDERER_SHARED_SECRET` and into `manara-renderer` production as the encrypted secret
@@ -315,12 +333,25 @@ response headers and the absence of any new KV key are read directly.
    `RENDERER_PREVIEW_ADMIN_ORIGINS=https://masjid.hopetechapps.com,https://manara.hopetechapps.com`.
 3. Renderer: `NUXT_PREVIEW_HOSTS=manara-renderer.pages.dev`,
    `NUXT_PREVIEW_ADMIN_ORIGINS=https://masjid.hopetechapps.com,https://manara.hopetechapps.com`.
-4. Optional, recommended: add `https://manara-renderer.pages.dev` to `CORS_ALLOWED_ORIGINS`. Without
+   `wrangler pages secret put` writes the production environment, which is the one
+   `manara-renderer` serves from, so all three can be set that way (value on stdin). On staging the
+   preview is a branch alias in the PREVIEW environment, which wrangler 4 cannot write; its three
+   keys were added with one Pages API PATCH (merge semantics, verified by downloading the project
+   config before and after).
+4. The next ship after the `.env` edits caches config; `bin/deploy` restarts the queue worker,
+   which runs the second purge pass.
+5. Verify as on staging (§10): a preview session from the admin, the frame's headers, a save
+   followed by a fresh render, and RBI again.
+6. Optional, recommended: add `https://manara-renderer.pages.dev` to `CORS_ALLOWED_ORIGINS`. Without
    it the preview still works (the store keeps the server-rendered data), but browser-side reads
    inside the preview (events pagination, offering seat re-read, a page not yet in the store) fail
    quietly. W1 S9 keeps the env list as its base, so this carries over.
 
 ## 9. Known limits and open questions
+
+- **Owner decision needed: "immediately" is about a minute, not the next request.** See §4.6.
+  Options: accept (recommended: it is a 5x improvement and needs nothing new), or move the page
+  cache to a strongly consistent store, which is new infrastructure and its own project.
 
 - **`mec-web` is not purged.** It builds from `cloudflare-migration`, which W1 leaves untouched, so
   `mec-web.pages.dev` keeps its 5-minute window. MEC's Manara host is on `manara-renderer` and is
@@ -335,5 +366,47 @@ response headers and the absence of any new KV key are read directly.
 - **A custom preview domain** (`preview.manara.hopetechapps.com`) would read better than
   `*.pages.dev`; it is DNS plus a Pages domain, so it is the owner's call. Everything here takes the
   origin from config.
-- **Unknown, needs investigation:** KV delete propagation time from the purge colo to others,
-  measured on staging (§7.4).
+- **`scripts/set-server-secret.sh` cannot write `RENDERER_PREVIEW_ADMIN_ORIGINS` with two
+  origins**: its value check refuses a comma. Staging holds one origin. Production needs two
+  (`masjid.` and `manara.hopetechapps.com`): widen the script's character set to include `,`
+  (commas need no quoting in `.env`), or set it by a reviewed hand edit.
+- **The same script exits silently when piped a value with no trailing newline** (`read` returns
+  non-zero at EOF under `set -e`). Found setting staging's secret; the second attempt, with a
+  newline, succeeded.
+
+## 10. Status and evidence (2026-09-24)
+
+Branches: MasjidWebMS `feat/live-preview`; renderer `feat/live-preview` (merges to `main` only).
+
+**Verified**
+- Renderer `npm test` 492/492 (the three existing isolation tests unedited); 16 mutations of the
+  security rules each caught by a failing test.
+- Renderer in workerd (`scripts/live-preview-integration.mjs`, 27/27): caching really on; previews
+  fresh with the preview headers; 20 previews added no KV key and moved no public body hash; four
+  kinds of invalid token and a valid token on a tenant host render the ordinary response; forged
+  and stale purges refused; a signed purge removed exactly one organisation's entries; payload
+  guard still 404s.
+- Browser (local sandbox): unsaved section, theme and splash repaint without reload; a theme sent
+  under a pages token is ignored; an unlisted origin is refused by `frame-ancestors`.
+- Laravel full suite on the droplet CI copy at `2de3a9de`: 4322 passed, 1 skipped, 2 failed — both
+  failures were the new tests' own mistakes, fixed in `ecb00efd` and re-run green with the
+  route-table pins (148 passed). Final full run at the branch head: see LOG / hand-back.
+- Staging, real Cloudflare and MySQL: renderer alias `https://live-preview.manara-renderer-staging.pages.dev`
+  (build `b4561a2b`); Laravel `https://masjid-staging.hopetechapps.com` at `ecb00efd`. Admin CSP
+  frames the preview origin; MEC's client admin is refused a pages session while `web_pages` is off
+  and granted one once on; another organisation is 403; an unlisted Origin gets `enabled:false`;
+  minted URLs render the token's organisation with `no-store`, `noindex` and
+  `frame-ancestors https://masjid-staging.hopetechapps.com`. In the admin SPA, as that client
+  admin: the section editor's unsaved CTA heading appeared in MEC's real About page, at desktop and
+  phone widths; the Brand Studio's unsaved colour and heading font repainted MEC's home page; an
+  unsaved splash appeared as the site's pop-up. A theme save purged MEC's cached page (fresh render
+  64 s later, before expiry). Staging was returned to its prior state afterwards (`web_pages` off
+  for MEC through the ledgered endpoint, QA tokens revoked).
+
+**Assumed / not verified**
+- Production values of the config (§8) and the CORS addition: not set; the point session's.
+- The second purge pass on a live queue: unit-tested and asserted queued; not observed firing on
+  staging.
+- A Studio draft organisation with no tenant-map entry previews as a bare `{id}` tenant (unit
+  test only).
+- `mec-web.pages.dev` keeps its 5-minute window (not touched, by W1's rule).

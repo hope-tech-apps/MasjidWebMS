@@ -2129,3 +2129,16 @@ Decision: follow W1 — `manara-renderer` (branch `main`) gets preview and purge
 Alternatives: port to both branches as the payload fix was — rejected, W1 fixed
 `cloudflare-migration` as a control that is not redeployed.
 Rationale: one live renderer to reason about; MEC's Manara host is on `main`.
+
+## 2026-09-24 — A second purge pass, and "immediately" means about a minute on KV
+Decision: a save purges at once (after the response) and again 75 s later on the
+queue (`PurgeRendererCacheAgain`, unique per organisation). The owner is told that on
+Cloudflare KV a saved change reaches visitors elsewhere in about a minute, not on the
+next request.
+Alternatives: one pass only — rejected, measured on staging: a page warmed in another
+region seconds before a save was missing from KV's eventually consistent listing and
+would have lived its full 5 minutes; a strongly consistent page cache (Durable Object)
+— not built, it is new infrastructure and an owner decision.
+Rationale: measured, not assumed — the fresh render appeared 64 s after a staging save,
+well before the entry would have expired, against up to 5 minutes plus a
+stale-while-revalidate request before this work.
