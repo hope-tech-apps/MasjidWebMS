@@ -671,6 +671,48 @@ class DomainAttacherTest extends TestCase
     }
 
     #[Test]
+    public function the_row_lock_outlives_the_slowest_step_cloudflare_can_make(): void
+    {
+        // The slowest step: a custom host whose zone the account lacks, made
+        // and active at once, whose CNAME post loses an "already exists" race,
+        // and whose Pages domain is new.
+        $this->withStudioToken();
+        $host = 'www.new-masjid.org';
+        $domain = $this->makeDomain($this->makeOrg(), $host, MasjidDomain::STATUS_PENDING, ['zone_apex' => 'new-masjid.org']);
+        $this->fakeCloudflare([
+            'GET /zones?*' => $this->cfOk([]),
+            'POST /zones' => $this->cfOk($this->zoneBody('new-masjid.org', 'active', 'zone-new')),
+            'GET /zones/zone-new/dns_records?*' => Http::sequence()
+                ->pushResponse($this->cfOk([]))
+                ->pushResponse($this->cfOk([$this->dnsRecord($host, 'CNAME', 'manara-renderer.pages.dev', 'rec-race')])),
+            'POST /zones/zone-new/dns_records' => $this->cfError(400, 81053, 'An A, AAAA, or CNAME record with that host already exists.'),
+            self::PAGES . $host => $this->cfError(404, 8000007, 'Domain not found.'),
+            'GET /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk([], ['total_count' => 5]),
+            'POST /accounts/*/pages/projects/manara-renderer/domains' => $this->cfOk($this->pagesDomainBody($host, 'initializing')),
+        ]);
+
+        $this->attacher()->advance($domain);
+
+        $this->assertSame(MasjidDomain::STATUS_PROVISIONING, $domain->fresh()->status, 'the premise: the step ran the whole way');
+        $this->assertSame(['GET', 'POST', 'GET', 'POST', 'GET', 'GET', 'GET', 'POST'], $this->cloudflareVerbs());
+        $this->assertCount(DomainAttacher::MAX_CLOUDFLARE_REQUESTS_PER_STEP, $this->sentToCloudflare());
+
+        // Each of those requests may take its connect timeout and its total
+        // timeout (CloudflareService::client()); the lock must outlast them all.
+        $timeout = (int) config('cloudflare.timeout');
+        $slowest = DomainAttacher::MAX_CLOUDFLARE_REQUESTS_PER_STEP * ($timeout + $timeout);
+        $this->assertGreaterThanOrEqual($slowest, DomainAttacher::LOCK_SECONDS);
+
+        // And lockFor() takes it for that long: a second writer is still kept
+        // out once the slowest step's time has passed.
+        $step = DomainAttacher::lockFor($domain->id);
+        $this->assertTrue($step->get());
+        $this->travel($slowest)->seconds();
+        $this->assertFalse(DomainAttacher::lockFor($domain->id)->get(), 'the lock ran out while the slowest step could still be running');
+        $step->release();
+    }
+
+    #[Test]
     public function stage_started_at_is_a_nullable_timestamp(): void
     {
         $this->assertContains(Schema::getColumnType('masjid_domains', 'stage_started_at'), ['datetime', 'timestamp']);

@@ -56,11 +56,12 @@ use Illuminate\Support\Facades\Cache;
  *
  * ## One writer at a time
  *
- * Each row is advanced under Cache::lock('masjid-domain:<id>', 120) (lockFor()),
- * and the row is re-read inside the lock. If the lock is held (the job and the
- * schedule reached the same row), this call does nothing: the holder is doing
- * the work. DELETE takes the same lock, because a step keeps what it made in
- * Cloudflare in memory until its one save at the end: a row deleted mid-step
+ * Each row is advanced under Cache::lock('masjid-domain:<id>', LOCK_SECONDS)
+ * (lockFor()), and the row is re-read inside the lock. If the lock is held (the
+ * job and the schedule reached the same row), advance() does nothing: the
+ * holder is doing the work, and "Check now" answers 409 to try again
+ * (checkNow()). DELETE takes the same lock, because a step keeps what it made
+ * in Cloudflare in memory until its one save at the end: a row deleted mid-step
  * would leave a CNAME, a Pages domain or a whole zone that nothing records.
  *
  * `serving_confirmed_at` is set by every probe match and never cleared by a
@@ -68,7 +69,34 @@ use Illuminate\Support\Facades\Cache;
  */
 class DomainAttacher
 {
-    public const LOCK_SECONDS = 120;
+    /**
+     * The most Cloudflare requests one step can send. A custom host whose zone
+     * the account lacks: createZone() reads (1) and posts (2), and if that zone
+     * came back active the same step goes on to the DNS step, ensureCname()
+     * reads (3), posts (4) and, when the post loses an "already exists" race,
+     * reads again (5), then to the Pages step, ensurePagesDomain() reads the
+     * domain (6), counts the project (7) and posts (8). Every other path sends
+     * fewer: a zone found or waited for skips the zone post (7 at most), and a
+     * step that probes sends at most two. CloudflareService never retries.
+     */
+    public const MAX_CLOUDFLARE_REQUESTS_PER_STEP = 8;
+
+    /**
+     * How long one step may hold its row. It must outlive the slowest step, or
+     * a second writer (the schedule, a Check now, a DELETE) takes the row while
+     * the first still holds what it made in Cloudflare only in memory.
+     *
+     * The slowest step is MAX_CLOUDFLARE_REQUESTS_PER_STEP requests, each
+     * allowed config('cloudflare.timeout') to connect and the same again as its
+     * total timeout (CloudflareService::client()): 8 x (15 + 15) = 240 s.
+     * Counting both in full over-counts, since curl's total includes the
+     * connect, which is the side to err on. A step that probes sends at most
+     * two Cloudflare requests (60 s) plus the probe's DNS lookup and its
+     * 5 + 5 s fetch, well inside that. The last 60 s are for the database
+     * writes and a slow worker. Pinned by DomainAttacherTest against the
+     * configured timeout, so raising the timeout without this fails a test.
+     */
+    public const LOCK_SECONDS = self::MAX_CLOUDFLARE_REQUESTS_PER_STEP * (15 + 15) + 60;
 
     /** Cloudflare deletes a Free-plan zone left pending longer than this. */
     public const ZONE_PENDING_LIMIT_DAYS = 28;
@@ -144,23 +172,56 @@ class DomainAttacher
                 return;
             }
 
-            if ($domain->status !== MasjidDomain::STATUS_FAILED) {
-                return;
-            }
-
-            $domain->forceFill([
-                'status' => MasjidDomain::STATUS_PENDING,
-                'waiting_on' => null,
-                'last_error' => null,
-                'stage_started_at' => null,
-                'next_check_at' => null,
-            ])->save();
-
-            Cache::forget(self::PAGES_RETRY_KEY . $domain->id);
-            Cache::forget(self::ACTIVATION_CHECK_KEY . $domain->id);
+            $this->restartIfFailed($domain);
         } finally {
             $lock->release();
         }
+    }
+
+    /**
+     * "Check now": restart() and then advance(), under one hold of the row's
+     * lock, answering whether it got the row at all. False means another
+     * writer holds it and nothing was done, which the caller must say rather
+     * than show the unchanged row as if it had been checked.
+     *
+     * @throws ModelNotFoundException when the row was deleted before the lock
+     */
+    public function checkNow(MasjidDomain $domain): bool
+    {
+        $lock = self::lockFor($domain->id);
+
+        if (! $lock->get()) {
+            return false;
+        }
+
+        try {
+            $domain->refresh();
+            $this->restartIfFailed($domain);
+            $this->step($domain);
+        } finally {
+            $lock->release();
+        }
+
+        return true;
+    }
+
+    /** restart()'s work, for a caller that already holds the lock and re-read the row. */
+    private function restartIfFailed(MasjidDomain $domain): void
+    {
+        if ($domain->status !== MasjidDomain::STATUS_FAILED) {
+            return;
+        }
+
+        $domain->forceFill([
+            'status' => MasjidDomain::STATUS_PENDING,
+            'waiting_on' => null,
+            'last_error' => null,
+            'stage_started_at' => null,
+            'next_check_at' => null,
+        ])->save();
+
+        Cache::forget(self::PAGES_RETRY_KEY . $domain->id);
+        Cache::forget(self::ACTIVATION_CHECK_KEY . $domain->id);
     }
 
     public function advance(MasjidDomain $domain): MasjidDomain

@@ -155,9 +155,10 @@ class MasjidDomain extends Model
             }
 
             // `reserved` holds a live host for an organisation without trusting
-            // it (R4), and nothing advances it. A reservation that should go
-            // live is removed and the host added again (manualSteps() says so),
-            // so the new row goes through every check a new host does.
+            // it (R4), and nothing advances it. Every reserved row is imported,
+            // so Studio cannot delete it either (R28) and its host cannot be
+            // added again: changing one is a platform-level act, not a Studio
+            // one (manualSteps() says so).
             if ($domain->exists
                 && $domain->getOriginal('status') === self::STATUS_RESERVED
                 && $domain->isDirty('status')) {
@@ -303,7 +304,8 @@ class MasjidDomain extends Model
 
         if ($this->status === self::STATUS_RESERVED) {
             return [
-                "{$this->host} is held for this organisation and is not served. Nothing needs doing unless it should go live: then remove the reservation and add it again.",
+                "{$this->host} is held for this organisation, which is already reached at it through the live host map, so no other organisation can take it. Studio does not check or change it and cannot release it.",
+                'Nothing needs doing here. If it should go live through Studio or be let go, that is a platform-level change for the platform owner, not a Studio action in W1.',
             ];
         }
 
