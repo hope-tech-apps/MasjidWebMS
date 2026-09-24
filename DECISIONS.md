@@ -2084,3 +2084,17 @@ tests live in `tests/Feature/Studio/`; StudioAccessTest finds every
 its SuperAdmin call to `StudioAccessTest::calls()` or the test names it.
 Rationale: each follows the nearest existing pattern (MasjidsController::capabilities
 for entry fields); recorded because the plan left them open.
+
+## 2026-09-24 — Studio W1 S6: calls made where the plan was silent
+Decision: `ProvisionContext` (the plan names it but never defines it) carries one
+field, `actorId`, typed `int|string|null` and taken from `Auth::id()` uncast, because
+it is written to `masjids.created_by` and echoed in the response the extraction must
+not change. The controller calls the provisioner from a full closure with
+`use (&$invitations)`, not the plan's `fn () =>`: an arrow function captures by value,
+so the literal form would drop every invitation without an error. The byte-identity
+pin is `ProvisionResponseSnapshotTest`, whose fixtures in
+`tests/fixtures/provision-snapshot/` were recorded from the unrefactored controller
+(commit 90e4d182) and are re-recorded only with `PROVISION_SNAPSHOT_RECORD=1`, a run
+that always fails so it cannot pass for a check.
+Rationale: each keeps the legacy endpoint's rows, mail and response identical, which
+is the slice's whole contract.
