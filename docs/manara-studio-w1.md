@@ -626,7 +626,10 @@ the live hosts are recorded. Nothing consumes any of it yet.
 - A `saving` invariant: `status = active` requires `verified_by = 'cloudflare'`
   and `verified_at` to be set, otherwise it throws `LogicException`.
 - A second one: a stored `reserved` row cannot change status (`LogicException`).
-  A reservation that should go live is removed and the host added again.
+  Every reserved row is imported, so Studio cannot delete it (409) and its host
+  cannot be added again (422): a reservation that should go live, or be let go,
+  is a platform-level change, and `manualSteps()` says so rather than offering
+  remove-and-add.
 - `TenantScopingCoverageTest` DECLINED entry: `has_masjid_id_column=true`,
   reason "Host→org map read by the unauthenticated renderer lookup and written
   only by SuperAdmin Studio routes; unbound by design".
@@ -1095,7 +1098,9 @@ truthful no-op until the owner's token lands.
     never appears in a log line or in `last_error`.
 - **`App\Services\Domains\DomainAttacher::advance(MasjidDomain)`** is the state
   machine in domains-cloudflare §6. It runs under
-  `Cache::lock('masjid-domain:'.$id, 120)`. Additions:
+  `Cache::lock('masjid-domain:'.$id, DomainAttacher::LOCK_SECONDS)`, 300 s:
+  the slowest step's 8 Cloudflare requests at 15 s connect + 15 s total each,
+  plus 60 s (derivation on the constant). Additions:
   - once the Pages status is active, the row becomes `active` with
     `verified_by = 'cloudflare'`; then `DomainProbe` runs, and a match sets
     `serving_confirmed_at`;
@@ -1125,7 +1130,9 @@ truthful no-op until the owner's token lands.
   - `GET /api/admin/masjids/{masjid_id}/domains`
   - `POST /api/admin/masjids/{masjid_id}/domains`
   - `POST …/{domain_id}/refresh` runs `advance()` synchronously. A `failed` row
-    is reset to `pending` first.
+    is reset to `pending` first. While another writer holds the row's lock it
+    checks nothing and returns 409 ("try again in a moment"), the envelope
+    DELETE uses for a held row.
   - `DELETE …/{domain_id}` returns 204 only when no `cf_*` id is set,
     `cf_zone_created` is false and `source` is not `imported` (R28). Otherwise it
     returns 409 with the manual removal steps.

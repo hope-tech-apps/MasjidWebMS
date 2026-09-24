@@ -113,13 +113,23 @@ class MasjidDomainsController extends Controller
      * "Check now": advance the row synchronously, which always ends in the
      * probe when there is no token. A `failed` row starts again from `pending`,
      * because the operator pressing this is saying the cause is fixed.
+     *
+     * While another writer holds the row (the job, the schedule, another Check
+     * now or a DELETE) nothing is checked, and the answer is the 409 a DELETE
+     * gives for a held row: a 200 with the row unchanged would read as "checked,
+     * nothing new" when no check was made.
      */
     public function refresh($masjid_id, $domain_id, DomainAttacher $attacher)
     {
         $domain = $this->domain($masjid_id, $domain_id);
 
-        $attacher->restart($domain);
-        $attacher->advance($domain);
+        if (! $attacher->checkNow($domain)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Studio is already checking {$domain->host}. Try again in a moment.",
+                'manual_steps' => [],
+            ], Response::HTTP_CONFLICT);
+        }
 
         return response()->json([
             'status' => 'success',

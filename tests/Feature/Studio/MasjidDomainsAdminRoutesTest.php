@@ -414,6 +414,104 @@ class MasjidDomainsAdminRoutesTest extends TestCase
     }
 
     #[Test]
+    public function delete_judges_the_row_it_re_reads_under_the_lock_not_the_copy_it_loaded(): void
+    {
+        $this->actAsSuper();
+        $org = $this->makeOrg();
+        $row = $this->makeDomain($org, 'al-nor.manara.hopetechapps.com', MasjidDomain::STATUS_PENDING, [
+            'kind' => MasjidDomain::KIND_MANAGED_SUBDOMAIN, 'zone_apex' => 'hopetechapps.com',
+        ]);
+        $this->assertTrue($row->fresh()->deletableThroughStudio(), 'the premise: the stored row looks deletable');
+
+        // A step finishes between DELETE loading the row and DELETE taking its
+        // lock: it saves the ids of what it made in Cloudflare and lets go. The
+        // first load of the row after this point is DELETE's own.
+        $stepSaved = false;
+        MasjidDomain::retrieved(function (MasjidDomain $loaded) use ($row, &$stepSaved) {
+            if ($stepSaved || $loaded->id !== $row->id) {
+                return;
+            }
+
+            $stepSaved = true;
+            MasjidDomain::query()->whereKey($row->id)->update([
+                'status' => MasjidDomain::STATUS_PROVISIONING, 'waiting_on' => 'certificate',
+                'cf_zone_id' => 'zone-managed', 'cf_dns_record_id' => 'rec-1', 'cf_pages_domain_id' => 'pd-1',
+            ]);
+        });
+
+        $response = $this->deleteJson($this->url($org, "/{$row->id}"))
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', "{$row->host} has records in Cloudflare that Studio made or found, and Studio does not remove anything there.");
+
+        $this->assertTrue($stepSaved, 'the premise: the step saved after DELETE loaded the row');
+        $this->assertNotNull(MasjidDomain::find($row->id), 'DELETE judged its first copy and dropped a row whose Cloudflare records now exist');
+        $this->assertStringContainsString('Custom domains, and remove ' . $row->host, implode(' ', $response->json('manual_steps')));
+        $this->assertTrue(DomainAttacher::lockFor($row->id)->get(), 'DELETE kept the lock');
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function check_now_answers_409_and_checks_nothing_while_another_writer_holds_the_row(): void
+    {
+        $this->actAsSuper();
+        $org = $this->makeOrg();
+        $row = $this->makeDomain($org, 'www.example.org', MasjidDomain::STATUS_FAILED, ['last_error' => 'old trouble']);
+        $before = $row->fresh()->getAttributes();
+
+        // The job, the schedule or another Check now is on the row.
+        $held = DomainAttacher::lockFor($row->id);
+        $this->assertTrue($held->get());
+
+        $this->postJson($this->url($org, "/{$row->id}/refresh"))
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', 'Studio is already checking www.example.org. Try again in a moment.')
+            ->assertJsonPath('manual_steps', [])
+            ->assertJsonMissingPath('data');
+        $this->assertSame($before, $row->fresh()->getAttributes(), 'Check now wrote to a row another writer held');
+
+        // Once the holder lets go, Check now does its work, and lets go too.
+        $held->release();
+
+        $this->postJson($this->url($org, "/{$row->id}/refresh"))
+            ->assertOk()
+            ->assertJsonPath('data.domain.status', MasjidDomain::STATUS_PENDING)
+            ->assertJsonPath('data.domain.waiting_on', 'token');
+        $this->assertNotNull($row->fresh()->last_checked_at);
+        $this->assertTrue(DomainAttacher::lockFor($row->id)->get(), 'Check now kept the lock');
+        Http::assertNothingSent();
+    }
+
+    #[Test]
+    public function a_reserved_row_is_not_offered_remove_and_add_again_because_studio_refuses_both(): void
+    {
+        $this->actAsSuper();
+        $org = $this->makeOrg();
+        $reserved = $this->makeDomain($org, 'meccharlotte.org', MasjidDomain::STATUS_RESERVED, ['source' => MasjidDomain::SOURCE_IMPORTED]);
+
+        $shown = collect($this->getJson($this->url($org))->assertOk()->json('data.domains'))->firstWhere('id', $reserved->id);
+        $text = strtolower(implode(' ', $shown['manual_steps']));
+
+        $this->assertFalse($shown['deletable']);
+        $this->assertStringContainsString('cannot release it', $text);
+        $this->assertStringContainsString('platform-level change', $text);
+        foreach (['remove', 'add it again', 're-add', 'added again'] as $deadEnd) {
+            $this->assertStringNotContainsString($deadEnd, $text, "a reserved row is offered \"{$deadEnd}\"");
+        }
+
+        // What the old text offered is refused both ways.
+        $this->deleteJson($this->url($org, "/{$reserved->id}"))->assertStatus(409);
+        $this->assertNotNull(MasjidDomain::find($reserved->id));
+        $this->post($this->url($org), ['kind' => 'custom', 'host' => 'meccharlotte.org', 'zone_apex' => 'meccharlotte.org'], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJsonPath('data.host.0', "meccharlotte.org is already recorded for organisation #{$org->id}.");
+        $this->assertSame(1, MasjidDomain::query()->where('host', 'meccharlotte.org')->count());
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+    }
+
+    #[Test]
     public function another_organisations_row_is_not_found_through_this_one(): void
     {
         $this->actAsSuper();
