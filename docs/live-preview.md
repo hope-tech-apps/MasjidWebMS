@@ -23,8 +23,9 @@ Status markers below: **verified** = read in installed source or observed live o
 
 The admin asks Laravel for a **preview session**. Laravel signs a five-minute token naming one
 organisation, one surface (pages, theme or splash), one path and the admin origin, and returns a
-URL on a **dedicated preview host** (the renderer project's own `*.pages.dev` host, which serves
-no tenant). The admin puts that URL in an iframe. The renderer sees the path prefix
+URL on a **dedicated preview host** that serves no tenant (production:
+`preview.manara.hopetechapps.com`, a custom domain on the `manara-renderer` project; staging: a
+`*.pages.dev` branch alias). The admin puts that URL in an iframe. The renderer sees the path prefix
 `/__manara/preview/`, which **no cache rule covers**, so Nitro routes it to the uncached catch-all
 renderer; a Nitro `render:before` hook verifies the token, takes the tenant **from the token**,
 rewrites the path to the real page and stamps no-store, noindex and a `frame-ancestors` naming the
@@ -40,7 +41,7 @@ that organisation's entries from `MANARA_PAGE_CACHE`, so the next visitor gets a
  ─────────────────────────────────────            ───────                         ────────────────
  1 POST .../pages/preview-session {path} ───────▶ gate = the save route's gate
                                                    sign {o,s,p,a,e}  ◀── shared secret ──▶ verify
-   ◀──── {url: https://manara-renderer.pages.dev/__manara/preview/about?mp=v1.…}
+   ◀──── {url: https://preview.manara.hopetechapps.com/__manara/preview/about?mp=v1.…}
  2 <iframe src=url> ───────────────────────────────────────────────────────────▶ router: /** (uncached)
                                                                                   render:before: verify,
                                                                                   tenant := token.o,
@@ -82,6 +83,11 @@ that organisation's entries from `MANARA_PAGE_CACHE`, so the next visitor gets a
   excludes `.pages.dev` from its host lookup (`docs/manara-studio-w1.md` S10), and Studio drafts
   that have no host yet can be previewed the same way. A tenant's own domain **never** enters
   preview mode, so its caching and framing cannot change.
+  The owner chose `preview.manara.hopetechapps.com` over the `pages.dev` name (2026-09-24). That
+  host IS eligible for Studio's runtime host lookup, so it is protected twice: the label `preview`
+  is reserved for Studio slugs and the host is imported as `reserved` (W1), and the renderer refuses
+  preview mode on any host the tenant middleware resolved to an organisation, by any path
+  (renderer branch `feat/live-preview-host-guard`).
 - **Why overrides in the browser, not in the request.** Everything the page shows is derived from
   the Pinia store `app` (`settings`, `pages`), and the page, menu, buttons, theme and header/footer
   variant are computed from it reactively (`stores/app.ts:142-300`, `layouts/default.vue:130-148`,
@@ -318,7 +324,7 @@ response headers and the absence of any new KV key are read directly.
 
 Order: renderer first (dark), then MasjidWebMS (dark), then the configuration, then verify.
 
-0. Merge renderer `feat/live-preview` to `main`, build from the committed tree
+0. Merge renderer `feat/live-preview` and `feat/live-preview-host-guard` to `main`, build from the committed tree
    (`DEPLOY_TARGET=cloudflare`, as today) and deploy `manara-renderer`. With no configuration it is
    dark: RBI on the five hosts must be byte-identical and the payload guard must still 404.
    Merge MasjidWebMS `feat/live-preview` and `scripts/ship.sh production`: dark too (every preview
@@ -328,30 +334,43 @@ Order: renderer first (dark), then MasjidWebMS (dark), then the configuration, t
    argv or history (`scripts/set-server-secret.sh`), into production Laravel as
    `RENDERER_SHARED_SECRET` and into `manara-renderer` production as the encrypted secret
    `NUXT_MANARA_SHARED_SECRET`.
-2. Laravel: `RENDERER_PREVIEW_ORIGIN=https://manara-renderer.pages.dev`,
-   `RENDERER_PURGE_ORIGINS=https://manara-renderer.pages.dev`,
+2. Laravel: `RENDERER_PREVIEW_ORIGIN=https://preview.manara.hopetechapps.com`,
+   `RENDERER_PURGE_ORIGINS=https://manara-renderer.pages.dev` (the purge stays on `pages.dev`: the
+   same production deployment and KV binding, and not behind the `hopetechapps.com` zone's WAF or
+   bot rules, which could challenge a server-to-server POST; the purge route never checks Host),
    `RENDERER_PREVIEW_ADMIN_ORIGINS=https://masjid.hopetechapps.com,https://manara.hopetechapps.com`.
-3. Renderer: `NUXT_PREVIEW_HOSTS=manara-renderer.pages.dev`,
+3. Renderer: `NUXT_PREVIEW_HOSTS=preview.manara.hopetechapps.com`,
    `NUXT_PREVIEW_ADMIN_ORIGINS=https://masjid.hopetechapps.com,https://manara.hopetechapps.com`.
    `wrangler pages secret put` writes the production environment, which is the one
    `manara-renderer` serves from, so all three can be set that way (value on stdin). On staging the
    preview is a branch alias in the PREVIEW environment, which wrangler 4 cannot write; its three
    keys were added with one Pages API PATCH (merge semantics, verified by downloading the project
    config before and after).
-4. The next ship after the `.env` edits caches config; `bin/deploy` restarts the queue worker,
+4. The preview host: a DNS CNAME `preview.manara.hopetechapps.com` and the matching custom domain
+   on the `manara-renderer` Pages project. Reserve the label `preview` in Studio's
+   `cloudflare.reserved_labels` and import the host as `reserved` (W1 S3).
+5. Add `https://preview.manara.hopetechapps.com` to `CORS_ALLOWED_ORIGINS` (owner, 2026-09-24).
+   Without it the preview still works (the store keeps the server-rendered data), but browser-side
+   reads inside the preview (events pagination, offering seat re-read, a page not yet in the store)
+   fail quietly. W1 S9 keeps the env list as its base, so this carries over.
+6. The next ship after the `.env` edits caches config; `bin/deploy` restarts the queue worker,
    which runs the second purge pass.
-5. Verify as on staging (§10): a preview session from the admin, the frame's headers, a save
-   followed by a fresh render, and RBI again.
-6. Optional, recommended: add `https://manara-renderer.pages.dev` to `CORS_ALLOWED_ORIGINS`. Without
-   it the preview still works (the store keeps the server-rendered data), but browser-side reads
-   inside the preview (events pagination, offering seat re-read, a page not yet in the store) fail
-   quietly. W1 S9 keeps the env list as its base, so this carries over.
+7. Verify as on staging (§10): a preview session from the admin, the frame's headers, a save
+   followed by a fresh render, and RBI again. The custom domain puts previews behind the
+   `hopetechapps.com` zone, so `curl -I` one signed preview URL and expect exactly
+   `content-security-policy: frame-ancestors <admin origins>`, `cache-control: no-store, private`,
+   `x-robots-tag: noindex, nofollow, noarchive`, and no `x-frame-options`. Email Obfuscation is on
+   for the zone: the server-rendered preview matches what live `mec.`/`alrazi.manara` show, and the
+   browser-side overlays render unobfuscated, which is accepted.
+   Checked in production on 2026-09-24 by the point session: `SESSION_DOMAIN` is null (cookies are
+   host-only) and `SANCTUM_STATEFUL_DOMAINS` is unset (localhost plus the APP_URL host), so the
+   preview host, which is same-site with the admin, receives no admin cookie and is not stateful.
 
 ## 9. Known limits and open questions
 
-- **Owner decision needed: "immediately" is about a minute, not the next request.** See §4.6.
-  Options: accept (recommended: it is a 5x improvement and needs nothing new), or move the page
-  cache to a strongly consistent store, which is new infrastructure and its own project.
+- **Decided by the owner, 2026-09-24:** "immediately" is about a minute on KV, accepted (§4.6);
+  ship and switch on after the independent review; the preview host is
+  `preview.manara.hopetechapps.com`; its origin goes into production CORS.
 
 - **`mec-web` is not purged.** It builds from `cloudflare-migration`, which W1 leaves untouched, so
   `mec-web.pages.dev` keeps its 5-minute window. MEC's Manara host is on `manara-renderer` and is
@@ -363,9 +382,10 @@ Order: renderer first (dark), then MasjidWebMS (dark), then the configuration, t
   the other pages show it after Save.
 - **Header pins, sub-menus, favicon and share tags** come from renderer code keyed by id
   (`shared/tenantHeader.ts`, `tenantBranding.ts`), not from any editor, so they render as live.
-- **A custom preview domain** (`preview.manara.hopetechapps.com`) would read better than
-  `*.pages.dev`; it is DNS plus a Pages domain, so it is the owner's call. Everything here takes the
-  origin from config.
+- **The custom preview domain needs no code change.** Every host and origin is read from
+  configuration: the admin CSP (`SecurityHeaders.php`, from `RENDERER_PREVIEW_ORIGIN`), the pane's
+  iframe URL and postMessage origin (from the session response), and the renderer's preview hosts
+  (`NUXT_PREVIEW_HOSTS`). The one hardening it prompted is the host guard in §3.
 - **`scripts/set-server-secret.sh`** refused a comma and exited silently on a piped value with no
   trailing newline; both were found here and fixed on `main` in `bb60da7f`, so production's
   two-origin `RENDERER_PREVIEW_ADMIN_ORIGINS` can go through it.
