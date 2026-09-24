@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\Renderer\RendererConfig;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -111,6 +112,12 @@ class SecurityHeaders
             $ownConnect = " {$app}";
         }
 
+        // Live preview (docs/live-preview.md): the page editors frame the public
+        // renderer's preview origin. Added only when the integration is configured,
+        // so an unconfigured deployment's policy is byte-identical to before. The
+        // preview origin serves no tenant and answers only signed preview requests.
+        $previewFrame = RendererConfig::previewEnabled() ? ' '.RendererConfig::previewOrigin() : '';
+
         $csp = implode('; ', [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com{$ownOrigin}",
@@ -125,7 +132,7 @@ class SecurityHeaders
             "font-src 'self' https://fonts.gstatic.com https://fonts.bunny.net data:{$ownFont}",
             "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com{$ownImg}",
             "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com{$ownConnect}",
-            "frame-src 'self' https://www.google.com https://maps.google.com",
+            "frame-src 'self' https://www.google.com https://maps.google.com{$previewFrame}",
             "frame-ancestors 'none'",
             "form-action 'self'",
             "base-uri 'self'",

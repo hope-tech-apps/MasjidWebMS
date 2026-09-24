@@ -24,6 +24,7 @@ use App\Http\Controllers\AdminDashboard\DonationStatsController;
 use App\Http\Controllers\AdminDashboard\FlyerCutoutController;
 use App\Http\Controllers\AdminDashboard\FlyersController;
 use App\Http\Controllers\AdminDashboard\FlyerTemplatesController;
+use App\Http\Controllers\AdminDashboard\LivePreviewController;
 use App\Http\Controllers\AdminDashboard\PropertiesController;
 use App\Http\Controllers\AdminDashboard\RecurringDonationsController;
 use App\Http\Controllers\AdminDashboard\RegistrationsController;
@@ -208,7 +209,8 @@ Route::prefix('admin')->group(function () {
             });
 
             // Masjid general settings (logos, copyright, app links, api keys)
-            Route::prefix('{masjid_id}/general-settings')->controller(MasjidDetailsController::class)->group(function () {
+            // `renderer.purge`: logos and copyright are on every public page.
+            Route::prefix('{masjid_id}/general-settings')->middleware('renderer.purge')->controller(MasjidDetailsController::class)->group(function () {
                 Route::get('/', 'getGeneralSettings');
                 Route::post('/', 'updateGeneralSettings');
             });
@@ -252,6 +254,9 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/splash-announcements')->middleware('capability:splash')->controller(SplashAnnouncementsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
+                // Live preview of the splash form (docs/live-preview.md). Registered
+                // before POST /{splash_id} so that route does not swallow it.
+                Route::post('/preview-session', [LivePreviewController::class, 'splash']);
                 Route::get('/{splash_id}', 'show');
                 Route::post('/{splash_id}', 'update');
                 Route::delete('/{splash_id}', 'destroy');
@@ -407,7 +412,13 @@ Route::prefix('admin')->group(function () {
 
             Route::prefix('{masjid_id}/theme')->controller(ThemeSettingsController::class)->group((function () {
                 Route::get('/', 'index');
-                Route::post('/', 'save');
+                // `renderer.purge`: the saved theme is live on the public site at once
+                // (docs/live-preview.md §4.6). Not on the two preview routes below,
+                // which save nothing.
+                Route::post('/', 'save')->middleware('renderer.purge');
+                // Live preview, under the theme save's own gate.
+                Route::post('/preview-session', [LivePreviewController::class, 'theme']);
+                Route::post('/preview', [LivePreviewController::class, 'themePreview']);
             }));
 
             // Get prayer calculation options (methods, madhabs, high latitude rules).
@@ -455,8 +466,16 @@ Route::prefix('admin')->group(function () {
             // (a module, on by default) is whether the organisation has a website
             // at all — switched off for BISS, which has none. Both must pass.
             Route::middleware(['capability:web_pages', 'capability:website'])->group(function () {
+                // Live preview of the page builder (docs/live-preview.md): inside this
+                // group, so exactly the people who may save pages may preview them.
+                Route::post('{masjid_id}/pages/preview-session', [LivePreviewController::class, 'pages']);
+
+                // `renderer.purge` on the three write groups below: a saved page,
+                // menu order, section or library section is live at once
+                // (docs/live-preview.md §4.6). Reads purge nothing.
+
                 // Pages & Sections Management
-                Route::prefix('{masjid_id}/pages')->controller(PagesController::class)->group(function () {
+                Route::prefix('{masjid_id}/pages')->middleware('renderer.purge')->controller(PagesController::class)->group(function () {
                     Route::get('/', 'index');
                     Route::post('/', 'store');
                     Route::post('/reorder', 'reorder'); // Reorder pages
@@ -466,7 +485,7 @@ Route::prefix('admin')->group(function () {
                 });
 
                 // Sections Library Management
-                Route::prefix('{masjid_id}/sections')->controller(SectionsController::class)->group(function () {
+                Route::prefix('{masjid_id}/sections')->middleware('renderer.purge')->controller(SectionsController::class)->group(function () {
                     Route::get('/', 'index');
                     Route::post('/', 'store');
                     Route::get('/{section_id}', 'show');
@@ -475,7 +494,7 @@ Route::prefix('admin')->group(function () {
                 });
 
                 // Page Sections Management (attach/detach sections to pages)
-                Route::prefix('{masjid_id}/pages/{page_id}/sections')->controller(PageSectionsController::class)->group(function () {
+                Route::prefix('{masjid_id}/pages/{page_id}/sections')->middleware('renderer.purge')->controller(PageSectionsController::class)->group(function () {
                     Route::get('/', 'index');
                     Route::post('/', 'store'); // Create new section and attach to page
                     Route::post('/attach', 'attach'); // Attach existing section to page

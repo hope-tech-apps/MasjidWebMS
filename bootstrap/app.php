@@ -174,6 +174,11 @@ return Application::configure(basePath: dirname(__DIR__))
             // SuperAdmins pass. Runs after `tenant`, like `crm`. The SuperAdmin
             // toggle that sets them (PATCH .../capabilities/{key}) is NOT gated.
             'capability' => \App\Http\Middleware\EnsureOrgCapability::class,
+            // After a successful write, purge the organisation's pages from the
+            // public renderer's cache so the save is live at once. Works in
+            // terminate(), after the response; no-op when unconfigured. On the
+            // page, section, theme-save and general-settings routes only.
+            'renderer.purge' => \App\Http\Middleware\PurgeRendererCacheAfterWrite::class,
             // Additive spatie/laravel-permission aliases — applied ONLY to the new
             // CRM endpoints (see routes/admin.php). Its UnauthorizedException is an
             // HttpException(403), so the JSON renderer below returns a clean 403.
