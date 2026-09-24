@@ -6,6 +6,8 @@ use App\Models\BehaviorAward;
 use App\Models\Contact;
 use App\Models\Group;
 use App\Models\GroupMembership;
+use App\Models\GroupResource;
+use App\Models\GroupResourceRecipient;
 use App\Models\GroupThread;
 use App\Models\HifzEntry;
 use App\Models\Masjid;
@@ -91,6 +93,13 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // may have a thread's photos. It builds on mayReceiveThread() and
         // refuses an unrecognized principal the same way.
         'mayReceiveThreadMedia',
+        // The eighteenth and nineteenth, added when a class file became
+        // ADDRESSED (whole class / named students / staff only): the listing
+        // constraint and its single-row twin. A file this class keeps can be a
+        // scan naming one child, so an unrecognized principal must get null and
+        // false here for exactly the reason it gets them above.
+        'readableResourcesQuery',
+        'mayReceiveResource',
     ];
 
     /** The one email shared by the staff User, the leader Contact, and the fixture. */
@@ -120,6 +129,9 @@ class GroupAudienceForeignPrincipalTest extends TestCase
     private BehaviorAward $award;
 
     private HifzEntry $hifzEntry;
+
+    /** A file addressed to the student — the narrowest audience there is. */
+    private GroupResource $targetedFile;
 
     protected function setUp(): void
     {
@@ -211,6 +223,24 @@ class GroupAudienceForeignPrincipalTest extends TestCase
             'group_membership_id' => $this->student->id,
         ]);
 
+        $this->targetedFile = GroupResource::create([
+            'masjid_id' => $this->masjid->id,
+            'group_id' => $this->group->id,
+            'title' => 'Progress report',
+            'visibility' => GroupResource::VISIBILITY_STUDENTS,
+            'original_name' => 'report-card.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 1024,
+            'disk' => 'local',
+            'path' => 'group-resources/' . $this->masjid->id . '/' . $this->group->id . '/x.pdf',
+        ]);
+
+        GroupResourceRecipient::create([
+            'masjid_id' => $this->masjid->id,
+            'group_resource_id' => $this->targetedFile->id,
+            'group_membership_id' => $this->student->id,
+        ]);
+
         $this->staff = User::factory()->create([
             'type' => 'MasjidAdmin',
             'email' => self::SHARED_EMAIL,
@@ -281,7 +311,7 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         // fourteenth. A new seam must be ADDED to the list above deliberately —
         // the failure this pins is one that arrives silently.
         $this->assertSame($expected, $seen);
-        $this->assertCount(17, $seen);
+        $this->assertCount(19, $seen);
     }
 
     #[Test]
@@ -332,8 +362,15 @@ class GroupAudienceForeignPrincipalTest extends TestCase
             $this->audience->membershipsFor($this->foreign, $this->group)->isEmpty()
         );
 
+        // The file seams. A targeted handout names a child, so an unrecognized
+        // principal must not be able to list it or fetch its bytes.
+        $this->assertFalse(
+            $this->audience->mayReceiveResource($this->foreign, $this->group, $this->targetedFile)
+        );
+
         // Null, not an empty query: "no standing in this group at all", which
         // the controllers answer with 403.
+        $this->assertNull($this->audience->readableResourcesQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableThreadsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery($this->foreign, $this->group));
         $this->assertNull($this->audience->readableHifzQuery($this->foreign, $this->group));
@@ -357,11 +394,16 @@ class GroupAudienceForeignPrincipalTest extends TestCase
             $this->group->behaviorAwards()->getQuery(),
         ]));
 
+        // `current` joined this shape when the owner's ruling made consent and
+        // departure two different questions (2026-09-24): a file addressed to
+        // one child is not consent-gated, but leaving the class still ends it,
+        // and one flag could not say both.
         $this->assertSame(
             [
                 'in_group' => false,
                 'leader' => false,
                 'feed' => false,
+                'current' => false,
                 'participant_contact_ids' => [],
                 'ward_contact_ids' => [],
             ],
@@ -404,6 +446,16 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         $threads = $this->audience->readableThreadsQuery($this->staff, $this->group);
         $this->assertInstanceOf(Builder::class, $threads);
         $this->assertSame(2, $threads->count());
+
+        // The leader of the room reads every file in it, the targeted one
+        // included — so the foreign principal's refusal above is the narrowing
+        // and not an empty shelf.
+        $files = $this->audience->readableResourcesQuery($this->staff, $this->group);
+        $this->assertInstanceOf(Builder::class, $files);
+        $this->assertSame(1, $files->count());
+        $this->assertTrue(
+            $this->audience->mayReceiveResource($this->staff, $this->group, $this->targetedFile)
+        );
     }
 
     #[Test]
@@ -418,6 +470,10 @@ class GroupAudienceForeignPrincipalTest extends TestCase
         $this->assertNull($this->audience->readableThreadsQuery(null, $this->group));
         $this->assertNull($this->audience->readableAwardsQuery(null, $this->group));
         $this->assertNull($this->audience->readableHifzQuery(null, $this->group));
+        $this->assertNull($this->audience->readableResourcesQuery(null, $this->group));
+        $this->assertFalse(
+            $this->audience->mayReceiveResource(null, $this->group, $this->targetedFile)
+        );
     }
 
     /** @param array<int,mixed> $arguments */

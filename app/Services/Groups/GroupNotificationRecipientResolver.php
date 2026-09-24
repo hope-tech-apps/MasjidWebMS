@@ -76,6 +76,34 @@ class GroupNotificationRecipientResolver
     }
 
     /**
+     * The guardian(s) of ONE ward who ALSO granted feed consent and are still in
+     * the class — a handout addressed to that child (2026-09-24).
+     *
+     * The third shape, and it exists because neither of the two above says this
+     * one. `feedGuardians()` is the whole class, which is precisely what a
+     * targeted handout must not reach; `wardGuardians()` is the right people but
+     * is not consent-gated, and a targeted file IS consent-gated
+     * (`GroupAudience::readableResourcesQuery()` requires feed standing for
+     * every family branch). Nudging somebody about a file the portal will then
+     * refuse them is a promise the next screen breaks.
+     *
+     * @return Collection<int,NudgeRecipient>
+     */
+    public function consentedWardGuardians(Group $group, int $wardContactId, ?string $authorAddress): Collection
+    {
+        $contacts = $group->memberships()
+            ->consented()
+            ->current()
+            ->where('guardian_of_contact_id', $wardContactId)
+            ->with('contact')
+            ->get()
+            ->map(fn (GroupMembership $m) => $m->contact)
+            ->filter();
+
+        return $this->resolveAddressable($contacts, $authorAddress);
+    }
+
+    /**
      * The teachers of the class — a parent's reply. Teachers are Users named in
      * `group_staff`, PLUS any confirmed legacy Contact `leader` on the roster.
      *
