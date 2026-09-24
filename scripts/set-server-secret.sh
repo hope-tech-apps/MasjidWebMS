@@ -54,17 +54,21 @@ if [ -t 0 ]; then
   read -rsp "Paste the value for $KEY (input is hidden), then press Return: " VALUE
   echo
 else
-  IFS= read -r VALUE          # piped, for testing only
+  # Piped, for testing and for values held in a file. `read` returns 1 at an
+  # end-of-file with no newline even though it filled VALUE, and under set -e
+  # that exited silently having changed nothing.
+  IFS= read -r VALUE || true   # the empty case is answered just below
 fi
 
 if [ -z "${VALUE:-}" ]; then
   echo "Nothing entered. Nothing was changed." >&2
   exit 1
 fi
-# The set every token this is meant for uses. Anything with whitespace, quotes, '#',
-# '$' or a backslash needs .env quoting rules, and getting those wrong is how a
-# single paste becomes a site-wide 500. Refuse rather than guess.
-if [[ ! "$VALUE" =~ ^[A-Za-z0-9._:/+=-]+$ ]]; then
+# The set every token this is meant for uses, plus ',' for origin lists such as
+# CORS_ALLOWED_ORIGINS, which production already holds unquoted. Anything with
+# whitespace, quotes, '#', '$' or a backslash needs .env quoting rules, and getting
+# those wrong is how a single paste becomes a site-wide 500. Refuse rather than guess.
+if [[ ! "$VALUE" =~ ^[A-Za-z0-9._:/+=,-]+$ ]]; then
   echo "REFUSED: the value has characters that need quoting in .env (spaces, quotes, #, \$ or \\)." >&2
   echo "Nothing was changed. If the value is right, this one needs a human edit." >&2
   exit 1
