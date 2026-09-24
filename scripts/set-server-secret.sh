@@ -34,6 +34,15 @@ set -euo pipefail
 KEY="${1:-}"
 if [[ ! "$KEY" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
   echo "usage: $0 KEY_NAME        (UPPER_SNAKE_CASE, e.g. CLOUDFLARE_STUDIO_TOKEN)" >&2
+  # The one mistake this refusal exists for: typing the secret where its NAME goes.
+  # The value is then in shell history, so say so plainly rather than just "usage".
+  if [ "${#KEY}" -ge 20 ]; then
+    echo >&2
+    echo "That argument looks like a secret VALUE, not a key name. Nothing was sent anywhere," >&2
+    echo "but it is now in your shell history. Roll (regenerate) that secret, then run:" >&2
+    echo "    $0 KEY_NAME        (for the Studio token: $0 CLOUDFLARE_STUDIO_TOKEN)" >&2
+    echo "with the NAME typed as shown, and paste the new value when the hidden prompt asks for it." >&2
+  fi
   exit 2
 fi
 
