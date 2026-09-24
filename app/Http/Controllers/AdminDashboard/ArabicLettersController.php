@@ -174,7 +174,31 @@ class ArabicLettersController extends Controller
         $group = Group::findOrFail($group_id);
         $membership = $group->memberships()->participants()->current()->findOrFail($membership_id);
 
-        $drills = $curriculum->syllabus($tracker->stageFor($group));
+        $stage = $tracker->stageFor($group);
+        $scope = $request->scope();
+
+        // What "all" means is now stated by the caller, because the screen
+        // states it too. Before this, every scope resolved to the cumulative
+        // syllabus while the confirmation named a single stage — so a class on
+        // Long Vowels marked its letters, short vowels, sukun, shadda and
+        // tanween as well, none of which the teacher had asked about.
+        if ($scope === MasterAllDrillsRequest::SCOPE_GROUP) {
+            $groupId = (string) $request->validated('group');
+
+            if (! in_array($groupId, array_column($curriculum->groups(), 'id'), true)) {
+                return response()->json([
+                    'status' => 'failed',
+                    'message' => 'That letter group is not part of this alphabet.',
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            $drills = $curriculum->groupDrills($groupId);
+        } elseif ($scope === MasterAllDrillsRequest::SCOPE_EVERYTHING) {
+            $drills = $curriculum->syllabus($stage);
+        } else {
+            $drills = $curriculum->stageDrills($stage);
+        }
+
         $userId = Auth::id();
 
         $changed = DB::transaction(function () use ($drills, $membership, $group, $curriculum, $userId): int {

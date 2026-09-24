@@ -275,20 +275,31 @@
                                 Mark all mastered
                             </button>
                         </div>
+                        <!-- The two scopes are separate buttons because they are
+                             separate decisions, and each says its own number.
+                             One button reading "Long Vowels" and writing all
+                             five stages is what a teacher reported. -->
                         <div v-if="confirmMasterAll" class="alert alert-warning small" role="alert">
                             <p class="mb-2">
-                                Mark all {{ (tracker.totals?.total ?? 0) - (tracker.totals?.mastered ?? 0) }} remaining
-                                {{ tracker.stage?.label ? `“${tracker.stage.label}”` : '' }} drills mastered for
-                                {{ name(selected.contact) }}?
+                                What should be marked mastered for {{ name(selected.contact) }}?
                             </p>
                             <p class="mb-2 text-muted">
                                 Drills already mastered keep their date, and notes are not touched.
                                 You can still move any drill back by tapping it.
+                                Letter groups below are never included — each has its own button.
                             </p>
-                            <div class="d-flex gap-2">
-                                <button type="button" class="btn btn-sm btn-success" :disabled="masteringAll" @click="masterAll">
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-sm btn-success" :disabled="masteringAll"
+                                        @click="masterAll('stage')">
                                     <span v-if="masteringAll" class="spinner-border spinner-border-sm"></span>
-                                    <span v-else>Yes, mark all mastered</span>
+                                    <span v-else>
+                                        Just {{ tracker.stage?.label ?? 'this stage' }} ({{ stageOwnRemaining }})
+                                    </span>
+                                </button>
+                                <button v-if="everythingRemaining > stageOwnRemaining"
+                                        type="button" class="btn btn-sm btn-outline-secondary" :disabled="masteringAll"
+                                        @click="masterAll('everything')">
+                                    Everything up to here ({{ everythingRemaining }})
                                 </button>
                                 <button type="button" class="btn btn-sm btn-link text-muted" :disabled="masteringAll"
                                         @click="confirmMasterAll = false">Cancel</button>
@@ -396,6 +407,116 @@
                                 </div>
                                 <p v-if="letterError" class="text-danger small mt-2 mb-0">{{ letterError }}</p>
                                 <p class="text-muted small mt-2 mb-0">Tap a drill to move it: Not started → Learning → Mastered. The speech bubble writes a note about that drill.</p>
+                            </div>
+                        </div>
+
+                        <!-- ---------------------------------- LETTER GROUPS --
+                             How a letter is SOUNDED, as against which letter it
+                             is. These are not stages and are deliberately not on
+                             the ladder: غ and خ are throat letters AND heavy
+                             letters, so one letter would have to sit in two
+                             stages at once.
+
+                             Each group carries its OWN total, and none of them
+                             counts toward the stage progress above. Adding
+                             twenty-eight drills to that denominator would have
+                             moved every existing class's bar backwards for a
+                             change nobody asked them about.
+
+                             Absent on a track that has no such teaching: the
+                             English alphabet answers with an empty list and
+                             nothing below draws. -->
+                        <div v-if="tracker.groups?.length" class="mt-4">
+                            <h6 class="text-muted small text-uppercase mb-2">How the letters sound</h6>
+
+                            <div v-for="g in tracker.groups" :key="g.id" class="card border-0 shadow-sm mb-3">
+                                <div class="card-body">
+                                    <div class="d-flex align-items-baseline gap-2 mb-1">
+                                        <h6 class="mb-0">{{ g.label }}</h6>
+                                        <span v-if="g.arabic_name" class="text-muted" dir="rtl">{{ g.arabic_name }}</span>
+                                        <span class="ms-auto text-muted small text-nowrap">
+                                            {{ g.totals?.mastered ?? 0 }} / {{ g.totals?.total ?? 0 }}
+                                        </span>
+                                    </div>
+                                    <p class="text-muted small mb-2">{{ g.summary }}</p>
+
+                                    <div class="list-group mb-2" :dir="lettersDir">
+                                        <div v-for="d in g.drills" :key="d.id"
+                                             class="list-group-item p-0" :class="`drill--${d.status}`">
+                                            <div class="d-flex align-items-center">
+                                                <button type="button"
+                                                        class="btn btn-link text-reset text-decoration-none flex-grow-1 d-flex align-items-center gap-3 px-3 py-2"
+                                                        :disabled="marking === d.id" @click="advance(d)">
+                                                    <span class="drill__glyph">{{ d.text }}</span>
+                                                    <span class="flex-grow-1 small" dir="ltr" style="text-align:start;">{{ d.label }}</span>
+                                                    <span class="badge" :class="badgeClass(d.status)">{{ statusLabel(d.status) }}</span>
+                                                </button>
+                                                <button type="button" class="btn btn-link px-3 py-2"
+                                                        :class="d.note ? 'text-success' : 'text-muted'"
+                                                        :aria-expanded="openDrillNote === d.id"
+                                                        :title="d.note ? 'Edit the note on this drill' : 'Write a note about this drill'"
+                                                        @click="toggleDrillNote(d)">
+                                                    <i class="bi" :class="d.note ? 'bi-chat-left-text-fill' : 'bi-chat-left-text'"></i>
+                                                    <span class="visually-hidden">Note on {{ d.label }}</span>
+                                                </button>
+                                            </div>
+
+                                            <div v-if="d.note && openDrillNote !== d.id"
+                                                 class="px-3 pb-2 small text-muted fst-italic"
+                                                 dir="ltr" style="text-align:start;">
+                                                {{ d.note }}
+                                            </div>
+
+                                            <div v-if="openDrillNote === d.id" class="px-3 pb-3" dir="ltr" style="text-align:start;">
+                                                <textarea class="form-control form-control-sm" rows="2"
+                                                          v-model="drillNoteDraft" :maxlength="arabicNoteMax"
+                                                          :disabled="savingDrillNote"></textarea>
+                                                <div class="d-flex align-items-center gap-2 mt-2">
+                                                    <button class="btn btn-sm btn-success" :disabled="savingDrillNote" @click="saveDrillNote(d)">
+                                                        <span v-if="savingDrillNote" class="spinner-border spinner-border-sm"></span>
+                                                        <span v-else>Save note</span>
+                                                    </button>
+                                                    <button class="btn btn-sm btn-link text-muted" :disabled="savingDrillNote"
+                                                            @click="openDrillNote = null">Cancel</button>
+                                                    <button v-if="d.note" class="btn btn-sm btn-link text-danger ms-auto"
+                                                            :disabled="savingDrillNote" @click="clearDrillNote(d)">Remove note</button>
+                                                </div>
+                                                <p v-if="drillNoteError" class="text-danger small mt-2 mb-0">{{ drillNoteError }}</p>
+                                                <div class="form-text">{{ drillNoteDraft.length }} / {{ arabicNoteMax }}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Where ر, ل and ا went. A group that
+                                         quietly omits three letters reads as a
+                                         bug to anyone who knows the alphabet. -->
+                                    <p v-if="g.note" class="text-muted small fst-italic mb-2">{{ g.note }}</p>
+
+                                    <div v-if="confirmGroup !== g.id">
+                                        <button v-if="(g.totals?.mastered ?? 0) < (g.totals?.total ?? 0)"
+                                                type="button" class="btn btn-sm btn-outline-success"
+                                                :disabled="masteringGroup !== null" @click="confirmGroup = g.id">
+                                            Mark all {{ g.label.toLowerCase() }} mastered
+                                        </button>
+                                    </div>
+                                    <div v-else class="alert alert-warning small mb-0" role="alert">
+                                        <p class="mb-2">
+                                            Mark the {{ (g.totals?.total ?? 0) - (g.totals?.mastered ?? 0) }} remaining
+                                            {{ g.label.toLowerCase() }} mastered for {{ name(selected.contact) }}?
+                                            This touches {{ g.label.toLowerCase() }} only — nothing else on this screen changes.
+                                        </p>
+                                        <div class="d-flex gap-2">
+                                            <button type="button" class="btn btn-sm btn-success"
+                                                    :disabled="masteringGroup !== null" @click="masterGroup(g)">
+                                                <span v-if="masteringGroup === g.id" class="spinner-border spinner-border-sm"></span>
+                                                <span v-else>Yes, mark them mastered</span>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-link text-muted"
+                                                    :disabled="masteringGroup !== null" @click="confirmGroup = null">Cancel</button>
+                                        </div>
+                                        <p v-if="groupError" class="text-danger mt-2 mb-0">{{ groupError }}</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -724,6 +845,15 @@
                                     <select class="form-select form-select-sm" v-model="hifzForm.quality">
                                         <option v-for="q in hifzQualities" :key="q" :value="q">{{ qualityLabel(q) }}</option>
                                     </select>
+                                </div>
+                                <div class="col-6 col-sm-auto">
+                                    <label class="form-label small text-muted mb-1">Heard on</label>
+                                    <!-- `max` is today: the API refuses a future
+                                         recitation, and a date that cannot be
+                                         valid should not be offerable. -->
+                                    <input type="date" class="form-control form-control-sm"
+                                           v-model="hifzForm.recited_on" :max="todayIso"
+                                           :placeholder="todayIso" />
                                 </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Note <span class="text-muted">(optional)</span></label>
@@ -2908,7 +3038,13 @@ const confirmMasterAll = ref(false);
 const masteringAll = ref(false);
 const masterAllNote = ref('');
 const masterAllError = ref('');
-const masterAll = async () => {
+/**
+ * `scope` is sent explicitly because the button's words promise a scope. It used
+ * to send neither, and the server marked the whole cumulative syllabus while the
+ * confirmation named one stage — a class on Long Vowels had its letters, short
+ * vowels, sukun, shadda and tanween marked too.
+ */
+const masterAll = async (scope: 'stage' | 'everything' = 'stage') => {
     if (!selected.value) return;
     masteringAll.value = true;
     masterAllError.value = '';
@@ -2916,7 +3052,7 @@ const masterAll = async () => {
     try {
         const res = await TeacherApiService.put(
             `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
-            { alphabet: lettersAlphabet.value }
+            { alphabet: lettersAlphabet.value, scope }
         );
         tracker.value = res.data?.data ?? tracker.value;
         masterAllNote.value = res.data?.message ?? 'Marked mastered.';
@@ -2930,11 +3066,59 @@ const masterAll = async () => {
         masteringAll.value = false;
     }
 };
+/**
+ * What each scope would actually write, counted off the SAME payload the tiles
+ * are drawn from — so the number on the button cannot disagree with the screen.
+ * `stage` is the drills this stage introduces (their `stage` key equals the
+ * class's); `everything` is the whole cumulative denominator.
+ */
+const allDrills = computed<any[]>(() =>
+    (tracker.value?.letters ?? []).flatMap((l: any) => l.drills ?? []));
+
+const everythingRemaining = computed<number>(() =>
+    allDrills.value.filter((d: any) => d.status !== 'mastered').length);
+
+const stageOwnRemaining = computed<number>(() => {
+    const stage = tracker.value?.stage?.id;
+    return allDrills.value.filter((d: any) => d.stage === stage && d.status !== 'mastered').length;
+});
+
+const confirmGroup = ref<string | null>(null);
+const masteringGroup = ref<string | null>(null);
+const groupError = ref('');
+
+/**
+ * Mark one letter group mastered. Separate from `masterAll` on purpose: a group
+ * is not a stage, so "all of them" on the stage card must never reach in here,
+ * and marking every throat letter must never touch the qāʿidah drills.
+ */
+const masterGroup = async (group: any) => {
+    if (!selected.value) return;
+    masteringGroup.value = group.id;
+    groupError.value = '';
+    try {
+        const res = await TeacherApiService.put(
+            `${base.value}/members/${selected.value.membership_id}/letters/master-all`,
+            { alphabet: lettersAlphabet.value, scope: 'group', group: group.id }
+        );
+        tracker.value = res.data?.data ?? tracker.value;
+        masterAllNote.value = res.data?.message ?? 'Marked mastered.';
+        confirmGroup.value = null;
+    } catch (e: any) {
+        groupError.value = e?.response?.data?.message
+            ?? 'That did not save. Check your connection and try again.';
+    } finally {
+        masteringGroup.value = null;
+    }
+};
+
 // A confirmation or a result belongs to the child and track it was about.
 watch([selected, lettersAlphabet], () => {
     confirmMasterAll.value = false;
     masterAllNote.value = '';
     masterAllError.value = '';
+    confirmGroup.value = null;
+    groupError.value = '';
 });
 
 const setStage = async (stage: string) => {
@@ -3389,6 +3573,16 @@ const hifzForm = ref({
     // wrote its explanation here and a teacher looking at that record saw 25
     // excellent recitations with no sign that nobody heard them.
     note: '',
+    // WHEN it was heard. The API has accepted `recited_at` since the module
+    // shipped — and documents that it may be backdated, "a teacher entering the
+    // morning's ḥalaqa after ʿaṣr" — but no screen ever sent it, so every entry
+    // was stamped at the moment of typing. A teacher writing up Saturday's
+    // ḥalaqa on Sunday had no way to say so, and the child's sabak history
+    // recorded the wrong day.
+    //
+    // Empty means today, and today sends nothing: an entry made now should
+    // carry the real time it was made, not midnight.
+    recited_on: '',
     // "Whole surah": no āyah range is sent; the server records 1 to the last.
     whole_surah: false,
 });
@@ -3463,6 +3657,11 @@ const recordHifz = async () => {
             // the column means "nobody wrote here", and '' would assert that a
             // teacher wrote nothing, which is a different claim.
             ...(hifzForm.value.note.trim() ? { note: hifzForm.value.note.trim() } : {}),
+            // Sent only when it is NOT today: an entry recorded now should keep
+            // the time it happened, and a bare date would stamp it midnight.
+            ...(hifzForm.value.recited_on && hifzForm.value.recited_on !== todayIso
+                ? { recited_at: hifzForm.value.recited_on }
+                : {}),
         });
         // The surah is KEPT: the next entry for this child is usually the next
         // few āyāt of the same one.

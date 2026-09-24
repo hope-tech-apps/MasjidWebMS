@@ -154,6 +154,12 @@ class LetterTracker
             'alphabet' => $this->curriculum->alphabetId(),
             'direction' => $this->curriculum->direction(),
             'stage' => $this->stagePayload($stage),
+            // Each group carries its OWN totals and is absent from `totals`
+            // above. A teacher reading "Throat letters 4 of 5" is being told
+            // about five drills, not about the stage denominator, and the two
+            // numbers must never be added together by a client that assumed
+            // one bar.
+            'groups' => $this->groupsFor($rows),
             'student' => [
                 'membership_id' => (int) $membership->id,
                 'contact' => $membership->contact ? [
@@ -166,6 +172,57 @@ class LetterTracker
             'letters' => $letters,
             'totals' => ['mastered' => $mastered, 'total' => $total],
         ];
+    }
+
+    /**
+     * The letter groups for one child: each group's drills with their status,
+     * and a total that counts only that group.
+     *
+     * Takes the progress rows already fetched rather than querying again —
+     * `forStudent` has them all for this membership and alphabet, and a second
+     * query would be a chance for the two halves of one screen to disagree.
+     *
+     * @param  \Illuminate\Support\Collection<string,\App\Models\ArabicLetterProgress>  $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function groupsFor(Collection $rows): array
+    {
+        $groups = [];
+
+        foreach ($this->curriculum->groups() as $group) {
+            $drills = [];
+            $mastered = 0;
+
+            foreach ($this->curriculum->groupDrills($group['id']) as $drillId) {
+                $described = $this->curriculum->describeDrill($drillId);
+
+                if ($described === null) {
+                    continue;
+                }
+
+                $status = $rows[$drillId]->status ?? ArabicCurriculum::STATUS_NOT_STARTED;
+
+                $drills[] = $described + [
+                    'status' => $status,
+                    'mastered_at' => optional($rows[$drillId]->mastered_at ?? null)->toIso8601String(),
+                    'note' => $rows[$drillId]->note ?? null,
+                ];
+
+                if ($status === ArabicCurriculum::STATUS_MASTERED) {
+                    $mastered++;
+                }
+            }
+
+            $count = count($drills);
+
+            $groups[] = $group + [
+                'drills' => $drills,
+                'totals' => ['mastered' => $mastered, 'total' => $count],
+                'completion' => $count > 0 ? round($mastered / $count, 4) : 0.0,
+            ];
+        }
+
+        return $groups;
     }
 
     /** Every stage, so a client can render the ladder without hardcoding it. */

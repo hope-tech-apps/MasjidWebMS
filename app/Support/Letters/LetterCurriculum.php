@@ -56,6 +56,36 @@ interface LetterCurriculum
      */
     public static function stages(): array;
 
+    /**
+     * The drills a stage introduces on its own, WITHOUT the earlier stages.
+     * `syllabus()` stays cumulative; this is what a per-stage bulk action acts
+     * on, so the words on the button and the rows it writes agree.
+     *
+     * @return array<int,string>
+     */
+    public static function stageDrills(?string $stage): array;
+
+    /**
+     * Letter GROUPS — a property of a letter (how it is sounded), as against a
+     * stage, which is a step the class moves through.
+     *
+     * A track with no such teaching has none: the English alphabet returns an
+     * empty list and every surface simply draws nothing, exactly as it does for
+     * a stage ladder of length one. Groups never appear in `syllabus()`, so a
+     * track that gains them does not move any class's existing progress bar.
+     *
+     * @return array<int,array{id:string,label:string,arabic_name:?string,summary:string,note:?string,letters:array<int,string>}>
+     */
+    public static function groups(): array;
+
+    /**
+     * The drill ids for one group — one per letter in it, empty for a group
+     * this track does not have.
+     *
+     * @return array<int,string>
+     */
+    public static function groupDrills(string $group): array;
+
     /** An unset or unrecognised stage is the FIRST stage, never an error. */
     public static function normaliseStage(?string $stage): string;
 

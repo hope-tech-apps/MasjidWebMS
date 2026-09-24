@@ -152,6 +152,195 @@ class ArabicCurriculum implements LetterCurriculum
         'ya'   => ['kasra', 'ي', 'Madd Ya',   'bii'],
     ];
 
+    // -------------------------------------------------------- letter groups
+
+    /**
+     * How a letter is SOUNDED, as against which letter it is.
+     *
+     * These three are not stages and must never join the ladder. A stage is a
+     * step a class moves through, each one including everything before it; a
+     * group is a property the letter has always had. They also overlap — غ and
+     * خ are throat letters AND heavy letters — so a single letter would have to
+     * sit in two stages at once, which `stageIndex()` cannot express.
+     *
+     * They therefore carry their OWN drills and their own totals, and are
+     * deliberately absent from `syllabus()`. Adding twenty-eight drills to the
+     * qāʿidah denominator would have moved every existing class's progress bar
+     * backwards overnight for a change nobody asked them about.
+     *
+     * ## Why some letters are missing on purpose
+     *
+     * Each list holds only letters whose membership is UNCONDITIONAL, because a
+     * drill tile has no honest way to say "sometimes". The conditional cases are
+     * named in `note` for the teacher instead of being drawn as a tile a child
+     * would be marked right or wrong on:
+     *
+     *  - **Throat** is classically SIX letters: ء ه ع ح غ خ. The first is hamza,
+     *    which is not one of the twenty-eight — this alphabet's first letter is
+     *    alif (ا), a different thing. Alif is NOT a throat letter and is not
+     *    listed; the note tells the teacher where the sixth went.
+     *  - **Heavy** is the seven ḥurūf al-istiʿlāʾ of خُصَّ ضَغْطٍ قِظْ, and only those.
+     *  - **Light** is not a list in the books at all: it is every letter that is
+     *    not one of the seven. ر, ل and ا are left out of BOTH groups because
+     *    each is heavy in some positions and light in others.
+     */
+    public const GROUP_HALQ = 'halq';
+    public const GROUP_TAFKHEEM = 'tafkheem';
+    public const GROUP_TARQEEQ = 'tarqeeq';
+
+    /** In teaching order. Unlike stages, this order implies no prerequisite. */
+    /**
+     * The seven ḥurūf al-istiʿlāʾ — the only letters that are heavy wherever
+     * they appear. This is the list the books enumerate and the one a child
+     * memorises.
+     */
+    public const HEAVY_LETTERS = ['kha', 'sad', 'dad', 'ghayn', 'taa', 'qaf', 'zaa'];
+
+    /**
+     * The three letters that are neither always heavy nor always light, and so
+     * belong to NEITHER group:
+     *
+     *  - ر  heavy on fatḥa or ḍamma (or sākin after one), light on kasra.
+     *  - ل  heavy only in the name الله, and only after fatḥa or ḍamma.
+     *  - ا  has no weight of its own; it copies the letter before it.
+     *
+     * They are named in the groups' `note` so a teacher is told where they went.
+     * Drawing them as a tile in either group would mark a child right or wrong
+     * on something that depends on the word in front of them.
+     */
+    public const CONDITIONAL_LETTERS = ['ra', 'lam', 'alif'];
+
+    public const GROUPS = [
+        self::GROUP_HALQ => [
+            'label' => 'Throat Letters',
+            'arabic_name' => 'حُرُوف الحَلْق',
+            'summary' => 'The letters sounded from the throat, deepest to nearest the mouth.',
+            'note' => 'Classically six: ء ه ع ح غ خ. Hamza (ء) is not one of the twenty-eight letters here, so five are shown. Alif (ا) is a different letter, sounded from the chest, and is not a throat letter.',
+        ],
+        self::GROUP_TAFKHEEM => [
+            'label' => 'Heavy Letters',
+            'arabic_name' => 'حُرُوف الاسْتِعْلاء',
+            'summary' => 'The seven letters that are heavy wherever they appear — خُصَّ ضَغْطٍ قِظْ.',
+            'note' => 'ر, ل and ا are not shown here: each is heavy in some words and light in others, so they are taught as their own rules rather than marked as heavy letters.',
+        ],
+        self::GROUP_TARQEEQ => [
+            'label' => 'Light Letters',
+            'arabic_name' => 'حُرُوف الاسْتِفال',
+            // Captioned by the RULE, not by a count. No source prints "18":
+            // the books say istifāl is 28 − 7 = 21 and count ا, ل and ر among
+            // them, so a screen claiming eighteen light letters would be
+            // contradicted by the first parent who looks it up.
+            'summary' => 'Every letter that is not one of the seven heavy letters — light is the default.',
+            'note' => 'ر, ل and ا are not shown here either, for the same reason they are absent from the heavy letters.',
+        ],
+    ];
+
+    /** The prefix that marks a drill as belonging to a group, not a stage. */
+    public const GROUP_DRILL_PREFIX = 'group_';
+
+    public static function groupIds(): array
+    {
+        return array_keys(self::GROUPS);
+    }
+
+    public static function isGroup(?string $group): bool
+    {
+        return $group !== null && isset(self::GROUPS[$group]);
+    }
+
+    /**
+     * The groups as payloads, so a client renders them without hardcoding the
+     * names, the membership or the caveats.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function groups(): array
+    {
+        $out = [];
+
+        foreach (self::GROUPS as $id => $group) {
+            $out[] = [
+                'id' => $id,
+                'label' => $group['label'],
+                'arabic_name' => $group['arabic_name'],
+                'summary' => $group['summary'],
+                'note' => $group['note'],
+                'letters' => self::groupLetters($id),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The letters in one group, in hijāʾī order.
+     *
+     * Light is DERIVED — every letter that is neither always heavy nor
+     * conditional — rather than typed out. A typed list is where ح and ه get
+     * confused for one another, and it would silently stop agreeing with
+     * HEAVY_LETTERS the first time that list was edited.
+     *
+     * @return array<int,string>
+     */
+    public static function groupLetters(string $group): array
+    {
+        return match ($group) {
+            self::GROUP_HALQ => ['ha', 'ayn', 'haa', 'ghayn', 'kha'],
+            self::GROUP_TAFKHEEM => self::HEAVY_LETTERS,
+            self::GROUP_TARQEEQ => array_values(array_diff(
+                array_keys(self::LETTERS),
+                self::HEAVY_LETTERS,
+                self::CONDITIONAL_LETTERS
+            )),
+            default => [],
+        };
+    }
+
+    /**
+     * The drills for one group — one per letter in it.
+     *
+     * @return array<int,string> drill ids
+     */
+    public static function groupDrills(string $group): array
+    {
+        return array_map(
+            static fn (string $letter): string => $letter.'.'.self::GROUP_DRILL_PREFIX.$group,
+            self::groupLetters($group)
+        );
+    }
+
+    /** Every group drill on the track, for a caller that wants the lot. */
+    public static function groupSyllabus(): array
+    {
+        $drills = [];
+
+        foreach (self::groupIds() as $group) {
+            $drills = array_merge($drills, self::groupDrills($group));
+        }
+
+        return $drills;
+    }
+
+    /**
+     * The group a drill id belongs to, or null if it is not a group drill.
+     *
+     * Membership is checked, not just the prefix: `sad.group_halq` parses but
+     * ṣād is not a throat letter, and accepting it would let a client invent a
+     * drill the group's own totals do not count.
+     */
+    public static function groupOfDrill(string $drillId): ?string
+    {
+        [$letter, $suffix] = array_pad(explode('.', $drillId, 2), 2, null);
+
+        if ($suffix === null || ! str_starts_with($suffix, self::GROUP_DRILL_PREFIX)) {
+            return null;
+        }
+
+        $group = substr($suffix, strlen(self::GROUP_DRILL_PREFIX));
+
+        return in_array($letter, self::groupLetters($group), true) ? $group : null;
+    }
+
     // -------------------------------------------------------------- identity
 
     public static function alphabetId(): string
@@ -253,6 +442,50 @@ class ArabicCurriculum implements LetterCurriculum
         return $drills;
     }
 
+    /**
+     * The drills a stage introduces ON ITS OWN — `syllabus()` minus everything
+     * the earlier stages already covered.
+     *
+     * `syllabus()` is cumulative and must stay so: it is the progress
+     * denominator, and a class on Long Vowels is still accountable for its
+     * letters. But "mark all the Long Vowels drills" is a different question
+     * from "mark all 336 drills", and until this existed the two had the same
+     * answer — the confirmation named one stage and the action marked five.
+     *
+     * @return array<int,string> drill ids
+     */
+    public static function stageDrills(?string $stage): array
+    {
+        $stage = self::normaliseStage($stage);
+        $letters = array_keys(self::LETTERS);
+
+        if ($stage === self::STAGE_LETTERS) {
+            return $letters;
+        }
+
+        $drills = [];
+
+        foreach (self::MARKS as $mark => $definition) {
+            if ($definition[4] !== $stage) {
+                continue;
+            }
+
+            foreach ($letters as $letter) {
+                $drills[] = "{$letter}.{$mark}";
+            }
+        }
+
+        if ($stage === self::STAGE_MADD) {
+            foreach (array_keys(self::MADD) as $madd) {
+                foreach ($letters as $letter) {
+                    $drills[] = "{$letter}.madd_{$madd}";
+                }
+            }
+        }
+
+        return $drills;
+    }
+
     /** The drills for ONE letter at a stage — one student's letter card. */
     public static function drillsForLetter(string $letter, ?string $stage): array
     {
@@ -273,8 +506,17 @@ class ArabicCurriculum implements LetterCurriculum
         return $drills;
     }
 
+    /**
+     * A group drill is valid at ANY stage: how a letter is sounded is not
+     * unlocked by the qāʿidah ladder, and a class practising throat letters in
+     * its first term must be able to record that.
+     */
     public static function isValidDrill(string $drillId, ?string $stage): bool
     {
+        if (self::groupOfDrill($drillId) !== null) {
+            return true;
+        }
+
         return in_array($drillId, self::syllabus($stage), true);
     }
 
@@ -352,7 +594,27 @@ class ArabicCurriculum implements LetterCurriculum
             return [
                 'id' => $drillId, 'letter' => $letter, 'text' => $glyph,
                 'label' => $translit, 'arabic_name' => $arabicName,
-                'sound' => null, 'stage' => self::STAGE_LETTERS,
+                'sound' => null, 'stage' => self::STAGE_LETTERS, 'group' => null,
+            ];
+        }
+
+        if (str_starts_with($suffix, self::GROUP_DRILL_PREFIX)) {
+            $group = self::groupOfDrill($drillId);
+
+            if ($group === null) {
+                return null;
+            }
+
+            return [
+                'id' => $drillId, 'letter' => $letter, 'text' => $glyph,
+                'label' => $translit, 'arabic_name' => $arabicName,
+                // A group drill is the letter sounded, not a new shape to read,
+                // so there is nothing to spell out as a syllable.
+                'sound' => null,
+                // Deliberately null: this drill belongs to no stage, and a
+                // client that groups by stage must not file it under one.
+                'stage' => null,
+                'group' => $group,
             ];
         }
 
@@ -367,7 +629,7 @@ class ArabicCurriculum implements LetterCurriculum
                 'id' => $drillId, 'letter' => $letter,
                 'text' => $glyph.self::MARKS[$short][0].$letterGlyph,
                 'label' => $label, 'arabic_name' => null,
-                'sound' => $sound, 'stage' => self::STAGE_MADD,
+                'sound' => $sound, 'stage' => self::STAGE_MADD, 'group' => null,
             ];
         }
 
@@ -380,7 +642,7 @@ class ArabicCurriculum implements LetterCurriculum
         return [
             'id' => $drillId, 'letter' => $letter, 'text' => $glyph.$mark,
             'label' => $label, 'arabic_name' => $markArabic,
-            'sound' => $sound, 'stage' => $stage,
+            'sound' => $sound, 'stage' => $stage, 'group' => null,
         ];
     }
 }

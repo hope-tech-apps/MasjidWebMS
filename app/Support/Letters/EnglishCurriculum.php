@@ -135,6 +135,31 @@ class EnglishCurriculum implements LetterCurriculum
      * branches. An Arabic stage id means nothing here, and answering with the
      * only stage there is beats throwing at a caller who did nothing wrong.
      */
+    /**
+     * A–Z has no equivalent of the qāʿidah's sounding groups. Answering with an
+     * empty list is the honest answer, not a gap: the tracker draws no group
+     * sections and the teacher sees the screen they saw before.
+     */
+    /**
+     * A–Z has one stage, so the stage owns the whole syllabus and "this stage"
+     * and "everything" are the same set — which is the honest answer here, not
+     * a shortcut.
+     */
+    public static function stageDrills(?string $stage): array
+    {
+        return self::syllabus($stage);
+    }
+
+    public static function groups(): array
+    {
+        return [];
+    }
+
+    public static function groupDrills(string $group): array
+    {
+        return [];
+    }
+
     public static function normaliseStage(?string $stage): string
     {
         return self::STAGE_LETTERS;

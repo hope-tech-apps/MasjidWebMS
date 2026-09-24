@@ -79,32 +79,112 @@ class TeacherClassShortcutsTest extends TestCase
     // ================================================================ LETTERS
 
     #[Test]
-    public function mark_all_masters_every_drill_at_the_class_stage_and_nothing_beyond_it(): void
+    public function mark_all_defaults_to_the_stage_the_button_names_and_leaves_earlier_stages_alone(): void
     {
         $this->assign(null);
         $this->class->forceFill(['arabic_stage' => ArabicCurriculum::STAGE_SHORT_VOWELS])->save();
 
-        $syllabus = ArabicCurriculum::syllabus(ArabicCurriculum::STAGE_SHORT_VOWELS);
+        // The reported bug (teacher, 2026-09-24): the confirmation reads "Mark
+        // all N remaining <stage> drills", and this used to resolve to the
+        // CUMULATIVE syllabus — so a class on Short Vowels had its twenty-eight
+        // bare letters marked too, work the teacher had not asked about. The
+        // default is now exactly the drills that stage introduces.
+        $own = ArabicCurriculum::stageDrills(ArabicCurriculum::STAGE_SHORT_VOWELS);
+        $cumulative = ArabicCurriculum::syllabus(ArabicCurriculum::STAGE_SHORT_VOWELS);
 
-        $res = $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'))
+        $this->assertCount(28 * 3, $own);
+        $this->assertCount(28 * 4, $cumulative);
+
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'))
             ->assertOk()
-            ->assertJsonPath('data.totals.mastered', count($syllabus))
-            ->assertJsonPath('data.totals.total', count($syllabus))
-            ->assertJsonPath('meta.changed', count($syllabus));
+            ->assertJsonPath('meta.changed', count($own))
+            // The denominator is untouched: the bar still counts the whole stage.
+            ->assertJsonPath('data.totals.total', count($cumulative))
+            ->assertJsonPath('data.totals.mastered', count($own));
 
         $rows = ArabicLetterProgress::withoutMasjidScope()
             ->where('group_membership_id', $this->esraa->id)->get();
 
-        // Exactly the stage's syllabus — no sukūn drill from the next stage.
-        $this->assertEqualsCanonicalizing($syllabus, $rows->pluck('drill_id')->all());
+        $this->assertEqualsCanonicalizing($own, $rows->pluck('drill_id')->all());
         $this->assertTrue($rows->every(fn ($r) => $r->status === ArabicCurriculum::STATUS_MASTERED));
         $this->assertTrue($rows->every(fn ($r) => $r->mastered_at !== null));
         $this->assertTrue($rows->every(fn ($r) => (int) $r->marked_by_user_id === $this->teacher->id));
         $this->assertTrue($rows->every(fn ($r) => $r->alphabet === 'arabic'));
 
+        // No bare-letter drill was written, and nothing from the next stage.
+        $this->assertSame(0, $rows->filter(fn ($r) => ! str_contains($r->drill_id, '.'))->count());
+        $this->assertSame(0, $rows->filter(fn ($r) => str_contains($r->drill_id, '.sukun'))->count());
+
         // The other child is untouched.
         $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()
             ->where('group_membership_id', $this->yusuf->id)->count());
+    }
+
+    #[Test]
+    public function mark_all_with_the_everything_scope_takes_the_whole_cumulative_syllabus(): void
+    {
+        $this->assign(null);
+        $this->class->forceFill(['arabic_stage' => ArabicCurriculum::STAGE_MADD])->save();
+
+        // The child who genuinely knows it all — the case the feature was built
+        // for. It is still available, but a teacher now has to ask for it.
+        $cumulative = ArabicCurriculum::syllabus(ArabicCurriculum::STAGE_MADD);
+
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'), ['scope' => 'everything'])
+            ->assertOk()
+            ->assertJsonPath('meta.changed', count($cumulative))
+            ->assertJsonPath('data.totals.mastered', count($cumulative));
+
+        $rows = ArabicLetterProgress::withoutMasjidScope()
+            ->where('group_membership_id', $this->esraa->id)->get();
+
+        $this->assertEqualsCanonicalizing($cumulative, $rows->pluck('drill_id')->all());
+    }
+
+    #[Test]
+    public function mark_all_on_a_letter_group_touches_that_group_and_nothing_else(): void
+    {
+        $this->assign(null);
+
+        $throat = ArabicCurriculum::groupDrills(ArabicCurriculum::GROUP_HALQ);
+
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'), [
+            'scope' => 'group', 'group' => ArabicCurriculum::GROUP_HALQ,
+        ])
+            ->assertOk()
+            ->assertJsonPath('meta.changed', count($throat))
+            // The group carries its OWN total and stays out of the stage bar.
+            ->assertJsonPath('data.totals.mastered', 0)
+            ->assertJsonPath('data.groups.0.id', ArabicCurriculum::GROUP_HALQ)
+            ->assertJsonPath('data.groups.0.totals.mastered', count($throat));
+
+        $rows = ArabicLetterProgress::withoutMasjidScope()
+            ->where('group_membership_id', $this->esraa->id)->get();
+
+        $this->assertEqualsCanonicalizing($throat, $rows->pluck('drill_id')->all());
+    }
+
+    #[Test]
+    public function mark_all_refuses_a_group_this_alphabet_does_not_have(): void
+    {
+        $this->assign(null);
+
+        // A–Z has no sounding groups at all, so naming one is not a typo to be
+        // shrugged off — it would silently write Arabic drills onto the English
+        // track if the scope were ignored.
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'), [
+            'scope' => 'group', 'group' => ArabicCurriculum::GROUP_HALQ, 'alphabet' => 'english',
+        ])->assertUnprocessable();
+
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'), [
+            'scope' => 'group', 'group' => 'makhraj_of_the_moon',
+        ])->assertUnprocessable();
+
+        // `group` is required when the scope says group.
+        $this->putJson($this->url('/members/'.$this->esraa->id.'/letters/master-all'), ['scope' => 'group'])
+            ->assertUnprocessable();
+
+        $this->assertSame(0, ArabicLetterProgress::withoutMasjidScope()->count());
     }
 
     #[Test]
