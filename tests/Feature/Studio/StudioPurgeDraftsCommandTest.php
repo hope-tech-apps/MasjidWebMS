@@ -103,4 +103,18 @@ class StudioPurgeDraftsCommandTest extends TestCase
 
         $this->assertSame(0, StudioDraft::count());
     }
+
+    #[Test]
+    public function a_negative_window_is_held_to_one_day_and_spares_a_draft_being_edited(): void
+    {
+        $this->freezeTime();
+        $editing = $this->newDraft(['name' => 'Being edited'])['id'];
+
+        // --days=0 falls through to the config default; a sign error does not.
+        $this->artisan('studio:purge-drafts', ['--days' => -5])
+            ->expectsOutputToContain('Purged 0 Studio draft(s) untouched since ' . now()->subDay()->toDateTimeString())
+            ->assertSuccessful();
+
+        $this->assertDatabaseHas('studio_drafts', ['id' => $editing]);
+    }
 }

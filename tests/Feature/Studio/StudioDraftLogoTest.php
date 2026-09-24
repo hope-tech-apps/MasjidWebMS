@@ -4,6 +4,7 @@ namespace Tests\Feature\Studio;
 
 use App\Models\StudioDraft;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\StudioDraftFixtures;
@@ -138,5 +139,85 @@ class StudioDraftLogoTest extends TestCase
         $this->uploadLogo($id, $this->realUpload('wide.png', $this->pngBytes(1000, 250)))
             ->assertOk()
             ->assertJsonPath('data.palette.aspect_warning', true);
+    }
+
+    #[Test]
+    public function the_stored_extension_follows_the_sniffed_type_not_the_clients_name(): void
+    {
+        $id = $this->newDraft()['id'];
+
+        // A real PNG named as a web page is stored, and served, as a PNG.
+        $this->uploadLogo($id, $this->realUpload('logo.html', $this->pngBytes()))
+            ->assertOk()
+            ->assertJsonPath('data.logo.mime_type', 'image/png');
+        $this->assertMatchesRegularExpression('#\.png$#', StudioDraft::findOrFail($id)->logo_path);
+        $this->assertStringContainsString(
+            "draft-{$id}-logo.png",
+            (string) $this->get(self::DRAFTS . "/{$id}/logo")->assertOk()->headers->get('Content-Disposition'),
+        );
+
+        // A JPEG named .png is a JPEG.
+        $image = imagecreatetruecolor(200, 200);
+        ob_start();
+        imagejpeg($image);
+        $jpeg = (string) ob_get_clean();
+
+        $this->uploadLogo($id, $this->realUpload('logo.png', $jpeg))
+            ->assertOk()
+            ->assertJsonPath('data.logo.mime_type', 'image/jpeg');
+        $this->assertMatchesRegularExpression('#\.jpg$#', StudioDraft::findOrFail($id)->logo_path);
+    }
+
+    #[Test]
+    public function an_upload_clears_files_nothing_points_at_from_the_drafts_directory(): void
+    {
+        $id = $this->newDraft()['id'];
+        $other = $this->newDraft()['id'];
+        $this->uploadLogo($other, $this->realUpload('theirs.png', $this->pngBytes()))->assertOk();
+        $theirs = StudioDraft::findOrFail($other)->logo_path;
+
+        // What an overlapping double-submit, or an old logo whose delete
+        // failed, leaves behind: a file in the draft's directory no row names.
+        $disk = Storage::disk((string) config('studio.logo.disk'));
+        $disk->put("studio-drafts/{$id}/" . str_repeat('b', 40) . '.png', $this->pngBytes());
+
+        $this->uploadLogo($id, $this->realUpload('logo.png', $this->pngBytes()))->assertOk();
+        $ours = StudioDraft::findOrFail($id)->logo_path;
+
+        $this->assertEqualsCanonicalizing([$ours, $theirs], $this->storedLogos(), 'the stray went; another draft\'s logo did not');
+    }
+
+    #[Test]
+    public function an_upload_racing_a_discard_or_a_provision_leaves_no_file_behind(): void
+    {
+        $orgId = $this->org()->id;
+
+        $cases = [
+            // Another tab discards the draft once this upload has found it.
+            'discarded' => [404, fn (int $id) => DB::table('studio_drafts')->where('id', $id)->delete()],
+            // Step 3 provisions it in the same window.
+            'provisioned' => [409, fn (int $id) => DB::table('studio_drafts')->where('id', $id)->update([
+                'status' => StudioDraft::STATUS_PROVISIONED, 'provisioned_masjid_id' => $orgId, 'provisioned_at' => now(),
+            ])],
+        ];
+
+        foreach ($cases as $what => [$status, $interleave]) {
+            $id = $this->newDraft()['id'];
+
+            $fired = false;
+            StudioDraft::retrieved(function (StudioDraft $draft) use ($id, $interleave, &$fired) {
+                if (! $fired && $draft->id === $id) {
+                    $fired = true;
+                    $interleave($id);
+                }
+            });
+
+            $this->uploadLogo($id, $this->realUpload('logo.png', $this->pngBytes()))->assertStatus($status);
+
+            $this->assertTrue($fired, $what);
+            $this->assertSame([], $this->storedLogos(), "{$what}: no file is left for nothing to find");
+        }
+
+        $this->assertNull(StudioDraft::findOrFail($id)->logo_path, 'the provisioned draft kept the logo it had');
     }
 }

@@ -30,6 +30,10 @@ class StudioDraftsController extends Controller
 {
     private const LIST_LIMIT = 100;
 
+    private const PROVISIONED = 'This draft has already been provisioned and can no longer change.';
+
+    private const STALE = 'This draft was saved somewhere else since you loaded it. Reload it to carry on.';
+
     /** Sniffed type => stored extension. The client's filename never decides it. */
     private const LOGO_EXTENSIONS = ['image/png' => 'png', 'image/jpeg' => 'jpg'];
 
@@ -97,54 +101,65 @@ class StudioDraftsController extends Controller
      * lock_version it read, and a stale one is refused with the draft as it now
      * stands, so the SPA can show "Reload draft" instead of overwriting another
      * tab's work.
+     *
+     * The write is conditional on the lock_version and status that were read, so
+     * two saves naming the same version cannot both win: the second matches no
+     * row. That holds on any database, where a row lock would be a no-op on the
+     * suite's SQLite and so could never be shown to work.
      */
     public function update(UpdateStudioDraftRequest $request, int $draft_id)
     {
-        StudioDraft::findOrFail($draft_id);
+        $draft = StudioDraft::findOrFail($draft_id);
+        $version = (int) $request->validated('lock_version');
 
-        return DB::transaction(function () use ($request, $draft_id) {
-            // Locked so two saves naming the same lock_version cannot both win.
-            $draft = StudioDraft::query()->lockForUpdate()->findOrFail($draft_id);
+        if ($refused = $this->refuseSave($draft, $version)) {
+            return $refused;
+        }
 
-            if ($draft->isProvisioned()) {
-                return $this->conflict($draft, 'This draft has already been provisioned and can no longer change.');
+        $answers = $draft->answers;
+        $sections = $request->sections();
+
+        foreach ($sections as $section => $value) {
+            if ($value === null) {
+                unset($answers[$section]);
+            } else {
+                $answers[$section] = $value;
             }
+        }
 
-            if ((int) $request->validated('lock_version') !== $draft->lock_version) {
-                return $this->conflict($draft, 'This draft was saved somewhere else since you loaded it. Reload it to carry on.');
-            }
+        $draft->answers = $answers;
 
-            $answers = $draft->answers;
-            $sections = $request->validated('answers') ?? [];
+        if (array_key_exists('identity', $sections)) {
+            $identity = is_array($sections['identity']) ? $sections['identity'] : [];
+            $name = is_string($identity['name'] ?? null) && $identity['name'] !== '' ? $identity['name'] : null;
 
-            foreach ($sections as $section => $value) {
-                if ($value === null) {
-                    unset($answers[$section]);
-                } else {
-                    $answers[$section] = $value;
-                }
-            }
+            $draft->name = $name === null ? null : mb_substr($name, 0, 255);
+            $draft->org_type = $identity['org_type'] ?? null;
+        }
 
-            $draft->answers = $answers;
+        if ($request->has('current_step')) {
+            $draft->current_step = $request->validated('current_step');
+        }
 
-            if (array_key_exists('identity', $sections)) {
-                $identity = is_array($sections['identity']) ? $sections['identity'] : [];
-                $name = is_string($identity['name'] ?? null) && $identity['name'] !== '' ? $identity['name'] : null;
+        $draft->lock_version = $version + 1;
+        $draft->updated_by = $request->user()?->id;
 
-                $draft->name = $name === null ? null : mb_substr($name, 0, 255);
-                $draft->org_type = $identity['org_type'] ?? null;
-            }
+        // The model's own setters encoded the changes, so its dirty attributes
+        // are exactly what save() would have written.
+        $saved = StudioDraft::query()
+            ->whereKey($draft->id)
+            ->where('status', StudioDraft::STATUS_DRAFT)
+            ->where('lock_version', $version)
+            ->update($draft->getDirty());
 
-            if ($request->has('current_step')) {
-                $draft->current_step = $request->validated('current_step');
-            }
+        if ($saved === 0) {
+            // Saved, provisioned or discarded between the read and the write.
+            $current = StudioDraft::findOrFail($draft_id);
 
-            $draft->lock_version = $draft->lock_version + 1;
-            $draft->updated_by = $request->user()?->id;
-            $draft->save();
+            return $this->refuseSave($current, $version) ?? $this->conflict($current, self::STALE);
+        }
 
-            return $this->draft($draft->fresh());
-        });
+        return $this->draft($draft->fresh());
     }
 
     /**
@@ -155,19 +170,26 @@ class StudioDraftsController extends Controller
      */
     public function destroy(int $draft_id)
     {
-        $draft = StudioDraft::findOrFail($draft_id);
+        StudioDraft::findOrFail($draft_id);
 
-        if ($draft->isProvisioned()) {
-            return $this->conflict($draft, 'A provisioned draft is the record of what Studio created, and is kept.');
-        }
+        return DB::transaction(function () use ($draft_id) {
+            // Locked so a logo upload in flight finishes, or waits, before the
+            // hook clears the draft's directory; otherwise its file could land
+            // after the sweep, under a row that no longer exists.
+            $draft = StudioDraft::query()->lockForUpdate()->findOrFail($draft_id);
 
-        $draft->delete();
+            if ($draft->isProvisioned()) {
+                return $this->conflict($draft, 'A provisioned draft is the record of what Studio created, and is kept.');
+            }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Draft discarded.',
-            'data' => ['id' => $draft_id],
-        ], Response::HTTP_OK);
+            $draft->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Draft discarded.',
+                'data' => ['id' => $draft_id],
+            ], Response::HTTP_OK);
+        });
     }
 
     /**
@@ -177,66 +199,83 @@ class StudioDraftsController extends Controller
      * one deleted only once the row points at the new one, so a failure part way
      * leaves the draft with a logo, never with none.
      *
+     * The whole replacement runs under the row's lock. A discard waits for it
+     * rather than deleting the row between the write and the update, and while
+     * the lock is held no other upload can be part way through, so every other
+     * file in the draft's directory is one nothing points at and goes: an
+     * earlier double-submit's, or an old logo whose delete once failed.
+     *
      * The logo is not part of `answers`, so it does not move lock_version: an
      * autosave cannot overwrite it, and uploading one must not make the next
      * autosave look stale.
      */
     public function storeLogo(StoreStudioDraftLogoRequest $request, int $draft_id)
     {
-        $draft = StudioDraft::findOrFail($draft_id);
+        StudioDraft::findOrFail($draft_id);
 
-        if ($draft->isProvisioned()) {
-            return $this->conflict($draft, 'This draft has already been provisioned; change the logo on the organisation instead.');
-        }
+        return DB::transaction(function () use ($request, $draft_id) {
+            $draft = StudioDraft::query()->lockForUpdate()->findOrFail($draft_id);
 
-        $file = $request->file('logo');
-        $mime = $file->getMimeType();
-        $diskName = (string) config('studio.logo.disk', 'local');
-        $disk = Storage::disk($diskName);
+            if ($draft->isProvisioned()) {
+                return $this->conflict($draft, 'This draft has already been provisioned; change the logo on the organisation instead.');
+            }
 
-        $path = $disk->putFileAs(
-            config('studio.logo.directory', 'studio-drafts') . '/' . $draft->id,
-            $file,
-            // A type added to config('studio.logo.mime_types') later still gets
-            // an extension guessed from the sniffed type, never the client's.
-            Str::random(40) . '.' . (self::LOGO_EXTENSIONS[$mime] ?? $file->guessExtension()),
-        );
+            $file = $request->file('logo');
+            $mime = $file->getMimeType();
+            $diskName = (string) config('studio.logo.disk', 'local');
+            $disk = Storage::disk($diskName);
 
-        if ($path === false) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'The logo could not be saved.',
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+            $path = $disk->putFileAs(
+                $draft->logoDirectory(),
+                $file,
+                // A type added to config('studio.logo.mime_types') later still gets
+                // an extension guessed from the sniffed type, never the client's.
+                Str::random(40) . '.' . (self::LOGO_EXTENSIONS[$mime] ?? $file->guessExtension()),
+            );
 
-        [$width, $height] = getimagesize($file->getRealPath()) ?: [null, null];
-        $previous = $draft->hasLogo() ? [$draft->logo_disk, $draft->logo_path] : null;
+            if ($path === false) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'The logo could not be saved.',
+                ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            }
 
-        try {
-            $draft->update([
-                'logo_disk' => $diskName,
-                'logo_path' => $path,
-                // The uploader's name is data, shown back to them; it never
-                // touches the filesystem, and an overlong one is cut, not refused.
-                'logo_original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
-                'logo_mime_type' => $mime,
-                'logo_size_bytes' => $file->getSize(),
-                'logo_width' => $width,
-                'logo_height' => $height,
-                'logo_sha256' => hash_file('sha256', $file->getRealPath()),
-                'updated_by' => $request->user()?->id,
-            ]);
-        } catch (\Throwable $e) {
-            $disk->delete($path);
+            [$width, $height] = getimagesize($file->getRealPath()) ?: [null, null];
+            $previous = $draft->hasLogo() ? [$draft->logo_disk, $draft->logo_path] : null;
 
-            throw $e;
-        }
+            try {
+                $draft->update([
+                    'logo_disk' => $diskName,
+                    'logo_path' => $path,
+                    // The uploader's name is data, shown back to them; it never
+                    // touches the filesystem, and an overlong one is cut, not refused.
+                    'logo_original_name' => mb_substr($file->getClientOriginalName(), 0, 255),
+                    'logo_mime_type' => $mime,
+                    'logo_size_bytes' => $file->getSize(),
+                    'logo_width' => $width,
+                    'logo_height' => $height,
+                    'logo_sha256' => hash_file('sha256', $file->getRealPath()),
+                    'updated_by' => $request->user()?->id,
+                ]);
+            } catch (\Throwable $e) {
+                $disk->delete($path);
 
-        if ($previous !== null && $previous !== [$diskName, $path]) {
-            Storage::disk($previous[0])->delete($previous[1]);
-        }
+                throw $e;
+            }
 
-        return $this->draft($draft->fresh());
+            // A logo written before a change of disk is not in this directory.
+            if ($previous !== null && $previous !== [$diskName, $path]) {
+                Storage::disk($previous[0])->delete($previous[1]);
+            }
+
+            foreach ($disk->files($draft->logoDirectory()) as $stray) {
+                if ($stray !== $path) {
+                    $disk->delete($stray);
+                }
+            }
+
+            return $this->draft($draft->fresh());
+        });
     }
 
     /**
@@ -269,19 +308,47 @@ class StudioDraftsController extends Controller
         );
     }
 
-    /** DELETE /api/admin/studio/drafts/{draft_id}/logo */
+    /**
+     * DELETE /api/admin/studio/drafts/{draft_id}/logo
+     *
+     * The row forgets the logo first and the bytes go after, under the lock. A
+     * failed update leaves the draft with its logo intact, rather than naming a
+     * file already deleted; a failed delete leaves a file in the draft's
+     * directory, which the next upload, the discard or the purge removes.
+     */
     public function destroyLogo(int $draft_id)
     {
-        $draft = StudioDraft::findOrFail($draft_id);
+        StudioDraft::findOrFail($draft_id);
 
+        return DB::transaction(function () use ($draft_id) {
+            $draft = StudioDraft::query()->lockForUpdate()->findOrFail($draft_id);
+
+            if ($draft->isProvisioned()) {
+                return $this->conflict($draft, 'This draft has already been provisioned; change the logo on the organisation instead.');
+            }
+
+            // The columns as they were, so the bytes can be found once the row no longer names them.
+            $withLogo = clone $draft;
+
+            $draft->update(StudioDraft::withoutLogo() + ['updated_by' => request()->user()?->id]);
+            $withLogo->deleteLogoBytes();
+
+            return $this->draft($draft->fresh());
+        });
+    }
+
+    /** The 409 a save naming $version gets for this draft, or null when it may go ahead. */
+    private function refuseSave(StudioDraft $draft, int $version)
+    {
         if ($draft->isProvisioned()) {
-            return $this->conflict($draft, 'This draft has already been provisioned; change the logo on the organisation instead.');
+            return $this->conflict($draft, self::PROVISIONED);
         }
 
-        $draft->deleteLogoBytes();
-        $draft->update(StudioDraft::withoutLogo() + ['updated_by' => request()->user()?->id]);
+        if ($version !== $draft->lock_version) {
+            return $this->conflict($draft, self::STALE);
+        }
 
-        return $this->draft($draft->fresh());
+        return null;
     }
 
     private function draft(StudioDraft $draft, int $status = Response::HTTP_OK)

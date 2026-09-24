@@ -202,6 +202,35 @@ class UpdateStudioDraftRequest extends BaseFormRequest
         return $rules;
     }
 
+    /**
+     * The sections this save replaces, keyed by name, each as validated or null
+     * when it was sent as null to clear it.
+     *
+     * Not validated('answers') alone: Laravel leaves out of validated() an array
+     * that has child rules but none of its children present, so a section sent
+     * as {} (or as {"custom": {}}) would vanish from it and the save would record
+     * nothing while answering 200. Which sections were sent is read from the
+     * input instead, which withValidator has already held to ANSWER_SECTIONS.
+     *
+     * @return array<string, array<string, mixed>|null>
+     */
+    public function sections(): array
+    {
+        $sent = $this->input('answers');
+
+        if (! is_array($sent)) {
+            return [];
+        }
+
+        $sections = [];
+
+        foreach ($sent as $section => $value) {
+            $sections[$section] = $value === null ? null : ($this->validated("answers.{$section}") ?? []);
+        }
+
+        return $sections;
+    }
+
     public function messages(): array
     {
         return [

@@ -4,6 +4,7 @@ namespace Tests\Feature\Studio;
 
 use App\Models\StudioDraft;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Feature\Studio\Concerns\StudioDraftFixtures;
 use Tests\TestCase;
@@ -95,5 +96,49 @@ class StudioDraftDiscardTest extends TestCase
 
         $this->assertCount(1, $this->storedLogos());
         $this->assertSame('logo.png', StudioDraft::findOrFail($id)->logo_original_name);
+    }
+
+    #[Test]
+    public function every_file_in_a_drafts_directory_goes_with_its_logo_or_the_draft(): void
+    {
+        $disk = Storage::disk((string) config('studio.logo.disk'));
+        $stray = fn (int $id) => $disk->put("studio-drafts/{$id}/" . str_repeat('b', 40) . '.png', $this->pngBytes());
+
+        $kept = $this->newDraft()['id'];
+        $this->uploadLogo($kept, $this->realUpload('logo.png', $this->pngBytes()))->assertOk();
+        $keptPath = StudioDraft::findOrFail($kept)->logo_path;
+
+        // Removing the logo takes the file the row names and any it does not.
+        $id = $this->newDraft()['id'];
+        $this->uploadLogo($id, $this->realUpload('logo.png', $this->pngBytes()))->assertOk();
+        $stray($id);
+        $this->deleteJson(self::DRAFTS . "/{$id}/logo")->assertOk();
+        $this->assertSame([$keptPath], $this->storedLogos());
+
+        // So does discarding the draft, which the purge also goes through.
+        $id = $this->newDraft()['id'];
+        $this->uploadLogo($id, $this->realUpload('logo.png', $this->pngBytes()))->assertOk();
+        $stray($id);
+        $this->deleteJson(self::DRAFTS . "/{$id}")->assertOk();
+        $this->assertSame([$keptPath], $this->storedLogos(), 'only the other draft\'s logo is left');
+    }
+
+    #[Test]
+    public function a_logo_removal_that_cannot_save_keeps_the_file_the_row_still_names(): void
+    {
+        $id = $this->newDraft()['id'];
+        $this->uploadLogo($id, $this->realUpload('logo.png', $this->pngBytes()))->assertOk();
+        $path = StudioDraft::findOrFail($id)->logo_path;
+
+        // The row update fails, as a lost connection or a deadlock would.
+        StudioDraft::updating(function () {
+            throw new \RuntimeException('The database went away.');
+        });
+
+        $this->deleteJson(self::DRAFTS . "/{$id}/logo")->assertStatus(500);
+
+        $this->assertSame($path, StudioDraft::findOrFail($id)->logo_path, 'the row still names the logo');
+        $this->assertSame([$path], $this->storedLogos(), 'so its file is still there');
+        $this->get(self::DRAFTS . "/{$id}/logo")->assertOk();
     }
 }

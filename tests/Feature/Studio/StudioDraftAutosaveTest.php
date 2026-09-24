@@ -246,4 +246,120 @@ class StudioDraftAutosaveTest extends TestCase
 
         $this->assertSame(1, StudioDraft::findOrFail($id)->lock_version);
     }
+
+    #[Test]
+    public function a_section_sent_empty_replaces_the_stored_one_with_nothing(): void
+    {
+        $id = $this->newDraft()['id'];
+
+        $this->patchDraft($id, 0, [
+            'identity' => ['org_type' => 'masjid', 'name' => 'Masjid An-Nur', 'admin' => ['name' => 'Imran Ali']],
+            'prayer' => ['iqama' => ['fajr' => 20]],
+            'content' => ['about' => 'Old text'],
+            'domain' => ['custom' => ['host' => 'old.annur.test']],
+        ])->assertOk();
+
+        // The Step 2 editor cleared: a JSON {} for the section, not null.
+        $response = $this->patchJson(self::DRAFTS . "/{$id}", ['lock_version' => 1, 'answers' => ['content' => new \stdClass]])
+            ->assertOk()
+            ->assertJsonPath('data.lock_version', 2);
+
+        $this->assertEmpty($response->json('data.answers.content'), 'the save answered with what it recorded');
+        $this->assertSame([], StudioDraft::findOrFail($id)->section('content'), 'the old about text is gone');
+
+        // Sections holding only an empty object, sent as the SPA's JSON string.
+        $this->patch(self::DRAFTS . "/{$id}", [
+            'lock_version' => '2',
+            'answers' => json_encode([
+                'identity' => ['admin' => new \stdClass],
+                'prayer' => ['iqama' => new \stdClass],
+                'domain' => ['custom' => new \stdClass],
+            ]),
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('data.lock_version', 3);
+
+        $draft = StudioDraft::findOrFail($id);
+        $this->assertArrayNotHasKey('custom', $draft->section('domain'), 'the old custom host did not survive');
+        $this->assertArrayNotHasKey('iqama', $draft->section('prayer'));
+        $this->assertArrayNotHasKey('name', $draft->section('identity'));
+        $this->assertNull($draft->name, 'the list columns follow the replaced identity');
+        $this->assertNull($draft->org_type);
+    }
+
+    #[Test]
+    public function a_half_chosen_palette_is_not_graded(): void
+    {
+        $id = $this->newDraft()['id'];
+        $colours = ['primary_color' => '#01B151', 'secondary_color' => '#1B1B2E', 'accent_color' => '#FFBA63', 'background_color' => '#F3F8FB'];
+
+        // One colour, then three: DesignTokens would fill the rest with a live
+        // client's, so there is nothing of this client's to grade yet (R25).
+        foreach ([1, 3] as $version => $chosen) {
+            $data = $this->patchDraft($id, $version, ['brand' => array_slice($colours, 0, $chosen, true)])->assertOk()->json('data');
+
+            $this->assertArrayHasKey('palette', $data);
+            $this->assertNull($data['palette'], "{$chosen} of four colours chosen");
+        }
+
+        $palette = $this->patchDraft($id, 2, ['brand' => $colours])->assertOk()->json('data.palette');
+
+        $this->assertNotNull($palette, 'all four chosen');
+        $this->assertContains('on_primary', array_column($palette['pairs'], 'key'));
+    }
+
+    #[Test]
+    public function answers_sent_as_a_json_string_over_the_byte_ceiling_are_refused(): void
+    {
+        config(['studio.drafts.max_answers_bytes' => 2048]);
+        $id = $this->newDraft()['id'];
+
+        // The SPA's own encoding, which is measured as the string it arrives as.
+        $send = fn (int $version, int $length) => $this->patch(self::DRAFTS . "/{$id}", [
+            'lock_version' => (string) $version,
+            'answers' => json_encode(['content' => ['about' => str_repeat('a', $length)]]),
+        ], ['Accept' => 'application/json']);
+
+        $send(0, 1500)->assertOk();
+
+        $send(1, 2100)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['answers'], 'data');
+
+        $this->assertSame(1, StudioDraft::findOrFail($id)->lock_version);
+        $this->assertSame(1500, strlen(StudioDraft::findOrFail($id)->section('content')['about']));
+    }
+
+    #[Test]
+    public function a_save_that_lands_between_the_read_and_the_write_is_a_409_not_an_overwrite(): void
+    {
+        $id = $this->newDraft()['id'];
+        $this->patchDraft($id, 0, ['content' => ['about' => 'Loaded by both tabs.']])->assertOk();
+
+        // Tab A's save commits after tab B's PATCH has read lock_version 1 and
+        // before it writes: the window a row lock on MySQL would close, and
+        // which the suite's SQLite cannot show without an actual interleaving.
+        $landed = false;
+        DB::connection()->beforeExecuting(function (string $query) use ($id, &$landed) {
+            if ($landed || ! str_starts_with(strtolower(ltrim($query)), 'update "studio_drafts"')) {
+                return;
+            }
+
+            $landed = true;
+            DB::table('studio_drafts')->where('id', $id)->update([
+                'lock_version' => 2,
+                'answers' => json_encode(['content' => ['about' => 'Written in tab A.']]),
+            ]);
+        });
+
+        $this->patchDraft($id, 1, ['content' => ['about' => 'Written in tab B.']])
+            ->assertStatus(409)
+            ->assertJsonPath('status', 'conflict')
+            ->assertJsonPath('data.lock_version', 2)
+            ->assertJsonPath('data.answers.content.about', 'Written in tab A.');
+
+        $this->assertTrue($landed, 'the interleaved save ran');
+
+        $draft = StudioDraft::findOrFail($id);
+        $this->assertSame('Written in tab A.', $draft->section('content')['about'], 'tab B did not overwrite tab A');
+        $this->assertSame(2, $draft->lock_version);
+    }
 }

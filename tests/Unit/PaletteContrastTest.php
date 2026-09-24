@@ -70,6 +70,19 @@ class PaletteContrastTest extends TestCase
     }
 
     #[Test]
+    public function a_ratio_that_rounds_up_to_4_5_still_fails(): void
+    {
+        // #088766 on white is 4.4989:1. Shown to 2 dp it reads 4.50; judged on
+        // that, body text below WCAG AA would pass the blocking gate.
+        $report = PaletteContrast::report(self::WHITE_PAGE, ['onPrimary' => '#088766']);
+        $pair = $this->pair($report, 'on_primary');
+
+        $this->assertSame(4.5, $pair['ratio']);
+        $this->assertFalse($pair['passes']);
+        $this->assertContains('on_primary', $report['blocking_failures']);
+    }
+
+    #[Test]
     public function on_burlington_green_design_tokens_white_is_about_2_83_and_the_auto_ink_about_6_26(): void
     {
         $designInk = DesignTokens::resolve(new ThemeSetting(['primary_color' => '#01B151']))['color']['onPrimary'];

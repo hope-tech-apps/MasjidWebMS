@@ -19,9 +19,10 @@ use Illuminate\Support\Facades\Storage;
  * each Studio step owns its own section and two steps autosaving cannot clobber
  * each other; `lock_version` catches two TABS saving the same section.
  *
- * The logo is on a private disk (config('studio.logo')), and its bytes go with
- * the row: the `deleting` hook removes them, so every delete must go through the
- * model — the discard endpoint and `studio:purge-drafts` both do.
+ * The logo is on a private disk (config('studio.logo')), in a directory of the
+ * draft's own, and its bytes go with the row: the `deleting` hook removes that
+ * directory, so every delete must go through the model — the discard endpoint
+ * and `studio:purge-drafts` both do.
  */
 class StudioDraft extends Model
 {
@@ -112,8 +113,13 @@ class StudioDraft extends Model
 
     protected static function booted(): void
     {
-        // `deleting`, not `deleted`: if removing the row fails, the only copy of
-        // the file has not already been destroyed.
+        // `deleting`, as .claude/rules/private-uploads.md has it, so the bytes go
+        // BEFORE the row. If removing the row then fails, the row survives
+        // naming a logo that is gone (hasLogo() reads only the columns, so the
+        // payload still describes it while GET .../logo answers 404) until the
+        // next discard or purge finishes the job. The other order could leave
+        // bytes with no row to find them by, which is what the purge exists to
+        // prevent.
         static::deleting(function (StudioDraft $draft) {
             $draft->deleteLogoBytes();
         });
@@ -178,6 +184,10 @@ class StudioDraft extends Model
         return $colours;
     }
 
+    /**
+     * Whether the row names a logo. The columns only, not the disk: see the
+     * `deleting` hook for the one way a row can name bytes that are gone.
+     */
     public function hasLogo(): bool
     {
         return $this->logo_path !== null && $this->logo_disk !== null;
@@ -194,12 +204,26 @@ class StudioDraft extends Model
         return $this->hasLogo() && $this->logoStorage()->exists($this->logo_path);
     }
 
-    /** Remove the stored bytes, leaving the row's logo columns as they are. */
+    /** Where every logo this draft is given is written, on config('studio.logo.disk'). */
+    public function logoDirectory(): string
+    {
+        return config('studio.logo.directory', 'studio-drafts') . '/' . $this->id;
+    }
+
+    /**
+     * Remove the stored bytes, leaving the row's logo columns as they are.
+     *
+     * The whole directory, not only the file the row names: an upload whose old
+     * file failed to delete, or two uploads that overlapped, leave files nothing
+     * points at, and this is the last chance anything has to find them.
+     */
     public function deleteLogoBytes(): void
     {
         if ($this->hasLogo()) {
             $this->logoStorage()->delete($this->logo_path);
         }
+
+        Storage::disk((string) config('studio.logo.disk', 'local'))->deleteDirectory($this->logoDirectory());
     }
 
     /** The logo columns cleared, for update(); the bytes are the caller's to delete. */

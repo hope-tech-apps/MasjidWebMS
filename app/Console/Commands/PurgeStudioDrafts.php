@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\StudioDraft;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -18,7 +19,9 @@ use Illuminate\Support\Facades\Log;
  * Only `draft` rows. A provisioned draft is the record of what Step 3 created
  * and is kept. Every delete goes through the model, one row at a time, so
  * StudioDraft's `deleting` hook removes the logo bytes; a query-level delete
- * would leave them on disk with nothing pointing at them.
+ * would leave them on disk with nothing pointing at them. Each row is locked and
+ * checked again before it goes, as the discard endpoint does, so a draft that
+ * somebody saved or gave a logo while the sweep was running is kept.
  *
  * A draft has no tenant, so there is no scope to bypass. Counts go to the log as
  * well as stdout because `schedule:run` discards stdout, and a sweep that
@@ -53,10 +56,18 @@ class PurgeStudioDrafts extends Command
         if ($dryRun) {
             $count = $query->count();
         } else {
-            $query->chunkById(100, function ($drafts) use (&$count) {
+            $query->chunkById(100, function ($drafts) use (&$count, $cutoff) {
                 foreach ($drafts as $draft) {
-                    $draft->delete();
-                    $count++;
+                    $count += DB::transaction(function () use ($draft, $cutoff) {
+                        $locked = StudioDraft::query()
+                            ->lockForUpdate()
+                            ->whereKey($draft->id)
+                            ->where('status', StudioDraft::STATUS_DRAFT)
+                            ->where('updated_at', '<', $cutoff)
+                            ->first();
+
+                        return $locked?->delete() ? 1 : 0;
+                    });
                 }
             });
         }
