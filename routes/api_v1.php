@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
 use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
 use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
+use App\Http\Controllers\Api\V1\OrganizationByHostController;
 use App\Http\Controllers\Api\V1\PagesController;
 use App\Http\Controllers\Api\V1\PhotoGalleryController;
 use App\Http\Controllers\Api\V1\ServicesController;
@@ -20,6 +21,13 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('v1')->group(function () {
     Route::get('/home', [HomeController::class, 'index']);
     Route::get('/settings', [SettingController::class, 'index']);
+
+    // Which organisation serves a website host (Manara Studio, S3). The renderer
+    // asks it for hosts its build-time map does not know. Public and read-only;
+    // its own generous per-IP limiter, because every renderer isolate calls from
+    // Cloudflare's shared egress addresses. See OrganizationByHostController.
+    Route::get('/organizations/by-host', [OrganizationByHostController::class, 'show'])
+        ->middleware('throttle:tenant-host');
 
     // Services routes
     Route::prefix('services')->controller(ServicesController::class)->group(function () {

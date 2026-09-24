@@ -139,6 +139,7 @@ in either repository.
 | Worker custom domains | account | `parents.alrazischool.org`, `mec-planner.hopetechapps.com` |
 | Pages project domains + `NUXT_TENANT_HOSTS` | Cloudflare Pages env (`manara-renderer`, `manara-renderer-staging`) | Nuxt host → org. **Setting this variable replaces the whole code map**; always write the full map |
 | `DEFAULT_TENANT_HOSTS` | `burlington-masjid-site/nuxt.config.ts` | Nuxt host → org when `NUXT_TENANT_HOSTS` is unset (`mec-web`) |
+| `masjid_domains` table | app database (Manara Studio S3, `App\Models\MasjidDomain`) | host → org as data, with a status per host. Served publicly by `GET /api/v1/organizations/by-host` (pending/awaiting_nameservers/provisioning/active/manual hosts of live orgs; never `failed` or `reserved`). **Nothing consumes it yet**: CORS reads it from S9, the renderer from S11. Seeded from the live map by `php artisan domains:import-host-map` (dry run unless `--execute`); a probe match is `manual`, anything else `reserved` |
 | `NUXT_PUBLIC_API_BASE_URL` | Pages env | which Laravel host the Nuxt site calls (prod: `masjid.hopetechapps.com`; staging project: `masjid-staging.hopetechapps.com`) |
 | `CORS_ALLOWED_ORIGINS` | app `.env` → `config/cors.php` | which browser origins may call `/api/*` |
 | `FORMS_PAYMENT_RETURN_ORIGINS` | app `.env` → `config/forms.php` | which origins a form card payment may return to (prod: `sundayschool.burlingtonmasjid.com`) |

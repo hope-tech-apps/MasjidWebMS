@@ -75,6 +75,7 @@ use App\Http\Controllers\AdminDashboard\ServicesController;
 use App\Http\Controllers\AdminDashboard\SplashAnnouncementsController;
 use App\Http\Controllers\AdminDashboard\StripeConnectController;
 use App\Http\Controllers\AdminDashboard\StudioCatalogueController;
+use App\Http\Controllers\AdminDashboard\StudioDomainCheckController;
 use App\Http\Controllers\AdminDashboard\StudioDraftsController;
 use App\Http\Controllers\AdminDashboard\TasabihController;
 use App\Http\Controllers\AdminDashboard\ThemeSettingsController;
@@ -1596,6 +1597,7 @@ Route::prefix('admin')->group(function () {
                 Route::get('/drafts/{draft_id}/logo', 'showLogo')->whereNumber('draft_id');
                 Route::delete('/drafts/{draft_id}/logo', 'destroyLogo')->whereNumber('draft_id');
             });
+            Route::post('/domains/check', [StudioDomainCheckController::class, 'check']);
         });
 
         Route::prefix('countries')->middleware('super')->controller(CountriesCitiesController::class)->group(function () {

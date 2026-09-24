@@ -64,6 +64,7 @@ class StudioAccessTest extends TestCase
             'POST ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['POST', "{$drafts}/{$f['working']}/logo", ['logo' => $f['upload']]],
             'GET ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['GET', "{$drafts}/{$f['with_logo']}/logo", []],
             'DELETE ' . self::PREFIX . '/drafts/{draft_id}/logo' => ['DELETE', "{$drafts}/{$f['with_logo_to_remove']}/logo", []],
+            'POST ' . self::PREFIX . '/domains/check' => ['POST', '/' . self::PREFIX . '/domains/check', ['kind' => 'managed_subdomain', 'label' => 'studio-access']],
         ];
     }
 

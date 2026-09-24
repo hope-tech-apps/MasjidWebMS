@@ -1,0 +1,190 @@
+[
+  {
+    "input": "example.org",
+    "expected": "example.org"
+  },
+  {
+    "input": "WWW.Example.ORG",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "WWW.Example.ORG.:443",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "  www.example.org  ",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "\twww.example.org\n",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "www.example.org:8080",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "www.example.org.",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "www.example.org:",
+    "expected": "www.example.org"
+  },
+  {
+    "input": "mec.manara.hopetechapps.com, proxy.internal",
+    "expected": "mec.manara.hopetechapps.com"
+  },
+  {
+    "input": "a.com,b.com",
+    "expected": "a.com"
+  },
+  {
+    "input": "localhost",
+    "expected": "localhost"
+  },
+  {
+    "input": "localhost:3000",
+    "expected": "localhost"
+  },
+  {
+    "input": "mec-web.pages.dev",
+    "expected": "mec-web.pages.dev"
+  },
+  {
+    "input": "xn--mgbh0fb.example",
+    "expected": "xn--mgbh0fb.example"
+  },
+  {
+    "input": "XN--MGBH0FB.Example",
+    "expected": "xn--mgbh0fb.example"
+  },
+  {
+    "input": "sub-domain.example.org",
+    "expected": "sub-domain.example.org"
+  },
+  {
+    "input": "123.example.org",
+    "expected": "123.example.org"
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.org",
+    "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.org"
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "input": "",
+    "expected": null
+  },
+  {
+    "input": "   ",
+    "expected": null
+  },
+  {
+    "input": ".",
+    "expected": null
+  },
+  {
+    "input": ":443",
+    "expected": null
+  },
+  {
+    "input": ",example.org",
+    "expected": null
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expected": null
+  },
+  {
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.org",
+    "expected": null
+  },
+  {
+    "input": "127.0.0.1",
+    "expected": null
+  },
+  {
+    "input": "127.0.0.1:8080",
+    "expected": null
+  },
+  {
+    "input": "10.0.0.1.",
+    "expected": null
+  },
+  {
+    "input": "[::1]",
+    "expected": null
+  },
+  {
+    "input": "[::1]:443",
+    "expected": null
+  },
+  {
+    "input": "::1",
+    "expected": null
+  },
+  {
+    "input": "2001:db8::1",
+    "expected": null
+  },
+  {
+    "input": "مسجد.example",
+    "expected": null
+  },
+  {
+    "input": "bücher.example",
+    "expected": null
+  },
+  {
+    "input": "www.example.org..",
+    "expected": null
+  },
+  {
+    "input": ".example.org",
+    "expected": null
+  },
+  {
+    "input": "-bad.example.org",
+    "expected": null
+  },
+  {
+    "input": "bad-.example.org",
+    "expected": null
+  },
+  {
+    "input": "under_score.example.org",
+    "expected": null
+  },
+  {
+    "input": "exa mple.org",
+    "expected": null
+  },
+  {
+    "input": "www\n.example.org",
+    "expected": null
+  },
+  {
+    "input": "www.example.org\n:443",
+    "expected": null
+  },
+  {
+    "input": "example.org/path",
+    "expected": null
+  },
+  {
+    "input": "user@example.org",
+    "expected": null
+  },
+  {
+    "input": "https://example.org",
+    "expected": null
+  },
+  {
+    "input": "example.org:443:443",
+    "expected": null
+  }
+]

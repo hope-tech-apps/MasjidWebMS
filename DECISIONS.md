@@ -2084,3 +2084,17 @@ tests live in `tests/Feature/Studio/`; StudioAccessTest finds every
 its SuperAdmin call to `StudioAccessTest::calls()` or the test names it.
 Rationale: each follows the nearest existing pattern (MasjidsController::capabilities
 for entry fields); recorded because the plan left them open.
+
+## 2026-09-24 — Studio W1 S3 review: calls made where the plan was silent
+Decision: a stored `reserved` row can never change status (MasjidDomain's `saving`
+invariant), and `DomainProbe::confirm()` stamps only `last_checked_at` on one, so R4
+("never advanced") holds whatever S7 path calls the probe; releasing a reservation is
+removing the row. A `failed` row that the probe matches becomes `manual`, because our
+site answering with the org's id is the same R24 proof a pending row needs. The import
+reads each map value the way the renderer's `toRecord` does (a bare id or `{id, ...}`),
+so the in-git map feeds it unflattened. The import stays a dry run unless `--execute`;
+the S3 spec and runbook now say so, and the runbook reserves `www.alrazischool.org` and
+`parents.alrazischool.org` too. The by-host limiter's 429 carries `no-store` like the
+controller's answers. HostName anchors its regexes with `\z`, so a newline inside a host
+never passes as part of a label.
+Rationale: each came from the S3 review; recorded because the plan did not decide them.
