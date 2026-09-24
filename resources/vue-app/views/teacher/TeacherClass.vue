@@ -1145,13 +1145,30 @@
                                 </div>
                                 <div class="col-12 col-sm">
                                     <label class="form-label small text-muted mb-1">Subject</label>
-                                    <select v-if="curriculum.subjects.length" class="form-select form-select-sm"
-                                            v-model="planForm.subject" @change="onSubjectChange">
+                                    <!-- The list is the school's IMPORTED pacing guide, and a
+                                         subject the guide has no column for was unreachable:
+                                         Al-Razi's guide carries "Qur'an & Islamic Studies" as
+                                         one subject and no Arabic at all, so an Arabic lesson
+                                         plan could not be written at all — not merely
+                                         inconvenienced. "Other" is the escape, and the week
+                                         picker below falls back to a plain number when the
+                                         chosen subject has no imported weeks. -->
+                                    <select v-if="curriculum.subjects.length && !subjectOther"
+                                            class="form-select form-select-sm"
+                                            v-model="planForm.subject" @change="onSubjectPick">
                                         <option value="">—</option>
                                         <option v-for="s in curriculum.subjects" :key="s" :value="s">{{ s }}</option>
+                                        <option :value="SUBJECT_OTHER">Other…</option>
                                     </select>
-                                    <input v-else v-model="planForm.subject" type="text" maxlength="64"
-                                           class="form-control form-control-sm" placeholder="e.g. Mathematics">
+                                    <div v-else class="d-flex gap-1">
+                                        <input v-model="planForm.subject" type="text" maxlength="64"
+                                               class="form-control form-control-sm"
+                                               placeholder="e.g. Arabic" @change="onSubjectChange">
+                                        <button v-if="curriculum.subjects.length" type="button"
+                                                class="btn btn-sm btn-link px-1 text-muted text-nowrap"
+                                                title="Back to the school's guide"
+                                                @click="useGuideSubjects">Guide</button>
+                                    </div>
                                 </div>
                                 <div class="col-6 col-sm-auto">
                                     <label class="form-label small text-muted mb-1">Week</label>
@@ -2309,10 +2326,52 @@ const onGradeChange = async () => {
     await loadCurriculum(planForm.value.grade_label);
 };
 
+/**
+ * The sentinel for "not in the guide". A literal that no real subject can be —
+ * an empty string already means "none chosen", and any readable word could
+ * collide with a subject a school actually imports.
+ */
+const SUBJECT_OTHER = '__other__';
+
+/** True while the teacher is typing a subject the guide does not list. */
+const subjectOther = ref(false);
+
 const onSubjectChange = async () => {
     planForm.value.curriculum_week_no = null;
     await loadCurriculum(planForm.value.grade_label, planForm.value.subject);
 };
+
+/** Picking "Other…" clears the box rather than storing the sentinel. */
+const onSubjectPick = async () => {
+    if (planForm.value.subject === SUBJECT_OTHER) {
+        planForm.value.subject = '';
+        planForm.value.curriculum_week_no = null;
+        subjectOther.value = true;
+        return;
+    }
+    await onSubjectChange();
+};
+
+const useGuideSubjects = async () => {
+    subjectOther.value = false;
+    planForm.value.subject = '';
+    await onSubjectChange();
+};
+
+/**
+ * A plan already saved against a subject the guide does not carry — an older
+ * plan, or one written before the guide was imported — opens in the text box
+ * rather than silently losing its subject to a select that has no such option.
+ */
+watch(
+    () => [planForm.value.subject, curriculum.value.subjects] as const,
+    ([subject, subjects]) => {
+        if (subject && subjects.length && !subjects.includes(subject)) {
+            subjectOther.value = true;
+        }
+    },
+    { immediate: true }
+);
 
 /**
  * Copy the week's cell into the form. Every field lands EDITABLE and nothing is
