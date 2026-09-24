@@ -91,6 +91,14 @@ Schedule::command('translations:purge')->dailyAt('03:15')->withoutOverlapping();
 // the same `lockForUpdate` rows for no benefit.
 Schedule::command('registrations:reap-expired')->everyFifteenMinutes()->withoutOverlapping();
 
+// The Al-Razi school website's registrations and job applications, copied into
+// two switched-off forms so the school works from one list. A no-op (no request
+// at all) wherever ALRAZI_EXPORT_URL / _TOKEN are blank, which is every box but
+// production. withoutOverlapping(10): a run that downloads a backlog of documents
+// can outlast five minutes, and two runs would fetch the same file twice; the
+// ten-minute lock expiry means a killed run cannot wedge the schedule for a day.
+Schedule::command('alrazi:sync-website')->everyFiveMinutes()->withoutOverlapping(10);
+
 // Spent and expired family sign-in codes. Scheduled for exactly the reason the
 // two sweeps above are: a retention policy that nothing executes is not a
 // policy, it is a claim — and this table gains a row per sign-in REQUEST,

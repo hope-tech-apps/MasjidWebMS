@@ -92,6 +92,55 @@ class FormAttachments
     }
 
     /**
+     * Store ONE file that is already on this server's disk — a document the
+     * school-website import has just downloaded — against a saved response.
+     *
+     * The upload path has a request boundary that settles what may be stored
+     * (SubmitFormResponseRequest, from config('forms.attachments')). A file that
+     * arrives by import has no such boundary, so the same two checks are made here
+     * and made the same way: the type SNIFFED FROM THE BYTES against
+     * `mime_types`, and the size against `max_size_kb`
+     * (.claude/rules/private-uploads.md). Nothing the sender claims — the name,
+     * the extension, a Content-Type — is consulted.
+     *
+     * A file that fails either check is NOT stored and null is returned; the
+     * caller says so in the log. Otherwise it goes through store(), so the
+     * directory, the random name, the attachment row and the rollback are the
+     * upload path's own.
+     *
+     * The file at $absolutePath is read, never moved or deleted: it belongs to the
+     * caller, who removes it.
+     *
+     * @return string|null  the stored original filename, or null when refused
+     */
+    public static function storeFromPath(FormResponse $response, string $field, string $absolutePath, string $originalName): ?string
+    {
+        if (! is_file($absolutePath)) {
+            return null;
+        }
+
+        // test: true — this file did not arrive through a PHP upload, so
+        // is_uploaded_file() would call it invalid. That flag only waives that one
+        // check; the type and size are checked below.
+        $file = new UploadedFile($absolutePath, $originalName, null, null, true);
+
+        $size = (int) $file->getSize();
+        $maxBytes = max(0, (int) config('forms.attachments.max_size_kb', 8192)) * 1024;
+
+        if ($size <= 0 || $size > $maxBytes) {
+            return null;
+        }
+
+        $allowed = (array) config('forms.attachments.mime_types', []);
+
+        if (! in_array((string) $file->getMimeType(), $allowed, true)) {
+            return null;
+        }
+
+        return self::store($response, [$field => $file])[$field] ?? null;
+    }
+
+    /**
      * The respondent's filename, reduced to something safe to store and to hand
      * back in a Content-Disposition header.
      *

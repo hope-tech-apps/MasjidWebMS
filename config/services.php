@@ -335,4 +335,22 @@ return [
         'timeout' => (int) env('RENDERER_TIMEOUT', 5),
     ],
 
+    // The Al-Razi school website's read-only export (a Supabase Edge Function),
+    // pulled every five minutes by `alrazi:sync-website` into two inactive forms.
+    // URL or token blank = the command does nothing and makes no request, which is
+    // what every box but PRODUCTION must be: these are children's records, and
+    // staging must never pull them. Set both in production's .env only.
+    'alrazi_export' => [
+        // https://<ref>.supabase.co/functions/v1/export-submissions
+        'url' => env('ALRAZI_EXPORT_URL'),
+        // The Edge Function's EXPORT_TOKEN, sent as a bearer token.
+        'token' => env('ALRAZI_EXPORT_TOKEN'),
+        // The organisation whose two forms receive the rows (Al-Razi is 14).
+        'masjid_id' => (int) env('ALRAZI_EXPORT_MASJID_ID', 14),
+        // Import medical.insurance_policy_number too. Off unless the school asks.
+        'include_insurance' => filter_var(env('ALRAZI_EXPORT_INCLUDE_INSURANCE', false), FILTER_VALIDATE_BOOLEAN),
+        // Seconds per request to the export, and per document download.
+        'timeout' => (int) env('ALRAZI_EXPORT_TIMEOUT', 30),
+    ],
+
 ];

@@ -1,0 +1,1009 @@
+{
+  "$comment": "Al-Razi School website registrations, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-registration.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email families, because the website already emailed them when they applied. Every value is the website's own, stored verbatim: grade and program are text, not options, so nothing here can drift from the site's list. The student's SSN and the SSN card are never imported, and the insurance policy number only when ALRAZI_EXPORT_INCLUDE_INSURANCE is true. Payment fields prefixed `website` are the SITE's Stripe state, for reference; they never touch Manara's own payment columns. Imported rows cannot be deleted, only cancelled, or the next run would write them back.",
+  "slug": "alrazi-website-registration",
+  "name": "Al-Razi School — Website Registrations",
+  "description": "Applications submitted on alrazischool.org, copied here every five minutes. Read-only: edit status and notes only.",
+  "is_active": false,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+  "settings": {
+    "confirmationEmail": false,
+    "notifyEmails": [],
+    "identity": {
+      "name": [
+        "parentFirstName",
+        "parentLastName"
+      ],
+      "email": "parentEmail",
+      "phone": "parentPhone"
+    }
+  },
+  "schema": {
+    "sections": [
+      {
+        "id": "application",
+        "title": "Application",
+        "fields": [
+          {
+            "name": "grade",
+            "label": "Grade applied for",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "program",
+            "label": "Program",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "student",
+        "title": "Student",
+        "fields": [
+          {
+            "name": "studentFirstName",
+            "label": "First name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentMiddleName",
+            "label": "Middle name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentLastName",
+            "label": "Last name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentNickname",
+            "label": "Nickname",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentGender",
+            "label": "Gender",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentDob",
+            "label": "Date of birth",
+            "type": "date",
+            "required": false
+          },
+          {
+            "name": "studentAge",
+            "label": "Age",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentBirthCity",
+            "label": "Place of birth (city)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "studentBirthState",
+            "label": "Place of birth (state)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "homeStreet",
+            "label": "Home street address",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "homeCity",
+            "label": "Home city",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "homeState",
+            "label": "Home state",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "homeZip",
+            "label": "Home ZIP code",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "previousSchool",
+            "label": "Previous school",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "previousSchoolAddress",
+            "label": "Previous school address",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "previousSchoolFrom",
+            "label": "Attended previous school from",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "previousSchoolTo",
+            "label": "Attended previous school to",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "reasonForLeaving",
+            "label": "Reason for leaving",
+            "type": "textarea",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "language",
+        "title": "Language",
+        "fields": [
+          {
+            "name": "firstLanguage",
+            "label": "First language",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "languagesAtHome",
+            "label": "Languages spoken at home",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "speaksEnglishFluently",
+            "label": "Speaks English fluently",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "readsWritesEnglish",
+            "label": "Reads and writes English",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "needsEnglishSupport",
+            "label": "Needs English language support",
+            "type": "checkbox",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "parent1",
+        "title": "Parent / Guardian 1",
+        "fields": [
+          {
+            "name": "parentFirstName",
+            "label": "First name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parentLastName",
+            "label": "Last name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parentEmail",
+            "label": "Email",
+            "type": "email",
+            "required": false
+          },
+          {
+            "name": "parentPhone",
+            "label": "Cell phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "primaryContact",
+            "label": "Primary contact (parent1 or parent2)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1FullName",
+            "label": "Full name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1Relationship",
+            "label": "Relationship to the student",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1Dob",
+            "label": "Date of birth",
+            "type": "date",
+            "required": false
+          },
+          {
+            "name": "parent1PlaceOfBirth",
+            "label": "Place of birth",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1Occupation",
+            "label": "Occupation",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1Employer",
+            "label": "Employer",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1WorkStreet",
+            "label": "Work street address",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1WorkCity",
+            "label": "Work city",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1WorkState",
+            "label": "Work state",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1WorkZip",
+            "label": "Work ZIP code",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1WorkPhone",
+            "label": "Work phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "parent1HomePhone",
+            "label": "Home phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "parent1Education",
+            "label": "Highest education",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1SpeaksEnglish",
+            "label": "Speaks English",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "parent1SpeaksArabic",
+            "label": "Speaks Arabic",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "parent1OtherLanguages",
+            "label": "Other languages spoken",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent1PreferredCommunication",
+            "label": "Preferred communication",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "parent2",
+        "title": "Parent / Guardian 2",
+        "fields": [
+          {
+            "name": "parent2FullName",
+            "label": "Full name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2Relationship",
+            "label": "Relationship to the student",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2Dob",
+            "label": "Date of birth",
+            "type": "date",
+            "required": false
+          },
+          {
+            "name": "parent2PlaceOfBirth",
+            "label": "Place of birth",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2Occupation",
+            "label": "Occupation",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2Employer",
+            "label": "Employer",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2WorkStreet",
+            "label": "Work street address",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2WorkCity",
+            "label": "Work city",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2WorkState",
+            "label": "Work state",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2WorkZip",
+            "label": "Work ZIP code",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2WorkPhone",
+            "label": "Work phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "parent2CellPhone",
+            "label": "Cell phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "parent2HomePhone",
+            "label": "Home phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "parent2Email",
+            "label": "Email",
+            "type": "email",
+            "required": false
+          },
+          {
+            "name": "parent2Education",
+            "label": "Highest education",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2SpeaksEnglish",
+            "label": "Speaks English",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "parent2SpeaksArabic",
+            "label": "Speaks Arabic",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "parent2OtherLanguages",
+            "label": "Other languages spoken",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "parent2PreferredCommunication",
+            "label": "Preferred communication",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "emergencyContacts",
+        "title": "Emergency contacts",
+        "repeatable": true,
+        "minEntries": 0,
+        "fields": [
+          {
+            "name": "name",
+            "label": "Name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "relationship",
+            "label": "Relationship",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "phone",
+            "label": "Phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "altPhone",
+            "label": "Alternate phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "address",
+            "label": "Address",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "pickup",
+        "title": "Authorized pickup",
+        "description": "Up to three people, besides the parents, who may pick the student up.",
+        "fields": [
+          {
+            "name": "pickup1Name",
+            "label": "Pickup person 1",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "pickup1Relationship",
+            "label": "Pickup person 1: relationship",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "pickup2Name",
+            "label": "Pickup person 2",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "pickup2Relationship",
+            "label": "Pickup person 2: relationship",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "pickup3Name",
+            "label": "Pickup person 3",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "pickup3Relationship",
+            "label": "Pickup person 3: relationship",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "medical",
+        "title": "Medical",
+        "fields": [
+          {
+            "name": "physicianName",
+            "label": "Physician",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "physicianPhone",
+            "label": "Physician phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "clinic",
+            "label": "Clinic",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "insuranceProvider",
+            "label": "Insurance provider",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "insurancePolicyNumber",
+            "label": "Insurance policy number",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "conditionAsthma",
+            "label": "Asthma",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "conditionHeartDisease",
+            "label": "Heart disease",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "conditionEpilepsy",
+            "label": "Epilepsy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "conditionDiabetes",
+            "label": "Diabetes",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "conditionAdhd",
+            "label": "ADHD / ADD",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "allergies",
+            "label": "Allergies",
+            "type": "textarea",
+            "required": false
+          },
+          {
+            "name": "otherConditions",
+            "label": "Other conditions",
+            "type": "textarea",
+            "required": false
+          },
+          {
+            "name": "currentMedications",
+            "label": "Current medications",
+            "type": "textarea",
+            "required": false
+          },
+          {
+            "name": "dietaryRestrictions",
+            "label": "Dietary restrictions",
+            "type": "textarea",
+            "required": false
+          },
+          {
+            "name": "authFirstAid",
+            "label": "Authorizes first aid",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "authContactEms",
+            "label": "Authorizes contacting EMS",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "authTransport",
+            "label": "Authorizes transport to a medical facility",
+            "type": "checkbox",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "tuition",
+        "title": "Tuition agreement",
+        "fields": [
+          {
+            "name": "tuitionAgreementPlan",
+            "label": "Tuition plan (agreement)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "ncoScholarship",
+            "label": "Using the NC Opportunity Scholarship",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ncoScholarshipResponsibility",
+            "label": "Responsible for tuition the scholarship does not cover",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "financiallyResponsible",
+            "label": "Financially responsible",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "paysOnTime",
+            "label": "Pays on time",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "understandsLateFee",
+            "label": "Understands the late fee",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "attendsRegularly",
+            "label": "Attends regularly",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "understandsAbsencePolicy",
+            "label": "Understands the absence policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "supportsIslamicValues",
+            "label": "Supports Islamic values",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "followsRulesIslamicEtiquette",
+            "label": "Follows the rules and Islamic etiquette",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "understandsDisciplinaryConsequences",
+            "label": "Understands disciplinary consequences",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "cooperatesWithAdmin",
+            "label": "Cooperates with the administration",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "responsibleForSupplies",
+            "label": "Responsible for supplies",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "replacesDamagedProperty",
+            "label": "Replaces damaged property",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "tuitionParent1Signature",
+            "label": "Parent 1 signature",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "tuitionParent1SignedAt",
+            "label": "Parent 1 signed at",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "tuitionParent2Signature",
+            "label": "Parent 2 signature",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "tuitionParent2SignedAt",
+            "label": "Parent 2 signed at",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "consents",
+        "title": "Consents",
+        "fields": [
+          {
+            "name": "photoVideoConsent",
+            "label": "Photo and video consent (yes / no)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "fieldTripConsent",
+            "label": "Field trip consent (yes / no)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "technologyUseAgreed",
+            "label": "Agrees to the technology use policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "islamicStudiesAgreed",
+            "label": "Agrees to Islamic studies",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "healthScreeningConsent",
+            "label": "Health screening consent (yes / no)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "commEmail",
+            "label": "Communication by email",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "commText",
+            "label": "Communication by text",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "commWhatsapp",
+            "label": "Communication by WhatsApp",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "commPrinted",
+            "label": "Printed communication",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "consentSignature",
+            "label": "Consent signature",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "consentSignedAt",
+            "label": "Consent signed at",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "policies",
+        "title": "Policy acknowledgements",
+        "fields": [
+          {
+            "name": "ackAttendance",
+            "label": "Attendance policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackUniform",
+            "label": "Uniform policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackHomework",
+            "label": "Homework policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackDiscipline",
+            "label": "Discipline policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackDropOffPickUp",
+            "label": "Drop-off and pick-up policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackHealth",
+            "label": "Health policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackCommunication",
+            "label": "Communication policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackIslamicEnvironment",
+            "label": "Islamic environment policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackParentInvolvement",
+            "label": "Parent involvement policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "ackGrievance",
+            "label": "Grievance policy",
+            "type": "checkbox",
+            "required": false
+          },
+          {
+            "name": "policyAcknowledgedAt",
+            "label": "Acknowledged at",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "policyParent1Signature",
+            "label": "Parent 1 signature",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "policyParent2Signature",
+            "label": "Parent 2 signature",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "documents",
+        "title": "Documents",
+        "description": "Copied from the website. The Social Security card is never imported.",
+        "fields": [
+          {
+            "name": "docBirthCertificate",
+            "label": "Birth certificate",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "docImmunization",
+            "label": "Immunization records",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "docPriorRecords",
+            "label": "Previous school records",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "docCustody",
+            "label": "Custody documents",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "docToiletTraining",
+            "label": "Toilet training confirmation",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "docFoodAllergyPlan",
+            "label": "Food allergy action plan",
+            "type": "file",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "website",
+        "title": "Website payment (read-only)",
+        "description": "The payment state on the school website's own Stripe account, for reconciling there. Manara's payment columns are never set from these.",
+        "fields": [
+          {
+            "name": "websiteTuitionPlan",
+            "label": "Tuition plan",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websitePaymentMethod",
+            "label": "Payment method",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websitePaymentStatus",
+            "label": "Payment status",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteBaseAmount",
+            "label": "Base amount (USD)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteSurcharge",
+            "label": "Card surcharge (USD)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteTotal",
+            "label": "Total (USD)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteAmountPaid",
+            "label": "Amount paid (USD)",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "websiteStripePaymentId",
+            "label": "Stripe payment id",
+            "type": "text",
+            "required": false
+          }
+        ]
+      }
+    ]
+  }
+}

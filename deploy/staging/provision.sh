@@ -386,7 +386,9 @@ DENY_PREFIXES="STRIPE_ RESEND_ ANTHROPIC_ ONESIGNAL_ PUSHER_ GITHUB_"
 #                is `log`, but a single edited line would make it live again.
 # CLOUDFLARE_  — Manara Studio's token edits production's one Pages project
 #                (config/cloudflare.php); a staging copy would move live domains.
-DENY_PREFIXES="${DENY_PREFIXES} AWS_ VITE_PUSHER_ CLOUDFLARE_"
+# ALRAZI_EXPORT_ — the school website's export: children's records, SSN-free but
+#                still medical and custody data. Production pulls it; staging never.
+DENY_PREFIXES="${DENY_PREFIXES} AWS_ VITE_PUSHER_ CLOUDFLARE_ ALRAZI_EXPORT_"
 DENY_EXACT="MAIL_PASSWORD MAIL_USERNAME"
 
 DENIED=0

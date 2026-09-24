@@ -294,6 +294,7 @@ return [
             'stripe_payment_intent_id',   // a live payment, the same
             'charge_account_id', // the Connect account a page was opened on (DECISIONS.md 2026-09-15): a live acct_ id, nulled like masjids.stripe_account_id
             'charge_ref',        // the opaque key a linked charge carries in Stripe metadata; UNIQUE and nullable, so NULL is the only safe scrub
+            'external_ref',      // the school website's row id (alrazi:sync-website): the site hands it to the family and it unlocks the site's payment step. UNIQUE per form and nullable, so NULL is the only safe scrub
         ],
 
         'form_staff_codes' => [

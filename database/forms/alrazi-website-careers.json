@@ -1,0 +1,98 @@
+{
+  "$comment": "Al-Razi School website careers applications, imported by `php artisan alrazi:sync-website` from the website's export (never submitted here). Import with: php artisan form:import 14 database/forms/alrazi-website-careers.json. It MUST stay switched off (is_active false) with confirmationEmail false and no notifyEmails: the sync refuses to write into a form that is live or that would email applicants. `role` is text holding the website's role title as-is. The résumé is optional because an applicant may give a link instead. Imported rows cannot be deleted, only cancelled, or the next run would write them back.",
+  "slug": "alrazi-website-careers",
+  "name": "Al-Razi School — Website Job Applications",
+  "description": "Applications submitted on alrazischool.org/careers, copied here every five minutes. Read-only: edit status and notes only.",
+  "is_active": false,
+  "opens_at": null,
+  "closes_at": null,
+  "capacity": null,
+  "settings": {
+    "confirmationEmail": false,
+    "notifyEmails": [],
+    "identity": {
+      "name": [
+        "applicantFirstName",
+        "applicantLastName"
+      ],
+      "email": "email",
+      "phone": "phone"
+    }
+  },
+  "schema": {
+    "sections": [
+      {
+        "id": "applicant",
+        "title": "Applicant",
+        "fields": [
+          {
+            "name": "role",
+            "label": "Position",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "applicantFirstName",
+            "label": "First name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "applicantLastName",
+            "label": "Last name",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "email",
+            "label": "Email",
+            "type": "email",
+            "required": false
+          },
+          {
+            "name": "phone",
+            "label": "Phone",
+            "type": "tel",
+            "required": false
+          },
+          {
+            "name": "startAvailability",
+            "label": "Available to start",
+            "type": "text",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "application",
+        "title": "Application",
+        "fields": [
+          {
+            "name": "resume",
+            "label": "Résumé",
+            "type": "file",
+            "required": false
+          },
+          {
+            "name": "resumeLink",
+            "label": "Résumé link",
+            "type": "text",
+            "required": false
+          },
+          {
+            "name": "coverLetter",
+            "label": "Cover letter",
+            "type": "textarea",
+            "required": false
+          },
+          {
+            "name": "refs",
+            "label": "References",
+            "type": "textarea",
+            "required": false
+          }
+        ]
+      }
+    ]
+  }
+}

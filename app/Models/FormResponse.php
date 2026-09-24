@@ -97,6 +97,7 @@ class FormResponse extends Model
         'charge_expires_at' => 'datetime',
         'charge_flagged_at' => 'datetime',
         'charge_refunded_minor' => 'integer',
+        'external_synced_at' => 'datetime',
     ];
 
     /**
@@ -104,10 +105,17 @@ class FormResponse extends Model
      * any screen, so it never serialises. The pinned account id is another
      * organisation's acct_ string for a row charged through it (DECISIONS.md
      * 2026-09-15), which the row's own organisation is never shown.
+     *
+     * `external_ref` is the id of the school-website row an imported response was
+     * copied from (alrazi:sync-website). The website hands that same id to the
+     * family's browser and it unlocks the site's payment step, so it is a bearer
+     * value, not a label: it never serialises, and it is not fillable either. The
+     * import sets it attribute by attribute, and `uuid` is still minted locally.
      */
     protected $hidden = [
         'client_payload_hash',
         'charge_account_id',
+        'external_ref',
     ];
 
     /**
@@ -344,6 +352,16 @@ class FormResponse extends Model
     public function hasMoneyLeg(): bool
     {
         return $this->payment_method !== null;
+    }
+
+    /**
+     * Imported from another system (the Al-Razi school website) rather than
+     * submitted here. Such a row is never deleted, only cancelled: the next import
+     * would write it straight back.
+     */
+    public function isExternal(): bool
+    {
+        return $this->external_ref !== null;
     }
 
     public function isPaid(): bool

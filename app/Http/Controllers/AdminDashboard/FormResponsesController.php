@@ -642,29 +642,37 @@ class FormResponsesController extends Controller
      * cancelled instead, which keeps it — in its own column — in the cash totals. Checked
      * on the locked row, so a payment recorded that same second is not deleted from under
      * it.
+     *
+     * Nor is a row imported from the school website (`external_ref`, alrazi:sync-website):
+     * the next five-minute run would write it straight back, files and all. It is
+     * cancelled instead, like a paid one.
      */
     public function destroy($masjid_id, $form_id, $response_id)
     {
         [, , $response] = $this->resolveResponse($masjid_id, $form_id, $response_id);
 
         try {
-            $deleted = DB::transaction(function () use ($response): bool {
+            $refusal = DB::transaction(function () use ($response): ?string {
                 $row = FormResponse::query()->whereKey($response->getKey())->lockForUpdate()->firstOrFail();
 
                 if ($row->hasMoneyLeg()) {
-                    return false;
+                    return 'A registration with a payment is never deleted. Cancel it instead, and add a note.';
+                }
+
+                if ($row->isExternal()) {
+                    return 'Imported from the school website. Cancel it instead.';
                 }
 
                 $row->delete();
 
-                return true;
+                return null;
             });
         } catch (\Exception $e) {
             return $this->failed($e);
         }
 
-        if (! $deleted) {
-            return $this->refused('A registration with a payment is never deleted. Cancel it instead, and add a note.');
+        if ($refusal !== null) {
+            return $this->refused($refusal);
         }
 
         return response()->json([
