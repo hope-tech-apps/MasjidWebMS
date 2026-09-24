@@ -14,12 +14,26 @@
                     <code>/{{ currentPage?.slug }}</code>
                 </p>
             </div>
-            <button class="btn btn-primary" @click="openCreateModal">
-                <i class="bi bi-plus-circle me-2"></i>
-                Add Section
-            </button>
+            <div class="d-flex gap-2">
+                <!-- The published page, reloaded after every save (docs/live-preview.md).
+                     Offered only when the API says preview is available here. -->
+                <button
+                    v-if="previewAvailable === true"
+                    class="btn btn-outline-secondary"
+                    @click="showPagePreview = !showPagePreview"
+                >
+                    <i class="bi me-2" :class="showPagePreview ? 'bi-eye-slash' : 'bi-eye'"></i>
+                    {{ showPagePreview ? 'Hide live page' : 'Show live page' }}
+                </button>
+                <button class="btn btn-primary" @click="openCreateModal">
+                    <i class="bi bi-plus-circle me-2"></i>
+                    Add Section
+                </button>
+            </div>
         </div>
 
+        <div :class="pagePreviewOn ? 'row g-3' : ''">
+        <div :class="pagePreviewOn ? 'col-xl-5' : ''">
         <!-- Sections List -->
         <div class="card">
             <div class="card-body">
@@ -105,6 +119,16 @@
                 </div>
             </div>
         </div>
+        </div>
+        <div v-if="pagePreviewOn && currentPage" class="col-xl-7">
+            <LivePreviewPane
+                surface="pages"
+                :path="pagePath(currentPage.slug)"
+                :reload-key="savedVersion"
+                published
+            />
+        </div>
+        </div>
     </div>
 
     <!-- Section Form Modal -->
@@ -112,6 +136,7 @@
         v-if="showModal"
         :section="selectedSection"
         :pageId="pageId"
+        :preview-page="currentPage ? { id: currentPage.id, slug: currentPage.slug } : undefined"
         @close="closeModal"
         @saved="handleSectionSaved"
     />
@@ -119,6 +144,8 @@
 
 <script setup lang="ts">
 import SectionFormModal from '@/components/modals/SectionFormModal.vue';
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
+import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
 import { PageSection } from '@/core/types/data/masjid-related/PageSection';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { ref, onBeforeMount, computed } from 'vue';
@@ -143,6 +170,13 @@ const selectedSection = ref<PageSection | undefined>(undefined);
 // Computed
 const currentPage = computed(() => pagesStore.currentPage);
 
+// Live page preview: bumped after every successful load, so the frame shows what a
+// save (or reorder, or removal) just published.
+const previewAvailable = usePreviewAvailability('pages');
+const showPagePreview = ref(false);
+const pagePreviewOn = computed(() => previewAvailable.value === true && showPagePreview.value);
+const savedVersion = ref(0);
+
 // Sortable sections (writable computed for v-model)
 const sortableSections = computed({
     get: () => sections.value,
@@ -163,6 +197,7 @@ const loadData = async () => {
         await pagesStore.fetchPage(pageId.value);
         sections.value = await pagesStore.fetchPageSections(pageId.value);
         sections.value.sort((a, b) => a.order - b.order);
+        savedVersion.value++;
     } catch (error) {
         console.error('Error loading page sections:', error);
         Swal.fire({

@@ -1,15 +1,28 @@
 <template>
     <div class="modal fade show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-dialog" :class="previewOn ? 'modal-fullscreen modal-dialog-scrollable' : 'modal-dialog-centered modal-lg'">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
                         <i class="bi bi-file-earmark-text me-2"></i>
                         {{ isEdit ? 'Edit Page' : 'Create New Page' }}
                     </h5>
+                    <!-- Live preview of the page settings and the menu (docs/live-preview.md),
+                         offered only where the API says preview is available. -->
+                    <button
+                        v-if="previewAvailable === true"
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary ms-auto me-3"
+                        @click="showPreview = !showPreview"
+                    >
+                        <i class="bi me-1" :class="showPreview ? 'bi-eye-slash' : 'bi-eye'"></i>
+                        {{ showPreview ? 'Hide preview' : 'Show preview' }}
+                    </button>
                     <button type="button" class="btn-close" @click="$emit('close')"></button>
                 </div>
                 <div class="modal-body">
+                  <div :class="previewOn ? 'row g-3' : ''">
+                    <div :class="previewOn ? 'col-lg-5' : ''">
                     <form @submit.prevent="handleSubmit">
                         <div class="row">
                             <!-- Title -->
@@ -123,6 +136,15 @@
                             </div>
                         </div>
                     </form>
+                    </div>
+                    <div v-if="previewOn" class="col-lg-7">
+                        <LivePreviewPane
+                            surface="pages"
+                            :path="pagePath(page?.slug)"
+                            :overrides="pageOverrides"
+                        />
+                    </div>
+                  </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" @click="$emit('close')">
@@ -148,6 +170,8 @@ import { Page } from '@/core/types/data/masjid-related/Page';
 import { usePagesStore } from '@/stores/masjid/pagesStore';
 import { ref, computed, onMounted } from 'vue';
 import Swal from 'sweetalert2';
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
+import { pagePath, usePreviewAvailability } from '@/composables/useLivePreview';
 
 // Props
 const props = defineProps<{
@@ -177,6 +201,32 @@ const formData = ref({
 
 // Computed
 const isEdit = computed(() => !!props.page);
+
+// Live preview: the site with these unsaved page settings. The menu is built from every
+// page's title, order, show_in_menu and show_as_button, so it shows on any page; a new
+// page (no id yet) travels as -1 and joins the menu once it has a slug.
+const previewAvailable = usePreviewAvailability('pages');
+const showPreview = ref(true);
+const previewOn = computed(() => previewAvailable.value === true && showPreview.value);
+const pageOverrides = computed(() => {
+    const f = formData.value;
+    const slug = String(f.slug || '').trim();
+
+    return {
+        pages: [{
+            id: props.page?.id ?? -1,
+            // A saved page keeps its saved slug in the preview: the frame is showing that
+            // address, and a renamed slug is only real once saved.
+            ...(!props.page && slug && !/[\s?#\\]/.test(slug) ? { slug } : {}),
+            title: f.title || '',
+            order: Number(f.order) || 1,
+            is_active: !!f.is_active,
+            show_in_menu: !!f.show_in_menu,
+            show_as_button: !!f.show_as_button,
+            meta_description: f.meta_description || null,
+        }],
+    };
+});
 
 // Lifecycle
 onMounted(() => {

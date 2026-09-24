@@ -5,6 +5,8 @@ export type ThemeSetting = {
     secondary_color: string | null;
     accent_color: string | null;
     background_color: string | null;
+    /** Per-organisation design-token overrides, deep-merged by App\Support\DesignTokens. */
+    tokens?: Record<string, any> | null;
     created_at: string;
     updated_at: string;
 }

@@ -76,6 +76,12 @@
                 </div>
             </div>
 
+            <!-- The public site with this unsaved splash (docs/live-preview.md). Renders
+                 nothing where preview is unavailable. -->
+            <div v-if="previewAvailable === true">
+                <LivePreviewPane surface="splash" path="/" :overrides="splashOverrides" />
+            </div>
+
         </div>
 
         <div class="card-footer d-flex align-items-center justify-content-end w-100 bg-white border-0">
@@ -93,6 +99,8 @@ import { getMessageFromObj } from '@/assets/ts/swalMethods'
 import ColumnInputContainer from '@/components/form/ColumnInputContainer.vue'
 import ImageDraggableInput from '@/components/form/ImageDraggableInput.vue'
 import LoadingButton from '@/components/form/LoadingButton.vue'
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue'
+import { usePreviewAvailability } from '@/composables/useLivePreview'
 import { MSwal, QSwal } from '@/core/plugins/SweetAlerts2'
 import ApiService from '@/core/services/ApiService'
 import { BackendResponseData } from '@/core/types/config/AxiosCustom'
@@ -133,6 +141,31 @@ const form = ref({
 const imageSrc = ref<string | undefined>('')
 
 const oldImage = computed(() => splash.value?.image?.original_url ?? '')
+
+// Live preview: this splash as the public site's pop-up would show it. The site accepts
+// only https, site-relative or inline-image URLs; anything else is left out of the preview
+// rather than sent (it would make the site drop the whole update).
+const previewAvailable = usePreviewAvailability('splash')
+const previewableUrl = (url: string | undefined | null, allowInlineImage = false): string | null => {
+    const value = (url ?? '').trim()
+    if (/^https:\/\//i.test(value)) return value
+    if (value.startsWith('/') && !value.startsWith('//')) return value
+    if (allowInlineImage && /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(value)) return value
+    return null
+}
+const splashOverrides = computed(() => {
+    const image = previewableUrl(imageSrc.value, true)
+    return {
+        splash: {
+            id: splash.value?.id ?? -1,
+            title: form.value.title || '',
+            body: form.value.body || null,
+            cta_label: form.value.cta_label || null,
+            cta_url: previewableUrl(form.value.cta_url),
+            image: image ? { original_url: image } : null,
+        },
+    }
+})
 
 const formValidationSchema = object().shape({
     title: string().required().max(255),

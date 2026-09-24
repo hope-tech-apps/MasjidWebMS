@@ -73,6 +73,41 @@
                     <p class="text-muted small mb-0">
                         Leave a field blank to fall back to the app's built-in default.
                     </p>
+
+                    <!-- Typography and header/footer style: design tokens the website already
+                         reads (tokens.typography.*, tokens.layout.*). Shown with the live
+                         preview, so an admin sees what a choice does before saving it. -->
+                    <div v-if="previewAvailable === true" class="mt-4">
+                        <div class="fw-semibold text-uppercase text-muted small mb-3">Website fonts &amp; layout</div>
+                        <div class="row">
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-heading-font">Heading font</label>
+                                <select id="theme-heading-font" v-model="styleModel.heading" class="form-select" @change="styleTouched = true">
+                                    <option v-for="f in fontChoices('heading')" :key="f.key" :value="f.key">{{ f.label }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-body-font">Body font</label>
+                                <select id="theme-body-font" v-model="styleModel.body" class="form-select" @change="styleTouched = true">
+                                    <option v-for="f in fontChoices('body')" :key="f.key" :value="f.key">{{ f.label }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-header-style">Header style</label>
+                                <select id="theme-header-style" v-model="styleModel.header" class="form-select" @change="styleTouched = true">
+                                    <option value="default">Standard</option>
+                                    <option value="overlay">Over the page's top image</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-6 mb-3">
+                                <label class="form-label fw-semibold" for="theme-footer-style">Footer style</label>
+                                <select id="theme-footer-style" v-model="styleModel.footer" class="form-select" @change="styleTouched = true">
+                                    <option value="default">Standard</option>
+                                    <option value="columns">Columns</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Derived palette + preview -->
@@ -121,6 +156,12 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- The organisation's real website with these unsaved colours
+                     (docs/live-preview.md). Renders nothing where preview is unavailable. -->
+                <div v-if="previewAvailable === true" class="col-12">
+                    <LivePreviewPane surface="theme" path="/" :overrides="themeOverrides" />
+                </div>
             </div>
         </div>
 
@@ -134,7 +175,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeMount, computed } from 'vue';
+import { ref, onBeforeMount, computed, watch } from 'vue';
 import { Form, Field, ErrorMessage } from 'vee-validate';
 import { object, string } from 'yup';
 import { useMasjidStore } from '@/stores/masjidStore';
@@ -144,6 +185,8 @@ import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import type { AxiosError } from 'axios';
 import type { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import type { ThemeSetting } from '@/core/types/data/masjid-related/ThemeSetting';
+import LivePreviewPane from '@/components/preview/LivePreviewPane.vue';
+import { usePreviewAvailability } from '@/composables/useLivePreview';
 
 // Stores
 const masjidStore = useMasjidStore();
@@ -163,6 +206,95 @@ const settingsModel = ref({
     secondary_color: '',
     accent_color: '',
     background_color: ''
+});
+
+/*
+ * Website fonts and header/footer style. They live in the theme's `tokens` override
+ * tree, which the save REPLACES whole — so the tree is loaded, edited in place and sent
+ * back complete, and it is sent at all only once one of these controls has been changed:
+ * an admin who only touches colours posts exactly what this screen always posted.
+ */
+type FontChoice = { key: string; label: string; stack: string | null; google: string | null };
+const FONTS: FontChoice[] = [
+    { key: '', label: 'Site default', stack: null, google: null },
+    { key: 'poppins', label: 'Poppins', stack: "'Poppins', sans-serif", google: 'Poppins:wght@400;500;600;700' },
+    { key: 'inter', label: 'Inter', stack: "'Inter', sans-serif", google: 'Inter:wght@400;500;600;700' },
+    { key: 'lato', label: 'Lato', stack: "'Lato', sans-serif", google: 'Lato:wght@400;700' },
+    { key: 'montserrat', label: 'Montserrat', stack: "'Montserrat', sans-serif", google: 'Montserrat:wght@400;500;600;700' },
+    { key: 'open-sans', label: 'Open Sans', stack: "'Open Sans', sans-serif", google: 'Open Sans:wght@400;600;700' },
+    { key: 'merriweather', label: 'Merriweather', stack: "'Merriweather', serif", google: 'Merriweather:wght@400;700' },
+    { key: 'playfair', label: 'Playfair Display', stack: "'Playfair Display', serif", google: 'Playfair Display:wght@400;600;700' },
+    { key: 'amiri', label: 'Amiri (Arabic)', stack: "'Amiri', serif", google: 'Amiri:wght@400;700' },
+    { key: 'noto-naskh', label: 'Noto Naskh Arabic', stack: "'Noto Naskh Arabic', serif", google: 'Noto Naskh Arabic:wght@400;600;700' },
+    { key: 'cairo', label: 'Cairo (Arabic)', stack: "'Cairo', sans-serif", google: 'Cairo:wght@400;600;700' },
+];
+const CURRENT = '__current';
+const savedTokens = ref<Record<string, any> | null>(null);
+const styleModel = ref({ heading: '', body: '', header: 'default', footer: 'default' });
+const styleTouched = ref(false);
+
+/** The saved font, kept as a choice when it is not one of ours (e.g. set by Studio). */
+const fontChoices = (which: 'heading' | 'body'): FontChoice[] => {
+    const saved = savedTokens.value?.typography?.[which === 'heading' ? 'headingFamily' : 'bodyFamily'];
+    if (typeof saved === 'string' && saved !== 'system' && !FONTS.some((f) => f.stack === saved)) {
+        return [...FONTS, { key: CURRENT, label: `Current: ${saved}`, stack: saved, google: null }];
+    }
+    return FONTS;
+};
+
+const loadStyle = (tokens: Record<string, any> | null | undefined) => {
+    savedTokens.value = tokens && typeof tokens === 'object' ? tokens : null;
+    const pick = (stack: unknown) => {
+        if (typeof stack !== 'string' || stack === 'system') return '';
+        return FONTS.find((f) => f.stack === stack)?.key ?? CURRENT;
+    };
+    styleModel.value = {
+        heading: pick(savedTokens.value?.typography?.headingFamily),
+        body: pick(savedTokens.value?.typography?.bodyFamily),
+        header: savedTokens.value?.layout?.header === 'overlay' ? 'overlay' : 'default',
+        footer: savedTokens.value?.layout?.footer === 'columns' ? 'columns' : 'default',
+    };
+    styleTouched.value = false;
+};
+
+/** The complete override tree with this screen's choices applied. */
+const buildTokens = (): Record<string, any> => {
+    const tree: Record<string, any> = JSON.parse(JSON.stringify(savedTokens.value ?? {}));
+    const typography: Record<string, any> = { ...(tree.typography ?? {}) };
+    const layout: Record<string, any> = { ...(tree.layout ?? {}) };
+    const chosen = (which: 'heading' | 'body') => fontChoices(which).find((f) => f.key === styleModel.value[which]) ?? FONTS[0];
+    const heading = chosen('heading');
+    const body = chosen('body');
+
+    for (const [key, font] of [['headingFamily', heading], ['bodyFamily', body]] as const) {
+        if (font.stack) typography[key] = font.stack;
+        else delete typography[key];
+    }
+    const families = [...new Set([heading.google, body.google].filter((g): g is string => !!g))];
+    if (families.length) {
+        typography.fontsUrl = 'https://fonts.googleapis.com/css2?'
+            + families.map((f) => `family=${f.replace(/ /g, '+')}`).join('&') + '&display=swap';
+    } else if (heading.key !== CURRENT && body.key !== CURRENT) {
+        delete typography.fontsUrl;
+    }
+
+    if (styleModel.value.header === 'overlay') layout.header = 'overlay';
+    else delete layout.header;
+    if (styleModel.value.footer === 'columns') layout.footer = 'columns';
+    else delete layout.footer;
+
+    if (Object.keys(typography).length) tree.typography = typography;
+    else delete tree.typography;
+    if (Object.keys(layout).length) tree.layout = layout;
+    else delete tree.layout;
+
+    return tree;
+};
+
+/** What Save posts, and what the preview is derived from. */
+const themePayload = () => ({
+    ...settingsModel.value,
+    ...(styleTouched.value ? { tokens: buildTokens() } : {}),
 });
 
 // Validation — a hex color (#RGB, #RRGGBB or #RRGGBBAA), or empty to fall back.
@@ -291,6 +423,7 @@ const fetchSettings = async () => {
             settingsModel.value.secondary_color = data.secondary_color ?? '';
             settingsModel.value.accent_color = data.accent_color ?? '';
             settingsModel.value.background_color = data.background_color ?? '';
+            loadStyle(data.tokens);
         }
     } catch (error) {
         console.error('Error fetching settings:', error);
@@ -302,7 +435,7 @@ const onSubmit = async () => {
     QSwal.fire("Question", 'Save theme settings?', 'question')
         .then(async (result) => {
             if (result.isConfirmed) {
-                await ApiService.post(`/api/admin/masjids/${masjidStore.masjid?.id}/theme`, settingsModel.value)
+                await ApiService.post(`/api/admin/masjids/${masjidStore.masjid?.id}/theme`, themePayload())
                     .then(async res => {
                         if (res.data.status === 'success') {
                             QSwal.fire("Success", "Theme settings saved successfully.", "success");
@@ -322,6 +455,39 @@ const onSubmit = async () => {
             }
         });
 };
+
+// Live preview. The site reads the resolved token tree ahead of the four flat colours,
+// so the theme it is sent must be the SERVER's derivation (App\Support\DesignTokens) of
+// these unsaved values — POST .../theme/preview, which saves nothing. Debounced; a value
+// the server refuses (a half-typed hex) keeps the last good preview.
+const previewAvailable = usePreviewAvailability('theme');
+const previewTheme = ref<Record<string, unknown> | null>(null);
+const themeOverrides = computed(() => (previewTheme.value ? { theme: previewTheme.value } : {}));
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+let previewRequest = 0;
+
+const refreshPreviewTheme = () => {
+    if (previewAvailable.value !== true || !masjidStore.masjid?.id) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+        const mine = ++previewRequest;
+        try {
+            const res = await ApiService.post(
+                `/api/admin/masjids/${masjidStore.masjid?.id}/theme/preview`,
+                themePayload(),
+            );
+            if (mine === previewRequest && res.data?.status === 'success' && res.data.data?.theme) {
+                previewTheme.value = res.data.data.theme;
+            }
+        } catch {
+            // Invalid while typing: keep showing the last theme that was valid.
+        }
+    }, 250);
+};
+
+watch(settingsModel, refreshPreviewTheme, { deep: true });
+watch(styleModel, refreshPreviewTheme, { deep: true });
+watch(previewAvailable, refreshPreviewTheme);
 </script>
 
 <style scoped>
