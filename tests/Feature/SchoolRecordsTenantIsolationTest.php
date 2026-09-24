@@ -9,6 +9,7 @@ use App\Models\CurriculumWeek;
 use App\Models\Group;
 use App\Models\GroupMembership;
 use App\Models\GroupResource;
+use App\Models\GroupResourceRecipient;
 use App\Models\LessonPlan;
 use App\Models\Masjid;
 use App\Support\TenantContext;
@@ -120,6 +121,57 @@ class SchoolRecordsTenantIsolationTest extends TestCase
 
         $this->assertNull(GroupResource::find($foreign->id));
         $this->assertCount(0, GroupResource::all());
+    }
+
+    /**
+     * WHO a file was addressed to is one school's business too.
+     *
+     * A recipient row names a CHILD, so a leak here is worse than a leak of the
+     * file: it says which children in a named class were sent a handout. The
+     * denormalised `masjid_id` is what makes the audience read scope without
+     * joining back through the file and the group, and it is therefore also the
+     * only thing standing between the two schools on this table.
+     *
+     * Delete is asserted as well as read: `GroupResource::deleting` and the
+     * teacher controller's set-replacement both DELETE through this model, and
+     * a write verb that crosses the boundary is the half a read-only test
+     * leaves open (.claude/rules/tenant-scoping.md).
+     */
+    #[Test]
+    public function the_scope_hides_another_schools_group_resource_recipients(): void
+    {
+        [$foreignFile, $foreignRecipient] = $this->tenant->runWithout(function () {
+            $file = GroupResource::create([
+                'masjid_id' => $this->schoolB->id, 'group_id' => $this->classB->id,
+                'title' => 'Their report card', 'visibility' => GroupResource::VISIBILITY_STUDENTS,
+                'original_name' => 'r.pdf', 'mime_type' => 'application/pdf',
+                'size_bytes' => 10, 'disk' => 'local', 'path' => 'x/y/r.pdf',
+            ]);
+
+            return [$file, GroupResourceRecipient::create([
+                'masjid_id' => $this->schoolB->id,
+                'group_resource_id' => $file->id,
+                'group_membership_id' => $this->studentB->id,
+            ])];
+        });
+
+        $this->tenant->set($this->schoolA->id);
+
+        $this->assertNull(GroupResourceRecipient::find($foreignRecipient->id));
+        $this->assertCount(0, GroupResourceRecipient::all());
+
+        // And the file cannot be reached THROUGH its recipients either, which is
+        // the shape GroupAudience::readableResourcesQuery() actually queries.
+        $this->assertCount(0, GroupResource::whereHas('recipients')->get());
+
+        $this->assertSame(0, GroupResourceRecipient::where('id', $foreignRecipient->id)->delete());
+        $this->assertNotNull($this->tenant->runWithout(
+            fn () => GroupResourceRecipient::find($foreignRecipient->id)
+        ));
+
+        // Unused beyond the fixture, and named so a reader can see the row the
+        // recipient above belongs to is the other school's as well.
+        $this->assertNull(GroupResource::find($foreignFile->id));
     }
 
     /**
