@@ -3,7 +3,7 @@
     "body": {
         "status": "success",
         "data": {
-            "masjid_id": "masjids#1",
+            "masjid_id": "masjids#2",
             "masjid": {
                 "name": "Snapshot Org",
                 "org_type": "community",
@@ -20,7 +20,7 @@
                 "created_by": "users#1",
                 "updated_at": "<timestamp>",
                 "created_at": "<timestamp>",
-                "id": "masjids#1",
+                "id": "masjids#2",
                 "vertical": {
                     "org_type": "community",
                     "label": "Community Organization",
@@ -64,8 +64,8 @@
                     "updated_at": null
                 },
                 "app_publishing": {
-                    "id": "masjid_app_publishing#1",
-                    "masjid_id": "masjids#1",
+                    "id": "masjid_app_publishing#2",
+                    "masjid_id": "masjids#2",
                     "ios_account_mode": "managed",
                     "android_account_mode": "managed",
                     "web_account_mode": "managed",
@@ -97,7 +97,7 @@
         "iqama_time_settings": [
             {
                 "id": "iqama_time_settings#1",
-                "masjid_id": "masjids#1",
+                "masjid_id": "masjids#2",
                 "fajr": 20,
                 "dhuhr": 10,
                 "asr": 10,
@@ -112,7 +112,7 @@
         "jumaa_settings": [
             {
                 "id": "jumaa_settings#1",
-                "masjid_id": "masjids#1",
+                "masjid_id": "masjids#2",
                 "iqama": "13:30",
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>",
@@ -122,8 +122,8 @@
         ],
         "masjid_app_publishing": [
             {
-                "id": "masjid_app_publishing#1",
-                "masjid_id": "masjids#1",
+                "id": "masjid_app_publishing#2",
+                "masjid_id": "masjids#2",
                 "ios_account_mode": "managed",
                 "android_account_mode": "managed",
                 "web_account_mode": "managed",
@@ -141,89 +141,89 @@
         ],
         "masjid_mobile_app_features": [
             {
-                "id": "masjid_mobile_app_features#1",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#12",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#1",
                 "is_available": 0,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#10",
-                "masjid_id": "masjids#1",
-                "feature_id": "mobile_app_features#10",
-                "is_available": 1,
-                "created_at": "<timestamp>",
-                "updated_at": "<timestamp>"
-            },
-            {
-                "id": "masjid_mobile_app_features#11",
-                "masjid_id": "masjids#1",
-                "feature_id": "mobile_app_features#11",
-                "is_available": 1,
-                "created_at": "<timestamp>",
-                "updated_at": "<timestamp>"
-            },
-            {
-                "id": "masjid_mobile_app_features#2",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#13",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#2",
                 "is_available": 0,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#3",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#14",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#3",
                 "is_available": 0,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#4",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#15",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#4",
                 "is_available": 0,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#5",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#16",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#5",
                 "is_available": 0,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#6",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#17",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#6",
                 "is_available": 1,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#7",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#18",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#7",
                 "is_available": 1,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#8",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#19",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#8",
                 "is_available": 1,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
             },
             {
-                "id": "masjid_mobile_app_features#9",
-                "masjid_id": "masjids#1",
+                "id": "masjid_mobile_app_features#20",
+                "masjid_id": "masjids#2",
                 "feature_id": "mobile_app_features#9",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#21",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#10",
+                "is_available": 1,
+                "created_at": "<timestamp>",
+                "updated_at": "<timestamp>"
+            },
+            {
+                "id": "masjid_mobile_app_features#22",
+                "masjid_id": "masjids#2",
+                "feature_id": "mobile_app_features#11",
                 "is_available": 1,
                 "created_at": "<timestamp>",
                 "updated_at": "<timestamp>"
@@ -231,15 +231,15 @@
         ],
         "masjids": [
             {
-                "id": "masjids#1",
+                "id": "masjids#2",
                 "user_id": null,
                 "name": "Snapshot Org",
                 "email": "org@snapshot.example.test",
                 "email_verified_at": null,
                 "phone": "+15551234567",
                 "phone_verified_at": null,
-                "country_id": "countries#1",
-                "city_id": "cities#1",
+                "country_id": "countries#1:string",
+                "city_id": "cities#1:string",
                 "address": "1 Test St",
                 "latitude": 43.32,
                 "longitude": -79.79,
@@ -276,7 +276,7 @@
         "prayer_calculation_settings": [
             {
                 "id": "prayer_calculation_settings#1",
-                "masjid_id": "masjids#1",
+                "masjid_id": "masjids#2",
                 "method": "MuslimWorldLeague",
                 "madhab": "Shafi",
                 "high_latitude_rule": "MiddleOfTheNight",
@@ -287,7 +287,7 @@
         "theme_settings": [
             {
                 "id": "theme_settings#1",
-                "masjid_id": "masjids#1",
+                "masjid_id": "masjids#2",
                 "primary_color": null,
                 "secondary_color": null,
                 "accent_color": null,

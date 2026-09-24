@@ -1019,7 +1019,7 @@ call. Nothing it produces changes.
 **Contract.**
 
 - `App\Support\Studio\OrganisationProvisioner::create(ProvisionMasjidRequest $request, array &$invitations, ProvisionContext $ctx): Masjid`.
-  - It is the body of `OnboardingController.php:135-346`, moved verbatim.
+  - It is the body of `OnboardingController.php:135-346` (as of bb60da7f), moved verbatim.
   - It throws `LogicException` when `DB::transactionLevel() === 0`.
 - `OnboardingController::provision` keeps its signature
   `(ProvisionMasjidRequest $request, ?AccountAccessService $access = null)`, its
@@ -1233,14 +1233,14 @@ behaviour is exactly today's.
 | `description` | nullable, string, max:300 | Sets `masjids.description` (public copy) |
 | `capabilities` | `sometimes`, array; values coerced with `FILTER_VALIDATE_BOOLEAN \| FILTER_NULL_ON_FAILURE` in `prepareForValidation`, then `boolean`; keys must be ones the catalogue serves for this `org_type` (hidden or unknown → 422); `prohibits:crm_enabled,feature_keys,feature_keys_provided` | Runs `CapabilityWriter::applyAtCreation`, then `AppFeaturePivot::seedFromSwitches` |
 | `layout_preset` | nullable, `Rule::in(LayoutPresets::keysFor(org_type))`; requires `web` in `platforms` | Runs `StarterSite::applyTo` and writes `theme_settings.tokens.layout` |
-| `show_iqama_times` | `sometimes`, boolean (coerced) | Written instead of the hard-coded `true` default (`OnboardingController.php:196-205`) |
+| `show_iqama_times` | `sometimes`, boolean (coerced) | Written instead of the hard-coded `true` default (`OrganisationProvisioner.php:118-127`) |
 | `web_domain.custom_host`, `web_domain.custom_zone_apex` | nullable; the `HostName` rules, S3's write-side host rule and the apex rule; unique `masjid_domains.host` | Adds a custom domain row |
 
 Every new boolean is coerced in `prepareForValidation`, because the wizard's
 serializer posts `"true"`/`"false"` strings and the `boolean` rule rejects them
 (`OnboardingWizardView.vue:1005`; `.claude/rules/shipping.md:15-38`).
 
-The `: true` fallback at `OnboardingController.php:163-165` becomes
+The `: true` fallback at `OrganisationProvisioner.php:85-87` becomes
 `config('capabilities.crm.provision_default', true)`; a sent `crm_enabled` is
 still honoured, as today. The config fallback keeps today's value if the config
 cache is stale.
@@ -1260,9 +1260,9 @@ cache is stale.
      otherwise the override) with one `CapabilityLedger` row and the SuperAdmin
      as actor;
    - then `AppFeaturePivot::seedFromSwitches` **replaces** the key-matched loop
-     at `:252-261`.
+     at `OrganisationProvisioner.php:186-192`.
    - If `capabilities` is absent, the existing loop runs unchanged.
-3. `FormTemplates::applyTo`, which already runs at `:272`.
+3. `FormTemplates::applyTo`, which already runs at `OrganisationProvisioner.php:202`.
 4. If `layout_preset` is present:
    - `StarterSite::applyTo` writes the pages, the sections (with
      `settings.studio`) and the `page_section` rows with `platforms` null;
@@ -1389,11 +1389,12 @@ the results screen must not show an invite as sent when it was not.
   (`CapabilityChangeLedgerTest:91-97`), while `applyAtCreation` ledgers only
   departures from the defaults.
 - **Iqama.** On the Studio path, iqama is displayed only when the client gave
-  times. The legacy invented schedule of 20/10/10/5/10 (`OnboardingController.php:196-205`)
-  stays only on the legacy path.
+  times. The legacy invented schedule of 20/10/10/5/10
+  (`OrganisationProvisioner.php:118-127`) stays only on the legacy path.
 - **Donation labels.** The generic donation labels "Donation Link" / "Donate
-  Now" (`:218-219`) stay: they are interface words, not facts about the
-  congregation, and D8's list is history, scholars, programmes and numbers.
+  Now" (`OrganisationProvisioner.php:140-141`) stay: they are interface words,
+  not facts about the congregation, and D8's list is history, scholars,
+  programmes and numbers.
 - **Jumu'ah.** The Jumu'ah default of 13:30 (`:209`) is still stored. The web
   does not draw it (layouts fact [30]), and W2/W3 must not show it unless it was supplied.
 

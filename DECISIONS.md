@@ -2098,3 +2098,20 @@ pin is `ProvisionResponseSnapshotTest`, whose fixtures in
 that always fails so it cannot pass for a check.
 Rationale: each keeps the legacy endpoint's rows, mail and response identical, which
 is the slice's whole contract.
+
+## 2026-09-24 — Studio W1 S6 review: what the byte-identity pin could not see
+Decision: the snapshot's id labels keep a key's JSON type (`users#1` for an int,
+`users#1:string` otherwise), and every case provisions next to an existing organisation
+that has a row in each per-organisation table, so the new org is `masjids#2`. The
+fixtures were re-recorded with 90e4d182's controller swapped into the CI tree, not from
+the refactored code, and the refactored code then matched them unchanged. The promises
+one recording cannot show (only a SuperAdmin reaches `/onboarding/*`, the invited
+admin's stored credential is unguessable, a supplied `user_id` beats `admin.email`,
+BYO secrets are kept only for a selected platform, invitations leave only after commit
+and never for a rolled-back provision) are explicit tests in
+`ProvisionWizardGuaranteesTest`, each killed by its mutation. The path-scoped rules for
+the provisioning body (`directory-listing.md`, `verticals.md`) now load for
+`app/Support/Studio/`.
+Rationale: the type-blind labels filed 5 and "5" under one key, so the `actorId`-uncast
+promise above had no test; with only one organisation, "the new org" and "the first
+org" got the same label; and a session editing only the provisioner loaded neither rule.

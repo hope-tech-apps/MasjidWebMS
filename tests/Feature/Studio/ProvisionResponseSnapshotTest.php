@@ -3,6 +3,11 @@
 namespace Tests\Feature\Studio;
 
 use App\Mail\AccountAccessMail;
+use App\Models\DonationLink;
+use App\Models\Masjid;
+use App\Models\MasjidAppPublishing;
+use App\Models\MasjidMobileAppFeature;
+use App\Models\MasjidSocialMediaLink;
 use App\Models\MobileAppFeature;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -27,15 +32,25 @@ use Tests\TestCase;
  * of every table the call adds, changes or removes, the mail it sends, and the
  * status and body it answers, for an organisation of each vertical and for a
  * provision that fails part-way. The fixtures under tests/fixtures/provision-
- * snapshot were written by the unrefactored controller and are never edited by
- * hand; a difference is a behaviour change, not a stale snapshot.
+ * snapshot were written by the unrefactored controller (90e4d182's, swapped in
+ * for every recording since) and are never edited by hand; a difference is a
+ * behaviour change, not a stale snapshot.
  *
  * Ids are replaced by "table#n" (the row's position in its table) and every
  * foreign key that can be traced is replaced the same way, so the snapshot says
- * WHICH row a key points at rather than which number it happened to get.
+ * WHICH row a key points at rather than which number it happened to get. A key
+ * that is not an integer keeps its JSON type in the label ("users#1:string"):
+ * PHP files "5" and 5 under the same array key, so without it a response that
+ * started answering `"created_by": "5"` would still match, and a typed mobile or
+ * SPA decoder would break with every snapshot green.
  * Timestamps, password hashes and token digests are replaced by what they are.
  * Encrypted columns are decrypted, because the ciphertext changes on every run
  * but what it holds must not.
+ *
+ * Another organisation already exists, with a row in each table provisioning
+ * writes per organisation, so "the new organisation" and "the first one" are
+ * different rows. With an empty `masjids` table a row written against the wrong
+ * tenant would get the same label as the right one and pass.
  *
  * To record a fixture (only ever against code whose behaviour is the one to
  * keep): PROVISION_SNAPSHOT_RECORD=1. Recording never passes, so a recorded run
@@ -85,6 +100,8 @@ class ProvisionResponseSnapshotTest extends TestCase
         // so the snapshot runs on the catalogue production actually has.
         MobileAppFeature::where('key', 'quran')->firstOrFail()
             ->forceFill(['key' => "qur\u{2019}an", 'name' => "Qur\u{2019}an"])->save();
+
+        $this->seedNeighbour();
 
         Mail::fake();
     }
@@ -220,6 +237,9 @@ class ProvisionResponseSnapshotTest extends TestCase
             ])->values()->all(),
         ];
 
+        // Checked before anything is recorded, so a recording cannot capture it.
+        $this->assertWrittenOnlyForTheNewOrganisation($snapshot);
+
         $actual = json_encode($snapshot, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)."\n";
         $path = base_path(self::FIXTURES."/{$case}.json");
 
@@ -233,6 +253,73 @@ class ProvisionResponseSnapshotTest extends TestCase
 
         $this->assertFileExists($path, "No recording for '{$case}'.");
         $this->assertSame(file_get_contents($path), $actual, "Provisioning a {$case} no longer writes or answers what was recorded.");
+    }
+
+    /**
+     * An organisation that is not the one being provisioned, with a donation
+     * link, a social link, a feature toggle per catalogue entry and a publishing
+     * row: every per-organisation table the provision writes to has a row that
+     * is not the new tenant's.
+     */
+    private function seedNeighbour(): void
+    {
+        $neighbour = Masjid::create([
+            'name' => 'Neighbour Masjid',
+            'org_type' => 'masjid',
+            'email' => 'office@neighbour.example.test',
+            'phone' => '+15550004444',
+            'address' => '2 Test St',
+            'latitude' => 43.33,
+            'longitude' => -79.8,
+            'timezone' => 'America/Toronto',
+            'country_id' => $this->countryId,
+            'city_id' => $this->cityId,
+        ]);
+
+        DonationLink::create([
+            'masjid_id' => $neighbour->id,
+            'link' => 'https://give.example.test/neighbour',
+            'title' => 'Neighbour giving',
+            'message' => 'Give to the neighbour',
+        ]);
+        MasjidSocialMediaLink::create([
+            'masjid_id' => $neighbour->id,
+            'type' => 'Facebook',
+            'value' => 'https://facebook.example.test/neighbour',
+        ]);
+        foreach (MobileAppFeature::all() as $feature) {
+            MasjidMobileAppFeature::create([
+                'masjid_id' => $neighbour->id,
+                'feature_id' => $feature->id,
+                'is_available' => true,
+            ]);
+        }
+        MasjidAppPublishing::create([
+            'masjid_id' => $neighbour->id,
+            'enabled_platforms' => ['web'],
+            'ios_account_mode' => 'managed',
+            'android_account_mode' => 'managed',
+            'web_account_mode' => 'managed',
+        ]);
+    }
+
+    /**
+     * Every row the call wrote that belongs to an organisation belongs to the one
+     * it answered with. The recording would show a stray `masjids#1` too; this
+     * says what is wrong in one line instead of a fixture diff.
+     */
+    private function assertWrittenOnlyForTheNewOrganisation(array $snapshot): void
+    {
+        $created = $snapshot['body']['data']['masjid_id'] ?? null;
+
+        foreach ($snapshot['written'] as $table => $rows) {
+            foreach ($rows as $row) {
+                if ($table === 'masjids' || ! array_key_exists('masjid_id', $row)) {
+                    continue;
+                }
+                $this->assertSame($created, $row['masjid_id'], "A {$table} row was written for an organisation other than the one provisioned.");
+            }
+        }
     }
 
     /** @return array<string, list<array<string, mixed>>> every row of every table, by table */
@@ -356,13 +443,13 @@ class ProvisionResponseSnapshotTest extends TestCase
             return '<'.$column.'>';
         }
 
-        if ($column === 'id' && $table !== null) {
-            return $ids[$table][$value] ?? $value;
+        if ($column === 'id' && $table !== null && (is_int($value) || is_string($value))) {
+            return $this->label($ids, $table, $value);
         }
 
         $target = $this->foreignTable($column, $row);
         if ($target !== null && (is_int($value) || is_string($value))) {
-            return $ids[$target][$value] ?? $value;
+            return $this->label($ids, $target, $value);
         }
 
         if (is_string($value) && ($plain = $this->decrypted($value)) !== null) {
@@ -370,6 +457,17 @@ class ProvisionResponseSnapshotTest extends TestCase
         }
 
         return $value;
+    }
+
+    /** "table#n" for an integer key; a key of any other JSON type says which, since the map cannot. */
+    private function label(array $ids, string $table, int|string $value): int|string
+    {
+        $label = $ids[$table][$value] ?? null;
+        if ($label === null) {
+            return $value;
+        }
+
+        return is_int($value) ? $label : $label.':'.get_debug_type($value);
     }
 
     private function foreignTable(string $column, array $row): ?string
