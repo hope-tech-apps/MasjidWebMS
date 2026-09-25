@@ -107,9 +107,11 @@ return [
     'office_per_day' => max(1, (int) env('FORMS_OFFICE_PER_DAY', 3)),
 
     /*
-     * The ONLY origins a Stripe return URL may be built on: the public sites
-     * that host a paying form, as exact scheme://host[:port], comma-separated
-     * (https://mec.hopetechapps.com,https://mec-web.pages.dev).
+     * The origins a Stripe return URL may be built on for ANY form: the public
+     * sites that host a paying form, as exact scheme://host[:port],
+     * comma-separated (https://mec.hopetechapps.com,https://mec-web.pages.dev).
+     * From Studio W1 S9 the one other way in is a confirmed masjid_domains row of
+     * the form's own organisation (App\Support\FormPaymentReturn::allowedOrigin).
      *
      * NO DEFAULT, on purpose: unset means no form may open a card payment — the
      * checkout's preflight must refuse before anything is written, never fall

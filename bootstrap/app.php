@@ -4,6 +4,7 @@ use App\Http\Middleware\EnsureAssistantEnabled;
 use App\Http\Middleware\EnsureCrmEnabled;
 use App\Http\Middleware\EnsureFamilyLoginActive;
 use App\Http\Middleware\EnsureFamilyParentToken;
+use App\Http\Middleware\HandleCorsWithDomains;
 use App\Http\Middleware\EnsureStudentHandoffToken;
 use App\Http\Middleware\ResolveFamilyGuestTenant;
 use App\Http\Middleware\ResolveFamilyTenant;
@@ -87,6 +88,14 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Security headers on every response (web + api).
         $middleware->append(SecurityHeaders::class);
+
+        // CORS: the static CORS_ALLOWED_ORIGINS list, plus the origin of every
+        // masjid_domains row confirmed serving our own site (Studio W1, S9), so
+        // a new client host works in the browser without a production .env
+        // edit. Replaced in place, so it keeps HandleCors' slot in the global
+        // stack; a request the static list already answers never reads the
+        // table. See App\Http\Middleware\HandleCorsWithDomains.
+        $middleware->replace(\Illuminate\Http\Middleware\HandleCors::class, HandleCorsWithDomains::class);
 
         // The unsubscribe landing (T-042c) is the one web path that accepts a
         // POST with no session and no token, and it has to be: a person who

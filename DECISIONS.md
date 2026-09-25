@@ -2870,3 +2870,38 @@ never shows a time the congregation did not give, and every sentence on Step 3 i
 answer supports.
 Measured: `vue-tsc --noEmit` (vue-tsc 2.2.12, TypeScript 5.7.3) reports 106 errors at fe390d7d and
 at 41ea90d3 in this environment, and the same 106, line for line, with these fixes.
+
+## 2026-09-24 — Studio W1 S9: CORS and payment-return origins from `masjid_domains`, and the calls the plan left open
+Decision: `App\Http\Middleware\HandleCorsWithDomains` replaces `HandleCors` in the global stack
+and adds `MasjidDomain::corsOrigins()` (the `corsAdmitted()` rows) to `config('cors.allowed_origins')`
+for a request whose `Origin` the static list does not already name; `FormPaymentReturn::allowedOrigin`
+also accepts `https://<host>` of a `corsAdmitted()` row of the form's own organisation. The static
+env lists stay the base and are never narrowed. Calls the plan left open:
+- **The merged list is seen by the CORS decision only.** The plan says "set it for this request";
+  `HandleCors` loads `config('cors')` into the CorsService before running the stack, so the
+  middleware puts the static list back before `$next` and again in `finally`. Why:
+  `JummahLunchOrdersController::returnUrlsFor` trusts `config('cors.allowed_origins')` as a Stripe
+  return allowlist with no organisation check, so leaking the merged list into it would let one
+  organisation's confirmed host become the lunch return address for another's order; and a
+  long-lived app (tests, workers) must not carry one request's list into the next. Pinned by
+  `CorsDomainOriginsTest::the_merged_list_is_seen_by_the_cors_decision_only`.
+- **HandleCors' skip callbacks are honoured before any read**, in the parent's own order (skip,
+  path, Origin, static list), so a request the parent would ignore costs nothing.
+- **No confirmed rows means the parent runs unchanged**, not with a rewritten config.
+- **A payment-return table read that throws refuses** (warning logged). The CORS side falls back to
+  the static list, which is also the safe direction; for a Stripe return, "safe" is "no".
+- **Only a bare lower-case `https://host` is looked up** for a payment return (no `http`, port,
+  path, trailing dot or upper case): the stored host is normalised and a browser on our site sends
+  exactly that, so normalising the header could only widen the match.
+- **`base()` takes the masjid id as a required second argument** (`base($request, $masjidId,
+  $context)`), so a caller cannot forget it; the submit passes `$form->masjid_id`, the reopen
+  `$row->masjid_id`.
+Alternatives: mutating config for the whole request (the plan's literal wording; widens the lunch
+return allowlist across organisations); reimplementing `HandleCors` to hand the merged list straight
+to the CorsService (duplicates framework code the parent already maintains).
+Rationale: S9 must be invisible for every live origin: every live origin is on production's static
+list, so it takes the parent's path untouched, headers and `Vary` included, with no table or cache
+read. Mutation-checked: each of 13 mutations (registration removed, static/path/wildcard checks
+removed, catch removed, either restore removed, `served()` for `corsAdmitted()`, the save-forget
+removed, the payment masjid match/scope/lookup/catch/origin pattern loosened) fails at least one of
+the new tests.

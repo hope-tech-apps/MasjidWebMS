@@ -11,6 +11,11 @@
  *   '*' is acceptable for our anonymous public endpoints (mobile, v1) because they
  *   don't accept credentials or carry sensitive cookies; for admin endpoints behind
  *   Sanctum, the SPA is served same-origin via Blade so CORS doesn't apply.
+ * - 'allowed_origins' is the BASE list. App\Http\Middleware\HandleCorsWithDomains
+ *   (Studio W1, S9) adds the origin of every masjid_domains row confirmed serving
+ *   our own site, for the CORS decision of a request whose Origin this list does
+ *   not already name, so a new client host needs no .env edit. It never removes
+ *   an origin, and a '*' list is left alone.
  */
 
 return [
