@@ -3024,3 +3024,55 @@ Halal Kitchen: "Build ordering in Manara" — "Pickup at MEC, 48h, office confir
   offline entry (`payment_method`) and registrations (no Mark paid by design) are untouched.
 - Pinned lists updated on purpose: `MealOrderMarkPaidTest` (vocabulary + refusal sentence),
   `FormOfficePaymentTest` (refusal prefix + `meta.payment.paid_via`).
+
+## 2026-09-25 — Halal Kitchen ordering for MEC (a catalogue mode of the lunch module)
+
+**Kitchen = a catalogue mode of the lunch module, not a new module.**
+- `meal_menus.kind` (`dated` default | `catalogue`), `pickup_lead_hours`, `notify_emails`;
+  `service_date` made nullable (a catalogue has none; the unique (masjid, service_date) index still
+  means one menu per Friday because NULLs never collide). Reuses MealOrder, pricing
+  (`LunchOrderLines`, CAP_REFUSE: catering trays are refused over a cap, never trimmed), the Stripe
+  checkout, the webhook and Mark paid. Alternatives: separate kitchen tables (a second order/Stripe
+  path to keep correct); catalogue as a dated menu with a sentinel date (would be served as Friday).
+- Every "this Friday" reader is fenced: `menu()` filters `dated()`, the lunch `store()` refuses a
+  catalogue uuid, the lunch PATCH refuses a kitchen order (`EDIT_KITCHEN`, code `kitchen`), the SMS
+  opening announcement skips catalogues, `LunchOrderMailer::confirmation` hands a kitchen order to
+  `KitchenOrderNotifier`. Kind is fixed at creation (absent from the update rules).
+- Rides the `jummah_lunch` capability. Alternative: a new capability (catalogue, org switches,
+  app menu and cutover plans all pin the set). MEC is switching Friday lunch on anyway (plan 6.4).
+- Public door `Api\V1\KitchenOrdersController`: `GET kitchen-menus/{uuid}`, `POST kitchen-orders`,
+  `GET kitchen-orders/{uuid}`, `POST kitchen-orders/{uuid}/checkout`, on the lunch limiters.
+  Lead time and booking window (90 days) are the SERVER's clock, read in the organisation's
+  timezone; the payload carries the window as wall-clock strings for the picker. The methods are
+  the organisation's accepted ones narrowed by the menu's two switches; an organisation listing
+  none takes no kitchen order (no invented default). Card needs a CORS-trusted origin (the return
+  must reach the renderer's kitchen page, never the admin app's Friday page) and is refused before
+  anything is written otherwise.
+- Office confirmation: a kitchen order stays `pending` until staff move it to confirmed / ready /
+  picked up; `MealOrder::markPaid` no longer auto-confirms a kitchen order (a Friday order still
+  is). `confirmed_at` + `confirmed_by_user_id` are written the first time only, on the locked row.
+  The customer is emailed once (`customer_confirmed_sent_at`), not when it was only recorded at
+  pickup. Card orders are paid at placement, before confirmation; if the office declines, it
+  cancels and refunds in Stripe by hand (the owner's standing "no automatic refunds").
+- Office notification: `KitchenOrderNotifier::placed` emails `notify_emails` (else the
+  organisation's own address) when the order becomes real — at placement for offline, on the
+  webhook's payment for card, so an abandoned card page notifies nobody — claimed once on
+  `office_notified_at`. The customer gets "we received it; the office will confirm". Links go to
+  the renderer page on the recorded trusted origin, else no button (there is no admin-app page for
+  a kitchen order). `notify_emails` is nulled on staging (`config/staging_scrub.php`).
+- Stripe's return for a kitchen order is the kitchen page on every path, not only the public
+  door's: `MealOrderCheckoutService::openPage` defaults a kitchen order's success/cancel URLs to
+  `KitchenOrderLink` (the remembered trusted origin), so a replacement for an expired page and the
+  board's "Payment link" do not send a card payer to the admin app's Friday-lunch page. An order
+  with no trusted origin (taken by phone) keeps the old default: there is no kitchen page to send
+  them to. Alternative: pass return URLs from each caller (the expired-page replacement inside
+  `checkout()` has no request to read an origin from).
+- Staff can take a kitchen order by phone on the board (pickup required, not held to the public
+  lead time); the board shows `pickup_at_local` on the organisation's clock and a Confirm button.
+- Seed: `php artisan kitchen:seed-catalogue {masjid} [--apply --expect-name=]` from
+  `database/data/mec-halal-kitchen.json` (32 dishes, MEC's words and prices verbatim, the Wix
+  duplicate "Kunafeh" $65 dropped per plan 6.3). Dry run by default; --apply needs the exact name;
+  never overwrites (a same-titled menu refuses); creates a DRAFT with no pickup line (MEC's own
+  words go there). Not a migration: one organisation's content, run once, by an operator.
+- Deferred on purpose: Arabic "how to pay" text; the optional extra and fee coverage on kitchen
+  orders; customer self-edit of a kitchen order; a kitchen-specific capability.

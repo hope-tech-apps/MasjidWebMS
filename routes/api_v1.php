@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\FormStaffSessionsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
 use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
+use App\Http\Controllers\Api\V1\KitchenOrdersController;
 use App\Http\Controllers\Api\V1\PaymentMethodsController;
 use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
 use App\Http\Controllers\Api\V1\OrganizationByHostController;
@@ -150,6 +151,23 @@ Route::prefix('v1')->group(function () {
     // not stop a holder of the uuid who changes address.
     Route::patch('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'update'])
         ->middleware(['throttle:lunch-order', 'throttle:lunch-order-edit']);
+
+    // Public kitchen ordering: a standing catalogue on the lunch module, pickup
+    // booked a lead time ahead, confirmed by the office (KitchenOrdersController).
+    // The same allowances as the lunch door it shares a module with: reads on the
+    // loose `lunch-menu` limit, anything that writes or opens a Stripe page on the
+    // tight `lunch-order` one. As there, NOTHING here marks an order paid.
+    Route::get('/kitchen-menus/{uuid}', [KitchenOrdersController::class, 'menu'])
+        ->middleware('throttle:lunch-menu');
+
+    Route::post('/kitchen-orders', [KitchenOrdersController::class, 'store'])
+        ->middleware('throttle:lunch-order');
+
+    Route::get('/kitchen-orders/{uuid}', [KitchenOrdersController::class, 'show'])
+        ->middleware('throttle:lunch-menu');
+
+    Route::post('/kitchen-orders/{uuid}/checkout', [KitchenOrdersController::class, 'checkout'])
+        ->middleware('throttle:lunch-order');
 
     // The organisation's accepted payment methods and "how to pay" text, for any
     // public page that has to say how to pay. Writes nothing.

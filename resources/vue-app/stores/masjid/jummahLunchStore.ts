@@ -25,6 +25,10 @@ export const PAID_VIA_OPTIONS: { value: string; label: string }[] = [
     { value: "other", label: "Other" },
 ];
 
+/** The two kinds of menu (MealMenu::KINDS): a Friday lunch, or a standing kitchen catalogue. */
+export const MENU_KIND_DATED = "dated";
+export const MENU_KIND_CATALOGUE = "catalogue";
+
 /**
  * Admin Jummah-lunch store — CRUD over
  * /api/admin/masjids/{masjid_id}/jummah-lunch/... .
@@ -195,10 +199,14 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         customer_name: string; customer_phone?: string; customer_email?: string; customer_notes?: string;
         items: { item_id: number; quantity: number }[];
         donation_minor?: number; cover_fees?: boolean;
+        pickup_at?: string;
     }): Promise<any> {
         ensureMasjid();
         const body = new FormData();
         body.append("customer_name", payload.customer_name.trim());
+        // A kitchen order's pickup, the organisation's wall clock as the
+        // datetime-local input gives it; the server requires it on a catalogue.
+        if (payload.pickup_at) body.append("pickup_at", payload.pickup_at);
         if (payload.customer_phone?.trim()) body.append("customer_phone", payload.customer_phone.trim());
         if (payload.customer_email?.trim()) body.append("customer_email", payload.customer_email.trim());
         if (payload.customer_notes?.trim()) body.append("customer_notes", payload.customer_notes.trim());
@@ -331,7 +339,16 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         const b = new FormData();
         b.append("title", p.title ?? "Jummah Lunch");
         if (p.title_ar != null) b.append("title_ar", p.title_ar);
-        b.append("service_date", p.service_date ?? "");
+        // The kind is sent on CREATE only: the server fixes it there and ignores it
+        // on edit. A catalogue has no service date and carries its lead time and
+        // office addresses instead.
+        b.append("kind", p.kind === MENU_KIND_CATALOGUE ? MENU_KIND_CATALOGUE : MENU_KIND_DATED);
+        if (p.kind === MENU_KIND_CATALOGUE) {
+            if (p.pickup_lead_hours != null && p.pickup_lead_hours !== "") b.append("pickup_lead_hours", String(p.pickup_lead_hours));
+            if (p.notify_emails != null) b.append("notify_emails", p.notify_emails);
+        } else {
+            b.append("service_date", p.service_date ?? "");
+        }
         if (p.status) b.append("status", p.status);
         if (p.ordering_closes_at) b.append("ordering_closes_at", p.ordering_closes_at);
         if (p.pickup_instructions != null) b.append("pickup_instructions", p.pickup_instructions);
@@ -375,6 +392,12 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (p.allow_sms_optin != null) b.append("allow_sms_optin", p.allow_sms_optin ? "1" : "0");
         // Nullable: "" clears it, which is how an admin turns the text off.
         if (p.notify_service_id !== undefined) b.append("notify_service_id", p.notify_service_id == null ? "" : String(p.notify_service_id));
+        // A catalogue's own two fields. "" clears either: the lead time goes back
+        // to the default, the office list to the organisation's own address.
+        if (p.kind === MENU_KIND_CATALOGUE) {
+            if (p.pickup_lead_hours !== undefined) b.append("pickup_lead_hours", p.pickup_lead_hours == null ? "" : String(p.pickup_lead_hours));
+            if (p.notify_emails !== undefined) b.append("notify_emails", p.notify_emails ?? "");
+        }
         return b;
     }
 

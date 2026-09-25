@@ -8,6 +8,7 @@ use App\Models\MealMenu;
 use App\Models\MealOrder;
 use App\Models\MealOrderItem;
 use App\Models\MealOrderTopUp;
+use App\Services\Kitchen\KitchenOrderNotifier;
 use App\Support\FormNotifier;
 use App\Support\LunchOrderLink;
 use App\Support\MasjidTime;
@@ -35,9 +36,24 @@ use Illuminate\Support\Facades\Mail;
  */
 final class LunchOrderMailer
 {
-    /** The confirmation: a pay-at-pickup order on placement, an online order once paid. */
+    /**
+     * The confirmation: a pay-at-pickup order on placement, an online order once paid.
+     *
+     * A kitchen (catalogue) order is handed to KitchenOrderNotifier instead, at the
+     * same two moments: this is the one method every door calls when an order
+     * becomes real (the public page, and the webhook's two success events), so
+     * routing here means none of them can send a kitchen customer the Friday
+     * email with its "pay at pickup after Jummah" and change-until-the-cutoff
+     * link. The kitchen's own messages say the office will confirm.
+     */
     public function confirmation(MealOrder $order): void
     {
+        if ($order->isKitchenOrder()) {
+            app(KitchenOrderNotifier::class)->placed($order);
+
+            return;
+        }
+
         $this->attempt('confirmation', $order, function () use ($order): void {
             $to = self::address($order);
 

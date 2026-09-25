@@ -10,11 +10,13 @@ use App\Http\Requests\Admin\MealMenus\StoreStaffMealOrderRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealOrderStatusRequest;
 use App\Models\Masjid;
 use App\Models\MealOrderItem;
+use App\Services\Kitchen\KitchenOrderNotifier;
 use App\Services\Lunch\MealOrderEditor;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
 use App\Support\LunchOrderLines;
+use App\Support\MasjidTime;
 use Illuminate\Support\Facades\DB;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
@@ -59,6 +61,13 @@ class MealOrdersController extends Controller
      */
     private const EDIT_ITEM_GONE = 'This order has something on it that is no longer on the menu: %s. Put it back under Menu Items, then change the order.';
 
+    /** The statuses that mean the office has accepted a kitchen order. */
+    private const CONFIRMING_STATUSES = [
+        MealOrder::STATUS_CONFIRMED,
+        MealOrder::STATUS_READY,
+        MealOrder::STATUS_PICKED_UP,
+    ];
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
         private MealOrderEditor $editor
@@ -77,10 +86,22 @@ class MealOrdersController extends Controller
             ->where('meal_menu_id', $menu->id)
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('payment_status'), fn ($q) => $q->where('payment_status', $request->string('payment_status')))
-            ->with(['items', 'enteredBy:id,name', 'markedPaidBy:id,name'])
+            ->with(['items', 'enteredBy:id,name', 'markedPaidBy:id,name', 'confirmedBy:id,name'])
             ->orderByDesc('placed_at')
             ->orderByDesc('id')
             ->get();
+
+        // A kitchen order's pickup, as the office's wall clock reads it: the board
+        // shows this string as it is, so a browser in another timezone cannot
+        // shift the time the kitchen is cooking for.
+        if ($menu->isCatalogue()) {
+            $tz = MasjidTime::zoneFor($menu->masjid_id);
+
+            $orders->each(fn (MealOrder $order) => $order->setAttribute(
+                'pickup_at_local',
+                MasjidTime::toLocalInput($order->pickup_at, $tz)
+            ));
+        }
 
         // Board summary over the WHOLE menu (not the filtered slice).
         $all = MealOrder::query()->where('meal_menu_id', $menu->id);
@@ -203,6 +224,25 @@ class MealOrdersController extends Controller
             return $this->refuse($this->linesRefusal($e));
         }
 
+        // A kitchen order needs its pickup; the office is not held to the public
+        // lead time (it is the one deciding it can make it), only to a time that
+        // has not already passed.
+        $pickup = null;
+
+        if ($menu->isCatalogue()) {
+            try {
+                $pickup = filled($request->validated('pickup_at'))
+                    ? \Illuminate\Support\Carbon::parse((string) $request->validated('pickup_at'), MasjidTime::zoneFor($menu->masjid_id))->utc()
+                    : null;
+            } catch (\Throwable) {
+                $pickup = null;
+            }
+
+            if ($pickup === null || $pickup->isPast()) {
+                return $this->refuse('Choose when the customer will pick this order up.');
+            }
+        }
+
         // Checked before anything is written, so a refusal leaves no order behind.
         if (! $menu->allow_online_payment) {
             return $this->refuse('Orders added here are paid online through Stripe, and online payment is switched off for this lunch. Switch it on under Edit menu.');
@@ -225,7 +265,7 @@ class MealOrdersController extends Controller
         );
 
         try {
-            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $donation, $feeCovered) {
+            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $donation, $feeCovered, $pickup) {
                 $order = new MealOrder([
                     'meal_menu_id' => $menu->id,
                     'customer_name' => trim((string) $request->validated('customer_name')),
@@ -244,6 +284,7 @@ class MealOrdersController extends Controller
                 $order->placed_at = now();
                 $order->source = MealOrder::SOURCE_STAFF;
                 $order->entered_by_user_id = $request->user()?->id;
+                $order->pickup_at = $pickup;
                 // Never paid at creation: Stripe marks it paid when the customer pays.
                 $order->save();
 
@@ -596,9 +637,10 @@ class MealOrdersController extends Controller
     {
         MealOrder::where('meal_menu_id', $menu_id)->findOrFail($order_id);
         $status = (string) $request->validated('status');
+        $userId = $request->user()?->id;
 
         try {
-            [$order, $message, $warning] = DB::transaction(function () use ($menu_id, $order_id, $status) {
+            [$order, $message, $warning, $confirmedNow] = DB::transaction(function () use ($menu_id, $order_id, $status, $userId) {
                 $order = MealOrder::where('meal_menu_id', $menu_id)->lockForUpdate()->findOrFail($order_id);
 
                 if ($status === MealOrder::STATUS_PICKED_UP) {
@@ -608,12 +650,26 @@ class MealOrdersController extends Controller
                     $order->save();
                 }
 
+                // A kitchen order moving forward (confirmed, ready or collected) IS
+                // the office's confirmation (owner: "office confirms"); who and when
+                // are recorded the first time only, on the locked row.
+                $confirmedNow = in_array($status, self::CONFIRMING_STATUSES, true)
+                    && $order->isKitchenOrder()
+                    && $order->recordOfficeConfirmation($userId);
+
                 [$message, $warning] = $status === MealOrder::STATUS_CANCELLED
                     ? $this->closePageOfCancelled($order)
                     : [null, false];
 
-                return [$order, $message, $warning];
+                return [$order, $message, $warning, $confirmedNow];
             });
+
+            // After the commit, and never able to fail the change: the customer is
+            // told the office confirmed — unless it was only recorded at pickup,
+            // when they are standing at the counter already.
+            if ($confirmedNow && $status !== MealOrder::STATUS_PICKED_UP) {
+                app(KitchenOrderNotifier::class)->confirmed($order->load('items'));
+            }
 
             return response()->json([
                 'status' => 'success',

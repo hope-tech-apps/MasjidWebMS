@@ -22,7 +22,7 @@
                                 <h5 class="card-title mb-1">{{ m.title }}</h5>
                                 <span class="badge" :class="statusClass(m.status)">{{ m.status }}</span>
                             </div>
-                            <div class="text-muted small mb-2">{{ formatDate(m.service_date) }}</div>
+                            <div class="text-muted small mb-2">{{ isCatalogue(m) ? catalogueSummary(m) : formatDate(m.service_date) }}</div>
                             <div class="small mb-3">
                                 {{ m.items_count ?? 0 }} item(s) · {{ m.live_orders_count ?? m.orders_count ?? 0 }} order(s)
                             </div>
@@ -42,7 +42,7 @@
             <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>
                     <button class="btn btn-sm btn-link px-0 text-decoration-none" @click="closeMenu">← All menus</button>
-                    <h5 class="mb-0">{{ currentMenu.title }} <span class="text-muted small">· {{ formatDate(currentMenu.service_date) }}</span></h5>
+                    <h5 class="mb-0">{{ currentMenu.title }} <span class="text-muted small">· {{ isCatalogue(currentMenu) ? catalogueSummary(currentMenu) : formatDate(currentMenu.service_date) }}</span></h5>
                 </div>
                 <div class="btn-group">
                     <button v-for="s in ['draft','open','closed']" :key="s" class="btn btn-sm"
@@ -52,7 +52,12 @@
             </div>
 
             <div class="card-body">
-                <p v-if="currentMenu.status === 'open'" class="alert alert-success py-2 small">
+                <p v-if="currentMenu.status === 'open' && isCatalogue(currentMenu)" class="alert alert-success py-2 small">
+                    ✅ This catalogue is <strong>OPEN</strong> — its order page is live on your website at
+                    <code>/kitchen/{{ currentMenu.uuid }}</code>. Each order waits for the office to confirm it,
+                    and the office is emailed when one comes in.
+                </p>
+                <p v-else-if="currentMenu.status === 'open'" class="alert alert-success py-2 small">
                     ✅ This menu is <strong>OPEN</strong> — the public order page is live at
                     <code>/jummah-lunch/{{ masjidId }}</code>.
                 </p>
@@ -150,6 +155,8 @@
                                                 :title="o.entered_by?.name ? 'Entered by ' + o.entered_by.name : 'Entered on the board'">staff</span>
                                         </div>
                                         <div class="text-muted small">{{ o.customer_phone }}</div>
+                                        <!-- A kitchen order's pickup, on the organisation's own clock (pickup_at_local). -->
+                                        <div v-if="o.pickup_at_local" class="small fw-semibold">Pickup {{ pickupWords(o.pickup_at_local) }}</div>
                                     </td>
                                     <!-- Each line in its dish's colour, so an order reads at a glance. -->
                                     <td class="small">
@@ -195,18 +202,23 @@
                                         </template>
                                         <template v-else>
                                             <span class="badge bg-warning text-dark">{{ o.payment_status }}</span>
-                                            <div class="text-muted small">{{ o.payment_method === 'online' ? 'online' : 'at pickup' }}</div>
+                                            <div class="text-muted small">{{ isCatalogue(currentMenu) ? unpaidHow(o) : (o.payment_method === 'online' ? 'online' : 'at pickup') }}</div>
                                         </template>
                                     </td>
                                     <td>
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
                                             <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s" :disabled="s === 'pending'">{{ s }}</option>
                                         </select>
+                                        <div v-if="awaitsConfirmation(o, currentMenu)" class="small text-warning-emphasis fw-semibold mt-1">Awaiting the office</div>
+                                        <div v-else-if="o.confirmed_by?.name" class="small text-muted mt-1">confirmed by {{ o.confirmed_by.name }}</div>
                                     </td>
                                     <td class="text-end text-nowrap">
                                         <!-- After the cutoff, and on a paid order: the changes staff
                                              actually get asked for. Administrators only — the server
                                              does not serve this to a lunch volunteer. -->
+                                        <!-- The office's "yes, we can make this" (owner: "office confirms"). The
+                                             customer is emailed once; the server records who confirmed. -->
+                                        <button v-if="awaitsConfirmation(o, currentMenu)" class="btn btn-sm btn-primary me-1" @click="setOrderStatus(o, 'confirmed')">Confirm</button>
                                         <button v-if="canEditItems(o)" class="btn btn-sm btn-outline-secondary me-1" @click="openEditItems(o)">Edit items</button>
                                         <button v-if="o.payment_status === 'unpaid' && o.status !== 'cancelled' && currentMenu?.allow_online_payment"
                                             class="btn btn-sm btn-outline-primary me-1" @click="openPayLink(o)">Payment link</button>
@@ -315,7 +327,31 @@
                 <div class="card-body">
                     <div class="mb-2"><label class="form-label">Title</label><input v-model="menuModal.form.title" class="form-control" maxlength="120" /></div>
                     <div class="mb-2"><label class="form-label">Title — Arabic <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.title_ar" class="form-control" dir="rtl" maxlength="120" placeholder="العنوان بالعربية" /></div>
-                    <div class="mb-2"><label class="form-label">Service date (Friday)</label><input v-model="menuModal.form.service_date" type="date" class="form-control" /></div>
+                    <!-- Chosen once, on creation: the server fixes a menu's kind there. -->
+                    <div v-if="!menuModal.isEdit" class="mb-2">
+                        <div class="form-label mb-1">Kind of menu</div>
+                        <div class="form-check">
+                            <input id="jlk-dated" v-model="menuModal.form.kind" class="form-check-input" type="radio" :value="MENU_KIND_DATED" />
+                            <label class="form-check-label" for="jlk-dated">Friday lunch — one date, everyone picks up after Jummah</label>
+                        </div>
+                        <div class="form-check">
+                            <input id="jlk-catalogue" v-model="menuModal.form.kind" class="form-check-input" type="radio" :value="MENU_KIND_CATALOGUE" />
+                            <label class="form-check-label" for="jlk-catalogue">Kitchen catalogue — standing menu, customers book a pickup time and the office confirms each order</label>
+                        </div>
+                    </div>
+                    <template v-if="menuModal.form.kind === MENU_KIND_CATALOGUE">
+                        <div class="mb-2">
+                            <label class="form-label" for="jlk-lead">Notice needed before pickup (hours)</label>
+                            <input id="jlk-lead" v-model="menuModal.form.pickup_lead_hours" type="number" min="0" max="720" step="1" class="form-control" />
+                            <div class="form-text">Customers cannot book a pickup sooner than this. Leave empty for 48.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label" for="jlk-notify">Email new orders to</label>
+                            <input id="jlk-notify" v-model="menuModal.form.notify_emails" class="form-control" maxlength="1000" placeholder="office@example.org, kitchen@example.org" />
+                            <div class="form-text">Separate addresses with commas. Leave empty to use the organisation's own email.</div>
+                        </div>
+                    </template>
+                    <div v-else class="mb-2"><label class="form-label">Service date (Friday)</label><input v-model="menuModal.form.service_date" type="date" class="form-control" /></div>
                     <div class="mb-2"><label class="form-label">Ordering closes at <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.ordering_closes_at_local" type="datetime-local" class="form-control" /><div class="form-text">{{ menuTimezoneLabel }}</div></div>
                     <div class="mb-2"><label class="form-label">Pickup instructions</label><input v-model="menuModal.form.pickup_instructions" class="form-control" maxlength="255" /></div>
                     <div class="mb-2"><label class="form-label">Pickup instructions — Arabic <span class="text-muted small">(optional)</span></label><input v-model="menuModal.form.pickup_instructions_ar" class="form-control" dir="rtl" maxlength="255" placeholder="تعليمات الاستلام بالعربية" /></div>
@@ -329,7 +365,7 @@
                         <div v-if="uploadingFlyer" class="text-muted small mt-1">Uploading…</div>
                     </div>
                     <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_online_payment" id="jlaop" /><label class="form-check-label" for="jlaop">Allow pay online (Stripe)</label></div>
-                    <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_pay_at_pickup" id="jlapp" /><label class="form-check-label" for="jlapp">Allow pay at pickup</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" v-model="menuModal.form.allow_pay_at_pickup" id="jlapp" /><label class="form-check-label" for="jlapp">{{ menuModal.form.kind === MENU_KIND_CATALOGUE ? 'Allow paying the office (cash, check, Zelle… as set under Payment Methods)' : 'Allow pay at pickup' }}</label></div>
                     <div class="form-check mb-2">
                         <input class="form-check-input" type="checkbox" v-model="menuModal.form.collect_customer_email" id="jlcce" />
                         <label class="form-check-label" for="jlcce">Ask for an email address</label>
@@ -376,6 +412,12 @@
                 <div class="card-header"><h5 class="mb-0">Add an order</h5></div>
                 <div class="card-body">
                     <div class="mb-2"><label class="form-label" for="jlo-name">Customer name</label><input id="jlo-name" v-model="orderModal.form.customer_name" class="form-control" maxlength="120" /></div>
+                    <!-- A kitchen order needs its pickup. The office is not held to the public notice period. -->
+                    <div v-if="isCatalogue(currentMenu)" class="mb-2">
+                        <label class="form-label" for="jlo-pickup">Pickup</label>
+                        <input id="jlo-pickup" v-model="orderModal.form.pickup_at" type="datetime-local" class="form-control" />
+                        <div class="form-text">{{ menuTimezoneLabel }}</div>
+                    </div>
                     <div class="row g-2 mb-2">
                         <div class="col-sm-6"><label class="form-label" for="jlo-phone">Phone <span class="text-muted small">(optional)</span></label><input id="jlo-phone" v-model="orderModal.form.customer_phone" type="tel" class="form-control" maxlength="32" /></div>
                         <div class="col-sm-6"><label class="form-label" for="jlo-email">Email <span class="text-muted small">(optional)</span></label><input id="jlo-email" v-model="orderModal.form.customer_email" type="email" class="form-control" maxlength="190" /></div>
@@ -611,7 +653,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, reactive, ref, watch } from "vue";
 import Swal from "sweetalert2";
-import { PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
+import { MENU_KIND_CATALOGUE, MENU_KIND_DATED, PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
+import { awaitsConfirmation, catalogueSummary, isCatalogue, pickupWords, unpaidHow } from "@/views/lunch/kitchenBoard";
 import { useMasjidStore } from "@/stores/masjidStore";
 
 const store = useJummahLunchStore();
@@ -850,7 +893,7 @@ const orderFeeMinor = computed<number>(() => (orderModal.coverFees ? orderFeeOff
 const orderTotal = computed<number>(() => orderSubtotal.value + orderExtraMinor.value + orderFeeMinor.value);
 
 function openAddOrder() {
-    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "" };
+    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "", pickup_at: "" };
     orderModal.qty = {};
     orderModal.extraInput = "";
     orderModal.coverFees = false;
@@ -980,6 +1023,7 @@ async function saveOrder() {
         .filter(([, q]) => Number(q) > 0)
         .map(([id, q]) => ({ item_id: Number(id), quantity: Number(q) }));
     if (!items.length) { orderError.value = "Add at least one item."; return; }
+    if (isCatalogue(currentMenu.value) && !orderModal.form.pickup_at) { orderError.value = "Choose when the customer will pick this order up."; return; }
     savingOrder.value = true;
     try {
         const res = await store.createOrder(currentMenu.value.id, {
@@ -1140,6 +1184,10 @@ async function saveEditItems() {
     });
 }
 
+// A new Friday menu's defaults; declared before menuModal, whose form is built from them.
+const FRIDAY_TITLE = "Jummah Lunch";
+const FRIDAY_PICKUP = "Pick up after Jummah in the main hall.";
+
 const menuModal = reactive({
     show: false, isEdit: false, id: null as number | null,
     form: emptyMenuForm(),
@@ -1151,12 +1199,25 @@ const itemModal = reactive({
 
 function emptyMenuForm() {
     return {
-        title: "Jummah Lunch", title_ar: "", service_date: "", ordering_closes_at_local: "",
-        pickup_instructions: "Pick up after Jummah in the main hall.", pickup_instructions_ar: "", flyer_image_url: "",
+        kind: MENU_KIND_DATED as string,
+        title: FRIDAY_TITLE, title_ar: "", service_date: "", ordering_closes_at_local: "",
+        pickup_instructions: FRIDAY_PICKUP, pickup_instructions_ar: "", flyer_image_url: "",
         allow_online_payment: true, allow_pay_at_pickup: true, collect_customer_email: true, allow_donation: true, allow_fee_coverage: true,
         notify_service_id: null, allow_sms_optin: false,
+        pickup_lead_hours: "" as string | number, notify_emails: "",
     };
 }
+
+// Choosing "Kitchen catalogue" on a new menu must not carry the Friday wording
+// into it: the defaults are swapped while the admin has not typed their own.
+watch(() => menuModal.form.kind, (kind) => {
+    if (menuModal.isEdit) return;
+    const catalogue = kind === MENU_KIND_CATALOGUE;
+    if (catalogue && menuModal.form.title === FRIDAY_TITLE) menuModal.form.title = "Kitchen";
+    if (!catalogue && menuModal.form.title === "Kitchen") menuModal.form.title = FRIDAY_TITLE;
+    if (catalogue && menuModal.form.pickup_instructions === FRIDAY_PICKUP) menuModal.form.pickup_instructions = "";
+    if (!catalogue && menuModal.form.pickup_instructions === "") menuModal.form.pickup_instructions = FRIDAY_PICKUP;
+});
 function emptyItemForm() {
     return { name: "", name_ar: "", description: "", description_ar: "", price: "", max_quantity: "", is_available: true };
 }
@@ -1195,6 +1256,11 @@ function openCreateMenu() {
 function openEditMenu(m: any) {
     menuModal.isEdit = true; menuModal.id = m.id;
     menuModal.form = {
+        // Fixed at creation. Carried so the form shows the right fields and the
+        // serialiser sends a catalogue's own two (menuUrlParams); never sent itself.
+        kind: isCatalogue(m) ? MENU_KIND_CATALOGUE : MENU_KIND_DATED,
+        pickup_lead_hours: m.pickup_lead_hours ?? "",
+        notify_emails: m.notify_emails ?? "",
         title: m.title, title_ar: m.title_ar ?? "", service_date: String(m.service_date ?? "").slice(0, 10),
         // The API's *_local twin, already in the masjid's timezone. Never slice
         // the UTC column here: it renders 3 PM for a menu that closes at 11 AM.

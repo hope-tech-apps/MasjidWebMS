@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Admin\MealMenus;
 
+use App\Http\Requests\Admin\MealMenus\Concerns\CatalogueMenuRules;
 use App\Http\Requests\Admin\MealMenus\Concerns\NormalizesOrderingWindow;
 use App\Http\Requests\BaseFormRequest;
 use App\Models\MealMenu;
@@ -9,14 +10,18 @@ use Illuminate\Validation\Rule;
 
 class StoreMealMenuRequest extends BaseFormRequest
 {
-    use NormalizesOrderingWindow;
+    use CatalogueMenuRules, NormalizesOrderingWindow;
 
     public function rules(): array
     {
-        return [
+        return $this->catalogueRules() + [
+            // Fixed at creation: a menu's orders were placed under its kind's
+            // rules (lead time, office confirmation), so it is never switched later.
+            'kind' => ['sometimes', Rule::in(MealMenu::KINDS)],
             'title' => 'required|string|max:120',
             'title_ar' => 'nullable|string|max:120',
-            'service_date' => 'required|date',
+            // A dated menu is for one Friday; a catalogue has no date at all.
+            'service_date' => 'exclude_if:kind,' . MealMenu::KIND_CATALOGUE . '|required|date',
             'status' => ['sometimes', Rule::in(MealMenu::STATUSES)],
             'ordering_opens_at' => 'nullable|date',
             'ordering_closes_at' => 'nullable|date',

@@ -7,6 +7,7 @@ use App\Models\MealMenu;
 use App\Models\MealOrder;
 use App\Models\MealOrderTopUp;
 use App\Services\Lunch\MealOrderEditor;
+use App\Support\KitchenOrderLink;
 use App\Support\LunchOrderExtras;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -627,6 +628,16 @@ class MealOrderCheckoutService
 
         $base = rtrim((string) config('app.url'), '/');
         $orderUrl = $base . '/jummah-lunch/' . $order->masjid_id . '/order/' . $order->uuid;
+
+        // A kitchen order's page is on the organisation's own site, never the
+        // admin app's Friday page, which would show it as a lunch. The public
+        // door passes its return URLs; this default is what every OTHER page
+        // gets — the replacement for an expired one, and the board's payment
+        // link — so it must point at the kitchen page too whenever the order
+        // remembers a trusted site to send the payer back to.
+        if ($order->isKitchenOrder()) {
+            $orderUrl = KitchenOrderLink::url($order) ?? $orderUrl;
+        }
 
         $params = [
             'mode' => 'payment',

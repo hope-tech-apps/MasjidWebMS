@@ -48,6 +48,12 @@ class StoreStaffMealOrderRequest extends BaseFormRequest
             'donation_minor' => 'nullable|integer|min:0|max:' . \App\Models\MealOrder::MAX_DONATION_MINOR,
             // Yes/no only; the surcharge is computed on the server.
             'cover_fees' => 'sometimes|boolean',
+            // A kitchen (catalogue) order's pickup, on the organisation's wall
+            // clock as a datetime-local input sends it. Required there and ignored
+            // on a Friday menu (MealOrdersController::store). The office taking an
+            // order by phone is not held to the public lead time: it is the office
+            // deciding it can make it.
+            'pickup_at' => 'nullable|string|max:40',
         ];
     }
 

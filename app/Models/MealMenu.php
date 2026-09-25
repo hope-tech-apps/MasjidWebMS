@@ -12,11 +12,23 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
 /**
- * A dated meal menu (the Jummah lunch) a masjid opens for ordering.
+ * A meal menu a masjid opens for ordering — one of two KINDS:
  *
- * Status is a plain string backed by the constants below — never a DB enum, so
- * a new state never needs an ALTER on a live table (and SQLite, which the test
- * suite runs on, cannot ALTER a CHECK constraint at all).
+ *  - `dated` (every menu before 2026-09-25, and still the default): the Jummah
+ *    lunch. One service date, one cutoff, everyone collects after the prayer.
+ *  - `catalogue`: a standing price list with no service date (MEC's Halal
+ *    Kitchen; owner: "Pickup at MEC, 48h, office confirms"). The customer picks
+ *    when to collect, at least `pickup_lead_hours` ahead, and the office confirms
+ *    each order (KitchenOrdersController, KitchenOrderNotifier). A paid catalogue
+ *    order is NOT confirmed by its payment (MealOrder::markPaid).
+ *
+ * Every reader that means "this Friday's lunch" filters with scopeDated(), so a
+ * catalogue can never be served, announced or ordered as one. DECISIONS.md
+ * 2026-09-25 records why the kitchen rides on these tables at all.
+ *
+ * Status and kind are plain strings backed by the constants below — never a DB
+ * enum, so a new state never needs an ALTER on a live table (and SQLite, which
+ * the test suite runs on, cannot ALTER a CHECK constraint at all).
  */
 class MealMenu extends Model
 {
@@ -31,6 +43,24 @@ class MealMenu extends Model
         self::STATUS_OPEN,
         self::STATUS_CLOSED,
     ];
+
+    public const KIND_DATED = 'dated';          // the Jummah lunch: a service date and a cutoff
+    public const KIND_CATALOGUE = 'catalogue';  // a standing catalogue: pickup chosen by the customer
+
+    public const KINDS = [
+        self::KIND_DATED,
+        self::KIND_CATALOGUE,
+    ];
+
+    /** The owner's lead time for MEC's kitchen, and the default for a new catalogue. */
+    public const DEFAULT_PICKUP_LEAD_HOURS = 48;
+
+    /**
+     * How far ahead a catalogue pickup may be booked. Not a business rule — a
+     * bound on what an unauthenticated form can put on the office's board, so a
+     * typo of 2062 for 2026 is refused instead of sitting there for decades.
+     */
+    public const MAX_PICKUP_DAYS_AHEAD = 90;
 
     protected $fillable = [
         'masjid_id',
@@ -52,10 +82,14 @@ class MealMenu extends Model
         'notify_service_id',
         'allow_sms_optin',
         'currency',
+        'kind',
+        'pickup_lead_hours',
+        'notify_emails',
     ];
 
     protected $attributes = [
         'title' => 'Jummah Lunch',
+        'kind' => self::KIND_DATED,
         'status' => self::STATUS_DRAFT,
         'allow_online_payment' => true,
         'allow_pay_at_pickup' => true,
@@ -75,6 +109,7 @@ class MealMenu extends Model
             'allow_fee_coverage' => 'boolean',
             'allow_sms_optin' => 'boolean',
             'opening_notified_at' => 'datetime',
+            'pickup_lead_hours' => 'integer',
         ];
     }
 
@@ -119,6 +154,45 @@ class MealMenu extends Model
             ->where('masjid_id', $masjidId)
             ->where('uuid', $uuid)
             ->first();
+    }
+
+    public function isCatalogue(): bool
+    {
+        return $this->kind === self::KIND_CATALOGUE;
+    }
+
+    /** Only the dated (Jummah-lunch) menus: what every "this Friday" reader means. */
+    public function scopeDated(Builder $query): Builder
+    {
+        return $query->where($query->getModel()->qualifyColumn('kind'), self::KIND_DATED);
+    }
+
+    /** Only the standing catalogues. */
+    public function scopeCatalogue(Builder $query): Builder
+    {
+        return $query->where($query->getModel()->qualifyColumn('kind'), self::KIND_CATALOGUE);
+    }
+
+    /** The lead time a catalogue pickup must respect, in hours. */
+    public function pickupLeadHours(): int
+    {
+        return max(0, (int) ($this->pickup_lead_hours ?? self::DEFAULT_PICKUP_LEAD_HOURS));
+    }
+
+    /**
+     * The earliest pickup a customer may choose right now: the lead time from
+     * this moment. The server decides it (the page only displays it), because the
+     * customer's clock is not the office's.
+     */
+    public function earliestPickup(?Carbon $now = null): Carbon
+    {
+        return ($now ?? Carbon::now())->copy()->addHours($this->pickupLeadHours());
+    }
+
+    /** The latest pickup a customer may choose right now. */
+    public function latestPickup(?Carbon $now = null): Carbon
+    {
+        return ($now ?? Carbon::now())->copy()->addDays(self::MAX_PICKUP_DAYS_AHEAD);
     }
 
     /** The menu a masjid is currently taking orders on, if any. */
