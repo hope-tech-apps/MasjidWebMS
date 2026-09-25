@@ -3073,3 +3073,8 @@ receipts or emails are sent on import". Built as `crm:import-wix-orders`
   distinct buyer emails. Not yet dry-run through PHP against the real export: PHP runs only on the
   droplet and the raw export may not leave the Mac. Apply together with the contact import, before
   the domain move, from the fresh read-only pull.
+- **Where the order points at a contact.** A contact merge carries `historical_orders.contact_id`
+  to the survivor with the donations (otherwise the force-delete nulls it while its gifts move on);
+  MemberAccountDeletion classes the column as an OFFICE record, like `donations`, so an app member
+  deleting their account keeps the contact the order history is filed under. The importer is on
+  EmailUnsubscribeTest's allow-list: it writes and reads holds, and gates no send.

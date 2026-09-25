@@ -270,6 +270,13 @@ class ContactsController extends Controller
             \App\Models\Donation::where('contact_id', $source->id)
                 ->update(['contact_id' => $target->id]);
 
+            // An imported Wix order follows its gifts to the survivor. Left
+            // behind, the force-delete below would null its contact while the
+            // donations it produced moved on, and the order would read as
+            // nobody's (DECISIONS.md 2026-09-25, "Wix order history").
+            \App\Models\HistoricalOrder::where('contact_id', $source->id)
+                ->update(['contact_id' => $target->id]);
+
             foreach ($source->cards as $card) {
                 \App\Models\ContactCard::firstOrCreate(
                     ['contact_id' => $target->id, 'last4' => $card->last4],

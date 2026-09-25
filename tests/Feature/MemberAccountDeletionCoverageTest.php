@@ -102,6 +102,10 @@ class MemberAccountDeletionCoverageTest extends TestCase
             'group_message_reactions' => ['contact_id'],
             'group_thread_reads' => ['contact_id'],
             'group_threads' => ['created_by_contact_id'],
+            // 2026-09-25: an order from the organisation's old Wix site,
+            // imported as history. The office's record of a sale, like the
+            // donations the same order produced.
+            'historical_orders' => ['contact_id'],
             'meal_orders' => ['contact_id'],
             'registrants' => ['contact_id'],
             'registrations' => ['contact_id'],

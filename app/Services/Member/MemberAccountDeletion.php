@@ -111,6 +111,11 @@ class MemberAccountDeletion
         'group_message_reactions' => ['contact_id'],
         'group_thread_reads' => ['contact_id'],
         'group_threads' => ['created_by_contact_id'],
+        // An order the person placed on the organisation's old Wix site,
+        // imported as history (crm:import-wix-orders, DECISIONS.md 2026-09-25).
+        // The office's financial record of that sale, like `donations` above,
+        // which the same order's gifts already sit in.
+        'historical_orders' => ['contact_id'],
         'meal_orders' => ['contact_id'],
         'registrants' => ['contact_id'],
         'registrations' => ['contact_id'],

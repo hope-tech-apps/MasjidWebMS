@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Contact;
 use App\Models\Donation;
 use App\Models\Fund;
+use App\Models\HistoricalOrder;
 use App\Models\Masjid;
 use App\Models\Registration;
 use App\Models\User;
@@ -34,7 +35,7 @@ use Tests\TestCase;
  *
  *   giving dashboard (DonationMetrics), the ledger + CSV, receipts (issue and
  *   edit), annual statements, impact figures, the Giving module's facts, the
- *   contact record's totals, and registration cancel.
+ *   contact record's totals, contact merge, and registration cancel.
  *
  * Each exclusion is on by default and history is reachable by name
  * (`source=historical`), so nothing is hidden from the organisation — it is
@@ -205,6 +206,29 @@ class HistoricalOrderReportsTest extends TestCase
         $this->assertSame(10700, $data['giving_total']);
         $this->assertSame(4900, $data['historical_giving_total']);
         $this->assertCount(4, $data['donations'], 'the history is on the record, marked');
+    }
+
+    #[Test]
+    public function merging_a_contact_carries_its_imported_orders_to_the_survivor(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $duplicate = Contact::factory()->create([
+            'masjid_id' => $this->org->id, 'first_name' => 'Amina', 'last_name' => 'Duplicate',
+            'email' => 'amina.old@example.test',
+        ]);
+        $orderIds = HistoricalOrder::withoutMasjidScope()->where('contact_id', $this->amina->id)->pluck('id')->all();
+        $this->assertNotEmpty($orderIds, 'the premise: the import linked orders to Amina');
+
+        $this->postJson("/api/admin/masjids/{$this->org->id}/contacts/{$this->amina->id}/merge", [
+            'target_contact_id' => $duplicate->id,
+        ])->assertOk();
+
+        $this->assertSame(
+            count($orderIds),
+            HistoricalOrder::withoutMasjidScope()->whereIn('id', $orderIds)->where('contact_id', $duplicate->id)->count(),
+            'the orders follow the gifts they produced to the surviving contact'
+        );
     }
 
     #[Test]
