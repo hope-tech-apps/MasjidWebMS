@@ -2997,3 +2997,53 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — Broadcast newsletter layout (MEC migration, "Build rich layout first")
+Decision: a broadcast's EMAIL can carry an ordered list of blocks — heading, rich text, picture
+(alt text required, optional link), button, divider, two pictures side by side, space — stored as
+ONE nullable JSON column `broadcasts.blocks`, rendered by `App\Services\Broadcast\Newsletter\*`
+into `emails.broadcast-newsletter` plus a text/plain part. Calls made where the brief was silent:
+- **One JSON column, not a child table.** A broadcast is never edited after composing, so blocks
+  are only ever read and written whole and in order; a table would add ordering columns, a second
+  write in the compose transaction and a guessable id per block for no query anyone runs.
+- **The legacy email is a separate, untouched template.** A broadcast without blocks renders
+  `emails.broadcast` exactly as before and gains NO text part — pinned byte for byte against the
+  blade frozen at e4c7fc48 (`BroadcastLegacyEmailUnchangedTest`, committed before any change).
+  Adding the text part to legacy mail too would be a deliverability win but changes what every
+  existing sender sends; it is a one-line change in `BroadcastMail::content()` if the owner wants it.
+- **Title and body stay required.** They are what the feed, push, the board and SMS carry; in the
+  newsletter email the body is the opening paragraph under the greeting, then the blocks, then the
+  existing "More details" link, then the unchanged unsubscribe footer. The composer image, when one
+  is attached, stays the email's top picture (alt = the title).
+- **Blocks without the email channel are refused (422)**, not stored and ignored.
+- **Pictures are uploaded with the send, never addressed by URL.** `block_images[<key>]` files become
+  media rows in a NEW collection `broadcast_blocks` (so one never becomes the feed or push picture,
+  which read `MEDIA_COLLECTION` first) tagged `block_key`; the email's address comes from the public
+  disk's configured URL, pinned to `SiteUrl` if the disk yields a path. No admin-typed image URL
+  exists, so no newsletter can hotlink a tracker. SVG is refused (it can carry script). Limits:
+  10 pictures × 8 MB per send (inside production's 100M), not resized.
+- **Rich text is parsed and re-written, never cleaned up.** `RichText` keeps only p/lists and
+  strong/em/u/a (http, https, mailto); everything else is unwrapped or dropped with its content
+  (`<img>` included). It runs on store AND on render, so a hand-edited row is held to the same rules.
+  The editor pastes as plain text. Button and picture links are http(s) only: Laravel's `url` rule
+  accepts `javascript:`, so `NewsletterBlocks::webUrl()` is used instead.
+- **The live preview is the server's own render.** `POST /broadcasts/preview` builds the real
+  `BroadcastMail` (stores nothing, sends nothing); unuploaded pictures are addressed at the reserved
+  `https://preview.invalid/...` and the SPA swaps in its local copy (image data URLs only). With no
+  blocks it returns the legacy email, because that is what the send would produce. Shown in an iframe
+  with an empty `sandbox`.
+- **Email-client safety:** tables only, inline styles on every element, a declared background on
+  every cell (inverting dark modes), `color-scheme` meta + a `prefers-color-scheme`/Outlook.com
+  `[data-ogsc]` palette as an enhancement, MSO ghost table for Outlook's width, two-picture rows stack
+  under 620px. The accent is #1f7a41, darker than the legacy #2f9e57, because white text on #2f9e57 is
+  ~3.3:1 and fails WCAG AA; the legacy email keeps its colour.
+- **Reorder is up/down buttons**, reachable by keyboard and screen reader, not drag alone.
+- **A refused send (422) keeps the composer open.** Before, the composer left for the list after
+  ANY outcome, which with a newsletter would throw away the whole layout over one missing alt text.
+  A 422 stored nothing, so staying is safe; every other failure still leaves as before, because
+  after a 500 part of the send may already have gone and a second press would send it twice.
+- Not built: RTL/Arabic newsletter direction (`lang="en"`, left-aligned), saved templates or
+  "duplicate last newsletter", campaign landing pages (Wix `/so/...`), per-link click tracking.
+Rationale: MEC sends weekly multi-block Wix campaigns (reports/cms.md §4) and the owner chose to
+build the layout before the domain move; the constraints above keep every existing sender's email
+unchanged and keep admin input from becoming markup in 2,800 inboxes.

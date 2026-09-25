@@ -164,6 +164,29 @@ audiences carry guardian-consent rules (`.claude/rules/groups.md`) that an
 interest toggle does not, and that deserve their own task rather than a quiet
 inheritance.
 
+## The newsletter layout is EMAIL's, and the legacy email is frozen
+
+A broadcast may carry `blocks` (heading, text, image, button, divider,
+image_row, spacer) that only the EMAIL renders — `App\Services\Broadcast\Newsletter\`
+(`NewsletterBlocks` = schema + validation, `RichText` = the allowlist parser,
+`NewsletterRenderer` = table rows + text part) into `emails.broadcast-newsletter`.
+
+- **No blocks ⇒ `emails.broadcast`, byte for byte, no text part.** Pinned against
+  `tests/fixtures/broadcast-e4c7fc48/`. Never edit that fixture to make a test pass;
+  a change to the legacy email is a decision, recorded in DECISIONS.md first.
+- **Blocks require the email channel** (422 otherwise). Title and body stay required.
+- **Pictures are uploads, never URLs**: `block_images[key]` → media collection
+  `Broadcast::BLOCK_MEDIA_COLLECTION` with the `block_key` property, resolved by
+  `Broadcast::newsletterBlocks()`. Do not add an image-URL field: it would let a
+  newsletter hotlink a tracking pixel into every inbox.
+- **Rich text is re-parsed on store AND render.** Adding an allowed tag or scheme is
+  a change to `RichText` plus a case in `NewsletterSanitisationTest`, never a regex.
+- **Reader-clickable addresses use `NewsletterBlocks::webUrl()`**, not Laravel's
+  `url` rule, which accepts `javascript:`.
+- **The preview is `BroadcastMail` itself** (`POST .../broadcasts/preview`); the SPA
+  holds no copy of the email's markup. Changing the markup means regenerating
+  `tests/fixtures/newsletter/` with `UPDATE_SNAPSHOTS=1` and reading its diff.
+
 ## Adding a channel
 
 1. A case on `App\Enums\BroadcastChannel` (+ `isAddressable()` / `readsContacts()`).

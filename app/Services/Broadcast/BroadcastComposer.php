@@ -8,6 +8,7 @@ use App\Jobs\SendBroadcastJob;
 use App\Models\Broadcast;
 use App\Models\BroadcastDelivery;
 use App\Models\Masjid;
+use App\Services\Broadcast\Newsletter\NewsletterBlocks;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -47,8 +48,10 @@ class BroadcastComposer
     /**
      * Compose a broadcast and its pending per-channel deliveries.
      *
-     * @param  array<string, mixed>  $attributes  Validated payload.
+     * @param  array<string, mixed>  $attributes  Validated payload; `blocks` is the
+     *                                            normalised newsletter layout, if any.
      * @param  array<int, BroadcastChannel>  $channels  Channels opted in for this send.
+     * @param  array<string, UploadedFile>  $blockImages  The layout's pictures, by upload key.
      */
     public function compose(
         Masjid $masjid,
@@ -56,6 +59,7 @@ class BroadcastComposer
         array $channels,
         ?UploadedFile $image = null,
         ?int $authorId = null,
+        array $blockImages = [],
     ): Broadcast {
         $audience = BroadcastAudience::tryFrom((string) ($attributes['audience'] ?? '')) ?? BroadcastAudience::EVERYONE;
 
@@ -73,6 +77,9 @@ class BroadcastComposer
                 'title' => $attributes['title'],
                 'body' => $attributes['body'],
                 'link' => $attributes['link'] ?? null,
+                // Written only when there is a layout, so a broadcast without
+                // one is created with exactly the attributes it always had.
+                ...(! empty($attributes['blocks']) ? ['blocks' => $attributes['blocks']] : []),
                 'starts_on' => $attributes['starts_on'] ?? null,
                 'ends_on' => $attributes['ends_on'] ?? null,
                 'audience' => $audience->value,
@@ -112,6 +119,25 @@ class BroadcastComposer
             $broadcast->refresh();
         }
 
+        // The newsletter's pictures follow the same rule, each tagged with the
+        // key its blocks name. Only keys the stored layout references are kept,
+        // so a stray upload never becomes an orphaned public file.
+        if (! empty($attributes['blocks']) && $blockImages !== []) {
+            $wanted = array_flip(NewsletterBlocks::imageKeys($attributes['blocks']));
+
+            foreach ($blockImages as $key => $file) {
+                if (! isset($wanted[$key])) {
+                    continue;
+                }
+
+                $broadcast->addMedia($file)
+                    ->withCustomProperties([Broadcast::BLOCK_KEY_PROPERTY => (string) $key])
+                    ->toMediaCollection(Broadcast::BLOCK_MEDIA_COLLECTION);
+            }
+
+            $broadcast->refresh();
+        }
+
         return $broadcast;
     }
 
@@ -120,6 +146,7 @@ class BroadcastComposer
      *
      * @param  array<string, mixed>  $attributes
      * @param  array<int, BroadcastChannel>  $channels
+     * @param  array<string, UploadedFile>  $blockImages
      */
     public function send(
         Masjid $masjid,
@@ -127,8 +154,9 @@ class BroadcastComposer
         array $channels,
         ?UploadedFile $image = null,
         ?int $authorId = null,
+        array $blockImages = [],
     ): Broadcast {
-        $broadcast = $this->compose($masjid, $attributes, $channels, $image, $authorId);
+        $broadcast = $this->compose($masjid, $attributes, $channels, $image, $authorId, $blockImages);
 
         if ($this->isFuture($broadcast->scheduled_at)) {
             SendBroadcastJob::dispatch($broadcast->id)->delay($broadcast->scheduled_at);

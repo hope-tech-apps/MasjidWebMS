@@ -252,6 +252,9 @@ Route::prefix('admin')->group(function () {
             Route::prefix('{masjid_id}/broadcasts')->middleware('capability:broadcasts')->controller(BroadcastsController::class)->group(function () {
                 Route::get('/', 'index');
                 Route::post('/', 'store');
+                // The composer's live preview: renders, stores nothing, sends nothing.
+                // Declared before /{broadcast_id} so "preview" is never read as an id.
+                Route::post('/preview', 'preview');
                 Route::get('/{broadcast_id}', 'show');
             });
 

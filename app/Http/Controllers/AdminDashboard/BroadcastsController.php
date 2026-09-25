@@ -5,10 +5,13 @@ namespace App\Http\Controllers\AdminDashboard;
 use App\Enums\BroadcastAudience;
 use App\Enums\BroadcastChannel;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Admin\Broadcasts\PreviewNewsletterRequest;
 use App\Http\Requests\Admin\Broadcasts\StoreBroadcastRequest;
+use App\Mail\BroadcastMail;
 use App\Models\Broadcast;
 use App\Models\Masjid;
 use App\Services\Broadcast\BroadcastComposer;
+use App\Services\Broadcast\Newsletter\NewsletterBlocks;
 use App\Support\Errors;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Symfony\Component\HttpFoundation\Response;
@@ -47,6 +50,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class BroadcastsController extends Controller
 {
+    /** Reserved by RFC 2606: never resolves, so a preview image can only be the SPA's own copy. */
+    public const PREVIEW_ORIGIN = 'https://preview.invalid';
+
     public function __construct(private readonly BroadcastComposer $composer)
     {
     }
@@ -106,13 +112,14 @@ class BroadcastsController extends Controller
         try {
             $broadcast = $this->composer->send(
                 masjid: $masjid,
-                attributes: $request->safe()->only([
+                attributes: array_merge($request->safe()->only([
                     'title', 'body', 'link', 'starts_on', 'ends_on',
                     'audience', 'contact_ids', 'service_id', 'scheduled_at',
-                ]),
+                ]), ['blocks' => $request->newsletterBlocks()]),
                 channels: $channels,
                 image: $request->file('image'),
                 authorId: $request->user()?->id,
+                blockImages: $request->newsletterImages(),
             );
 
             return response()->json([
@@ -125,6 +132,55 @@ class BroadcastsController extends Controller
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * The email exactly as it will be sent, for the composer's live preview.
+     *
+     * Rendered by BroadcastMail itself — the class that sends it — rather than
+     * by a copy of its layout in the SPA, so the preview cannot drift from the
+     * inbox. Nothing is stored and nothing is sent. Pictures are not uploaded
+     * until the admin sends, so each one is addressed at a reserved `.invalid`
+     * host the SPA swaps for its local copy of that file; a `.invalid` name
+     * never resolves, so nothing leaves the admin's browser to fetch it.
+     *
+     * With no blocks this returns the ORIGINAL single-image email, because that
+     * is what a send without blocks produces: the preview shows the truth rather
+     * than a newsletter frame the recipients would not get.
+     *
+     * The masjid lookup is the tenant guardrail's: a MasjidAdmin naming another
+     * organisation is refused by ResolveMasjidTenant before this runs.
+     */
+    public function preview(PreviewNewsletterRequest $request, $masjid_id)
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+
+        $blocks = $request->newsletterBlocks();
+        $placeholders = [];
+        foreach (NewsletterBlocks::imageKeys($blocks) as $key) {
+            $placeholders[$key] = self::PREVIEW_ORIGIN . '/newsletter-image/' . $key;
+        }
+
+        $mail = new BroadcastMail(
+            orgName: (string) $masjid->name,
+            title: (string) ($request->input('title') ?: 'Your title'),
+            body: (string) ($request->input('body') ?: 'Your message.'),
+            link: $request->input('link') ?: null,
+            imageUrl: $request->input('with_image') === '1' ? self::PREVIEW_ORIGIN . '/composer-image' : null,
+            recipientName: null,
+            orgEmail: null,
+            unsubscribeUrl: self::PREVIEW_ORIGIN . '/unsubscribe',
+            unsubscribeOneClickUrl: null,
+            blocks: NewsletterBlocks::withImageUrls($blocks, $placeholders),
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'html' => $mail->render(),
+                'text' => $mail->textAlternative(),
+            ],
+        ], Response::HTTP_OK);
     }
 
     /**

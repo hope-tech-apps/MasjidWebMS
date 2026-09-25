@@ -80,6 +80,11 @@ class EmailChannel implements BroadcastChannelDriver
         $failed = 0;
         $lastError = null;
 
+        // The newsletter layout, resolved once for every recipient: its image
+        // addresses come from this broadcast's own media. Null for a broadcast
+        // without one, which is what keeps that mail exactly as it was.
+        $blocks = $broadcast->newsletterBlocks();
+
         foreach ($audience->recipients as $contact) {
             try {
                 // Per recipient, because it carries the address it was sent to.
@@ -99,6 +104,7 @@ class EmailChannel implements BroadcastChannelDriver
                     orgEmail: $masjid->email,
                     unsubscribeUrl: $unsubscribe['page'],
                     unsubscribeOneClickUrl: $unsubscribe['one_click'],
+                    blocks: $blocks,
                 ));
 
                 $sent++;

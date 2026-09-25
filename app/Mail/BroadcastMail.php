@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Services\Broadcast\Newsletter\NewsletterRenderer;
 use App\Support\MailGreeting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -57,10 +58,36 @@ use Illuminate\Queue\SerializesModels;
  * Mailable ever may: the opt-out is honoured where the audience is resolved
  * (BroadcastAudienceResolver::emailAudience), which is what keeps receipts,
  * statements, registration confirmations and sign-in codes out of its reach.
+ *
+ * ## The newsletter layout
+ *
+ * A broadcast composed with blocks renders `emails.broadcast-newsletter` — the
+ * same header, greeting, body, link and unsubscribe footer, with the blocks
+ * between the body and the link — plus a plain-text alternative. A broadcast
+ * without blocks renders `emails.broadcast` exactly as it always has, with no
+ * text part: that path is pinned byte for byte against the blade as it stood
+ * before the layout existed (BroadcastLegacyEmailUnchangedTest), so every
+ * organisation not using the layout sends precisely what it sent before.
+ *
+ * The blocks travel in the queued payload already resolved to absolute image
+ * addresses (EmailChannel builds them once per broadcast from the broadcast's
+ * own media), and are rendered — and their text re-sanitised — on the worker,
+ * so a payload is held to the same rules as a request.
  */
 class BroadcastMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+
+    /**
+     * The newsletter layout, image keys resolved to `src`; null sends the
+     * original single-image email. Declared with a default rather than
+     * promoted: this mail is queued, and a payload queued before the property
+     * existed unserializes without it — it must come back as the legacy email,
+     * not as an uninitialized property.
+     *
+     * @var list<array<string, mixed>>|null
+     */
+    public ?array $blocks = null;
 
     public function __construct(
         public string $orgName,
@@ -79,7 +106,10 @@ class BroadcastMail extends Mailable implements ShouldQueue
         public ?string $unsubscribeUrl = null,
         /** The POST that acts; goes in List-Unsubscribe for one-click clients. */
         public ?string $unsubscribeOneClickUrl = null,
+        ?array $blocks = null,
     ) {
+        $this->blocks = $blocks === [] ? null : $blocks;
+
         // A stored first name is not always the reader's own words: a stranger
         // can plant a web address as one through the public registration form.
         // See MailGreeting. Cleaned here, so the queued payload never holds the
@@ -123,6 +153,14 @@ class BroadcastMail extends Mailable implements ShouldQueue
 
     public function content(): Content
     {
+        if ($this->hasNewsletterLayout()) {
+            return new Content(
+                view: 'emails.broadcast-newsletter',
+                text: 'emails.broadcast-newsletter-text',
+                with: $this->newsletterData(),
+            );
+        }
+
         return new Content(
             view: 'emails.broadcast',
             with: [
@@ -135,5 +173,40 @@ class BroadcastMail extends Mailable implements ShouldQueue
                 'greeting' => MailGreeting::for($this->recipientName),
             ],
         );
+    }
+
+    /**
+     * The text/plain part as it will be sent, or null when there is none (a
+     * broadcast without a layout). For the composer's preview, which shows the
+     * admin both parts from the same code that sends them.
+     */
+    public function textAlternative(): ?string
+    {
+        return $this->hasNewsletterLayout()
+            ? view('emails.broadcast-newsletter-text', $this->newsletterData())->render()
+            : null;
+    }
+
+    private function hasNewsletterLayout(): bool
+    {
+        return is_array($this->blocks) && $this->blocks !== [];
+    }
+
+    /** @return array<string, mixed> */
+    private function newsletterData(): array
+    {
+        $renderer = new NewsletterRenderer();
+
+        return [
+            'orgName' => $this->orgName,
+            'title' => $this->title,
+            'body' => $this->body,
+            'link' => $this->link,
+            'imageUrl' => $this->imageUrl,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+            'greeting' => MailGreeting::for($this->recipientName),
+            'blocksHtml' => $renderer->html($this->blocks ?? []),
+            'blocksText' => $renderer->text($this->blocks ?? []),
+        ];
     }
 }
