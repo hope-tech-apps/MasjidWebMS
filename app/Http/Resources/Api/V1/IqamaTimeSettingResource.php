@@ -51,15 +51,19 @@ class IqamaTimeSettingResource extends JsonResource
     }
 
     /**
-     * Today's fixed iqama time for each salah, or null where the offset applies.
+     * Today's stored range time for each salah, or null where none covers today.
      *
-     * Resolved by App\Support\IqamaResolver, the same rule the backstop push and
-     * the stored prayer rows use, so the website cannot say one time while a
-     * phone is pushed another. Null also when the masjid is on Minutes After
-     * Adhan: the website prints any non-null value here as the iqama without
-     * looking at `type`, while the apps honour `type`, so a stored range left
-     * over from an earlier Specific Time Ranges schedule used to show on the
-     * website only.
+     * The covering range is found by App\Support\IqamaResolver, the same lookup
+     * the backstop push and the stored prayer rows use, so on Specific Time
+     * Ranges the website cannot say one time while a phone is pushed another.
+     *
+     * It deliberately does NOT ask the mode (coveringTime, not fixedTime): this
+     * payload has always sent a covering range for a masjid on Minutes After
+     * Adhan too, the website prints any non-null value here without reading
+     * `type`, and live organisations on Minutes After Adhan must see
+     * byte-identical times. Whether a range left over from an earlier schedule
+     * should stop showing on such a website is the owner's call (DECISIONS.md,
+     * 2026-09-25 iqama follow-up), not a side effect of this resolver.
      *
      * @return array<string, string|null> "05:30 PM", as the website prints it
      */
@@ -71,7 +75,7 @@ class IqamaTimeSettingResource extends JsonResource
         $times = [];
 
         foreach (IqamaResolver::PRAYERS as $salah) {
-            $fixed = $resolver->fixedTime($salah, $today);
+            $fixed = $resolver->coveringTime($salah, $today);
 
             $times[$salah] = $fixed === null ? null : Carbon::parse($fixed)->format('h:i A');
         }

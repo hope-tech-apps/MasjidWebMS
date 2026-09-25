@@ -119,9 +119,18 @@ final class ModuleFacts
         } else {
             $lastFixed = IqamaTimeRange::where('iqama_time_setting_id', $setting->id)->max('end_date');
 
-            $facts[] = $lastFixed !== null
-                ? 'Fixed iqama times are set until ' . Carbon::parse($lastFixed)->format('F j, Y') . '; after that the website and apps show minutes after adhan'
-                : 'No fixed iqama dates';
+            // The mode decides whether the ranges are in use, as it does for the
+            // apps and the push (IqamaResolver::usesRanges). On Minutes After
+            // Adhan the website alone still prints a covering range (see
+            // IqamaResolver::coveringTime), so the sentence says exactly that
+            // rather than "set until" a date nothing but the website honours.
+            $onRanges = IqamaResolver::for($setting, $masjid->timezone)->usesRanges();
+
+            $facts[] = match (true) {
+                $lastFixed === null => 'No fixed iqama dates',
+                $onRanges => 'Fixed iqama times are set until ' . Carbon::parse($lastFixed)->format('F j, Y') . '; after that the website and apps show minutes after adhan',
+                default => 'Fixed iqama times are stored until ' . Carbon::parse($lastFixed)->format('F j, Y') . ' but not in use: the apps and prayer reminders show minutes after adhan, while the website still shows a stored time on the days it covers',
+            };
         }
 
         // Exactly the devices the backstop (prayers:send-due) targets: a

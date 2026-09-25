@@ -12,6 +12,7 @@ use App\Support\IqamaResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -25,8 +26,9 @@ use Tests\TestCase;
  * PrayerPushes::STALE_DAYS) and `prayers.iqama_times_data` used adhan + offset only,
  * so MEC, once on fixed Dhuhr 1:45 / Asr 5:30 / Isha 8:45, would have had its dark
  * devices told "the iqama time for Dhuhr has arrived" at adhan + 10 while its own
- * website said 1:45. And the website printed a stored range for a masjid on Minutes
- * After Adhan, where the apps (rightly) ignore it.
+ * website said 1:45. The website's own payload is unchanged for a masjid on Minutes
+ * After Adhan (it still shows a stored covering range, as it always has), because
+ * live organisations on that mode must see byte-identical times.
  *
  * Every adhan instant below is written into the prayers row by hand, so each test
  * says exactly which minute the push should and should not fire in. All clocks are
@@ -225,10 +227,12 @@ class IqamaResolverAgreementTest extends TestCase
     }
 
     #[Test]
-    public function the_website_shows_no_fixed_time_for_a_masjid_on_minutes_after_adhan(): void
+    public function the_website_still_shows_a_stored_range_for_a_masjid_on_minutes_after_adhan(): void
     {
-        // The website prints any non-null value here as the iqama and never reads
-        // `type`; the apps read `type` and use the offsets. Now both use the offsets.
+        // Byte-identical for live Minutes After Adhan organisations: this payload has
+        // always sent a covering range whatever the mode, and the website prints it.
+        // Hiding it is the owner's call (DECISIONS.md), so the resolver's mode check
+        // stops at the apps and the push. Fails if the payload asks fixedTime().
         $masjid = $this->masjidOnMecsSchedule();
         $masjid->iqamaTimeSettings()->update(['iqama_type' => 'minutes_after_adhan']);
 
@@ -238,8 +242,54 @@ class IqamaResolverAgreementTest extends TestCase
             ->json('data.iqama_settings');
 
         $this->assertSame('minutes_after_adhan', $site['type']);
-        $this->assertSame(['fajr' => null, 'dhuhr' => null, 'asr' => null, 'maghrib' => null, 'isha' => null], $site['specific_time_ranges']);
+        $this->assertSame(['fajr' => null, 'dhuhr' => '01:45 PM', 'asr' => '05:30 PM', 'maghrib' => null, 'isha' => '08:45 PM'], $site['specific_time_ranges']);
         $this->assertSame([20, 10, 10, 5, 10], array_map('intval', array_values($site['minutes_after_adhan'])));
+    }
+
+    #[Test]
+    public function the_isha_iqama_the_day_after_a_fixed_range_ends_is_pushed_although_both_fall_on_one_utc_date(): void
+    {
+        // MEC's last fixed Isha, 8:45 PM EDT on Sat Oct 31, is 00:45 UTC on Nov 1. On
+        // Sun Nov 1 (EST) Isha is adhan + 10 again, 6:49 PM = 23:49 UTC, the SAME UTC
+        // date. The once-a-day guard used to be keyed on that UTC date and held for 26
+        // hours, so Sunday's push was swallowed. Keyed on each prayer's own day, both
+        // go out. The cache is deliberately NOT cleared between the two runs.
+        $masjid = $this->masjidOnMecsSchedule();
+        $this->row($masjid, '2026-10-31', ['isha' => '19:55']);
+        $this->row($masjid, '2026-11-01', ['isha' => '18:39']);
+
+        $this->assertSame(['isha'], $this->pushesAtUtc('2026-11-01 00:45', 'iqama'));
+        $this->assertSame(['isha'], $this->pushesAtUtc('2026-11-01 23:49', 'iqama'));
+
+        // And the guard still does its job: a second run in the same minute is silent.
+        $this->assertSame([], $this->pushesAtUtc('2026-11-01 23:49', 'iqama'));
+    }
+
+    #[Test]
+    public function a_masjid_on_ranges_without_a_zone_of_its_own_keeps_its_offset_pushes_and_says_so_once(): void
+    {
+        // `masjids.timezone` defaulted to 'UTC' for every masjid that predates it. A
+        // fixed 1:45 PM placed in UTC would push at 9:45 AM in New York while the
+        // website prints 1:45 PM, so the push keeps adhan + offset (what it always
+        // did) and a warning names the masjid, once a day rather than once a minute.
+        $masjid = $this->masjidOnMecsSchedule();
+        $masjid->update(['timezone' => 'UTC']);
+        $this->row($masjid, '2026-10-15', ['dhuhr' => '13:20']);
+        Log::spy();
+
+        $this->assertSame([], $this->pushesAtUtc('2026-10-15 13:45', 'iqama'), '1:45 PM read as UTC');
+        $this->assertSame(['dhuhr'], $this->pushesAt('2026-10-15 13:30', 'iqama'), 'adhan + 10, as before ranges were read');
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn (string $line) => str_contains($line, "masjid={$masjid->id} is on Specific Time Ranges"))
+            ->once();
+
+        // The stored column follows the same rule, so the apps' cached rows agree.
+        $this->getJson("/api/mobile/masjids/{$masjid->id}/prayers?start_date=2026-10-16&end_date=2026-10-16")->assertOk();
+        $row = Prayer::where('masjid_id', $masjid->id)->where('date', '2026-10-16')->firstOrFail();
+        $adhan = json_decode($row->getRawOriginal('prayers_data'), true);
+        $iqama = json_decode($row->getRawOriginal('iqama_times_data'), true);
+        $this->assertSame(Carbon::parse($adhan['dhuhr'])->addMinutes(10)->format('H:i:s'), $iqama['dhuhr']);
     }
 
     #[Test]

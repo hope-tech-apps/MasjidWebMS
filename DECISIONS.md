@@ -3016,25 +3016,64 @@ found the server still had three copies of the iqama rule, and they disagreed.
   after UTC midnight still belongs to its day. MasjidKit's `fixedIqamaTime(for:on:)` does the same.
 - **A fixed time is its clock time on that day in the masjid's zone**, so 1:45 PM stays 1:45 PM on the
   wall across both daylight-saving changes (17:45 UTC in EDT, 18:45 UTC in EST).
-- **The mode is asked before any range, on the website too.** The website prints any non-null
-  `specific_time_ranges` value as the iqama and never reads `type`; the apps read `type`. So a range left
-  over from an earlier Specific Time Ranges schedule showed on the website only. The resource now sends
-  null there for a masjid on Minutes After Adhan. A masjid on Minutes After Adhan with no covering range
-  (the live payloads pinned in tests/fixtures/live-public-payloads) is byte-identical; one WITH a stored
-  range covering today would see its website change to match its apps. Whether any live org is in that
-  state was not checked (no production reads).
+- **The mode is asked before any range by the apps' stored rows and the push, NOT by the website payload.**
+  The first cut of this branch also made `IqamaTimeSettingResource` send null `specific_time_ranges` for a
+  masjid on Minutes After Adhan, because the website prints any non-null value there without reading `type`.
+  Review rejected that: live organisations on Minutes After Adhan must see byte-identical times, and whether any
+  of them still holds a covering range was never checked. The payload now asks
+  `IqamaResolver::coveringTime()` (mode-agnostic, byte-identical to production), pinned by
+  `the_website_still_shows_a_stored_range_for_a_masjid_on_minutes_after_adhan`. So a Minutes After Adhan
+  masjid with a covering range still disagrees website vs apps, exactly as on production today. **Owner call,
+  open:** run read-only on production `SELECT s.masjid_id, COUNT(*) FROM iqama_time_settings s JOIN
+  iqama_time_ranges r ON r.iqama_time_setting_id = s.id WHERE s.iqama_type = 'minutes_after_adhan' AND
+  r.end_date >= CURDATE() GROUP BY s.masjid_id;` If it is empty, switching the resource to `fixedTime()` changes
+  nobody; if not, the owner decides per org. `ModuleFacts` now says this honestly for such a masjid
+  ("stored ... but not in use: the apps and prayer reminders show minutes after adhan, while the website still
+  shows a stored time"); the Assistant's `mode_explained` ("stored but NOT in use") is left as it was.
 - **The mode is read from the raw column, not the enum cast**: a bad stored value would make the cast throw
   inside the every-minute push loop for every masjid; an unknown mode reads as offsets, as before.
 - **Unchanged on purpose:** a masjid with no iqama row still gets no backstop push at all (adhan
   included) and still stores iqama == adhan; the push still never reads `iqama_times_data`.
-- **The MEC apply script's prerequisite probes were kept as they are**
-  (mec-wix-migration/wave3/1.4-iqama/iqama-fixed-times.php): `inTimezone()` and the save() behaviour are
-  unchanged, and its backstop probe matches `IqamaResol`/`timeRanges` in the command, which now does
-  resolve ranges. Its informational `iqamaTimes()` line still prints OFFSET-ONLY and its "Backstop vs MEC"
-  section still measures adhan + offset; both are stale once this ships and are for the script's owner.
+- **The push's once-a-day guard is keyed on the prayer's own day** (`SendDuePrayerNotifications::guardKey`,
+  the prayers row's `date`), not the UTC date of the instant. With fixed times the instant can jump backwards a
+  day: MEC's last fixed Isha, 8:45 PM EDT Sat 10-31, is 00:45 UTC Nov 1, and Sun 11-01's adhan + 10 is about
+  23:4x UTC the same UTC date, so the 26-hour guard swallowed Sunday's push (review lead, confirmed; pinned by
+  `the_isha_iqama_the_day_after_a_fixed_range_ends_is_pushed_although_both_fall_on_one_utc_date`). For a masjid
+  on Minutes After Adhan the only pushes that change are ones the old key wrongly suppressed (an instant drifting
+  earlier across UTC midnight). Deploy-moment cost, accepted: a push sent by the old code in the 90 s window
+  before the deploy, for a prayer whose row date differs from its UTC date (a New York Isha in EDT, a June
+  Maghrib), can go out once more under the new key. Checking the legacy key as well was rejected: it would
+  keep the suppression bug alive for 26 hours around every such day and leave dead code behind.
+- **A fixed time is only placed in the masjid's OWN zone** (`IqamaResolver::placesFixedTimes`). A blank, unknown
+  or UTC-named `masjids.timezone` (the column's default for every masjid that predates it) keeps the push and the
+  stored column at adhan + offset, which is what they did before this branch, and the push logs one warning per
+  masjid per day at warning level (production's LOG_LEVEL). Placing 1:45 PM at 13:45 UTC would push hours away from
+  the 1:45 PM the website prints. The website payload only uses the zone for "today" and is unchanged.
+- **Other organisations on Specific Time Ranges change on purpose.** The comment in SaveIqamaSettingsRequest names
+  Burlington and NAFIS Apex as on that mode. Their dark-device iqama pushes and stored `iqama_times_data` move from
+  adhan + offset (0 for their fixed prayers) to the fixed times their website and apps already show; that is the
+  fix, not a side effect, and restricting it to MEC was rejected because the task is one rule for every consumer.
+  What was NOT checked (no production reads from a builder): that each such masjid has a real IANA `timezone`
+  (if it does not, the zone guard above keeps its old behaviour) and which of their ranges cover the coming
+  weeks. **Before deploy, owner-approved read-only:** `SELECT m.id, m.name, m.timezone, MAX(r.end_date) FROM
+  masjids m JOIN iqama_time_settings s ON s.masjid_id = m.id LEFT JOIN iqama_time_ranges r ON
+  r.iqama_time_setting_id = s.id WHERE s.iqama_type = 'specific_time_ranges' GROUP BY m.id, m.name, m.timezone;`
+  and record the result here.
+- **`ModuleFacts` asks the mode** (`IqamaResolver::usesRanges`): "Fixed iqama times are set until ..." only on
+  Specific Time Ranges, byte-identical there; on Minutes After Adhan it says the ranges are stored but not in use.
+- **The MEC apply script's backstop prerequisite now probes the new code by behaviour**
+  (mec-wix-migration/wave3/1.4-iqama/iqama-fixed-times.php; that folder is not a git repo, the edit is recorded
+  here). The old probe grepped the command for `timeRanges|specific_time|IqamaResol`, which any bare mention
+  would satisfy. It now requires `App\Support\IqamaResolver`, fed MEC's own offsets and the ranges the script
+  writes (unsaved models), to put Dhuhr/Asr/Isha at MEC's fixed time on the first and last range day and back at
+  adhan + offset the day after; the command (comments stripped) to call `IqamaResolver::for(` and `->iqamaAt(`;
+  and `guardKey`'s fourth parameter to be `$day`. Its "Backstop vs MEC" table measures the deployed resolver (0 min
+  every day) when the probe passes, and adhan + offset before. `inTimezone()`, the save() probe and the SPA
+  caption probes are unchanged. Evidence: harness-backstop-probe.php and its output file next to the script
+  (passes on this branch; refuses with a named reason when the guard key or zone placement is reverted).
 
 Alternatives: resolving on the website only and leaving the push as a documented gap (the apply script
 already allowed an owner's acceptance) was rejected because the push would contradict the site for every
-dark device from the first day; having the resource keep sending ranges for Minutes After Adhan and fixing
-the website instead was rejected because the renderer ships separately and the payload is the one place
-all website builds read.
+dark device from the first day. Hiding a Minutes After Adhan masjid's stored ranges from the website (the
+first cut) was withdrawn in review, above: correct in itself, but it changes a live payload nobody has
+checked, and that is the owner's call.

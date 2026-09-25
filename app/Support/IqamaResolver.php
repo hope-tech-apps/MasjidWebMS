@@ -31,10 +31,27 @@ use Carbon\CarbonInterface;
  * with no row resolves to offsets of 0 (iqama == adhan), which is what the stored
  * column has always said for it; the backstop push, separately, has never sent
  * anything for such a masjid and still does not.
+ *
+ * ONE DELIBERATE EXCEPTION, the website payload: it keeps showing a stored range
+ * for a masjid on Minutes After Adhan (coveringTime), as it always has, because
+ * live organisations on Minutes After Adhan must see byte-identical times until
+ * the owner decides otherwise (DECISIONS.md, 2026-09-25 iqama follow-up).
  */
 final class IqamaResolver
 {
     public const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+
+    /**
+     * Names that all mean UTC. `masjids.timezone` was added with a default of
+     * 'UTC' for every masjid that existed then, so for a masjid these read as
+     * "never set", not as a place on the prime meridian (a real masjid there is
+     * Europe/London or Africa/Abidjan, which follow their own clocks).
+     */
+    private const UTC_NAMES = [
+        'UTC', 'Etc/UTC', 'Etc/UCT', 'UCT', 'Etc/Universal', 'Universal', 'Etc/Zulu', 'Zulu',
+        'GMT', 'Etc/GMT', 'Etc/GMT0', 'Etc/GMT+0', 'Etc/GMT-0', 'GMT0', 'GMT+0', 'GMT-0',
+        'Etc/Greenwich', 'Greenwich',
+    ];
 
     /** @var array<string, true>|null valid IANA identifiers, built once per process */
     private static ?array $zones = null;
@@ -42,6 +59,7 @@ final class IqamaResolver
     private function __construct(
         private readonly ?IqamaTimeSetting $setting,
         private readonly string $zone,
+        private readonly bool $zoneIsTheMasjids,
     ) {
     }
 
@@ -53,7 +71,9 @@ final class IqamaResolver
      */
     public static function for(?IqamaTimeSetting $setting, ?string $zone): self
     {
-        return new self($setting, self::zone($zone));
+        $resolved = self::zone($zone);
+
+        return new self($setting, $resolved, $resolved === (string) $zone && ! in_array($resolved, self::UTC_NAMES, true));
     }
 
     /**
@@ -105,8 +125,35 @@ final class IqamaResolver
     }
 
     /**
+     * Whether a fixed clock time can be turned into an instant for this masjid.
+     *
+     * Only in the masjid's own zone. When its `timezone` is blank, unknown or a
+     * name for UTC (the column's default for every masjid that predates it), a
+     * fixed 1:45 PM would be placed at 13:45 UTC, hours away from the 1:45 PM its
+     * website prints, so iqamaAt() keeps adhan + offset instead: what the push and
+     * the stored column did before they read ranges at all. The push logs it.
+     */
+    public function placesFixedTimes(): bool
+    {
+        return $this->zoneIsTheMasjids;
+    }
+
+    /**
      * The fixed clock time ("HH:MM:SS" as stored) that governs $salah on $day, or
      * null when the masjid is not on ranges or none covers that day.
+     */
+    public function fixedTime(string $salah, string $day): ?string
+    {
+        return $this->usesRanges() ? $this->coveringTime($salah, $day) : null;
+    }
+
+    /**
+     * The stored range time covering $salah on $day, WHATEVER the mode.
+     *
+     * Only the website payload asks this: it has always shown a covering range
+     * even for a masjid on Minutes After Adhan (the apps and the push honour the
+     * mode through fixedTime()), and that stays byte-identical until the owner
+     * decides otherwise. Everything else asks fixedTime().
      *
      * $day is the prayer's own day in the masjid's calendar, Y-m-d. The first
      * covering range in relation order wins, as it does on every client. Dates
@@ -114,9 +161,9 @@ final class IqamaResolver
      * drops the last day of every range for a masjid west of UTC, since the
      * stored dates read as midnight UTC.
      */
-    public function fixedTime(string $salah, string $day): ?string
+    public function coveringTime(string $salah, string $day): ?string
     {
-        if (! $this->usesRanges()) {
+        if ($this->setting === null) {
             return null;
         }
 
@@ -137,9 +184,12 @@ final class IqamaResolver
      * itself does not occur (polar latitudes; see PrayersController::iqamaTimes).
      *
      * A fixed time is that clock time on $day in the masjid's zone, so it stays
-     * 1:45 PM on the wall across a daylight-saving change. The offset path adds
-     * minutes to the adhan instant exactly as the two old copies did, so a
-     * masjid on Minutes After Adhan resolves to the same instant, byte for byte.
+     * 1:45 PM on the wall across a daylight-saving change. With no zone of the
+     * masjid's own to place it in, the offset applies (placesFixedTimes).
+     *
+     * The offset path adds minutes to the adhan instant exactly as the two old
+     * copies did, so a masjid on Minutes After Adhan resolves to the same
+     * instant, byte for byte.
      */
     public function iqamaAt(string $salah, string $day, CarbonInterface|string|null $adhan): ?Carbon
     {
@@ -147,7 +197,7 @@ final class IqamaResolver
             return null;
         }
 
-        $fixed = $this->fixedTime($salah, $day);
+        $fixed = $this->placesFixedTimes() ? $this->fixedTime($salah, $day) : null;
 
         if ($fixed !== null) {
             return Carbon::parse("{$day} {$fixed}", $this->zone)->utc();

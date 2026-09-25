@@ -75,6 +75,24 @@ class SendDuePrayerNotifications extends Command
 
     public const ANDROID_CHANNEL_IQAMA = 'prayer_iqama_v1';
 
+    /**
+     * The once-per-prayer-day guard for one push.
+     *
+     * Keyed on the prayer's OWN day (the prayers row's date), never the UTC date
+     * of the instant. The UTC date used to be the key, which was nearly harmless
+     * while iqama was adhan + offset and moved about a minute a day. A fixed time
+     * can jump: MEC's Isha is 8:45 PM EDT until 2026-10-31, which is 00:45 UTC on
+     * Nov 1, and on Nov 1 it returns to adhan + 10, about 23:4x UTC the same UTC
+     * date, so the first push's 26-hour guard silently swallowed the second.
+     *
+     * Public so the MEC apply script can tell whether this fix is deployed by
+     * asking the code rather than grepping it.
+     */
+    public static function guardKey(int $masjidId, string $prayer, string $type, string $day): string
+    {
+        return "prayer_push:{$masjidId}:{$prayer}:{$type}:{$day}";
+    }
+
     public function handle(OnesignalService $onesignal): int
     {
         $now = Carbon::now('UTC');
@@ -96,6 +114,20 @@ class SendDuePrayerNotifications extends Command
             }
 
             $iqamaTimes = IqamaResolver::for($masjid->iqamaTimeSettings, $masjid->timezone);
+
+            // Fixed times need the masjid's own zone to become instants; without
+            // one its iqama pushes stay at adhan + offset (IqamaResolver::
+            // placesFixedTimes). Said once a day at warning level, which is the
+            // level production logs, so the gap is findable without spamming a
+            // line a minute.
+            if ($iqamaTimes->usesRanges() && ! $iqamaTimes->placesFixedTimes()
+                && Cache::add("prayer_push_zone_unset:{$masjid->id}:{$now->format('Y-m-d')}", true, now()->addHours(26))) {
+                Log::warning(sprintf(
+                    'prayers:send-due masjid=%d is on Specific Time Ranges but its timezone %s is not its own; iqama pushes use adhan + offset until it is set',
+                    $masjid->id,
+                    json_encode($masjid->timezone),
+                ));
+            }
 
             // A prayer instant can land on the UTC calendar day before/after the
             // local prayer day, so scan a 3-day window of rows around "now".
@@ -123,10 +155,10 @@ class SendDuePrayerNotifications extends Command
                     }
 
                     $adhan = Carbon::parse($data->{$prayer})->utc();
-                    $this->maybeSend($onesignal, $masjid, $prayer, 'adhan', $adhan, $now, $dryRun, $onlyDevice, $ignoreStaleness);
+                    $this->maybeSend($onesignal, $masjid, $prayer, 'adhan', $day, $adhan, $now, $dryRun, $onlyDevice, $ignoreStaleness);
 
                     $iqama = $iqamaTimes->iqamaAt($prayer, $day, $adhan);
-                    $this->maybeSend($onesignal, $masjid, $prayer, 'iqama', $iqama, $now, $dryRun, $onlyDevice, $ignoreStaleness);
+                    $this->maybeSend($onesignal, $masjid, $prayer, 'iqama', $day, $iqama, $now, $dryRun, $onlyDevice, $ignoreStaleness);
                 }
             }
         }
@@ -139,6 +171,7 @@ class SendDuePrayerNotifications extends Command
         Masjid $masjid,
         string $prayer,
         string $type,
+        string $day,
         Carbon $time,
         Carbon $now,
         bool $dryRun,
@@ -151,7 +184,7 @@ class SendDuePrayerNotifications extends Command
         }
 
         // Once-per-day idempotency guard so a late/overlapping run can't double-fire.
-        $guard = "prayer_push:{$masjid->id}:{$prayer}:{$type}:{$time->format('Y-m-d')}";
+        $guard = self::guardKey($masjid->id, $prayer, $type, $day);
         if (Cache::has($guard)) {
             return;
         }

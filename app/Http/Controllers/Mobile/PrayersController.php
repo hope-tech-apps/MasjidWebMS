@@ -246,7 +246,9 @@ class PrayersController extends Controller
      * column used to be adhan + offset only, so for a masjid on fixed times it
      * disagreed with the website, the apps and (now) the push. A masjid on
      * Minutes After Adhan, and a masjid with no iqama row (offsets 0), resolve
-     * byte-identically to before. The value is still the UTC wall clock, `H:i:s`.
+     * byte-identically to before, and so does a masjid on fixed times whose
+     * `timezone` is not its own (IqamaResolver::placesFixedTimes). The value is
+     * still the UTC wall clock, `H:i:s`.
      *
      * @param  array<string, mixed>  $item  One day of generated prayer times.
      * @return array<string, string|null>

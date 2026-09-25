@@ -108,8 +108,14 @@ class ModuleFactsTest extends TestCase
 
     private function iqamaUntil(Masjid $masjid, string ...$endDates): void
     {
+        $this->iqamaInModeUntil($masjid, 'specific_time_ranges', ...$endDates);
+    }
+
+    private function iqamaInModeUntil(Masjid $masjid, string $mode, string ...$endDates): void
+    {
         $setting = IqamaTimeSetting::create([
             'masjid_id' => $masjid->id,
+            'iqama_type' => $mode,
             'fajr' => 20, 'dhuhr' => 10, 'asr' => 10, 'maghrib' => 10, 'isha' => 10,
         ]);
 
@@ -281,6 +287,21 @@ class ModuleFactsTest extends TestCase
 
         // Every device with a real subscription id gets the daily refresh.
         $this->assertSame('4 phones get the daily background refresh', ModuleFacts::for($org, 'prayer_times')[2]);
+    }
+
+    #[Test]
+    public function fixed_times_stored_on_minutes_after_adhan_are_not_called_in_use(): void
+    {
+        // The apps and the backstop push ask the mode before any range
+        // (IqamaResolver), so on Minutes After Adhan "set until" would describe
+        // a schedule they ignore. Only the website still prints a covering range.
+        $org = $this->org();
+        $this->iqamaInModeUntil($org, 'minutes_after_adhan', '2026-12-31');
+
+        $this->assertSame(
+            'Fixed iqama times are stored until December 31, 2026 but not in use: the apps and prayer reminders show minutes after adhan, while the website still shows a stored time on the days it covers',
+            ModuleFacts::for($org, 'prayer_times')[0]
+        );
     }
 
     #[Test]
