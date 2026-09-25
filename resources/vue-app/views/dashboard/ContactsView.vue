@@ -352,11 +352,23 @@
                                         whatever reader replaces it and this markup
                                         stands. Nothing else in the SPA reads the field.
                                     -->
-                                    <p v-if="emailOptedOutAt" class="mb-0 mt-1">
+                                    <p v-if="emailOptedOutAt && emailBadge" class="mb-0 mt-1">
                                         <span class="badge bg-secondary-subtle text-secondary">
                                             <i class="bi bi-envelope-slash me-1" aria-hidden="true"></i>
-                                            Emails: unsubscribed {{ formatDate(emailOptedOutAt) }}
+                                            {{ emailBadge.label }} {{ formatDate(emailOptedOutAt) }}
                                         </span>
+                                        <!--
+                                            Only for an import's "not opted in": the person
+                                            never received a broadcast, so their own link
+                                            can never reach them. Every opt-out stays theirs
+                                            to undo; the server refuses it (422) regardless.
+                                        -->
+                                        <button
+                                            v-if="emailBadge.canRecordConsent"
+                                            type="button"
+                                            class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                                            @click="recordEmailConsent"
+                                        >Record consent to email</button>
                                     </p>
                                 </div>
                             </div>
@@ -1215,6 +1227,7 @@ import PageDataContainer from '@/components/PageDataContainer.vue';
 import ContactCredentialsPanel from '@/views/dashboard/contacts/ContactCredentialsPanel.vue';
 import ContactTagsManager from '@/views/dashboard/contacts/ContactTagsManager.vue';
 import { selectableIds, tagsNotOn, toggleId, togglePage } from '@/views/dashboard/contacts/contactTags';
+import { emailOptOutBadge } from '@/views/dashboard/contacts/emailOptOut';
 import { PageChangeData, PaginationOptions } from '@/core/types/elements/Pagination';
 import {
     ADMIN_SELECTABLE_SMS_CONSENT_SOURCES,
@@ -1295,6 +1308,47 @@ const recordTagOptions = computed(() => tagsNotOn(contactsStore.tags, selectedCo
  */
 const emailOptedOutAt = computed<string | null>(
     () => selectedContact.value?.email_opted_out_at ?? null);
+
+/** Which kind of suppression the badge names, from the server's reason (emailOptOut.ts). */
+const emailBadge = computed(() =>
+    emailOptOutBadge(emailOptedOutAt.value, selectedContact.value?.email_opt_out_reason));
+
+/**
+ * Staff record that the person consented to email in Manara, with their own
+ * words for how. Lifts an import's "not opted in" precaution only; the server's
+ * refusal sentence is shown as it comes.
+ */
+const recordEmailConsent = async () => {
+    if (!selectedContact.value) return;
+
+    const result = await Swal.fire({
+        title: 'Record consent to email',
+        text: 'The old website never had this person\'s consent, so the import held their email back. '
+            + 'Record how they have now agreed to receive this organization\'s emails.',
+        input: 'text',
+        inputPlaceholder: 'Signed the newsletter sheet at Jumu\'ah on 3 Oct',
+        inputAttributes: { maxlength: '500' },
+        inputValidator: (value: string) => (value.trim() === '' ? 'Say how they gave consent. An address on file is not consent.' : null),
+        showCancelButton: true,
+        confirmButtonText: 'Record consent',
+    });
+
+    if (!result.isConfirmed || !selectedContact.value) return;
+
+    try {
+        applySavedContact(await contactsStore.recordEmailConsent(selectedContact.value.id, String(result.value)));
+        Swal.fire({ icon: 'success', title: 'Consent recorded', text: 'Broadcast emails can now reach this address.', timer: 2500, showConfirmButton: false });
+    } catch (error: any) {
+        const data = error?.response?.data;
+        Swal.fire({
+            icon: 'error',
+            title: 'Not recorded',
+            text: data?.message
+                || (data?.data && typeof data.data === 'object' ? Object.values(data.data).flat().join(' ') : '')
+                || 'Could not record consent. Please try again.',
+        });
+    }
+};
 
 const paginationOptions = computed<PaginationOptions | undefined>(() => {
     if (!contactsStore.contactsPaginated) return undefined;

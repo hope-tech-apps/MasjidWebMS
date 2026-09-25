@@ -121,6 +121,11 @@ class ContactsController extends Controller
         $data = $contact->toArray();
         $data['giving_total'] = (int) $contact->donations
             ->where('status', 'succeeded')->sum('charged_amount');
+        // WHY the address is suppressed, for the badge only: an import's
+        // "not opted in" is not an unsubscribe, and staff may lift it
+        // (ContactEmailConsentController) where they may not lift an opt-out.
+        $data['email_opt_out_reason'] = app(\App\Services\Broadcast\EmailSuppressionService::class)
+            ->activeReason((int) $contact->masjid_id, $contact->email);
 
         return response()->json([
             'status' => 'success',

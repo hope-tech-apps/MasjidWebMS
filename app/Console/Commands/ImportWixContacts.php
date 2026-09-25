@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\ImportLink;
 use App\Models\Masjid;
 use App\Services\Imports\WixContactImport;
 use App\Support\TenantContext;
@@ -13,6 +14,7 @@ use Illuminate\Console\Command;
  *   php artisan wix:import-contacts contacts.json --masjid=13 --labels=labels.json            # dry run
  *   php artisan wix:import-contacts contacts.json --masjid=13 --labels=labels.json --execute  # write
  *   php artisan wix:import-contacts --masjid=13 --undo=wix-contacts-20261020-1432             # reverse one run
+ *   php artisan wix:import-contacts --masjid=13 --undo=wix-contacts-20261020-1432 --remove-opt-outs  # …written into the wrong organisation
  *
  * The console face of App\Services\Imports\WixContactImport, which holds every
  * rule (the consent rule, matching, re-runs, undo). This reads options, prints
@@ -25,6 +27,9 @@ use Illuminate\Console\Command;
  * - SENDS NOTHING. No email, text, push or notification, and no invitation.
  * - ONE ORGANISATION. The tenant is bound before anything is read, so matching
  *   sees only that organisation's contacts and every write lands in it.
+ * - ONE BATCH NAME PER RUN. A --batch already used in the organisation, by this
+ *   or any staged importer, is refused before anything is written: undo selects
+ *   by batch, so a shared name would let one undo remove two runs.
  */
 class ImportWixContacts extends Command
 {
@@ -34,7 +39,8 @@ class ImportWixContacts extends Command
         {--labels= : The Wix label definitions (JSON with a "labels" array), so tags carry their display names}
         {--batch= : Tag for this run (default wix-contacts-YYYYMMDD-HHMMSS); --undo takes it}
         {--execute : Actually write (otherwise a dry run)}
-        {--undo= : Remove what the named run created, then exit}';
+        {--undo= : Remove what the named run created, then exit}
+        {--remove-opt-outs : With --undo: also remove the Wix opt-outs the run copied (only for a run written into the wrong organisation or from the wrong file)}';
 
     protected $description = 'Import a Wix contacts export into one organisation (dry run by default; reversible).';
 
@@ -55,20 +61,22 @@ class ImportWixContacts extends Command
             'Deleted in Manara, not recreated' => 'deleted_in_manara_skipped',
         ],
         'Email' => [
-            'Stay mailable (SUBSCRIBED and VALID on Wix)' => 'mailable',
+            'Stay mailable (SUBSCRIBED and VALID on Wix, not suppressed in Manara)' => 'mailable',
+            'SUBSCRIBED on Wix, but suppressed in Manara (kept suppressed)' => 'suppressed_but_now_subscribed',
             'No email address (phone only)' => 'no_email',
             'Suppress: spam complaint on Wix' => 'suppress_complaint',
             'Suppress: unsubscribed on Wix' => 'suppress_opt_out',
             'Suppress: bounced on Wix' => 'suppress_bounce',
             'Suppress: never opted in, or inactive, on Wix' => 'suppress_not_opted_in',
-            '  of which Wix opt-outs applied to existing contacts' => 'opt_outs_on_existing_contacts',
+            '  of which Wix opt-outs on contacts already in Manara' => 'opt_outs_on_existing_contacts',
+            '  of which precautions on contacts already in Manara' => 'precautions_on_existing_contacts',
             'Already suppressed in Manara' => 'already_suppressed',
-            'Existing Manara contacts Wix never opted in (left as they are)' => 'existing_left_mailable_by_rule',
-            'Suppressed earlier, SUBSCRIBED on Wix now (not released)' => 'suppressed_but_now_subscribed',
+            'Released in Manara by the person or staff (Wix status not applied)' => 'released_in_manara_kept',
         ],
         'Text messages' => [
             'SMS consents written' => 'sms_consents',
             'SMS opt-outs to record' => 'sms_opt_outs',
+            'SMS opt-outs released in Manara (Wix status not applied)' => 'sms_released_in_manara_kept',
         ],
         'Tags' => [
             'Wix labels in the file' => 'labels',
@@ -95,7 +103,13 @@ class ImportWixContacts extends Command
         app(TenantContext::class)->set($masjid->id);
 
         if (filled($this->option('undo'))) {
-            return $this->undo($import, (string) $this->option('undo'), $masjid);
+            return $this->undo($import, (string) $this->option('undo'), $masjid, (bool) $this->option('remove-opt-outs'));
+        }
+
+        if ($this->option('remove-opt-outs')) {
+            $this->error('--remove-opt-outs only goes with --undo.');
+
+            return self::FAILURE;
         }
 
         $path = (string) $this->argument('file');
@@ -127,6 +141,12 @@ class ImportWixContacts extends Command
         $counts = $import->counts($plan);
         $execute = (bool) $this->option('execute');
         $batch = (string) ($this->option('batch') ?: 'wix-contacts-' . now()->format('Ymd-His'));
+
+        if ($execute && ImportLink::batchUsed($masjid->id, $batch)) {
+            $this->error("Batch {$batch} has already been used in organisation {$masjid->id}; nothing was written. Name a new --batch, so one undo can only ever remove one run.");
+
+            return self::FAILURE;
+        }
 
         $this->info(($execute ? "Importing Wix contacts (batch {$batch})" : 'Wix contact import — DRY RUN') . " into organisation {$masjid->id}");
 
@@ -160,9 +180,9 @@ class ImportWixContacts extends Command
         return self::SUCCESS;
     }
 
-    private function undo(WixContactImport $import, string $batch, Masjid $masjid): int
+    private function undo(WixContactImport $import, string $batch, Masjid $masjid, bool $removeOptOuts): int
     {
-        $result = $import->undo($batch);
+        $result = $import->undo($batch, $removeOptOuts);
 
         if ($result['refused'] !== []) {
             $this->error("Refusing to undo batch {$batch}: nothing has been removed. These contacts are now the organisation's records:");
@@ -176,11 +196,20 @@ class ImportWixContacts extends Command
 
         $this->table(['Undone', 'Count'], [
             ['Contacts removed (erased, not archived)', $result['contacts_removed']],
+            ['Links later runs held to those contacts, removed', $result['later_links_removed']],
             ['Tag assignments removed', $result['tag_assignments_removed']],
             ['Tags removed', $result['tags_removed']],
             ['Tags kept because contacts still carry them', $result['tags_kept_in_use']],
+            ['Precaution suppressions the run wrote (not opted in, bounced), removed', $result['precautions_removed']],
+            ['Wix email opt-outs the run wrote, removed (--remove-opt-outs)', $result['opt_outs_removed']],
+            ['Wix email opt-outs the run wrote, KEPT', $result['opt_outs_kept']],
+            ['Wix SMS opt-outs the run wrote, removed (--remove-opt-outs)', $result['sms_opt_outs_removed']],
+            ['Wix SMS opt-outs the run wrote, KEPT', $result['sms_opt_outs_kept']],
+            ['Suppressions the run wrote that were released in Manara since, KEPT', $result['released_kept']],
         ]);
-        $this->line('Email and SMS suppressions written by the run are KEPT: an opt-out is never deleted.');
+        if (! $removeOptOuts && $result['opt_outs_kept'] + $result['sms_opt_outs_kept'] > 0) {
+            $this->line('Opt-outs copied from Wix are real requests and stay. Only if this run went into the wrong organisation, undo the same batch again with --remove-opt-outs.');
+        }
         $this->info("Batch {$batch} undone in organisation {$masjid->id}.");
 
         return self::SUCCESS;

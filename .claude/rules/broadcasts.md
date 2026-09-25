@@ -254,7 +254,12 @@ only the subscriber can undo it, by texting START back.
 Rows are **released, never deleted**. A START stamps `released_at` and leaves the
 row standing: the history of an opt-out is the evidence it was honoured, and the
 unique index over `(masjid_id, phone_e164)` makes a re-STOP an update rather than
-a second contradictory row.
+a second contradictory row. The single deletion, on both lists, is a staged
+import's undo removing rows that same run INSERTED (tracked row by row in
+`import_links`): its own precautions always, the opt-outs it copied only with
+`--remove-opt-outs` (the run went into the wrong organisation). Staff may lift one
+email reason only, an import's `not_opted_in`, on recorded evidence of consent
+(`EmailSuppressionService::liftPrecaution`).
 
 Suppression is **per tenant**, because consent is: STOP is a reply to one
 registered number, each masjid has its own, and unsubscribing from your masjid

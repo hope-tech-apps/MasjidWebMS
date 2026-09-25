@@ -10,6 +10,8 @@ use App\Models\ImportLink;
 use App\Models\Masjid;
 use App\Models\SmsSuppression;
 use App\Services\Broadcast\BroadcastAudienceResolver;
+use App\Services\Broadcast\EmailSuppressionService;
+use App\Services\Sms\SmsConsentService;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -192,6 +194,17 @@ class WixContactImportTest extends TestCase
             ->whereNull('released_at')->pluck('reason', 'email_normalized')->all();
     }
 
+    /** @return list<string> what a broadcast to "everyone" would email right now; the tenant is unbound again afterwards */
+    private function everyoneEmailed(): array
+    {
+        app(TenantContext::class)->set($this->masjid->id);
+        $everyone = (new Broadcast())->forceFill(['masjid_id' => $this->masjid->id, 'audience' => 'everyone']);
+        $emails = app(BroadcastAudienceResolver::class)->emailRecipients($everyone)->pluck('email')->sort()->values()->all();
+        app(TenantContext::class)->forgetTenant();
+
+        return $emails;
+    }
+
     #[Test]
     public function a_dry_run_prints_counts_only_and_writes_nothing(): void
     {
@@ -276,7 +289,38 @@ class WixContactImportTest extends TestCase
         $this->assertSame(1, $this->contacts()->count());
         $this->assertSame($before, $existing->fresh()->only(['first_name', 'last_name', 'email', 'phone', 'notes', 'import_batch']));
         $this->assertSame(['volunteer'], $existing->tags()->pluck('name')->all());
-        $this->assertSame([], $this->suppressions(), 'a Wix "never subscribed" does not silence somebody already on the Manara list');
+    }
+
+    #[Test]
+    public function the_owners_rule_suppresses_a_matched_contacts_address_that_wix_never_had_subscribed_or_that_bounced(): void
+    {
+        // "Everyone, most blocked": EVERY contact not subscribed or not
+        // deliverable, bounced named among them — matched ones included.
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'Known@Example.test']);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'bounced@example.test']);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'fine@example.test']);
+        $bystander = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'bystander@example.test']);
+
+        [, $output] = $this->import($this->file([
+            $this->wix('w1', ['email' => 'known@example.test', 'sub' => 'NOT_SET']),
+            $this->wix('w2', ['email' => 'bounced@example.test', 'deliv' => 'BOUNCED']),
+            $this->wix('w3', ['email' => 'fine@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $this->assertSame([
+            'bounced@example.test' => EmailSuppression::REASON_BOUNCE,
+            'known@example.test' => EmailSuppression::REASON_NOT_OPTED_IN,
+        ], collect($this->suppressions())->sortKeys()->all());
+        $this->assertMatchesRegularExpression('/of which precautions on contacts already in Manara\s*\|\s*2/', $output);
+
+        app(TenantContext::class)->set($this->masjid->id);
+        $everyone = (new Broadcast())->forceFill(['masjid_id' => $this->masjid->id, 'audience' => 'everyone']);
+        $this->assertSame(
+            ['bystander@example.test', 'fine@example.test'],
+            app(BroadcastAudienceResolver::class)->emailRecipients($everyone)->pluck('email')->sort()->values()->all(),
+        );
+        $this->assertSame(4, $this->contacts()->count(), 'matched, not duplicated');
+        $this->assertNull($bystander->fresh()->email_opted_out_at);
     }
 
     #[Test]
@@ -345,7 +389,7 @@ class WixContactImportTest extends TestCase
         $this->assertCount(1, $contacts);
         $this->assertSame('Newer', $contacts[0]->first_name, 'the most recently updated record names the person');
         $this->assertSame(['twice@example.test' => EmailSuppression::REASON_IMPORTED_OPT_OUT], $this->suppressions());
-        $this->assertSame(2, ImportLink::withoutMasjidScope()->where('local_id', $contacts[0]->id)->count());
+        $this->assertSame(2, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->where('local_id', $contacts[0]->id)->count());
         $this->assertSame('+13365550101', $contacts[0]->phone, 'the older record\'s phone fills the one the newer record lacks');
     }
 
@@ -436,7 +480,7 @@ class WixContactImportTest extends TestCase
         [, $output] = $this->import($this->file([$this->wix('w1', ['email' => 'later@example.test'])]), ['--execute' => true, '--batch' => 'b2']);
 
         $this->assertSame(['later@example.test' => EmailSuppression::REASON_NOT_OPTED_IN], $this->suppressions());
-        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix now \(not released\)\s*\|\s*1/', $output);
+        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix, but suppressed in Manara \(kept suppressed\)\s*\|\s*1/', $output);
     }
 
     #[Test]
@@ -459,7 +503,7 @@ class WixContactImportTest extends TestCase
     }
 
     #[Test]
-    public function undo_removes_exactly_what_the_run_created_and_keeps_every_opt_out(): void
+    public function undo_removes_exactly_what_the_run_created_including_its_own_precautions_and_keeps_the_wix_opt_outs(): void
     {
         $matched = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'matched@example.test']);
         $bystander = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'bystander@example.test']);
@@ -486,11 +530,12 @@ class WixContactImportTest extends TestCase
         $this->assertSame(['Volunteer'], ContactTag::withoutMasjidScope()->pluck('name')->all(), 'the office tag stays, the created tag goes');
         $this->assertSame([], $matched->tags()->pluck('name')->all(), 'the import\'s tag on a matched contact is removed');
         $this->assertSame(['Volunteer'], $bystander->tags()->pluck('name')->all(), 'an office tag assignment is untouched');
-        $this->assertSame(0, ImportLink::withoutMasjidScope()->count());
+        $this->assertSame([ImportLink::KIND_EMAIL_SUPPRESSION], ImportLink::withoutMasjidScope()->pluck('kind')->all(),
+            'only the kept opt-out stays linked, so --remove-opt-outs can still find it');
         $this->assertSame([
             'created@example.test' => EmailSuppression::REASON_IMPORTED_OPT_OUT,
-            'precaution@example.test' => EmailSuppression::REASON_NOT_OPTED_IN,
-        ], collect($this->suppressions())->sortKeys()->all(), 'no suppression is ever deleted');
+        ], $this->suppressions(), 'the precaution the run wrote is gone; the opt-out the person made on Wix stays');
+        $this->assertSame(1, EmailSuppression::withoutMasjidScope()->count(), 'removed, not released: the import never happened');
     }
 
     #[Test]
@@ -562,5 +607,341 @@ class WixContactImportTest extends TestCase
         $this->assertSame([], $this->suppressions($this->other));
         $this->assertSame(0, ContactTag::withoutMasjidScope()->where('masjid_id', $this->other->id)->count());
         $this->assertSame(0, ImportLink::withoutMasjidScope()->where('masjid_id', $this->other->id)->count());
+    }
+
+    // ---------------------------------------------------------------- consent
+
+    #[Test]
+    public function wix_records_sharing_an_address_are_suppressed_when_the_older_one_opted_out_and_the_newer_is_subscribed(): void
+    {
+        // The mirror of the test above: the NEWER record (which names the
+        // person) is mailable, the older one is not. The stricter record still
+        // wins; the newest does not decide.
+        $this->import($this->file([
+            $this->wix('w1', ['first' => 'Older', 'email' => 'twice@example.test', 'sub' => 'UNSUBSCRIBED', 'updated' => '2020-01-01T00:00:00.000Z']),
+            $this->wix('w2', ['first' => 'Newer', 'email' => 'Twice@Example.test', 'updated' => '2025-01-01T00:00:00.000Z']),
+            $this->wix('w3', ['first' => 'Older', 'email' => 'thrice@example.test', 'deliv' => 'BOUNCED', 'updated' => '2020-01-01T00:00:00.000Z']),
+            $this->wix('w4', ['first' => 'Newer', 'email' => 'thrice@example.test', 'updated' => '2025-01-01T00:00:00.000Z']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $this->assertSame(['Newer', 'Newer'], $this->contacts()->pluck('first_name')->all());
+        $this->assertSame([
+            'thrice@example.test' => EmailSuppression::REASON_BOUNCE,
+            'twice@example.test' => EmailSuppression::REASON_IMPORTED_OPT_OUT,
+        ], collect($this->suppressions())->sortKeys()->all());
+        $this->assertSame([], $this->everyoneEmailed());
+    }
+
+    #[Test]
+    public function a_rerun_whose_fresh_pull_marks_a_created_contact_bounced_or_never_subscribed_suppresses_it(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'goes-bad@example.test']),
+            $this->wix('w2', ['email' => 'lapsed@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+        $this->assertSame(['goes-bad@example.test', 'lapsed@example.test'], $this->everyoneEmailed());
+
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'goes-bad@example.test', 'deliv' => 'BOUNCED']),
+            $this->wix('w2', ['email' => 'lapsed@example.test', 'sub' => 'NOT_SET']),
+        ]), ['--execute' => true, '--batch' => 'b2']);
+
+        $this->assertSame([
+            'goes-bad@example.test' => EmailSuppression::REASON_BOUNCE,
+            'lapsed@example.test' => EmailSuppression::REASON_NOT_OPTED_IN,
+        ], collect($this->suppressions())->sortKeys()->all());
+        $this->assertSame([], $this->everyoneEmailed());
+    }
+
+    #[Test]
+    public function a_rerun_never_re_suppresses_an_address_or_number_the_person_released_in_manara(): void
+    {
+        $file = $this->file([
+            $this->wix('w1', ['email' => 'came-back@example.test', 'sub' => 'UNSUBSCRIBED']),
+            $this->wix('w2', ['email' => 'texts@example.test', 'phone' => '(336) 555-0160', 'sms' => 'UNSUBSCRIBED']),
+        ]);
+        $this->import($file, ['--execute' => true, '--batch' => 'b1']);
+
+        // Since then, in Manara: the subscriber's own re-subscribe link, and a START reply.
+        app(EmailSuppressionService::class)->release($this->masjid->id, 'came-back@example.test');
+        app(SmsConsentService::class)->release($this->masjid->id, '+13365550160', 'START');
+
+        [, $output] = $this->import($file, ['--execute' => true, '--batch' => 'b2']);
+
+        $this->assertSame([], $this->suppressions(), 'the older Wix opt-out does not override the newer decision');
+        $this->assertSame(['came-back@example.test', 'texts@example.test'], $this->everyoneEmailed());
+        $this->assertNotNull(SmsSuppression::withoutMasjidScope()->where('phone_e164', '+13365550160')->value('released_at'));
+        $this->assertMatchesRegularExpression('/Released in Manara by the person or staff \(Wix status not applied\)\s*\|\s*1/', $output);
+        $this->assertMatchesRegularExpression('/SMS opt-outs released in Manara \(Wix status not applied\)\s*\|\s*1/', $output);
+    }
+
+    #[Test]
+    public function the_dry_run_counts_an_address_manara_already_suppresses_apart_from_the_mailable_ones(): void
+    {
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'left-in-manara@example.test']);
+        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'left-in-manara@example.test');
+
+        [, $output] = $this->import($this->file([
+            $this->wix('w1', ['email' => 'left-in-manara@example.test']),
+            $this->wix('w2', ['email' => 'fine@example.test']),
+        ]));
+
+        $this->assertMatchesRegularExpression('/Stay mailable \(SUBSCRIBED and VALID on Wix, not suppressed in Manara\)\s*\|\s*1/', $output);
+        $this->assertMatchesRegularExpression('/SUBSCRIBED on Wix, but suppressed in Manara \(kept suppressed\)\s*\|\s*1/', $output);
+    }
+
+    // --------------------------------------------------------------- matching
+
+    #[Test]
+    public function a_placeholder_card_stub_is_never_matched_and_a_real_contact_is_created_beside_it(): void
+    {
+        $stub = Contact::factory()->create([
+            'masjid_id' => $this->masjid->id, 'first_name' => 'Unidentified', 'last_name' => 'Card 4242',
+            'email' => 'card@example.test', 'is_placeholder' => true,
+        ]);
+        $before = $stub->fresh()->only(['first_name', 'last_name', 'email', 'notes', 'import_batch']);
+
+        $this->import($this->file([$this->wix('w1', ['email' => 'card@example.test', 'labels' => ['custom.volunteer']])]),
+            ['--execute' => true, '--batch' => 'b1']);
+
+        $created = $this->contacts()->where('is_placeholder', false)->sole();
+        $this->assertSame('card@example.test', $created->email);
+        $this->assertSame('b1', $created->import_batch);
+        $this->assertSame($before, $stub->fresh()->only(['first_name', 'last_name', 'email', 'notes', 'import_batch']));
+        $this->assertSame([], $stub->tags()->pluck('name')->all());
+        $link = ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->sole();
+        $this->assertSame([$created->id, true], [$link->local_id, $link->created_local]);
+    }
+
+    #[Test]
+    public function of_two_live_contacts_sharing_the_address_the_oldest_is_the_match(): void
+    {
+        $older = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'shared@example.test']);
+        $newer = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'Shared@Example.test']);
+
+        $this->import($this->file([$this->wix('w1', ['email' => 'shared@example.test', 'labels' => ['custom.volunteer']])]),
+            ['--execute' => true, '--batch' => 'b1']);
+
+        $this->assertSame(['volunteer'], $older->tags()->pluck('name')->all());
+        $this->assertSame([], $newer->tags()->pluck('name')->all());
+        $this->assertSame($older->id, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->sole()->local_id);
+    }
+
+    #[Test]
+    public function a_tag_the_office_deleted_is_not_recreated_by_a_rerun(): void
+    {
+        $labels = $this->labelsFile(['custom.zoo-trip' => 'Zoo trip']);
+        $this->import($this->file([$this->wix('w1', ['email' => 'a@example.test', 'labels' => ['custom.zoo-trip']])]),
+            ['--labels' => $labels, '--execute' => true, '--batch' => 'b1']);
+        ContactTag::withoutMasjidScope()->where('name', 'Zoo trip')->sole()->delete();
+
+        [, $output] = $this->import($this->file([
+            $this->wix('w1', ['email' => 'a@example.test', 'labels' => ['custom.zoo-trip']]),
+            $this->wix('w2', ['email' => 'b@example.test', 'labels' => ['custom.zoo-trip']]),
+        ]), ['--labels' => $labels, '--execute' => true, '--batch' => 'b2']);
+
+        $this->assertSame(0, ContactTag::withoutMasjidScope()->where('name', 'Zoo trip')->count());
+        $this->assertMatchesRegularExpression('/Tags deleted in Manara, not recreated\s*\|\s*1/', $output);
+    }
+
+    #[Test]
+    public function a_batch_name_already_used_in_the_organisation_is_refused_before_anything_is_written(): void
+    {
+        $this->import($this->file([$this->wix('w1', ['email' => 'a@example.test'])]), ['--execute' => true, '--batch' => 'b1']);
+        Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'roster@example.test', 'import_batch' => 'roster-2026']);
+        $second = $this->file([$this->wix('w2', ['email' => 'b@example.test'])]);
+
+        [$code, $output] = $this->import($second, ['--execute' => true, '--batch' => 'b1']);
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString('Batch b1 has already been used', $output);
+
+        [$code] = $this->import($second, ['--execute' => true, '--batch' => 'roster-2026']);
+        $this->assertSame(1, $code, 'a name another importer used counts too');
+        $this->assertNull($this->contactWithEmail('b@example.test'), 'nothing was written');
+
+        [$code] = $this->import($second, ['--execute' => true, '--batch' => 'b1'], $this->other);
+        $this->assertSame(0, $code, 'another organisation\'s batch of the same name does not');
+    }
+
+    // ------------------------------------------------------------------- undo
+
+    #[Test]
+    public function undo_removes_only_the_suppressions_the_run_inserted_and_clears_their_badge(): void
+    {
+        $service = app(EmailSuppressionService::class);
+        $service->suppress($this->masjid->id, 'office-opt-out@example.test', EmailSuppression::REASON_MANUAL);
+        $service->suppress($this->masjid->id, 'earlier@example.test', EmailSuppression::REASON_NOT_OPTED_IN);
+        $matched = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'matched@example.test']);
+
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'office-opt-out@example.test', 'sub' => 'NOT_SET']),
+            $this->wix('w2', ['email' => 'earlier@example.test', 'sub' => 'NOT_SET']),
+            $this->wix('w3', ['email' => 'matched@example.test', 'sub' => 'NOT_SET']),
+            $this->wix('w4', ['email' => 'bounced@example.test', 'deliv' => 'BOUNCED']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+        $this->assertSame(4, count($this->suppressions()));
+        $this->assertNotNull($matched->fresh()->email_opted_out_at);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame([
+            'earlier@example.test' => EmailSuppression::REASON_NOT_OPTED_IN,
+            'office-opt-out@example.test' => EmailSuppression::REASON_MANUAL,
+        ], collect($this->suppressions())->sortKeys()->all(), 'rows that existed before the run are untouched');
+        $this->assertNull($matched->fresh()->email_opted_out_at, 'the badge follows the list');
+        $this->assertMatchesRegularExpression('/Precaution suppressions the run wrote \(not opted in, bounced\), removed\s*\|\s*2/', $output);
+    }
+
+    #[Test]
+    public function undo_with_remove_opt_outs_also_removes_the_wix_opt_outs_that_run_wrote_and_nothing_older(): void
+    {
+        app(EmailSuppressionService::class)->suppress($this->masjid->id, 'before@example.test');
+        app(SmsConsentService::class)->suppress($this->masjid->id, '+13365550150');
+
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'left@example.test', 'sub' => 'UNSUBSCRIBED', 'phone' => '(336) 555-0102', 'sms' => 'UNSUBSCRIBED']),
+            $this->wix('w2', ['email' => 'spam@example.test', 'deliv' => 'SPAM_COMPLAINT']),
+            $this->wix('w3', ['email' => 'before@example.test', 'sub' => 'UNSUBSCRIBED', 'phone' => '(336) 555-0150', 'sms' => 'UNSUBSCRIBED']),
+        ]), ['--execute' => true, '--batch' => 'wrong-org']);
+
+        // A plain undo keeps them: they are real requests.
+        [$code] = $this->import(null, ['--undo' => 'wrong-org']);
+        $this->assertSame(0, $code);
+        $this->assertCount(3, $this->suppressions());
+        $this->assertSame(2, SmsSuppression::withoutMasjidScope()->count());
+
+        // Told the run went into the wrong organisation, the same batch's copies go.
+        [$code, $output] = $this->import(null, ['--undo' => 'wrong-org', '--remove-opt-outs' => true]);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(['before@example.test' => EmailSuppression::REASON_UNSUBSCRIBE_LINK], $this->suppressions());
+        $this->assertSame(['+13365550150'], SmsSuppression::withoutMasjidScope()->pluck('phone_e164')->all());
+        $this->assertSame(0, ImportLink::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function undo_of_an_earlier_run_also_removes_the_links_a_later_run_made_to_its_contacts(): void
+    {
+        $this->import($this->file([$this->wix('w1', ['email' => 'twice@example.test'])]), ['--execute' => true, '--batch' => 'b1']);
+        // The later pull has a new duplicate record for the same person.
+        $later = $this->file([
+            $this->wix('w1', ['email' => 'twice@example.test']),
+            $this->wix('w2', ['email' => 'Twice@Example.test']),
+        ]);
+        $this->import($later, ['--execute' => true, '--batch' => 'b2']);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(0, $this->contacts()->count());
+        $this->assertSame(0, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->count());
+
+        [, $output] = $this->import($later);
+        $this->assertMatchesRegularExpression('/New contacts to create\s*\|\s*1/', $output, 'a corrected re-run brings the person back');
+        $this->assertMatchesRegularExpression('/Deleted in Manara, not recreated\s*\|\s*0/', $output);
+    }
+
+    #[Test]
+    public function undo_is_refused_for_a_run_that_updated_a_contact_an_earlier_run_created(): void
+    {
+        $this->import($this->file([$this->wix('w1', ['first' => 'Amina', 'email' => 'amina@example.test'])]), ['--execute' => true, '--batch' => 'b1']);
+        $this->import($this->file([$this->wix('w1', ['first' => 'Aminah', 'email' => 'amina@example.test'])]), ['--execute' => true, '--batch' => 'b2']);
+        $contact = $this->contactWithEmail('amina@example.test');
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b2']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$contact->id}: updated by this run from a later pull", $output);
+        $this->assertSame('Aminah', $contact->fresh()->first_name, 'nothing was changed');
+
+        // Undoing the run that created it removes it, and then the later run has nothing left to refuse.
+        $this->assertSame(0, $this->import(null, ['--undo' => 'b1'])[0]);
+        $this->assertSame(0, $this->contacts()->count());
+        $this->assertSame(0, $this->import(null, ['--undo' => 'b2'])[0]);
+    }
+
+    #[Test]
+    public function undo_is_refused_once_the_office_edited_the_notes_the_name_or_the_sms_consent_of_an_imported_contact(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'notes@example.test']),
+            $this->wix('w2', ['email' => 'name@example.test']),
+            $this->wix('w3', ['email' => 'sms@example.test', 'phone' => '(336) 555-0170']),
+            $this->wix('w4', ['email' => 'untouched@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $notes = $this->contactWithEmail('notes@example.test');
+        $notes->forceFill(['notes' => $notes->notes . "
+Called about the fall festival."])->save();
+        $name = $this->contactWithEmail('name@example.test');
+        $name->forceFill(['last_name' => 'Corrected-by-office'])->save();
+        $sms = $this->contactWithEmail('sms@example.test');
+        $sms->forceFill(['sms_opt_in' => true, 'sms_consent_at' => now(), 'sms_consent_source' => 'paper_form', 'sms_consent_evidence' => 'signed sheet'])->save();
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$notes->id}: contacts (edited since the import)", $output);
+        $this->assertStringContainsString("contact {$name->id}: contacts (edited since the import)", $output);
+        $this->assertStringContainsString("contact {$sms->id}: contacts.sms_opt_in, contacts.sms_consent_at, contacts.sms_consent_source, contacts.sms_consent_evidence", $output);
+        $this->assertStringNotContainsString('untouched', $output);
+        $this->assertSame(4, $this->contacts()->count(), 'nothing was removed');
+    }
+
+    #[Test]
+    public function undo_is_refused_once_an_imported_contact_has_a_login(): void
+    {
+        $this->import($this->file([
+            $this->wix('w1', ['email' => 'password@example.test']),
+            $this->wix('w2', ['email' => 'login@example.test']),
+        ]), ['--execute' => true, '--batch' => 'b1']);
+
+        $withPassword = $this->contactWithEmail('password@example.test');
+        $withPassword->forceFill(['password' => bcrypt('a-test-only-password'), 'verified_at' => now()])->save();
+        $withLogin = $this->contactWithEmail('login@example.test');
+        $withLogin->forceFill(['login_email' => 'login@example.test'])->save();
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$withPassword->id}: contacts.verified_at, contacts.password", $output);
+        $this->assertStringContainsString("contact {$withLogin->id}: contacts.login_email", $output);
+        $this->assertSame(2, $this->contacts()->count(), 'nothing was removed');
+        $this->assertSame(2, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT)->count());
+    }
+
+    #[Test]
+    public function undo_is_refused_once_a_broadcast_named_an_imported_contact(): void
+    {
+        $this->import($this->file([$this->wix('w1', ['email' => 'named@example.test'])]), ['--execute' => true, '--batch' => 'b1']);
+        $named = $this->contactWithEmail('named@example.test');
+        (new Broadcast())->forceFill([
+            'masjid_id' => $this->masjid->id, 'title' => 'Board meeting', 'body' => 'Tuesday',
+            'audience' => 'contacts', 'audience_contact_ids' => [$named->id],
+        ])->save();
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString("contact {$named->id}: broadcasts", $output);
+        $this->assertSame(1, $this->contacts()->count());
+    }
+
+    #[Test]
+    public function undo_keeps_a_tag_it_created_that_the_office_has_since_given_to_another_contact(): void
+    {
+        $bystander = Contact::factory()->create(['masjid_id' => $this->masjid->id, 'email' => 'bystander@example.test']);
+        $labels = $this->labelsFile(['custom.zoo-trip' => 'Zoo trip']);
+        $this->import($this->file([$this->wix('w1', ['email' => 'created@example.test', 'labels' => ['custom.zoo-trip']])]),
+            ['--labels' => $labels, '--execute' => true, '--batch' => 'b1']);
+        ContactTag::withoutMasjidScope()->where('name', 'Zoo trip')->sole()->contacts()->attach([$bystander->id]);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'b1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertNull($this->contactWithEmail('created@example.test'));
+        $this->assertSame(['Zoo trip'], $bystander->tags()->pluck('name')->all());
+        $this->assertMatchesRegularExpression('/Tags kept because contacts still carry them\s*\|\s*1/', $output);
     }
 }

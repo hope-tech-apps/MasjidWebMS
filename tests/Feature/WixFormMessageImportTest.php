@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\ContactUsAccount;
 use App\Models\ContactUsMessage;
+use App\Models\ContactUsReason;
 use App\Models\ContactUsReply;
 use App\Models\ImportLink;
 use App\Models\Masjid;
@@ -313,6 +314,97 @@ class WixFormMessageImportTest extends TestCase
 
         // The same file into our organisation is not "already imported" there.
         $this->import($this->contactFormCsv(), ['--form' => 'Contact', '--execute' => true, '--batch' => 'm2']);
+        $this->assertSame(3, $this->messages()->count());
+    }
+
+    #[Test]
+    public function a_submission_dated_in_the_future_or_before_wix_existed_refuses_the_whole_write(): void
+    {
+        $file = $this->csv(['Date', 'Email', 'Message'], [
+            ['2026-02-01 10:00', 'a@example.test', 'Fine'],
+            [now()->addYear()->format('Y-m-d H:i'), 'b@example.test', 'A misread column'],
+            ['2004-05-01 10:00', 'c@example.test', 'Before Wix'],
+        ]);
+
+        [$code, $output] = $this->import($file, ['--form' => 'Contact', '--execute' => true]);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString('row 3: the submission date cannot be read', $output);
+        $this->assertStringContainsString('row 4: the submission date cannot be read', $output);
+        $this->assertSame(0, ContactUsMessage::count());
+    }
+
+    #[Test]
+    public function undo_of_one_run_keeps_a_sender_a_later_run_filed_messages_under(): void
+    {
+        $this->import($this->csv(['Date', 'Email', 'Message'], [['2026-02-01 10:00', 'same@example.test', 'First']]),
+            ['--form' => 'Contact', '--execute' => true, '--batch' => 'm1']);
+        $this->import($this->csv(['Date', 'Email', 'Message'], [['2026-03-01 10:00', 'same@example.test', 'Second']]),
+            ['--form' => 'Get Subscribers 2', '--execute' => true, '--batch' => 'm2']);
+        $this->assertSame(1, ContactUsAccount::count(), 'one sender across both runs');
+
+        [$code, $output] = $this->import(null, ['--undo' => 'm1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame(['Second'], $this->messages()->pluck('message')->all(), 'the later run\'s message survives');
+        $this->assertSame(1, ContactUsAccount::count());
+        $this->assertSame(1, ImportLink::withoutMasjidScope()->where('import_batch', 'm2')->count());
+        $this->assertSame(1, ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT_US_ACCOUNT)->count(),
+            'the sender\'s link stays, so a further run reuses it');
+    }
+
+    #[Test]
+    public function undo_is_not_refused_by_a_staff_reply_to_a_message_the_run_did_not_import(): void
+    {
+        $this->import($this->contactFormCsv(), ['--form' => 'Contact', '--execute' => true, '--batch' => 'm1']);
+
+        // A message that came in through the website, and was answered, in the same organisation.
+        $device = MobileAppUser::create(['masjid_id' => $this->masjid->id, 'device_id' => 'a-real-device', 'user_agent' => 'Safari']);
+        $account = ContactUsAccount::create(['mobile_app_user_id' => $device->id, 'email' => 'native@example.test', 'name' => 'Native Sender']);
+        $native = new ContactUsMessage();
+        $native->forceFill([
+            'masjid_id' => $this->masjid->id, 'contact_us_account_id' => $account->id,
+            'contact_us_reason_id' => ContactUsReason::firstOrCreate(['text' => 'General'])->id, 'message' => 'Hello',
+        ])->save();
+        ContactUsReply::forceCreate(['contact_us_message_id' => $native->id, 'body' => 'Wa alaykum', 'sent_to' => 'native@example.test', 'sent_at' => now()]);
+
+        [$code, $output] = $this->import(null, ['--undo' => 'm1']);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame([$native->id], ContactUsMessage::pluck('id')->all());
+    }
+
+    #[Test]
+    public function imported_senders_are_keyed_so_no_address_can_be_recomputed_from_the_links_or_the_device(): void
+    {
+        $this->import($this->contactFormCsv(), ['--form' => 'Contact', '--execute' => true, '--batch' => 'm1']);
+
+        $plain = hash('sha256', 'zaynab@example.test');
+        $keys = ImportLink::withoutMasjidScope()->where('kind', ImportLink::KIND_CONTACT_US_ACCOUNT)->pluck('external_id')->all();
+        $this->assertCount(2, $keys);
+        $this->assertNotContains('sender:' . $plain, $keys);
+
+        foreach (MobileAppUser::pluck('device_id') as $deviceId) {
+            $this->assertStringStartsWith('import-wix-' . $this->masjid->id . '-', $deviceId);
+            $this->assertStringNotContainsString(substr($plain, 0, 40), $deviceId);
+        }
+
+        // The key is still stable, so a later run files under the same sender.
+        $this->import($this->csv(['Date', 'Email', 'Message'], [['2026-03-01 10:00', 'Zaynab@example.test', 'Again']]),
+            ['--form' => 'Contact', '--execute' => true, '--batch' => 'm2']);
+        $this->assertSame(2, ContactUsAccount::count());
+    }
+
+    #[Test]
+    public function a_batch_name_already_used_in_the_organisation_is_refused_before_anything_is_written(): void
+    {
+        $this->import($this->contactFormCsv(), ['--form' => 'Contact', '--execute' => true, '--batch' => 'm1']);
+
+        [$code, $output] = $this->import($this->csv(['Date', 'Email', 'Message'], [['2026-03-01 10:00', 'new@example.test', 'New']]),
+            ['--form' => 'Contact', '--execute' => true, '--batch' => 'm1']);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString('Batch m1 has already been used', $output);
         $this->assertSame(3, $this->messages()->count());
     }
 }

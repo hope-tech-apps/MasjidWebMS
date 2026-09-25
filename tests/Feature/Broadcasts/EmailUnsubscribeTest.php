@@ -785,6 +785,10 @@ class EmailUnsubscribeTest extends TestCase
             // what it will write and to leave a suppression already in force
             // untouched; it decides nothing about any send.
             'app/Services/Imports/WixContactImport.php',
+            // Staff recording consent given in Manara, which lifts an import's
+            // `not_opted_in` precaution and refuses every other reason. It
+            // writes the list; it decides nothing about any send.
+            'app/Http/Controllers/AdminDashboard/ContactEmailConsentController.php',
         ];
 
         // Deliberately NOT the bare verbs `isSuppressed(` / `suppressedAmong(`:

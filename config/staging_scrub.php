@@ -151,6 +151,7 @@ return [
         'stripe_webhook_events' => 'An idempotency ledger only (stripe_event_id UNIQUE, type, processed_at) — it has no payload column. Dropping is desirable: staging wants its test webhooks processed, not swallowed as duplicates.',
         'provisioning_jobs' => 'callback_token is a live shared secret; github_repo and artifact_url point at real build infrastructure.',
         'studio_drafts' => 'Manara Studio drafts: a prospective client\'s admin name, email and phone, and a logo path on the private disk, which is never copied to staging. Nothing references the table.',
+        'import_links' => 'Which row each record of a staged import (the Wix contacts and form-message importers) became. external_id holds Wix ids and, for form senders and submissions, keyed hashes of an address, a phone or a name; staging needs none of it and runs no import undo. Nothing references the table (local_id is deliberately not a foreign key).',
 
         // Framework runtime state. All of it is regenerated on demand and all of
         // it can hold a snapshot of the very data being scrubbed.

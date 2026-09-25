@@ -7,11 +7,14 @@ import assert from 'node:assert/strict';
 import {
     clashingTag,
     contactIdsBody,
+    contactsListUrl,
     selectableIds,
     tagNameKey,
     tagsNotOn,
     toggleId,
     togglePage,
+    tagContactsUrl,
+    untagContactsUrl,
 } from '../views/dashboard/contacts/contactTags.ts';
 
 test('a tag name compares the way the server key does: case and spacing ignored', () => {
@@ -52,4 +55,14 @@ test('the picker on a record offers only the tags the member does not carry', ()
     const tags = [{ id: 1, name: 'Volunteer' }, { id: 2, name: 'Donor' }];
     assert.deepEqual(tagsNotOn(tags, [{ id: 1, name: 'Volunteer' }]), [tags[1]]);
     assert.deepEqual(tagsNotOn(tags, undefined), tags);
+});
+
+test('tag and untag are different endpoints: "Remove tag" can never add the tag', () => {
+    assert.equal(tagContactsUrl(13, 7), '/api/admin/masjids/13/contact-tags/7/contacts');
+    assert.equal(untagContactsUrl(13, 7), '/api/admin/masjids/13/contact-tags/7/contacts/remove');
+});
+
+test('the directory list asks the server for the chosen tag, and only when one is chosen', () => {
+    assert.equal(contactsListUrl(13, 2, '', '', 5), '/api/admin/masjids/13/contacts?page=2&tag_id=5');
+    assert.equal(contactsListUrl(13, 1, 'a b', 'only', null), '/api/admin/masjids/13/contacts?page=1&search=a%20b&trashed=only');
 });

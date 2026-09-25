@@ -6,7 +6,8 @@ import { AxiosResponse } from "axios";
 import { PaginatedData } from "@/core/types/data/interfaces/PaginatedData";
 import { Contact, ContactPayload, FamilyLoginStatus } from "@/core/types/data/masjid-related/Contact";
 import { ContactTag } from "@/core/types/data/masjid-related/ContactTag";
-import { contactIdsBody } from "@/views/dashboard/contacts/contactTags";
+import { contactIdsBody, contactsListUrl, tagContactsUrl, untagContactsUrl } from "@/views/dashboard/contacts/contactTags";
+import { emailConsentBody } from "@/views/dashboard/contacts/emailOptOut";
 
 /**
  * Member directory store — CRUD over /api/admin/masjids/{masjid_id}/contacts.
@@ -49,16 +50,7 @@ export const useContactsStore = defineStore('contactsStore', () => {
                 contactsPaginated.value.data = [];
             }
 
-            let url = `/api/admin/masjids/${masjidStore.masjid.id}/contacts?page=${page}`;
-            if (search) {
-                url += `&search=${encodeURIComponent(search)}`;
-            }
-            if (trashed) {
-                url += `&trashed=${trashed}`;
-            }
-            if (tagId) {
-                url += `&tag_id=${tagId}`;
-            }
+            const url = contactsListUrl(masjidStore.masjid.id, page, search, trashed, tagId);
 
             await ApiService.get(url)
                 .then((res: AxiosResponse) => {
@@ -322,19 +314,33 @@ export const useContactsStore = defineStore('contactsStore', () => {
 
     /** Tag one or many members. Returns how many did not carry the tag before. */
     async function tagContacts(tagId: number, contactIds: number[]): Promise<number> {
-        const res: AxiosResponse = await ApiService.post(`/api/admin/masjids/${masjidId()}/contact-tags/${tagId}/contacts`, contactIdsBody(contactIds));
+        const res: AxiosResponse = await ApiService.post(tagContactsUrl(masjidId(), tagId), contactIdsBody(contactIds));
         await fetchTags();
         return res.data?.data?.added ?? 0;
     }
 
     /** Untag one or many members. Returns how many carried it. */
     async function untagContacts(tagId: number, contactIds: number[]): Promise<number> {
-        const res: AxiosResponse = await ApiService.post(`/api/admin/masjids/${masjidId()}/contact-tags/${tagId}/contacts/remove`, contactIdsBody(contactIds));
+        const res: AxiosResponse = await ApiService.post(untagContactsUrl(masjidId(), tagId), contactIdsBody(contactIds));
         await fetchTags();
         return res.data?.data?.removed ?? 0;
     }
 
+    /**
+     * Staff record that the person consented to email in Manara. Lifts an
+     * import's "not opted in" precaution only; the server refuses (422) any
+     * other reason with a sentence for the admin.
+     */
+    async function recordEmailConsent(contactId: number, evidence: string): Promise<Contact> {
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidId()}/contacts/${contactId}/email-consent`,
+            emailConsentBody(evidence),
+        );
+        return res.data.data;
+    }
+
     return {
+        recordEmailConsent,
         contactsPaginated,
         tags,
         fetchTags,

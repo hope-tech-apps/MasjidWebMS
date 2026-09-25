@@ -41,18 +41,32 @@ use Illuminate\Support\Str;
  * ## Idempotent
  *
  * Each submission is recorded in `import_links`, keyed on the export's
- * submission id when it has one and otherwise on a SHA-256 of the form, the
+ * submission id when it has one and otherwise on a keyed hash of the form, the
  * address, the date and the text, so re-running the same file (or a later
  * export that repeats the earlier rows) imports each submission once.
+ *
+ * ## Keys that cannot be recomputed from an address
+ *
+ * Senders are keyed on an HMAC of their address (or phone, or name) under the
+ * application key, never a plain hash: a plain SHA-256 of an email is a lookup
+ * anybody holding a list of addresses can reverse, and these keys sit in
+ * `import_links`. The same applies to the fallback submission key. Rotating
+ * APP_KEY between two runs therefore makes the second run see new senders and
+ * new submissions; the migration applies once, so that is recorded, not
+ * engineered around. `import_links` is emptied on staging
+ * (config/staging_scrub.php).
  *
  * ## Where a message is filed, and what it does NOT do
  *
  * A contact message needs a sender account, which needs a device row
  * (`contact_us_accounts.mobile_app_user_id` is required and unique): the
  * website form creates both for every sender. This does the same, once per
- * sender address, with a device id that names the import and no push
- * subscription, so no push audience, prayer alert or device count ever
- * includes it (every such reader filters on `onesignal_subscription_id`).
+ * sender address, with a RANDOM device id under an `import-wix-` prefix and no
+ * push subscription, so no push audience, prayer alert or device count ever
+ * includes it (every such reader filters on `onesignal_subscription_id`). The
+ * id is random because the public contact-us and device endpoints find a
+ * device by `device_id`: one derived from the sender would let anybody who
+ * knows the rule and the address write to the imported sender's account.
  *
  * `created_at` is the submission's own date, so the history sorts where it
  * happened; `answered_at` is the moment of import with no staff name, which is
@@ -263,7 +277,7 @@ final class WixFormMessageImport
             $submissionId = $get('submission_id');
             $externalId = $submissionId !== ''
                 ? $formSlug . ':' . $submissionId
-                : $formSlug . ':' . hash('sha256', implode("\x1F", [
+                : $formSlug . ':' . $this->key(implode("\x1F", [
                     (string) $this->addressKey($email), $submittedAt->toIso8601String(), $name, $phone, $body,
                 ]));
             if (strlen($externalId) > 191) {
@@ -283,7 +297,7 @@ final class WixFormMessageImport
                 continue;
             }
 
-            $sender = 'sender:' . hash('sha256', $this->addressKey($email)
+            $sender = 'sender:' . $this->key($this->addressKey($email)
                 ?? ($phone !== '' ? 'phone:' . preg_replace('/\D+/', '', $phone) : 'name:' . mb_strtolower($name)));
 
             if (! $knownSenders->has($sender)) {
@@ -340,6 +354,12 @@ final class WixFormMessageImport
         $key = strtolower(trim($email));
 
         return $key !== '' && str_contains($key, '@') ? $key : null;
+    }
+
+    /** HMAC-SHA256 under the application key; see "Keys that cannot be recomputed from an address". */
+    private function key(string $value): string
+    {
+        return hash_hmac('sha256', $value, (string) config('app.key'));
     }
 
     private function date(string $value, string $timezone, ?string $format): ?Carbon
@@ -423,7 +443,7 @@ final class WixFormMessageImport
                 if ($accountId === null) {
                     $device = MobileAppUser::create([
                         'masjid_id' => $masjidId,
-                        'device_id' => 'import-wix-' . $masjidId . '-' . substr($m['sender'], 7, 40),
+                        'device_id' => 'import-wix-' . $masjidId . '-' . Str::random(40),
                         'user_agent' => self::USER_AGENT,
                     ]);
                     $account = ContactUsAccount::create([

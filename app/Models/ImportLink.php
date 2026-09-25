@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToMasjid;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 
 /**
  * ImportLink — which Manara row an external record became, in one organisation.
@@ -39,6 +40,44 @@ class ImportLink extends Model
 
     /** local_id is a contact_us_messages.id */
     public const KIND_CONTACT_US_MESSAGE = 'contact_us_message';
+
+    /**
+     * local_id is an email_suppressions.id the run INSERTED (external_id is the
+     * same id as a string, so no address is copied into this table). Only a row
+     * that did not exist before the run is linked: that is what lets an undo
+     * remove the import's own precautions and never a row somebody else wrote.
+     */
+    public const KIND_EMAIL_SUPPRESSION = 'email_suppression';
+
+    /** local_id is an sms_suppressions.id the run INSERTED; as KIND_EMAIL_SUPPRESSION. */
+    public const KIND_SMS_SUPPRESSION = 'sms_suppression';
+
+    /**
+     * local_id is a contacts.id an EARLIER run created and this run updated from
+     * a fresher pull (external_id is "{contact id}@{batch}"). The values it
+     * replaced are not kept, so this row is what makes the undo of the updating
+     * run refuse rather than pretend to be exact.
+     */
+    public const KIND_CONTACT_UPDATE = 'contact_update';
+
+    /**
+     * Has this batch name already been used in the organisation, by any staged
+     * importer? A reused name would let one `--undo` remove two runs, so the
+     * commands refuse it before writing. Checks every place a batch name is
+     * written: these links, `contacts.import_batch` (the Wix and roster
+     * importers) and `contact_tag_links.import_batch`, which carries no
+     * masjid_id and is reached through its contact.
+     */
+    public static function batchUsed(int $masjidId, string $batch): bool
+    {
+        return self::withoutMasjidScope()->where('masjid_id', $masjidId)->where('import_batch', $batch)->exists()
+            || Contact::withoutMasjidScope()->withTrashed()->where('masjid_id', $masjidId)->where('import_batch', $batch)->exists()
+            || DB::table('contact_tag_links')
+                ->join('contacts', 'contacts.id', '=', 'contact_tag_links.contact_id')
+                ->where('contacts.masjid_id', $masjidId)
+                ->where('contact_tag_links.import_batch', $batch)
+                ->exists();
+    }
 
     protected $fillable = [
         'masjid_id',

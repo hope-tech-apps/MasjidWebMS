@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\ImportLink;
 use App\Models\Masjid;
 use App\Services\Imports\WixFormMessageImport;
 use App\Support\MasjidTime;
@@ -94,6 +95,14 @@ class ImportWixFormMessages extends Command
         $counts = $import->counts($plan);
         $execute = (bool) $this->option('execute');
         $batch = (string) ($this->option('batch') ?: 'wix-messages-' . now()->format('Ymd-His'));
+
+        // Undo selects by batch, so a name any staged importer already used
+        // here would let one undo remove two runs.
+        if ($execute && ImportLink::batchUsed($masjid->id, $batch)) {
+            $this->error("Batch {$batch} has already been used in organisation {$masjid->id}; nothing was written. Name a new --batch.");
+
+            return self::FAILURE;
+        }
 
         $this->newLine();
         $this->info(($execute ? "Importing \"{$form}\" submissions (batch {$batch})" : "\"{$form}\" submissions — DRY RUN")

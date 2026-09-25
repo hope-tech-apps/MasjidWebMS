@@ -810,6 +810,14 @@ Route::prefix('admin')->group(function () {
                         Route::delete('/', 'destroy')->middleware('permission:manage contacts');
                     });
 
+                // Email consent recorded by staff: lifts an import's
+                // `not_opted_in` precaution and nothing else (every opt-out is
+                // the subscriber's to release). One verb, `manage contacts`
+                // like the SMS twin above; no permission is minted.
+                Route::post('{masjid_id}/contacts/{contact_id}/email-consent',
+                    [\App\Http\Controllers\AdminDashboard\ContactEmailConsentController::class, 'store'])
+                    ->middleware('permission:manage contacts');
+
                 // Family sign-in for one contact (T-015d, admin half) — THE
                 // ON-SWITCH for the parent portal.
                 //

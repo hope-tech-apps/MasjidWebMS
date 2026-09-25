@@ -48,22 +48,30 @@ use Illuminate\Support\Facades\DB;
  *   BOUNCED on Wix                  -> bounce             (precaution)
  *   NOT_SET, PENDING, INACTIVE, ... -> not_opted_in       (precaution)
  *
- * The two OPT-OUTS are written whatever happens to the contact — matched to an
- * existing Manara contact, skipped, or created — because they record a request
- * the person made. The two PRECAUTIONS are written only for a contact this
- * import created: a person already in the organisation's Manara list was put
- * there by Manara's own sign-up or by staff, and a Wix "never subscribed" is not
- * a reason to silence them here.
+ * Both kinds are written for EVERY address, whatever happens to the contact —
+ * created, matched to an existing Manara contact, or skipped because the office
+ * deleted it — because the owner's rule names every contact and names bounced
+ * among them. The two OPT-OUTS record a request the person made. The two
+ * PRECAUTIONS record only that Wix never had consent (or could not deliver), so
+ * they are shown differently in the directory, staff may lift a `not_opted_in`
+ * once the person consents in Manara (EmailSuppressionService::liftPrecaution),
+ * and the undo of the run that wrote one removes it.
  *
  * Several Wix records sharing one address are one Manara contact, and the
  * address is mailable only if EVERY one of them is SUBSCRIBED and VALID: the
  * stricter record wins, because the dangerous direction is the one that mails
  * somebody who said no.
  *
- * A suppression is never released by this class, and never deleted by its
- * undo: rows are released only by the subscriber (EmailSuppression). So a
- * re-run where Wix now says SUBSCRIBED for an address an earlier run
- * suppressed as a precaution is COUNTED, not changed.
+ * A suppression is never released by this class. So a re-run where Wix now
+ * says SUBSCRIBED for an address an earlier run suppressed as a precaution is
+ * COUNTED, not changed. The other way round holds too: an address (or number)
+ * whose suppression row was RELEASED in Manara — by the subscriber's own link,
+ * or by staff recording their consent — is the person's newer decision, and a
+ * run never re-suppresses it from older Wix data; it is counted instead.
+ *
+ * Only a row the run INSERTS is its own: each is recorded in `import_links`
+ * (KIND_EMAIL_SUPPRESSION / KIND_SMS_SUPPRESSION), and a row that already
+ * existed in any state is left exactly as it was.
  *
  * No SMS consent is ever written (nobody opted in to SMS on Wix, and a phone
  * number is not consent). A Wix SMS UNSUBSCRIBED becomes an SMS suppression.
@@ -71,7 +79,7 @@ use Illuminate\Support\Facades\DB;
  * ## Matching the organisation's existing contacts
  *
  * Existing contacts are never edited — not a name, not a blank. The import adds
- * only what it owns: tags and suppressions.
+ * only tags and suppressions to them.
  *
  *  - By EMAIL first (the normalised address, placeholders excluded). Several
  *    live contacts with the address: the oldest is used.
@@ -89,11 +97,14 @@ use Illuminate\Support\Facades\DB;
  * A re-run looks there first, so it finds the contact even if its address was
  * corrected since. A contact the import CREATED is updated from the fresh pull
  * (name, email, phone) unless its values no longer match the fingerprint the
- * import last wrote — then somebody edited it in Manara, and the edit is kept.
+ * import last wrote (name, email, phone and notes) — then somebody edited it in
+ * Manara, and the edit is kept.
  *
  * ## Undo removes exactly what one run created
  *
- * See `undo()`. Suppressions are kept, on purpose.
+ * See `undo()`. The one documented exception: the opt-outs a run copied from
+ * Wix (`imported_opt_out`, `complaint`) are real requests and stay, unless the
+ * operator says the run went into the wrong organisation.
  *
  * ## It sends nothing
  *
@@ -115,13 +126,23 @@ final class WixContactImport
     private const SPAM_COMPLAINT = 'SPAM_COMPLAINT';
 
     /**
-     * Reasons that record a request the PERSON made; written even for a contact
-     * the import only matched. The others are the import's own precaution.
+     * Reasons that record a request the PERSON made. The undo of the run that
+     * wrote one keeps it unless told the run was a mistake (`$removeOptOuts`);
+     * the others (EmailSuppression::PRECAUTION_REASONS) are the import's own
+     * inference and go with its undo.
      */
     private const OPT_OUT_REASONS = [
         EmailSuppression::REASON_COMPLAINT,
         EmailSuppression::REASON_IMPORTED_OPT_OUT,
     ];
+
+    /**
+     * The `contacts` columns a create writes: the fingerprint covers the first
+     * five, and import_batch is the run's own tag. The undo reads every OTHER
+     * office column MemberAccountDeletion lists as a sign the office has since
+     * written to the contact.
+     */
+    private const COLUMNS_THE_IMPORT_WRITES = ['first_name', 'last_name', 'email', 'phone', 'notes', 'import_batch'];
 
     public function __construct(
         private readonly EmailSuppressionService $emailSuppression,
@@ -307,7 +328,13 @@ final class WixContactImport
         $tagLinks = ($links[ImportLink::KIND_TAG] ?? collect())->keyBy('external_id');
 
         $index = $this->existingContacts();
-        $suppressed = array_flip(EmailSuppression::query()->whereNull('released_at')->pluck('email_normalized')->all());
+
+        // Every row in any state, split: in force, or RELEASED — the person's
+        // decision in Manara, which older Wix data never overrides.
+        $emailRows = EmailSuppression::query()->get(['email_normalized', 'released_at']);
+        $suppressed = $emailRows->whereNull('released_at')->pluck('email_normalized')->flip()->all();
+        $released = $emailRows->whereNotNull('released_at')->pluck('email_normalized')->flip()->all();
+        $smsReleased = SmsSuppression::query()->whereNotNull('released_at')->pluck('phone_e164')->flip()->all();
 
         $tags = $this->planTags($groups, $labelNames, $tagLinks);
 
@@ -324,7 +351,8 @@ final class WixContactImport
                 } elseif ($link->created_local) {
                     $group['action'] = 'update_linked';
                     $group['contact_id'] = $link->local_id;
-                    $group['fingerprint_ok'] = hash_equals((string) $link->fingerprint, $this->fingerprint($contact['values']));
+                    $group['previous_fingerprint'] = (string) $link->fingerprint;
+                    $group['fingerprint_ok'] = hash_equals((string) $link->fingerprint, $this->fingerprint($contact['values'], $contact['notes']));
                     $group['changes'] = $group['fingerprint_ok'] && $contact['values'] !== $this->values($group);
                 } else {
                     $group['action'] = 'linked';
@@ -357,19 +385,17 @@ final class WixContactImport
                 $group['action'] = 'create';
             }
 
-            // Which suppression, if any, this address gets written.
-            $createdByImport = $group['action'] === 'create' || $group['action'] === 'update_linked';
-            $group['suppress'] = null;
-
-            if ($group['address'] !== null && $group['reason'] !== null) {
-                $isOptOut = in_array($group['reason'], self::OPT_OUT_REASONS, true);
-
-                if ($isOptOut || $createdByImport) {
-                    $group['suppress'] = $group['reason'];
-                }
-            }
-
+            // Which suppression this address gets: its reason, for every
+            // contact (the owner's rule), unless Manara holds a RELEASED row —
+            // then the person already decided here and the Wix status is older.
             $group['already_suppressed'] = $group['address'] !== null && isset($suppressed[$group['address']]);
+            $group['released_in_manara'] = $group['address'] !== null && isset($released[$group['address']]);
+            $group['suppress'] = $group['address'] !== null && ! $group['released_in_manara'] ? $group['reason'] : null;
+
+            $group['sms_released_in_manara'] = $group['sms_opt_out'] !== null && isset($smsReleased[$group['sms_opt_out']]);
+            if ($group['sms_released_in_manara']) {
+                $group['sms_opt_out'] = null;
+            }
         }
         unset($group);
 
@@ -427,6 +453,7 @@ final class WixContactImport
                 'action' => null,
                 'contact_id' => null,
                 'fingerprint_ok' => null,
+                'previous_fingerprint' => null,
                 'changes' => false,
                 'ambiguous_phone' => false,
             ];
@@ -554,7 +581,7 @@ final class WixContactImport
         $index = ['by_id' => [], 'email' => [], 'email_trashed' => [], 'phone' => [], 'phone_trashed' => []];
 
         Contact::withTrashed()
-            ->select(['id', 'first_name', 'last_name', 'email', 'phone', 'is_placeholder', 'deleted_at'])
+            ->select(['id', 'first_name', 'last_name', 'email', 'phone', 'notes', 'is_placeholder', 'deleted_at'])
             ->orderBy('id')
             ->chunk(1000, function ($contacts) use (&$index) {
                 foreach ($contacts as $contact) {
@@ -567,6 +594,7 @@ final class WixContactImport
                             'email' => $contact->email,
                             'phone' => $contact->phone,
                         ],
+                        'notes' => $contact->notes,
                     ];
 
                     if ($contact->is_placeholder) {
@@ -604,13 +632,20 @@ final class WixContactImport
         ];
     }
 
-    private function fingerprint(array $values): string
+    /**
+     * SHA-256 of every value a create writes onto the contact row. Notes are in
+     * it because they are the import's own text too: a contact whose notes staff
+     * have since added to is the office's record, which the re-run keeps and
+     * the undo refuses to erase.
+     */
+    private function fingerprint(array $values, ?string $notes): string
     {
         return hash('sha256', json_encode([
             (string) $values['first_name'],
             (string) $values['last_name'],
             (string) ($values['email'] ?? ''),
             (string) ($values['phone'] ?? ''),
+            (string) ($notes ?? ''),
         ]));
     }
 
@@ -643,17 +678,25 @@ final class WixContactImport
             'already_imported_edited_kept' => $groups->filter(fn ($g) => $g['action'] === 'update_linked' && ! $g['fingerprint_ok'])->count(),
             'deleted_in_manara_skipped' => $action('skip_deleted'),
             'no_email' => $groups->whereNull('address')->count(),
-            'mailable' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null && $g['action'] !== 'skip_deleted')->count(),
+            // Mailable means mailable in Manara after the run: an address Manara
+            // already suppresses stays suppressed whatever Wix says, and is
+            // counted on its own row below instead.
+            'mailable' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
+                && $g['action'] !== 'skip_deleted' && ! $g['already_suppressed'])->count(),
             'suppress_complaint' => $writes->where('suppress', EmailSuppression::REASON_COMPLAINT)->count(),
             'suppress_opt_out' => $writes->where('suppress', EmailSuppression::REASON_IMPORTED_OPT_OUT)->count(),
             'suppress_bounce' => $writes->where('suppress', EmailSuppression::REASON_BOUNCE)->count(),
             'suppress_not_opted_in' => $writes->where('suppress', EmailSuppression::REASON_NOT_OPTED_IN)->count(),
-            'opt_outs_on_existing_contacts' => $writes->filter(fn ($g) => in_array($g['action'], ['match_email', 'match_phone', 'linked', 'skip_deleted'], true))->count(),
+            'opt_outs_on_existing_contacts' => $writes->filter(fn ($g) => in_array($g['suppress'], self::OPT_OUT_REASONS, true)
+                && in_array($g['action'], ['match_email', 'match_phone', 'linked', 'skip_deleted'], true))->count(),
+            'precautions_on_existing_contacts' => $writes->filter(fn ($g) => in_array($g['suppress'], EmailSuppression::PRECAUTION_REASONS, true)
+                && in_array($g['action'], ['match_email', 'match_phone', 'linked', 'skip_deleted'], true))->count(),
             'already_suppressed' => $groups->filter(fn ($g) => $g['suppress'] !== null && $g['already_suppressed'])->count(),
             'suppressed_but_now_subscribed' => $groups->filter(fn ($g) => $g['address'] !== null && $g['reason'] === null
-                && $g['already_suppressed'] && in_array($g['action'], ['update_linked', 'linked'], true))->count(),
-            'existing_left_mailable_by_rule' => $groups->filter(fn ($g) => $g['reason'] !== null && $g['suppress'] === null)->count(),
+                && $g['already_suppressed'] && $g['action'] !== 'skip_deleted')->count(),
+            'released_in_manara_kept' => $groups->filter(fn ($g) => $g['reason'] !== null && $g['released_in_manara'])->count(),
             'sms_opt_outs' => $groups->whereNotNull('sms_opt_out')->count(),
+            'sms_released_in_manara_kept' => $groups->where('sms_released_in_manara', true)->count(),
             'sms_consents' => 0,
             'labels' => count($plan['tags']),
             'tags_create' => collect($plan['tags'])->where('action', 'create')->count(),
@@ -687,19 +730,52 @@ final class WixContactImport
                     $this->applyTagAssignments($contactId, $group['labels'], $tagIds, $batch, $written);
                 }
 
-                if ($group['suppress'] !== null && ! $this->emailSuppression->isSuppressed($masjidId, $group['address'])) {
-                    $this->emailSuppression->suppress($masjidId, $group['address'], $group['suppress']);
-                    $written['email_suppressions']++;
+                if ($group['suppress'] !== null) {
+                    $this->applyEmailSuppression($masjidId, $group['address'], $group['suppress'], $batch, $written);
                 }
 
-                if ($group['sms_opt_out'] !== null && ! $this->sms->isSuppressed($masjidId, $group['sms_opt_out'])) {
-                    $this->sms->suppress($masjidId, $group['sms_opt_out'], SmsSuppression::REASON_MANUAL);
-                    $written['sms_suppressions']++;
+                if ($group['sms_opt_out'] !== null) {
+                    $this->applySmsSuppression($masjidId, $group['sms_opt_out'], $batch, $written);
                 }
             }
         });
 
         return $written;
+    }
+
+    /**
+     * Write a suppression only where the address has NO row at all, and record
+     * the row as this run's. A row in force is honoured as it stands (its date
+     * is the evidence); a RELEASED row is the person's own decision in Manara,
+     * which suppress() would otherwise overwrite by re-suppressing it. Re-read
+     * here, inside the transaction, rather than trusted from the plan.
+     */
+    private function applyEmailSuppression(int $masjidId, string $address, string $reason, string $batch, array &$written): void
+    {
+        if (EmailSuppression::withoutMasjidScope()->where('masjid_id', $masjidId)->where('email_normalized', $address)->exists()) {
+            return;
+        }
+
+        $row = $this->emailSuppression->suppress($masjidId, $address, $reason);
+
+        if ($row !== null) {
+            $this->link(ImportLink::KIND_EMAIL_SUPPRESSION, (string) $row->id, (int) $row->id, true, null, $batch);
+            $written['email_suppressions']++;
+            $written['links']++;
+        }
+    }
+
+    /** The SMS twin of applyEmailSuppression(): a number with any row, in force or released, is left alone. */
+    private function applySmsSuppression(int $masjidId, string $e164, string $batch, array &$written): void
+    {
+        if (SmsSuppression::withoutMasjidScope()->where('masjid_id', $masjidId)->where('phone_e164', $e164)->exists()) {
+            return;
+        }
+
+        $row = $this->sms->suppress($masjidId, $e164, SmsSuppression::REASON_MANUAL);
+        $this->link(ImportLink::KIND_SMS_SUPPRESSION, (string) $row->id, (int) $row->id, true, null, $batch);
+        $written['sms_suppressions']++;
+        $written['links']++;
     }
 
     /** @return array<string, int> label key => tag id */
@@ -747,7 +823,7 @@ final class WixContactImport
                 $written['contacts_created']++;
 
                 foreach ($group['wix_ids'] as $id) {
-                    $this->link(ImportLink::KIND_CONTACT, $id, $contact->id, true, $this->fingerprint($values), $batch);
+                    $this->link(ImportLink::KIND_CONTACT, $id, $contact->id, true, $this->fingerprint($values, $group['notes']), $batch);
                     $written['links']++;
                 }
 
@@ -755,14 +831,20 @@ final class WixContactImport
 
             case 'update_linked':
                 if ($group['fingerprint_ok'] && $group['changes']) {
-                    Contact::query()->findOrFail($group['contact_id'])->fill($values)->save();
+                    $contact = Contact::query()->findOrFail($group['contact_id']);
+                    $contact->fill($values)->save();
                     ImportLink::query()
                         ->where('source', ImportLink::SOURCE_WIX)
                         ->where('kind', ImportLink::KIND_CONTACT)
                         ->where('local_id', $group['contact_id'])
                         ->where('created_local', true)
-                        ->update(['fingerprint' => $this->fingerprint($values)]);
+                        ->update(['fingerprint' => $this->fingerprint($values, $contact->notes)]);
+                    // The replaced values are not kept, so this run's undo
+                    // cannot restore them; this row makes it refuse instead.
+                    $this->link(ImportLink::KIND_CONTACT_UPDATE, $group['contact_id'] . '@' . $batch, (int) $group['contact_id'],
+                        false, $group['previous_fingerprint'], $batch);
                     $written['contacts_updated']++;
+                    $written['links']++;
                 }
 
                 $this->linkNewIds($group, $batch, $written);
@@ -838,51 +920,83 @@ final class WixContactImport
      *
      * Removed: the contacts it CREATED (hard-deleted through the model, so no
      * copy of an imported person lingers behind a soft delete and a corrected
-     * re-run does not collide with one), every tag assignment it added —
-     * including those on contacts it only matched — the tags it created that
-     * nothing else now uses, and its `import_links`, so a later run starts
-     * clean.
+     * re-run does not collide with one), and with them every link ANY run holds
+     * to them — a later run that linked a new Wix duplicate to one would
+     * otherwise leave a link to nobody, and the next run would skip that person
+     * as "deleted in Manara". Also every tag assignment it added (including on
+     * contacts it only matched), the tags it created that nothing else now
+     * carries, the precaution suppressions it INSERTED (`not_opted_in`,
+     * `bounce`: its own inference, never the person's request), and its links.
      *
-     * Kept: every contact it matched, untouched; every tag an admin made; and
-     * EVERY email and SMS suppression. An opt-out is released only by the
-     * subscriber and never deleted (EmailSuppression), and a suppression
-     * written as a precaution is the safe direction to leave in place.
+     * Kept: every contact it matched, untouched; every tag an admin made; every
+     * suppression that existed before the run; a suppression it inserted that
+     * has since been RELEASED (somebody decided in Manara, and the row is that
+     * record); and — the one documented exception to "exactly" — the opt-outs
+     * it copied from Wix (`imported_opt_out`, `complaint`, SMS UNSUBSCRIBED),
+     * which are real requests. Their links are kept, and `$removeOptOuts`
+     * (now, or on a second undo of the same batch) removes those rows too, for
+     * a run written into the wrong organisation or from the wrong file.
      *
-     * Refused, removing nothing, when a contact it created has since become
-     * the office's record in any way App\Services\Member\MemberAccountDeletion
-     * would keep it for (a gift, a card, a class, a login, a tag an admin
-     * added...) or a broadcast named it. The refusal names contact ids only.
+     * Refused, removing nothing, when:
+     *  - this run UPDATED a contact an earlier run created (the values it
+     *    replaced were not kept; undoing the earlier run removes the contact);
+     *  - a contact it created has since become the office's record: edited
+     *    since the import (its values no longer match the fingerprint), any
+     *    office column MemberAccountDeletion keeps a contact for (SMS consent, a
+     *    family login, an avatar...), any row in its office tables (a gift, a
+     *    card, a class, a tag an admin added), a login, or a broadcast that
+     *    named it. The refusal names contact ids and columns only.
      *
-     * @return array{refused: list<string>, contacts_removed: int, tag_assignments_removed: int, tags_removed: int, tags_kept_in_use: int, suppressions_kept: bool}
+     * @return array<string, mixed>
      */
-    public function undo(string $batch): array
+    public function undo(string $batch, bool $removeOptOuts = false): array
     {
         $links = ImportLink::query()
             ->where('source', ImportLink::SOURCE_WIX)
             ->where('import_batch', $batch)
-            ->whereIn('kind', [ImportLink::KIND_CONTACT, ImportLink::KIND_TAG])
+            ->whereIn('kind', [ImportLink::KIND_CONTACT, ImportLink::KIND_TAG, ImportLink::KIND_CONTACT_UPDATE,
+                ImportLink::KIND_EMAIL_SUPPRESSION, ImportLink::KIND_SMS_SUPPRESSION])
             ->get();
 
-        $contactIds = $links->where('kind', ImportLink::KIND_CONTACT)->where('created_local', true)
-            ->pluck('local_id')->unique()->values()->all();
-        $contacts = Contact::withTrashed()->whereIn('id', $contactIds)->where('import_batch', $batch)->get();
+        $createdLinks = $links->where('kind', ImportLink::KIND_CONTACT)->where('created_local', true);
+        $contacts = Contact::withTrashed()->whereIn('id', $createdLinks->pluck('local_id')->unique()->values()->all())
+            ->where('import_batch', $batch)->get();
+
+        // Numbers whose SMS suppression THIS run inserted: the opt-out date it
+        // mirrored onto its own contacts is the import's write, not the office's.
+        $smsNumbers = SmsSuppression::query()
+            ->whereIn('id', $links->where('kind', ImportLink::KIND_SMS_SUPPRESSION)->pluck('local_id')->all())
+            ->pluck('phone_e164')->all();
 
         $refused = [];
+
+        foreach ($links->where('kind', ImportLink::KIND_CONTACT_UPDATE)->pluck('local_id')->unique() as $contactId) {
+            if (Contact::withTrashed()->whereKey($contactId)->exists()) {
+                $refused[] = "contact {$contactId}: updated by this run from a later pull, and the values it replaced were not kept"
+                    . ' (undo the run that created it instead)';
+            }
+        }
+
         foreach ($contacts as $contact) {
-            $held = $this->heldBy($contact, $batch);
+            $fingerprint = $createdLinks->firstWhere('local_id', (int) $contact->id)?->fingerprint;
+            $held = $this->heldBy($contact, $fingerprint, $smsNumbers);
+
             if ($held !== []) {
                 $refused[] = "contact {$contact->id}: " . implode(', ', $held);
             }
         }
 
-        $result = ['refused' => $refused, 'contacts_removed' => 0, 'tag_assignments_removed' => 0,
-            'tags_removed' => 0, 'tags_kept_in_use' => 0, 'suppressions_kept' => true];
+        $result = ['refused' => $refused, 'contacts_removed' => 0, 'later_links_removed' => 0,
+            'tag_assignments_removed' => 0, 'tags_removed' => 0, 'tags_kept_in_use' => 0,
+            'precautions_removed' => 0, 'opt_outs_removed' => 0, 'opt_outs_kept' => 0, 'released_kept' => 0,
+            'sms_opt_outs_removed' => 0, 'sms_opt_outs_kept' => 0];
 
         if ($refused !== []) {
             return $result;
         }
 
-        DB::transaction(function () use ($batch, $links, $contacts, &$result) {
+        DB::transaction(function () use ($batch, $links, $contacts, $removeOptOuts, &$result) {
+            $keep = [];
             $tagIds = ContactTag::query()->pluck('id')->all();
 
             $result['tag_assignments_removed'] = DB::table('contact_tag_links')
@@ -896,6 +1010,14 @@ final class WixContactImport
                 $contact->forceDelete();
                 $result['contacts_removed']++;
             }
+
+            // Links any OTHER run holds to the erased contacts.
+            $result['later_links_removed'] = ImportLink::query()
+                ->where('source', ImportLink::SOURCE_WIX)
+                ->whereIn('kind', [ImportLink::KIND_CONTACT, ImportLink::KIND_CONTACT_UPDATE])
+                ->whereIn('local_id', $contacts->pluck('id')->all())
+                ->where('import_batch', '!=', $batch)
+                ->delete();
 
             foreach ($links->where('kind', ImportLink::KIND_TAG)->where('created_local', true) as $link) {
                 $tag = ContactTag::query()->find($link->local_id);
@@ -912,23 +1034,96 @@ final class WixContactImport
                 }
             }
 
-            ImportLink::query()->whereKey($links->pluck('id'))->delete();
+            foreach ($links->where('kind', ImportLink::KIND_EMAIL_SUPPRESSION) as $link) {
+                $row = EmailSuppression::query()->find($link->local_id);
+
+                if ($row === null) {
+                    continue;
+                }
+
+                if ($row->released_at !== null) {
+                    $result['released_kept']++;
+                } elseif (in_array($row->reason, EmailSuppression::PRECAUTION_REASONS, true)) {
+                    $this->emailSuppression->forgetWrittenByImport($row);
+                    $result['precautions_removed']++;
+                } elseif ($removeOptOuts && in_array($row->reason, self::OPT_OUT_REASONS, true)) {
+                    $this->emailSuppression->forgetWrittenByImport($row);
+                    $result['opt_outs_removed']++;
+                } else {
+                    $result['opt_outs_kept']++;
+                    $keep[] = $link->id;
+                }
+            }
+
+            foreach ($links->where('kind', ImportLink::KIND_SMS_SUPPRESSION) as $link) {
+                $row = SmsSuppression::query()->find($link->local_id);
+
+                if ($row === null) {
+                    continue;
+                }
+
+                if ($row->released_at !== null) {
+                    $result['released_kept']++;
+                } elseif ($removeOptOuts) {
+                    $this->sms->forgetWrittenByImport($row);
+                    $result['sms_opt_outs_removed']++;
+                } else {
+                    $result['sms_opt_outs_kept']++;
+                    $keep[] = $link->id;
+                }
+            }
+
+            // A kept opt-out keeps its link, so a later `--undo --remove-opt-outs`
+            // of the same batch can still find exactly the rows this run wrote.
+            ImportLink::query()->whereKey($links->pluck('id')->diff($keep)->values())->delete();
         });
 
         return $result;
     }
 
     /**
-     * Why this imported contact can no longer be removed: every table
-     * MemberAccountDeletion counts as the office's record of a person, the
-     * login a person may since have claimed, and a broadcast that named them.
-     * A tag assignment made by THIS batch is the import's own and does not count.
+     * Why this imported contact can no longer be removed — the same judgement
+     * MemberAccountDeletion::reasonsToKeep() makes about a person, less what
+     * the import itself wrote:
      *
+     *  - its name, email, phone or notes no longer hash to the fingerprint the
+     *    import last wrote (somebody edited it);
+     *  - any OTHER office column holds a value (SMS consent, a family login, an
+     *    avatar...), except the SMS opt-out date this run's own SMS suppression
+     *    mirrored onto it;
+     *  - a row in any office table, where a tag assignment made by ANY import
+     *    run is the import's own and does not count;
+     *  - a login the person may since have claimed, or a broadcast naming them.
+     *
+     * @param  list<string>  $smsNumbersWrittenByRun
      * @return list<string>
      */
-    private function heldBy(Contact $contact, string $batch): array
+    private function heldBy(Contact $contact, ?string $fingerprint, array $smsNumbersWrittenByRun): array
     {
         $held = [];
+
+        $values = [
+            'first_name' => (string) $contact->getRawOriginal('first_name'),
+            'last_name' => (string) $contact->getRawOriginal('last_name'),
+            'email' => $contact->getRawOriginal('email'),
+            'phone' => $contact->getRawOriginal('phone'),
+        ];
+
+        if ($fingerprint === null || ! hash_equals($fingerprint, $this->fingerprint($values, $contact->getRawOriginal('notes')))) {
+            $held[] = 'contacts (edited since the import)';
+        }
+
+        foreach (array_diff(MemberAccountDeletion::OFFICE_COLUMNS, self::COLUMNS_THE_IMPORT_WRITES) as $column) {
+            if ($column === 'sms_opted_out_at' && in_array($contact->smsNumber(), $smsNumbersWrittenByRun, true)) {
+                continue;
+            }
+
+            $value = $contact->getRawOriginal($column);
+
+            if ($value !== null && $value !== '' && $value !== false && $value !== 0 && $value !== '0') {
+                $held[] = 'contacts.' . $column;
+            }
+        }
 
         foreach (MemberAccountDeletion::OFFICE_RECORDS + MemberAccountDeletion::LOGIN_RECORDS as $table => $columns) {
             $query = DB::table($table)->where(function ($q) use ($columns, $contact) {
@@ -938,7 +1133,7 @@ final class WixContactImport
             });
 
             if ($table === 'contact_tag_links') {
-                $query->where(fn ($q) => $q->whereNull('import_batch')->orWhere('import_batch', '!=', $batch));
+                $query->whereNull('import_batch');
             }
 
             if ($query->exists()) {
@@ -947,7 +1142,7 @@ final class WixContactImport
         }
 
         foreach (['login_email', 'login_enabled_at', 'signup_source', 'verified_at', 'password'] as $column) {
-            if (filled($contact->getRawOriginal($column))) {
+            if (filled($contact->getRawOriginal($column)) && ! in_array('contacts.' . $column, $held, true)) {
                 $held[] = 'contacts.' . $column;
             }
         }

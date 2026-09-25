@@ -68,3 +68,32 @@ export function tagsNotOn<T extends TagLike>(tags: T[], carried: TagLike[] | und
     const on = new Set((carried ?? []).map(t => t.id));
     return tags.filter(t => !on.has(t.id));
 }
+
+/**
+ * The bulk TAG endpoint. Tag and untag are two POSTs on one resource; the
+ * untag is `/contacts/remove` because every bulk write here carries a body
+ * (routes/admin.php), so pointing "Remove tag" at this URL would ADD the tag.
+ */
+export function tagContactsUrl(masjidId: string | number, tagId: number): `/api/admin/masjids/${string}/contact-tags/${string}/contacts` {
+    return `/api/admin/masjids/${masjidId}/contact-tags/${tagId}/contacts`;
+}
+
+/** The bulk UNTAG endpoint; see tagContactsUrl(). */
+export function untagContactsUrl(masjidId: string | number, tagId: number): `/api/admin/masjids/${string}/contact-tags/${string}/contacts/remove` {
+    return `${tagContactsUrl(masjidId, tagId)}/remove`;
+}
+
+/** The directory's list request: page, search, deleted-rows mode and the tag filter. */
+export function contactsListUrl(
+    masjidId: string | number,
+    page: number,
+    search: string = '',
+    trashed: '' | 'with' | 'only' = '',
+    tagId: number | null = null,
+): string {
+    let url = `/api/admin/masjids/${masjidId}/contacts?page=${page}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+    if (trashed) url += `&trashed=${trashed}`;
+    if (tagId) url += `&tag_id=${tagId}`;
+    return url;
+}
