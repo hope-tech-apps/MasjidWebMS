@@ -159,15 +159,25 @@
                                         {{ money(o.total_minor) }}
                                         <span v-if="Number(o.donation_minor) > 0" class="badge bg-success-subtle text-success-emphasis ms-1" :title="'Includes ' + money(o.donation_minor) + ' extra'">+{{ money(o.donation_minor) }}</span>
                                         <span v-if="Number(o.fee_covered_minor) > 0" class="badge bg-secondary-subtle text-secondary-emphasis ms-1" :title="'Customer covered ' + money(o.fee_covered_minor) + ' of card fees'">+fee</span>
-                                        <!-- A PAID order whose items were changed afterwards: the
-                                             money that settled is not the money the food now costs.
-                                             It stays on the board until somebody settles it by hand —
+                                        <!-- What has been paid and what is still due, on every live
+                                             order (owner, 2026-09-24: "note how much of it has been
+                                             paid"). The total above follows the plates automatically;
+                                             this line says how much of it the masjid actually has. A
+                                             PAID order whose items changed afterwards keeps what it paid,
+                                             so the difference shows here until it is settled by hand —
                                              nothing in the system marks a balance as collected. -->
-                                        <div v-if="balanceOf(o) > 0" class="small text-danger fw-semibold">
-                                            Owes {{ money(balanceOf(o)) }} — not collected
-                                        </div>
-                                        <div v-else-if="balanceOf(o) < 0" class="small text-warning-emphasis fw-semibold">
-                                            {{ money(-balanceOf(o)) }} owed back — refund by hand
+                                        <div v-if="showsMoney(o)" class="small jl-money">
+                                            <span class="text-muted">Paid {{ money(paidSoFar(o)) }}</span>
+                                            <span class="text-muted"> · </span>
+                                            <span v-if="amountDue(o) > 0" :class="paidSoFar(o) > 0 ? 'text-danger fw-semibold' : 'fw-semibold'"
+                                                  :title="paidSoFar(o) > 0 ? 'The order grew after it was paid. Collect the difference by hand.' : ''">
+                                                Due {{ money(amountDue(o)) }}<span v-if="paidSoFar(o) > 0"> — not collected</span>
+                                            </span>
+                                            <span v-else-if="amountDue(o) < 0" class="text-warning-emphasis fw-semibold"
+                                                  title="The order shrank after it was paid. Refund the difference by hand.">
+                                                {{ money(-amountDue(o)) }} owed back — refund by hand
+                                            </span>
+                                            <span v-else class="text-success">paid in full</span>
                                         </div>
                                     </td>
                                     <!-- Paid: how the money came (paidLabel). Unpaid: the channel it was ordered through.
@@ -551,12 +561,22 @@
                         <div v-if="editStoredExtra > 0" class="d-flex justify-content-between"><span>Extra (unchanged)</span><span>{{ money(editStoredExtra) }}</span></div>
                         <div v-if="editStoredFee > 0" class="d-flex justify-content-between"><span>Card fee (recalculated on save)</span><span>{{ money(editStoredFee) }}</span></div>
                     </div>
+                    <!-- The money, as it will stand after Save: the new total moves as the
+                         plates do, what was paid does not, and the difference is what is due.
+                         Shown on every order, paid or not, so nobody has to work it out. -->
                     <div class="d-flex justify-content-between fw-semibold mt-1"><span>New total</span><span>{{ money(editTotal) }}</span></div>
-                    <div v-if="editOrder?.payment_status === 'paid' && editTotal !== editPaidMinor" class="d-flex justify-content-between mt-1"
-                        :class="editTotal > editPaidMinor ? 'text-danger' : 'text-warning-emphasis'">
-                        <span>{{ editTotal > editPaidMinor ? 'Customer would still owe' : 'Would be owed back' }}</span>
-                        <span class="fw-semibold">{{ money(Math.abs(editTotal - editPaidMinor)) }}</span>
+                    <div class="d-flex justify-content-between mt-1 small">
+                        <span>Paid so far</span>
+                        <span>{{ editPaidMinor > 0 ? money(editPaidMinor) : 'Nothing yet' }}</span>
                     </div>
+                    <div class="d-flex justify-content-between mt-1 fw-semibold"
+                        :class="editDueAfter > 0 && editPaidMinor > 0 ? 'text-danger' : editDueAfter < 0 ? 'text-warning-emphasis' : editDueAfter === 0 ? 'text-success' : ''">
+                        <span>{{ editDueAfter > 0 ? 'Due after saving' : editDueAfter < 0 ? 'Owed back to the customer' : 'Nothing more due' }}</span>
+                        <span v-if="editDueAfter !== 0">{{ money(Math.abs(editDueAfter)) }}</span>
+                    </div>
+                    <p v-if="editOrder?.payment_status !== 'paid' && editOrder?.payment_method === 'online'" class="small text-muted mt-2 mb-0">
+                        The customer's card payment link is replaced with one for the new total when you save.
+                    </p>
                     <div v-if="editError" class="alert alert-danger py-2 mt-2 mb-0" role="alert">{{ editError }}</div>
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
@@ -1002,6 +1022,27 @@ const editError = ref("");
 // balance that means anything, and only after an edit moved its total. Read
 // defensively: a server that predates the field sends nothing, and NaN must
 // never render as money.
+/**
+ * What the masjid has actually received on an order: nothing while it is unpaid,
+ * and on a paid order the amount that settled (total − balance_minor), which an
+ * edit after payment does not move. A server that predates balance_minor sends
+ * none, and then a paid order is taken as paid at its total.
+ */
+function paidSoFar(o: any): number {
+    if (o?.payment_status !== "paid") return 0;
+    const total = Number(o?.total_minor || 0);
+    if (o?.balance_minor == null) return total;
+    const n = total - Number(o.balance_minor);
+    return Number.isFinite(n) ? n : total;
+}
+/** Positive: still owed. Negative: owed back to the customer. Zero: settled. */
+function amountDue(o: any): number {
+    return Number(o?.total_minor || 0) - paidSoFar(o);
+}
+/** A cancelled or refunded order owes nothing and has its own label; everything else gets the line. */
+function showsMoney(o: any): boolean {
+    return o?.status !== "cancelled" && o?.payment_status !== "refunded";
+}
 function balanceOf(o: any): number {
     if (o?.payment_status !== "paid" || o?.balance_minor == null) return 0;
     const n = Number(o.balance_minor);
@@ -1024,7 +1065,12 @@ const editStoredFee = computed<number>(() => Number(editOrder.value?.fee_covered
 // What actually settled: the order's own total until an edit moved it, and
 // `settled_total_minor` from then on. Derived from the balance the server sends
 // rather than recomputed, so the board cannot disagree with it.
-const editPaidMinor = computed<number>(() => Number(editOrder.value?.total_minor || 0) - balanceOf(editOrder.value));
+// What has been paid, from the SAME definition the board uses. The old one was
+// total − balanceOf(), and balanceOf() is 0 on an unpaid order, so it would have
+// told staff an unpaid order was paid in full the moment it was shown there.
+const editPaidMinor = computed<number>(() => paidSoFar(editOrder.value));
+// Positive: still owed. Negative: owed back. After Save, at the new total.
+const editDueAfter = computed<number>(() => editTotal.value - editPaidMinor.value);
 const editSubtotal = computed<number>(() => orderableItems.value.reduce(
     (sum: number, i: any) => sum + (editModal.qty[i.id] || 0) * Number(i.price_minor || 0), 0));
 const editPlates = computed<number>(() => orderableItems.value.reduce(
