@@ -1573,8 +1573,12 @@ domain works in the browser the moment its row is confirmed serving, with no
   `mec-web.pages.dev` and `alrazischool.org` are allowed.
 - That was the state the recon read. The one-line hotfix adding the two blocked
   origins **landed on 2026-09-24** (production `.env` backup
-  `.env.bak-20260924T025936Z-445611-cors`); `CORS_ALLOWED_ORIGINS` now holds 11
-  origins, both included. `FORMS_PAYMENT_RETURN_ORIGINS` is a second static list
+  `.env.bak-20260924T025936Z-445611-cors`); `CORS_ALLOWED_ORIGINS` then held 11
+  origins, both included. Later the same day the owner added
+  `https://preview.manara.hopetechapps.com` for the live preview
+  (`docs/live-preview.md`, step 5), so it holds **12**; a 12th static origin
+  takes the parent's untouched path like the other eleven.
+  `FORMS_PAYMENT_RETURN_ORIGINS` is a second static list
   (`config/forms.php:109-132`) and still holds only
   `https://sundayschool.burlingtonmasjid.com`, so card payment on a form fails
   closed on every other host today. That is by design, not an S9 defect.
@@ -1663,8 +1667,9 @@ preflight anyway: if either differs from §8 OQ6, stop and re-plan the gate.
    - `https://burlingtonmasjid.com`, `https://www.burlingtonmasjid.com`,
      `https://sundayschool.burlingtonmasjid.com`, `https://mec-web.pages.dev`,
      `https://alrazischool.org`: ACAO and `Vary` exactly as recorded before;
-   - `https://mec.manara.hopetechapps.com`, `https://alrazi.manara.hopetechapps.com`:
-     ACAO echoed;
+   - `https://mec.manara.hopetechapps.com`, `https://alrazi.manara.hopetechapps.com`,
+     `https://preview.manara.hopetechapps.com`: ACAO echoed, `Vary` as recorded
+     before (all three are on the static list since 2026-09-24);
    - `https://example.org`: no ACAO.
 2. In a browser on `mec.manara` and `alrazi.manara`, open an events page with
    pagination and a form page. The console shows no CORS errors.
@@ -2005,7 +2010,7 @@ These are not W1 work. Each needs its own ticket.
 | OQ3 | The Cloudflare Pages custom-domain `status` values and field names (`validation_data`, `verification_data`); whether `dns_records` filters by `name=` or `name.exact=` | S7 | Read the API reference at build time and encode it in the `CloudflareServiceTest` fixtures. An unrecognised status stays `provisioning` and fails at 72 h. |
 | OQ4 | Whether `event.node.req.headers` is writable under workerd (nitropack 2.13.4, `cloudflare_pages` preset) | S10's cache re-key | Prove it in the wrangler integration run. If it is not writable, ship S10 without the `varies` change and document that re-pointing a host, or trashing its org, keeps serving the cached pages (swr keeps an entry whose re-render fails, renderer-lookup fact [10]) until a KV purge of its page keys or the next build id. W1 re-points nothing; trashing a lookup-resolved org then needs that purge as a manual step. |
 | OQ5 | The Workers/KV plan and its write quota | Shapes S10 | Assume Free (1,000 writes a day). R5's write-on-change policy holds under either plan. |
-| OQ6 | ~~Production origin lists, and whether the hotfix has landed~~ **Resolved 2026-09-24** | — | The hotfix landed (see S9). `CORS_ALLOWED_ORIGINS` has 11 origins; `FORMS_PAYMENT_RETURN_ORIGINS` has one, `https://sundayschool.burlingtonmasjid.com`. S9 is invisible. Card payment on MEC's or Al-Razi's forms needs their host on that list (today, by `.env`; after S9, by a confirmed `masjid_domains` row) before it is switched on. |
+| OQ6 | ~~Production origin lists, and whether the hotfix has landed~~ **Resolved 2026-09-24** | — | The hotfix landed (see S9). `CORS_ALLOWED_ORIGINS` has 12 origins: the hotfix's 11 plus `https://preview.manara.hopetechapps.com`, which the owner added for the live preview the same day (corrected from 11 during the S9 review; the S9 gate compares against this row); `FORMS_PAYMENT_RETURN_ORIGINS` has one, `https://sundayschool.burlingtonmasjid.com`. S9 is invisible. Card payment on MEC's or Al-Razi's forms needs their host on that list (today, by `.env`; after S9, by a confirmed `masjid_domains` row) before it is switched on. |
 | OQ7 | Whether spatie/image's `GdColor` parses a transparent background (`GdColor.php:35-60`) | S8's favicon padding | Check it at build time. If no transparent form parses, pad the favicon with `background_color`. |
 | OQ8 | Whether any production section carries `settings.studio`. None is expected | S8 | The preflight count. If it is non-zero, stop. |
 | OQ9 | How many layout presets per vertical (spec §6 Open) | S4 content | Three per vertical, per the layouts contract. Changing it later is a config change. |

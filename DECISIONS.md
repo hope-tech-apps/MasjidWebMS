@@ -2896,6 +2896,17 @@ env lists stay the base and are never narrowed. Calls the plan left open:
 - **`base()` takes the masjid id as a required second argument** (`base($request, $masjidId,
   $context)`), so a caller cannot forget it; the submit passes `$form->masjid_id`, the reopen
   `$row->masjid_id`.
+- **The S9 gate was re-checked against §8 OQ6 during review (2026-09-24), and OQ6 was corrected.**
+  OQ6 said `CORS_ALLOWED_ORIGINS` holds 11 origins; the list this slice was briefed with holds 12,
+  the 12th being `https://preview.manara.hopetechapps.com`, which the owner added for the live
+  preview (`docs/live-preview.md` step 5, "owner, 2026-09-24"). That difference is expected, not a
+  reason to re-plan: a 12th static origin takes the parent's untouched path. OQ6, the S9 facts and
+  the S9 "Verify in production" list now say 12, preview included; `FORMS_PAYMENT_RETURN_ORIGINS`
+  is unchanged (only `https://sundayschool.burlingtonmasjid.com`). Unknown, needs investigation
+  until the ship: this session had no production access, so the counts above are the briefing's,
+  not a read. The ship's preflight must read both lists through the app (`config('cors.allowed_origins')`,
+  `config('forms.payment_return_origins')`, never by editing `.env`), record the values here, and
+  stop if either differs from OQ6.
 Alternatives: mutating config for the whole request (the plan's literal wording; widens the lunch
 return allowlist across organisations); reimplementing `HandleCors` to hand the merged list straight
 to the CorsService (duplicates framework code the parent already maintains).
@@ -2904,4 +2915,8 @@ list, so it takes the parent's path untouched, headers and `Vary` included, with
 read. Mutation-checked: each of 13 mutations (registration removed, static/path/wildcard checks
 removed, catch removed, either restore removed, `served()` for `corsAdmitted()`, the save-forget
 removed, the payment masjid match/scope/lookup/catch/origin pattern loosened) fails at least one of
-the new tests.
+the new tests. The review found four more that survived, now killed: the submit passing `$form->id`
+and the reopen passing `$row->form_id` (the controller-wiring tests in `FormPaymentReturnDomainTest`,
+on a form whose id is the other organisation's id), a TTL of a day (the trashed-org test travels a
+literal 301 seconds), and an `/i` on the payment-return host pattern (the rejected shapes are now
+asserted to run no query, because SQLite's case-sensitive `=` masked it).

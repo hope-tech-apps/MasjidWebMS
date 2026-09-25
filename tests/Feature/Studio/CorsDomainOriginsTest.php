@@ -169,8 +169,11 @@ class CorsDomainOriginsTest extends TestCase
         $gone->delete();
 
         // Trashing an organisation does not touch masjid_domains, so the cached
-        // list lets the host through until it expires, and never after.
-        $this->travel(MasjidDomain::CORS_ORIGINS_TTL + 1)->seconds();
+        // list lets the host through until it expires, and never after. A literal
+        // 301 seconds, not the constant plus one: corsOrigins() promises the host
+        // is gone "at most five minutes later", and a travel that scaled with
+        // CORS_ORIGINS_TTL would let any longer TTL break that promise unnoticed.
+        $this->travel(301)->seconds();
 
         $this->assertRefuses('https://gone.example.org', 'after the organisation is trashed');
         $this->assertAdmits('https://kept.example.org', "another organisation's row");
