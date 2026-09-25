@@ -79,8 +79,31 @@ class EmailSuppression extends Model
     /** An operator recorded a request made some other way (by phone, in person). */
     public const REASON_MANUAL = 'manual';
 
-    /** The relay reported the address as permanently undeliverable. */
+    /**
+     * The relay reported the address as permanently undeliverable — or, for a
+     * contact imported from another platform, that platform had.
+     */
     public const REASON_BOUNCE = 'bounce';
+
+    /**
+     * The person unsubscribed on the platform this organisation's list was
+     * imported from (App\Services\Imports\WixContactImport). A real opt-out,
+     * made before Manara held the list; it is honoured exactly like one made
+     * here and outlives the import (its undo keeps it).
+     */
+    public const REASON_IMPORTED_OPT_OUT = 'imported_opt_out';
+
+    /** The person marked the organisation's email as spam on the platform it was imported from. */
+    public const REASON_COMPLAINT = 'complaint';
+
+    /**
+     * Written IN ADVANCE by an import, for an address that never opted in on
+     * the platform it came from (never subscribed, pending, or no longer
+     * receiving mail there). Not a request from the person: it keeps the
+     * import from opting anybody in. The owner's rule for the MEC migration
+     * (DECISIONS.md 2026-09-25, "Everyone, most blocked").
+     */
+    public const REASON_NOT_OPTED_IN = 'not_opted_in';
 
     protected $fillable = [
         'masjid_id',
