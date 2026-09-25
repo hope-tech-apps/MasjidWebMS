@@ -7,7 +7,6 @@ use App\Models\ContactUsMessage;
 use App\Models\ContactUsReason;
 use App\Models\ImportLink;
 use App\Models\MobileAppUser;
-use App\Services\Broadcast\EmailSuppressionService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -265,7 +264,7 @@ final class WixFormMessageImport
             $externalId = $submissionId !== ''
                 ? $formSlug . ':' . $submissionId
                 : $formSlug . ':' . hash('sha256', implode("\x1F", [
-                    (string) EmailSuppressionService::normalize($email), $submittedAt->toIso8601String(), $name, $phone, $body,
+                    (string) $this->addressKey($email), $submittedAt->toIso8601String(), $name, $phone, $body,
                 ]));
             if (strlen($externalId) > 191) {
                 $externalId = $formSlug . ':' . hash('sha256', $externalId);
@@ -284,7 +283,7 @@ final class WixFormMessageImport
                 continue;
             }
 
-            $sender = 'sender:' . hash('sha256', EmailSuppressionService::normalize($email)
+            $sender = 'sender:' . hash('sha256', $this->addressKey($email)
                 ?? ($phone !== '' ? 'phone:' . preg_replace('/\D+/', '', $phone) : 'name:' . mb_strtolower($name)));
 
             if (! $knownSenders->has($sender)) {
@@ -327,6 +326,20 @@ final class WixFormMessageImport
             'new_senders' => $plan['new_senders'],
             'notifications' => 0,
         ];
+    }
+
+    /**
+     * An address as a matching key: trimmed, lower-cased, null when it is not
+     * an address. The broadcast opt-out service has the same rule; it is
+     * repeated here rather than called because this importer has nothing to do
+     * with the opt-out list, and EmailUnsubscribeTest pins the few files that
+     * may name it.
+     */
+    private function addressKey(string $email): ?string
+    {
+        $key = strtolower(trim($email));
+
+        return $key !== '' && str_contains($key, '@') ? $key : null;
     }
 
     private function date(string $value, string $timezone, ?string $format): ?Carbon
