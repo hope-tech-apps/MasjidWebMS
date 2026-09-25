@@ -110,6 +110,11 @@ class MealOrderTopUpPaymentService
         $paidAtTime = $paidAt !== null && $paidAt > 0 ? Carbon::createFromTimestamp($paidAt) : Carbon::now();
 
         $outcome = DB::transaction(function () use ($topUp, $order, $paymentIntentId, $paidAtTime): ?array {
+            // ORDER first, then the top-up — the same order every other path takes
+            // (the customer's edit, staff edits, cancels, opening a page). Taking the
+            // top-up first here while those take the order first is the textbook
+            // deadlock: each holds the row the other is waiting for.
+            $row = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $lockedTopUp = MealOrderTopUp::withoutMasjidScope()->lockForUpdate()->find($topUp->id);
 
             // Replays, and the second of Stripe's two success events, stop here.
@@ -117,8 +122,6 @@ class MealOrderTopUpPaymentService
                 || in_array($lockedTopUp->status, [MealOrderTopUp::STATUS_APPLIED, MealOrderTopUp::STATUS_CONFLICT], true)) {
                 return null;
             }
-
-            $row = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $lockedTopUp->stripe_payment_intent_id = $paymentIntentId;
 
             $menu = MealMenu::withoutMasjidScope()

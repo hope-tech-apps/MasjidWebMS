@@ -239,8 +239,10 @@ class MealOrderCheckoutService
                 throw new RuntimeException(self::TOP_UP_PRICES_MOVED);
             }
 
+            // Re-checked on the locked row: the menu's card switch can be turned off
+            // between the page's first answer and this moment.
             $masjid = Masjid::find($row->masjid_id);
-            if (! $masjid || ! $masjid->canAcceptDonations()) {
+            if (! $menu->allow_online_payment || ! $masjid || ! $masjid->canAcceptDonations()) {
                 throw new RuntimeException(self::TOP_UP_UNAVAILABLE);
             }
 
@@ -403,13 +405,17 @@ class MealOrderCheckoutService
      * read could answer from an older snapshot and miss the page another request
      * committed while this one waited for the lock.
      */
+    /** Callers MUST hold the order's row lock (see the read below). */
     public static function hasPendingTopUp(MealOrder $order): bool
     {
         return MealOrderTopUp::withoutMasjidScope()
             ->where('masjid_id', $order->masjid_id)
             ->where('meal_order_id', $order->id)
             ->where('status', MealOrderTopUp::STATUS_PENDING)
-            ->lockForUpdate()
+            // A PLAIN read. Every caller already holds this order's row lock, which
+            // is what serialises creating a top-up for it; a FOR UPDATE here only
+            // added a gap lock on an empty range, and two customers topping up
+            // DIFFERENT orders at once could deadlock on it.
             ->value('id') !== null;
     }
 

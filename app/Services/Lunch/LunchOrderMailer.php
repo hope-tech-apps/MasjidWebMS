@@ -193,10 +193,21 @@ final class LunchOrderMailer
      * cutoff shown in UTC is how this module's worst bug read to an admin — or
      * null when there is no cutoff still ahead to promise.
      */
+    /**
+     * Stands in for a time when the menu is open but has NO cutoff: the order can
+     * still be changed, there is simply no moment to name. Returning null there
+     * (as this first did) told customers of an open menu they could only look.
+     */
+    public const WHILE_OPEN = '__while_open__';
+
     private static function changeUntil(?MealMenu $menu): ?string
     {
-        if (! $menu || ! $menu->isOpenForOrders() || $menu->ordering_closes_at === null) {
+        if (! $menu || ! $menu->isOpenForOrders()) {
             return null;
+        }
+
+        if ($menu->ordering_closes_at === null) {
+            return self::WHILE_OPEN;
         }
 
         return $menu->ordering_closes_at->copy()

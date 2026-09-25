@@ -97,12 +97,17 @@ class LunchOrderConfirmation extends Mailable implements ShouldQueue
                 // property over these keys, so a key sharing a property's name would
                 // render the raw property instead of this checked one.
                 'orderLink' => $this->orderLink(),
-                'changeLine' => $this->changeUntil !== null
-                    ? 'You can change your order until ' . $this->changeUntil . '.'
+                'changeLine' => match (true) {
+                    $this->changeUntil === null => null,
+                    // Open, no cutoff: changeable, with no time to name and no
+                    // last-half-hour rule to warn about.
+                    $this->changeUntil === \App\Services\Lunch\LunchOrderMailer::WHILE_OPEN
+                        => 'You can change your order while ordering is open.',
+                    default => 'You can change your order until ' . $this->changeUntil . '.'
                         // A paid order grows only by paying the difference, and that
                         // page is not offered in the last half hour.
-                        . ($this->paidLine !== null ? ' Adding plates to a paid order online closes 30 minutes before that.' : '')
-                    : null,
+                        . ($this->paidLine !== null ? ' Adding plates to a paid order online closes 30 minutes before that.' : ''),
+                },
                 // Only a promise the link can keep: once the cutoff has passed the
                 // order can be looked at, not changed.
                 'buttonLabel' => $this->changeUntil !== null ? 'View or change your order' : 'View your order',

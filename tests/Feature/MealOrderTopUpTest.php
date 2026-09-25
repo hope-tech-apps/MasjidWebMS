@@ -143,6 +143,25 @@ class MealOrderTopUpTest extends TestCase
     }
 
     #[Test]
+    public function a_cash_only_lunch_never_takes_a_card_difference(): void
+    {
+        // A top-up is a card payment, so it obeys the menu's card switch exactly as
+        // placing an order online does. Found in verification: without this, an
+        // order marked paid by hand on a cash-only menu could be topped up by card,
+        // and the masjid would pay Stripe fees it chose not to pay.
+        $this->menu->forceFill(['allow_online_payment' => false])->save();
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertStatus(422)
+            ->assertJsonPath('data.code', 'topup_unavailable');
+
+        $this->assertSame(0, MealOrderTopUp::withoutMasjidScope()->count(), 'no pending top-up is created');
+        $this->assertSame(800, (int) $order->fresh()->total_minor, 'the order is untouched');
+        $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
+    }
+
+    #[Test]
     public function more_plates_on_a_paid_order_change_nothing_until_the_difference_is_paid(): void
     {
         $order = $this->paidOrder([[$this->biryani, 1]]);
@@ -1021,6 +1040,15 @@ class MealOrderTopUpTest extends TestCase
         $this->assertStringContainsString('View or change your order', $open);
         $this->assertStringContainsString('Reply to it', $open);
         $this->assertStringContainsString('Adding plates to a paid order online closes 30 minutes before that.', $open);
+
+        // Open with NO cutoff: still changeable, so the button offers it, and there is
+        // no time to name and no last-half-hour rule to warn about. The stand-in
+        // value must never reach the customer as text.
+        $noCutoff = (new LunchOrderConfirmation(...$args, changeUntil: \App\Services\Lunch\LunchOrderMailer::WHILE_OPEN, masjidEmail: null))->render();
+        $this->assertStringContainsString('View or change your order', $noCutoff);
+        $this->assertStringContainsString('You can change your order while ordering is open.', $noCutoff);
+        $this->assertStringNotContainsString('30 minutes', $noCutoff);
+        $this->assertStringNotContainsString('__while_open__', $noCutoff);
     }
 
     #[Test]

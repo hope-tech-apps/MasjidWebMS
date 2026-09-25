@@ -645,7 +645,11 @@ class JummahLunchOrdersController extends Controller
             return $this->refusal(422, MealOrderCheckoutService::TOP_UP_TOO_SMALL);
         }
 
-        if (! Masjid::find($order->masjid_id)?->canAcceptDonations()) {
+        // A top-up is a CARD payment, so it obeys the menu's own switch exactly as
+        // placing an order online does (line ~207) and the staff payment link does.
+        // Without this, a menu run as cash-only would still take a card difference
+        // — and the masjid would pay Stripe fees it chose not to pay.
+        if (! $menu->allow_online_payment || ! Masjid::find($order->masjid_id)?->canAcceptDonations()) {
             return $this->refusal(422, MealOrderCheckoutService::TOP_UP_UNAVAILABLE);
         }
 
