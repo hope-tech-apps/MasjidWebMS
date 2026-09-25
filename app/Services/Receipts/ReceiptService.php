@@ -47,6 +47,15 @@ class ReceiptService
             return null;
         }
 
+        // Imported Wix history was paid through Square or PayPal before the
+        // organisation came to Manara. A serialled tax receipt minted for it
+        // would read as a payment Manara took, and would spend a number in the
+        // gap-free sequence on money this platform never saw. Declined here,
+        // at the one place a serial is allocated, whoever asks.
+        if ($donation->isHistorical()) {
+            return null;
+        }
+
         // Respect the fund's receiptable flag (e.g. a pass-through relief fund
         // may not issue tax receipts). Load without the tenant scope since we
         // run unbound.

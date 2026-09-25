@@ -354,7 +354,9 @@ class ImpactMetrics
                     . 'minor units. Computed by DonationMetrics — the same code behind the giving dashboard, '
                     . 'so this figure cannot drift from it. Gift date is donated_at when present (offline '
                     . 'gifts, a wall-calendar day) and created_at otherwise, each compared in its own time '
-                    . 'frame. GROSS: processor fees are not deducted.',
+                    . 'frame. GROSS: processor fees are not deducted. Gifts imported from another system\'s '
+                    . 'order history (source `historical`, paid before the organisation used Manara) are '
+                    . 'excluded, as they are on the giving dashboard.',
             ],
             [
                 'key' => self::DONORS_IDENTIFIED,
@@ -464,7 +466,8 @@ class ImpactMetrics
                     . '`confirmed` as of now. Seat and money are separate state machines: a family behind on '
                     . 'an installment (payment_status past_due) is still enrolled and still counts. One row '
                     . 'is one household signing up for one offering, however many children it covers. '
-                    . 'Current status, not a transition log.',
+                    . 'Current status, not a transition log. Registrations imported from another system\'s '
+                    . 'order history (source `historical`) are excluded.',
             ],
             [
                 'key' => self::REGISTRATION_PARTICIPANTS,
@@ -492,7 +495,9 @@ class ImpactMetrics
                     . 'collected — NOT donations, and never overlapping them (a separate table and a '
                     . 'separate ledger). Refunded and failed charges are excluded, as are rows with no '
                     . 'paid_at, so an all-time figure and a bounded one are computed over the same '
-                    . 'population. GROSS: processor fees are not deducted.',
+                    . 'population. GROSS: processor fees are not deducted. Charges on registrations imported '
+                    . 'from another system\'s order history (source `historical`) are excluded: that money '
+                    . 'was taken by the other system\'s processor, not collected here.',
             ],
         ];
     }
@@ -720,14 +725,21 @@ class ImpactMetrics
     /** @return array<string,int> */
     private function registrationValues(array $window): array
     {
-        $confirmed = Registration::query()->where('registrations.status', Registration::STATUS_CONFIRMED);
+        // Imported history (`source = historical`, tickets sold on the old Wix
+        // site before the organisation came to Manara) is left out of every
+        // figure here: this report is what Manara holds evidence of, and those
+        // sales are already in the processor's and the organisation's own books.
+        $confirmed = Registration::query()
+            ->where('registrations.status', Registration::STATUS_CONFIRMED)
+            ->where('registrations.source', '!=', Registration::SOURCE_HISTORICAL);
         $this->applyWindow($confirmed, 'registrations.created_at', $window);
 
         $people = Registrant::query()
             ->join('registrations', 'registrations.id', '=', 'registrants.registration_id')
             ->join('contacts', 'contacts.id', '=', 'registrants.contact_id')
             ->whereNull('contacts.deleted_at')
-            ->where('registrations.status', Registration::STATUS_CONFIRMED);
+            ->where('registrations.status', Registration::STATUS_CONFIRMED)
+            ->where('registrations.source', '!=', Registration::SOURCE_HISTORICAL);
         // The window is on the REGISTRATION, not the registrant row: a person is
         // counted for the period their household signed up in, which is the
         // period the seat was taken.
@@ -755,6 +767,10 @@ class ImpactMetrics
         ])['all_time'];
 
         $fees = RegistrationPayment::query()
+            ->join('registrations', 'registrations.id', '=', 'registration_payments.registration_id')
+            // A ticket paid through Square or PayPal on the old Wix site is not a
+            // fee Manara collected (DECISIONS.md 2026-09-25, "Wix order history").
+            ->where('registrations.source', '!=', Registration::SOURCE_HISTORICAL)
             ->where('registration_payments.status', RegistrationPayment::STATUS_SUCCEEDED)
             // No paid_at means the charge never reported a settlement time.
             // Excluded always, so the all-time figure and a bounded one are

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Contacts\StoreContactRequest;
 use App\Http\Requests\Admin\Contacts\UpdateContactRequest;
 use App\Models\Contact;
+use App\Models\Donation;
 use App\Support\Errors;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -108,8 +109,17 @@ class ContactsController extends Controller
         ])->findOrFail($contact_id);
 
         $data = $contact->toArray();
-        $data['giving_total'] = (int) $contact->donations
-            ->where('status', 'succeeded')->sum('charged_amount');
+
+        // Two totals, because they answer two questions. `giving_total` is what
+        // this person gave that Manara recorded (Stripe and offline gifts).
+        // Gifts imported from the old Wix site stay in the history list, marked,
+        // and are summed on their own: folded into the first figure they would
+        // read as money that came through Manara (DECISIONS.md 2026-09-25).
+        $succeeded = $contact->donations->where('status', 'succeeded');
+        $data['giving_total'] = (int) $succeeded
+            ->where('source', '!=', Donation::SOURCE_HISTORICAL)->sum('charged_amount');
+        $data['historical_giving_total'] = (int) $succeeded
+            ->where('source', Donation::SOURCE_HISTORICAL)->sum('charged_amount');
 
         return response()->json([
             'status' => 'success',

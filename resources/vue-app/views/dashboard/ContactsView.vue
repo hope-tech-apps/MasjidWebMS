@@ -316,6 +316,15 @@
                                 <div class="col-md-6">
                                     <h6 class="text-muted mb-1">Total giving</h6>
                                     <p class="mb-0 fw-semibold">{{ formatCents((selectedContact as any).giving_total || 0) }}</p>
+                                    <!--
+                                        Gifts imported from the old Wix site are summed apart: they
+                                        were paid through Square or PayPal before Manara, and folded
+                                        into the total above they would read as Manara's
+                                        (ContactsController::show, DECISIONS.md 2026-09-25).
+                                    -->
+                                    <p v-if="(selectedContact as any).historical_giving_total" class="mb-0 small text-muted">
+                                        plus {{ formatCents((selectedContact as any).historical_giving_total) }} on the old Wix site
+                                    </p>
                                 </div>
                                 <div class="col-md-6">
                                     <h6 class="text-muted mb-1">Card last-4 on file</h6>
@@ -689,7 +698,7 @@
                                         <tr v-for="d in ((selectedContact as any).donations || [])" :key="d.id">
                                             <td>{{ formatDate(d.donated_at || d.created_at) }}</td>
                                             <td>{{ d.fund?.name || '—' }}</td>
-                                            <td class="text-capitalize">{{ d.source === 'offline' ? (d.payment_method || 'offline') : 'card' }}</td>
+                                            <td class="text-capitalize">{{ donationMethodLabel(d) }}</td>
                                             <td class="text-end">{{ formatCents(d.charged_amount) }}</td>
                                         </tr>
                                         <tr v-if="!((selectedContact as any).donations || []).length"><td colspan="4" class="text-center text-muted py-3">No giving recorded</td></tr>
@@ -1142,6 +1151,7 @@ import {
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
 import ApiService from '@/core/services/ApiService';
+import { donationMethodLabel } from '@/core/helpers/donationMethod';
 import Swal from 'sweetalert2';
 
 // Store

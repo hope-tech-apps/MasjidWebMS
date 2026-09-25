@@ -62,6 +62,17 @@ export type Donation = {
      */
     is_zakat: boolean;
     zakat_source: ZakatSource | null;
+    /**
+     * `stripe` (webhook), `offline` (recorded by staff) or `historical` (an order
+     * imported from the old Wix site, paid through Square or PayPal before
+     * Manara; `payment_method` then names that processor). Optional because the
+     * rows predate the type; the server always sends it.
+     */
+    source?: 'stripe' | 'offline' | 'historical';
+    payment_method?: string | null;
+    note?: string | null;
+    /** Set only on imported Wix history: the order the gift came from. */
+    historical_order_id?: number | null;
     status: DonationStatus;
     stripe_payment_intent_id: string | null;
     stripe_checkout_session_id: string | null;

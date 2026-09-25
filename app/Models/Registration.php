@@ -92,9 +92,21 @@ class Registration extends Model
     public const SOURCE_PUBLIC = 'public';
     public const SOURCE_STAFF = 'staff';
 
+    /**
+     * HISTORICAL — a ticket another system sold before the organisation came to
+     * Manara (MEC's Wix store and Wix Events orders, DECISIONS.md 2026-09-25).
+     * Written only by `crm:import-wix-orders` through `recordedFromHistory()`,
+     * against an unpublished offering, always with `historical_order_id`. The
+     * money moved through Square or PayPal at the Wix checkout: no Stripe leg,
+     * no seat counter, no roster, no email — and the row is not changed here
+     * (`RegistrationService::cancel()` refuses it).
+     */
+    public const SOURCE_HISTORICAL = 'historical';
+
     public const SOURCES = [
         self::SOURCE_PUBLIC,
         self::SOURCE_STAFF,
+        self::SOURCE_HISTORICAL,
     ];
 
     protected $fillable = [
@@ -267,6 +279,42 @@ class Registration extends Model
         ]);
 
         return $this;
+    }
+
+    /**
+     * Stamp this registration as IMPORTED HISTORY — THE ONE PLACE `source`
+     * becomes 'historical', the sibling of `enteredByStaff()` for the same
+     * reason: the provenance columns are not fillable, so the one legitimate
+     * writer is findable by its callers.
+     *
+     * `staff_note` carries the order in words ("Wix order #10412: 3 × Fall
+     * Festival Ticket at $10.00, paid through PayPal"), which is what the roster
+     * badge shows. Nothing here touches money; the importer writes the settled
+     * ledger row itself, from the order.
+     */
+    public function recordedFromHistory(HistoricalOrder $order, string $note): static
+    {
+        $note = trim($note);
+
+        $this->forceFill([
+            'source' => self::SOURCE_HISTORICAL,
+            'entered_by_user_id' => null,
+            'staff_note' => $note === '' ? null : mb_substr($note, 0, 500),
+            'historical_order_id' => $order->getKey(),
+        ]);
+
+        return $this;
+    }
+
+    public function isHistorical(): bool
+    {
+        return $this->source === self::SOURCE_HISTORICAL;
+    }
+
+    /** The imported order this registration came from; null for every other door. */
+    public function historicalOrder(): BelongsTo
+    {
+        return $this->belongsTo(HistoricalOrder::class);
     }
 
     /** Who this registration is FOR (one row per child/participant). */

@@ -2997,3 +2997,79 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — Wix order history: imported as HISTORY, never as money Manara processed
+
+Owner (MEC migration, round 2, binding): past orders → **"Import everything"** — all 685 Wix
+store orders (2017-08 → 2026-05, $39,739) and 149 Wix Events orders (2024, $3,923.24 paid) into
+Manara's donation and registration history, "marked as historical/offline (paid via
+Square/PayPal/Wix, NOT Manara/Stripe) so nothing looks like a payment Manara took, and no
+receipts or emails are sent on import". Built as `crm:import-wix-orders`
+(`App\Services\Crm\WixOrderHistoryImporter`, reader `App\Support\WixOrderExport`).
+
+- **A third source, `historical`, on both ledgers** (`Donation::SOURCE_HISTORICAL`,
+  `Registration::SOURCE_HISTORICAL`), plus `historical_order_id` pointing at a new
+  `historical_orders` row per imported order (provider, Wix order number, lines, totals).
+  Alternatives: (a) reuse `source = offline` like `crm:import-ledger` — rejected, because
+  offline gifts are editable, receiptable and counted in every total, which is exactly what the
+  owner ruled out; (b) keep Wix orders only in a separate table — rejected, the owner asked for
+  them in donations and registrations history.
+- **Mapping.** Giving products (Zakat-ul-Fitr, iftar tiers and sponsorships, 10 Meals in
+  Ramadan, Qurbani, shelter/fence, student sponsorships, bread for Syria) → one donation per line
+  into a fund matched by name, else created **inactive and non-receiptable** (Zakat-ul-Fitr is
+  type `fitra`; every other created fund is `general` — naming iftar or Qurbani `sadaqah` would be
+  a ruling). Ticket products (Eid/Fall festivals per year, Kid's Hajj Simulation, the Hajj/Eid
+  bazaar, the Career DNA workshop, the 2018 summer sessions) and every Wix Events order → one
+  registration per order on an **unpublished** offering (`is_active` false) sharing one inactive
+  intake form and one inactive fee plan; paid = `confirmed`/`paid` with one settled ledger row
+  (the Wix fee added at checkout is in it, and on the order's `fee_minor`); Wix's abandoned
+  checkouts (41 canceled, 2 declined) = `cancelled`/`canceled`, no ledger row. **Festival food
+  tickets and the 2021 prayer rugs** fit neither ledger: a purchase is not a gift and a food
+  ticket is not a seat, so they live on `historical_orders.lines` only (`order_only`). An
+  unrecognised product name blocks the whole import rather than being guessed. Coupons
+  (Intellicor, May 2026) are `code` adjustments.
+- **Processor.** Wix Events names PayPal per order; a card there does not say whose terminal, so
+  it is `wix` + method `card`. The Stores projection has NO per-order payment column (Wix reported
+  Square 410 / PayPal 275 only in aggregate), so every store order is `wix` ("paid at the Wix
+  checkout, Square or PayPal") unless the pull that feeds the real run adds a `paymentProvider`
+  column, which the reader then uses per order. Nothing guesses a processor.
+- **Excluded from everything that reports money received or what Manara did**, by one scope
+  (`Donation::withoutHistorical()`) or the registration source: the giving dashboard
+  (DonationMetrics — history only when `source=historical` is chosen, so header and rows agree),
+  the ledger and its CSV (same default), receipts (ReceiptService declines; issue/edit answer a
+  422 naming the Wix history), annual statements, impact figures (donations, confirmed
+  registrations, program fees), the Giving module's "gifts recorded" fact, and the contact's
+  `giving_total` (history summed apart as `historical_giving_total`, shown "plus $X on the old Wix
+  site"). A historical registration cannot be cancelled (`RegistrationException::historicalRecord`).
+  Nothing is sent: rows are written with Eloquent in one transaction; no mailer, notifier, queue,
+  Stripe client or renderer purge is reached (pinned with Mail/Notification/Queue fakes).
+- **Contacts.** Linked by email case-insensitively (the oldest if several share it). A buyer with
+  no contact gets one, and the address gets an `order_history_import` suppression — a HOLD, not an
+  opt-out — unless the organisation already has a suppression row for it (a released row is the
+  person's own request to be mailed and is left alone). **Order of the two imports: contacts
+  FIRST.** Then nearly every buyer is an existing contact carrying their Wix consent and is linked;
+  a hold is written only for a buyer the contact import did not bring over. The contact import
+  (`WixContactImport`, branch feat/mec-contacts-import) never releases a suppression, so if the
+  order import ran first a buyer SUBSCRIBED on Wix would stay held (it errs towards not mailing;
+  the dry run warns whenever it would create contacts). **Known wording limit:** the directory
+  badge reads "Emails: unsubscribed <date>" for a hold.
+- **No buyer detail beyond the contact link is stored**: no address, phone, buyer note or Wix
+  Events checkout answer (the 2024 zoo trip asked for emergency contacts). Notes name products,
+  amounts, the Wix order number and the processor only. The command prints counts and money only.
+- **Idempotent** on `(masjid_id, source, order_number)`; **undo** (`--undo=<batch>`, dry unless
+  `--execute`) removes the batch's orders, donations and registrations, then the scaffolding it
+  recorded in `historical_import_records` — each piece only if nothing outside the batch uses it
+  and its `updated_at` has not moved since the import. A contact the Wix contact import has filled
+  in since is KEPT (and its hold with it), unlike `schools:import-roster --rollback`, which refuses
+  the whole batch: here the order history is what is being undone.
+- **Timestamps are the order's**: `created_at` of donations and registrations and `paid_at` of the
+  ledger row are the Wix order instant, `donated_at` the organisation-local date — so every
+  created_at window ("gifts in the last 12 months", impact periods) sees the order where it
+  happened, not on import day.
+- Expected run on the 2026-09-25 export (computed from the raw files, aggregates only): 339
+  donations $27,464.00 (Zakat-ul-Fitr 273 / $13,381, Iftar 50 / $11,568, Qurbani 4 / $900, General
+  12 / $1,615); 491 registrations (448 paid, 43 cancelled) $12,918.24 across 15 historical
+  offerings; 36 order-only lines $3,280.00; total $43,662.24 = paid orders, reconciles; 575
+  distinct buyer emails. Not yet dry-run through PHP against the real export: PHP runs only on the
+  droplet and the raw export may not leave the Mac. Apply together with the contact import, before
+  the domain move, from the fresh read-only pull.

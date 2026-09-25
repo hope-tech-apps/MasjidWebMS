@@ -81,9 +81,11 @@ final class ModuleFacts
             ->count();
         $facts[] = self::counted($pending, 'gift', 'gifts') . ' started in the last 24 hours may still complete';
 
+        // Imported Wix history is not a gift this module recorded.
         $recorded = Donation::withoutMasjidScope()
             ->where('masjid_id', $masjid->id)
             ->where('status', 'succeeded')
+            ->withoutHistorical()
             ->where('created_at', '>=', now()->subYear())
             ->count();
         $facts[] = self::counted($recorded, 'gift', 'gifts') . ' recorded in the last 12 months';

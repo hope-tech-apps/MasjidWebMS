@@ -82,6 +82,26 @@ class EmailSuppression extends Model
     /** The relay reported the address as permanently undeliverable. */
     public const REASON_BOUNCE = 'bounce';
 
+    /**
+     * A HOLD, not an opt-out: the order-history import created a contact for a
+     * Wix buyer Manara had no consent record for, and suppressed the address so
+     * no broadcast reaches somebody who never subscribed (DECISIONS.md
+     * 2026-09-25, "Wix order history"; the owner's contact rule, "Everyone, most
+     * blocked"). Nobody asked for it, so it is the one reason whose row may be
+     * removed rather than released: `crm:import-wix-orders --undo` deletes the
+     * hold it created when it deletes the contact it created, and only while the
+     * row still carries this reason and no live contact holds the address.
+     *
+     * The Wix contact import is meant to run FIRST: then almost every buyer is
+     * already a contact carrying their Wix consent, the order import links to
+     * them, and this hold is written only for a buyer that import did not bring
+     * over. Run the other way round, a buyer who is subscribed on Wix stays held
+     * until someone decides otherwise, which errs towards not mailing. A later
+     * consent decision may lift a hold of THIS reason; every other reason keeps
+     * the release-only rule above.
+     */
+    public const REASON_ORDER_HISTORY_HOLD = 'order_history_import';
+
     protected $fillable = [
         'masjid_id',
         'email_normalized',

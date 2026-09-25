@@ -291,6 +291,15 @@
                                     Issue receipt
                                 </button>
                             </template>
+                            <!--
+                                Imported Wix history: the money moved through Square or PayPal on
+                                the old site, so there is nothing for Manara to receipt or edit. The
+                                sentence mirrors DonationsController::historicalRefusal().
+                            -->
+                            <p v-else-if="isHistoricalGift(selectedDonation)" class="text-muted mb-0">
+                                This gift is part of the order history imported from the old Wix site. It was paid
+                                through Wix, not Manara, so Manara does not edit it or issue a receipt for it.
+                            </p>
                             <p v-else-if="selectedDonation.source !== 'offline'" class="text-muted mb-0">
                                 Receipts for card gifts are issued automatically when Stripe confirms the payment.
                             </p>
@@ -440,6 +449,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
+import { donationMethodLabel, isHistoricalGift } from '@/core/helpers/donationMethod';
 
 // Stores
 const donationsStore = useDonationsStore();
@@ -912,16 +922,9 @@ const donorName = (donation: any): string => {
     return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Donor';
 };
 
-// Online = Stripe (card via checkout); offline = the recorded payment method
-// (cash/check/zelle/…). Falls back to a dash when neither is set.
-const methodLabel = (donation: any): string => {
-    if (donation.source === 'offline') {
-        return (donation.payment_method && donation.payment_method !== 'unknown')
-            ? donation.payment_method.replace(/_/g, '/')
-            : 'offline';
-    }
-    return 'card';
-};
+// One label for every giving screen: card, the recorded offline method, or the
+// processor of an imported Wix order (core/helpers/donationMethod.ts).
+const methodLabel = (donation: any): string => donationMethodLabel(donation);
 
 const statusClass = (status: DonationStatus): string => {
     switch (status) {

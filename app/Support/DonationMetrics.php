@@ -74,14 +74,28 @@ use Illuminate\Database\Query\JoinClause;
  * `meta.zakat.definition`, because a zakat total an organization shows its
  * donors is worth nothing if the reader has to guess which of the two it means.
  * See App\Support\ZakatDesignation.
+ *
+ * ## Imported history is left out unless it is asked for by name
+ *
+ * `source = 'historical'` rows are orders another system took before the
+ * organisation came to Manara (MEC's Wix store, paid through Square and PayPal;
+ * DECISIONS.md 2026-09-25). With no source filter every figure here describes
+ * what Manara recorded — Stripe plus offline — and history is excluded, so a
+ * 2019 Zakat-ul-Fitr order on Wix never reads as money that came in through
+ * Manara, never inflates "all time", and never counts twice beside the
+ * processor's own records. `source=historical` shows the history on its own,
+ * and the header then describes that set, as it does for every other filter.
+ * The ledger list and its CSV apply the same default
+ * (DonationsController::filteredQuery), so the header and the rows beneath it
+ * keep describing one set of gifts.
  */
 class DonationMetrics
 {
     /** Mirrors the donations.status enum — also the whitelist the controller validates against. */
     public const STATUSES = ['pending', 'succeeded', 'failed', 'refunded'];
 
-    /** Mirrors donations.source. */
-    public const SOURCES = ['stripe', 'offline'];
+    /** Mirrors donations.source (Donation::SOURCES). */
+    public const SOURCES = Donation::SOURCES;
 
     /** Money received. Anything else is an intent, a failure, or a reversal. */
     public const MONEY_RECEIVED_STATUS = 'succeeded';
@@ -219,6 +233,8 @@ class DonationMetrics
 
                 if ($filters['source'] !== null) {
                     $join->where('donations.source', '=', $filters['source']);
+                } else {
+                    $join->where('donations.source', '!=', Donation::SOURCE_HISTORICAL);
                 }
             })
             ->groupBy('funds.id', 'funds.name', 'funds.type', 'funds.is_active')
@@ -332,7 +348,10 @@ class DonationMetrics
             ->where('donations.status', $filters['status'])
             ->when(
                 $filters['source'] !== null,
-                fn (Builder $q) => $q->where('donations.source', $filters['source'])
+                fn (Builder $q) => $q->where('donations.source', $filters['source']),
+                // No source asked for: what Manara recorded, never imported
+                // history (see the class docblock).
+                fn (Builder $q) => $q->withoutHistorical()
             );
     }
 

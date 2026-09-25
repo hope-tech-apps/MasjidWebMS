@@ -119,6 +119,8 @@
                                 <option value="">All sources</option>
                                 <option value="stripe">Online</option>
                                 <option value="offline">Offline</option>
+                                <!-- Left out of "All sources" by the server; see DonationsDashboardView. -->
+                                <option value="historical">Wix history (before Manara)</option>
                             </select>
                         </div>
                         <div class="col-md-6 col-lg-3">
@@ -215,6 +217,7 @@ import { useDonationsStore } from '@/stores/masjid/donationsStore';
 import { useDonationStatsStore } from '@/stores/masjid/donationStatsStore';
 import { useFundsStore } from '@/stores/masjid/fundsStore';
 import Swal from 'sweetalert2';
+import { donationMethodLabel } from '@/core/helpers/donationMethod';
 
 // Stores
 const route = useRoute();
@@ -490,14 +493,8 @@ const donorName = (donation: any): string => {
     return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Donor';
 };
 
-const methodLabel = (donation: any): string => {
-    if (donation.source === 'offline') {
-        return (donation.payment_method && donation.payment_method !== 'unknown')
-            ? donation.payment_method.replace(/_/g, '/')
-            : 'offline';
-    }
-    return 'card';
-};
+// One label for every giving screen (core/helpers/donationMethod.ts).
+const methodLabel = (donation: any): string => donationMethodLabel(donation);
 
 const statusClass = (status: DonationStatus): string => {
     switch (status) {

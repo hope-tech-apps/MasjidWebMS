@@ -571,8 +571,11 @@ export type RegistrationView = 'registrations' | 'registrants';
 
 // ------------------------------------------- entering a registration by hand
 
-/** Which door a registration came through. Mirrors `Registration::SOURCES`. */
-export type RegistrationSource = 'public' | 'staff';
+/**
+ * Which door a registration came through. Mirrors `Registration::SOURCES`.
+ * `historical` is a ticket imported from the old Wix site's order history.
+ */
+export type RegistrationSource = 'public' | 'staff' | 'historical';
 
 /**
  * One person on a hand-entered registration: an EXISTING contact, or a new one

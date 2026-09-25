@@ -516,6 +516,12 @@ class RegistrationService
                 return $locked;
             }
 
+            // Imported history is a record of a sale Wix made; it holds no seat
+            // on the counter and no money Manara could refund.
+            if ($locked->isHistorical()) {
+                throw RegistrationException::historicalRecord();
+            }
+
             if ($locked->status === Registration::STATUS_WAITLISTED) {
                 $locked->status = Registration::STATUS_CANCELLED;
                 $locked->payment_status = Registration::PAYMENT_CANCELED;

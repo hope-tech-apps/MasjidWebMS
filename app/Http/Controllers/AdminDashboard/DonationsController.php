@@ -21,6 +21,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -77,7 +78,7 @@ class DonationsController extends Controller
         $rules = [
             'status' => ['nullable', 'in:pending,succeeded,failed,refunded'],
             'fund_id' => ['nullable', 'integer'],
-            'source' => ['nullable', 'in:stripe,offline'],
+            'source' => ['nullable', Rule::in(Donation::SOURCES)],
             'search' => ['nullable', 'string', 'max:255'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date'],
@@ -112,7 +113,15 @@ class DonationsController extends Controller
         $donations = Donation::query()
             ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->when($filters['fund_id'] ?? null, fn ($q, $fundId) => $q->where('fund_id', $fundId))
-            ->when($filters['source'] ?? null, fn ($q, $source) => $q->where('source', $source))
+            // No source asked for: what Manara recorded. Imported history
+            // (`historical`, MEC's Wix orders) appears only when asked for by
+            // name — the same default DonationMetrics applies to the header
+            // above this list, so the two keep describing one set of gifts.
+            ->when(
+                $filters['source'] ?? null,
+                fn ($q, $source) => $q->where('source', $source),
+                fn ($q) => $q->withoutHistorical()
+            )
             // Optional donor search (name or email).
             ->when($filters['search'] ?? null, function ($q, $search) {
                 $q->whereHas('contact', function ($c) use ($search) {
@@ -299,6 +308,10 @@ class DonationsController extends Controller
     {
         $donation = Donation::with('receipt')->findOrFail($donation_id);
 
+        if ($donation->isHistorical()) {
+            return $this->historicalRefusal();
+        }
+
         if ($donation->source !== 'offline') {
             return response()->json([
                 'status' => 'error',
@@ -472,6 +485,10 @@ class DonationsController extends Controller
     {
         $donation = Donation::findOrFail($donation_id);
 
+        if ($donation->isHistorical()) {
+            return $this->historicalRefusal();
+        }
+
         if ($donation->source !== 'offline') {
             return response()->json([
                 'status' => 'error',
@@ -498,6 +515,25 @@ class DonationsController extends Controller
             'status' => 'success',
             'data' => $receipt,
         ], $existing ? Response::HTTP_OK : Response::HTTP_CREATED);
+    }
+
+    /**
+     * The one answer to "edit" or "receipt" on an imported Wix gift.
+     *
+     * The money moved through Square or PayPal on the old Wix site, years before
+     * Manara, so Manara issues no tax document for it and does not rewrite it:
+     * the processor's record and the organisation's books are the source of
+     * truth, and a Manara receipt would read as a payment Manara took. An import
+     * that was wrong is undone as a batch (`crm:import-wix-orders --undo`), not
+     * corrected row by row. DECISIONS.md 2026-09-25, "Wix order history".
+     */
+    private function historicalRefusal()
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'This gift is part of the order history imported from the old Wix site. It was paid '
+                . 'through Wix, not Manara, so Manara does not edit it or issue a receipt for it.',
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
     }
 
     /**
