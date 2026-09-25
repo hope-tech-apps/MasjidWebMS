@@ -846,6 +846,32 @@ Route::prefix('admin')->group(function () {
                         // Permission::count() stays at 8 and StaffAuthGuardPinTest
                         // pins it.
                         Route::post('/invite', 'invite')->middleware('permission:manage contacts');
+
+                        // A FIFTH VERB (2026-09-25), and the one that is NOT
+                        // for the office: mint the same 7-day link and RETURN
+                        // it, for the owner to text a parent directly.
+                        //
+                        // SUPER ADMIN ONLY, enforced in the controller with
+                        // abort(403) — the call `MasjidsController::setCrmAccess`
+                        // makes, and for its reason: the shared `super`
+                        // middleware answers 401, which the SPA reads as an
+                        // expired session and acts on by signing the operator
+                        // out. A MasjidAdmin who reaches this must be told they
+                        // may not, not logged out.
+                        //
+                        // `permission:manage contacts` stays underneath and
+                        // changes no outcome (a SuperAdmin holds all eight); it
+                        // keeps this route reading like its siblings. No
+                        // permission is minted — Permission::count() stays at 8.
+                        //
+                        // Why it is narrower than `/invite` above, which the
+                        // same office staff may press: an emailed link goes to
+                        // the address on the row, so "where did the key go?" has
+                        // an answer. A copied one goes to a person in a room by
+                        // a channel this application cannot see. Owner,
+                        // 2026-09-25: "You only (super admin)". DECISIONS.md.
+                        Route::post('/invite/copy-link', 'copyLink')
+                            ->middleware('permission:manage contacts');
                     });
 
                 // Volunteer credentials (T-023, Community vertical) — a

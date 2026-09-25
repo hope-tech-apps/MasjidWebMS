@@ -8,6 +8,7 @@ use App\Models\ContactLoginEvent;
 use App\Models\ContactPortalInvite;
 use App\Models\Masjid;
 use App\Models\User;
+use Closure;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -83,6 +84,25 @@ use Throwable;
  * the staff reset token WAS found in this production host's rotated nginx access
  * logs, beside the account's email address. The SPA reads `location.hash`,
  * scrubs it, and POSTs the token in a request body.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO DOORS, ONE MINT (2026-09-25)
+ * ---------------------------------------------------------------------------
+ *
+ * `issue()` mails the link. `issueCopyableLink()` RETURNS it, for a SuperAdmin
+ * to hand a parent by text or in person — the owner's ask, and a deliberate
+ * relaxation of the property above that no staff member ever holds a working
+ * key. DECISIONS.md, 2026-09-25, records what was relaxed and why SuperAdmin is
+ * the boundary; `ContactFamilyLoginController::copyLink()` is where that is
+ * enforced, with the in-controller `abort(403)` this codebase already uses for
+ * super-only writes.
+ *
+ * Both are `mint()` with a different delivery and a different audit verb.
+ * Everything in the numbered list above still holds for both, including (6) —
+ * copying a link invalidates an outstanding emailed one, so there is still only
+ * ever ONE live link per contact — and (7), the flood ceiling, which counts
+ * copied and emailed links together because what it bounds is working keys in
+ * circulation for one family.
  */
 class FamilyInviteService
 {
@@ -92,6 +112,14 @@ class FamilyInviteService
 
     /**
      * Mint a link and mail it to the address on file.
+     *
+     * THE PLAINTEXT NEVER LEAVES `mint()` BY THIS DOOR, and the return type is
+     * the guarantee: this method hands back the ROW, which cannot reproduce the
+     * token (the column is a keyed digest and the model hides it besides). The
+     * only copy in the world when this returns is in the parent's inbox. That
+     * property is what made it safe to give every MasjidAdmin this button, and
+     * the SuperAdmin-only `issueCopyableLink()` below does NOT weaken it — it is
+     * a different door with a different gate and a different audit verb.
      *
      * @throws RuntimeException when this contact may not hold a family login,
      *                          has no live one, or has been sent too many
@@ -105,6 +133,106 @@ class FamilyInviteService
      */
     public function issue(Contact $contact, ?User $actor = null, ?string $ip = null): ContactPortalInvite
     {
+        return $this->mint(
+            $contact,
+            $actor,
+            $ip,
+            ContactLoginEvent::ACTION_INVITE_SENT,
+            // The delivery, and the ONLY difference between this door and the
+            // copy door. Inside the transaction, for the reason `mint()` records.
+            fn (Contact $c, string $token) => $this->deliver($c, $token),
+        )['invite'];
+    }
+
+    /**
+     * Mint a link and HAND IT BACK, for a SuperAdmin to pass on by hand.
+     *
+     * ---------------------------------------------------------------------------
+     * THIS RELAXES A DELIBERATE GUARANTEE. READ DECISIONS.md, 2026-09-25.
+     * ---------------------------------------------------------------------------
+     *
+     * `issue()` was written so the plaintext's entire life was inside one method
+     * — generated, put in a URL, handed to the mailer, gone. What that bought was
+     * that **no staff member ever holds a working key to a child's records**. A
+     * link on a screen can be read over a shoulder, screenshotted, or pasted into
+     * the wrong thread; an emailed one can only be read by whoever holds the
+     * mailbox the office typed, and the row says which mailbox that was.
+     *
+     * The owner asked for it back, narrowly: he wants "the ability to set
+     * Sajida's login myself" and "the link for me to text her directly", and when
+     * asked who should be able to do that he chose "You only (super admin)".
+     *
+     * **The gate is NOT here.** `ContactFamilyLoginController::copyLink()` refuses
+     * anybody but a SuperAdmin with a 403, the same in-controller `abort()`
+     * `MasjidsController::setCrmAccess` makes. A service method is the wrong place
+     * for a principal check — it has no request and no HTTP answer — but this
+     * docblock is the reason a future caller must not add a second one without
+     * the same gate in front of it. Nothing else in `app/` calls this method.
+     *
+     * Everything else is `issue()`'s, because it is literally the same `mint()`:
+     * the same guardian-edge eligibility, the same liveness and address checks,
+     * the same flood ceiling, the same one-live-link invalidation (so copying a
+     * link KILLS an outstanding emailed one — there is still only ever one live
+     * link per contact), the same 7-day TTL, the same HMAC at rest, the same
+     * transaction. The differences are exactly two: nothing is mailed, and the
+     * audit verb is `invite_link_copied` rather than `invite_sent`.
+     *
+     * The returned URL is the caller's whole responsibility from here. It must
+     * reach the response body and nothing else — not a log line, not an exception
+     * message, not a stored column.
+     *
+     * @return array{invite: ContactPortalInvite, url: string}
+     *
+     * @throws RuntimeException for the same three refusals `issue()` throws.
+     */
+    public function issueCopyableLink(Contact $contact, ?User $actor = null, ?string $ip = null): array
+    {
+        // No delivery closure: nothing is mailed, so there is no
+        // InviteDeliveryFailed path and no transport to fail.
+        $minted = $this->mint(
+            $contact,
+            $actor,
+            $ip,
+            ContactLoginEvent::ACTION_INVITE_LINK_COPIED,
+            null,
+        );
+
+        return [
+            'invite' => $minted['invite'],
+            'url' => $this->linkFor($contact, $minted['token']),
+        ];
+    }
+
+    /**
+     * ONE mint. Both doors are this method with a different last two arguments.
+     *
+     * Every rule that makes a portal link safe to exist lives here and only here
+     * — eligibility, liveness, an address to bind to, the flood ceiling, the
+     * one-live-link invalidation, the seven days, the keyed digest, the
+     * transaction and the audit row. A second implementation of any of them is
+     * the copy that agrees today and stops getting the fix; the point of the
+     * `$deliver` parameter is that the ONLY thing a caller may vary is what
+     * happens to the plaintext.
+     *
+     * `$deliver` is called INSIDE the transaction, and that is deliberate for the
+     * emailed path: the two failure directions are not symmetrical. Mail fails
+     * and we roll back — nothing changed, the previous invite is still live, the
+     * office is told. Mail fails after a commit — the office reads "sent", the
+     * parent has nothing, and a working link was invalidated by a send that never
+     * happened. That is the silent failure this codebase keeps finding. The copy
+     * path passes null and therefore cannot be wrong in either direction: the
+     * operator either has the link in the response or has an error.
+     *
+     * @param  null|\Closure(Contact, string): void  $deliver
+     * @return array{invite: ContactPortalInvite, token: string}
+     */
+    private function mint(
+        Contact $contact,
+        ?User $actor,
+        ?string $ip,
+        string $action,
+        ?Closure $deliver,
+    ): array {
         // THE SAME CHECK `enable()` MAKES, not a second copy of it. Guardian
         // edges only: a login on a contact who is nobody's guardian is a STUDENT
         // login, which `GroupAudience::standingIn()` would grant the whole class
@@ -142,13 +270,16 @@ class FamilyInviteService
 
         $this->assertNotFlooding($contact);
 
-        // The plaintext's ENTIRE LIFE: generated here, put into a URL, handed to
-        // the mailer, and gone when this method returns. It is never returned to
-        // the caller, never logged and never stored — the only copy in the world
-        // after this is in the parent's inbox.
+        // 32 bytes of CSPRNG output. Where it goes from here is the caller's:
+        // `issue()` hands it to the mailer and drops it, so the only copy in the
+        // world is in the parent's inbox; `issueCopyableLink()` puts it in a URL
+        // and returns it to one SuperAdmin. It is never logged and never stored
+        // — the column below holds a keyed digest — and it must never appear in
+        // an exception message, which is why every refusal above is thrown
+        // BEFORE it is generated.
         $token = bin2hex(random_bytes(32));
 
-        return DB::transaction(function () use ($contact, $address, $token, $actor, $ip): ContactPortalInvite {
+        $invite = DB::transaction(function () use ($contact, $address, $token, $actor, $ip, $action, $deliver): ContactPortalInvite {
             // ONE LIVE LINK. Done first and in the same transaction, so there is
             // no instant at which two working keys exist.
             ContactPortalInvite::invalidateOutstandingFor($contact);
@@ -183,7 +314,13 @@ class FamilyInviteService
             // error path would be an existence oracle, and this one is an
             // authenticated admin request whose entire purpose is to report
             // whether a parent was written to.
-            $this->deliver($contact, $token);
+            //
+            // NULL on the copy path — nothing is delivered, because the operator
+            // IS the delivery. The rest of this transaction is identical, which
+            // is the whole reason the two doors share it.
+            if ($deliver !== null) {
+                $deliver($contact, $token);
+            }
 
             // On the record, the way `enable` and `revoke` are: what is being
             // handed out is a stranger's view of a specific child's file, and
@@ -193,9 +330,14 @@ class FamilyInviteService
                 // the CONTACT's tenant even in an unbound context.
                 'masjid_id' => $contact->masjid_id,
                 'contact_id' => $contact->id,
-                'action' => ContactLoginEvent::ACTION_INVITE_SENT,
-                // The address the mail actually went to, snapshotted — the
-                // contact's column may move afterwards.
+                // `invite_sent` or `invite_link_copied`, and they are two verbs
+                // rather than one because an emailed link went to the address on
+                // file while a copied one went to a person in a room. See the
+                // constants on ContactLoginEvent.
+                'action' => $action,
+                // The address the link is BOUND to, snapshotted — the contact's
+                // column may move afterwards, and moving it is what kills the
+                // link. On the emailed path it is also where the mail went.
                 'login_email' => $address,
                 'actor_user_id' => $actor?->id,
                 // Snapshotted for the reason the migration records: a name read
@@ -208,6 +350,12 @@ class FamilyInviteService
 
             return $invite;
         });
+
+        // The token travels back beside the row rather than on it: nothing on
+        // `ContactPortalInvite` can hold a plaintext (the column is a digest and
+        // the model hides it), which is what stops a future `toArray()` from
+        // publishing one. `issue()` throws this half away.
+        return ['invite' => $invite, 'token' => $token];
     }
 
     /**

@@ -12,9 +12,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * The row is the RECORD of a credential, never the credential: `token_hash` is a
  * keyed digest (see the migration for the construction and why it is keyed), the
- * plaintext exists only inside `App\Services\Family\FamilyInviteService::issue()`
- * for as long as it takes to build a URL and hand it to the mailer, and nothing
- * in this class can reproduce it.
+ * plaintext exists only inside `App\Services\Family\FamilyInviteService::mint()`
+ * for as long as it takes to build a URL, and nothing in this class can
+ * reproduce it. That holds for BOTH doors: the emailed one hands the URL to the
+ * mailer and drops it, and the SuperAdmin-only "Copy link" (2026-09-25) returns
+ * it in one response body — neither ever writes it anywhere this model can see.
  *
  * `BelongsToMasjid` because an invite is tenant data of the most sensitive kind:
  * it names a family address against an organisation and it opens a specific

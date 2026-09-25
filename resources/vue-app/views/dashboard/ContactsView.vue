@@ -623,6 +623,37 @@
                                                 <i class="bi bi-envelope-paper me-1"></i>
                                                 {{ familyLogin.invite ? 'Send invite again' : 'Send portal invite' }}
                                             </button>
+                                            <!--
+                                                SUPER ADMIN ONLY, and the v-if is
+                                                a courtesy rather than the
+                                                control: the server refuses a
+                                                MasjidAdmin 403 whether or not
+                                                this button was ever rendered.
+
+                                                It sits beside "Send portal
+                                                invite" because they are the same
+                                                act with a different delivery —
+                                                and it is worded "Copy link"
+                                                rather than "Get link" so the
+                                                operator reads it as taking
+                                                something out of the system,
+                                                which is what it is. The owner
+                                                asked for it so he can text a
+                                                parent their link directly;
+                                                everybody else keeps the emailed
+                                                path, which is unchanged.
+                                            -->
+                                            <button
+                                                v-if="familyLogin.state === 'enabled' && canCopyPortalLink"
+                                                type="button"
+                                                class="btn btn-outline-warning"
+                                                @click="copyPortalLink"
+                                                :disabled="familyLoginSaving"
+                                                title="Make a sign-in link and copy it — it is not emailed"
+                                            >
+                                                <i class="bi bi-clipboard-check me-1"></i>
+                                                Copy link
+                                            </button>
                                             <button
                                                 v-if="familyLogin.state === 'enabled'"
                                                 type="button"
@@ -632,6 +663,85 @@
                                             >
                                                 <i class="bi bi-slash-circle me-1"></i> Revoke
                                             </button>
+                                        </div>
+
+                                        <!--
+                                            THE LINK ITSELF — the only place this
+                                            application ever puts one on a screen.
+
+                                            Rendered so it can be READ, because
+                                            the operator's next act is typing it
+                                            into a text message and a clipboard
+                                            write can fail silently (undefined on
+                                            a non-secure origin, rejected when
+                                            the permission is denied). The
+                                            readonly field is the fallback that
+                                            makes that failure cost nothing.
+
+                                            It says what holding it means in
+                                            plain words rather than in security
+                                            language: seven days, one use, and —
+                                            the one an operator will not infer —
+                                            anyone holding it opens this child's
+                                            record until it is used.
+
+                                            It is dropped when the card closes
+                                            and when another member's card is
+                                            opened, so it is never left on screen
+                                            after navigating away.
+                                        -->
+                                        <div v-if="copiedPortalLink" class="alert alert-warning py-2 px-3 mb-2 small">
+                                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                                <strong>
+                                                    <i class="bi bi-link-45deg me-1"></i>Sign-in link for
+                                                    <span class="font-monospace">{{ familyLogin.login_email }}</span>
+                                                </strong>
+                                                <button
+                                                    type="button"
+                                                    class="btn-close btn-sm ms-2"
+                                                    aria-label="Hide the link"
+                                                    @click="clearCopiedPortalLink"
+                                                ></button>
+                                            </div>
+
+                                            <div class="input-group input-group-sm mb-2">
+                                                <input
+                                                    type="text"
+                                                    class="form-control font-monospace"
+                                                    :value="copiedPortalLink.url"
+                                                    readonly
+                                                    @focus="($event.target as HTMLInputElement).select()"
+                                                    aria-label="Parent portal sign-in link"
+                                                />
+                                                <button type="button" class="btn btn-outline-secondary" @click="copyPortalLinkToClipboard">
+                                                    <i class="bi bi-clipboard me-1"></i>Copy
+                                                </button>
+                                            </div>
+
+                                            <!-- A failed copy is said out loud: "not copied" is
+                                                 visually identical to "not clicked", and an
+                                                 operator who believes it is on the clipboard
+                                                 pastes whatever was there before. -->
+                                            <p v-if="copiedPortalLinkCopyState === 'copied'" class="mb-1 text-success">
+                                                <i class="bi bi-check2 me-1"></i>Copied to the clipboard.
+                                            </p>
+                                            <p v-else-if="copiedPortalLinkCopyState === 'failed'" class="mb-1 text-danger">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                                Not copied — select the link above and copy it by hand.
+                                            </p>
+
+                                            <ul class="mb-1 ps-3">
+                                                <li>It works for <strong>7 days</strong>, until {{ formatDateTime(copiedPortalLink.expires_at ?? '') }}.</li>
+                                                <li>It can be used <strong>once</strong>, then it stops working.</li>
+                                                <li>
+                                                    <strong>Anyone who has this link can open this child's record</strong>
+                                                    until it is used — send it only to the parent, and only by a channel you trust.
+                                                </li>
+                                            </ul>
+                                            <p class="mb-0 text-muted">
+                                                It is not shown again after you close this card, and it was not emailed to anyone.
+                                                Copying it is recorded on the access history below.
+                                            </p>
                                         </div>
 
                                         <details v-if="familyLogin.events.length" class="small">
@@ -1141,12 +1251,14 @@ import {
 } from '@/core/types/data/masjid-related/Contact';
 import { useContactsStore } from '@/stores/masjid/contactsStore';
 import { useMasjidStore } from '@/stores/masjidStore';
+import { useAuthStore } from '@/stores/authStore';
 import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
 
 // Store
 const contactsStore = useContactsStore();
 const masjidStore = useMasjidStore();
+const authStore = useAuthStore();
 
 // State
 const loading = ref(false);
@@ -1377,8 +1489,42 @@ const inviteBadgeClass = computed<string>(() => {
     }
 });
 
+/**
+ * THE COPIED LINK, held only while the operator is looking at this contact.
+ *
+ * A working key to one child's photographs, marks and safeguarding
+ * conversations. It is cleared by `loadFamilyLogin` — which runs whenever a
+ * contact card is opened — and by `clearCopiedPortalLink`, wired to the modal
+ * closing, so it is never left rendered behind a navigation and never carried
+ * from one member's card onto another's. It is in a ref and never in a store,
+ * `localStorage`, a query string or a log line.
+ */
+const copiedPortalLink = ref<{ url: string; expires_at: string | null } | null>(null);
+
+/** '' | 'copied' | 'failed' — a failed clipboard write must be said out loud. */
+const copiedPortalLinkCopyState = ref<'' | 'copied' | 'failed'>('');
+
+const clearCopiedPortalLink = () => {
+    copiedPortalLink.value = null;
+    copiedPortalLinkCopyState.value = '';
+};
+
+/**
+ * May this operator copy a link at all.
+ *
+ * `users.type` is the source of truth (.claude/rules/auth-permissions.md), and
+ * this is the SAME string the server compares. It hides a control the server
+ * would refuse; it is NOT the control — `ContactFamilyLoginController::copyLink`
+ * answers a MasjidAdmin 403 whether or not this SPA ever rendered the button,
+ * and `FamilyPortalInviteCopyLinkTest` deletes that check to prove it.
+ */
+const canCopyPortalLink = computed<boolean>(() => authStore.user?.type === 'SuperAdmin');
+
 const loadFamilyLogin = async (contactId: number | string) => {
     familyLogin.value = null;
+    // Opening a different member's card must not leave the last one's key on
+    // the screen.
+    clearCopiedPortalLink();
     familyLoginLoading.value = true;
     try {
         familyLogin.value = await contactsStore.fetchFamilyLogin(contactId);
@@ -1416,6 +1562,12 @@ const eventLabel = (action: FamilyLoginEvent['action']): string => {
         // claim access was granted three times when it was granted once and
         // advertised twice.
         case 'invite_sent': return 'Invite emailed';
+        // A DIFFERENT WORD from "Invite emailed", because it is a different act:
+        // an emailed link went to the address on the row, and a copied one went
+        // to a person in a room by a channel this application cannot see. The
+        // reader of this trail is asking who was handed a key to a child's file;
+        // one label for both is the answer they cannot get.
+        case 'invite_link_copied': return 'Link copied by super admin';
         default: return 'Enabled';
     }
 };
@@ -1429,6 +1581,9 @@ const eventBadgeClass = (action: FamilyLoginEvent['action']): string => {
         case 'password_set': return 'bg-secondary-subtle text-secondary';
         case 'password_cleared': return 'bg-secondary-subtle text-secondary';
         case 'invite_sent': return 'bg-primary-subtle text-primary';
+        // Warning-toned, not primary: it is the one row on this trail that says
+        // a working key left the system by a channel nothing here can see.
+        case 'invite_link_copied': return 'bg-warning-subtle text-warning';
         default: return 'bg-success-subtle text-success';
     }
 };
@@ -1583,6 +1738,107 @@ const confirmSendPortalInvite = async () => {
         });
     } finally {
         familyLoginSaving.value = false;
+    }
+};
+
+/**
+ * SUPER ADMIN ONLY — mint a portal link and put it on this screen.
+ *
+ * ## What this is, and why the confirmation is worded the way it is
+ *
+ * Every other way this application hands out a portal link mails it to the
+ * address on the record. This one hands it to the person at the keyboard, which
+ * is a deliberate relaxation of the rule that no staff member ever holds a
+ * working key to a child's file (DECISIONS.md, 2026-09-25 — the owner's ask, and
+ * his choice of "You only (super admin)").
+ *
+ * The dialog therefore states the three facts that decide whether the operator
+ * should press it, in plain words rather than in security language:
+ *
+ *  - it works for 7 days,
+ *  - it can be used once,
+ *  - **whoever holds it can open that child's record until it is used** — which
+ *    is the one an operator will not infer from "single-use link", and the whole
+ *    reason a link handed over by text is a different decision from one emailed
+ *    to an address the office typed.
+ *
+ * And, on a re-issue, that any link already in the family's inbox stops working
+ * — the same thing "Send invite again" says, because the server enforces one
+ * live link per contact ACROSS both doors.
+ *
+ * ## The clipboard write, and why a failure is not swallowed
+ *
+ * `navigator.clipboard` is undefined on a non-secure origin and `writeText()`
+ * rejects when the permission is denied. "Not copied" looks identical to "not
+ * clicked", so a silent catch means the operator pastes the PREVIOUS clipboard
+ * contents into a text message to a parent — the failure ImpactReportView
+ * records. It is reported, and the link is rendered in a selectable field
+ * regardless, so a failed copy costs nothing but a manual selection.
+ */
+const copyPortalLink = async () => {
+    if (!selectedContact.value || !familyLogin.value) return;
+
+    const address = familyLogin.value.login_email ?? '';
+    const reissuing = !!familyLogin.value.invite;
+
+    const result = await Swal.fire({
+        title: 'Copy a sign-in link?',
+        html: 'This makes a link that signs this parent in at '
+            + `<strong>${address}</strong> — it is not emailed to them, `
+            + 'you pass it on yourself.'
+            + '<br><br>It works for <strong>7 days</strong>, can be used <strong>once</strong>, '
+            + 'and <strong>anyone who has it can open this child\'s record</strong> until it is used.'
+            + (reissuing
+                ? '<br><br>Any link already sent to this family will stop working straight away.'
+                : ''),
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#286c56',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: 'Yes, make a link'
+    });
+
+    if (!result.isConfirmed) return;
+
+    familyLoginSaving.value = true;
+    try {
+        const status = await contactsStore.copyFamilyPortalLink(selectedContact.value.id);
+
+        // The panel refreshes with the new `invite` block and the fresh
+        // `invite_link_copied` row; the link rides beside it and lives only in
+        // the ref below.
+        familyLogin.value = status;
+        copiedPortalLink.value = status.copied_link ?? null;
+        copiedPortalLinkCopyState.value = '';
+
+        await copyPortalLinkToClipboard();
+    } catch (error: any) {
+        // A 403 is a MasjidAdmin who reached this some other way; a 422 is a
+        // refusal written for the reader (not eligible, no live sign-in, or the
+        // hour's worth of links already taken). Neither may be shown as anything
+        // but a failure — an operator who believes they have a link and has not
+        // is one who texts a parent nothing.
+        clearCopiedPortalLink();
+        Swal.fire({
+            icon: 'error',
+            title: 'No link was made',
+            text: error?.response?.data?.message ?? 'Could not copy the portal link. Please try again.'
+        });
+    } finally {
+        familyLoginSaving.value = false;
+    }
+};
+
+/** Put the link on the clipboard, and say so either way. */
+const copyPortalLinkToClipboard = async () => {
+    if (!copiedPortalLink.value) return;
+
+    try {
+        await navigator.clipboard.writeText(copiedPortalLink.value.url);
+        copiedPortalLinkCopyState.value = 'copied';
+    } catch (e) {
+        console.error('Copy portal link error: ', e);
+        copiedPortalLinkCopyState.value = 'failed';
     }
 };
 
@@ -2103,6 +2359,21 @@ const confirmRestore = async (contact: Contact) => {
 // Lock body scroll while any modal is open
 watch([showFormModal, showViewModal], ([a, b]) => {
     document.body.style.overflow = (a || b) ? 'hidden' : '';
+});
+
+/**
+ * THE LINK DOES NOT SURVIVE THE CARD BEING CLOSED.
+ *
+ * `loadFamilyLogin` already clears it when a card is opened, which covers moving
+ * from one member to another; this covers the plainer case of closing the card
+ * and leaving the screen, after which a working key to a child's file must not
+ * still be in memory waiting to be re-rendered. Watched on the modal flag rather
+ * than wired to the Close button because the card also closes by the backdrop,
+ * by Escape, and by `editContact`, and a key left behind by the path nobody
+ * wired is exactly the failure this is for.
+ */
+watch(showViewModal, (open) => {
+    if (!open) clearCopiedPortalLink();
 });
 </script>
 

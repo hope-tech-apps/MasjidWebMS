@@ -35,3 +35,33 @@
 
 | 13 | The iOS side drawer's primary-coloured band names the organisation, so Studio's iOS mockup puts the name there | ios `Masjid/Views/Menu/ProfileSection.swift` (the drawer's profile row shows `profile.title`); not traced to the band itself | 🟡 | the mockup's band text differs from the app's; colours, tabs and menu are unaffected | Studio S5 | to be compared with a TestFlight build's drawer |
 | 14 | A Studio org given content for a module its switches leave off (for example a school or community org given a donation link, whose `donation_link` switch is off by default) needs no app-features cutover decision, though `app-features:cutover-plan` reports one | measured 2026-09-24 (S8): a school provisioned from a draft with a donation link gets one BLOCKING (a) finding on `donation_link`; the command treats "pivot row off over content" as blocking even when the switch is already off, so the cutover would change nothing | 🔴 | the first such Studio org blocks the S2b cutover until the owner adds a resolution for it to `config/app_feature_cutover.php` | owner / S2b | open: either resolve such orgs in the config as they appear, or make the command non-blocking when the module is already off (a change to S2b's tool, not made in S8). `StudioProvisionCapabilitiesTest::a_studio_org_has_no_blocking_cutover_finding` pins the default maps with every fact the vertical's switches publish |
+
+## 2026-09-25 — Copy link (SuperAdmin-only portal invite)
+
+- **Assumption: the base is current `origin/main`, not the sha in the brief.**
+  The brief named `1bdf986f`; `origin/main` had moved to `e4c7fc48` (20+ commits
+  ahead, `1bdf986f` an ancestor). Branched off `origin/main`, which is what the
+  instruction says and the more defensible reading of a stale sha. Flagged.
+- **Assumption: the copy path keeps `permission:manage contacts` on the route
+  underneath the SuperAdmin check.** A SuperAdmin holds all eight permissions so
+  it changes no outcome, and it keeps the route reading like its three siblings.
+  The SuperAdmin check is the operative gate and is tested as such.
+- **Assumption: the copy path shares the emailed path's flood ceiling rather
+  than getting its own.** `family.invite.sends_per_hour_per_contact` bounds a
+  family's mailbox filling with working keys; the harm the ceiling names is
+  "working keys in circulation for this contact", which a copied link is one of.
+  A separate ceiling would let an actor take 3 emailed plus 3 copied links in an
+  hour. Owner did not speak to this.
+- **Assumption: the copied link is shown on screen until the operator dismisses
+  it or leaves the contact, not behind a one-shot reveal that traps focus.**
+  `FormStaffCodesPanel`'s shown-once dialog is the stricter pattern in this
+  codebase; it was not copied because the owner's stated use is reading the link
+  off the screen while typing a text message, which a focus-trapping dialog
+  makes worse. The link is cleared when the contact modal closes and whenever a
+  different contact is selected, so it is never left rendered after navigating
+  away.
+- **Unverified: the clipboard write itself.** `navigator.clipboard.writeText`
+  is undefined on a non-secure origin and rejects when permission is denied.
+  The failure is surfaced ("Not copied — select the link below"), never
+  swallowed, and the link is rendered in a selectable field regardless, so a
+  failed copy costs nothing. Not exercised in a browser on this machine.

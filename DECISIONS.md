@@ -2997,3 +2997,77 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — A SuperAdmin may COPY a portal link; nobody else may hold one
+
+Decision: add a **Copy link** action to the parent-portal panel that mints the
+same 7-day single-use invite the emailed path mints and **returns the plaintext
+link to the caller**, restricted to `users.type === 'SuperAdmin'` and refused —
+403 — to a MasjidAdmin, including the school's own office staff who may send the
+emailed invite.
+
+**This relaxes a guarantee that was deliberate, and the relaxation is the
+decision.** `FamilyInviteService::issue()` was written so the plaintext's entire
+life was inside one method: generated, put in a URL, handed to the mailer, gone
+when the method returned. Its own docblock says so — "It is never returned to
+the caller, never logged and never stored — the only copy in the world after
+this is in the parent's inbox." The property that bought was that **no staff
+member ever holds a working key to a child's photographs, marks and
+safeguarding conversations.** A link that reaches a screen is a link that can be
+read over a shoulder, pasted into the wrong thread, or screenshotted; an emailed
+one can only be read by whoever holds the mailbox the office typed.
+
+Owner, 2026-09-25, in his own words: he wants "the ability to set Sajida's login
+myself" and "the link for me to text her directly". Asked who should be able to
+do that, he chose **"You only (super admin)"**.
+
+Alternatives considered and rejected:
+
+- **`manage contacts`, like the emailed path.** Rejected: that is precisely the
+  set the owner declined. Every MasjidAdmin at every organisation holds the full
+  CRM permission set, so gating on it would hand the school's registrars,
+  office staff and anyone else with a contacts role the ability to take a
+  working key to any parent's child out of the system and keep it. The emailed
+  path is safe in their hands *because* the link goes to the address on file
+  and nowhere else; removing that is exactly what needs the narrower boundary.
+- **A new spatie permission (`copy portal link`).** Rejected: `Permission::count()
+  === 8` is pinned by `StaffAuthGuardPinTest` and `RolePermissionBridgeTest`, and
+  a new permission would be granted to `masjid-admin` or to nobody — the first
+  is the rejected option above and the second is a SuperAdmin check wearing a
+  costume. `.claude/rules/auth-permissions.md` records the same call for the
+  family-login routes themselves.
+- **The shared `super` middleware.** Rejected for the reason `setCrmAccess`
+  records: `SuperAdminMiddleware` answers a non-super caller **401**, which the
+  admin SPA reads as "your session ended" and acts on by signing the operator
+  out. A MasjidAdmin who clicks a control they should not see must be told they
+  may not, not logged out. The in-controller `abort(403)` produces a clean 403
+  through this app's JSON renderer (an `HttpException`), which is the same shape
+  `setCrmAccess` and `setCapability` chose and for the same reason.
+- **A second service method that duplicates `issue()` without the mailer.**
+  Rejected on the kit's own grounds: a second copy of the eligibility rule, the
+  flood ceiling, the one-live-link invalidation and the TTL is the copy that
+  stops getting the fix. `mint()` is now the single implementation and the two
+  public methods differ only in whether a delivery closure is passed.
+
+Why SuperAdmin is the right boundary and not merely the narrowest one: the harm
+this guarantee was protecting against is *a key in circulation with no record of
+where it went*. The emailed path has an answer to "where did it go" — the
+address on the row. The copied path does not, so the only thing that bounds it
+is who may take it, and the owner is the single principal who is accountable for
+the platform rather than for one school's roster. It is also the only principal
+for whom "I will text her myself" is a real workflow: a registrar with the same
+button would use it in place of the emailed path, because it is faster, and the
+audit trail would stop being able to say which mailbox was handed a key.
+
+What is unchanged, deliberately: the emailed path keeps its signature and its
+guarantee (`issue()` returns a `ContactPortalInvite` and has no way to hand a
+caller a token), every eligibility and flood rule is shared rather than copied,
+and copying invalidates any outstanding emailed link exactly as a re-send does —
+there is still only ever ONE live link per contact.
+
+The act is audited as a **different verb**, `contact_login_events.action =
+'invite_link_copied'`, not `invite_sent`. An emailed link went to the address on
+file; a copied link went to a person in a room, and an audit trail that cannot
+tell those apart cannot answer the question it exists for. The row names the
+SuperAdmin who took it and snapshots the address the link was bound to.
+

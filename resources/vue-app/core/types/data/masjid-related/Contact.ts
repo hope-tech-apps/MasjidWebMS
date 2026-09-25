@@ -198,10 +198,15 @@ export type FamilyLoginEvent = {
      * to another address ended it. `invite_sent` (2026-09-24) records the office
      * MAILING a 7-day portal link — the act that used to be invisible, because
      * `enabled` said the door had been opened and nothing said whether the
-     * family had ever been told where it was. See ContactLoginEvent::ACTIONS; the column
+     * family had ever been told where it was. `invite_link_copied` (2026-09-25)
+     * is a SuperAdmin taking that same link OUT of the system to hand over by
+     * text or in person; it is a separate verb because an emailed link went to
+     * the address on the row and a copied one went to a person in a room, and a
+     * trail that could not tell them apart could not answer what it is for. See
+     * ContactLoginEvent::ACTIONS; the column
      * is a plain string precisely so verbs can be added without a migration.
      */
-    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed' | 'password_set' | 'password_cleared' | 'invite_sent';
+    action: 'enabled' | 'revoked' | 'merged' | 'address_released' | 'address_claimed' | 'password_set' | 'password_cleared' | 'invite_sent' | 'invite_link_copied';
     login_email: string | null;
     actor_name: string;
     actor_email: string | null;
@@ -254,6 +259,22 @@ export type FamilyLoginStatus = {
      */
     invite: FamilyPortalInvite | null;
     events: FamilyLoginEvent[];
+    /**
+     * THE ONE TIME A PORTAL LINK IS EVER EMITTED, and the only shape in this
+     * application that carries one.
+     *
+     * Present ONLY on the response to `copyFamilyPortalLink()` — the
+     * SuperAdmin-only "Copy link". It is absent from every GET, absent from the
+     * emailed path's response, and there is no way to ask for it again: the row
+     * stores a keyed digest and nothing can reproduce the plaintext. A screen
+     * that holds this must drop it when the operator leaves the contact.
+     *
+     * `expires_at` is the server's own row, not "7 days" re-typed here.
+     */
+    copied_link?: {
+        url: string;
+        expires_at: string | null;
+    };
 };
 
 /**

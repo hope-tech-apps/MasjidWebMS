@@ -151,8 +151,34 @@ class ContactLoginEvent extends Model
     public const ACTION_INVITE_SENT = 'invite_sent';
 
     /**
+     * A 7-day portal link was MINTED AND HANDED TO AN OPERATOR, not mailed.
+     *
+     * The SuperAdmin-only "Copy link" (2026-09-25, DECISIONS.md). It produces
+     * exactly the same credential `invite_sent` does, and it is a DIFFERENT VERB
+     * on purpose rather than for tidiness.
+     *
+     * An emailed link went to the address on this row and nowhere else: "where
+     * did the key go?" has an answer, and the answer is a mailbox the office
+     * typed. A copied link went to a person in a room, by a channel this
+     * application cannot see — read aloud, texted, pasted. The two acts have
+     * different blast radii and different people to ask afterwards, so a trail
+     * that collapsed them into one word could not answer the question it exists
+     * for. `FamilyPortalInviteTest` and `FamilyPortalInviteCopyLinkTest` both
+     * assert the verbs stay distinct.
+     *
+     * `login_email` is the address the link is BOUND to — redemption re-reads
+     * `contacts.login_email` and refuses if it has moved — even though no mail
+     * was sent to it. It is the fact that says which child's file the copied key
+     * opens.
+     *
+     * `actor_*` is never null in practice here: the act is refused unless the
+     * caller is a SuperAdmin `User`, which is the whole point of recording it.
+     */
+    public const ACTION_INVITE_LINK_COPIED = 'invite_link_copied';
+
+    /**
      * A plain string column, not an enum — adding a verb must not be an
-     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The six
+     * `ALTER TABLE` on a live table (.claude/rules/migrations.md). The seven
      * verbs below `revoked` are what that choice was made FOR; they cost a
      * constant each and no schema change.
      *
@@ -167,14 +193,15 @@ class ContactLoginEvent extends Model
         self::ACTION_PASSWORD_SET,
         self::ACTION_PASSWORD_CLEARED,
         self::ACTION_INVITE_SENT,
+        self::ACTION_INVITE_LINK_COPIED,
     ];
 
     /**
      * Everything is fillable because nothing here is reachable from a request
      * body: rows are written in exactly four places, from values each derives
      * from the authenticated actor and the contact it just changed:
-     * App\Services\Family\FamilyInviteService::issue (`invite_sent`, naming the
-     * staff member who pressed the button),
+     * App\Services\Family\FamilyInviteService::mint (`invite_sent` and
+     * `invite_link_copied`, naming the staff member who pressed the button),
      * App\Services\Family\FamilyAccessService::record (including
      * `password_cleared` when an operator re-addresses or releases a login),
      * App\Services\Family\FamilyPasswordService::record (`password_set` and

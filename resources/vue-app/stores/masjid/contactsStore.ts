@@ -271,6 +271,43 @@ export const useContactsStore = defineStore('contactsStore', () => {
         throw new Error('Failed to send the portal invite.');
     }
 
+    /**
+     * SUPER ADMIN ONLY — mint the same 7-day link and get it BACK, unsent.
+     *
+     * The owner's ask (2026-09-25): "the ability to set Sajida's login myself",
+     * "the link for me to text her directly", and — asked who should be able to
+     * do that — "You only (super admin)". A MasjidAdmin calling this gets a 403,
+     * enforced server-side in ContactFamilyLoginController::copyLink; the
+     * caller's `v-if` is a courtesy, not the control.
+     *
+     * Everything else is `sendFamilyPortalInvite`'s: the same eligibility, the
+     * same flood ceiling, the same seven days, and the same ONE LIVE LINK — so
+     * copying kills an outstanding emailed link, and vice versa.
+     *
+     * The returned `copied_link.url` is the ONLY time this application emits a
+     * portal link. It exists for this one response; there is no way to ask for
+     * it again, and the caller must drop it when the operator leaves the
+     * contact rather than leaving a working key to a child's file on a screen.
+     * Never log it, never persist it.
+     */
+    async function copyFamilyPortalLink(contactId: number | string): Promise<FamilyLoginStatus> {
+        if (!masjidStore.masjid?.id) {
+            throw new Error('Masjid not specified.');
+        }
+
+        const res: AxiosResponse = await ApiService.post(
+            `/api/admin/masjids/${masjidStore.masjid.id}/contacts/${contactId}/family-login/invite/copy-link`,
+            new URLSearchParams()
+        );
+
+        if (res.data?.status === 'success' && res.data?.data?.copied_link?.url) {
+            return res.data.data;
+        }
+        // A success envelope with no link is a failure, not a link-less success:
+        // the caller would otherwise show a tick over nothing copied.
+        throw new Error('Failed to copy the portal link.');
+    }
+
     return {
         contactsPaginated,
         fetchContacts,
@@ -282,6 +319,7 @@ export const useContactsStore = defineStore('contactsStore', () => {
         fetchFamilyLogin,
         enableFamilyLogin,
         revokeFamilyLogin,
-        sendFamilyPortalInvite
+        sendFamilyPortalInvite,
+        copyFamilyPortalLink
     }
 })

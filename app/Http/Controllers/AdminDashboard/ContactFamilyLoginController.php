@@ -14,6 +14,7 @@ use App\Services\Family\InviteDeliveryFailed;
 use App\Support\Errors;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\Response;
@@ -32,6 +33,11 @@ use Symfony\Component\HttpFoundation\Response;
  *  - POST   opens sign-in at an address the admin types. Also the way an address
  *           is CHANGED and the way a revoked login is re-opened.
  *  - DELETE withdraws it and ends any live session.
+ *
+ * Plus two acts on the INVITE rather than on the sign-in: `invite()` mails a
+ * 7-day link, and `copyLink()` mints the same link and hands it back **to a
+ * SuperAdmin only**, unsent (2026-09-25). The second relaxes a guarantee the
+ * first was built around — see its docblock and DECISIONS.md.
  *
  * ## Where it sits
  *
@@ -169,6 +175,122 @@ class ContactFamilyLoginController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => $this->payload($contact->refresh()),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * SUPER ADMIN ONLY — mint a portal link and hand it back, unsent.
+     *
+     * ## What this relaxes, said plainly
+     *
+     * `FamilyInviteService::issue()` was built so the plaintext never reached a
+     * caller: generated, mailed, discarded. What that bought is that **no staff
+     * member ever holds a working key to a child's photographs, marks and
+     * safeguarding conversations** — the emailed link can only be read by
+     * whoever holds the mailbox the office typed, and the row says which mailbox
+     * that was. A link on a screen has no such answer.
+     *
+     * The owner asked for it back, narrowly: "the ability to set Sajida's login
+     * myself", "the link for me to text her directly", and, asked who should be
+     * able to do that, **"You only (super admin)"**. DECISIONS.md, 2026-09-25,
+     * carries the alternatives and why this is the boundary.
+     *
+     * ## The gate, and why it is HERE rather than on the route
+     *
+     * `Auth::user()?->type !== 'SuperAdmin'` → `abort(403)`, which is the call
+     * `MasjidsController::setCrmAccess` and `setCapability` already make, for
+     * the reason recorded there: the shared `super` middleware answers a
+     * non-super caller **401**, and the admin SPA reads a 401 as "your session
+     * ended" and signs the operator out. A MasjidAdmin who reaches this must be
+     * told they may not, not logged out of a screen they are entitled to.
+     *
+     * `abort()` raises an `HttpException`, which this app's JSON renderer turns
+     * into a clean 403 with the standard envelope. `can:` and a FormRequest
+     * `authorize()` are avoided for the reason .claude/rules/auth-permissions.md
+     * records: an `AuthorizationException` is not an `HttpException` and would
+     * fall through to a 500 here.
+     *
+     * **No permission is minted.** `Permission::count()` stays at 8 and
+     * `StaffAuthGuardPinTest` pins it. A `copy portal link` permission would be
+     * granted either to `masjid-admin` — the set the owner declined, since every
+     * MasjidAdmin at every organisation holds the full CRM set — or to nobody,
+     * which is this check wearing a costume.
+     *
+     * The route keeps `permission:manage contacts` underneath, which changes no
+     * outcome (a SuperAdmin holds all eight) and keeps it reading like its three
+     * siblings. **The SuperAdmin check is the operative gate**, and
+     * `FamilyPortalInviteCopyLinkTest` deletes it to prove so.
+     *
+     * ## The plaintext is in the response body and nowhere else
+     *
+     * Not logged — there is no `Log::` on any path through here, and the refusal
+     * catch below re-throws nothing that has seen the token, because every
+     * refusal `mint()` raises is thrown BEFORE the token is generated. Not
+     * stored — the column is a keyed digest. Not in an exception message. It is
+     * in the fragment of the URL besides, so even a caller who pasted it into an
+     * address bar would not put it in an access log.
+     *
+     * There is no `InviteDeliveryFailed` catch because nothing is delivered:
+     * that whole failure direction does not exist on this door.
+     */
+    public function copyLink(Request $request, $masjid_id, $contact_id)
+    {
+        if (Auth::user()?->type !== 'SuperAdmin') {
+            abort(
+                Response::HTTP_FORBIDDEN,
+                'Only a super admin can copy a parent portal link. Use "Send portal invite" to email it instead.'
+            );
+        }
+
+        // Non-trashed and outside any try/catch, exactly as `invite()` above:
+        // another masjid's contact id is a clean 404, never a 500, and the
+        // route's `{masjid_id}` is never used as a filter
+        // (.claude/rules/tenant-scoping.md).
+        $contact = Contact::findOrFail($contact_id);
+
+        try {
+            $minted = $this->invites->issueCopyableLink(
+                $contact,
+                $this->actor($request),
+                $request->ip(),
+            );
+        } catch (QueryException $e) {
+            // Above the refusal for `store()`'s reason: QueryException extends
+            // PDOException extends RuntimeException, so without this the refusal
+            // block answers every database error with the driver's message —
+            // table names, columns and a bound value — as a 422 body.
+            return response()->json([
+                'status' => 'error',
+                'message' => Errors::publicMessage($e),
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->payload($contact->refresh()) + [
+                /*
+                 * THE ONLY TIME THIS APPLICATION EVER EMITS A PORTAL LINK.
+                 *
+                 * A separate key rather than folded into the `invite` block,
+                 * because the `invite` block is what `show()` serves on every
+                 * page load and a link must never ride a GET. Nothing reads this
+                 * back: it exists for exactly one response and the screen that
+                 * renders it drops it when the operator leaves the contact.
+                 *
+                 * `expires_at` travels with it so the screen states the lifetime
+                 * from the server's own row rather than repeating "7 days" from
+                 * a constant in TypeScript that agrees today.
+                 */
+                'copied_link' => [
+                    'url' => $minted['url'],
+                    'expires_at' => $minted['invite']->expires_at,
+                ],
+            ],
         ], Response::HTTP_OK);
     }
 
