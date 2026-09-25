@@ -363,7 +363,7 @@ webhooks", like the forms' take-cash. Until 2026-09-11 it was pay-at-pickup only
 and refused every online order. It now works on any unpaid order that is not
 cancelled, for admins and lunch volunteers, on these terms:
 
-- **It always says how** (`paid_via`: `cash | zelle | terminal | stripe`,
+- **It always says how** (`paid_via`: `cash | zelle | terminal | stripe | check | bank_transfer | other`,
   `MealOrder::PAID_VIA`). `stripe` is money taken through some other Stripe route:
   a label staff record. A payment on the order's own Checkout page is still
   recorded by the webhook alone and leaves `paid_via` NULL. Who and how are
@@ -420,6 +420,21 @@ before the call, positive-only application fee, integer minor units, webhook-onl
   order with a balance open or moved prices is not changed online, one pending top-up per order
   is checked under the lock, and the top-up's idempotency key covers only the SDK's retries of
   one call (it rolls back with the row).
+
+## Kitchen orders ride the lunch path, but payment does not confirm them (DECISIONS.md 2026-09-25)
+
+A kitchen order is a `MealOrder` on a `MealMenu` of kind `catalogue` (`Api\V1\KitchenOrdersController`).
+Its card payment is the lunch order's: the same checkout (`MealOrderCheckoutService::checkout`), a
+direct charge on the organisation's account, and the webhook alone marks it paid. Two differences:
+
+- **Paid is not confirmed.** `MealOrder::markPaid` leaves a kitchen order `pending`; the office
+  confirms it on the board (`recordOfficeConfirmation`, first time only). A Friday order is still
+  confirmed by its payment. A declined card order is cancelled and refunded by hand: no automatic
+  refunds.
+- **Stripe returns the payer to the kitchen page on every path.** `openPage` defaults a kitchen
+  order's success/cancel URLs to `KitchenOrderLink` (its remembered trusted origin), so neither a
+  replacement for an expired page nor the board's "Payment link" sends them to the admin app's
+  Friday-lunch page. The public door refuses card outright without a CORS-trusted origin.
 
 ## The Giving switch never touches money that moved (DECISIONS.md 2026-09-16, switches wave 2)
 
