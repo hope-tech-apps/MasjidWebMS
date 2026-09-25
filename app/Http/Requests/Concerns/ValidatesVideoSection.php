@@ -11,14 +11,16 @@ use App\Enums\SectionType;
  * the only way in, so the rule lives where every writer passes through.
  *
  * Before the video type, every uploaded file got the image rule. It still does, with ONE
- * exception: the `video_url` field of a `video` section takes an MP4 of up to 25 MB. An
+ * exception: the `video_url` field of a `video` section takes an MP4 (by its bytes AND
+ * its `.mp4` name) of up to 25 MB. An
  * MP4 sent anywhere else (an image section's `image_url`, the video section's own
  * `poster_url`) is still refused, because those fields are drawn by `<img>` elements and
  * an MP4 in one draws nothing.
  *
  * Uses ValidatesEmbedContent::resolvedSectionType(), declared abstract below so the
  * dependency is stated rather than assumed: on an update `section_type` may be omitted,
- * and the section's stored type then decides, exactly as it does for an embed.
+ * and the section's stored type then decides, exactly as it does for an embed (and, like
+ * it, only from this tenant's sections).
  */
 trait ValidatesVideoSection
 {
@@ -43,11 +45,15 @@ trait ValidatesVideoSection
         $rules = [];
 
         foreach ($this->allFiles() as $fieldName => $_) {
-            // `mimetypes` reads the file's bytes (finfo), not its name or the browser's
-            // claim: a JPEG renamed clip.mp4 is still a JPEG.
+            // Both halves of each rule are needed. `mimetypes` / `mimes` read the file's
+            // BYTES (finfo), not its name or the browser's claim: a JPEG renamed clip.mp4
+            // is still a JPEG. `extensions` pins the NAME, because the media library keeps
+            // the client's file name (DefaultFileNamer) on the public disk, and the web
+            // server picks the Content-Type from the extension: real MP4 or JPEG bytes
+            // uploaded as `x.html` would be served as a page on this app's own origin.
             $rules[$fieldName] = $isVideo && $fieldName === 'video_url'
-                ? 'nullable|file|mimetypes:video/mp4|max:' . self::SECTION_UPLOAD_MAX_KB
-                : 'nullable|file|mimes:jpeg,png,jpg,gif,webp|max:' . self::SECTION_UPLOAD_MAX_KB;
+                ? 'nullable|file|mimetypes:video/mp4|extensions:mp4|max:' . self::SECTION_UPLOAD_MAX_KB
+                : 'nullable|file|mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp|max:' . self::SECTION_UPLOAD_MAX_KB;
         }
 
         return $rules;

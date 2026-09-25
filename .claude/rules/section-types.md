@@ -45,7 +45,10 @@ every uploaded file gets the image rule, except a `video` section's `video_url`,
 which takes an MP4 (by its bytes) of up to 25 MB. A new type whose upload is not
 an image adds its field THERE, by type AND field, never by loosening the image
 rule: an MP4 in a field an `<img>` draws is a blank box on a live page
-(`VideoSectionTypeTest` pins that it is still refused).
+(`VideoSectionTypeTest` pins that it is still refused). Every rule checks the
+bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
+the uploaded file name on the public disk, and the web server serves it by its
+extension, so matching bytes named `.html` would be a page on this app's origin.
 
 `label()`, `description()`, `usesExternalData()`, `requiresModule()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without

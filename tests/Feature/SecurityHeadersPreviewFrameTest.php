@@ -13,12 +13,17 @@ use Tests\TestCase;
  */
 class SecurityHeadersPreviewFrameTest extends TestCase
 {
-    /** The policy on an ordinary page before live preview (SecurityHeaders at 4df5242). */
+    /**
+     * The policy on an ordinary page before live preview (SecurityHeaders at 4df5242),
+     * plus the `media-src` the video section editor's preview needs
+     * (SecurityHeadersMediaSrcTest). Live preview still adds nothing when unconfigured.
+     */
     private const BASELINE = "default-src 'self'; "
         ."script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://*.pusher.com https://js.pusher.com; "
         ."style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.bunny.net https://cdn.jsdelivr.net; "
         ."font-src 'self' https://fonts.gstatic.com https://fonts.bunny.net data:; "
         ."img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com; "
+        ."media-src 'self' blob:; "
         ."connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com; "
         ."frame-src 'self' https://www.google.com https://maps.google.com; "
         ."frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; upgrade-insecure-requests";
@@ -75,7 +80,7 @@ class SecurityHeadersPreviewFrameTest extends TestCase
         ]);
 
         $second = (string) $this->get('https://manara.hopetechapps.com/robots.txt')->headers->get('Content-Security-Policy');
-        foreach (['script-src', 'style-src', 'font-src', 'img-src', 'connect-src'] as $directive) {
+        foreach (['script-src', 'style-src', 'font-src', 'img-src', 'media-src', 'connect-src'] as $directive) {
             $this->assertMatchesRegularExpression("#{$directive} [^;]* https://masjid\\.hopetechapps\\.com(;| )#", $second, "{$directive} names the app's own origin on the second host");
         }
         $this->assertStringContainsString('https://fonts.bunny.net', $second);

@@ -3031,3 +3031,38 @@ Calls the plan left open:
 Unknown, needs investigation: what the iOS and Android apps do with an unknown `video` section. The
 API passes `platforms` through without filtering (`PageSectionResource`); MEC's placement is
 `["web"]`, but whether each app honours that before this goes on a page the apps load is not known.
+
+
+## 2026-09-25 — `video` section review fixes: `media-src`, the upload NAME, and a tenant-scoped type lookup
+Decision (three calls, each pinned by a test shown to fail without it):
+- **`SecurityHeaders` gains `media-src 'self' blob:`**, plus APP_URL on a second host / proxied page
+  (`$ownMedia`, set beside `$ownImg`). Without it `<video>` fell back to `default-src 'self'`, which
+  never matches `blob:` and does not name APP_URL on the second host, so the video editor's preview
+  (an object URL for a chosen file, APP_URL/storage for a stored one) was always refused. `data:` is
+  left out: nothing here plays media from one. The directive only widens what `default-src` already
+  allowed, so every other `<video>`/`<audio>` (group video playback is a signed RELATIVE URL) is
+  unaffected. `SecurityHeadersPreviewFrameTest::BASELINE` gains the line on purpose; the new
+  `SecurityHeadersMediaSrcTest` asserts it on the SPA shell itself (`withoutVite()`), on both hosts.
+  Alternative: drop the preview (the admin then uploads 18 MB blind).
+- **Every section upload rule pins the extension as well as the bytes**: `video_url` is
+  `mimetypes:video/mp4|extensions:mp4`, every other file `mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp`.
+  The media library keeps the client's file name on the public disk (DefaultFileNamer) and the web
+  server picks the Content-Type from the extension, so real MP4 or JPEG bytes uploaded as `x.html`
+  would be served as a page on this app's own origin. The image half predates the video type; it is
+  fixed here because it is the same trait. `extensions` lower-cases, so `IMG_1.JPG` still passes; a
+  `.jfif` or `.jpe` JPEG is now refused (it was accepted by bytes alone) and must be renamed.
+  The SPA's `sectionVideoFileProblem` checks the `.mp4` name too, so its "a file refused here is
+  refused by the server, never the reverse" promise still holds.
+  Alternative: rename server-side (`usingFileName(uuid.ext)`): removes the class of bug without
+  refusing anything, but changes every stored section file name and URL, and the review asked for a
+  422 on `clip.html`.
+- **`ValidatesEmbedContent::resolvedSectionType()` reads the stored type only from this tenant's
+  sections** (`TenantContext`, else the route's `masjid_id`, as `embedMasjid()` does); another
+  tenant's id resolves to null like a missing one. `Section` has no global scope and the lookup runs
+  in validation, before the controller's `$masjid->sections()->findOrFail()`, so another org's video
+  id used to let an MP4 through to the 404 while its image id answered 422: the response said what
+  the other tenant's section is. The embed rule shares the function and gets the same fix.
+Also pinned (tests only, mutation review P1-P9): the 25 MB ceiling is accepted at the limit and at
+MEC's 18 MB clip; a `video_url` file on a non-video section is refused; the library update takes a
+replacement MP4; `layout` / `max_width` are checked by all four writers, with `narrow` accepted and
+non-strings (`true`, `0`) refused; unidentifiable bytes and a real text file named `.mp4` are refused.

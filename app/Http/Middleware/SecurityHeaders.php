@@ -93,7 +93,7 @@ class SecurityHeaders
         // renders perfectly and every API call is refused by the browser.
         $proxiedPaths = ['jummah-lunch', 'portal'];
 
-        $ownOrigin = $ownStyle = $ownFont = $ownImg = $ownConnect = '';
+        $ownOrigin = $ownStyle = $ownFont = $ownImg = $ownMedia = $ownConnect = '';
         $isProxied = false;
 
         foreach ($proxiedPaths as $prefix) {
@@ -122,6 +122,7 @@ class SecurityHeaders
             $ownStyle = " {$app}";
             $ownFont = " {$app}";
             $ownImg = " {$app}";
+            $ownMedia = " {$app}";
             $ownConnect = " {$app}";
         }
 
@@ -144,6 +145,12 @@ class SecurityHeaders
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.bunny.net https://cdn.jsdelivr.net{$ownStyle}",
             "font-src 'self' https://fonts.gstatic.com https://fonts.bunny.net data:{$ownFont}",
             "img-src 'self' data: blob: https://*.supabase.co https://*.supabase.in https://maps.gstatic.com https://maps.googleapis.com{$ownImg}",
+            // <video>/<audio> fell back to default-src 'self', which never matches a
+            // blob: URL (CSP requires the scheme by name) and, on the second host, not
+            // APP_URL either. The video section editor previews the chosen MP4 as an
+            // object URL and a stored one at APP_URL/storage, so both were refused and
+            // the preview never played. No data: here: nothing plays media from one.
+            "media-src 'self' blob:{$ownMedia}",
             "connect-src 'self' https://*.supabase.co https://*.supabase.in https://*.pusher.com wss://*.pusher.com https://onesignal.com https://*.onesignal.com{$ownConnect}",
             "frame-src 'self' https://www.google.com https://maps.google.com{$previewFrame}",
             "frame-ancestors 'none'",
