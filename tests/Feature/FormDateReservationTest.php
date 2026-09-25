@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Mail\FormResponseSubmitted;
+use App\Mail\FormSubmissionReceipt;
 use App\Models\Form;
 use App\Models\FormDateReservation;
 use App\Models\FormResponse;
@@ -34,11 +36,14 @@ use Tests\TestCase;
  *    hold still protects, and the unique index refuses one written around the lock;
  *  - an unpaid card hold lapses with its page (plus the grace) and goes to the next payer
  *    who asks, and then its own "Return to payment" is refused, while one nobody took is
- *    renewed; a payment that lands after the date went elsewhere is recorded and shown
- *    as a conflict; the office and a paid row never lapse; a cancelled row gives its
- *    date back;
- *  - each level asks for exactly what it needs (a date, a quantity), and a level that
- *    reserves nothing stores no date;
+ *    renewed, but never past its deadline; a payment that lands after the date went
+ *    elsewhere is recorded, told to the payer and the coordinators, and shown as a
+ *    conflict; the office and a paid row never lapse; a cancelled row gives its date
+ *    back, and restoring it asks for the date again;
+ *  - each level asks for exactly what it needs (a date, a quantity), is never refused over
+ *    an answer it does not use, and a level that reserves nothing stores no date; a form
+ *    not priced by choice reserves every date named;
+ *  - the public page shows each level's price and publishes it in cents;
  *  - holds are per form and per organisation, the board is tenant-bound, and the model's
  *    scope hides another organisation's reservations;
  *  - the save refuses a list nothing reserves from, a level with no price, and a date
@@ -160,6 +165,32 @@ class FormDateReservationTest extends TestCase
     }
 
     #[Test]
+    public function an_unpaid_card_hold_lapses_at_exactly_its_held_until_and_not_a_second_before(): void
+    {
+        $until = now()->addMinutes(10);
+        $card = $this->holdFor($this->cardRow(), self::D1, $until);
+
+        $this->assertFalse(FormReservations::claim($this->form, self::D1, $until->copy()->subSecond()), 'still holding one second before');
+        $this->assertTrue($card->fresh()->isHolding());
+
+        $this->assertTrue(FormReservations::claim($this->form, self::D1, $until->copy()), 'lapsed at held_until itself');
+        $this->assertSame(FormDateReservation::RELEASED_LAPSED, $card->fresh()->release_reason);
+    }
+
+    #[Test]
+    public function dates_are_offered_from_today_on_the_organisations_own_clock(): void
+    {
+        $eve = '2027-02-09';
+        $form = $this->makeIftarForm($this->org, [$eve, self::D1]);
+
+        // 01:00 UTC on the 10th is still the evening of the 9th in New York.
+        $this->assertSame([$eve, self::D1], FormReservations::offerable($form, Carbon::parse('2027-02-10 01:00:00', 'UTC')));
+
+        // Today is offered all day: noon in New York on the 10th.
+        $this->assertSame([self::D1], FormReservations::offerable($form, Carbon::parse('2027-02-10 17:00:00', 'UTC')));
+    }
+
+    #[Test]
     public function two_forms_and_two_organisations_each_hold_the_same_evening(): void
     {
         $otherOrg = $this->makeOrg('acct_test_other_org');
@@ -229,7 +260,7 @@ class FormDateReservationTest extends TestCase
     }
 
     #[Test]
-    public function a_payment_that_lands_after_its_date_went_elsewhere_is_recorded_warned_and_shown_as_a_conflict(): void
+    public function a_payment_that_lands_after_its_date_went_elsewhere_is_recorded_and_the_payer_and_the_organisation_are_told(): void
     {
         config(['services.stripe.connect_webhook_secret' => self::CONNECT_SECRET, 'services.stripe.webhook_secret' => 'whsec_ramadan_platform']);
         Log::spy();
@@ -247,12 +278,82 @@ class FormDateReservationTest extends TestCase
         Log::shouldHaveReceived('warning')->withArgs(fn ($message, $context = []) => str_contains($message, 'after its reserved date went to another payer')
             && ($context['form_response_id'] ?? null) === $late->id)->once();
 
+        // The payer's receipt and the coordinators' email promise no date, and say which
+        // date could not be kept, rather than leaving it out without a word.
+        $label = 'Wednesday, February 10, 2027';
+        Mail::assertQueued(FormSubmissionReceipt::class, fn (FormSubmissionReceipt $mail) => $mail->responseId === $late->id
+            && $mail->reservedDate === null && $mail->lostDate === $label);
+        Mail::assertQueued(FormResponseSubmitted::class, fn (FormResponseSubmitted $mail) => $mail->responseId === $late->id
+            && $mail->reservedDate === null && $mail->lostDate === $label);
+
+        $receipt = Mail::queued(FormSubmissionReceipt::class, fn (FormSubmissionReceipt $mail) => $mail->responseId === $late->id)->first()->render();
+        $this->assertStringContainsString("The date you chose, {$label}, was reserved by someone else before your payment arrived", $receipt);
+        $this->assertStringNotContainsString('Date reserved', $receipt);
+
+        $coordinators = Mail::queued(FormResponseSubmitted::class, fn (FormResponseSubmitted $mail) => $mail->responseId === $late->id)->first()->render();
+        $this->assertStringContainsString('Date conflict', $coordinators);
+
         Sanctum::actingAs($this->makeAdminFor($this->org));
         $board = $this->getJson($this->boardUrl($this->org, $this->form))->assertOk()->json('data');
 
         $this->assertCount(1, $board['conflicts']);
         $this->assertSame($late->id, $board['conflicts'][0]['response_id']);
         $this->assertSame(self::D1, $board['conflicts'][0]['date']);
+
+        // Counted on the list itself, while the board is folded away.
+        $list = "/api/admin/masjids/{$this->org->id}/forms/{$this->form->id}/responses";
+        $this->getJson($list)->assertOk()->assertJsonPath('meta.reservation_conflicts', 1);
+
+        // Refunded and cancelled by the admin, it is no longer a conflict.
+        $this->putJson("{$list}/{$late->id}", ['status' => 'cancelled'])->assertOk();
+        $this->assertSame([], $this->getJson($this->boardUrl($this->org, $this->form))->json('data.conflicts'));
+        $this->getJson($list)->assertOk()->assertJsonPath('meta.reservation_conflicts', 0);
+    }
+
+    #[Test]
+    public function a_paid_sponsor_is_told_the_date_they_reserved(): void
+    {
+        config(['services.stripe.connect_webhook_secret' => self::CONNECT_SECRET, 'services.stripe.webhook_secret' => 'whsec_ramadan_platform']);
+
+        $this->submitTo($this->form, ['sponsorship' => 'quarter', 'iftar_date' => self::D1])->assertOk();
+        $row = FormResponse::sole();
+
+        $this->postWebhook($this->completed($row))->assertOk();
+
+        Mail::assertQueued(FormSubmissionReceipt::class, fn (FormSubmissionReceipt $mail) => $mail->reservedDate === 'Wednesday, February 10, 2027'
+            && $mail->lostDate === null);
+        Mail::assertQueued(FormResponseSubmitted::class, fn (FormResponseSubmitted $mail) => $mail->reservedDate === 'Wednesday, February 10, 2027'
+            && $mail->lostDate === null);
+    }
+
+    #[Test]
+    public function reopening_an_unpaid_page_never_holds_a_date_past_the_deadline(): void
+    {
+        $this->submitTo($this->form, ['sponsorship' => 'quarter', 'iftar_date' => self::D1])->assertOk();
+        $row = FormResponse::sole();
+        $submitted = now()->toImmutable();
+
+        // A new page 40 minutes in is still inside the deadline: its hold runs to 86 minutes.
+        FakeStripePages::$pages['cs_ramadan_1'] = 'expired';
+        Carbon::setTestNow($submitted->addMinutes(40));
+        $this->reopenPayment($row)->assertOk();
+        $this->assertSame($submitted->addMinutes(86)->toIso8601String(), FormReservations::of($row)->held_until->toIso8601String());
+
+        // At 80 minutes a new page's hold would run to 126, past submit + 120: refused.
+        FakeStripePages::$pages['cs_ramadan_2'] = 'expired';
+        Carbon::setTestNow($submitted->addMinutes(80));
+        $this->reopenPayment($row)
+            ->assertStatus(422)
+            ->assertJsonPath('message', FormReservations::EXPIRED);
+        $this->assertSame($submitted->addMinutes(86)->toIso8601String(), FormReservations::of($row)->held_until->toIso8601String(), 'not renewed');
+        $this->assertCount(2, FakeStripePages::$created);
+
+        // Once the last hold runs out, the date is offered again and the status read offers no page.
+        Carbon::setTestNow($submitted->addMinutes(87));
+        $this->assertContains(self::D1, $this->offeredDates());
+        $this->getJson("/api/v1/form-responses/{$row->uuid}", ['masjid-id' => (string) $this->org->id])
+            ->assertOk()
+            ->assertJsonPath('data.can_pay', false);
     }
 
     #[Test]
@@ -274,10 +375,64 @@ class FormDateReservationTest extends TestCase
     }
 
     #[Test]
+    public function restoring_a_cancelled_registration_takes_its_date_back_or_is_refused_when_it_has_gone(): void
+    {
+        $office = $this->makeIftarForm($this->org, [self::D1, self::D2], office: true);
+        $this->submitTo($office, ['sponsorship' => 'half', 'iftar_date' => self::D1], ['pay_with' => 'office'])->assertOk();
+        $first = FormResponse::sole();
+
+        Sanctum::actingAs($this->makeAdminFor($this->org));
+        $url = "/api/admin/masjids/{$this->org->id}/forms/{$office->id}/responses/{$first->id}";
+        $this->putJson($url, ['status' => 'cancelled'])->assertOk();
+
+        // Another sponsor takes the evening the cancellation gave up.
+        $this->submitTo($office, ['sponsorship' => 'full', 'iftar_date' => self::D1])->assertOk();
+        $second = FormResponse::whereKeyNot($first->id)->sole();
+
+        $this->putJson($url, ['status' => 'new'])
+            ->assertStatus(422)
+            ->assertJsonPath('message', sprintf(FormReservations::RESTORE_TAKEN, 'Wednesday, February 10, 2027'));
+
+        $this->assertTrue($first->fresh()->isCancelled(), 'nothing changed');
+        $this->assertFalse(FormReservations::of($first)->isHolding());
+        $this->assertTrue(FormReservations::of($second)->isHolding());
+
+        // Once that card sponsor's page runs out unpaid, the restore takes the date back.
+        FakeStripePages::$pages['cs_ramadan_1'] = 'expired';
+        Carbon::setTestNow(now()->addMinutes(47));
+        $this->putJson($url, ['status' => 'confirmed'])->assertOk()->assertJsonPath('data.reservation.state', 'held');
+
+        $this->assertTrue(FormReservations::of($first)->isHolding());
+        $this->assertSame(FormDateReservation::RELEASED_LAPSED, FormReservations::of($second)->release_reason);
+        $this->assertSame(1, FormDateReservation::withoutMasjidScope()->where('holding_on', self::D1)->count());
+        $this->assertSame([], $this->getJson($this->boardUrl($this->org, $office))->json('data.conflicts'));
+    }
+
+    #[Test]
+    public function a_live_unpaid_registration_that_lost_its_date_to_a_cancellation_is_a_conflict(): void
+    {
+        // Restored some way round the admin screen (by hand in the database, or before the
+        // restore took its date back): unpaid, not cancelled, and without its date.
+        $row = $this->officeRow();
+        $hold = $this->holdFor($row, self::D1, null);
+        $hold->forceFill(['holding_on' => null, 'released_at' => now(), 'release_reason' => FormDateReservation::RELEASED_CANCELLED])->save();
+
+        // An unpaid card registration whose page simply ran out is not one.
+        $abandoned = $this->holdFor($this->cardRow(), self::D2, now()->subMinute());
+        $abandoned->forceFill(['holding_on' => null, 'released_at' => now(), 'release_reason' => FormDateReservation::RELEASED_LAPSED])->save();
+
+        $conflicts = FormReservations::board($this->form)['conflicts'];
+
+        $this->assertSame([$row->id], array_column($conflicts, 'response_id'));
+        $this->assertSame(1, FormReservations::conflictCount($this->form));
+    }
+
+    #[Test]
     public function an_office_registration_holds_its_date_until_it_is_settled_or_cancelled(): void
     {
         $office = $this->makeIftarForm($this->org, [self::D1], office: true);
         $this->submitTo($office, ['sponsorship' => 'full', 'iftar_date' => self::D1], ['pay_with' => 'office'])->assertOk();
+        $this->assertSame([190000, 1, 'Full Iftar'], [FormResponse::sole()->unit_price_minor, FormResponse::sole()->price_quantity, FormResponse::sole()->price_label]);
 
         Carbon::setTestNow(now()->addDays(3));
 
@@ -298,6 +453,56 @@ class FormDateReservationTest extends TestCase
         $this->assertArrayNotHasKey('iftar_date', $row->data);
         $this->assertSame(0, FormDateReservation::withoutMasjidScope()->count());
         $this->assertSame([1800, 3], [$row->unit_price_minor, $row->price_quantity]);
+    }
+
+    #[Test]
+    public function a_level_is_never_refused_over_an_answer_it_does_not_use(): void
+    {
+        $this->submitTo($this->form, ['sponsorship' => 'quarter', 'iftar_date' => self::D1])->assertOk();
+
+        // An Individual Iftar naming an evening another sponsor holds: the date is not theirs
+        // to reserve, so it is dropped, not validated.
+        $this->submitTo($this->form, ['sponsorship' => 'individual', 'people' => '2', 'iftar_date' => self::D1])->assertOk()
+            ->assertJsonPath('data.total_minor', 3600);
+
+        // A Quarter Iftar with "0" left in the people box it does not use.
+        $this->submitTo($this->form, ['sponsorship' => 'half', 'people' => '0', 'iftar_date' => self::D2])->assertOk()
+            ->assertJsonPath('data.total_minor', 95000);
+
+        $this->assertSame(3, FormResponse::count());
+        $this->assertSame(2, FormDateReservation::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_form_not_priced_by_choice_reserves_the_date_every_submission_names(): void
+    {
+        $form = Form::create([
+            'masjid_id' => $this->org->id,
+            'slug' => 'evening-' . uniqid(),
+            'name' => 'Host an evening',
+            'schema' => ['sections' => [['id' => 'host', 'title' => 'Host', 'fields' => [
+                ['name' => 'fullName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                ['name' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true],
+                ['name' => 'evening', 'label' => 'Evening', 'type' => 'select', 'required' => true, 'optionsSource' => 'reservable_dates'],
+            ]]]],
+            'settings' => [
+                'identity' => ['name' => 'fullName', 'email' => 'email'],
+                'reservation' => ['field' => 'evening', 'dates' => [self::D1, self::D2]],
+            ],
+            'is_active' => true,
+        ]);
+
+        $this->submitTo($form, ['evening' => self::D1])->assertOk();
+
+        $this->submitTo($form, ['evening' => self::D1], ['client_submission_key' => (string) Str::uuid()])
+            ->assertStatus(422)
+            ->assertJsonPath('data.evening.0', FormReservations::NO_LONGER_OPEN);
+
+        $holds = FormDateReservation::withoutMasjidScope()->where('form_id', $form->id)->get();
+        $this->assertCount(1, $holds);
+        $this->assertSame(self::D1, $holds[0]->holding_on);
+        $this->assertNull($holds[0]->held_until, 'nothing to pay, so it never lapses');
+        $this->assertSame(1, FormResponse::where('form_id', $form->id)->count());
     }
 
     #[Test]
@@ -387,6 +592,39 @@ class FormDateReservationTest extends TestCase
     }
 
     #[Test]
+    public function the_public_page_shows_each_levels_price_and_publishes_it_in_cents(): void
+    {
+        $payload = $this->publicFormPayload($this->form);
+
+        $fee = $payload['settings']['fee'];
+        $this->assertSame('choice', $fee['pricing']);
+        $this->assertArrayNotHasKey('amount', $fee, 'the lowest level would be drawn as every total');
+        $this->assertSame('sponsorship', $fee['choiceField']);
+        $this->assertCount(4, $fee['choicePrices']);
+
+        $payment = $payload['settings']['payment'];
+        $this->assertNull($payment['unitMinor']);
+        $this->assertSame('sponsorship', $payment['choiceField']);
+        $this->assertSame([
+            ['value' => 'individual', 'amountMinor' => 1800, 'perQuantity' => true, 'reservesDate' => false],
+            ['value' => 'quarter', 'amountMinor' => 45000, 'perQuantity' => false, 'reservesDate' => true],
+            ['value' => 'half', 'amountMinor' => 95000, 'perQuantity' => false, 'reservesDate' => true],
+            ['value' => 'full', 'amountMinor' => 190000, 'perQuantity' => false, 'reservesDate' => true],
+        ], $payment['choicePrices']);
+
+        // What the sponsor reads: each level with its price, from the price it is charged.
+        $levels = collect($payload['schema']['sections'][0]['fields'])->firstWhere('name', 'sponsorship')['options'];
+        $this->assertSame(
+            ['Individual Iftar ($18.00 each)', 'Quarter Iftar ($450.00)', 'Half Iftar ($950.00)', 'Full Iftar ($1,900.00)'],
+            array_column($levels, 'label')
+        );
+        $this->assertSame(['individual', 'quarter', 'half', 'full'], array_column($levels, 'value'), 'the answers are unchanged');
+
+        // The receipt still names the level in the organisation's own words.
+        $this->assertSame('Quarter Iftar', $this->form->fresh()->optionLabel('sponsorship', 'quarter'));
+    }
+
+    #[Test]
     public function the_reservation_columns_have_their_types_and_the_holding_index_is_unique(): void
     {
         $this->assertSame('date', Schema::getColumnType('form_date_reservations', 'reserved_on'));
@@ -449,6 +687,14 @@ class FormDateReservationTest extends TestCase
                 return $d;
             }, 'settings.fee.byChoice.prices.0.perQuantity'],
             'a level under 50 cents' => [fn (array $d) => data_set($d, 'settings.fee.byChoice.prices.0.amount', 0.25), 'settings.fee.byChoice.prices.0.amount'],
+            'a level priced twice' => [fn (array $d) => data_set($d, 'settings.fee.byChoice.prices.1.value', 'individual'), 'settings.fee.byChoice.prices.1.value'],
+            'staff codes on a form priced by answer' => [fn (array $d) => data_set($d, 'settings.payment.staffCodes', true), 'settings.payment.staffCodes'],
+            'an optional date question on a form not priced by choice' => [function (array $d) {
+                // Free, so every registration reserves the date it names: the question must be asked.
+                unset($d['settings']['fee'], $d['settings']['payment']);
+
+                return $d;
+            }, 'settings.reservation.field'],
         ];
 
         foreach ($cases as $why => [$edit, $key]) {

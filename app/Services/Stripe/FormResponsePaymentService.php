@@ -268,7 +268,9 @@ class FormResponsePaymentService
         }
 
         // Paid after its lapsed date hold went to another payer (Ramadan giving,
-        // 2026-09-25): recorded as paid like any payment, and the operator is told.
+        // 2026-09-25): recorded as paid like any payment and logged here; the receipt and
+        // the coordinators' email notify() sends say the date could not be kept
+        // (FormNotifier's lost date).
         FormReservations::notePaidAfterLosingDate($row);
 
         $this->notify($row, $masjid);

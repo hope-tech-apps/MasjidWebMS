@@ -233,6 +233,28 @@ class SchoolCalendarAdminTest extends TestCase
     }
 
     #[Test]
+    public function an_answer_naming_a_forms_own_reservable_date_does_not_hold_a_school_year(): void
+    {
+        $year = $this->makeYear();
+
+        // An iftar evening that happens to fall on a Sunday of the school year: it is the
+        // form's own date list (settings.reservation), not a meeting day.
+        $form = Form::create([
+            'masjid_id' => $this->school->id, 'slug' => 'evening-'.uniqid(), 'name' => 'Host an evening',
+            'schema' => ['sections' => [['id' => 'host', 'title' => 'Host', 'fields' => [
+                ['name' => 'parentName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                ['name' => 'evening', 'label' => 'Evening', 'type' => 'select', 'required' => true, 'optionsSource' => 'reservable_dates'],
+            ]]]],
+            'settings' => ['identity' => ['name' => 'parentName'], 'reservation' => ['field' => 'evening', 'dates' => ['2026-10-18']]],
+        ]);
+        $this->postJson("/api/v1/forms/{$form->id}/responses", [
+            'data' => ['parentName' => 'Amal Yusuf', 'evening' => '2026-10-18'],
+        ], ['masjid-id' => (string) $this->school->id])->assertOk();
+
+        $this->deleteJson($this->url("/years/{$year->id}"))->assertOk()->assertJsonPath('data.years', []);
+    }
+
+    #[Test]
     public function another_organisations_calendar_is_out_of_reach(): void
     {
         $other = $this->makeOrg('school');

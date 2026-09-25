@@ -1159,7 +1159,7 @@ import {
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
 import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
-import { type FeePricing, feePricingOf } from '@/components/forms/formFeePricing';
+import { type FeePricing, buildFee, feePricingOf, preservedFeeOf } from '@/components/forms/formFeePricing';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useConnectStore } from '@/stores/masjid/connectStore';
@@ -1304,8 +1304,7 @@ const MANAGED_SETTINGS_KEYS = [
     'confirmationEmail', 'paymentNote', 'intro', 'identity', 'fee', 'payment',
     'whatsappUrl', 'whatsappLabel'
 ] as const;
-// `pricing` is Form::feeRule()'s computed marker, never part of what is saved.
-const MANAGED_FEE_KEYS = ['amount', 'currency', 'perEntryOfSection', 'perQuantityOf', 'tiers', 'countTiers', 'pricing'] as const;
+// The managed fee keys, and what a save carries through, live in ./formFeePricing.ts (tested).
 const MANAGED_PAYMENT_KEYS = [
     'online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment', 'officeInstructions', 'eventDate'
 ] as const;
@@ -1732,7 +1731,7 @@ const load = async () => {
 
         preserved.value = {
             settings: omit(settings, MANAGED_SETTINGS_KEYS),
-            fee: omit(fee, MANAGED_FEE_KEYS),
+            fee: preservedFeeOf(fee),
             payment: omit(payment, MANAGED_PAYMENT_KEYS),
             hadPaymentBlock,
             loadedPaymentKeys: Object.keys(payment)
@@ -1857,60 +1856,22 @@ const buildPayload = (): FormPayload => {
     if (hasIdentity(draftSettings.identityPhone)) identity.phone = draftSettings.identityPhone;
     if (Object.keys(identity).length) settings.identity = identity;
 
-    // Only the chosen pricing is sent: the server refuses countTiers together with an amount
-    // or date steps, and this is what widens the old "amount or steps" gate so prices by
-    // number of entries are not dropped (a form priced only by them would save as free).
+    // Only the chosen pricing is sent (buildFee() in ./formFeePricing.ts, tested on its own):
+    // the server refuses countTiers together with an amount or date steps, and this is what
+    // widens the old "amount or steps" gate so prices by number of entries are not dropped
+    // (a form priced only by them would save as free).
     const pricing = draftSettings.feePricing;
-    const currency = (draftSettings.feeCurrency || 'USD').toUpperCase();
+    const fee = buildFee(preserved.value.fee, {
+        pricing,
+        currency: draftSettings.feeCurrency,
+        amount: draftSettings.feeAmount,
+        perEntryOfSection: draftSettings.feePerEntryOfSection,
+        perQuantityOf: draftSettings.feePerQuantityOf,
+        tiers: pricing === 'dateSteps' ? draftSettings.feeTiers.map(buildTier) : [],
+        countTiers: pricing === 'count' ? draftSettings.feeCountTiers.map(buildCountTier) : []
+    });
 
-    // Prices by answer go back exactly as loaded, and only in their own mode: beside any other
-    // price the server refuses them.
-    const feeWithoutChoice = omit(preserved.value.fee, ['byChoice']);
-
-    if (pricing === 'none') {
-        // No price, chosen as such (an empty price box under another choice blocks the save).
-    } else if (pricing === 'choice') {
-        settings.fee = {
-            ...preserved.value.fee,
-            currency,
-            ...(draftSettings.feePerQuantityOf ? { perQuantityOf: draftSettings.feePerQuantityOf } : {})
-        };
-    } else if (pricing === 'count') {
-        const countTiers = draftSettings.feeCountTiers.map(buildCountTier);
-
-        if (countTiers.length) {
-            settings.fee = {
-                ...feeWithoutChoice,
-                currency,
-                perEntryOfSection: draftSettings.feePerEntryOfSection || null,
-                countTiers
-            };
-        }
-    } else {
-        // A fee is an amount, price steps, or both: the festival form has steps and no amount.
-        // With neither there is no fee, and the form is free.
-        const tiers = pricing === 'dateSteps' ? draftSettings.feeTiers.map(buildTier) : [];
-
-        if (draftSettings.feeAmount !== null || tiers.length) {
-            const fee: FormFeeRule = {
-                ...feeWithoutChoice,
-                currency,
-                perEntryOfSection: pricing === 'flat' || pricing === 'perQuantity' ? null : (draftSettings.feePerEntryOfSection || null)
-            };
-
-            if (draftSettings.feeAmount !== null) fee.amount = draftSettings.feeAmount;
-            if (tiers.length) fee.tiers = tiers;
-
-            // The number question the price is multiplied by: its own mode, or date steps that
-            // were imported with one and are charged once per submission otherwise.
-            const quantity = pricing === 'perQuantity' || (pricing === 'dateSteps' && !fee.perEntryOfSection)
-                ? draftSettings.feePerQuantityOf
-                : null;
-            if (quantity) fee.perQuantityOf = quantity;
-
-            settings.fee = fee;
-        }
-    }
+    if (fee) settings.fee = fee as FormFeeRule;
 
     const payment = buildPaymentBlock();
     if (payment) settings.payment = payment;

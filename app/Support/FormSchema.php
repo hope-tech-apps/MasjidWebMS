@@ -640,10 +640,22 @@ class FormSchema
      * How many entries this submission represents — the repeatable section's row count,
      * or 1 for a form without one. Drives capacity accounting and the fee total.
      *
+     * On a form priced by a quantity question or by answer (Ramadan giving, 2026-09-25)
+     * it is the quantity priced (Form::priceFor()['entries']): a Zakat-ul-Fitr for four
+     * people is 4, as the admin list, the roster, the collect button ("For 4 people") and
+     * the people counted in Impact read it, not 1. At least 1, as everywhere else.
+     * Capacity counts responses, not this.
+     *
      * @param  array<string,mixed>  $data
      */
     public function entryCount(array $data): int
     {
+        if ($this->form->pricesByQuantityOrChoice()) {
+            $price = $this->form->priceFor($data);
+
+            return max(1, (int) ($price['entries'] ?? 1));
+        }
+
         $section = $this->form->repeatableSection();
 
         if (! $section || ! isset($section['id'])) {

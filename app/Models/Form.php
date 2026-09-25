@@ -234,7 +234,25 @@ class Form extends Model
      */
     public function takesStaffCodes(): bool
     {
-        return $this->paymentFlag('staffCodes') && $this->chargesFee();
+        // Not on a form priced by a quantity question or by answer (Ramadan giving,
+        // 2026-09-25): the renderer's staff button states the amount to collect from the
+        // unit x rows price, which such a form does not publish, so it would read "Record
+        // $0.00" while the server records the real amount. The save refuses the pair
+        // (StoreFormRequest::quantityProblems() / choiceProblems()); this is the read half.
+        return $this->paymentFlag('staffCodes') && $this->chargesFee() && ! $this->pricesByQuantityOrChoice();
+    }
+
+    /**
+     * Whether the price in force is multiplied by a quantity question
+     * (settings.fee.perQuantityOf) or set by the answer to a choice question
+     * (settings.fee.byChoice): the two Ramadan-giving pricings (2026-09-25), which have no
+     * single unit x rows total and list no people.
+     */
+    public function pricesByQuantityOrChoice(?CarbonInterface $at = null): bool
+    {
+        $fee = $this->feeRule($at);
+
+        return isset($fee['perQuantityOf']) || ($fee['pricing'] ?? null) === self::PRICING_CHOICE;
     }
 
     /**
@@ -596,9 +614,13 @@ class Form extends Model
      * answer of a level not charged per unit (a Quarter Iftar with "3" typed in the
      * people box), and a date named beside a level that reserves none.
      *
+     * Applied to the submission BEFORE it is validated (FormSubmissionsController::store()),
+     * so a level is never refused over an answer it does not use: an Individual Iftar
+     * naming an evening since taken, or a Quarter Iftar with "0" in the people box.
+     *
      * Every other form comes back exactly as it went in.
      *
-     * @param  array<string,mixed>  $data  the cleaned submission (FormSchema::only())
+     * @param  array<string,mixed>  $data  the submission as posted, or as cleaned
      * @return array<string,mixed>
      */
     public function withoutUnusedPriceAnswers(array $data): array

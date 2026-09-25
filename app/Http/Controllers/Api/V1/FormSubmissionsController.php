@@ -269,6 +269,12 @@ class FormSubmissionsController extends Controller
                 return response()->api(422, 'No form data was submitted.', null);
             }
 
+            // A level priced by answer drops the answers its price does not use (a Quarter
+            // Iftar's people count, an Individual Iftar's date) BEFORE they are validated, so
+            // a level is never refused over a question it does not ask: a date since taken,
+            // or a "0" left in the people box. Every other form's answers are unchanged.
+            $submitted = $form->withoutUnusedPriceAnswers($submitted);
+
             $schema = FormSchema::for($form);
 
             // Only the uploads this form actually asked for; anything else in the
@@ -290,10 +296,9 @@ class FormSubmissionsController extends Controller
                 ], 422);
             }
 
-            // A level priced by answer drops the answers its price does not use (a Quarter
-            // Iftar's people count, an Individual Iftar's date), so the row stores what was
-            // charged and reserved. Every other form's answers are unchanged.
-            $clean = $form->withoutUnusedPriceAnswers($schema->only($submitted));
+            // Without the answers the chosen level does not use (dropped above), so the row
+            // stores what was charged and reserved.
+            $clean = $schema->only($submitted);
 
             // The date this registration reserves from the form's list, or null
             // (App\Support\FormReservations). Claimed under the form lock below.

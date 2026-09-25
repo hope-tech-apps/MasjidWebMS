@@ -3055,3 +3055,54 @@ Stripe Connect account. The calls the brief left open:
   (Per Person) $17; Individual $18, Quarter $450, Half $950, Full $1900; source: the migration's
   `reports/stores.md`, as the brief's `commerce.md` does not exist). Both import switched off;
   the evenings list is empty and every 2027 figure is a `mecToFill` item, never invented.
+
+## 2026-09-25 — Ramadan giving review fixes (contract, safety and mutation lenses)
+Review of 0f932352 + a9148813. What changed from the entry above, and the calls made:
+
+- **Prices on the public page, from the server** (`App\Support\FormPriceLabels`). The renderer
+  draws a price only from `unitMinor` or `fee.amount`, which these forms do not publish, so no
+  price appeared anywhere. The published copy of the schema now carries them: each priced
+  option of the level question reads "Quarter Iftar ($450.00)" / "Individual Iftar ($18.00
+  each)", and the quantity question's help starts "$17.00 each.". Written from the same fee
+  rule the server charges by, so the page cannot quote one price and charge another; the
+  stored schema, the answers and the receipt's level name are untouched. Alternative: prices
+  typed into MEC's form files; rejected because they drift from `byChoice` the first time MEC
+  changes a price. Still no live "$17 × 4 = $68": that is the renderer reading
+  `choicePrices` / `unitMinorEach`, a burlington-masjid-site change not made here. When the
+  renderer does, it should stop drawing these labels' prices twice.
+- **Staff codes are refused on quantity and choice forms** (`StoreFormRequest::staffCodeProblems()`,
+  and `Form::takesStaffCodes()` false for such a form stored another way, so `staffEntry` is
+  never published). The renderer's staff button reads "Record $0.00" without `unitMinor`.
+  Lifted when the renderer can price them.
+- **`entry_count` is the quantity priced** on these forms (`FormSchema::entryCount()` =
+  `priceFor()['entries']`): Zakat for four people is 4 on the list, the roster, the collect
+  button and Impact's people count. Capacity counts responses, not entries, so nothing else
+  moves. The emails still hide "People registered" there (a Quarter Iftar is not one person).
+  The list shows the unit × quantity under the amount only on these forms (`meta.price_breakdown`).
+- **The "$15.00 × 3" email line is only on quantity and choice forms.** Every other paying
+  form's receipt and coordinator email are exactly as before (pinned by
+  `an_existing_per_entry_form_sends_the_emails_it_always_did`); the snapshot columns are still
+  written on every paying row, for the admin detail.
+- **A level's unused answers are dropped before validation**, not after, so an Individual
+  Iftar naming a taken evening, or a Quarter Iftar with "0" people, is never refused over a
+  question its level does not ask.
+- **An unpaid hold ends 120 minutes after submission** (`FormReservations::HOLD_LIMIT_MINUTES`),
+  however often "Return to payment" is used. A new page whose 46-minute hold would run past
+  that is refused whole (`EXPIRED`), rather than opened with a shorter hold, so nobody is sent
+  to a page that can still take money after their date was offered to others; the status
+  read stops offering the button. 120 is the review's own example and unvalidated with MEC.
+  Alternative: a renewal count; rejected because the deadline also bounds a page left open.
+- **A payment that lands after its date went elsewhere is told to the people involved**, not
+  only the platform log: the payer's receipt says the date could not be kept and the
+  organisation will be in touch (`lostDate`), and the coordinators' email carries a "Date
+  conflict" row. The responses list counts conflicts (`meta.reservation_conflicts`) and the
+  folded board header shows the count. No new column: the conflict is derived from the
+  reservation and the row, so it cannot drift from them.
+- **Restoring a cancelled registration asks for its date again** under the form lock
+  (form, then row: the submit's order), and is refused with a 422 naming the date when
+  someone else holds it. A conflict is now any live registration without its date that
+  someone must act on: paid after losing it, or cancelled-then-restored some way round the
+  screen (`FormReservations::isConflict()`); an abandoned card page is not one.
+- **Builder fee assembly is a pure function** (`buildFee()` / `preservedFeeOf()` beside
+  `feePricingOf()` in `formFeePricing.ts`), so the load-then-save round trips are tested
+  without mounting FormBuilder.vue.

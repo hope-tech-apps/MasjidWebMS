@@ -117,6 +117,9 @@ class FormQuantityPricingTest extends TestCase
         $twice = $this->iftarForm(fn (array $fee) => array_replace_recursive($fee, ['byChoice' => ['prices' => [1 => ['value' => 'individual']]]]));
         $this->assertNull($twice->feeRule(), 'a value priced twice is ambiguous');
 
+        $negative = $this->iftarForm(fn (array $fee) => array_replace_recursive($fee, ['byChoice' => ['prices' => [1 => ['amount' => -450]]]]));
+        $this->assertNull($negative->feeRule(), 'a negative level would pay the sponsor');
+
         $noQuantity = $this->iftarForm(function (array $fee) {
             unset($fee['perQuantityOf']);
 

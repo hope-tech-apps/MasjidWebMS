@@ -202,11 +202,10 @@ class FormResponsePaymentsController extends Controller
             return false;
         }
 
-        // Its date hold lapsed and another payer took the date (App\Support\FormReservations):
-        // "Return to payment" is refused, so the page must not offer it.
-        $reservation = FormReservations::of($row);
-
-        if ($reservation !== null && ! $reservation->isHolding()) {
+        // Its date went to another payer, or its time to pay for the date has run out
+        // (App\Support\FormReservations): "Return to payment" is refused, so the page must
+        // not offer it.
+        if (! FormReservations::canStillPay($row)) {
             return false;
         }
 

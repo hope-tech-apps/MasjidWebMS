@@ -601,6 +601,11 @@ class FormPaymentCheckoutTest extends TestCase
             ->assertJsonMissingPath('data.checkout_url');
 
         $this->assertSame([], self::$created);
+
+        // The breakdown is snapshotted beside the amount on a cash entry too (Ramadan giving,
+        // 2026-09-25): $15 x 2 attendees, no tier.
+        $row = FormResponse::where('form_id', $form->id)->sole();
+        $this->assertSame([1500, 2, null], [$row->unit_price_minor, $row->price_quantity, $row->price_label]);
     }
 
     // ------------------------------------------ BISS: family prices, the fee required

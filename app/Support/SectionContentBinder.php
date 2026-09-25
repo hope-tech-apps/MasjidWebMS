@@ -175,8 +175,10 @@ class SectionContentBinder
             'name' => $form->name,
             'description' => $form->description,
             // A calendar-sourced question arrives with today's open days filled in
-            // (FormOptionSources); every other form publishes its schema as stored.
-            'schema' => FormOptionSources::schema($form, FormOptionSources::OFFER),
+            // (FormOptionSources), and a form priced by a quantity question or by answer
+            // with its prices written into its questions (FormPriceLabels); every other
+            // form publishes its schema as stored.
+            'schema' => FormPriceLabels::apply($form, FormOptionSources::schema($form, FormOptionSources::OFFER)),
             'accepting' => $form->acceptsSubmissions(),
             'closed_reason' => $form->closedReason(),
             'settings' => [
@@ -258,8 +260,9 @@ class SectionContentBinder
         $byCount = $form->pricesByCount();
         // Priced by a quantity question or by answer (Ramadan giving, 2026-09-25): no single
         // unit x rows total exists for a renderer that predates them, so unitMinor is null
-        // and such a page draws no total rather than a wrong one. The server prices it.
-        $byQuantityOrChoice = isset($fee['perQuantityOf']) || ($fee['pricing'] ?? null) === Form::PRICING_CHOICE;
+        // and such a page draws no total rather than a wrong one. The server prices it, and
+        // the prices are written into the questions themselves (FormPriceLabels).
+        $byQuantityOrChoice = $form->pricesByQuantityOrChoice();
 
         $payment = [
             'online' => $online,

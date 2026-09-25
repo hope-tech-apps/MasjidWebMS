@@ -24,9 +24,11 @@ use Tests\TestCase;
  *  - a quantity below 1, above the question's max, or not a whole number is refused
  *    before anything is written or Stripe is asked;
  *  - the Stripe line is the unit x the quantity, and the row snapshots the breakdown;
- *  - the admin detail and the receipt restate the breakdown the payer was quoted;
+ *  - the admin detail and the receipt restate the breakdown the payer was quoted, the
+ *    row counts the quantity as its entries, and an existing per-entry form's emails are
+ *    unchanged;
  *  - the public page publishes no `amount` or unitMinor an older renderer would draw as
- *    the whole total;
+ *    the whole total, shows the price for each in the question, and offers no staff entry;
  *  - the save accepts a paying form priced per quantity and refuses one that could
  *    charge for nothing or without bound.
  */
@@ -101,6 +103,18 @@ class FormQuantityPaymentTest extends TestCase
     }
 
     #[Test]
+    public function a_part_person_is_refused_as_not_a_whole_number(): void
+    {
+        $form = $this->makeZakatForm($this->makeOrg(), ['min' => 1, 'max' => 12]);
+
+        $this->submitTo($form, ['people' => '2.5'])
+            ->assertStatus(422)
+            ->assertJsonPath('data.people.0', 'The Number of people field must be an integer.');
+
+        $this->assertSame(0, FormResponse::count());
+    }
+
+    #[Test]
     public function a_quantity_question_without_a_max_is_still_capped_at_the_ceiling(): void
     {
         $form = $this->makeZakatForm($this->makeOrg(), ['min' => 1]);
@@ -128,7 +142,28 @@ class FormQuantityPaymentTest extends TestCase
 
         $this->getJson("/api/admin/masjids/{$org->id}/forms/{$form->id}/responses")
             ->assertOk()
-            ->assertJsonPath('data.data.0.price_breakdown.quantity', 3);
+            ->assertJsonPath('data.data.0.price_breakdown.quantity', 3)
+            ->assertJsonPath('meta.price_breakdown', true);
+    }
+
+    #[Test]
+    public function a_gift_for_four_people_counts_four_entries_not_one(): void
+    {
+        $org = $this->makeOrg();
+        $form = $this->makeZakatForm($org);
+        $this->submitTo($form, ['people' => '4'])->assertOk();
+
+        $this->assertSame(4, FormResponse::sole()->entry_count);
+
+        Sanctum::actingAs($this->makeAdminFor($org));
+        $this->getJson("/api/admin/masjids/{$org->id}/forms/{$form->id}/responses")
+            ->assertOk()
+            ->assertJsonPath('data.data.0.entry_count', 4);
+
+        // A level charged once counts one, whatever was typed in a box it does not use.
+        $iftar = $this->makeIftarForm($org, []);
+        $this->submitTo($iftar, ['sponsorship' => 'individual', 'people' => '3'])->assertOk();
+        $this->assertSame(3, FormResponse::where('form_id', $iftar->id)->sole()->entry_count);
     }
 
     #[Test]
@@ -168,6 +203,76 @@ class FormQuantityPaymentTest extends TestCase
 
         $this->assertStringContainsString('$17.00 × 4', $html);
         $this->assertStringNotContainsString('People registered', $html);
+    }
+
+    #[Test]
+    public function an_existing_per_entry_form_sends_the_emails_it_always_did(): void
+    {
+        $org = $this->makeOrg();
+        $form = Form::create([
+            'masjid_id' => $org->id,
+            'slug' => 'festival-' . uniqid(),
+            'name' => 'Fall Festival',
+            'schema' => ['sections' => [
+                ['id' => 'you', 'title' => 'You', 'fields' => [
+                    ['name' => 'fullName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                    ['name' => 'email', 'label' => 'Email', 'type' => 'email', 'required' => true],
+                ]],
+                ['id' => 'attendees', 'title' => 'Attendees', 'repeatable' => true, 'minEntries' => 1, 'maxEntries' => 10, 'fields' => [
+                    ['name' => 'attendeeName', 'label' => 'Name', 'type' => 'text', 'required' => true],
+                ]],
+            ]],
+            'settings' => [
+                'identity' => ['name' => 'fullName', 'email' => 'email'],
+                'fee' => ['amount' => 15, 'currency' => 'USD', 'perEntryOfSection' => 'attendees'],
+                'payment' => ['online' => true],
+            ],
+            'is_active' => true,
+        ]);
+
+        $this->submitTo($form, ['attendees' => [['attendeeName' => 'Guest 1'], ['attendeeName' => 'Guest 2'], ['attendeeName' => 'Guest 3']]])
+            ->assertOk()->assertJsonPath('data.total_minor', 4500);
+        $row = FormResponse::sole();
+        $this->assertTrue($row->markPaid('pi_festival_1'));
+        FormNotifier::submitted($form, $row->fresh());
+
+        // The people are listed as always, and no "$15.00 × 3" line is added.
+        Mail::assertQueued(FormSubmissionReceipt::class, fn (FormSubmissionReceipt $mail) => $mail->breakdownLine === null
+            && $mail->entryCount === 3
+            && $mail->amountLine === '$45.00'
+            && $mail->reservedDate === null
+            && $mail->lostDate === null);
+        Mail::assertQueued(FormResponseSubmitted::class, fn (FormResponseSubmitted $mail) => $mail->breakdownLine === null
+            && $mail->entryCount === 3);
+
+        $html = Mail::queued(FormSubmissionReceipt::class)->first()->render();
+        $this->assertStringContainsString('People registered', $html);
+        $this->assertStringNotContainsString('×', $html);
+
+        // The admin list keeps its columns as they were.
+        Sanctum::actingAs($this->makeAdminFor($org));
+        $this->getJson("/api/admin/masjids/{$org->id}/forms/{$form->id}/responses")->assertOk()->assertJsonPath('meta.price_breakdown', false);
+    }
+
+    #[Test]
+    public function the_public_page_shows_the_price_for_each_person(): void
+    {
+        $payload = $this->publicFormPayload($this->makeZakatForm($this->makeOrg()));
+
+        $people = collect($payload['schema']['sections'][0]['fields'])->firstWhere('name', 'people');
+        $this->assertSame('$17.00 each.', $people['help']);
+    }
+
+    #[Test]
+    public function staff_codes_are_not_offered_on_a_form_priced_per_quantity(): void
+    {
+        $org = $this->makeOrg();
+        $form = $this->makeZakatForm($org, settings: ['payment' => ['online' => true, 'staffCodes' => true]]);
+
+        // Stored another way than the save (which refuses it): still no staff button, whose
+        // amount the page cannot work out.
+        $this->assertFalse($form->takesStaffCodes());
+        $this->assertFalse($this->publicFormPayload($form)['settings']['payment']['staffEntry']);
     }
 
     #[Test]
@@ -224,6 +329,7 @@ class FormQuantityPaymentTest extends TestCase
             'a maximum above the ceiling' => [fn (array $d) => data_set($d, 'schema.sections.0.fields.1.max', Form::MAX_QUANTITY + 1), 'settings.fee.perQuantityOf'],
             'no such question' => [fn (array $d) => data_set($d, 'settings.fee.perQuantityOf', 'nobody'), 'settings.fee.perQuantityOf'],
             'beside a per-entry count' => [fn (array $d) => data_set($d, 'settings.fee.perEntryOfSection', 'giver'), 'settings.fee.perEntryOfSection'],
+            'with staff codes' => [fn (array $d) => data_set($d, 'settings.payment.staffCodes', true), 'settings.payment.staffCodes'],
         ];
 
         foreach ($cases as $why => [$edit, $key]) {

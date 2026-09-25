@@ -280,6 +280,10 @@ export type FormResponsesMeta = {
     payment?: FormResponsesPaymentMeta;
     /** The form reserves dates from a list: offer the reservations board. Absent from an older API. */
     reservations?: boolean;
+    /** How many conflicts the board lists (FormReservations::conflictCount()), shown while it is folded. */
+    reservation_conflicts?: number;
+    /** Priced by a quantity question or by answer: show each row's unit x quantity under its amount. */
+    price_breakdown?: boolean;
 };
 
 /** meta.payment: whether this form shows a money leg at all, and its codes for the filter. */

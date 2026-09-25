@@ -47,6 +47,13 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
     public ?string $reservedDate = null;
 
     /**
+     * The date this registration asked for when it went to another payer before this
+     * payment arrived (App\Support\FormReservations), or null. The email then says the
+     * date could not be kept, instead of silently leaving it out. As above.
+     */
+    public ?string $lostDate = null;
+
+    /**
      * @param  array<int,array{name:string,detail:string}>  $people
      * @param  array<int,string>  $nextSteps
      */
@@ -73,9 +80,11 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
         public ?string $whatsappLabel = null,
         ?string $breakdownLine = null,
         ?string $reservedDate = null,
+        ?string $lostDate = null,
     ) {
         $this->breakdownLine = $breakdownLine;
         $this->reservedDate = $reservedDate;
+        $this->lostDate = $lostDate;
     }
 
     public function envelope(): Envelope
@@ -107,6 +116,7 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
                 'tierLabel' => $this->tierLabel,
                 'breakdownLine' => $this->breakdownLine,
                 'reservedDate' => $this->reservedDate,
+                'lostDate' => $this->lostDate,
                 'people' => $this->people,
                 'nextSteps' => $this->nextSteps,
                 'paymentNote' => $this->paymentNote,

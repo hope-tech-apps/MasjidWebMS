@@ -145,8 +145,9 @@ class FormNotifier
                 adminUrl: self::adminUrl(),
                 paymentLine: $coordinatorPaymentLine,
                 paymentOwed: $owedAtOffice,
-                breakdownLine: self::breakdownLine($response),
+                breakdownLine: self::breakdownLine($form, $response),
                 reservedDate: self::reservedDate($response),
+                lostDate: self::lostDate($response),
             ));
         });
 
@@ -189,8 +190,9 @@ class FormNotifier
                 paymentLine: $paymentLine,
                 whatsappUrl: self::whatsappUrl($form, $response),
                 whatsappLabel: self::whatsappLabel($form),
-                breakdownLine: self::breakdownLine($response),
+                breakdownLine: self::breakdownLine($form, $response),
                 reservedDate: self::reservedDate($response),
+                lostDate: self::lostDate($response),
             ));
         });
     }
@@ -407,21 +409,24 @@ class FormNotifier
      */
     private static function entryCount(Form $form, FormResponse $response): int
     {
-        $fee = $form->feeRule($response->submitted_at);
-
-        if (isset($fee['perQuantityOf']) || ($fee['pricing'] ?? null) === Form::PRICING_CHOICE) {
-            return 0;
-        }
-
-        return (int) $response->entry_count;
+        return $form->pricesByQuantityOrChoice($response->submitted_at) ? 0 : (int) $response->entry_count;
     }
 
     /**
      * "$17.00 × 4", from the snapshot the row was written at (FormResponse::priceBreakdown()),
      * when more than one unit was charged. Null otherwise: one unit is the amount itself.
+     *
+     * Only on a form priced by a quantity question or by answer, where the emails list no
+     * people and this line is the only place "how many" appears. Every other paying form
+     * (a festival charged per attendee) sends exactly the emails it always did: its people
+     * are listed, and the row's snapshot is for the admin screens.
      */
-    private static function breakdownLine(FormResponse $response): ?string
+    private static function breakdownLine(Form $form, FormResponse $response): ?string
     {
+        if (! $form->pricesByQuantityOrChoice($response->submitted_at)) {
+            return null;
+        }
+
         $breakdown = $response->priceBreakdown();
 
         if ($breakdown === null || $breakdown['quantity'] < 2) {
@@ -441,6 +446,22 @@ class FormNotifier
         $reservation = FormReservations::of($response);
 
         return $reservation !== null && $reservation->isHolding() ? FormReservations::label($reservation->date()) : null;
+    }
+
+    /**
+     * The date this registration asked for when its hold went to another payer, for a
+     * human, or null. It reaches an email only on a payment that landed after the date was
+     * taken (FormResponsePaymentService::settle()): the money is kept, so the payer is
+     * told the date could not be, and the coordinators that it needs a refund or another
+     * date. A cancelled registration is not told anything here.
+     */
+    private static function lostDate(FormResponse $response): ?string
+    {
+        $reservation = FormReservations::of($response);
+
+        return $reservation !== null && ! $reservation->isHolding() && ! $response->isCancelled()
+            ? FormReservations::label($reservation->date())
+            : null;
     }
 
     /** An unpaid registration whose family chose to pay the office. */

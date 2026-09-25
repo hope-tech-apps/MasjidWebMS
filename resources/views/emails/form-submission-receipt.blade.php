@@ -58,6 +58,14 @@
                                 @endif
                             </table>
 
+                            @if (! empty($lostDate))
+                                {{-- Paid after the date went to another sponsor (FormReservations): the money is kept, so the payer must hear that the date was not, and who acts next. --}}
+                                <div style="border-left:3px solid #c0392b; padding:4px 0 4px 16px; margin:24px 0 0; font-size:14px; line-height:1.55; color:#52606d;">
+                                    The date you chose, {{ $lostDate }}, was reserved by someone else before your payment arrived, so it could not be kept.
+                                    {{ $masjidName }} will contact you to arrange another date or a refund.
+                                </div>
+                            @endif
+
                             @if ($groupLink)
                                 {{-- $groupLink, never $whatsappUrl: only the former is checked (FormSubmissionReceipt::groupLink()). Escaped into the attribute; noreferrer, so the click carries nothing from this email. --}}
                                 <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">

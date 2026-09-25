@@ -399,7 +399,7 @@ class StoreFormRequest extends BaseFormRequest
         // A key already refused above keeps its first, more specific message. The count
         // schedule is checked on EVERY form, paying or not, because amount_due is
         // stored from it either way.
-        foreach ([self::countTierProblems($schema, $settings), self::quantityProblems($schema, $settings), self::choiceProblems($schema, $settings), self::reservationProblems($schema, $settings), self::paymentProblems($schema, $settings)] as $found) {
+        foreach ([self::countTierProblems($schema, $settings), self::quantityProblems($schema, $settings), self::choiceProblems($schema, $settings), self::reservationProblems($schema, $settings), self::staffCodeProblems($settings), self::paymentProblems($schema, $settings)] as $found) {
             foreach ($found as $field => $message) {
                 $problems[$field] ??= $message;
             }
@@ -844,6 +844,29 @@ class StoreFormRequest extends BaseFormRequest
         }
 
         return [];
+    }
+
+    /**
+     * Staff codes on a form priced by a quantity question or by answer (Ramadan giving,
+     * 2026-09-25). The renderer's staff button states what to collect from the unit x
+     * rows price, which such a form does not publish, so it would read "Record $0.00"
+     * while the server records the real amount. Refused until the renderer can price
+     * them; Form::takesStaffCodes() is the read half for a form stored another way.
+     *
+     * @param  array<string,mixed>  $settings
+     * @return array<string,string>
+     */
+    private static function staffCodeProblems(array $settings): array
+    {
+        $fee = is_array($settings['fee'] ?? null) ? $settings['fee'] : [];
+        $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
+
+        if (! self::switchedOn($payment['staffCodes'] ?? null)
+            || (! self::given($fee['perQuantityOf'] ?? null) && ! self::given($fee['byChoice'] ?? null))) {
+            return [];
+        }
+
+        return ['settings.payment.staffCodes' => 'Staff codes cannot be used on a form priced per quantity or by the answer to a question yet: the staff screen cannot show how much to collect. Turn staff codes off.'];
     }
 
     /** Anything but absent, null, a blank string or an empty list. */

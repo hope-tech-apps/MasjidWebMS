@@ -433,6 +433,10 @@
                             >
                                 <i class="bi me-1" :class="reservationsOpen ? 'bi-chevron-down' : 'bi-chevron-right'" aria-hidden="true"></i>
                                 Reserved dates
+                                <!-- Counted even while folded: a paid sponsor without a date must not wait for someone to open this. -->
+                                <span v-if="reservationConflicts > 0" class="badge bg-danger ms-1" data-test="reservation-conflicts">
+                                    {{ reservationConflicts }} {{ reservationConflicts === 1 ? 'conflict' : 'conflicts' }}
+                                </span>
                             </button>
                             <button
                                 v-if="reservationsOpen"
@@ -569,7 +573,13 @@
                                         <span v-else class="text-muted">—</span>
                                     </td>
                                     <td class="text-center">{{ response.entry_count }}</td>
-                                    <td class="text-end">{{ formatAmount(response.amount_due) }}</td>
+                                    <td class="text-end">
+                                        {{ formatAmount(response.amount_due) }}
+                                        <!-- Priced per quantity or by answer: how many, as the form lists no people. -->
+                                        <div v-if="showsBreakdown && breakdownText(response)" class="small text-muted" data-test="list-price-breakdown">
+                                            {{ breakdownText(response) }}
+                                        </div>
+                                    </td>
                                     <td>
                                         <span class="badge text-capitalize" :class="statusClass(response.status)">
                                             {{ response.status }}
@@ -1146,7 +1156,7 @@
                                 <div class="col-md-3">
                                     <h6 class="text-muted mb-1">Amount due</h6>
                                     <p class="mb-0">{{ formatAmount(selectedResponse.amount_due) }}</p>
-                                    <p v-if="breakdownText(selectedResponse)" class="small text-muted mb-0" data-test="price-breakdown">
+                                    <p v-if="showsBreakdown && breakdownText(selectedResponse)" class="small text-muted mb-0" data-test="price-breakdown">
                                         {{ breakdownText(selectedResponse) }}
                                     </p>
                                 </div>
@@ -3358,6 +3368,15 @@ const money = (minor: number | null | undefined, currency: string | null | undef
     formatMinorAmount(minor, currency || 'usd');
 
 // --- Price breakdown and reserved dates (Ramadan giving, 2026-09-25) -----------
+
+/**
+ * Only on a form priced by a quantity question or by answer (meta.price_breakdown), whose rows
+ * list no people: every other paying form's list and detail read as they always did.
+ */
+const showsBreakdown = computed(() => meta.value?.price_breakdown === true);
+
+/** The board's conflicts: the loaded board's once it has been read, else the list's count. */
+const reservationConflicts = computed(() => reservations.value?.conflicts.length ?? meta.value?.reservation_conflicts ?? 0);
 
 /** "Quarter Iftar: $450.00 × 1" from the row's snapshot, or '' when it has none. */
 const breakdownText = (row: FormResponseRow | FormResponseDetail): string => {
