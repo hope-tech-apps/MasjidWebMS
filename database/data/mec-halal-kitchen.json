@@ -1,0 +1,169 @@
+{
+  "_about": "MEC's Halal Kitchen catering trays, carried from its Wix store (Wix Stores catalog read 2026-09-25, read-only). Public menu content: names, descriptions and prices verbatim as MEC published them (MEC's own spelling kept, e.g. 'rise'). The Wix product 'Kunafeh' ($65) is left out as a duplicate of 'Kunafeh (Small)' ($65), per reports/migration-plan.md 6.3. The pickup line is left empty on purpose: MEC's own words go there, set by its office. Seeded by `php artisan kitchen:seed-catalogue`.",
+  "title": "Halal Kitchen",
+  "pickup_lead_hours": 48,
+  "pickup_instructions": null,
+  "currency": "usd",
+  "items": [
+    {
+      "name": "Kunafeh (Small)",
+      "description": null,
+      "price_minor": 6500
+    },
+    {
+      "name": "Kunafeh (Large)",
+      "description": null,
+      "price_minor": 10000
+    },
+    {
+      "name": "Lentil Soup (Small)",
+      "description": null,
+      "price_minor": 4000
+    },
+    {
+      "name": "Lentil Soup (Large)",
+      "description": null,
+      "price_minor": 6500
+    },
+    {
+      "name": "Vegetable Soup (Small)",
+      "description": null,
+      "price_minor": 4000
+    },
+    {
+      "name": "Vegetable Soup (Large)",
+      "description": null,
+      "price_minor": 6500
+    },
+    {
+      "name": "Shawarma over hummus (Serves 8)",
+      "description": null,
+      "price_minor": 7500
+    },
+    {
+      "name": "Shawarma over hummus (Serves 12)",
+      "description": null,
+      "price_minor": 14000
+    },
+    {
+      "name": "Shawarma over rice (Serves 8)",
+      "description": null,
+      "price_minor": 6000
+    },
+    {
+      "name": "Shawarma over rice (Serves 12)",
+      "description": null,
+      "price_minor": 12000
+    },
+    {
+      "name": "Shrimp Alfredo Pasta (Serves 8)",
+      "description": null,
+      "price_minor": 8000
+    },
+    {
+      "name": "Shrimp Alfredo Pasta (Serves 12)",
+      "description": null,
+      "price_minor": 12000
+    },
+    {
+      "name": "Chicken Alfredo Pasta (Serves 8)",
+      "description": null,
+      "price_minor": 6000
+    },
+    {
+      "name": "Chicken Alfredo Pasta (Serves 12)",
+      "description": null,
+      "price_minor": 9000
+    },
+    {
+      "name": "Fried Fish with Fries (Half of Tray)",
+      "description": null,
+      "price_minor": 7500
+    },
+    {
+      "name": "Fried Fish with Fries (Full Tray)",
+      "description": null,
+      "price_minor": 10000
+    },
+    {
+      "name": "Baked Fish with Vegetables (Half of Tray)",
+      "description": null,
+      "price_minor": 9500
+    },
+    {
+      "name": "Baked Fish with Vegetables (Full Tray)",
+      "description": null,
+      "price_minor": 16000
+    },
+    {
+      "name": "Chicken Leg quarters (serves 6)",
+      "description": "Served with Rice, Salad & Garlic",
+      "price_minor": 7500
+    },
+    {
+      "name": "Chicken Leg quarters (Serves 12)",
+      "description": "Served with Rice, Salad & Garlic",
+      "price_minor": 12000
+    },
+    {
+      "name": "Chicken Maqluba (Serves 8)",
+      "description": null,
+      "price_minor": 11000
+    },
+    {
+      "name": "Chicken Maqluba (Serves 12)",
+      "description": null,
+      "price_minor": 16000
+    },
+    {
+      "name": "Chicken Kabsa (Serves 8)",
+      "description": null,
+      "price_minor": 9000
+    },
+    {
+      "name": "Chicken Kabsa (Serves 12)",
+      "description": null,
+      "price_minor": 16000
+    },
+    {
+      "name": "Freekeh with Chicken (Serves 8)",
+      "description": null,
+      "price_minor": 10000
+    },
+    {
+      "name": "Freekeh with Chicken (Serves 12)",
+      "description": null,
+      "price_minor": 17000
+    },
+    {
+      "name": "Chicken Biryani (Serves 8)",
+      "description": null,
+      "price_minor": 10000
+    },
+    {
+      "name": "Chicken Biryani (Serves 12)",
+      "description": null,
+      "price_minor": 13000
+    },
+    {
+      "name": "Kufta Kabab (serves 6)",
+      "description": null,
+      "price_minor": 7500
+    },
+    {
+      "name": "Kufta Kabab (serves 12)",
+      "description": null,
+      "price_minor": 14000
+    },
+    {
+      "name": "Lamb shanks (Serves 4)",
+      "description": "Served with rise, salad, and hummus.",
+      "price_minor": 12000
+    },
+    {
+      "name": "Lamb shanks (Serves 6)",
+      "description": "Served with rise, salad, and hummus.",
+      "price_minor": 17000
+    }
+  ]
+}
