@@ -54,7 +54,12 @@ class JummahLunchOrdersController extends Controller
      */
     private const EDIT_CLOSED = 'Orders for this menu are closed.';
 
-    private const EDIT_PAID = 'This order is already paid. Please contact the masjid to change it.';
+    /**
+     * A paid order after the cutoff. It leads with the cutoff because that is the
+     * reason: before it, a paid order CAN be changed online (updatePaid), and the
+     * email said so.
+     */
+    private const EDIT_PAID = 'Ordering has closed and this order is paid. Please contact the masjid to change it.';
 
     /**
      * A PAID order's customer asked for a lower total (owner, 2026-09-24): there
@@ -102,6 +107,8 @@ class JummahLunchOrdersController extends Controller
         self::EDIT_REFUNDED => 'refunded',
         self::EDIT_CANCELLED => 'cancelled',
         self::EDIT_ITEM_GONE => 'item_gone',
+        MealOrderCheckoutService::TOP_UP_BALANCE_OPEN => 'paid_balance_open',
+        MealOrderCheckoutService::TOP_UP_PRICES_MOVED => 'paid_prices_moved',
     ];
 
     /**
@@ -114,7 +121,20 @@ class JummahLunchOrdersController extends Controller
         MealOrderCheckoutService::TOP_UP_UNAVAILABLE => 'topup_unavailable',
         MealOrderCheckoutService::TOP_UP_CONFIRMING => 'topup_confirming',
         MealOrderCheckoutService::TOP_UP_ORDER_MOVED => 'order_moved',
-        self::EDIT_JUST_PAID => 'order_moved',
+        MealOrderCheckoutService::TOP_UP_NOT_OPENED => 'topup_not_opened',
+        MealOrderCheckoutService::TOP_UP_BALANCE_OPEN => 'paid_balance_open',
+        MealOrderCheckoutService::TOP_UP_PRICES_MOVED => 'paid_prices_moved',
+        MealOrderCheckoutService::TOP_UP_TOO_SMALL => 'topup_too_small',
+        self::EDIT_JUST_PAID => 'just_paid',
+    ];
+
+    /**
+     * Refusals that are about the request itself rather than the order having
+     * moved under it: answered 422 wherever they are raised, the lock included.
+     */
+    private const UNPROCESSABLE = [
+        MealOrderCheckoutService::TOP_UP_TOO_CLOSE,
+        MealOrderCheckoutService::TOP_UP_TOO_SMALL,
     ];
 
     public function __construct(
@@ -407,7 +427,7 @@ class JummahLunchOrdersController extends Controller
             }
 
             if (($refusal = self::customerMayEdit($order, $menu)) !== null) {
-                return response()->api(409, $refusal, null);
+                return $this->refusal(409, $refusal);
             }
 
             $wanted = LunchOrderLines::wanted((array) $request->validated('items'), 'meal_menu_item_id');
@@ -596,6 +616,13 @@ class JummahLunchOrdersController extends Controller
                             throw new \RuntimeException(MealOrderCheckoutService::TOP_UP_ORDER_MOVED);
                         }
 
+                        // A page for the difference opened by another request after
+                        // this one's close ran. Swapping now would leave it payable
+                        // against an order it no longer describes.
+                        if (MealOrderCheckoutService::hasPendingTopUp($locked)) {
+                            throw new \RuntimeException(MealOrderCheckoutService::TOP_UP_ORDER_MOVED);
+                        }
+
                         if (LunchOrderLines::unreachable($menu, $locked->items, $wanted) !== []) {
                             throw new \RuntimeException(self::EDIT_ITEM_GONE);
                         }
@@ -612,6 +639,10 @@ class JummahLunchOrdersController extends Controller
 
         if (MealOrderCheckoutService::topUpClosesTooSoon($menu)) {
             return $this->refusal(422, MealOrderCheckoutService::TOP_UP_TOO_CLOSE);
+        }
+
+        if ($newTotal - $paid < MealOrderCheckoutService::TOP_UP_MIN_MINOR) {
+            return $this->refusal(422, MealOrderCheckoutService::TOP_UP_TOO_SMALL);
         }
 
         if (! Masjid::find($order->masjid_id)?->canAcceptDonations()) {
@@ -674,7 +705,7 @@ class JummahLunchOrdersController extends Controller
             // The cutoff passing while the page was being made is the same answer,
             // with the same status, as the cutoff being too near to begin with.
             return $this->refusal(
-                $e->getMessage() === MealOrderCheckoutService::TOP_UP_TOO_CLOSE ? 422 : 409,
+                in_array($e->getMessage(), self::UNPROCESSABLE, true) ? 422 : 409,
                 $e->getMessage()
             );
         }
@@ -685,7 +716,7 @@ class JummahLunchOrdersController extends Controller
     /** A refusal, with its code beside the sentence when it has one. */
     private function refusal(int $status, string $message)
     {
-        $code = self::REFUSAL_CODES[$message] ?? null;
+        $code = self::REFUSAL_CODES[$message] ?? self::EDIT_NOTICE_CODES[$message] ?? null;
 
         return response()->api($status, $message, $code === null ? null : ['code' => $code]);
     }
@@ -735,6 +766,28 @@ class JummahLunchOrdersController extends Controller
         ];
     }
 
+    private static function lastTopUpStatus(MealOrder $order): ?string
+    {
+        $status = MealOrderTopUp::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->where('meal_order_id', $order->id)
+            ->latest('id')
+            ->value('status');
+
+        return $status === null ? null : (string) $status;
+    }
+
+    private static function topUpOpenUntil(MealOrder $order, ?MealMenu $menu): ?string
+    {
+        if ($menu === null || $menu->ordering_closes_at === null || $order->payment_status !== MealOrder::PAYMENT_PAID) {
+            return null;
+        }
+
+        return $menu->ordering_closes_at->copy()
+            ->subMinutes(MealOrderCheckoutService::TOP_UP_MIN_LEAD_MINUTES)
+            ->toIso8601String();
+    }
+
     /**
      * Why this customer may not change this order right now, or null when they
      * may. Asked before the work starts so the answer is cheap, and again on the
@@ -745,7 +798,8 @@ class JummahLunchOrdersController extends Controller
      * to know what to ask the masjid for.
      *
      * A paid order is no longer refused as such (owner, 2026-09-24): before the
-     * cutoff its customer may change it on the money's terms (updatePaid()).
+     * cutoff its customer may change it on the money's terms (updatePaid()),
+     * unless it carries a balance or its dishes have been re-priced since.
      */
     private static function customerMayEdit(MealOrder $order, MealMenu $menu): ?string
     {
@@ -754,7 +808,23 @@ class JummahLunchOrdersController extends Controller
         }
 
         if ($order->payment_status === MealOrder::PAYMENT_PAID) {
-            return $menu->isOpenForOrders() ? null : self::EDIT_PAID;
+            if (! $menu->isOpenForOrders()) {
+                return self::EDIT_PAID;
+            }
+
+            // A balance open either way (money owed back, or owed by the
+            // customer) is the masjid's to settle by hand. Pricing a change
+            // against "what was paid" could spend a refund the app never saw.
+            if ($order->settledMinor() !== (int) $order->total_minor) {
+                return MealOrderCheckoutService::TOP_UP_BALANCE_OPEN;
+            }
+
+            // Re-pricing would charge the plates already bought at today's price.
+            if (MealOrderEditor::pricesMoved($order->loadMissing('items'), $menu)) {
+                return MealOrderCheckoutService::TOP_UP_PRICES_MOVED;
+            }
+
+            return null;
         }
 
         if ($order->payment_status !== MealOrder::PAYMENT_UNPAID) {
@@ -882,6 +952,15 @@ class JummahLunchOrdersController extends Controller
             // A difference the customer has been asked to pay and has not yet been
             // recorded paying: its amount and when its page closes. Nothing more.
             'top_up' => self::pendingTopUp($order),
+            // What became of the customer's most recent change-and-pay, so the page
+            // says what happened instead of guessing from the totals: pending,
+            // applied, conflict (paid, not applied), expired, rejected. A status
+            // only; null when there has never been one.
+            'last_top_up_status' => self::lastTopUpStatus($order),
+            // Until when more plates can be paid for online (the cutoff less the
+            // last half hour), so the page can say so before the tap. Null when
+            // there is no cutoff, or the order is not paid.
+            'topup_open_until' => self::topUpOpenUntil($order, $menu),
             'currency' => $order->currency,
             'placed_at' => optional($order->placed_at)->toIso8601String(),
             'can_edit' => $editNotice === null,

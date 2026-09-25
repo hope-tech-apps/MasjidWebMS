@@ -22,7 +22,10 @@ use Illuminate\Queue\SerializesModels;
  *
  *  - a pay-at-pickup order, when it is placed;
  *  - an online order, when the webhook records its payment;
- *  - again, as "updated", when a paid order's top-up is applied.
+ *  - again, as "updated", when a paid order's top-up is applied;
+ *  - or, when a top-up was paid but NOT applied (the order had changed, or
+ *    ordering had ended), to say the payment arrived and the order was not
+ *    changed (`unappliedPaymentLine`).
  *
  * The order link is the capability to change the order, exactly as it is on the
  * page the customer already saw; it goes only to the address they gave.
@@ -54,6 +57,8 @@ class LunchOrderConfirmation extends Mailable implements ShouldQueue
         public bool $updated = false,
         /** Named masjidEmail, not replyTo: Mailable already owns a $replyTo property. */
         public ?string $masjidEmail = null,
+        /** The amount of a top-up that was paid but not applied ("$8.00"); null otherwise. */
+        public ?string $unappliedPaymentLine = null,
     ) {
     }
 
@@ -61,12 +66,12 @@ class LunchOrderConfirmation extends Mailable implements ShouldQueue
     {
         return new Envelope(
             from: new Address(config('mail.from.address'), $this->masjidName ?: config('mail.from.name')),
-            subject: $this->updated
-                ? 'Your lunch order #' . $this->orderNumber . ' was updated'
-                : 'Your lunch order #' . $this->orderNumber,
-            replyTo: $this->masjidEmail && filter_var($this->masjidEmail, FILTER_VALIDATE_EMAIL)
-                ? [$this->masjidEmail]
-                : [],
+            subject: match (true) {
+                $this->unappliedPaymentLine !== null => 'We received your payment for lunch order #' . $this->orderNumber,
+                $this->updated => 'Your lunch order #' . $this->orderNumber . ' was updated',
+                default => 'Your lunch order #' . $this->orderNumber,
+            },
+            replyTo: $this->canReply() ? [$this->masjidEmail] : [],
         );
     }
 
@@ -75,7 +80,16 @@ class LunchOrderConfirmation extends Mailable implements ShouldQueue
         return new Content(
             view: 'emails.lunch-order-confirmation',
             with: [
-                'headline' => $this->updated ? 'Your order was updated' : 'Your order is in',
+                'headline' => match (true) {
+                    $this->unappliedPaymentLine !== null => 'We received your payment',
+                    $this->updated => 'Your order was updated',
+                    default => 'Your order is in',
+                },
+                'unappliedLine' => $this->unappliedPaymentLine !== null
+                    ? 'We received your payment of ' . $this->unappliedPaymentLine . ', but your order had changed '
+                        . 'in the meantime or ordering had closed, so your order was not changed. The masjid will '
+                        . 'settle the difference with you.'
+                    : null,
                 'greeting' => $this->customerName
                     ? 'Assalamu alaikum ' . $this->customerName . ','
                     : 'Assalamu alaikum,',
@@ -85,9 +99,23 @@ class LunchOrderConfirmation extends Mailable implements ShouldQueue
                 'orderLink' => $this->orderLink(),
                 'changeLine' => $this->changeUntil !== null
                     ? 'You can change your order until ' . $this->changeUntil . '.'
+                        // A paid order grows only by paying the difference, and that
+                        // page is not offered in the last half hour.
+                        . ($this->paidLine !== null ? ' Adding plates to a paid order online closes 30 minutes before that.' : '')
                     : null,
+                // Only a promise the link can keep: once the cutoff has passed the
+                // order can be looked at, not changed.
+                'buttonLabel' => $this->changeUntil !== null ? 'View or change your order' : 'View your order',
+                // Without the masjid's own address there is no Reply-To, and a reply
+                // would reach the platform's sending address instead.
+                'canReply' => $this->canReply(),
             ],
         );
+    }
+
+    private function canReply(): bool
+    {
+        return $this->masjidEmail !== null && filter_var($this->masjidEmail, FILTER_VALIDATE_EMAIL) !== false;
     }
 
     /**

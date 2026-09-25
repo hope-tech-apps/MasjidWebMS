@@ -216,6 +216,9 @@ class StripeWebhookController extends Controller
     {
         $object = $event['data']['object'] ?? [];
         $account = $event['account'] ?? null;
+        // When Stripe raised the event: for a top-up, when the page was paid, which
+        // decides whether it came before the cutoff whatever the delivery's delay.
+        $paidAt = is_int($event['created'] ?? null) ? $event['created'] : null;
 
         // The branch that decides whose event this is, by DISTINCT metadata key.
         // A meal order carries metadata.order_uuid; a registration carries
@@ -231,7 +234,7 @@ class StripeWebhookController extends Controller
 
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
-                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account),
+                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account, $paidAt),
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
@@ -243,7 +246,7 @@ class StripeWebhookController extends Controller
             // Form checkout is card only, so a form response should never get here;
             // if one does, its own handler settles it rather than the donation path.
             'checkout.session.async_payment_succeeded' => match (true) {
-                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account),
+                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account, $paidAt),
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),

@@ -503,6 +503,20 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // Changing ONE lunch order on its link, whatever connection it comes from.
+        // `lunch-order` is per IP, so someone holding a uuid and rotating addresses
+        // could otherwise open payment pages for its paid order without end (each
+        // one a retrieve, an expire and a create on the org's Stripe account). Ten
+        // an hour is several times what a customer changing their mind needs.
+        RateLimiter::for('lunch-order-edit', function (Request $request) {
+            return Limit::perHour(10)->by('lunch-order-edit|' . (string) $request->route('uuid'))->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This order has been changed too many times in the last hour. Please try again later or contact the masjid.',
+                ], 429);
+            });
+        });
+
         // The lunch menu + order-status reads write nothing, so they take the
         // looser allowance — a hungry visitor re-loads the menu while deciding.
         RateLimiter::for('lunch-menu', function (Request $request) {

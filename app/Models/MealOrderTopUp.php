@@ -33,11 +33,21 @@ class MealOrderTopUp extends Model
     /** Paid, but the order moved underneath it: the money is recorded, the plates are not. */
     public const STATUS_CONFLICT = 'conflict';
 
+    /**
+     * Its page completed, but not with a payment this app can record: another
+     * amount or currency than the difference, or not paid. Nothing was recorded on
+     * the order (a warning names it for the organisation to check in Stripe), and
+     * the row is closed so the order is not held waiting on it for ever. A later
+     * success for the same page is recorded as a conflict, never applied.
+     */
+    public const STATUS_REJECTED = 'rejected';
+
     public const STATUSES = [
         self::STATUS_PENDING,
         self::STATUS_APPLIED,
         self::STATUS_EXPIRED,
         self::STATUS_CONFLICT,
+        self::STATUS_REJECTED,
     ];
 
     /** The metadata `kind` on a top-up's Checkout Session and payment intent. */

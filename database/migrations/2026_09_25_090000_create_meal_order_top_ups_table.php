@@ -24,9 +24,12 @@ use Illuminate\Support\Facades\Schema;
  *  - `amount_minor` = `proposed_total_minor` - `base_settled_minor`, the one
  *    figure the Checkout Session charges. Integer minor units, never a float.
  *  - `status` is a plain string like every other status in this module:
- *    pending | applied | expired | conflict.
- *  - `idempotency_key` is written BEFORE the Stripe call (the stripe-payments
- *    rule), so a retried create returns the same session.
+ *    pending | applied | expired | conflict | rejected.
+ *  - `idempotency_key` is set on the row before the Stripe call, in the same
+ *    transaction. It covers the SDK's own network retries of that one call; a
+ *    failed attempt rolls the row back, and the customer's next try is a new
+ *    top-up with a new key (a page Stripe made for the failed one was never
+ *    handed to anyone, and closes at the cutoff).
  *  - `notified_at` stamps the "your order was updated" email, so a replayed
  *    webhook never sends it twice. The name avoids the PII tokens the staging
  *    scrub guard matches ("email").
@@ -55,7 +58,7 @@ return new class extends Migration
             $table->string('stripe_payment_intent_id')->nullable();
             $table->string('idempotency_key', 80)->nullable();
 
-            $table->string('status', 16)->default('pending');   // pending | applied | expired | conflict
+            $table->string('status', 16)->default('pending');   // pending | applied | expired | conflict | rejected
             $table->dateTime('expires_at')->nullable();
             $table->dateTime('applied_at')->nullable();
             $table->dateTime('notified_at')->nullable();

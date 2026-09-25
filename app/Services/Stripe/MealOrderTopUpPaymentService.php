@@ -29,10 +29,13 @@ use Illuminate\Support\Facades\Log;
  * is looked up by id WITHIN that masjid, so another organisation's id is a miss.
  *
  * The money is never lost. When the order moved after the top-up was asked for
- * (staff edited it, cancelled it, or it is no longer paid), the plates are NOT
- * applied — the change was priced against an order that no longer exists — but the
+ * (staff edited it, cancelled it, or it is no longer paid), or ordering had ended
+ * by the time it was paid (the menu closed, or the payment came after the cutoff,
+ * when the kitchen has already counted), the plates are NOT applied — but the
  * payment is still recorded on the order (`settled_total_minor` += the amount), so
- * the board shows it as owed back, and the top-up is marked `conflict`.
+ * the board shows it as owed back, the top-up is marked `conflict`, and the
+ * customer is emailed (when the order has an address) that their order was not
+ * changed.
  */
 class MealOrderTopUpPaymentService
 {
@@ -51,9 +54,14 @@ class MealOrderTopUpPaymentService
     /**
      * checkout.session.completed (and async_payment_succeeded, the same session
      * later `paid`). Pages are card only, so `unpaid` should never arrive; if it
-     * does, nothing is recorded until the money lands.
+     * does, nothing is recorded, and the top-up is closed as `rejected` so the
+     * order is not held waiting on it (a later success is recorded as a conflict).
+     *
+     * `$paidAt` is the event's own `created` time, when Stripe completed the page:
+     * a payment after the cutoff is judged by when it was made, not by when the
+     * webhook happened to be delivered (Stripe retries for days).
      */
-    public function handleCheckoutCompleted(array $session, ?string $account): void
+    public function handleCheckoutCompleted(array $session, ?string $account, ?int $paidAt = null): void
     {
         $found = $this->resolve($session, $account);
 
@@ -64,7 +72,9 @@ class MealOrderTopUpPaymentService
         [$topUp, $order] = $found;
 
         if (($session['payment_status'] ?? null) !== 'paid') {
-            Log::warning('A lunch top-up page completed without being paid; nothing was recorded until its money lands.', [
+            $this->reject($topUp);
+
+            Log::warning('A lunch top-up page completed without being paid; nothing was recorded, and the change it held was dropped.', [
                 'top_up_id' => (int) $topUp->id,
                 'masjid_id' => (int) $topUp->masjid_id,
                 'payment_status' => $session['payment_status'] ?? null,
@@ -78,6 +88,10 @@ class MealOrderTopUpPaymentService
 
         if (! is_int($amountTotal) || $amountTotal !== (int) $topUp->amount_minor
             || ($currency !== '' && $currency !== strtolower((string) $order->currency))) {
+            // Closed, so the order is not held on "still being confirmed" for ever
+            // by a page that will never be recorded.
+            $this->reject($topUp);
+
             Log::warning('A lunch top-up was paid for a different amount than it asked for; NOTHING was recorded. The organisation should check this payment in its Stripe dashboard.', [
                 'top_up_id' => (int) $topUp->id,
                 'masjid_id' => (int) $topUp->masjid_id,
@@ -93,7 +107,9 @@ class MealOrderTopUpPaymentService
             ? $session['payment_intent']
             : null;
 
-        $applied = DB::transaction(function () use ($topUp, $order, $paymentIntentId): ?MealOrderTopUp {
+        $paidAtTime = $paidAt !== null && $paidAt > 0 ? Carbon::createFromTimestamp($paidAt) : Carbon::now();
+
+        $outcome = DB::transaction(function () use ($topUp, $order, $paymentIntentId, $paidAtTime): ?array {
             $lockedTopUp = MealOrderTopUp::withoutMasjidScope()->lockForUpdate()->find($topUp->id);
 
             // Replays, and the second of Stripe's two success events, stop here.
@@ -105,34 +121,49 @@ class MealOrderTopUpPaymentService
             $row = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $lockedTopUp->stripe_payment_intent_id = $paymentIntentId;
 
-            $why = $this->conflict($lockedTopUp, $row);
+            $menu = MealMenu::withoutMasjidScope()
+                ->where('masjid_id', $row->masjid_id)
+                ->whereKey($row->meal_menu_id)
+                ->first();
 
-            if ($why === null) {
-                $menu = MealMenu::withoutMasjidScope()
-                    ->where('masjid_id', $row->masjid_id)
-                    ->whereKey($row->meal_menu_id)
-                    ->first();
-
-                $why = $this->apply($lockedTopUp, $row, $menu);
-            }
+            $why = $this->conflict($lockedTopUp, $row, $menu, $paidAtTime)
+                ?? $this->apply($lockedTopUp, $row, $menu);
 
             if ($why !== null) {
                 $this->recordConflict($lockedTopUp, $row, $why);
 
-                return null;
+                return [MealOrderTopUp::STATUS_CONFLICT, $lockedTopUp];
             }
 
-            return $lockedTopUp;
+            return [MealOrderTopUp::STATUS_APPLIED, $lockedTopUp];
         });
 
-        if ($applied !== null) {
-            // After the commit, never inside it: a queued mail must not describe a
-            // change a rollback took back.
-            $this->mailer->topUpApplied(
-                MealOrder::withoutMasjidScope()->with('items')->findOrFail($order->id),
-                $applied
-            );
+        if ($outcome === null) {
+            return;
         }
+
+        [$status, $settled] = $outcome;
+
+        // After the commit, never inside it: a queued mail must not describe a
+        // change a rollback took back.
+        $fresh = MealOrder::withoutMasjidScope()->with('items')->findOrFail($order->id);
+
+        if ($status === MealOrderTopUp::STATUS_APPLIED) {
+            $this->mailer->topUpApplied($fresh, $settled);
+        } else {
+            // The customer paid and may have closed the tab believing the plates
+            // are coming; the page is not the only place they learn otherwise.
+            $this->mailer->topUpNotApplied($fresh, $settled);
+        }
+    }
+
+    /** Close a pending top-up whose completion cannot be recorded (STATUS_REJECTED). */
+    private function reject(MealOrderTopUp $topUp): void
+    {
+        MealOrderTopUp::withoutMasjidScope()
+            ->whereKey($topUp->id)
+            ->where('status', MealOrderTopUp::STATUS_PENDING)
+            ->update(['status' => MealOrderTopUp::STATUS_REJECTED, 'updated_at' => Carbon::now()]);
     }
 
     /**
@@ -158,11 +189,18 @@ class MealOrderTopUpPaymentService
     /**
      * Why the change must NOT be applied to the order as it stands now, or null.
      * Asked on the LOCKED rows.
+     *
+     * Ordering having ended is a conflict too. The kitchen counts at the cutoff,
+     * so plates added after it would be paid for and never made: the menu closed
+     * early by staff (or deleted), or the payment made after the cutoff (a cutoff
+     * staff moved earlier than the page's own expiry, or the page's one-minute
+     * floor). The payment's time is Stripe's, not the delivery's.
      */
-    private function conflict(MealOrderTopUp $topUp, MealOrder $row): ?string
+    private function conflict(MealOrderTopUp $topUp, MealOrder $row, ?MealMenu $menu, Carbon $paidAt): ?string
     {
         if ($topUp->status !== MealOrderTopUp::STATUS_PENDING) {
-            // Superseded by a newer change, or its page was closed: paid anyway.
+            // Superseded by a newer change, its page was closed, or its first
+            // completion could not be recorded: paid anyway.
             return 'the top-up had already been closed';
         }
 
@@ -175,8 +213,22 @@ class MealOrderTopUpPaymentService
         }
 
         if ((int) $row->total_minor !== (int) $topUp->base_total_minor
-            || $row->settledMinor() !== (int) $topUp->base_settled_minor) {
+            || $row->settledMinor() !== (int) $topUp->base_settled_minor
+            || $row->settledMinor() !== (int) $row->total_minor
+            || ! hash_equals((string) $topUp->base_fingerprint, MealOrderEditor::fingerprint($row))) {
             return 'the order was changed after the top-up was asked for';
+        }
+
+        if ($menu === null) {
+            return 'the order\'s menu is gone';
+        }
+
+        if ($menu->status !== MealMenu::STATUS_OPEN) {
+            return 'ordering for this menu was closed before the payment arrived';
+        }
+
+        if ($menu->ordering_closes_at !== null && $paidAt->gt($menu->ordering_closes_at)) {
+            return 'the payment was made after the ordering cutoff';
         }
 
         return null;
@@ -221,8 +273,10 @@ class MealOrderTopUpPaymentService
                 $wanted,
                 MealOrderEditor::ACTOR_CUSTOMER,
                 null,
-                function (MealOrder $locked) use ($baseTotal, $baseSettled): void {
-                    if ((int) $locked->total_minor !== $baseTotal || $locked->settledMinor() !== $baseSettled) {
+                function (MealOrder $locked) use ($baseTotal, $baseSettled, $topUp): void {
+                    if ((int) $locked->total_minor !== $baseTotal
+                        || $locked->settledMinor() !== $baseSettled
+                        || ! hash_equals((string) $topUp->base_fingerprint, MealOrderEditor::fingerprint($locked))) {
                         throw new \RuntimeException('the order was changed after the top-up was asked for');
                     }
                 }

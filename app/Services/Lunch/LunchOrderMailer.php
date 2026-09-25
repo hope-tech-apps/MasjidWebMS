@@ -94,6 +94,44 @@ final class LunchOrderMailer
         });
     }
 
+    /**
+     * "We received your payment, but your order was not changed": a top-up was paid
+     * and recorded as a conflict (the order had changed, or ordering had ended).
+     * The customer may have closed the Stripe tab believing the plates are coming;
+     * the order page is not the only place they learn otherwise. Claimed once on
+     * the same `notified_at` stamp, only for a top-up that IS a conflict.
+     */
+    public function topUpNotApplied(MealOrder $order, MealOrderTopUp $topUp): void
+    {
+        $this->attempt('top_up_not_applied', $order, function () use ($order, $topUp): void {
+            $to = self::address($order);
+
+            if ($to === null) {
+                return;
+            }
+
+            $claimed = MealOrderTopUp::withoutMasjidScope()
+                ->whereKey($topUp->id)
+                ->where('status', MealOrderTopUp::STATUS_CONFLICT)
+                ->whereNull('notified_at')
+                ->update(['notified_at' => Carbon::now()]);
+
+            if ($claimed === 0) {
+                return;
+            }
+
+            $currency = (string) ($order->currency ?: 'usd');
+
+            try {
+                Mail::to($to)->queue($this->build($order, false, FormNotifier::money((int) $topUp->amount_minor, $currency)));
+            } catch (\Throwable $e) {
+                MealOrderTopUp::withoutMasjidScope()->whereKey($topUp->id)->update(['notified_at' => null]);
+
+                throw $e;
+            }
+        });
+    }
+
     /** The order's address when it is one a mailer can use, else null. */
     private static function address(MealOrder $order): ?string
     {
@@ -102,7 +140,7 @@ final class LunchOrderMailer
         return $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
     }
 
-    private function build(MealOrder $order, bool $updated): LunchOrderConfirmation
+    private function build(MealOrder $order, bool $updated, ?string $unappliedPaymentLine = null): LunchOrderConfirmation
     {
         $order->loadMissing('items');
 
@@ -141,9 +179,12 @@ final class LunchOrderMailer
                 : null,
             pickupNote: $menu?->pickup_instructions ?: null,
             orderUrl: LunchOrderLink::url($order),
-            changeUntil: self::changeUntil($menu),
+            // An order with a balance open is not changed online, so the email
+            // does not promise it can be (the unapplied payment leaves one).
+            changeUntil: $balance === 0 || $paid === 0 ? self::changeUntil($menu) : null,
             updated: $updated,
             masjidEmail: $masjid?->email,
+            unappliedPaymentLine: $unappliedPaymentLine,
         );
     }
 

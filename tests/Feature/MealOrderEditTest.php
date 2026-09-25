@@ -800,7 +800,7 @@ class MealOrderEditTest extends TestCase
 
         $this->assertFalse($response->json('data.order.can_edit'));
         $this->assertSame(
-            'This order is already paid. Please contact the masjid to change it.',
+            'Ordering has closed and this order is paid. Please contact the masjid to change it.',
             $response->json('data.order.edit_notice')
         );
     }

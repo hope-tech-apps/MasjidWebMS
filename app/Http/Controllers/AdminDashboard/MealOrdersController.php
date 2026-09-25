@@ -41,6 +41,14 @@ class MealOrdersController extends Controller
      */
     private const PAID_ON_ITS_PAGE = 'This order was already paid by card online, so nothing was recorded. If you also took money for it by hand, give that back.';
 
+    /**
+     * The customer's own page to pay for adding to a paid order (a top-up) could
+     * not be closed before a staff change, or has just been paid.
+     */
+    private const TOP_UP_NOT_CLOSED = 'The customer has a payment page open to add to this order, and Stripe did not let it be closed, so nothing was changed. Try again in a moment.';
+
+    private const TOP_UP_JUST_PAID = 'The customer has just paid to add to this order, and Stripe is confirming it, so nothing was changed. Try again in a minute.';
+
     /** An order may not be emptied: cancelling one is its own action. */
     private const EDIT_FLOOR = 'An order must keep at least one plate. Cancel the order instead.';
 
@@ -336,6 +344,21 @@ class MealOrdersController extends Controller
             return $this->refuse(sprintf(self::EDIT_ITEM_GONE, implode(', ', $gone)));
         }
 
+        // The customer may be holding a page to pay for a change of their own.
+        // Close it first: once staff have changed the order, that change no longer
+        // describes it, and paying it would only be money to hand back.
+        try {
+            $this->checkout->closeOpenTopUps($order);
+        } catch (\Stripe\Exception\ExceptionInterface $e) {
+            report($e);
+
+            return $this->refuse(self::TOP_UP_NOT_CLOSED);
+        } catch (\RuntimeException $e) {
+            return $this->refuse($e->getMessage() === MealOrderCheckoutService::TOP_UP_CONFIRMING
+                ? self::TOP_UP_JUST_PAID
+                : self::TOP_UP_NOT_CLOSED);
+        }
+
         try {
             $result = $this->editor->apply(
                 $order,
@@ -616,7 +639,11 @@ class MealOrdersController extends Controller
      */
     private function closePageOfCancelled(MealOrder $order): array
     {
-        if ($order->payment_status === MealOrder::PAYMENT_PAID || ! $order->stripe_checkout_session_id) {
+        if ($order->payment_status === MealOrder::PAYMENT_PAID) {
+            return $this->closeTopUpsOfCancelled($order);
+        }
+
+        if (! $order->stripe_checkout_session_id) {
             return [null, false];
         }
 
@@ -638,6 +665,30 @@ class MealOrdersController extends Controller
             $order->save();
 
             return ['Cancelled, and its payment page is closed.', false];
+        }
+
+        return [null, false];
+    }
+
+    /**
+     * A cancelled PAID order must not keep a page where the customer can pay to
+     * add plates to it. The cancellation stands whatever Stripe says; a page that
+     * was paid a moment ago lands as money owed back, and staff are told.
+     *
+     * @return array{0: ?string, 1: bool}
+     */
+    private function closeTopUpsOfCancelled(MealOrder $order): array
+    {
+        try {
+            $this->checkout->closeOpenTopUps($order);
+        } catch (\RuntimeException|\Stripe\Exception\ExceptionInterface $e) {
+            if ($e->getMessage() === MealOrderCheckoutService::TOP_UP_CONFIRMING) {
+                return ['Cancelled. The customer had just paid to add to this order, so that payment will show as owed back — refund it in Stripe.', true];
+            }
+
+            report($e);
+
+            return ['Cancelled, but the customer\'s page to pay for adding to this order could not be closed, so it still works. Cancel the order again to retry.', true];
         }
 
         return [null, false];

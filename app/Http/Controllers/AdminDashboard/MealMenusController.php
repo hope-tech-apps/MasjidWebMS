@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\MealMenus\StoreMealMenuRequest;
 use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
+use App\Services\Stripe\MealOrderCheckoutService;
 use App\Models\MealOrder;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOpeningNotifier;
@@ -86,6 +87,12 @@ class MealMenusController extends Controller
 
             app(LunchOpeningNotifier::class)->notifyOpened($menu, $request->user()?->id);
 
+            // Closed early, or the cutoff brought forward: a customer's page to pay
+            // for more plates must not outlive ordering (the kitchen counts at the
+            // cutoff). Best effort, never failing the menu change; the webhook
+            // records a late payment as owed back rather than applying it.
+            $this->closeTopUpsOutliving($menu);
+
             return response()->json([
                 'status' => 'success',
                 'data' => $this->withLocalWindow($menu->loadCount('items'), $masjid_id),
@@ -95,6 +102,15 @@ class MealMenusController extends Controller
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private function closeTopUpsOutliving(MealMenu $menu): void
+    {
+        try {
+            app(MealOrderCheckoutService::class)->closeTopUpsOutliving($menu);
+        } catch (\Throwable $e) {
+            report($e);
         }
     }
 
@@ -149,6 +165,8 @@ class MealMenusController extends Controller
 
         try {
             $menu->delete();
+
+            $this->closeTopUpsOutliving($menu);
 
             return response()->json([
                 'status' => 'success',

@@ -31,6 +31,9 @@
                          changes when the webhook records the payment, so this says
                          so, then says what happened once the order shows it. -->
                     <div v-if="topUpKey" class="lunch-note" :class="topUpTone" role="status">{{ t(topUpKey) }}</div>
+                    <!-- A change still waiting on its payment, for a customer who comes
+                         back from the email rather than from Stripe. -->
+                    <div v-else-if="order.top_up && !editing" class="lunch-note warn" role="status">{{ topUpWaiting }}</div>
 
                     <ul class="lunch-lines">
                         <li v-for="(it, i) in order.items" :key="i">
@@ -94,10 +97,10 @@
                             <p v-if="draftPlates <= 0" class="lunch-muted lunch-why">{{ t('edit_min_one') }}</p>
                             <!-- No automatic refunds: fewer plates on a paid order is
                                  the masjid's to do, so it cannot be saved here. -->
-                            <p v-else-if="paidReduces" class="lunch-note warn lunch-why">{{ t('topup_reduce') }}</p>
+                            <p v-else-if="paidBlock" class="lunch-note warn lunch-why">{{ t(paidBlock) }}</p>
                             <div class="lunch-edit-actions">
                                 <button type="button" class="lunch-btn ghost" :disabled="saving" @click="cancelEdit">{{ t('edit_cancel') }}</button>
-                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0 || !draftDirty || paidReduces" @click="saveEdit">
+                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0 || !draftDirty || !!paidBlock" @click="saveEdit">
                                     {{ saveLabel }}
                                 </button>
                             </div>
@@ -125,13 +128,15 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { usePublicLunchStore } from "@/stores/publicLunchStore";
 import { useLunchLang } from "./lunchI18n";
+import { EDIT_WHY_KEYS, REFUSAL_KEYS, paidDraftBlock, topUpOutcome, withoutTopUpMarker } from "./lunchTopUp";
 
 const route = useRoute();
+const router = useRouter();
 const store = usePublicLunchStore();
-const { lang, dir, toggle, t, switchLabel } = useLunchLang();
+const { lang, dir, toggle, t, switchLabel, locale } = useLunchLang();
 
 const masjidId = String(route.params.masjidId);
 const uuid = String(route.params.uuid);
@@ -155,27 +160,20 @@ const headline = computed(() => {
 // Why the order cannot be changed. The server sends both a sentence and a name
 // for the fact; the name is what can be translated, and an unknown one falls back
 // to the sentence so a newer server is never silenced by an older bundle.
-const EDIT_WHY: Record<string, string> = {
-    closed: "edit_why_closed",
-    paid: "edit_why_paid",
-    refunded: "edit_why_refunded",
-    cancelled: "edit_why_cancelled",
-    item_gone: "edit_why_item_gone",
-};
 const editWhy = computed<string>(() => {
-    const key = EDIT_WHY[String(order.value?.edit_notice_code ?? "")];
+    const key = EDIT_WHY_KEYS[String(order.value?.edit_notice_code ?? "")];
     return key ? t(key) : String(order.value?.edit_notice ?? "");
 });
 
-// A paid order's refusals, by the server's `data.code`; anything else is shown in
-// the server's own words.
-const REFUSAL: Record<string, string> = {
-    paid_reduce: "topup_reduce",
-    too_close_to_cutoff: "topup_too_close",
-    topup_unavailable: "topup_unavailable",
-    topup_confirming: "topup_confirming_wait",
-    order_moved: "order_moved",
-};
+// A change waiting on its payment: how much, and until when that page takes it.
+const topUpWaiting = computed<string>(() => {
+    const pending = order.value?.top_up;
+    if (!pending) return "";
+    const line = t("topup_waiting", money(Number(pending.amount_minor || 0)));
+    const until = pending.expires_at ? new Date(pending.expires_at) : null;
+    if (!until || Number.isNaN(until.getTime())) return line;
+    return line + " (" + until.toLocaleTimeString(locale.value, { hour: "numeric", minute: "2-digit" }) + ")";
+});
 
 const payLabel = computed(() => {
     switch (order.value?.payment_status) {
@@ -225,7 +223,15 @@ const previewTotal = computed(() => draftSubtotal.value
 // A PAID order is changed on the money's terms: a lower total cannot be saved
 // here, the same total saves as usual, and a higher one is paid first — the
 // server sends the payment page and changes nothing until that payment lands.
-const paidReduces = computed(() => isPaid.value && previewTotal.value < paidMinor.value);
+// Why this draft cannot be saved here (fewer plates than were paid for, or more
+// plates in the last half hour), said BEFORE the tap; the server refuses both too.
+const paidBlock = computed<string | null>(() => paidDraftBlock({
+    isPaid: isPaid.value,
+    previewTotal: previewTotal.value,
+    paidMinor: paidMinor.value,
+    openUntil: order.value?.topup_open_until,
+    nowMs: Date.now(),
+}));
 const toPayNow = computed(() => (isPaid.value ? Math.max(0, previewTotal.value - paidMinor.value) : 0));
 const saveLabel = computed(() => {
     if (toPayNow.value > 0) {
@@ -256,7 +262,7 @@ function bump(i: number, delta: number): void {
 }
 
 async function saveEdit(): Promise<void> {
-    if (!order.value || draftPlates.value <= 0 || !draftDirty.value || paidReduces.value || saving.value) return;
+    if (!order.value || draftPlates.value <= 0 || !draftDirty.value || paidBlock.value || saving.value) return;
     saving.value = true;
     editError.value = "";
 
@@ -285,7 +291,7 @@ async function saveEdit(): Promise<void> {
     if (!res.ok) {
         // The server's reason — closed, over the kitchen's cap, fewer plates on a
         // paid order — in the reader's language when it named it, else as it wrote it.
-        const key = REFUSAL[String(res.code ?? "")];
+        const key = REFUSAL_KEYS[String(res.code ?? "")];
         editError.value = key ? t(key) : (res.message || t("edit_failed"));
         return;
     }
@@ -311,21 +317,21 @@ function money(minor: number): string {
 //
 // Stripe sends the customer back with ?topup=success the moment they pay, which
 // is usually a few seconds BEFORE the webhook has recorded it. The order is read
-// again until it no longer holds a pending top-up, then the note says what
-// happened: updated, or paid-but-not-applied (the order changed meanwhile, so
-// more is recorded as paid than the order costs). setTimeout, never
-// requestAnimationFrame: a tab in the background must still get there. Bounded,
-// because the status read shares a 60-an-hour allowance per connection.
+// again until its last top-up is no longer pending, then the note says what the
+// SERVER recorded (last_top_up_status): updated, paid-but-not-applied, or not
+// confirmed. setTimeout, never requestAnimationFrame: a tab in the background
+// must still get there. Bounded, because the status read shares a 60-an-hour
+// allowance per connection.
 const topUpKey = ref("");
 const topUpTone = ref<"ok" | "warn">("ok");
 const POLL_DELAYS_MS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 12000];
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
 function settledTopUp(o: any): boolean {
-    if (!o || o.top_up) return false;
-    const conflicted = Number(o.paid_minor || 0) > Number(o.total_minor || 0);
-    topUpKey.value = conflicted ? "topup_conflict" : "topup_done";
-    topUpTone.value = conflicted ? "warn" : "ok";
+    const outcome = topUpOutcome(o);
+    if (!outcome) return false;
+    topUpKey.value = outcome.key;
+    topUpTone.value = outcome.tone;
     return true;
 }
 
@@ -341,22 +347,39 @@ function pollTopUp(attempt: number): void {
     }, POLL_DELAYS_MS[attempt]);
 }
 
+// Back from Stripe with the browser's Back button, a phone restores this page
+// from its back/forward cache exactly as it was left: "Taking you to the payment
+// page…", disabled. Nothing was sent that is still in flight, so the editor is
+// usable again.
+function onPageShow(e: PageTransitionEvent): void {
+    if (e.persisted) saving.value = false;
+}
+
 onMounted(async () => {
+    window.addEventListener("pageshow", onPageShow);
+
+    const marker = route.query.topup;
     const loaded = await store.fetchOrder(masjidId, uuid);
 
-    if (route.query.topup === "cancelled") {
+    if (marker === "cancelled") {
         topUpKey.value = "topup_cancelled";
         topUpTone.value = "warn";
-    } else if (route.query.topup === "success" && loaded) {
+    } else if (marker === "success" && loaded) {
         if (!settledTopUp(loaded)) {
             topUpKey.value = "topup_confirming";
             topUpTone.value = "ok";
             pollTopUp(0);
         }
     }
+
+    // Read once. Left in the URL, a reload weeks later would replay the note.
+    if (marker !== undefined) {
+        router.replace({ query: withoutTopUpMarker({ ...route.query }) }).catch(() => undefined);
+    }
 });
 
 onBeforeUnmount(() => {
+    window.removeEventListener("pageshow", onPageShow);
     if (pollTimer) clearTimeout(pollTimer);
 });
 </script>

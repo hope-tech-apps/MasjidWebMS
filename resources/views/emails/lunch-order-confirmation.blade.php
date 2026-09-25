@@ -20,6 +20,10 @@
                         <td style="padding:28px 32px 8px;">
                             <p style="margin:0 0 16px; font-size:16px; line-height:1.5;">{{ $greeting }}</p>
 
+                            @if ($unappliedLine)
+                                <p style="margin:0 0 20px; padding:12px 16px; border-radius:8px; background:#fbe6d4; color:#7a4312; font-size:15px; line-height:1.55;">{{ $unappliedLine }}</p>
+                            @endif
+
                             <p style="margin:0 0 20px; font-size:16px; line-height:1.55;">{{ $menuTitle ?: 'Jummah lunch' }}@if ($serviceDate) &middot; {{ $serviceDate }}@endif</p>
 
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4e7eb; border-radius:8px; font-size:14px;">
@@ -57,7 +61,7 @@
                                     <tr>
                                         <td style="background:#0c3d2b; border-radius:8px;">
                                             <a href="{{ $orderLink }}" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:12px 22px; color:#ffffff; font-size:15px; font-weight:600; text-decoration:none;">
-                                                View or change your order
+                                                {{ $buttonLabel }}
                                             </a>
                                         </td>
                                     </tr>
@@ -82,7 +86,9 @@
                     <tr>
                         <td style="padding:0 32px 28px; font-size:12px; color:#9aa5b1; line-height:1.5;">
                             Keep this email — the button above is the link to your order.
-                            Reply to it if anything above looks wrong.
+                            @if ($canReply)
+                                Reply to it if anything above looks wrong.
+                            @endif
                         </td>
                     </tr>
                 </table>

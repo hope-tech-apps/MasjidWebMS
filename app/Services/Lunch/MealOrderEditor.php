@@ -3,6 +3,7 @@
 namespace App\Services\Lunch;
 
 use App\Models\MealMenu;
+use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\MealOrderEdit;
 use App\Services\Stripe\MealOrderCheckoutService;
@@ -210,7 +211,9 @@ final class MealOrderEditor
         // way to re-charge a paid order here, so staff settle the difference
         // by hand, and asking them for 2.9% of a plate they will be handed
         // cash for is asking for money nobody owes. (A customer's own top-up
-        // charges exactly the difference in total, so the same holds there.)
+        // charges exactly the difference in total, with no card fee on it even
+        // when they chose to cover the fee on the order: the masjid absorbs the
+        // fee on that difference. DECISIONS.md 2026-09-25, review fixes.)
         $fee = (int) $order->fee_covered_minor;
         if ($fee > 0 && $order->payment_status === MealOrder::PAYMENT_UNPAID) {
             $fee = StripeFees::coverage($subtotal + $donation);
@@ -230,6 +233,68 @@ final class MealOrderEditor
             'before' => $before,
             'after' => $after,
         ];
+    }
+
+    /**
+     * A fingerprint of what is on the order now: every line (dish, price, quantity)
+     * and every money column, in the order-independent form `quote()` compares.
+     *
+     * A top-up keeps the one it was priced against, and the webhook refuses to
+     * apply it over any other. The total alone cannot say "the order is as the
+     * customer saw it": staff swapping a dish for one at the same price leaves the
+     * total where it was, and writing the customer's older basket over that would
+     * quietly undo what staff did. `$order` must have its `items` loaded.
+     */
+    public static function fingerprint(MealOrder $order): string
+    {
+        return hash('sha256', (string) json_encode(self::comparable(self::snapshot($order))));
+    }
+
+    /**
+     * True when a dish already on this order now costs something different on the
+     * menu than the order was charged for it.
+     *
+     * `quote()` prices every line from the menu as it is today, which is right for
+     * an order nobody has paid. On a PAID order it would re-charge the plates the
+     * customer already bought at the new price (and a cheaper menu would let a
+     * removal pass as a swap), so a paid order whose prices moved is not changed
+     * online at all: the masjid settles it by hand. A line whose dish is no longer
+     * on the menu is not asked about here; the edit refuses it on its own terms.
+     * `$order` must have its `items` loaded.
+     */
+    public static function pricesMoved(MealOrder $order, MealMenu $menu): bool
+    {
+        $ids = $order->items
+            ->pluck('meal_menu_item_id')
+            ->filter(fn ($id) => $id !== null)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            return false;
+        }
+
+        $prices = MealMenuItem::withoutMasjidScope()
+            ->where('masjid_id', $menu->masjid_id)
+            ->where('meal_menu_id', $menu->id)
+            ->whereIn('id', $ids)
+            ->pluck('price_minor', 'id');
+
+        foreach ($order->items as $item) {
+            if ($item->meal_menu_item_id === null) {
+                continue;
+            }
+
+            $price = $prices->get((int) $item->meal_menu_item_id);
+
+            if ($price !== null && (int) $price !== (int) $item->unit_price_minor) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

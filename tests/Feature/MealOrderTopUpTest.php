@@ -9,6 +9,8 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\MealOrderEdit;
 use App\Models\MealOrderTopUp;
+use App\Models\MasjidUser;
+use App\Models\User;
 use App\Services\Lunch\MealOrderEditor;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Services\Stripe\MealOrderTopUpPaymentService;
@@ -17,6 +19,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Testing\TestResponse;
+use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
 use Stripe\StripeClient;
 use Tests\TestCase;
@@ -45,6 +48,14 @@ class MealOrderTopUpTest extends TestCase
     public static array $created = [];
     public static array $expired = [];
     public static array $sessions = [];
+
+    /**
+     * When true, the checkout service's closeOpenTopUps() does nothing: another
+     * request's page committed AFTER this request's close had already run, which is
+     * the interleaving two taps or two tabs produce (and SQLite's no-op row lock
+     * cannot).
+     */
+    public static bool $skipClose = false;
 
     private const WEBHOOK_SECRET = 'whsec_lunch_top_up_test';
 
@@ -186,6 +197,11 @@ class MealOrderTopUpTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.order.paid_minor', 800)
             ->assertJsonPath('data.order.top_up.amount_minor', 800)
+            ->assertJsonPath('data.order.last_top_up_status', 'pending')
+            ->assertJsonPath(
+                'data.order.topup_open_until',
+                $this->menu->fresh()->ordering_closes_at->copy()->subMinutes(30)->toIso8601String()
+            )
             ->assertJsonPath('data.order.can_edit', true);
         $this->assertSame(['amount_minor', 'expires_at'], array_keys((array) $response->json('data.order.top_up')));
     }
@@ -214,7 +230,7 @@ class MealOrderTopUpTest extends TestCase
 
         $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
             ->assertStatus(422)
-            ->assertJsonPath('message', "It's too close to the ordering cutoff to change a paid order online. Please contact the masjid.")
+            ->assertJsonPath('message', "It's too close to the ordering cutoff to add plates to a paid order online. Please contact the masjid.")
             ->assertJsonPath('data.code', 'too_close_to_cutoff');
 
         $this->assertSame(0, MealOrderTopUp::withoutMasjidScope()->count());
@@ -236,7 +252,8 @@ class MealOrderTopUpTest extends TestCase
 
         $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
             ->assertStatus(409)
-            ->assertJsonPath('message', 'This order is already paid. Please contact the masjid to change it.');
+            ->assertJsonPath('message', 'Ordering has closed and this order is paid. Please contact the masjid to change it.')
+            ->assertJsonPath('data.code', 'paid');
 
         $this->showOrder($order)
             ->assertOk()
@@ -331,6 +348,7 @@ class MealOrderTopUpTest extends TestCase
         $this->showOrder($order)
             ->assertOk()
             ->assertJsonPath('data.order.top_up', null)
+            ->assertJsonPath('data.order.last_top_up_status', 'applied')
             ->assertJsonPath('data.order.paid_minor', 1600);
     }
 
@@ -347,11 +365,41 @@ class MealOrderTopUpTest extends TestCase
 
         $this->assertSame(800, (int) $order->fresh()->total_minor);
         $this->assertNull($order->fresh()->settled_total_minor);
-        $this->assertSame(MealOrderTopUp::STATUS_PENDING, $topUp->fresh()->status);
         $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
         Log::shouldHaveReceived('warning')
             ->withArgs(fn ($message) => str_contains($message, 'different amount'))
             ->once();
+
+        // Closed, not left pending: Stripe says that page is complete, and a
+        // pending row for it would refuse every later change as "still being
+        // confirmed" for ever.
+        $this->assertSame(MealOrderTopUp::STATUS_REJECTED, $topUp->fresh()->status);
+        self::$sessions['cs_topup_1'] = ['status' => 'complete', 'payment_status' => 'paid'];
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'payment_required');
+        $this->showOrder($order)->assertOk()->assertJsonPath('data.order.last_top_up_status', 'pending');
+    }
+
+    #[Test]
+    public function a_page_completed_without_payment_is_closed_and_does_not_hold_the_order(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        $this->signedWebhook($this->completedEvent($topUp, $order, ['payment_status' => 'unpaid']))->assertOk();
+
+        $this->assertSame(MealOrderTopUp::STATUS_REJECTED, $topUp->fresh()->status);
+        $this->assertSame(800, (int) $order->fresh()->total_minor);
+        $this->assertNull($order->fresh()->settled_total_minor);
+
+        // Should that page's money land after all, it is recorded, never applied.
+        $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
+        $this->assertSame(MealOrderTopUp::STATUS_CONFLICT, $topUp->fresh()->status);
+        $this->assertSame(800, (int) $order->fresh()->total_minor);
+        $this->assertSame(1600, (int) $order->fresh()->settled_total_minor);
     }
 
     #[Test]
@@ -361,12 +409,12 @@ class MealOrderTopUpTest extends TestCase
         $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
         $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
 
-        // Another session id, another order's uuid, another masjid id, and unpaid:
-        // each alone is refused.
+        // Another session id, another order's uuid, another masjid id: each alone
+        // is refused, and none of them touches the top-up (an unpaid completion of
+        // the RIGHT page is a_page_completed_without_payment_...).
         $this->signedWebhook($this->completedEvent($topUp, $order, ['id' => 'cs_someone_else']))->assertOk();
         $this->signedWebhook($this->completedEvent($topUp, $order, [], ['order_uuid' => 'not-this-order']))->assertOk();
         $this->signedWebhook($this->completedEvent($topUp, $order, [], ['masjid_id' => '999999']))->assertOk();
-        $this->signedWebhook($this->completedEvent($topUp, $order, ['payment_status' => 'unpaid']))->assertOk();
 
         $this->assertSame(800, (int) $order->fresh()->total_minor);
         $this->assertNull($order->fresh()->settled_total_minor);
@@ -437,6 +485,9 @@ class MealOrderTopUpTest extends TestCase
         $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
         $this->assertSame(1600, (int) $order->fresh()->settled_total_minor);
         Mail::assertNotQueued(LunchOrderConfirmation::class, fn (LunchOrderConfirmation $m) => $m->updated);
+
+        // The page is told what the server recorded, not left to guess from totals.
+        $this->showOrder($order)->assertOk()->assertJsonPath('data.order.last_top_up_status', 'conflict');
     }
 
     #[Test]
@@ -627,6 +678,404 @@ class MealOrderTopUpTest extends TestCase
         $this->assertNotNull($topUp->fresh()->notified_at);
     }
 
+    // ------------------------------------------------------ review fixes (2026-09-25)
+
+    #[Test]
+    public function a_top_up_paid_after_staff_closed_the_menu_is_recorded_and_not_applied(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        // Staff close ordering early; the kitchen counts without this plate.
+        $this->menu->forceFill(['status' => MealMenu::STATUS_CLOSED])->save();
+
+        $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
+
+        $order = $order->fresh()->load('items');
+        $this->assertSame(800, (int) $order->total_minor, 'no plate the kitchen did not count');
+        $this->assertSame(1, (int) $order->items->first()->quantity);
+        $this->assertSame(1600, (int) $order->settled_total_minor, 'the money is recorded, owed back');
+        $this->assertSame(MealOrderTopUp::STATUS_CONFLICT, $topUp->fresh()->status);
+        $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_top_up_paid_after_the_cutoff_was_moved_earlier_is_recorded_and_not_applied(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        // The page still runs to the old cutoff; staff brought the cutoff forward,
+        // and the customer paid after the new one.
+        $this->menu->forceFill(['ordering_closes_at' => now()->subMinutes(5)])->save();
+
+        $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
+
+        $this->assertSame(800, (int) $order->fresh()->total_minor);
+        $this->assertSame(1600, (int) $order->fresh()->settled_total_minor);
+        $this->assertSame(MealOrderTopUp::STATUS_CONFLICT, $topUp->fresh()->status);
+    }
+
+    #[Test]
+    public function a_payment_made_before_the_cutoff_is_applied_even_when_its_webhook_arrives_after(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        // Paid ten minutes before the cutoff; Stripe's retry delivers it after.
+        $paidAt = $this->menu->fresh()->ordering_closes_at->copy()->subMinutes(10)->getTimestamp();
+        $this->travelTo($this->menu->fresh()->ordering_closes_at->copy()->addMinutes(20));
+
+        $event = $this->completedEvent($topUp, $order);
+        $event['created'] = $paidAt;
+        $this->signedWebhook($event)->assertOk();
+
+        $this->assertSame(MealOrderTopUp::STATUS_APPLIED, $topUp->fresh()->status);
+        $this->assertSame(1600, (int) $order->fresh()->total_minor);
+        $this->assertSame(0, (int) $order->fresh()->balance_minor);
+    }
+
+    #[Test]
+    public function closing_a_menu_or_moving_its_cutoff_earlier_closes_the_top_up_pages_it_holds(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $checkout = app(MealOrderCheckoutService::class);
+
+        // A later cutoff leaves the page alone: it closes before the new one.
+        $this->menu->forceFill(['ordering_closes_at' => now()->addHours(5)])->save();
+        $this->assertSame(0, $checkout->closeTopUpsOutliving($this->menu->fresh()));
+        $this->assertSame([], self::$expired);
+
+        // An earlier one closes it: it would outlive ordering.
+        $this->menu->forceFill(['ordering_closes_at' => now()->addHour()])->save();
+        $this->assertSame(1, $checkout->closeTopUpsOutliving($this->menu->fresh()));
+        $this->assertSame(['cs_topup_1'], self::$expired);
+        $this->assertSame(MealOrderTopUp::STATUS_EXPIRED, MealOrderTopUp::withoutMasjidScope()->sole()->status);
+
+        // And staff closing the menu on the board closes every page it holds.
+        $this->menu->forceFill(['ordering_closes_at' => now()->addHours(3)])->save();
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $admin = $this->admin();
+
+        Sanctum::actingAs($admin);
+        $this->putJson("/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}", ['status' => MealMenu::STATUS_CLOSED])
+            ->assertOk();
+        app(TenantContext::class)->forgetTenant();
+
+        $this->assertSame(['cs_topup_1', 'cs_topup_2'], self::$expired);
+        $this->assertSame(0, MealOrderTopUp::withoutMasjidScope()->where('status', MealOrderTopUp::STATUS_PENDING)->count());
+    }
+
+    #[Test]
+    public function a_second_request_cannot_open_a_page_beside_one_already_open(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+
+        // The second tap's close ran before the first tap's page was committed.
+        self::$skipClose = true;
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertStatus(409)
+            ->assertJsonPath('data.code', 'order_moved');
+
+        $this->assertCount(1, self::$created, 'one payable page, never two');
+        $this->assertSame(1, MealOrderTopUp::withoutMasjidScope()->count());
+        $this->assertSame(MealOrderTopUp::STATUS_PENDING, MealOrderTopUp::withoutMasjidScope()->sole()->status);
+    }
+
+    #[Test]
+    public function a_swap_is_refused_while_another_requests_page_is_open(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+
+        self::$skipClose = true;
+
+        $this->editAsCustomer($order, [
+            ['meal_menu_item_id' => $this->biryani->id, 'quantity' => 0],
+            ['meal_menu_item_id' => $this->lamb->id, 'quantity' => 1],
+        ])->assertStatus(409)->assertJsonPath('data.code', 'order_moved');
+
+        $order = $order->fresh()->load('items');
+        $this->assertSame((int) $this->biryani->id, (int) $order->items->sole()->meal_menu_item_id);
+        $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_paid_order_whose_prices_moved_is_not_changed_online(): void
+    {
+        // Two plates bought at $8.00. The masjid then charges $10.00 a plate: adding
+        // one must not re-charge the two already bought ($30.00 - $16.00 = $14.00).
+        $order = $this->paidOrder([[$this->biryani, 2]]);
+        $this->biryani->forceFill(['price_minor' => 1000])->save();
+
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]])
+            ->assertStatus(409)
+            ->assertJsonPath('data.code', 'paid_prices_moved');
+
+        $this->assertSame([], self::$created);
+        $this->assertSame(0, MealOrderTopUp::withoutMasjidScope()->count());
+        $this->assertSame(1600, (int) $order->fresh()->total_minor);
+
+        $this->showOrder($order)
+            ->assertOk()
+            ->assertJsonPath('data.order.can_edit', false)
+            ->assertJsonPath('data.order.edit_notice_code', 'paid_prices_moved');
+
+        // Cheaper works the same way: a $3.00 side on a menu now at $6.00 a plate
+        // must not pass as "the same total" or be refused as a removal.
+        $this->biryani->forceFill(['price_minor' => 600])->save();
+        $this->editAsCustomer($order, [
+            ['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2],
+            ['meal_menu_item_id' => $this->water->id, 'quantity' => 1],
+        ])->assertStatus(409)->assertJsonPath('data.code', 'paid_prices_moved');
+        $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_same_total_staff_change_is_not_undone_by_the_customers_payment(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        // Biryani ran out; staff swap it for lamb at the same price. Total and
+        // settled amount are both unchanged.
+        app(MealOrderEditor::class)->apply($order, $this->menu, [$this->lamb->id => 1], MealOrderEditor::ACTOR_STAFF, null);
+        $this->assertSame(800, (int) $order->fresh()->total_minor);
+
+        $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
+
+        $order = $order->fresh()->load('items');
+        $this->assertSame((int) $this->lamb->id, (int) $order->items->sole()->meal_menu_item_id, 'the staff swap stands');
+        $this->assertSame(1, (int) $order->items->sole()->quantity);
+        $this->assertSame(1600, (int) $order->settled_total_minor, 'the payment is recorded, owed back');
+        $this->assertSame(MealOrderTopUp::STATUS_CONFLICT, $topUp->fresh()->status);
+    }
+
+    #[Test]
+    public function cancelling_a_paid_order_on_the_board_closes_its_top_up_page(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+
+        Sanctum::actingAs($this->admin());
+        $this->putJson(
+            "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/status",
+            ['status' => MealOrder::STATUS_CANCELLED]
+        )->assertOk()->assertJsonPath('warning', false);
+        app(TenantContext::class)->forgetTenant();
+
+        $this->assertSame(['cs_topup_1'], self::$expired);
+        $this->assertSame(MealOrderTopUp::STATUS_EXPIRED, MealOrderTopUp::withoutMasjidScope()->sole()->status);
+        $this->showOrder($order)->assertOk()->assertJsonPath('data.order.top_up', null);
+    }
+
+    #[Test]
+    public function a_staff_edit_closes_the_customers_top_up_page_first(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+
+        Sanctum::actingAs($this->admin());
+        $this->patch(
+            "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$order->id}/items",
+            ['items' => [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 1], ['meal_menu_item_id' => $this->water->id, 'quantity' => 1]]],
+            ['Accept' => 'application/json']
+        )->assertOk();
+        app(TenantContext::class)->forgetTenant();
+
+        $this->assertSame(['cs_topup_1'], self::$expired);
+        $this->assertSame(MealOrderTopUp::STATUS_EXPIRED, MealOrderTopUp::withoutMasjidScope()->sole()->status);
+
+        // A page paid a moment ago refuses the staff change instead.
+        $paid = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($paid, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        self::$sessions['cs_topup_2'] = ['status' => 'complete', 'payment_status' => 'paid'];
+
+        Sanctum::actingAs($this->admin());
+        $this->patch(
+            "/api/admin/masjids/{$this->masjid->id}/jummah-lunch/menus/{$this->menu->id}/orders/{$paid->id}/items",
+            ['items' => [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 3]]],
+            ['Accept' => 'application/json']
+        )->assertStatus(422)
+            ->assertJsonPath('data', 'The customer has just paid to add to this order, and Stripe is confirming it, so nothing was changed. Try again in a minute.');
+        app(TenantContext::class)->forgetTenant();
+
+        $this->assertSame(800, (int) $paid->fresh()->total_minor);
+    }
+
+    #[Test]
+    public function a_difference_under_stripes_minimum_is_refused_by_name(): void
+    {
+        $sauce = $this->item('Sauce', 25);
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+
+        $this->editAsCustomer($order, [
+            ['meal_menu_item_id' => $this->biryani->id, 'quantity' => 1],
+            ['meal_menu_item_id' => $sauce->id, 'quantity' => 1],
+        ])->assertStatus(422)->assertJsonPath('data.code', 'topup_too_small');
+
+        $this->assertSame([], self::$created);
+        $this->assertSame(0, MealOrderTopUp::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_paid_order_with_a_balance_open_cannot_be_changed_by_its_customer(): void
+    {
+        // Two plates paid ($16.00). Staff take one off ($8.00 owed back) and refund
+        // it in Stripe, which the app cannot see.
+        $order = $this->paidOrder([[$this->biryani, 2]]);
+        app(MealOrderEditor::class)->apply($order, $this->menu, [$this->biryani->id => 1], MealOrderEditor::ACTOR_STAFF, null);
+        $this->assertSame(-800, (int) $order->fresh()->balance_minor);
+
+        // Asking for the second plate back would come to exactly the $16.00 on
+        // record, and be taken as a free swap.
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertStatus(409)
+            ->assertJsonPath('data.code', 'paid_balance_open');
+
+        // Nor is a smaller change told it "removes plates".
+        $this->editAsCustomer($order, [
+            ['meal_menu_item_id' => $this->biryani->id, 'quantity' => 1],
+            ['meal_menu_item_id' => $this->water->id, 'quantity' => 1],
+        ])->assertStatus(409)->assertJsonPath('data.code', 'paid_balance_open');
+
+        $order = $order->fresh()->load('items');
+        $this->assertSame(800, (int) $order->total_minor);
+        $this->assertSame(1, (int) $order->items->sole()->quantity);
+        $this->assertSame(1, MealOrderEdit::withoutMasjidScope()->count(), 'only the staff edit');
+        $this->assertSame([], self::$created);
+
+        $this->showOrder($order)
+            ->assertOk()
+            ->assertJsonPath('data.order.can_edit', false)
+            ->assertJsonPath('data.order.edit_notice_code', 'paid_balance_open');
+    }
+
+    #[Test]
+    public function after_a_conflict_the_customer_cannot_spend_the_money_owed_back(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        app(MealOrderEditor::class)->apply($order, $this->menu, [$this->biryani->id => 1, $this->water->id => 1], MealOrderEditor::ACTOR_STAFF, null);
+        $this->signedWebhook($this->completedEvent($topUp, $order))->assertOk();
+        $this->assertSame(-700, (int) $order->fresh()->balance_minor);
+
+        // $16.00 on record against a $9.00 order: two plates and a water would come
+        // to $17.00 and ask only $1.00; two plates alone would be "free".
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
+            ->assertStatus(409)
+            ->assertJsonPath('data.code', 'paid_balance_open');
+        $this->assertCount(1, self::$created);
+        $this->assertSame(900, (int) $order->fresh()->total_minor);
+    }
+
+    #[Test]
+    public function a_top_up_paid_but_not_applied_is_emailed_once(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]], ['customer_email' => self::CUSTOMER_EMAIL]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        $this->menu->forceFill(['status' => MealMenu::STATUS_CLOSED])->save();
+
+        $event = $this->completedEvent($topUp, $order);
+        $this->signedWebhook($event)->assertOk();
+        $this->signedWebhook(array_merge($event, ['id' => 'evt_' . uniqid(), 'type' => 'checkout.session.async_payment_succeeded']))->assertOk();
+
+        $sent = Mail::queued(LunchOrderConfirmation::class, fn (LunchOrderConfirmation $m) => $m->unappliedPaymentLine !== null);
+        $this->assertCount(1, $sent);
+        $mail = $sent->first();
+        $this->assertTrue($mail->hasTo(self::CUSTOMER_EMAIL));
+        $this->assertSame('$8.00', $mail->unappliedPaymentLine);
+        $this->assertFalse($mail->updated);
+        $this->assertNull($mail->changeUntil, 'an order with money owed back is not changed online');
+        $this->assertStringContainsString('your order was not changed', $mail->render());
+        $this->assertNotNull($topUp->fresh()->notified_at);
+        Mail::assertNotQueued(LunchOrderConfirmation::class, fn (LunchOrderConfirmation $m) => $m->updated);
+    }
+
+    #[Test]
+    public function the_email_promises_a_change_only_while_one_can_be_made_and_a_reply_only_where_it_goes_to_the_masjid(): void
+    {
+        $args = [
+            'orderNumber' => '007', 'masjidName' => 'Test Masjid', 'customerName' => null, 'menuTitle' => null,
+            'serviceDate' => null, 'items' => [], 'totalLine' => '$8.00', 'paidLine' => '$8.00', 'dueLine' => null,
+            'dueLabel' => null, 'pickupNote' => null, 'orderUrl' => 'https://masjid.example.test/jummah-lunch/1/order/abc',
+        ];
+
+        $closed = (new LunchOrderConfirmation(...$args, changeUntil: null, masjidEmail: null))->render();
+        $this->assertStringContainsString('View your order', $closed);
+        $this->assertStringNotContainsString('View or change your order', $closed);
+        $this->assertStringNotContainsString('Reply to it', $closed);
+
+        $open = (new LunchOrderConfirmation(...$args, changeUntil: 'Friday, January 8 at 11:00 AM', masjidEmail: 'office@masjid.example.test'))->render();
+        $this->assertStringContainsString('View or change your order', $open);
+        $this->assertStringContainsString('Reply to it', $open);
+        $this->assertStringContainsString('Adding plates to a paid order online closes 30 minutes before that.', $open);
+    }
+
+    #[Test]
+    public function one_order_link_cannot_open_payment_pages_without_end(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $same = [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 1]];
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->editAsCustomer($order, $same)->assertOk();
+        }
+
+        $this->editAsCustomer($order, $same)
+            ->assertStatus(429)
+            ->assertJsonPath('message', 'This order has been changed too many times in the last hour. Please try again later or contact the masjid.');
+    }
+
+    #[Test]
+    public function an_event_from_another_account_is_refused_even_when_its_metadata_is_ours(): void
+    {
+        $order = $this->paidOrder([[$this->biryani, 1]]);
+        $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])->assertOk();
+        $topUp = MealOrderTopUp::withoutMasjidScope()->sole();
+
+        // Only the account differs: our masjid id, our session id, our order.
+        $event = $this->completedEvent($topUp, $order);
+        $event['account'] = $this->makeOrg()->stripe_account_id;
+        $this->signedWebhook($event)->assertOk();
+
+        $this->assertSame(MealOrderTopUp::STATUS_PENDING, $topUp->fresh()->status);
+        $this->assertSame(800, (int) $order->fresh()->total_minor);
+        $this->assertNull($order->fresh()->settled_total_minor);
+    }
+
+    #[Test]
+    public function a_stripe_email_never_replaces_the_address_the_customer_gave(): void
+    {
+        $order = $this->unpaidOnlineOrder();
+        $order->forceFill(['customer_email' => self::CUSTOMER_EMAIL])->save();
+
+        $this->signedWebhook(['id' => 'evt_' . uniqid(), 'type' => 'checkout.session.completed', 'account' => $this->masjid->stripe_account_id, 'data' => ['object' => [
+            'id' => 'cs_order_3',
+            'object' => 'checkout.session',
+            'status' => 'complete',
+            'payment_status' => 'paid',
+            'payment_intent' => 'pi_order_3',
+            'customer_details' => ['email' => 'someone.else@example.test'],
+            'metadata' => ['order_uuid' => $order->uuid, 'masjid_id' => (string) $this->masjid->id],
+        ]]])->assertOk();
+
+        $this->assertSame(MealOrder::PAYMENT_PAID, $order->fresh()->payment_status);
+        $this->assertSame(self::CUSTOMER_EMAIL, $order->fresh()->customer_email);
+        $this->assertTrue(Mail::queued(LunchOrderConfirmation::class)->first()->hasTo(self::CUSTOMER_EMAIL));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private function item(string $name, int $price, ?int $max = null): MealMenuItem
@@ -774,16 +1223,44 @@ class MealOrderTopUpTest extends TestCase
         ]);
     }
 
+    /** A MasjidAdmin who runs this organisation's board. */
+    private function admin(): User
+    {
+        if (! \Spatie\Permission\Models\Role::query()->exists()) {
+            $this->seed(\Database\Seeders\RolesAndPermissionsSeeder::class);
+        }
+
+        $user = User::factory()->create(['type' => 'MasjidAdmin', 'phone' => '+1' . random_int(1000000000, 9999999999)]);
+        MasjidUser::create(['masjid_id' => $this->masjid->id, 'user_id' => $user->id, 'role' => 'masjid-admin', 'is_default' => true]);
+
+        if (! $this->masjid->user_id) {
+            $this->masjid->user_id = $user->id;
+            $this->masjid->save();
+        }
+
+        return $user->fresh();
+    }
+
     /** The three seams the checkout service reaches Stripe through, and nothing else. */
     private function fakeStripe(): void
     {
         self::$created = [];
         self::$expired = [];
         self::$sessions = [];
+        self::$skipClose = false;
 
         $this->app->bind(MealOrderCheckoutService::class, function ($app) {
             return new class($app->make(StripeClient::class)) extends MealOrderCheckoutService
             {
+                public function closeOpenTopUps(MealOrder $order): void
+                {
+                    if (MealOrderTopUpTest::$skipClose) {
+                        return;
+                    }
+
+                    parent::closeOpenTopUps($order);
+                }
+
                 protected function createCheckoutSession(array $params, string $connectedAccountId, string $idempotencyKey): array
                 {
                     MealOrderTopUpTest::$created[] = ['params' => $params, 'account' => $connectedAccountId, 'key' => $idempotencyKey];

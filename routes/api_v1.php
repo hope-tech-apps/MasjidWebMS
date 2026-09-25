@@ -145,8 +145,10 @@ Route::prefix('v1')->group(function () {
     // one WRITES and moves money (it can close a Stripe payment page and open a
     // new one for the new total), so it takes the tight `lunch-order` allowance
     // that placing an order takes, not the loose read one.
+    // Also capped per ORDER (`lunch-order-edit`), since the per-IP allowance does
+    // not stop a holder of the uuid who changes address.
     Route::patch('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'update'])
-        ->middleware('throttle:lunch-order');
+        ->middleware(['throttle:lunch-order', 'throttle:lunch-order-edit']);
 
     // Public zakat calculator (T-031). The odd one out among the public POSTs
     // here: it WRITES NOTHING. It is a POST anyway because its body is a

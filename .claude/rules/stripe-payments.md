@@ -414,6 +414,12 @@ before the call, positive-only application fee, integer minor units, webhook-onl
 - **The money is never lost.** If the order moved after the top-up was asked for, the plates are
   not applied; `settled_total_minor` += the amount, the row is `conflict`, and a warning is logged.
 - Fewer plates on a paid order is refused online: no automatic refunds, ever.
+- **Only onto the order it was priced against, while ordering is open** (review fixes,
+  DECISIONS.md 2026-09-25): `base_fingerprint` must match, the menu must be `open`, and the
+  payment (the event's `created`) must be before the cutoff; otherwise it is a conflict. A paid
+  order with a balance open or moved prices is not changed online, one pending top-up per order
+  is checked under the lock, and the top-up's idempotency key covers only the SDK's retries of
+  one call (it rolls back with the row).
 
 ## The Giving switch never touches money that moved (DECISIONS.md 2026-09-16, switches wave 2)
 

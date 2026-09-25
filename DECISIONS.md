@@ -2951,3 +2951,49 @@ Calls the spec left open:
   `payment_intent.succeeded` for a top-up is acked and ignored.
 Rationale: the money is always recorded, the plates move only on a verified payment of exactly the
 quoted difference, and no path that routes by `order_uuid` can read a top-up as the order's payment.
+
+## 2026-09-25 — Lunch top-up review fixes (money, security, UX lenses on c20dae1d)
+Decisions taken on the review findings; the owner's rules (no automatic refunds, email optional)
+are unchanged.
+- **A payment after ordering ended is a conflict, not an edit.** The webhook records the money
+  and adds no plates when the menu is no longer `open`, or when the payment was made after
+  `ordering_closes_at`. "Made" is the event's own `created` time (passed from
+  `StripeWebhookController`), so a retry delivered after the cutoff for a payment made before it
+  still applies. Changing or deleting a menu also closes, best effort, every top-up page that
+  would outlive ordering (`MealOrderCheckoutService::closeTopUpsOutliving`).
+- **A paid order whose dish prices moved is not changed online** (`paid_prices_moved`), rather
+  than keeping the paid unit price for old plates and the menu price for new ones. Mixed
+  prices on one line do not fit the line schema (one `unit_price_minor` per line), and the
+  refusal is the conservative choice: the masjid settles it by hand.
+- **A paid order with any balance open is not changed online** (`paid_balance_open`), whichever
+  way the balance runs. The app cannot see a refund made in Stripe, so "what was paid" may no
+  longer be true, and a change priced against it could re-spend refunded money.
+- **A top-up applies only to the exact order it was priced against.** `base_fingerprint`
+  (`MealOrderEditor::fingerprint`, sha256 of every line and money column) is stored on the
+  top-up and compared under the lock; a same-total staff swap is now a conflict instead of being
+  overwritten. New column by its own migration (090002), so a database that already ran 090000
+  still gets it.
+- **One open top-up, enforced under the lock.** A pending top-up found under the order lock
+  refuses a new page or a swap (`order_moved`); staff edits and cancelling a paid order close the
+  customer's page first.
+- **A completion that cannot be recorded closes the top-up** as `rejected` (unpaid, or another
+  amount or currency), so the order is not held on "still being confirmed"; a later success on
+  that page is recorded as a conflict.
+- **A top-up under $0.50** is refused by name (`topup_too_small`); Stripe will not charge it.
+- **Card fees on a top-up are not covered by the customer**, even when they covered the fee on
+  the order: the top-up charges exactly the difference in total, and the masjid absorbs the
+  Stripe fee on it. `fee_covered_minor` stays the record of what was actually charged.
+- **The idempotency key on a top-up covers the SDK's retries of one call only.** It is set in the
+  same transaction as the row, so a failed attempt rolls both back and a retry is a new top-up;
+  the earlier claim that a retry reuses the session was wrong.
+- **The customer is emailed when a paid top-up was not applied** ("We received your payment"),
+  once per top-up (`notified_at`), only when the order has an address.
+- **The order page reads `last_top_up_status`** (a status only) and `topup_open_until` instead of
+  guessing from totals; the PATCH is also capped at 10 an hour per order uuid.
+- **Correction:** staff-entered board orders that are paid through a staff payment link DO get
+  the confirmation email (with the order link) when they hold an address, contrary to the build
+  report. Kept as built: the customer paid online and the link is theirs. **Owner to confirm.**
+- Deferred: the email greeting still carries the customer's name, and there is no per-address
+  send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
+  FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
+  while the server re-prices from the menu (pre-existing; the server's total comes back on save).

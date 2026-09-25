@@ -79,9 +79,32 @@ class MealOrderCheckoutService
 
     public const TOP_UP_ORDER_MOVED = 'This order was changed while you were editing it, so nothing was changed. Please reload the page and try again.';
 
-    public const TOP_UP_TOO_CLOSE = 'It\'s too close to the ordering cutoff to change a paid order online. Please contact the masjid.';
+    public const TOP_UP_TOO_CLOSE = 'It\'s too close to the ordering cutoff to add plates to a paid order online. Please contact the masjid.';
 
     public const TOP_UP_NOT_OPENED = 'The payment page could not be opened, so nothing was changed. Please try again in a moment.';
+
+    /**
+     * A paid order whose money and total disagree: more was paid than it costs
+     * (staff took a plate off, or a top-up landed on an order that had moved), or
+     * staff added something not yet paid for. Either way there is a balance the
+     * masjid settles by hand, and the app cannot see a refund made in Stripe, so a
+     * customer change priced against "what was paid" could spend money that was
+     * already given back. Such an order is not changed online at all.
+     */
+    public const TOP_UP_BALANCE_OPEN = 'This order has a balance the masjid still has to settle with you, so it can\'t be changed online. Please contact the masjid.';
+
+    /** A paid order whose dishes now cost something else on the menu (MealOrderEditor::pricesMoved). */
+    public const TOP_UP_PRICES_MOVED = 'The menu\'s prices have changed since this order was paid, so it can\'t be changed online. Please contact the masjid.';
+
+    /** A difference Stripe will not take on its own (TOP_UP_MIN_MINOR). */
+    public const TOP_UP_TOO_SMALL = 'The difference is too small to pay online. Please contact the masjid to make this change.';
+
+    /**
+     * The smallest difference a top-up page is made for, in minor units. Stripe
+     * refuses a charge under $0.50 USD, and a page it refuses turns into "try
+     * again in a moment" for ever; this names it instead.
+     */
+    public const TOP_UP_MIN_MINOR = 50;
 
     /**
      * How close to the cutoff a paid order may still be topped up online. The
@@ -118,7 +141,8 @@ class MealOrderCheckoutService
      * never asks for less than 31 minutes. topUpClosesTooSoon() refuses anything
      * under 30, so this floor only matters for a cutoff between 30 and 31 minutes
      * away, where the page can outlive the cutoff by under a minute. A payment in
-     * that minute is still applied: it was made on a page this app offered.
+     * that minute lands after the kitchen counted, so the webhook records it as a
+     * conflict (money kept, plates not added), like any payment after the cutoff.
      */
     public static function topUpExpiresAt(MealMenu $menu): Carbon
     {
@@ -141,14 +165,22 @@ class MealOrderCheckoutService
      * applies the change once the difference is paid (MealOrderTopUpPaymentService).
      *
      * The same doctrine as every page this service makes: a DIRECT charge on the
-     * org's connected account, card only, the idempotency key written before the
-     * call, positive-only application fee, integer minor units.
+     * org's connected account, card only, positive-only application fee, integer
+     * minor units. The idempotency key is set on the row before the call but in
+     * the same transaction, so it covers the SDK's retries of that one call only:
+     * a failed attempt rolls the row back and a retry is a new top-up.
      *
      * One open top-up per order. Any page the order already holds for an earlier
      * top-up is closed FIRST, in its own transaction (closeOpenTopUps), so a
      * customer can never pay two differences for one change; a page Stripe says was
      * already paid refuses the whole request, because that payment is about to
-     * land.
+     * land. Two requests at once (a double tap, two tabs) can both get past that
+     * close before either opens a page, so the locked transaction asks again: a
+     * pending top-up found under the lock refuses this one (TOP_UP_ORDER_MOVED).
+     *
+     * Refused under the lock too: an order with a balance (TOP_UP_BALANCE_OPEN),
+     * one whose dishes now cost something else (TOP_UP_PRICES_MOVED), and a
+     * difference under Stripe's minimum (TOP_UP_TOO_SMALL).
      *
      * The routing metadata is `kind` = MealOrderTopUp::STRIPE_KIND and the top-up's
      * id, on the session and its payment intent. The session also carries
@@ -188,8 +220,23 @@ class MealOrderCheckoutService
                 throw new RuntimeException(self::TOP_UP_ORDER_MOVED);
             }
 
+            if ($row->settledMinor() !== (int) $row->total_minor) {
+                throw new RuntimeException(self::TOP_UP_BALANCE_OPEN);
+            }
+
+            // Another request opened a page after this one's close ran: one open
+            // top-up per order, so this one is refused rather than left payable
+            // beside it.
+            if (self::hasPendingTopUp($row)) {
+                throw new RuntimeException(self::TOP_UP_ORDER_MOVED);
+            }
+
             if (! $menu->isOpenForOrders() || self::topUpClosesTooSoon($menu)) {
                 throw new RuntimeException(self::TOP_UP_TOO_CLOSE);
+            }
+
+            if (MealOrderEditor::pricesMoved($row, $menu)) {
+                throw new RuntimeException(self::TOP_UP_PRICES_MOVED);
             }
 
             $masjid = Masjid::find($row->masjid_id);
@@ -210,18 +257,26 @@ class MealOrderCheckoutService
                 throw new RuntimeException(self::TOP_UP_ORDER_MOVED);
             }
 
+            if ($amount < self::TOP_UP_MIN_MINOR) {
+                throw new RuntimeException(self::TOP_UP_TOO_SMALL);
+            }
+
             $topUp = new MealOrderTopUp();
             $topUp->masjid_id = (int) $row->masjid_id;
             $topUp->meal_order_id = (int) $row->id;
             $topUp->lines = ['wanted' => $wanted, 'items' => $quote['lines']];
             $topUp->base_total_minor = $baseTotal;
             $topUp->base_settled_minor = $baseSettled;
+            // The order exactly as this was priced against; the webhook applies the
+            // change only to an order that still matches it.
+            $topUp->base_fingerprint = MealOrderEditor::fingerprint($row);
             $topUp->amount_minor = $amount;
             $topUp->proposed_total_minor = $proposed;
             $topUp->status = MealOrderTopUp::STATUS_PENDING;
             $topUp->expires_at = self::topUpExpiresAt($menu);
-            // Persisted BEFORE talking to Stripe, so a retried create re-sends the
-            // same key and Stripe returns the same session.
+            // Set before talking to Stripe, so the SDK's own retries of this call
+            // send the same key. Same transaction: a failure rolls it back with
+            // the row, and a new attempt is a new top-up with a new key.
             $topUp->idempotency_key = 'meal_top_up_' . Str::uuid();
             $topUp->save();
 
@@ -340,6 +395,79 @@ class MealOrderCheckoutService
                 $topUp->save();
             }
         });
+    }
+
+    /**
+     * Whether the order holds a top-up still waiting on its payment. A LOCKING
+     * read, asked under the order row's lock: under MySQL's repeatable read a plain
+     * read could answer from an older snapshot and miss the page another request
+     * committed while this one waited for the lock.
+     */
+    public static function hasPendingTopUp(MealOrder $order): bool
+    {
+        return MealOrderTopUp::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->where('meal_order_id', $order->id)
+            ->where('status', MealOrderTopUp::STATUS_PENDING)
+            ->lockForUpdate()
+            ->value('id') !== null;
+    }
+
+    /**
+     * Close the top-up pages on this menu that would still take a payment after
+     * ordering has ended: every one when the menu is no longer open, else those
+     * whose page outlives a cutoff staff moved earlier. Called after staff change
+     * or delete a menu.
+     *
+     * Best effort: a page that cannot be closed (Stripe did not answer, or it was
+     * paid a moment ago) is logged and left, and the menu change stands. The
+     * webhook is the backstop: a payment after ordering ended is recorded as a
+     * conflict (money kept, plates not added), never applied.
+     *
+     * @return int how many orders had a page closed
+     */
+    public function closeTopUpsOutliving(MealMenu $menu): int
+    {
+        $open = $menu->status === MealMenu::STATUS_OPEN && ! $menu->trashed();
+
+        $query = MealOrderTopUp::withoutMasjidScope()
+            ->where('masjid_id', $menu->masjid_id)
+            ->where('status', MealOrderTopUp::STATUS_PENDING)
+            ->whereIn('meal_order_id', MealOrder::withoutMasjidScope()
+                ->where('masjid_id', $menu->masjid_id)
+                ->where('meal_menu_id', $menu->id)
+                ->select('id'));
+
+        if ($open) {
+            if ($menu->ordering_closes_at === null) {
+                return 0;
+            }
+
+            $query->where('expires_at', '>', $menu->ordering_closes_at);
+        }
+
+        $closed = 0;
+
+        foreach ($query->pluck('meal_order_id')->unique() as $orderId) {
+            $order = MealOrder::withoutMasjidScope()->where('masjid_id', $menu->masjid_id)->find($orderId);
+
+            if (! $order) {
+                continue;
+            }
+
+            try {
+                $this->closeOpenTopUps($order);
+                $closed++;
+            } catch (\Throwable $e) {
+                Log::warning('A lunch top-up page could not be closed after its menu closed or its cutoff moved; a payment on it will be recorded as owed back, not applied.', [
+                    'order_id' => (int) $order->id,
+                    'masjid_id' => (int) $order->masjid_id,
+                    'error' => get_class($e),
+                ]);
+            }
+        }
+
+        return $closed;
     }
 
     /** The platform's application fee on a charge, integer minor units. */
