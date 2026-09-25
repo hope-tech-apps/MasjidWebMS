@@ -3060,6 +3060,11 @@ found the server still had three copies of the iqama rule, and they disagreed.
   masjids m JOIN iqama_time_settings s ON s.masjid_id = m.id LEFT JOIN iqama_time_ranges r ON
   r.iqama_time_setting_id = s.id WHERE s.iqama_type = 'specific_time_ranges' GROUP BY m.id, m.name, m.timezone;`
   and record the result here.
+  **Result, 2026-09-25 21:4xZ (point session, read-only on masjid-backend-24-04):** (a) Minutes-After-Adhan orgs holding a
+  range that ends on or after today: none, so the resource switch changes no live org. (b) Specific-Time-Ranges orgs:
+  Burlington Masjid (1, America/New_York, last range ends 2026-09-30) and NAFIS Apex Mosque (5, America/New_York, 2026-12-31).
+  Both have a real IANA timezone, so neither gets the "timezone is not its own" warning. Burlington's ranges run out on
+  2026-09-30: from 10-01 it is on adhan + offset unless new ranges are entered (true before and after this branch).
 - **`ModuleFacts` asks the mode** (`IqamaResolver::usesRanges`): "Fixed iqama times are set until ..." only on
   Specific Time Ranges, byte-identical there; on Minutes After Adhan it says the ranges are stored but not in use.
 - **The MEC apply script's backstop prerequisite now probes the new code by behaviour**
