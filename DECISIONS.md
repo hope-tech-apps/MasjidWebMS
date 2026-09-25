@@ -2997,3 +2997,44 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — Iqama: one resolver for the website, the stored prayer rows and the dark-device push
+
+Context: MEC (org 13) is moving to fixed Dhuhr 1:45 / Asr 5:30 / Isha 8:45 with Fajr +20 and Maghrib +5,
+before 2026-10-31. The branch's first two commits keep the offsets on a Specific Time Ranges save. Review
+found the server still had three copies of the iqama rule, and they disagreed.
+
+- **`App\Support\IqamaResolver` is the server's only iqama rule** (tests/fixtures/iqama-resolution.json):
+  on Specific Time Ranges, a range covering the prayer's day wins for that prayer; otherwise adhan + that
+  prayer's offset, including after the last range ends (MEC on 2026-11-01). `IqamaTimeSettingResource`
+  (website), `PrayersController::iqamaTimes` (the stored `prayers.iqama_times_data` the apps receive) and
+  `prayers:send-due` (the dark-device push) all ask it. Before, the push and the stored column were
+  adhan + offset only, so MEC's dark devices would have been told "the iqama time for Dhuhr has arrived"
+  at adhan + 10 while its website said 1:45.
+- **The day a range is tested against is the prayer's own day** in the masjid's calendar: the prayers row's
+  `date` for the push and the stored column, today in the masjid's zone for the website. A late Isha
+  after UTC midnight still belongs to its day. MasjidKit's `fixedIqamaTime(for:on:)` does the same.
+- **A fixed time is its clock time on that day in the masjid's zone**, so 1:45 PM stays 1:45 PM on the
+  wall across both daylight-saving changes (17:45 UTC in EDT, 18:45 UTC in EST).
+- **The mode is asked before any range, on the website too.** The website prints any non-null
+  `specific_time_ranges` value as the iqama and never reads `type`; the apps read `type`. So a range left
+  over from an earlier Specific Time Ranges schedule showed on the website only. The resource now sends
+  null there for a masjid on Minutes After Adhan. A masjid on Minutes After Adhan with no covering range
+  (the live payloads pinned in tests/fixtures/live-public-payloads) is byte-identical; one WITH a stored
+  range covering today would see its website change to match its apps. Whether any live org is in that
+  state was not checked (no production reads).
+- **The mode is read from the raw column, not the enum cast**: a bad stored value would make the cast throw
+  inside the every-minute push loop for every masjid; an unknown mode reads as offsets, as before.
+- **Unchanged on purpose:** a masjid with no iqama row still gets no backstop push at all (adhan
+  included) and still stores iqama == adhan; the push still never reads `iqama_times_data`.
+- **The MEC apply script's prerequisite probes were kept as they are**
+  (mec-wix-migration/wave3/1.4-iqama/iqama-fixed-times.php): `inTimezone()` and the save() behaviour are
+  unchanged, and its backstop probe matches `IqamaResol`/`timeRanges` in the command, which now does
+  resolve ranges. Its informational `iqamaTimes()` line still prints OFFSET-ONLY and its "Backstop vs MEC"
+  section still measures adhan + offset; both are stale once this ships and are for the script's owner.
+
+Alternatives: resolving on the website only and leaving the push as a documented gap (the apply script
+already allowed an owner's acceptance) was rejected because the push would contradict the site for every
+dark device from the first day; having the resource keep sending ranges for Minutes After Adhan and fixing
+the website instead was rejected because the renderer ships separately and the payload is the one place
+all website builds read.

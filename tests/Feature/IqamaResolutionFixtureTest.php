@@ -17,10 +17,10 @@ use Tests\TestCase;
  * implementation asserts against a byte-identical copy of it, so they cannot disagree
  * silently again.
  *
- * The backend's job is narrower than the apps': it does not compute adhan times, it only
- * decides which fixed time applies today (IqamaTimeSettingResource::getCurrentTimeForSalah).
- * So this test drives the date-window selection with each case's date and checks the
- * chosen fixed time, and separately checks the fallback when no window covers the date.
+ * This test drives the website payload's share: which fixed time applies today
+ * (IqamaTimeSettingResource, through App\Support\IqamaResolver), checked with each case's
+ * date, plus the fallback when no window covers the date. The full iqama instant for every
+ * case, offsets included, is IqamaResolverAgreementTest::the_resolver_gives_every_iqama_in_the_shared_fixture.
  */
 class IqamaResolutionFixtureTest extends TestCase
 {

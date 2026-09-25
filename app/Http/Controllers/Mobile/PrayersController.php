@@ -7,6 +7,7 @@ use App\Models\Masjid;
 use App\Models\Prayer;
 use App\Services\PrayerTimes\PrayerTimesGenerator;
 use App\Services\PrayerTimes\SettingsCalculationParameters;
+use App\Support\IqamaResolver;
 use App\Support\MobileCache;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -108,10 +109,10 @@ class PrayersController extends Controller
     public function store($masjid_id, $rangeStart, $rangeEnd)
     {
         try {
-            // Eager load iqamaTimeSettings + jumaaSettings + prayerCalculationSettings so
-            // neither the JSON-building loop below nor the parameter mapping triggers a
-            // query per prayer day.
-            $masjid = Masjid::with('iqamaTimeSettings', 'jumaaSettings', 'prayerCalculationSettings')
+            // Eager load iqamaTimeSettings (with its ranges) + jumaaSettings +
+            // prayerCalculationSettings so neither the JSON-building loop below nor the
+            // parameter mapping triggers a query per prayer day.
+            $masjid = Masjid::with('iqamaTimeSettings.timeRanges', 'jumaaSettings', 'prayerCalculationSettings')
                 ->findOrFail($masjid_id);
 
             $longitude = $masjid->longitude;
@@ -161,15 +162,15 @@ class PrayersController extends Controller
                 SettingsCalculationParameters::fromSetting($masjid->prayerCalculationSettings),
             );
 
-            $iqamaSettings = $masjid->iqamaTimeSettings;
+            $iqamaTimes = IqamaResolver::for($masjid->iqamaTimeSettings, $masjid->timezone);
             $jumaaSettings = $masjid->jumaaSettings;
 
             // Map the calculated prayers data onto the Prayer model schema
-            $prayersToCreate = array_map(function (array $item) use ($masjid, $iqamaSettings, $jumaaSettings) {
+            $prayersToCreate = array_map(function (array $item) use ($masjid, $iqamaTimes, $jumaaSettings) {
                 return [
                     'masjid_id' => $masjid->id,
                     'prayers_data' => json_encode($item),
-                    'iqama_times_data' => json_encode(self::iqamaTimes($item, $iqamaSettings)),
+                    'iqama_times_data' => json_encode(self::iqamaTimes($item, $iqamaTimes)),
                     'jumaa_data' => Carbon::parse($item['date'])->isFriday() ? json_encode($jumaaSettings) : null,
                     'date' => Carbon::parse($item['date'])->format("Y-m-d"),
                     'created_at' => Carbon::now(),
@@ -232,32 +233,31 @@ class PrayersController extends Controller
      * order, same `H:i:s` UTC wall-clock strings for every prayer that occurs, so
      * a masjid outside the polar circles regenerates byte-identically.
      *
-     * `SendDuePrayerNotifications` is unaffected and stays correct: it never
-     * reads `iqama_times_data` at all (that column loses its date, which is
-     * unsafe for a late-night iqama), computing iqama as adhan + offset from
-     * `prayers_data` and skipping any prayer for which `isset()` is false — and
-     * `isset()` is already false for null, so an unresolved prayer was never
-     * pushed. This change makes the stored column agree with what that command
-     * was doing all along.
+     * `SendDuePrayerNotifications` never reads `iqama_times_data` (that column
+     * loses its date, which is unsafe for a late-night iqama): it resolves the
+     * same instant from `prayers_data` through the same IqamaResolver, and skips
+     * any prayer for which `isset()` is false, which is already false for null,
+     * so an unresolved prayer was never pushed.
+     *
+     * ## Fixed times
+     *
+     * Each value is IqamaResolver's instant for that prayer on the row's day: a
+     * covering Specific Time Ranges range wins, otherwise adhan + offset. This
+     * column used to be adhan + offset only, so for a masjid on fixed times it
+     * disagreed with the website, the apps and (now) the push. A masjid on
+     * Minutes After Adhan, and a masjid with no iqama row (offsets 0), resolve
+     * byte-identically to before. The value is still the UTC wall clock, `H:i:s`.
      *
      * @param  array<string, mixed>  $item  One day of generated prayer times.
      * @return array<string, string|null>
      */
-    private static function iqamaTimes(array $item, $iqamaSettings): array
+    private static function iqamaTimes(array $item, IqamaResolver $iqamaTimes): array
     {
         $times = [];
+        $day = Carbon::parse($item['date'])->format('Y-m-d');
 
-        foreach (['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as $prayer) {
-            $adhan = $item[$prayer] ?? null;
-
-            // Offsets read the same way SendDuePrayerNotifications reads them,
-            // so a masjid missing a column is 0 minutes in both places rather
-            // than a warning here and a 0 there.
-            $times[$prayer] = $adhan === null
-                ? null
-                : Carbon::parse($adhan)
-                    ->addMinutes((int) ($iqamaSettings->{$prayer} ?? 0))
-                    ->format('H:i:s');
+        foreach (IqamaResolver::PRAYERS as $prayer) {
+            $times[$prayer] = $iqamaTimes->iqamaAt($prayer, $day, $item[$prayer] ?? null)?->format('H:i:s');
         }
 
         return $times;

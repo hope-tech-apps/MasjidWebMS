@@ -6,6 +6,7 @@ use App\Models\Masjid;
 use App\Models\MobileAppUser;
 use App\Models\Prayer;
 use App\Services\OnesignalService;
+use App\Support\IqamaResolver;
 use App\Support\PrayerPushes;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -26,10 +27,14 @@ use Illuminate\Support\Facades\Log;
  * (PrayerPushes::allowedFor, fail-open).
  *
  * Timezone correctness: the stored `prayers_data` adhan values are full UTC
- * datetimes, so every comparison is done on absolute UTC instants. Iqama is
- * derived as adhan + the masjid's per-prayer offset (NOT read from the H:i:s
- * `iqama_times_data`, which loses its date and is unsafe for late-night
- * prayers that cross midnight UTC).
+ * datetimes, so every comparison is done on absolute UTC instants. The iqama
+ * instant comes from App\Support\IqamaResolver, the rule the website and the
+ * apps follow: a fixed time from a range covering the row's day wins, otherwise
+ * adhan + the prayer's offset. It used to be adhan + offset only, so a masjid on
+ * fixed times had its dark devices told "the iqama has arrived" minutes before
+ * (or after) the time on its own website. It is still NOT read from the H:i:s
+ * `iqama_times_data`, which loses its date and is unsafe for late-night prayers
+ * that cross midnight UTC.
  */
 class SendDuePrayerNotifications extends Command
 {
@@ -77,15 +82,20 @@ class SendDuePrayerNotifications extends Command
         $onlyDevice = $this->option('only-device');
         $ignoreStaleness = (bool) $this->option('ignore-staleness');
 
-        foreach (Masjid::with('iqamaTimeSettings', 'appPublishing')->get() as $masjid) {
+        // The ranges are eager-loaded with the settings: this runs every minute for
+        // every masjid, and the resolver reads them for every prayer of every row.
+        foreach (Masjid::with('iqamaTimeSettings.timeRanges', 'appPublishing')->get() as $masjid) {
             if (! PrayerPushes::allowedFor($masjid)) {
                 continue;
             }
 
-            $offsets = $masjid->iqamaTimeSettings;
-            if (!$offsets) {
+            // A masjid with no iqama row has never been sent anything here, adhan
+            // included; that is unchanged.
+            if (!$masjid->iqamaTimeSettings) {
                 continue;
             }
+
+            $iqamaTimes = IqamaResolver::for($masjid->iqamaTimeSettings, $masjid->timezone);
 
             // A prayer instant can land on the UTC calendar day before/after the
             // local prayer day, so scan a 3-day window of rows around "now".
@@ -102,6 +112,11 @@ class SendDuePrayerNotifications extends Command
                     continue;
                 }
 
+                // The row's date is the prayer's own day in the masjid's calendar
+                // (the generator's date), which is the day a range is tested
+                // against: an Isha after UTC midnight still belongs to it.
+                $day = substr((string) $row->date, 0, 10);
+
                 foreach (self::PRAYERS as $prayer) {
                     if (!isset($data->{$prayer})) {
                         continue;
@@ -110,7 +125,7 @@ class SendDuePrayerNotifications extends Command
                     $adhan = Carbon::parse($data->{$prayer})->utc();
                     $this->maybeSend($onesignal, $masjid, $prayer, 'adhan', $adhan, $now, $dryRun, $onlyDevice, $ignoreStaleness);
 
-                    $iqama = $adhan->copy()->addMinutes((int) ($offsets->{$prayer} ?? 0));
+                    $iqama = $iqamaTimes->iqamaAt($prayer, $day, $adhan);
                     $this->maybeSend($onesignal, $masjid, $prayer, 'iqama', $iqama, $now, $dryRun, $onlyDevice, $ignoreStaleness);
                 }
             }

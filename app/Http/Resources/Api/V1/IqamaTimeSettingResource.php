@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Api\V1;
 
 use Illuminate\Http\Request;
+use App\Support\IqamaResolver;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Carbon\Carbon;
 
@@ -50,21 +51,32 @@ class IqamaTimeSettingResource extends JsonResource
     }
 
     /**
-     * Get specific time ranges for each salah based on current date
+     * Today's fixed iqama time for each salah, or null where the offset applies.
      *
-     * @return array
+     * Resolved by App\Support\IqamaResolver, the same rule the backstop push and
+     * the stored prayer rows use, so the website cannot say one time while a
+     * phone is pushed another. Null also when the masjid is on Minutes After
+     * Adhan: the website prints any non-null value here as the iqama without
+     * looking at `type`, while the apps honour `type`, so a stored range left
+     * over from an earlier Specific Time Ranges schedule used to show on the
+     * website only.
+     *
+     * @return array<string, string|null> "05:30 PM", as the website prints it
      */
     private function getSpecificTimeRanges(): array
     {
-        $today = Carbon::today($this->masjidTimezone());
+        $resolver = IqamaResolver::for($this->resource, $this->masjidTimezone());
+        $today = $resolver->today();
 
-        return [
-            'fajr' => $this->getCurrentTimeForSalah('fajr', $today),
-            'dhuhr' => $this->getCurrentTimeForSalah('dhuhr', $today),
-            'asr' => $this->getCurrentTimeForSalah('asr', $today),
-            'maghrib' => $this->getCurrentTimeForSalah('maghrib', $today),
-            'isha' => $this->getCurrentTimeForSalah('isha', $today),
-        ];
+        $times = [];
+
+        foreach (IqamaResolver::PRAYERS as $salah) {
+            $fixed = $resolver->fixedTime($salah, $today);
+
+            $times[$salah] = $fixed === null ? null : Carbon::parse($fixed)->format('h:i A');
+        }
+
+        return $times;
     }
 
     /**
@@ -75,50 +87,12 @@ class IqamaTimeSettingResource extends JsonResource
      * over at 8 PM EDT (7 PM EST), so on the last day of a range the website served
      * the NEXT range's time for the whole evening, which is exactly when Isha is
      * prayed, while every app still showed the right one. An unknown or blank zone
-     * keeps the old behaviour rather than failing the settings payload.
+     * keeps the old behaviour rather than failing the settings payload
+     * (IqamaResolver::zone).
      */
     private function masjidTimezone(): string
     {
-        $zone = (string) ($this->zone ?? $this->resource->masjid?->timezone ?? '');
-
-        if ($zone !== '' && in_array($zone, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
-            return $zone;
-        }
-
-        return (string) config('app.timezone', 'UTC');
-    }
-
-    /**
-     * Get the current iqama time for a specific salah based on today's date
-     *
-     * @param string $salah
-     * @param Carbon $today
-     * @return string|null
-     */
-    private function getCurrentTimeForSalah(string $salah, Carbon $today): ?string
-    {
-        // Get all time ranges for this salah
-        $timeRanges = $this->timeRanges->where('salah', $salah);
-
-        // Find the time range that includes today's date. Compared as Y-m-d strings,
-        // both bounds inclusive: `today` is midnight in the MASJID's zone while the
-        // stored dates parse as midnight in the app zone, so comparing instants would
-        // drop the last day of every range for any masjid west of UTC.
-        $day = $today->format('Y-m-d');
-
-        $currentRange = $timeRanges->first(function ($range) use ($day) {
-            $startDate = Carbon::parse($range->start_date)->format('Y-m-d');
-            $endDate = Carbon::parse($range->end_date)->format('Y-m-d');
-
-            return $startDate <= $day && $day <= $endDate;
-        });
-
-        if (!$currentRange) {
-            return null;
-        }
-
-        // Format time to 12-hour format without seconds (e.g., "05:30 PM")
-        return Carbon::parse($currentRange->specific_time)->format('h:i A');
+        return IqamaResolver::zone($this->zone ?? $this->resource->masjid?->timezone);
     }
 }
 
