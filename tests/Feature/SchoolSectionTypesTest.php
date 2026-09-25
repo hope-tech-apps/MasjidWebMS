@@ -87,6 +87,8 @@ class SchoolSectionTypesTest extends TestCase
         'impact_stats',
         // T-006g; OfferingSectionTypeTest owns this one.
         'offering',
+        // MEC's home-page clip; VideoSectionTypeTest owns this one.
+        'video',
     ];
 
     protected function setUp(): void

@@ -5,11 +5,13 @@ namespace App\Http\Requests\Admin\PageSections;
 use App\Enums\SectionType;
 use App\Http\Requests\BaseFormRequest;
 use App\Http\Requests\Concerns\ValidatesEmbedContent;
+use App\Http\Requests\Concerns\ValidatesVideoSection;
 use Illuminate\Validation\Rules\Enum;
 
 class UpdatePageSectionRequest extends BaseFormRequest
 {
     use ValidatesEmbedContent;
+    use ValidatesVideoSection;
 
     protected function prepareForValidation(): void
     {
@@ -51,6 +53,8 @@ class UpdatePageSectionRequest extends BaseFormRequest
                     }
                     // An embed's provider+url are allowlisted server-side; see the trait.
                     $this->validateEmbedContent($value, $fail);
+                    // A video's layout and width are one of the renderer's words; see the trait.
+                    $this->validateVideoContent($value, $fail);
                 },
             ],
             'order' => 'nullable|integer',
@@ -61,11 +65,9 @@ class UpdatePageSectionRequest extends BaseFormRequest
             'is_active' => 'nullable|boolean',
         ];
 
-        foreach ($this->allFiles() as $fieldName => $_) {
-            $rules[$fieldName] = 'nullable|file|mimes:jpeg,png,jpg,gif,webp,webp|max:25600';
-        }
-
-        return $rules;
+        // The image rule for every uploaded file, except an MP4 in a video section's
+        // `video_url` (ValidatesVideoSection).
+        return array_replace($rules, $this->sectionUploadRules());
     }
 
     private function findBase64ImageInContent(?array $content): ?string

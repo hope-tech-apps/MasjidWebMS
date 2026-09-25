@@ -2997,3 +2997,37 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — `video` section type (MEC's home-page clip): the upload rule is per type AND field
+Decision: `SectionType::VIDEO` (`video`), content `video_url`, `poster_url`, `title`, `caption`,
+`layout` (player | banner), `max_width` (full | container | narrow, player only), `background_color`,
+exactly as mec-wix-migration `wave3/2.5-home-video/VIDEO-SECTION-PLAN.md` and its `home-video.php`
+assert. Both `getImageFieldsForSectionType` copies map it to `['video_url', 'poster_url']`, so the
+MP4 travels the image path into `section_images` (no conversions registered, so it is stored as
+uploaded). The four section requests take their per-file rules from the new
+`Concerns\ValidatesVideoSection::sectionUploadRules()`: the image rule for every file, except a
+`video` section's `video_url`, which is `mimetypes:video/mp4|max:25600`. `validateVideoContent()`
+refuses a `layout` or `max_width` outside the renderer's words. Not listed in `withoutRenderer()`:
+the renderer (burlington-masjid-site `feat/video-section`, `Video.vue`) was built first and must ship
+first.
+Calls the plan left open:
+- **The section type is resolved the embed rule's way** (`ValidatesEmbedContent::resolvedSectionType`,
+  declared `abstract private` in the new trait so the dependency is stated): an update that omits
+  `section_type` is judged by the stored type, so an MP4 can be added to an existing video section and
+  still cannot be added to an existing image section by leaving the type out.
+- **`mimetypes`, not `mimes`**: it reads the file's bytes (finfo), so a JPEG renamed `clip.mp4` is
+  refused. `video/quicktime` (.mov) and WebM are refused on purpose: MP4 (H.264 + AAC) is the one
+  format every browser plays, and the editor says so before upload.
+- **The editor uses a bare file input**, against the editors' "always ImageDraggableInput" idiom: that
+  component reads the file into a `data:` URL (24 MB of string for MEC's 18 MB clip) and accepts only
+  images. `video_url` in the content is never set from the chosen file; the preview is an object URL
+  held in the editor, and the server writes the stored URL. The client check
+  (`core/helpers/sectionVideoFile.ts`) mirrors the server's 25 MB / MP4 rule so the admin is told
+  before an upload is refused.
+- **The image rule's duplicated `webp,webp` is written once**; the accepted set is unchanged.
+- **The palette counts** in `SchoolSectionTypesTest`, `CommunitySectionTypesTest` (LATER_TYPES) and
+  `OfferingSectionTypeTest::the_palette_gained_exactly_one_type` (27 → 28) are updated on purpose:
+  each suite pins an exact count so a vanished type fails, and `video` is the one added since.
+Unknown, needs investigation: what the iOS and Android apps do with an unknown `video` section. The
+API passes `platforms` through without filtering (`PageSectionResource`); MEC's placement is
+`["web"]`, but whether each app honours that before this goes on a page the apps load is not known.

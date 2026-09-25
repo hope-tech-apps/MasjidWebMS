@@ -382,6 +382,7 @@ import ServicesEligibilitySectionEditor from '@/components/sections/editors/Serv
 import ProvidersDirectorySectionEditor from '@/components/sections/editors/ProvidersDirectorySectionEditor.vue';
 import ImpactStatsSectionEditor from '@/components/sections/editors/ImpactStatsSectionEditor.vue';
 import OfferingSectionEditor from '@/components/sections/editors/OfferingSectionEditor.vue';
+import VideoSectionEditor from '@/components/sections/editors/VideoSectionEditor.vue';
 
 // Props
 const props = defineProps<{
@@ -496,6 +497,9 @@ const editorMap: Record<SectionType, any> = {
     // editor pane — and here that pane would be the one thing standing between a
     // family and a payment.
     'offering': OfferingSectionEditor,
+    // An MP4 uploaded to this site. Same rule again: the import and this entry land
+    // together, or the dropdown offers Video with a blank editor pane.
+    'video': VideoSectionEditor,
 };
 
 const currentEditor = shallowRef<any>(null);

@@ -39,7 +39,9 @@ export type SectionType =
     | 'impact_stats'
     // The registration front door (T-006g). Offered to every tenant like every
     // other type. See App\Enums\SectionType.
-    | 'offering';
+    | 'offering'
+    // An MP4 uploaded to this site, as a player or a silent looping banner.
+    | 'video';
 
 // Base Section
 export type PageSection = {
@@ -87,7 +89,8 @@ export type SectionContent =
     | ServicesEligibilitySectionContent
     | ProvidersDirectorySectionContent
     | ImpactStatsSectionContent
-    | OfferingSectionContent;
+    | OfferingSectionContent
+    | VideoSectionContent;
 
 // Individual Section Content Types
 
@@ -238,6 +241,22 @@ export type ImageSectionContent = {
     image_url: string | null;
     alt_text: string;
     caption: string;
+    max_width: 'full' | 'container' | 'narrow';
+    background_color: string;
+};
+
+/**
+ * An MP4 uploaded to this site. `video_url` and `poster_url` are written by the upload
+ * (the backend puts the stored file's URL there), never typed in. `title` is the video's
+ * accessible name, not displayed text. `max_width` applies to the player only: a banner
+ * is always full width.
+ */
+export type VideoSectionContent = {
+    video_url: string | null;
+    poster_url: string | null;
+    title: string;
+    caption: string;
+    layout: 'player' | 'banner';
     max_width: 'full' | 'container' | 'narrow';
     background_color: string;
 };

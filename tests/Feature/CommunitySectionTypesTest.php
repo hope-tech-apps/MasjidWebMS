@@ -89,6 +89,8 @@ class CommunitySectionTypesTest extends TestCase
      */
     private const LATER_TYPES = [
         'offering',
+        // MEC's home-page clip; VideoSectionTypeTest owns this one.
+        'video',
     ];
 
     protected function setUp(): void
