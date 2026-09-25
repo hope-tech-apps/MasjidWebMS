@@ -88,6 +88,12 @@ class BroadcastComposer
                 'audience_service_id' => $audience === BroadcastAudience::SERVICE
                     ? (int) ($attributes['service_id'] ?? 0) ?: null
                     : null,
+                // The TAG is stored and its people are resolved at send time,
+                // like a service: a scheduled send reaches whoever carries the
+                // tag when it goes.
+                'audience_tag_id' => $audience === BroadcastAudience::TAG
+                    ? (int) ($attributes['tag_id'] ?? 0) ?: null
+                    : null,
                 'scheduled_at' => $scheduledAt,
                 'status' => $this->isFuture($scheduledAt) ? Broadcast::STATUS_SCHEDULED : Broadcast::STATUS_PENDING,
             ]);

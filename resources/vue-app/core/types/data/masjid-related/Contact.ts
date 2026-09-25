@@ -1,3 +1,5 @@
+import { ContactTagRef } from "./ContactTag";
+
 export type Contact = {
     id: number;
     masjid_id: number;
@@ -15,6 +17,13 @@ export type Contact = {
      * `deleted_at: null` are the same fact, and the UI tests truthiness.
      */
     deleted_at?: string | null;
+
+    /**
+     * The organisation's tags on this member (id and name), sorted by name.
+     * Carried by the directory listing and the show endpoint; optional because
+     * a Contact embedded in another payload does not load them.
+     */
+    tags?: ContactTagRef[];
 
     /**
      * TEXT-MESSAGE CONSENT (T-009). Five columns, not one boolean, and the

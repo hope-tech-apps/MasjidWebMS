@@ -10,8 +10,12 @@ export type BroadcastChannel = 'announcement' | 'push' | 'signage' | 'email' | '
  * one service, on the phones they signed in on. It is NOT a list of people the
  * admin picks — the recipients are resolved by the server at send time, so a
  * member who withdrew their interest an hour ago is not reached.
+ *
+ * `tag` is everyone carrying one contact tag, also resolved at send time. It
+ * narrows who is addressed and grants nothing: email opt-outs and SMS consent
+ * still apply to every tagged person.
  */
-export type BroadcastAudience = 'everyone' | 'contacts' | 'service'
+export type BroadcastAudience = 'everyone' | 'contacts' | 'service' | 'tag'
 
 /** Per-channel outcome. `skipped` is a fact, not a failure. */
 export type BroadcastDeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped'
@@ -44,6 +48,7 @@ export type Broadcast = {
     audience: BroadcastAudience;
     audience_contact_ids: number[] | null;
     audience_service_id: number | null;
+    audience_tag_id?: number | null;
     status: BroadcastStatus;
     scheduled_at: string | null;
     created_at: string;

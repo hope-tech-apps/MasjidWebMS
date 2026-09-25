@@ -159,6 +159,20 @@ and `authorizeChannels()` checks both — so a `service` audience on push inheri
 the `crm_enabled` + `view contacts` gate rather than bypassing it, even though
 push reads no contacts on its own and no individual contact is ever disclosed.
 
+- `tag` — everyone carrying one CONTACT TAG (App\Models\ContactTag), added
+  2026-09-25 for the MEC Wix migration's labels. Stored like `service`:
+  `audience_tag_id` names WHAT was addressed and the resolver answers WHO at send
+  time. A tag is the office's label, never an opt-in, so it only NARROWS: the
+  email opt-out list and the SMS consent record apply to every tagged person
+  exactly as to everyone. Push to a tag is refused at the request boundary for
+  the CONTACTS reason (a tag names people, most of them signed in on no device),
+  and `pushSubscriptionIds()` returns `[]` for a tag audience that reaches it
+  anyway. A tag audience with no tag — never chosen, or deleted since
+  (`nullOnDelete`) — addresses NOBODY, never everyone; deleting a tag a
+  still-scheduled broadcast addresses is refused. `readsContacts()` is true, so
+  it inherits the `crm_enabled` + `view contacts` gate. Pinned by
+  `tests/Feature/Broadcasts/TagAudienceTest.php`.
+
 A `group` audience is the natural next case and is deliberately absent: group
 audiences carry guardian-consent rules (`.claude/rules/groups.md`) that an
 interest toggle does not, and that deserve their own task rather than a quiet

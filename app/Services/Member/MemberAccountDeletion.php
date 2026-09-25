@@ -98,6 +98,10 @@ class MemberAccountDeletion
         // office's access history. An app member with no family login writes
         // no row here when they choose a password (FamilyPasswordService::set).
         'contact_login_events' => ['contact_id'],
+        // A tag is a label the OFFICE put on this person ("Volunteer"). The
+        // app never writes one, so a row here is office knowledge by
+        // construction, like a card or a credential.
+        'contact_tag_links' => ['contact_id'],
         'donations' => ['contact_id'],
         'donation_subscriptions' => ['contact_id'],
         // Participant, leader AND guardian edges: `guardian_of_contact_id` is the

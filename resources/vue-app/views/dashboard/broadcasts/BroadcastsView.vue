@@ -118,6 +118,7 @@ function deliveryBadge(s: BroadcastDeliveryStatus): { label: string; klass: stri
 
 function audienceLabel(b: Broadcast): string {
     if (b.audience === 'service') return 'People interested in one service'
+    if (b.audience === 'tag') return 'People with a tag'
     if (b.audience === 'contacts') {
         const n = b.audience_contact_ids?.length ?? 0
         return `${n} selected contact${n === 1 ? '' : 's'}`

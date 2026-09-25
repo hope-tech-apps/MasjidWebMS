@@ -577,6 +577,8 @@ return [
         'funds.name' => 'A donation fund name ("Zakat", "Masjid Expansion"). It appears on every receipt and in every ledger filter.',
         'forms.name' => 'The public title of a form. `schema` beside it is field DEFINITIONS, also kept; the ANSWERS in form_responses.data are what gets scrubbed.',
         'contact_reasons.name' => 'An admin-managed picklist label behind the contact-us dropdown.',
+        'contact_tags.name' => 'An organisation\'s own label for a group of contacts ("Volunteer", "Fall Festival 2024"), shown in the directory filter and the broadcast audience picker. A category, not a person; which contacts carry it is contact_tag_links, which holds ids only.',
+        'contact_tags.name_key' => 'The same label lower-cased with its whitespace collapsed, for the per-organisation unique index. Derived from contact_tags.name on every save.',
         'donation_links.message' => 'The blurb on a public donate page, written for publication.',
         'splash_announcements.body' => 'Admin-authored announcement copy shown to every app user. Public by construction; `onesignal_iam_id` beside it IS nulled.',
         'app_version_settings.update_message' => 'The "please update" banner copy shown to every app user.',

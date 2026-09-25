@@ -6,6 +6,7 @@ use App\Enums\BroadcastAudience;
 use Illuminate\Support\Facades\DB;
 use App\Models\Broadcast;
 use App\Models\Contact;
+use App\Models\ContactTag;
 use App\Models\Masjid;
 use App\Services\Sms\SmsConsentService;
 use Illuminate\Support\Collection;
@@ -132,6 +133,13 @@ class BroadcastAudienceResolver
             $this->narrowContactsToServiceInterest($query, (int) $broadcast->masjid_id, $serviceId);
         }
 
+        if ($broadcast->audienceType() === BroadcastAudience::TAG) {
+            if (! $this->narrowContactsToTag($query, $broadcast)) {
+                // a tag audience with no tag (deleted since) addresses nobody
+                return new EmailAudience(collect());
+            }
+        }
+
         $candidates = $query->orderBy('id')->get();
 
         // One query for the whole audience rather than one per recipient. The
@@ -221,6 +229,14 @@ class BroadcastAudienceResolver
             $this->narrowContactsToServiceInterest($query, (int) $broadcast->masjid_id, $serviceId);
         }
 
+        // A tag narrows SMS BEFORE consent and suppression, which then apply
+        // to the tagged people exactly as to everyone: a tag grants nothing.
+        if ($broadcast->audienceType() === BroadcastAudience::TAG) {
+            if (! $this->narrowContactsToTag($query, $broadcast)) {
+                return new SmsAudience(recipients: []);
+            }
+        }
+
         $candidates = $query->orderBy('id')->get();
 
         $consenting = [];
@@ -284,6 +300,14 @@ class BroadcastAudienceResolver
      */
     public function pushSubscriptionIds(Masjid $masjid, ?Broadcast $broadcast = null): array
     {
+        // Push to a tag is refused at the request boundary
+        // (StoreBroadcastRequest). If one reaches here anyway — a row written by
+        // some other path — it addresses NO device: falling through to the
+        // everyone query below is the one outcome that must be impossible.
+        if ($broadcast?->audienceType() === BroadcastAudience::TAG) {
+            return [];
+        }
+
         $query = $masjid->mobileAppUsers()->whereNotNull('onesignal_subscription_id');
 
         if ($broadcast?->audienceType() === BroadcastAudience::SERVICE) {
@@ -336,6 +360,28 @@ class BroadcastAudienceResolver
                     ->where('service_id', $serviceId);
             })
             ->whereNull('login_revoked_at');
+    }
+
+    /**
+     * Narrow a contact query to the people carrying this broadcast's tag, or
+     * answer false when there is no tag to narrow to (never set, or deleted
+     * since — the foreign key nulls it), so the caller addresses nobody.
+     *
+     * The tag is re-read through ContactTag, which carries the tenant scope,
+     * so a tag id from another organisation matches no tag rather than
+     * reaching into it. `whereHas` then applies the same scope to the join.
+     */
+    private function narrowContactsToTag($query, Broadcast $broadcast): bool
+    {
+        $tagId = (int) $broadcast->audience_tag_id;
+
+        if ($tagId <= 0 || ! ContactTag::query()->whereKey($tagId)->exists()) {
+            return false;
+        }
+
+        $query->whereHas('tags', fn ($tags) => $tags->whereKey($tagId));
+
+        return true;
     }
 
     private function narrowToServiceInterest($query, Masjid $masjid, int $serviceId): void
