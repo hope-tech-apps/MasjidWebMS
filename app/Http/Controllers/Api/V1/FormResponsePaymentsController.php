@@ -83,8 +83,9 @@ class FormResponsePaymentsController extends Controller
 
             [$row, $form] = $found;
 
-            // The submit's rules exactly: an allowlisted origin and a relative path.
-            $returnTo = FormPaymentReturn::base($request, [
+            // The submit's rules exactly: an allowlisted origin (or a confirmed domain of
+            // the row's organisation) and a relative path.
+            $returnTo = FormPaymentReturn::base($request, (int) $row->masjid_id, [
                 'masjid_id' => $row->masjid_id,
                 'form_id' => $form->id,
                 'form_response_id' => $row->id,

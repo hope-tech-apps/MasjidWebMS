@@ -232,7 +232,8 @@ class MasjidDomain extends Model
     /**
      * Rows whose origin CORS and the payment-return allowlist may trust: served,
      * active or manual, and seen serving our own site (R3, R24). Read by CORS
-     * and payment returns ONLY; nothing reads it until S9.
+     * and payment returns ONLY (S9: App\Http\Middleware\HandleCorsWithDomains
+     * through corsOrigins(), and App\Support\FormPaymentReturn::allowedOrigin).
      */
     public function scopeCorsAdmitted(Builder $query): Builder
     {

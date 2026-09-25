@@ -85,8 +85,9 @@ a zone we own, and no hour in which the log paused**. The commands are in
 
 None of these hostnames arrives at the app in the Host header. The Nuxt sites call
 the API at `masjid.hopetechapps.com`, so their requests arrive with that Host.
-Their own hostname arrives only as the browser's `Origin`, and
-`CORS_ALLOWED_ORIGINS` controls that, not `TRUSTED_HOSTS`.
+Their own hostname arrives only as the browser's `Origin`, and CORS controls
+that (`CORS_ALLOWED_ORIGINS`, plus, from Studio S9, every `masjid_domains` row
+confirmed serving), not `TRUSTED_HOSTS`.
 
 | hostname | served by | organisation | where the mapping lives | evidence, 2026-09-17 |
 |---|---|---|---|---|
@@ -139,9 +140,9 @@ in either repository.
 | Worker custom domains | account | `parents.alrazischool.org`, `mec-planner.hopetechapps.com` |
 | Pages project domains + `NUXT_TENANT_HOSTS` | Cloudflare Pages env (`manara-renderer`, `manara-renderer-staging`) | Nuxt host → org. **Setting this variable replaces the whole code map**; always write the full map |
 | `DEFAULT_TENANT_HOSTS` | `burlington-masjid-site/nuxt.config.ts` | Nuxt host → org when `NUXT_TENANT_HOSTS` is unset (`mec-web`) |
-| `masjid_domains` table | app database (Manara Studio S3, `App\Models\MasjidDomain`) | host → org as data, with a status per host. Served publicly by `GET /api/v1/organizations/by-host` (pending/awaiting_nameservers/provisioning/active/manual hosts of live orgs; never `failed` or `reserved`). **Nothing consumes it yet**: CORS reads it from S9, the renderer from S11. Seeded from the live map by `php artisan domains:import-host-map` (dry run unless `--execute`); a probe match is `manual`, anything else `reserved` |
+| `masjid_domains` table | app database (Manara Studio S3, `App\Models\MasjidDomain`) | host → org as data, with a status per host. Served publicly by `GET /api/v1/organizations/by-host` (pending/awaiting_nameservers/provisioning/active/manual hosts of live orgs; never `failed` or `reserved`). From S9, CORS (`App\Http\Middleware\HandleCorsWithDomains`) admits the origin of every `corsAdmitted()` row (active or manual, `serving_confirmed_at` set, org not trashed) on top of `CORS_ALLOWED_ORIGINS`, and a form's card payment may return to such a row's origin when it belongs to the form's own organisation; the renderer reads it from S11. Seeded from the live map by `php artisan domains:import-host-map` (dry run unless `--execute`); a probe match is `manual`, anything else `reserved` |
 | `NUXT_PUBLIC_API_BASE_URL` | Pages env | which Laravel host the Nuxt site calls (prod: `masjid.hopetechapps.com`; staging project: `masjid-staging.hopetechapps.com`) |
-| `CORS_ALLOWED_ORIGINS` | app `.env` → `config/cors.php` | which browser origins may call `/api/*` |
+| `CORS_ALLOWED_ORIGINS` | app `.env` → `config/cors.php` | the base list of browser origins that may call `/api/*`; from S9 the confirmed `masjid_domains` origins are added to it per request, never removed from it |
 | `FORMS_PAYMENT_RETURN_ORIGINS` | app `.env` → `config/forms.php` | which origins a form card payment may return to (prod: `sundayschool.burlingtonmasjid.com`) |
 
 ### Production `CORS_ALLOWED_ORIGINS`, as read on 2026-09-17
@@ -163,6 +164,10 @@ disagrees with the table above:
 
 Changing this is a production `.env` edit, so it needs its own decision.
 
+Update 2026-09-24: the hotfix added both hosts (production now lists 12 origins,
+`https://preview.manara.hopetechapps.com` included), so S9's table read changes
+nothing for any live origin. See `docs/manara-studio-w1.md` §8 OQ6.
+
 ---
 
 ## 4. Adding a hostname
@@ -183,7 +188,9 @@ Changing this is a production `.env` edit, so it needs its own decision.
 
 1. Add the name to the project's `NUXT_TENANT_HOSTS`, keeping the full map, and
    to `DEFAULT_TENANT_HOSTS` plus its drift-guard test in `burlington-masjid-site`.
-2. Add its origin to `CORS_ALLOWED_ORIGINS`.
+2. From S9: nothing, once its `masjid_domains` row is confirmed serving (Studio's
+   "Check now"); CORS admits it then. Before S9 ships, or for a host with no row,
+   add its origin to `CORS_ALLOWED_ORIGINS`.
 3. It does **not** go in `TRUSTED_HOSTS`.
 4. Add a row to section 2.
 

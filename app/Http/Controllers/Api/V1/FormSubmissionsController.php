@@ -357,7 +357,7 @@ class FormSubmissionsController extends Controller
                     return response()->api(422, $refusal, null);
                 }
 
-                $returnTo = FormPaymentReturn::base($request, ['masjid_id' => $masjidId, 'form_id' => $form->id]);
+                $returnTo = FormPaymentReturn::base($request, (int) $form->masjid_id, ['masjid_id' => $masjidId, 'form_id' => $form->id]);
 
                 if ($returnTo === null) {
                     return response()->api(422, FormPaymentReturn::REFUSED, null);
