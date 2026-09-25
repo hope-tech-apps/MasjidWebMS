@@ -19,6 +19,7 @@ import {
     FormResponseRow,
     FormResponsesMeta,
     FormResponseUpdatePayload,
+    FormReservationsBoard,
     FormRosterMeta
 } from "@/core/types/data/masjid-related/Form";
 
@@ -235,6 +236,21 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         }
 
         throw new Error('Unexpected cash totals response.');
+    }
+
+    /**
+     * The form's reservable dates and who holds each (FormResponsesController::reservations();
+     * Ramadan giving, 2026-09-25). Not filtered: a date is held or not whatever the list shows.
+     */
+    async function fetchReservations(formId: number | string): Promise<FormReservationsBoard> {
+        const id = requireMasjidId();
+
+        const res: AxiosResponse = await ApiService.get(`/api/admin/masjids/${id}/forms/${formId}/responses/reservations`);
+        if (res.data?.status === 'success' && res.data?.data && Array.isArray(res.data.data.dates)) {
+            return res.data.data;
+        }
+
+        throw new Error('Unexpected reservations response.');
     }
 
     /**
@@ -465,6 +481,7 @@ export const useFormResponsesStore = defineStore('formResponsesStore', () => {
         fetchResponses,
         fetchResponse,
         fetchCashTotals,
+        fetchReservations,
         updateResponse,
         deleteResponse,
         collectResponse,

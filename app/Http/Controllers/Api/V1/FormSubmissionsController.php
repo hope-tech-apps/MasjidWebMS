@@ -12,9 +12,11 @@ use App\Services\Stripe\FormCheckoutRefused;
 use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\Errors;
 use App\Support\FormAttachments;
+use App\Support\FormDateTaken;
 use App\Support\FormNotifier;
 use App\Support\FormPayment;
 use App\Support\FormPaymentReturn;
+use App\Support\FormReservations;
 use App\Support\FormSchema;
 use App\Support\FormStaffCodes;
 use App\Support\PublicTenant;
@@ -288,7 +290,14 @@ class FormSubmissionsController extends Controller
                 ], 422);
             }
 
-            $clean = $schema->only($submitted);
+            // A level priced by answer drops the answers its price does not use (a Quarter
+            // Iftar's people count, an Individual Iftar's date), so the row stores what was
+            // charged and reserved. Every other form's answers are unchanged.
+            $clean = $form->withoutUnusedPriceAnswers($schema->only($submitted));
+
+            // The date this registration reserves from the form's list, or null
+            // (App\Support\FormReservations). Claimed under the form lock below.
+            $reserveOn = $form->reservedDateIn($clean);
 
             // A retry of a card registration whose page was PINNED to an account
             // (DECISIONS.md 2026-09-15), arriving after card payment became unavailable
@@ -367,7 +376,7 @@ class FormSubmissionsController extends Controller
             $fingerprint = $this->fingerprint($form, $clean, $staffCode, $quote, $request->boolean('cover_fees'), $payWith);
 
             try {
-                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office): array {
+                [$outcome, $response] = DB::transaction(function () use ($form, $clean, $schema, $request, $masjidId, $uploads, $staffCode, $quote, $clientKey, $fingerprint, $online, $office, $reserveOn): array {
                     // Re-read inside the transaction and lock, so two submissions racing for
                     // the last place cannot both pass the capacity check. The counter is the
                     // thing capacity is enforced against, so it must be read under the lock
@@ -402,6 +411,13 @@ class FormSubmissionsController extends Controller
                         }
                     }
 
+                    // The date, under the form lock every submission for it queues on: held by
+                    // a hold that still counts, it is refused; held by one that lapsed or was
+                    // cancelled, that hold is released for this one.
+                    if ($reserveOn !== null && ! FormReservations::claim($locked, $reserveOn)) {
+                        return ['date_taken', null];
+                    }
+
                     $created = new FormResponse(array_merge(
                         [
                             'form_id' => $locked->id,
@@ -430,6 +446,17 @@ class FormSubmissionsController extends Controller
                     if ($staffCode !== null) {
                         $guarded['amount_due_minor'] = $quote['amount_due_minor'];
                         $guarded['currency'] = $quote['currency'];
+                    }
+
+                    // The breakdown the money leg was priced at (unit x quantity, and the tier
+                    // or level), beside the amount it multiplies to, for the receipt and the
+                    // admin view. Written wherever amount_due_minor is.
+                    if ($quote !== null && ($staffCode !== null || $online || $office)) {
+                        $guarded += [
+                            'unit_price_minor' => $quote['unit_minor'],
+                            'price_quantity' => $quote['quantity'],
+                            'price_label' => $quote['tier_label'] !== null ? mb_substr($quote['tier_label'], 0, 255) : null,
+                        ];
                     }
 
                     // A card registration is written UNPAID, with the snapshot Stripe is
@@ -461,6 +488,14 @@ class FormSubmissionsController extends Controller
 
                     $created->forceFill($guarded)->save();
 
+                    // The hold, in the transaction that wrote the row: a card registration's
+                    // lapses with its payment page (FormReservations::cardHoldUntil()); cash,
+                    // the office and a form that takes no payment never lapse. The unique
+                    // index refusing it rolls the row back (FormDateTaken, answered below).
+                    if ($reserveOn !== null) {
+                        FormReservations::hold($created, $reserveOn, $online ? FormReservations::cardHoldUntil(now()) : null);
+                    }
+
                     // Inside the transaction, and only once the row exists: a submission
                     // that arrives after the last place is taken returns above without
                     // ever touching the disk, and a write that fails here rolls the
@@ -485,6 +520,8 @@ class FormSubmissionsController extends Controller
 
                     return ['created', $created];
                 });
+            } catch (FormDateTaken) {
+                return $this->dateTaken($form);
             } catch (UniqueConstraintViolationException $e) {
                 // A double-tap that raced past the lookup: the other request's row is
                 // committed, and it is the answer.
@@ -505,6 +542,10 @@ class FormSubmissionsController extends Controller
 
             if ($outcome === 'refused') {
                 return FormStaffCodes::refusedResponse();
+            }
+
+            if ($outcome === 'date_taken') {
+                return $this->dateTaken($form);
             }
 
             if ($outcome === 'closed') {
@@ -756,7 +797,30 @@ class FormSubmissionsController extends Controller
             ], 422);
         }
 
+        // A quantity of 0 (Ramadan giving, 2026-09-25), reported on its own question.
+        $quantity = $quote !== null && $quote['quantity'] === 0 ? $form->quantityField() : null;
+
+        if ($quantity !== null) {
+            return response()->json([
+                'status' => 'failed',
+                'data' => [$quantity => ['Enter a number of at least 1.']],
+            ], 422);
+        }
+
         return response()->api(422, 'This form cannot take entries right now.', null);
+    }
+
+    /**
+     * Another payer holds the date this registration asked for: found under the form lock,
+     * or by the unique index. Reported on the date question, so the page shows it there,
+     * and nothing was written.
+     */
+    private function dateTaken(Form $form)
+    {
+        return response()->json([
+            'status' => 'failed',
+            'data' => [($form->reservation()['field'] ?? 'date') => [FormReservations::TAKEN]],
+        ], 422);
     }
 
     /**

@@ -420,6 +420,88 @@
                         </div>
                     </div>
 
+                    <!-- Reserved dates (Ramadan giving, 2026-09-25): the form's date list and who holds
+                         each date. Offered only on a form that reserves dates (meta.reservations). -->
+                    <div v-if="meta?.reservations && viewMode === 'submissions'" class="card mb-3" data-test="reservations-card">
+                        <div class="card-header bg-white d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                            <button
+                                type="button"
+                                class="btn btn-link p-0 text-decoration-none fw-semibold text-body"
+                                :aria-expanded="reservationsOpen"
+                                aria-controls="responses-reserved-dates"
+                                @click="toggleReservations"
+                            >
+                                <i class="bi me-1" :class="reservationsOpen ? 'bi-chevron-down' : 'bi-chevron-right'" aria-hidden="true"></i>
+                                Reserved dates
+                            </button>
+                            <button
+                                v-if="reservationsOpen"
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                :disabled="reservationsLoading"
+                                @click="loadReservations"
+                            >
+                                <span v-if="reservationsLoading" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                                Refresh
+                            </button>
+                        </div>
+
+                        <div v-if="reservationsOpen" id="responses-reserved-dates" class="card-body">
+                            <div v-if="reservationsLoading && !reservations" class="text-center py-3" role="status">
+                                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                                Reading the dates…
+                            </div>
+
+                            <div v-else-if="reservationsError" class="alert alert-danger py-2 small mb-0" role="alert">{{ reservationsError }}</div>
+
+                            <template v-else-if="reservations">
+                                <div v-if="reservations.conflicts.length" class="alert alert-danger py-2 small" role="alert">
+                                    <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
+                                    Paid after their date went to someone else. Refund them, or offer another date:
+                                    <ul class="mb-0 mt-1">
+                                        <li v-for="conflict in reservations.conflicts" :key="conflict.id">
+                                            {{ conflict.label }}: {{ conflict.respondent_name || 'Someone' }} (#{{ conflict.response_id }})<span v-if="conflict.price_label">, {{ conflict.price_label }}</span>
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                <p v-if="!reservations.dates.length" class="text-muted small mb-0">
+                                    No dates are listed on this form yet, so none can be reserved.
+                                </p>
+
+                                <div v-else class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Date</th>
+                                                <th scope="col">State</th>
+                                                <th scope="col">Held by</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="row in reservations.dates" :key="row.date" :class="{ 'text-muted': row.past }">
+                                                <td>
+                                                    {{ row.label }}
+                                                    <span v-if="!row.listed" class="badge bg-light text-dark border ms-1">no longer listed</span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge" :class="reservationBadgeClass(row.state)">{{ reservationStateLabel(row.state) }}</span>
+                                                </td>
+                                                <td>
+                                                    <template v-if="row.reservation">
+                                                        {{ row.reservation.respondent_name || 'Someone' }}
+                                                        <span class="text-muted">#{{ row.reservation.response_id }}</span><span v-if="row.reservation.price_label" class="text-muted">, {{ row.reservation.price_label }}</span>
+                                                    </template>
+                                                    <span v-else class="text-muted">—</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- Loading State -->
                     <div v-if="loading" class="text-center py-5">
                         <div class="spinner-border text-primary" role="status">
@@ -1064,6 +1146,9 @@
                                 <div class="col-md-3">
                                     <h6 class="text-muted mb-1">Amount due</h6>
                                     <p class="mb-0">{{ formatAmount(selectedResponse.amount_due) }}</p>
+                                    <p v-if="breakdownText(selectedResponse)" class="small text-muted mb-0" data-test="price-breakdown">
+                                        {{ breakdownText(selectedResponse) }}
+                                    </p>
                                 </div>
                                 <div class="col-md-3">
                                     <h6 class="text-muted mb-1">Status</h6>
@@ -1092,6 +1177,25 @@
                                         <span v-else class="text-muted">Not provided</span>
                                     </p>
                                 </div>
+                            </div>
+
+                            <!-- The date this registration reserved from the form's list, and whether it
+                                 still holds it (FormReservations::stateOf()). -->
+                            <div
+                                v-if="reservationOf(selectedResponse)"
+                                class="alert py-2 small mb-3"
+                                :class="reservationOf(selectedResponse)!.state === 'released' ? 'alert-danger' : 'alert-light border'"
+                                data-test="response-reservation"
+                            >
+                                <i class="bi bi-calendar-check me-1" aria-hidden="true"></i>
+                                Date: <strong>{{ reservationOf(selectedResponse)!.label }}</strong>
+                                <span class="badge ms-1" :class="reservationBadgeClass(reservationOf(selectedResponse)!.state)">
+                                    {{ reservationStateLabel(reservationOf(selectedResponse)!.state) }}
+                                </span>
+                                <span v-if="reservationOf(selectedResponse)!.state === 'released'" class="d-block mt-1">
+                                    This registration's date went to someone else after its payment page ran out, or after it
+                                    was cancelled. If it has been paid, refund it or offer another date.
+                                </span>
                             </div>
 
                             <!-- Payment and the door, on a form set up to take payment -->
@@ -1596,6 +1700,9 @@ import {
     FormResponseStatus,
     FormResponsesMeta,
     FormResponseUpdatePayload,
+    FormReservationsBoard,
+    FormReservationState,
+    FormResponseReservation,
     FormRosterColumn,
     FormRosterMeta,
     FormRosterSummary,
@@ -1728,6 +1835,12 @@ const cashOpen = ref(false);
 const cashLoading = ref(false);
 const cashTotals = ref<FormCashTotals | null>(null);
 const cashError = ref('');
+
+// The reserved-dates board (Ramadan giving, 2026-09-25).
+const reservationsOpen = ref(false);
+const reservationsLoading = ref(false);
+const reservations = ref<FormReservationsBoard | null>(null);
+const reservationsError = ref('');
 
 /**
  * Manara Insights. A 403 is not a fault — it means the masjid has not bought the tier —
@@ -1969,6 +2082,8 @@ watch(selectedFormId, async () => {
         doorMode.value = false;
     });
     cashTotals.value = null;
+    reservations.value = null;
+    reservationsOpen.value = false;
     insightsError.value = '';
     insightsRefused.value = false;
 
@@ -3241,6 +3356,60 @@ const formatAmount = (amount: string | null): string => {
 /** The money leg's *_minor fields are integer CENTS, unlike amount_due. */
 const money = (minor: number | null | undefined, currency: string | null | undefined): string =>
     formatMinorAmount(minor, currency || 'usd');
+
+// --- Price breakdown and reserved dates (Ramadan giving, 2026-09-25) -----------
+
+/** "Quarter Iftar: $450.00 × 1" from the row's snapshot, or '' when it has none. */
+const breakdownText = (row: FormResponseRow | FormResponseDetail): string => {
+    const breakdown = row.price_breakdown;
+    if (!breakdown) return '';
+
+    const line = `${money(breakdown.unit_minor, breakdown.currency)} × ${breakdown.quantity}`;
+    return breakdown.label ? `${breakdown.label}: ${line}` : line;
+};
+
+const reservationOf = (row: FormResponseRow | FormResponseDetail): FormResponseReservation | null =>
+    'reservation' in row && row.reservation ? row.reservation : null;
+
+const RESERVATION_STATE_LABELS: Record<FormReservationState, string> = {
+    open: 'Open',
+    reserved: 'Reserved',
+    held: 'Held until paid',
+    lapsed: 'Not paid in time, offered again',
+    cancelled: 'Cancelled, offered again',
+    released: 'Went to someone else'
+};
+
+const reservationStateLabel = (state: FormReservationState): string => RESERVATION_STATE_LABELS[state] ?? state;
+
+const reservationBadgeClass = (state: FormReservationState): string => ({
+    open: 'bg-light text-dark border',
+    reserved: 'bg-success',
+    held: 'bg-warning text-dark',
+    lapsed: 'bg-secondary',
+    cancelled: 'bg-secondary',
+    released: 'bg-danger'
+}[state] ?? 'bg-secondary');
+
+const toggleReservations = async () => {
+    reservationsOpen.value = !reservationsOpen.value;
+    if (reservationsOpen.value) await loadReservations();
+};
+
+const loadReservations = async () => {
+    if (!selectedFormId.value) return;
+
+    reservationsLoading.value = true;
+    reservationsError.value = '';
+
+    try {
+        reservations.value = await formResponsesStore.fetchReservations(selectedFormId.value);
+    } catch (error) {
+        reservationsError.value = serverMessage(error, 'Could not read the reserved dates.');
+    } finally {
+        reservationsLoading.value = false;
+    }
+};
 
 // --- Summary formatting ------------------------------------------------------
 // Everything printed in the summary panel is the server's own figure. What follows turns

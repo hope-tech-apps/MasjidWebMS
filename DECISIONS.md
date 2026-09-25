@@ -2997,3 +2997,61 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — Ramadan giving through forms: a price per quantity, prices by answer, and reserved dates
+Owner's call for MEC ("Form with payment"): Zakat-ul-Fitr per person x N and iftar sponsorship
+levels, some of which reserve one evening, as Manara forms paid through the organisation's own
+Stripe Connect account. The calls the brief left open:
+
+- **A quantity is a number question the fee names** (`settings.fee.perQuantityOf`), not a new
+  field type. The unit is the flat amount (or the date step in force), the quantity is the whole
+  number answered, and the server multiplies them (`Form::priceFor()`); the client never sends a
+  total, and one sent is ignored. The question must be required (unless a level asks it), flat
+  (not in a repeatable section), and bounded 1..`Form::MAX_QUANTITY` (1000, the same ceiling count
+  prices already put on a family size); `FormSchema` adds `integer|min:1|max:` so 2.5 people is
+  refused. Beside `perEntryOfSection` or count prices the rule is unreadable and prices nothing
+  (refused, never under-charged). Alternative: a `quantity` field type; rejected because the
+  renderer and the builder already know number questions, and a new type is a renderer change.
+- **Levels are priced by the answer to one choice question** (`settings.fee.byChoice`: the
+  question and one price per option value, each optionally `perQuantity` and `reservesDate`).
+  It replaces the flat amount, date steps, count prices and per-entry charging on that form
+  (the save refuses them together), and every option must be priced. Only `form:import` sets it
+  up; the builder shows it read-only and saves it back untouched. A level's unused answers (a
+  Quarter Iftar's people count, an Individual Iftar's date) are dropped before the row is stored.
+- **The breakdown is a snapshot**: `unit_price_minor`, `price_quantity`, `price_label` on
+  `form_responses`, written from the same quote as `amount_due_minor`, never recomputed.
+  `FormResponse::priceBreakdown()` hides one that no longer multiplies to the amount. The
+  receipt and the coordinator email show "$17.00 x 4" and drop the "people registered" count on
+  these forms (it would read 1 for four people).
+- **One date, one sponsor, enforced by the database.** `form_date_reservations` keeps
+  `reserved_on` for ever and `holding_on` (the same date, NULL once released) under
+  unique(form_id, holding_on). The submit claims the date under the form's row lock, so two
+  payers queue and the second gets a 422 on the date question; anything around the lock meets
+  the index (`FormDateTaken`, also a 422). A Quarter Iftar takes the whole evening off the list:
+  MEC's Wix note asked sponsors to email for availability of "your day", so one day per sponsor
+  is the reading; `mecToFill` asks MEC to confirm before import.
+- **When an abandoned payment releases its date**: an unpaid card registration holds it for the
+  page's life (30 min) + 1 min slack + 15 min grace, renewed by each "Return to payment". After
+  that it has lapsed: the date is offered again, and the next payer who asks releases it
+  (lazily, no scheduler). A late payment on a lapsed hold nobody took still gets its date; one
+  on a date already taken is recorded (money is never refused), logged as a warning by ids and
+  shown on the admin board as a conflict to refund or rebook; "Return to payment" on such a row
+  is refused. Office and cash registrations never lapse; a cancelled one stops protecting its
+  date at once. Alternative: a scheduled sweep; rejected because it can free a date seconds
+  before a late webhook arrives, and lazy release gives the same availability.
+- **The date list is a second options source** (`reservable_dates`: the form's
+  `settings.reservation.dates` from today on the organisation's clock, less held dates). It
+  needs no school calendar, and the builder's source picker does not offer it (it has no editor
+  for the list).
+- **Admin visibility**: GET `.../responses/reservations` (the board: each date's state and
+  holder, plus conflicts), the reservation on the response detail, and the breakdown on list and
+  detail rows. Scoped through the route's masjid; another organisation's form is a 404.
+- **The public payload publishes no single total for these forms** (`unitMinor` null, the unit
+  as `unitMinorEach`, levels as `choicePrices`), so the current renderer shows the questions and
+  no live total rather than a wrong one. A live "$17 x 4 = $68" on the public page is a renderer
+  change, not made here.
+- **MEC's two form files** (`database/forms/mec-zakat-ul-fitr.json`,
+  `database/forms/mec-iftar-sponsorship.json`) carry only MEC's Wix names and prices (Zakat-ul-Fitr
+  (Per Person) $17; Individual $18, Quarter $450, Half $950, Full $1900; source: the migration's
+  `reports/stores.md`, as the brief's `commerce.md` does not exist). Both import switched off;
+  the evenings list is empty and every 2027 figure is a `mecToFill` item, never invented.

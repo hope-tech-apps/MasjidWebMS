@@ -34,6 +34,19 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
     use Queueable, SerializesModels;
 
     /**
+     * "$17.00 × 4": the unit price and how many, when more than one unit was charged
+     * (FormResponse::priceBreakdown(); Ramadan giving, 2026-09-25), or null.
+     *
+     * Declared with a default, NOT promoted: a mail queued before this existed is
+     * unserialized without running the constructor, and a promoted property would be
+     * left uninitialised.
+     */
+    public ?string $breakdownLine = null;
+
+    /** "Wednesday, February 10, 2027": the date this registration holds, or null. As above. */
+    public ?string $reservedDate = null;
+
+    /**
      * @param  array<int,array{name:string,detail:string}>  $people
      * @param  array<int,string>  $nextSteps
      */
@@ -58,7 +71,11 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
         /** The WhatsApp group link, for a settled registration only. Re-checked in content(). */
         public ?string $whatsappUrl = null,
         public ?string $whatsappLabel = null,
+        ?string $breakdownLine = null,
+        ?string $reservedDate = null,
     ) {
+        $this->breakdownLine = $breakdownLine;
+        $this->reservedDate = $reservedDate;
     }
 
     public function envelope(): Envelope
@@ -88,6 +105,8 @@ class FormSubmissionReceipt extends Mailable implements ShouldQueue
                 'entryCount' => $this->entryCount,
                 'amountLine' => $this->amountLine,
                 'tierLabel' => $this->tierLabel,
+                'breakdownLine' => $this->breakdownLine,
+                'reservedDate' => $this->reservedDate,
                 'people' => $this->people,
                 'nextSteps' => $this->nextSteps,
                 'paymentNote' => $this->paymentNote,

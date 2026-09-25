@@ -329,7 +329,7 @@
                          together with an amount or date steps (buildPayload() sends only the chosen one). -->
                     <fieldset class="mb-3">
                         <legend class="form-label fs-6 mb-1">How the price is worked out</legend>
-                        <div v-for="mode in PRICING_MODES" :key="mode.value" class="form-check">
+                        <div v-for="mode in visiblePricingModes" :key="mode.value" class="form-check">
                             <input
                                 :id="`formFeePricing_${mode.value}`"
                                 class="form-check-input"
@@ -349,7 +349,39 @@
                         {{ fieldIssue('settings.fee') }}
                     </div>
 
-                    <div v-if="draft.settings.feePricing !== 'none'" class="row">
+                    <!-- Priced by the answer to a question (settings.fee.byChoice; Ramadan giving,
+                         2026-09-25). Set by form:import; shown here and saved back untouched. -->
+                    <div v-if="draft.settings.feePricing === 'choice'" class="mb-3" data-test="choice-prices">
+                        <p class="small text-muted mb-2">
+                            The price is the one set for the answer to "{{ choicePricing.questionLabel }}".
+                            These prices were set when the form was imported; to change them, edit the form
+                            file and import it again.
+                        </p>
+                        <table class="table table-sm mb-2">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Choice</th>
+                                    <th scope="col" class="text-end">Price</th>
+                                    <th scope="col">Charged</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="level in choicePricing.levels" :key="level.value">
+                                    <td>{{ level.label }}</td>
+                                    <td class="text-end">{{ level.amount }}</td>
+                                    <td>
+                                        {{ level.perQuantity ? `For each, by "${quantityQuestionLabel}"` : 'Once' }}<span v-if="level.reservesDate"> · reserves a date</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <p v-if="choicePricing.dates !== null" class="small text-muted mb-0">
+                            Dates that can be reserved:
+                            {{ choicePricing.dates.length ? choicePricing.dates.join(', ') : 'none listed yet, so no date can be reserved' }}.
+                        </p>
+                    </div>
+
+                    <div v-if="draft.settings.feePricing !== 'none' && draft.settings.feePricing !== 'choice'" class="row">
                         <div v-if="draft.settings.feePricing !== 'count'" class="col-md-4 mb-3">
                             <label class="form-label" for="formFeeAmount">{{ feeAmountLabel }}</label>
                             <input
@@ -383,7 +415,30 @@
                                 {{ fieldIssue('settings.fee.currency') }}
                             </div>
                         </div>
-                        <div v-if="draft.settings.feePricing !== 'flat'" class="col-md-5 mb-3">
+                        <!-- The number question the price is multiplied by (settings.fee.perQuantityOf). -->
+                        <div v-if="draft.settings.feePricing === 'perQuantity'" class="col-md-5 mb-3">
+                            <label class="form-label" for="formFeePerQuantity">Multiplied by the answer to</label>
+                            <select
+                                id="formFeePerQuantity"
+                                class="form-select"
+                                :class="{ 'is-invalid': !!fieldIssue('settings.fee.perQuantityOf') }"
+                                v-model="draft.settings.feePerQuantityOf"
+                                @change="clearServerError('settings.fee.perQuantityOf')"
+                            >
+                                <option :value="null">Choose a number question</option>
+                                <option v-for="question in quantityQuestions" :key="question.name" :value="question.name">
+                                    {{ question.label || question.name }}
+                                </option>
+                            </select>
+                            <div v-if="fieldIssue('settings.fee.perQuantityOf')" class="invalid-feedback d-block">
+                                {{ fieldIssue('settings.fee.perQuantityOf') }}
+                            </div>
+                            <small v-if="!quantityQuestions.length" class="form-text text-muted">
+                                Add a required number question outside the repeating sections first, for example
+                                "Number of people", with a minimum of 1.
+                            </small>
+                        </div>
+                        <div v-if="draft.settings.feePricing !== 'flat' && draft.settings.feePricing !== 'perQuantity'" class="col-md-5 mb-3">
                             <label class="form-label" for="formFeePerEntry">
                                 {{ draft.settings.feePricing === 'count' ? 'Count the entries of' : 'Charged' }}
                             </label>
@@ -1104,6 +1159,7 @@ import {
     uniqueFormIdentifier
 } from '@/core/types/data/masjid-related/Form';
 import FormFieldEditor from '@/components/forms/FormFieldEditor.vue';
+import { type FeePricing, feePricingOf } from '@/components/forms/formFeePricing';
 import FormStaffCodesModal from '@/components/forms/FormStaffCodesModal.vue';
 import { useFormsStore } from '@/stores/masjid/formsStore';
 import { useConnectStore } from '@/stores/masjid/connectStore';
@@ -1183,7 +1239,7 @@ type DraftCountTier = {
  * How the fee's price is worked out. Exactly one is saved (buildPayload()): the server
  * refuses countTiers together with amount or tiers.
  */
-type FeePricing = 'none' | 'flat' | 'perEntry' | 'dateSteps' | 'count';
+// FeePricing (and how a stored fee is read as one) lives in ./formFeePricing.ts, tested on its own.
 
 /** Who pays the card processing fee on a card payment. */
 type FeeCoverage = 'absorb' | 'optional' | 'required';
@@ -1203,6 +1259,8 @@ type DraftSettings = {
     feeAmount: number | null;
     feeCurrency: string;
     feePerEntryOfSection: string | null;
+    /** settings.fee.perQuantityOf: the number question the price is multiplied by, or null. */
+    feePerQuantityOf: string | null;
     feePricing: FeePricing;
     feeTiers: DraftTier[];
     feeCountTiers: DraftCountTier[];
@@ -1247,7 +1305,7 @@ const MANAGED_SETTINGS_KEYS = [
     'whatsappUrl', 'whatsappLabel'
 ] as const;
 // `pricing` is Form::feeRule()'s computed marker, never part of what is saved.
-const MANAGED_FEE_KEYS = ['amount', 'currency', 'perEntryOfSection', 'tiers', 'countTiers', 'pricing'] as const;
+const MANAGED_FEE_KEYS = ['amount', 'currency', 'perEntryOfSection', 'perQuantityOf', 'tiers', 'countTiers', 'pricing'] as const;
 const MANAGED_PAYMENT_KEYS = [
     'online', 'staffCodes', 'allowFeeCoverage', 'requireFeeCoverage', 'officePayment', 'officeInstructions', 'eventDate'
 ] as const;
@@ -1287,6 +1345,16 @@ const PRICING_MODES: { value: FeePricing; label: string; help: string }[] = [
         value: 'count',
         label: 'Price by number of entries',
         help: 'One total for 1 entry, another for 2, and so on, for example a family price by number of children. It is not multiplied.'
+    },
+    {
+        value: 'perQuantity',
+        label: 'A price for each, times a number people type',
+        help: 'The price is multiplied by the answer to a number question, for example per person when someone gives for their whole family.'
+    },
+    {
+        value: 'choice',
+        label: 'A price for each choice of a question',
+        help: 'Each choice of one question has its own price, for example sponsorship levels. Set up when the form is imported.'
     }
 ];
 
@@ -1392,6 +1460,7 @@ const blankSettings = (): DraftSettings => ({
     feeAmount: null,
     feeCurrency: 'USD',
     feePerEntryOfSection: null,
+    feePerQuantityOf: null,
     feePricing: 'none',
     feeTiers: [],
     feeCountTiers: [],
@@ -1557,12 +1626,7 @@ const buildCountTier = (tier: DraftCountTier): FormFeeCountTier => ({
  * Which pricing a stored fee uses. A fee with no amount, no date steps and no prices by
  * number of entries charges nothing (Form::feeRule() is null), so it reads as No price.
  */
-const pricingOf = (fee: Record<string, any>): FeePricing => {
-    if (Array.isArray(fee.countTiers) && fee.countTiers.length) return 'count';
-    if (Array.isArray(fee.tiers) && fee.tiers.length) return 'dateSteps';
-    if (toAmount(fee.amount) === null) return 'none';
-    return typeof fee.perEntryOfSection === 'string' && fee.perEntryOfSection ? 'perEntry' : 'flat';
-};
+const pricingOf = (fee: Record<string, any>): FeePricing => feePricingOf(fee);
 
 /**
  * settings.payment, or null to leave it out. Written for a form that already had one
@@ -1709,6 +1773,7 @@ const load = async () => {
                 feePerEntryOfSection: typeof fee.perEntryOfSection === 'string' && fee.perEntryOfSection
                     ? fee.perEntryOfSection
                     : null,
+                feePerQuantityOf: typeof fee.perQuantityOf === 'string' && fee.perQuantityOf ? fee.perQuantityOf : null,
                 feePricing: pricingOf(fee),
                 feeTiers: (Array.isArray(fee.tiers) ? fee.tiers : []).map(toDraftTier),
                 feeCountTiers: (Array.isArray(fee.countTiers) ? fee.countTiers : []).map(toDraftCountTier),
@@ -1798,14 +1863,24 @@ const buildPayload = (): FormPayload => {
     const pricing = draftSettings.feePricing;
     const currency = (draftSettings.feeCurrency || 'USD').toUpperCase();
 
+    // Prices by answer go back exactly as loaded, and only in their own mode: beside any other
+    // price the server refuses them.
+    const feeWithoutChoice = omit(preserved.value.fee, ['byChoice']);
+
     if (pricing === 'none') {
         // No price, chosen as such (an empty price box under another choice blocks the save).
+    } else if (pricing === 'choice') {
+        settings.fee = {
+            ...preserved.value.fee,
+            currency,
+            ...(draftSettings.feePerQuantityOf ? { perQuantityOf: draftSettings.feePerQuantityOf } : {})
+        };
     } else if (pricing === 'count') {
         const countTiers = draftSettings.feeCountTiers.map(buildCountTier);
 
         if (countTiers.length) {
             settings.fee = {
-                ...preserved.value.fee,
+                ...feeWithoutChoice,
                 currency,
                 perEntryOfSection: draftSettings.feePerEntryOfSection || null,
                 countTiers
@@ -1818,13 +1893,20 @@ const buildPayload = (): FormPayload => {
 
         if (draftSettings.feeAmount !== null || tiers.length) {
             const fee: FormFeeRule = {
-                ...preserved.value.fee,
+                ...feeWithoutChoice,
                 currency,
-                perEntryOfSection: pricing === 'flat' ? null : (draftSettings.feePerEntryOfSection || null)
+                perEntryOfSection: pricing === 'flat' || pricing === 'perQuantity' ? null : (draftSettings.feePerEntryOfSection || null)
             };
 
             if (draftSettings.feeAmount !== null) fee.amount = draftSettings.feeAmount;
             if (tiers.length) fee.tiers = tiers;
+
+            // The number question the price is multiplied by: its own mode, or date steps that
+            // were imported with one and are charged once per submission otherwise.
+            const quantity = pricing === 'perQuantity' || (pricing === 'dateSteps' && !fee.perEntryOfSection)
+                ? draftSettings.feePerQuantityOf
+                : null;
+            if (quantity) fee.perQuantityOf = quantity;
 
             settings.fee = fee;
         }
@@ -2357,7 +2439,9 @@ const problems = computed<string[]>(() => {
         found.push('The fee cannot be negative.');
     }
 
-    const perEntry = pricing === 'flat' || pricing === 'none' ? null : draft.value.settings.feePerEntryOfSection;
+    const perEntry = pricing === 'flat' || pricing === 'none' || pricing === 'perQuantity' || pricing === 'choice'
+        ? null
+        : draft.value.settings.feePerEntryOfSection;
     if (perEntry && !repeatableSections.value.some(section => section.id === perEntry)) {
         found.push(`The fee is charged per entry of "${perEntry}", which is not a repeating section.`);
     }
@@ -2400,7 +2484,55 @@ const feeAmountOptional = computed(() =>
 
 const feeAmountLabel = computed(() => {
     if (feeAmountOptional.value) return 'Price when no step applies';
+    if (draft.value.settings.feePricing === 'perQuantity') return 'Price for each';
     return draft.value.settings.feePricing === 'perEntry' ? 'Price per entry' : 'Amount';
+});
+
+/** Number questions outside the repeating sections: what a price may be multiplied by. */
+const quantityQuestions = computed(() =>
+    draft.value.sections
+        .filter(section => !section.repeatable)
+        .flatMap(section => section.fields)
+        .filter(field => field.type === 'number' && !!field.name?.trim())
+);
+
+const quantityQuestionLabel = computed(() => {
+    const name = draft.value.settings.feePerQuantityOf;
+    const question = quantityQuestions.value.find(field => field.name === name);
+
+    return question?.label || name || 'a number question';
+});
+
+/** The choice pricing is offered only for a form that already has it: only an import sets it up. */
+const visiblePricingModes = computed(() =>
+    PRICING_MODES.filter(mode => mode.value !== 'choice' || !!preserved.value.fee.byChoice)
+);
+
+/**
+ * The imported prices by answer, read for display (settings.fee.byChoice, with the choice
+ * labels from the question and the reservable dates from settings.reservation).
+ */
+const choicePricing = computed(() => {
+    const block = asRecord(preserved.value.fee.byChoice);
+    const questionName = typeof block.field === 'string' ? block.field : '';
+    const question = draft.value.sections.flatMap(section => section.fields).find(field => field.name === questionName);
+    const reservation = asRecord(preserved.value.settings.reservation);
+    const money = (amount: unknown): string => {
+        const value = toAmount(amount);
+        return value === null ? '—' : `${value.toFixed(2)} ${(draft.value.settings.feeCurrency || 'USD').toUpperCase()}`;
+    };
+
+    return {
+        questionLabel: question?.label || questionName,
+        levels: (Array.isArray(block.prices) ? block.prices : []).map((price: Record<string, any>) => ({
+            value: String(price?.value ?? ''),
+            label: question?.options?.find(option => option.value === price?.value)?.label || String(price?.value ?? ''),
+            amount: money(price?.amount),
+            perQuantity: price?.perQuantity === true,
+            reservesDate: price?.reservesDate === true
+        })),
+        dates: Array.isArray(reservation.dates) ? reservation.dates.filter((date: unknown): date is string => typeof date === 'string') : null
+    };
 });
 
 /**
@@ -2606,7 +2738,11 @@ const paymentIssues = computed<Record<string, string>>(() => {
 
     // A priced choice with no price would save the form as FREE without a word (switching away
     // from prices by number of entries leaves the box empty). Free has to be chosen: No price.
-    if ((pricing === 'flat' || pricing === 'perEntry') && s.feeAmount === null) {
+    if (pricing === 'perQuantity' && !s.feePerQuantityOf) {
+        issues['settings.fee.perQuantityOf'] = 'Choose the number question the price is multiplied by.';
+    }
+
+    if ((pricing === 'flat' || pricing === 'perEntry' || pricing === 'perQuantity') && s.feeAmount === null) {
         issues['settings.fee.amount'] = 'Enter a price, or choose No price.';
     }
 
@@ -2616,7 +2752,8 @@ const paymentIssues = computed<Record<string, string>>(() => {
 
     if (!paymentOn.value) return issues;
 
-    if (!issues['settings.fee.perEntryOfSection'] && pricing !== 'none') {
+    // A number question or a choice's prices say what is charged for; the server checks both.
+    if (!issues['settings.fee.perEntryOfSection'] && pricing !== 'none' && pricing !== 'perQuantity' && pricing !== 'choice') {
         if (pricing === 'flat') {
             issues['settings.fee.perEntryOfSection'] = 'A form that takes payment cannot charge one price per submission. Choose a pricing that counts the entries of a repeating section.';
         } else if (!s.feePerEntryOfSection) {
@@ -2632,7 +2769,7 @@ const paymentIssues = computed<Record<string, string>>(() => {
 
     const hasPrice = pricing === 'none'
         ? false
-        : (pricing === 'count'
+        : pricing === 'choice' ? true : (pricing === 'count'
             ? s.feeCountTiers.length > 0
             : s.feeAmount !== null || (pricing === 'dateSteps' && s.feeTiers.length > 0));
 
@@ -2644,7 +2781,7 @@ const paymentIssues = computed<Record<string, string>>(() => {
 
     // Prices by number of entries are checked in countTierIssues().
     const prices: [string, number][] = [];
-    if (pricing !== 'count' && pricing !== 'none' && s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
+    if (pricing !== 'count' && pricing !== 'none' && pricing !== 'choice' && s.feeAmount !== null) prices.push(['settings.fee.amount', s.feeAmount]);
     if (pricing === 'dateSteps') {
         s.feeTiers.forEach((tier, index) => {
             if (tier.amount !== null) prices.push([`settings.fee.tiers.${index}.amount`, tier.amount]);
@@ -2744,6 +2881,10 @@ const setPricing = (pricing: FeePricing) => {
     // With one repeating section there is only one section to count.
     if ((pricing === 'perEntry' || pricing === 'count') && !s.feePerEntryOfSection && repeatableSections.value.length === 1) {
         s.feePerEntryOfSection = repeatableSections.value[0].id;
+    }
+
+    if (pricing === 'perQuantity' && !s.feePerQuantityOf && quantityQuestions.value.length === 1) {
+        s.feePerQuantityOf = quantityQuestions.value[0].name;
     }
 
     if (pricing === 'count' && !s.feeCountTiers.length) {

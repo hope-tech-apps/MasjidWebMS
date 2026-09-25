@@ -40,7 +40,14 @@
                                         <td style="padding:12px 16px; color:#7b8794;">{{ $amountLabel }}</td>
                                         <td style="padding:12px 16px; text-align:right; font-weight:700; font-size:18px;">
                                             {{ $amountLine }}@if ($tierLabel)<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $tierLabel }} rate</span>@endif
+                                            @if (! empty($breakdownLine))<span style="display:block; font-weight:400; font-size:12px; color:#7b8794;">{{ $breakdownLine }}</span>@endif
                                         </td>
+                                    </tr>
+                                @endif
+                                @if (! empty($reservedDate))
+                                    <tr>
+                                        <td style="padding:12px 16px; color:#7b8794;">Date reserved</td>
+                                        <td style="padding:12px 16px; text-align:right; font-weight:600;">{{ $reservedDate }}</td>
                                     </tr>
                                 @endif
                                 @if ($paymentLine)

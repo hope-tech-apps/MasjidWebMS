@@ -152,6 +152,25 @@ class Form extends Model
     public const PRICING_COUNT = 'count';
 
     /**
+     * feeRule()['pricing'] on a form priced by the answer to one choice question
+     * (settings.fee.byChoice; Ramadan giving, 2026-09-25): iftar sponsorship levels.
+     */
+    public const PRICING_CHOICE = 'choice';
+
+    /**
+     * The most units one submission may be charged for by a quantity question
+     * (settings.fee.perQuantityOf), whatever the question's own `max` says.
+     *
+     * Derivation: the same ceiling the count prices already put on a family size
+     * (StoreFormRequest, 'settings.fee.countTiers.*.min' => max:1000). It exists so a
+     * typo ("1000" people for "10") or a scripted post cannot open a page for an
+     * amount nobody meant; Stripe's own $999,999.99 bound is still checked before any
+     * page opens (FormResponseCheckoutService::refusal()). A form that needs more
+     * than this per submission is not a donation form.
+     */
+    public const MAX_QUANTITY = 1000;
+
+    /**
      * Whether any price on this form is above zero: the flat amount, any tier
      * whatever its date, or any price by number of entries.
      *
@@ -179,6 +198,14 @@ class Form extends Model
 
         foreach (is_array($fee['countTiers'] ?? null) ? $fee['countTiers'] : [] as $tier) {
             $amounts[] = is_array($tier) ? ($tier['amount'] ?? null) : null;
+        }
+
+        // Priced by the answer to a question (Ramadan giving, 2026-09-25): without these a
+        // form whose only prices are its sponsorship levels would "charge nothing".
+        $byChoice = is_array($fee['byChoice'] ?? null) ? $fee['byChoice'] : [];
+
+        foreach (is_array($byChoice['prices'] ?? null) ? $byChoice['prices'] : [] as $price) {
+            $amounts[] = is_array($price) ? ($price['amount'] ?? null) : null;
         }
 
         foreach ($amounts as $amount) {
@@ -444,6 +471,10 @@ class Form extends Model
             return self::countFeeRule($fee);
         }
 
+        if (self::hasChoicePrices($fee)) {
+            return self::choiceFeeRule($fee);
+        }
+
         $tiers = is_array($fee['tiers'] ?? null) ? array_values($fee['tiers']) : [];
 
         if ($tiers === [] && ! isset($fee['amount'])) {
@@ -460,13 +491,172 @@ class Form extends Model
             return null;
         }
 
-        return [
+        $rule = [
             'amount' => (float) $amount,
             'currency' => $fee['currency'] ?? 'USD',
             'perEntryOfSection' => $fee['perEntryOfSection'] ?? null,
             'tiers' => $tiers,
             'currentTier' => $currentTier,
         ];
+
+        // Unit price x a quantity question (Zakat-ul-Fitr per person; 2026-09-25). The key
+        // is added only when the form has one, so every other unit-priced rule keeps
+        // exactly the keys it always had. Beside perEntryOfSection it is unreadable (one
+        // of the two counts would be ignored), and the whole rule is null: refused,
+        // never under-charged.
+        $perQuantity = self::quantityFieldOf($fee);
+
+        if ($perQuantity !== null) {
+            if (is_string($rule['perEntryOfSection']) && trim($rule['perEntryOfSection']) !== '') {
+                return null;
+            }
+
+            $rule['perQuantityOf'] = $perQuantity;
+        }
+
+        return $rule;
+    }
+
+    /**
+     * The quantity question (settings.fee.perQuantityOf): the name of a number question
+     * whose whole-number answer is how many units a submission is charged for, or null.
+     */
+    public function quantityField(): ?string
+    {
+        $fee = $this->settings['fee'] ?? null;
+
+        return is_array($fee) ? self::quantityFieldOf($fee) : null;
+    }
+
+    /**
+     * The date list reservations are made from (settings.reservation; Ramadan giving,
+     * 2026-09-25): the question that asks for the date and the dates it may name, as
+     * valid ISO dates, unique and in order. Null when the form reserves nothing, or when
+     * the block cannot be read, so the question offers no date at all.
+     *
+     * @return array{field: string, dates: array<int,string>}|null
+     */
+    public function reservation(): ?array
+    {
+        $block = $this->settings['reservation'] ?? null;
+
+        if (! is_array($block) || ! is_string($block['field'] ?? null) || trim($block['field']) === '') {
+            return null;
+        }
+
+        $dates = [];
+
+        foreach (is_array($block['dates'] ?? null) ? $block['dates'] : [] as $date) {
+            if (is_string($date) && preg_match('/^(\d{4})-(\d{2})-(\d{2})\z/', $date, $parts) === 1
+                && checkdate((int) $parts[2], (int) $parts[3], (int) $parts[1])) {
+                $dates[$date] = true;
+            }
+        }
+
+        $dates = array_keys($dates);
+        sort($dates, SORT_STRING);
+
+        return ['field' => trim($block['field']), 'dates' => $dates];
+    }
+
+    /**
+     * The date this submission reserves, or null when it reserves none: the form has no
+     * date list, the price chosen does not reserve a date (Individual Iftar), or the
+     * question was left blank. On a form not priced by choice, every submission that
+     * names a date reserves it.
+     *
+     * @param  array<string,mixed>  $data  the cleaned submission
+     */
+    public function reservedDateIn(array $data): ?string
+    {
+        $reservation = $this->reservation();
+
+        if ($reservation === null) {
+            return null;
+        }
+
+        $fee = $this->feeRule();
+
+        if (($fee['pricing'] ?? null) === self::PRICING_CHOICE) {
+            $chosen = self::chosenPrice($fee, $data);
+
+            if ($chosen === null || ! $chosen['reservesDate']) {
+                return null;
+            }
+        }
+
+        $date = $data[$reservation['field']] ?? null;
+
+        return is_string($date) && $date !== '' ? $date : null;
+    }
+
+    /**
+     * The submission without the answers its price does not use, so what is stored and
+     * emailed is what was charged and reserved: on a form priced by choice, the quantity
+     * answer of a level not charged per unit (a Quarter Iftar with "3" typed in the
+     * people box), and a date named beside a level that reserves none.
+     *
+     * Every other form comes back exactly as it went in.
+     *
+     * @param  array<string,mixed>  $data  the cleaned submission (FormSchema::only())
+     * @return array<string,mixed>
+     */
+    public function withoutUnusedPriceAnswers(array $data): array
+    {
+        $fee = $this->feeRule();
+
+        if (($fee['pricing'] ?? null) !== self::PRICING_CHOICE) {
+            return $data;
+        }
+
+        $chosen = self::chosenPrice($fee, $data);
+
+        if ($chosen === null) {
+            return $data;
+        }
+
+        $quantity = $fee['perQuantityOf'] ?? null;
+
+        if (! $chosen['perQuantity'] && is_string($quantity)) {
+            unset($data[$quantity]);
+        }
+
+        $reservation = $this->reservation();
+
+        if (! $chosen['reservesDate'] && $reservation !== null) {
+            unset($data[$reservation['field']]);
+        }
+
+        return $data;
+    }
+
+    /**
+     * The label a choice question shows for one of its values, or null. Read from the
+     * schema's typed options, so the receipt names the level as the page did.
+     */
+    public function optionLabel(string $field, string $value): ?string
+    {
+        foreach ($this->sections() as $section) {
+            if (! empty($section['repeatable'])) {
+                continue;
+            }
+
+            foreach (is_array($section['fields'] ?? null) ? $section['fields'] : [] as $candidate) {
+                if (! is_array($candidate) || ($candidate['name'] ?? null) !== $field) {
+                    continue;
+                }
+
+                foreach (is_array($candidate['options'] ?? null) ? $candidate['options'] : [] as $option) {
+                    if (is_array($option) && ($option['value'] ?? null) === $value) {
+                        $label = $option['label'] ?? null;
+
+                        return is_string($label) && trim($label) !== '' ? trim($label) : null;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /** Whether settings.fee prices by the number of entries (any non-empty `countTiers`). */
@@ -489,12 +679,22 @@ class Form extends Model
      *                     order the tiers were stored in; quantity 1 — or 0 with
      *                     no rows, so an empty list owes nothing and the paying
      *                     form's "Add at least one entry." refusal fires
+     *   per quantity      unit = amount (the date tier in force), quantity = the whole
+     *                     number answered to the settings.fee.perQuantityOf question
+     *                     (Zakat-ul-Fitr: $17 x 4 people). A blank answer is 0, so the
+     *                     never-free refusal fires; FormSchema requires it first
+     *   by choice         unit = the price of the level the settings.fee.byChoice
+     *                     question was answered with (Quarter Iftar $450); quantity =
+     *                     the quantity answer for a level charged per unit
+     *                     (Individual Iftar $18 x 3), else 1
      *
-     * `entries` is the counted section's row count (1 on a flat fee); `label` names
-     * the tier ("Early bird", "3 children"), or null.
+     * `entries` is the counted section's row count (1 on a flat fee; the quantity on
+     * a quantity or choice price); `label` names the tier ("Early bird", "3
+     * children") or the level chosen ("Quarter Iftar"), or null.
      *
      * Null when the form charges nothing, or when a count schedule cannot price
-     * this many rows (unreadable, or no tier starts low enough). A caller that
+     * this many rows (unreadable, or no tier starts low enough), when a choice
+     * names no level, or when a quantity is above Form::MAX_QUANTITY. A caller that
      * takes payment refuses the submission on a null; it never charges less.
      *
      * @param  array<string,mixed>  $data  the cleaned submission (FormSchema::only()), or a stored row's data
@@ -530,15 +730,193 @@ class Form extends Model
             return ['fee' => $fee, 'unit' => $tier['amount'], 'quantity' => 1, 'entries' => (int) $entries, 'label' => $tier['label']];
         }
 
+        if (($fee['pricing'] ?? null) === self::PRICING_CHOICE) {
+            $chosen = self::chosenPrice($fee, $data);
+
+            if ($chosen === null) {
+                return null;
+            }
+
+            $quantity = $chosen['perQuantity'] ? self::quantityIn($data, $fee['perQuantityOf']) : 1;
+
+            if ($quantity === null) {
+                return null;
+            }
+
+            return [
+                'fee' => $fee,
+                'unit' => $chosen['amount'],
+                'quantity' => $quantity,
+                'entries' => $quantity,
+                'label' => $this->optionLabel($fee['choiceField'], $chosen['value']) ?? $chosen['value'],
+            ];
+        }
+
         $label = $fee['currentTier']['label'] ?? null;
+        $label = is_string($label) && trim($label) !== '' ? trim($label) : null;
+
+        if (isset($fee['perQuantityOf'])) {
+            $quantity = self::quantityIn($data, $fee['perQuantityOf']);
+
+            if ($quantity === null) {
+                return null;
+            }
+
+            return ['fee' => $fee, 'unit' => (float) $fee['amount'], 'quantity' => $quantity, 'entries' => $quantity, 'label' => $label];
+        }
 
         return [
             'fee' => $fee,
             'unit' => (float) $fee['amount'],
             'quantity' => $entries ?? 1,
             'entries' => $entries ?? 1,
-            'label' => is_string($label) && trim($label) !== '' ? trim($label) : null,
+            'label' => $label,
         ];
+    }
+
+    /** @param  array<string,mixed>  $fee */
+    private static function quantityFieldOf(array $fee): ?string
+    {
+        $field = $fee['perQuantityOf'] ?? null;
+
+        return is_string($field) && trim($field) !== '' ? trim($field) : null;
+    }
+
+    /**
+     * The units a quantity question's answer charges for: a whole number, 0 when the
+     * answer is blank or not a whole number (the caller refuses a total of 0, and
+     * FormSchema has already refused both), or null above MAX_QUANTITY, which is never
+     * priced whatever the question's own maximum says.
+     *
+     * @param  array<string,mixed>  $data
+     */
+    private static function quantityIn(array $data, mixed $field): ?int
+    {
+        if (! is_string($field)) {
+            return 0;
+        }
+
+        $raw = $data[$field] ?? null;
+        $quantity = is_bool($raw) ? false : filter_var(is_string($raw) ? trim($raw) : $raw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+
+        if ($quantity === false) {
+            return 0;
+        }
+
+        return $quantity > self::MAX_QUANTITY ? null : $quantity;
+    }
+
+    /** @param  array<string,mixed>  $fee */
+    private static function hasChoicePrices(array $fee): bool
+    {
+        // As for count tiers: anything but absent, null or empty is a price list, readable
+        // or not, so a junk value makes the price unreadable and never unit-priced.
+        return array_key_exists('byChoice', $fee) && $fee['byChoice'] !== null && $fee['byChoice'] !== [];
+    }
+
+    /**
+     * The fee rule of a form priced by the answer to one choice question, or null when
+     * its list cannot be read. All or nothing, as for count tiers: a level that cannot
+     * be read must not quietly drop out and leave its payers unpriced.
+     *
+     * `amount` is the lowest level's price, for display only (the public payload does
+     * not publish it: SectionContentBinder::publicFee()); what is owed is the chosen
+     * level's, resolved by priceFor().
+     *
+     * @param  array<string,mixed>  $fee
+     * @return array<string,mixed>|null
+     */
+    private static function choiceFeeRule(array $fee): ?array
+    {
+        $block = $fee['byChoice'];
+        $field = is_array($block) && is_string($block['field'] ?? null) ? trim($block['field']) : '';
+        $raw = is_array($block) ? ($block['prices'] ?? null) : null;
+
+        if ($field === '' || ! is_array($raw) || $raw === []) {
+            return null;
+        }
+
+        $prices = [];
+
+        foreach ($raw as $price) {
+            $value = is_array($price) ? ($price['value'] ?? null) : null;
+            $amount = is_array($price) ? ($price['amount'] ?? null) : null;
+
+            if (! is_string($value) || $value === '' || isset($prices[$value])
+                || is_bool($amount) || ! is_numeric($amount) || (float) $amount < 0 || ! is_finite((float) $amount)) {
+                return null;
+            }
+
+            $prices[$value] = [
+                'value' => $value,
+                'amount' => (float) $amount,
+                'perQuantity' => filter_var($price['perQuantity'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true,
+                'reservesDate' => filter_var($price['reservesDate'] ?? false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true,
+            ];
+        }
+
+        $perQuantity = self::quantityFieldOf($fee);
+
+        // A level charged per unit with no quantity question to count by would be charged
+        // for nothing, or for 1 without saying so.
+        foreach ($prices as $price) {
+            if ($price['perQuantity'] && $perQuantity === null) {
+                return null;
+            }
+        }
+
+        return [
+            'amount' => min(array_column($prices, 'amount')),
+            'currency' => $fee['currency'] ?? 'USD',
+            'perEntryOfSection' => null,
+            'tiers' => [],
+            'currentTier' => null,
+            'pricing' => self::PRICING_CHOICE,
+            'choiceField' => $field,
+            'choicePrices' => array_values($prices),
+            'perQuantityOf' => $perQuantity,
+        ];
+    }
+
+    /**
+     * The price level the submission chose on a form priced by choice, or null when its
+     * answer names none.
+     *
+     * @param  array<string,mixed>|null  $fee  feeRule()
+     * @param  array<string,mixed>  $data
+     * @return array{value:string,amount:float,perQuantity:bool,reservesDate:bool}|null
+     */
+    private static function chosenPrice(?array $fee, array $data): ?array
+    {
+        if (($fee['pricing'] ?? null) !== self::PRICING_CHOICE) {
+            return null;
+        }
+
+        $answer = $data[$fee['choiceField']] ?? null;
+
+        if (! is_string($answer)) {
+            return null;
+        }
+
+        foreach ($fee['choicePrices'] as $price) {
+            if ($price['value'] === $answer) {
+                return $price;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The level a submission chose, for the validator and the receipt, or null on a form
+     * not priced by choice or when the answer names no level.
+     *
+     * @param  array<string,mixed>  $data
+     * @return array{value:string,amount:float,perQuantity:bool,reservesDate:bool}|null
+     */
+    public function chosenPriceIn(array $data): ?array
+    {
+        return self::chosenPrice($this->feeRule(), $data);
     }
 
     /** @param  array<string,mixed>  $fee */

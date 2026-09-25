@@ -138,13 +138,15 @@ class FormNotifier
                 registrantName: $response->respondent_name,
                 registrantEmail: $response->respondent_email,
                 registrantPhone: $response->respondent_phone,
-                entryCount: (int) $response->entry_count,
+                entryCount: self::entryCount($form, $response),
                 amountLine: self::amountLine($form, $response),
                 tierLabel: self::tierLabel($form, $response),
                 people: $people,
                 adminUrl: self::adminUrl(),
                 paymentLine: $coordinatorPaymentLine,
                 paymentOwed: $owedAtOffice,
+                breakdownLine: self::breakdownLine($response),
+                reservedDate: self::reservedDate($response),
             ));
         });
 
@@ -166,7 +168,7 @@ class FormNotifier
                 formName: $form->name,
                 masjidName: $masjid?->name ?? 'your masjid',
                 registrantName: $response->respondent_name,
-                entryCount: (int) $response->entry_count,
+                entryCount: self::entryCount($form, $response),
                 amountLine: self::amountLine($form, $response),
                 tierLabel: self::tierLabel($form, $response),
                 people: $people,
@@ -187,6 +189,8 @@ class FormNotifier
                 paymentLine: $paymentLine,
                 whatsappUrl: self::whatsappUrl($form, $response),
                 whatsappLabel: self::whatsappLabel($form),
+                breakdownLine: self::breakdownLine($response),
+                reservedDate: self::reservedDate($response),
             ));
         });
     }
@@ -393,6 +397,50 @@ class FormNotifier
             FormResponse::METHOD_EXTERNAL => $via !== null ? "Paid by {$via} (recorded by staff)" : 'Paid (recorded by staff)',
             default => null,
         };
+    }
+
+    /**
+     * "People registered" on the emails: the row's entry count, except on a form priced by
+     * a quantity question or by answer (Ramadan giving, 2026-09-25), where there is no
+     * list of people and the count would read 1 for four people's Zakat-ul-Fitr. There
+     * the breakdown line says how many, and 0 hides the row.
+     */
+    private static function entryCount(Form $form, FormResponse $response): int
+    {
+        $fee = $form->feeRule($response->submitted_at);
+
+        if (isset($fee['perQuantityOf']) || ($fee['pricing'] ?? null) === Form::PRICING_CHOICE) {
+            return 0;
+        }
+
+        return (int) $response->entry_count;
+    }
+
+    /**
+     * "$17.00 × 4", from the snapshot the row was written at (FormResponse::priceBreakdown()),
+     * when more than one unit was charged. Null otherwise: one unit is the amount itself.
+     */
+    private static function breakdownLine(FormResponse $response): ?string
+    {
+        $breakdown = $response->priceBreakdown();
+
+        if ($breakdown === null || $breakdown['quantity'] < 2) {
+            return null;
+        }
+
+        return self::money($breakdown['unit_minor'], $breakdown['currency']) . ' × ' . $breakdown['quantity'];
+    }
+
+    /**
+     * The date this registration holds from its form's list, for a human, or null: none
+     * reserved, or its hold went to another payer (FormReservations), when the email must
+     * not promise a date that is no longer theirs.
+     */
+    private static function reservedDate(FormResponse $response): ?string
+    {
+        $reservation = FormReservations::of($response);
+
+        return $reservation !== null && $reservation->isHolding() ? FormReservations::label($reservation->date()) : null;
     }
 
     /** An unpaid registration whose family chose to pay the office. */

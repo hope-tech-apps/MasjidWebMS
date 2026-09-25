@@ -17,6 +17,7 @@ use App\Services\Stripe\FormResponseCheckoutService;
 use App\Support\Errors;
 use App\Support\FormCashTotals;
 use App\Support\FormNotifier;
+use App\Support\FormReservations;
 use App\Support\FormRoster;
 use App\Support\FormSchema;
 use Illuminate\Http\JsonResponse;
@@ -149,6 +150,9 @@ class FormResponsesController extends Controller
                     'payment_filters' => IndexFormResponsesRequest::PAYMENT_FILTERS,
                     'collected_filters' => IndexFormResponsesRequest::COLLECTED_FILTERS,
                     'payment' => $this->paymentMeta($form),
+                    // Whether the form reserves dates from a list (Ramadan giving,
+                    // 2026-09-25): the screen offers the reservations board only then.
+                    'reservations' => $form->reservation() !== null,
                 ],
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
@@ -213,6 +217,9 @@ class FormResponsesController extends Controller
                     'payment_filters' => IndexFormResponsesRequest::PAYMENT_FILTERS,
                     'collected_filters' => IndexFormResponsesRequest::COLLECTED_FILTERS,
                     'payment' => $this->paymentMeta($form),
+                    // Whether the form reserves dates from a list (Ramadan giving,
+                    // 2026-09-25): the screen offers the reservations board only then.
+                    'reservations' => $form->reservation() !== null,
                 ],
             ], Response::HTTP_OK);
         } catch (\Exception $e) {
@@ -702,6 +709,30 @@ class FormResponsesController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => FormCashTotals::for($this->query($request, $masjid, $form), $codes),
+        ], Response::HTTP_OK);
+    }
+
+    /**
+     * GET .../responses/reservations — the form's date list and who holds each date
+     * (App\Support\FormReservations::board(); Ramadan giving, 2026-09-25): open, held
+     * (unpaid, still protected), reserved (paid), lapsed or cancelled (offered again),
+     * plus the conflicts, registrations paid after their date went to someone else.
+     *
+     * `enabled` is false on a form with no date list, and the screen shows no panel.
+     * Resolved through the route's masjid like every read here, outside any try, so
+     * another organisation's form is a 404. Declared before /{response_id}.
+     */
+    public function reservations($masjid_id, $form_id): JsonResponse
+    {
+        $masjid = Masjid::findOrFail($masjid_id);
+        $form = $masjid->forms()->findOrFail($form_id);
+        $form->setRelation('masjid', $masjid);
+
+        $enabled = $form->reservation() !== null;
+
+        return response()->json([
+            'status' => 'success',
+            'data' => ['enabled' => $enabled] + ($enabled ? FormReservations::board($form) : ['dates' => [], 'conflicts' => []]),
         ], Response::HTTP_OK);
     }
 
@@ -1385,7 +1416,24 @@ class FormResponsesController extends Controller
             'status_changed_by' => $this->person($response->statusChangedBy),
         ];
 
+        // What the money leg was priced at: unit x quantity and the tier or level
+        // (FormResponse::priceBreakdown()), or null on a row without a snapshot.
+        $row['price_breakdown'] = $response->priceBreakdown();
+
         if ($withData) {
+            // The date this registration reserved and whether it still holds it
+            // (FormReservations::stateOf()), or null. Detail only, like `data`: the list
+            // would read it once per row, and the reservations board shows them all.
+            $reservation = FormReservations::of($response);
+            $row['reservation'] = $reservation === null ? null : [
+                'date' => $reservation->date(),
+                'label' => FormReservations::label($reservation->date()),
+                'state' => FormReservations::stateOf($reservation, $response),
+                'held_until' => optional($reservation->held_until)->toIso8601String(),
+                'released_at' => optional($reservation->released_at)->toIso8601String(),
+                'release_reason' => $reservation->release_reason,
+            ];
+
             $row['data'] = $response->data;
             // Only on the detail view, for the same reason `data` is: the list would
             // otherwise issue a query per row for something no list column shows. The

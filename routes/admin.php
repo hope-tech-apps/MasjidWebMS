@@ -575,6 +575,8 @@ Route::prefix('admin')->group(function () {
                 Route::get('/roster', 'roster');
                 // The cash each staff member holds, over the list's own filters.
                 Route::get('/cash-totals', 'cashTotals');
+                // The form's reservable dates and who holds each (Ramadan giving, 2026-09-25).
+                Route::get('/reservations', 'reservations');
                 Route::get('/', 'index');
                 Route::get('/{response_id}', 'show');
                 // Uploaded files (a careers form's résumé) live on a PRIVATE disk with

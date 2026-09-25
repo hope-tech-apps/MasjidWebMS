@@ -32,18 +32,41 @@ use Closure;
  * remaining day closed: a non-empty answer gets NONE_OPEN and a required field
  * is not passed. FormSchema used to skip the in-list check when a field had no
  * options, which for a sourced field would have let any string through.
+ *
+ * ## 'reservable_dates' (Ramadan giving through forms, 2026-09-25)
+ *
+ * The second source: the form's OWN date list (settings.reservation), less every
+ * date another payer holds (App\Support\FormReservations). OFFER is the dates open
+ * now, from today on the organisation's clock; LABEL is every listed or reserved
+ * date. It needs no calendar and no capability, so the builder's source picker does
+ * not list it (BUILDER_SOURCES): the list has no editor there, and a form arrives
+ * with it through form:import.
  */
 final class FormOptionSources
 {
     public const SCHOOL_MEETING_DAYS = 'school_meeting_days';
 
-    /** key => what the builder calls it. */
+    /** The form's own reservable dates, less those already held (FormReservations). */
+    public const RESERVABLE_DATES = 'reservable_dates';
+
+    /** key => what the builder calls it. Every source a stored schema may name. */
     public const SOURCES = [
         self::SCHOOL_MEETING_DAYS => 'School calendar — meeting days',
+        self::RESERVABLE_DATES => 'This form\'s reservable dates',
     ];
+
+    /**
+     * The sources the builder offers to pick. RESERVABLE_DATES is not one: its date list
+     * (settings.reservation) has no editor in the builder, and a question drawing on an
+     * empty list refuses every answer.
+     */
+    public const BUILDER_SOURCES = [self::SCHOOL_MEETING_DAYS];
 
     /** The field types a source may fill. */
     public const TYPES = ['select', 'radio', 'checkboxGroup'];
+
+    /** The field types the date list may fill: one date per registration. */
+    public const RESERVABLE_TYPES = ['select', 'radio'];
 
     public const OFFER = 'offer';
 
@@ -76,6 +99,10 @@ final class FormOptionSources
             return is_array($field['options'] ?? null) ? $field['options'] : [];
         }
 
+        if ($field['optionsSource'] === self::RESERVABLE_DATES) {
+            return self::reservableDates($form, $purpose, $answers);
+        }
+
         return self::fromSource(SchoolCalendar::for((int) $form->masjid_id), $field['optionsSource'], $purpose, $answers);
     }
 
@@ -101,6 +128,12 @@ final class FormOptionSources
                     continue;
                 }
 
+                if ($field['optionsSource'] === self::RESERVABLE_DATES) {
+                    $schema['sections'][$s]['fields'][$f]['options'] = self::reservableDates($form, $purpose);
+
+                    continue;
+                }
+
                 $calendar ??= SchoolCalendar::for((int) $form->masjid_id);
                 $schema['sections'][$s]['fields'][$f]['options'] = self::fromSource($calendar, $field['optionsSource'], $purpose);
             }
@@ -111,19 +144,29 @@ final class FormOptionSources
 
     /**
      * The member check for a sourced field, against the live offer set. A
-     * closure rather than Rule::in so an EMPTY set still refuses, and says why.
+     * closure rather than Rule::in so an EMPTY set still refuses, and says why,
+     * in the words of the source it came from.
      *
      * @param  array<int,string>  $values
      */
-    public static function rule(array $values): Closure
+    public static function rule(array $values, mixed $source = null): Closure
     {
-        return static function (string $attribute, mixed $value, Closure $fail) use ($values): void {
+        $none = self::noneOpen($source);
+        $gone = $source === self::RESERVABLE_DATES ? FormReservations::NO_LONGER_OPEN : self::NO_LONGER_OPEN;
+
+        return static function (string $attribute, mixed $value, Closure $fail) use ($values, $none, $gone): void {
             if (is_string($value) && in_array($value, $values, true)) {
                 return;
             }
 
-            $fail($values === [] ? self::NONE_OPEN : self::NO_LONGER_OPEN);
+            $fail($values === [] ? $none : $gone);
         };
+    }
+
+    /** What a question whose source offers nothing says: no cleaning Sundays, or no dates. */
+    public static function noneOpen(mixed $source): string
+    {
+        return $source === self::RESERVABLE_DATES ? FormReservations::NONE_OPEN : self::NONE_OPEN;
     }
 
     /**
@@ -143,8 +186,9 @@ final class FormOptionSources
         $count = 0;
 
         foreach (Form::query()->where('masjid_id', $masjidId)->get() as $form) {
+            // Calendar questions only: a form's own reservable dates are not meeting days.
             $names = collect(FormSchema::for($form)->allFields())
-                ->filter(fn (array $row) => self::isSourced($row[2]))
+                ->filter(fn (array $row) => self::isSourced($row[2]) && $row[2]['optionsSource'] === self::SCHOOL_MEETING_DAYS)
                 ->map(fn (array $row) => $row[2]['name'])
                 ->unique()->values()->all();
 
@@ -173,6 +217,25 @@ final class FormOptionSources
         }
 
         return $count;
+    }
+
+    /**
+     * The form's own date list: the dates open now for OFFER, every listed or reserved
+     * date (and the answers passed in) for LABEL.
+     *
+     * @param  array<int,mixed>  $answers
+     * @return array<int,array<string,mixed>>
+     */
+    private static function reservableDates(Form $form, string $purpose, array $answers = []): array
+    {
+        if ($purpose === self::OFFER) {
+            return array_map(fn (string $date): array => [
+                'value' => $date,
+                'label' => FormReservations::label($date),
+            ], FormReservations::offerable($form));
+        }
+
+        return FormReservations::labelled($form, $answers);
     }
 
     /**

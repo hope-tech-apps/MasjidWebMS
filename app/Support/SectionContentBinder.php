@@ -256,13 +256,17 @@ class SectionContentBinder
 
         $fee = $form->feeRule();
         $byCount = $form->pricesByCount();
+        // Priced by a quantity question or by answer (Ramadan giving, 2026-09-25): no single
+        // unit x rows total exists for a renderer that predates them, so unitMinor is null
+        // and such a page draws no total rather than a wrong one. The server prices it.
+        $byQuantityOrChoice = isset($fee['perQuantityOf']) || ($fee['pricing'] ?? null) === Form::PRICING_CHOICE;
 
         $payment = [
             'online' => $online,
             'available' => $form->canTakeCardNow(),
             'allowFeeCoverage' => $form->allowsFeeCoverage(),
             'staffEntry' => $staffCodes && $form->acceptsStaffEntry(),
-            'unitMinor' => $byCount ? null : FormPayment::unitMinor($form),
+            'unitMinor' => $byCount || $byQuantityOrChoice ? null : FormPayment::unitMinor($form),
             'currency' => FormPayment::currencyFor($form),
             'stripeFeePercentage' => StripeFees::percentage(),
             'stripeFeeFixedMinor' => StripeFees::fixed(),
@@ -277,6 +281,29 @@ class SectionContentBinder
                 ], $fee['countTiers'])
                 : null,
         ];
+
+        // Added ONLY on a form priced by a quantity question or by answer, so every other
+        // paying form publishes exactly the keys it always did:
+        //
+        //   quantityField  the number question the unit price is multiplied by
+        //   unitMinorEach  the unit price in cents on a form priced per quantity (not by answer)
+        //   choiceField    the question whose answer sets the price
+        //   choicePrices   [{value, amountMinor, perQuantity, reservesDate}] per level
+        if ($byQuantityOrChoice && $fee !== null) {
+            $payment['quantityField'] = $fee['perQuantityOf'] ?? null;
+
+            if (($fee['pricing'] ?? null) === Form::PRICING_CHOICE) {
+                $payment['choiceField'] = $fee['choiceField'];
+                $payment['choicePrices'] = array_map(fn (array $price) => [
+                    'value' => $price['value'],
+                    'amountMinor' => FormPayment::toMinor($price['amount']),
+                    'perQuantity' => $price['perQuantity'],
+                    'reservesDate' => $price['reservesDate'],
+                ], $fee['choicePrices']);
+            } else {
+                $payment['unitMinorEach'] = FormPayment::unitMinor($form);
+            }
+        }
 
         // Card payments taken on another organisation's account (BISS through Burlington
         // Masjid; DECISIONS.md 2026-09-15): the name the card statement will carry, so the
@@ -313,6 +340,38 @@ class SectionContentBinder
     private static function publicFee(Form $form): ?array
     {
         $fee = $form->feeRule();
+
+        // Priced by answer (iftar levels; 2026-09-25): the levels, and NO `amount` key, for
+        // the reason given above for count pricing. The lowest level's price there would be
+        // drawn as the total of every registration.
+        if (($fee['pricing'] ?? null) === Form::PRICING_CHOICE) {
+            return [
+                'pricing' => Form::PRICING_CHOICE,
+                'currency' => $fee['currency'],
+                'choiceField' => $fee['choiceField'],
+                'choicePrices' => array_map(fn (array $price) => [
+                    'value' => $price['value'],
+                    'amount' => $price['amount'],
+                    'perQuantity' => $price['perQuantity'],
+                    'reservesDate' => $price['reservesDate'],
+                ], $fee['choicePrices']),
+                'perQuantityOf' => $fee['perQuantityOf'],
+            ];
+        }
+
+        // Priced per quantity (Zakat-ul-Fitr per person): the unit as `unitAmount`, never
+        // `amount`, which an older renderer would draw as the whole total ($17 while four
+        // people are charged $68). The date steps stay, for "the price becomes … on …".
+        if ($fee !== null && isset($fee['perQuantityOf'])) {
+            return [
+                'pricing' => 'quantity',
+                'currency' => $fee['currency'],
+                'perQuantityOf' => $fee['perQuantityOf'],
+                'unitAmount' => $fee['amount'],
+                'tiers' => $fee['tiers'],
+                'currentTier' => $fee['currentTier'],
+            ];
+        }
 
         if ($fee === null || ($fee['pricing'] ?? null) !== Form::PRICING_COUNT) {
             return $fee;
