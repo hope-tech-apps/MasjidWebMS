@@ -17,7 +17,7 @@ class WixOrderExportTest extends TestCase
     private const COLUMNS = [
         'number', 'createdDateUTC', 'buyerEmail', 'billingFirstName', 'billingLastName',
         'billingAddress', 'lineItems(qty x name @unitPrice [options])', 'totalUSD', 'discountUSD',
-        'appliedDiscounts(code:amount)', 'buyerNote',
+        'appliedDiscounts(code:amount)', 'buyerNote', 'paymentStatus', 'refundedUSD',
     ];
 
     private function stores(array ...$rows): array
@@ -25,9 +25,9 @@ class WixOrderExportTest extends TestCase
         return ['columns' => self::COLUMNS, 'rows' => $rows];
     }
 
-    private function row(string $lines, string $total, string $discount = '0', string $codes = ''): array
+    private function row(string $lines, string $total, string $discount = '0', string $codes = '', string $status = 'PAID', string $refunded = '0'): array
     {
-        return [10077, '2023-04-20T13:45', ' Someone@Example.TEST ', 'Some', 'One', '9 Invented Rd', $lines, $total, $discount, $codes, 'a note'];
+        return [10077, '2023-04-20T13:45', ' Someone@Example.TEST ', 'Some', 'One', '9 Invented Rd', $lines, $total, $discount, $codes, 'a note', $status, $refunded];
     }
 
     #[Test]
@@ -56,6 +56,7 @@ class WixOrderExportTest extends TestCase
         $order = $read['orders'][0];
 
         $this->assertSame('10077', $order['order_number']);
+        $this->assertSame(HistoricalOrder::STATUS_PAID, $order['status'], 'PAID with nothing refunded');
         $this->assertSame('someone@example.test', $order['email']);
         $this->assertSame('2023-04-20 13:45:00', $order['ordered_at']->format('Y-m-d H:i:s'));
         $this->assertSame(193600, $order['total_minor']);
@@ -81,6 +82,44 @@ class WixOrderExportTest extends TestCase
         $wrong = WixOrderExport::read($this->stores($this->row('3x HAJJ SIMULATION & EID ADHA BAZAAR @20', '60', '15')), null, null);
         $this->assertSame([], $wrong['orders']);
         $this->assertSame(['Store order #10077: the lines less the discount do not equal the total.'], $wrong['problems']);
+    }
+
+    #[Test]
+    public function a_store_export_without_payment_status_and_refunds_is_refused_rather_than_assumed_paid(): void
+    {
+        foreach (['paymentStatus', 'refundedUSD'] as $missing) {
+            $columns = array_values(array_diff(self::COLUMNS, [$missing]));
+            $row = $this->row('1x Individual Iftar @18', '18');
+            unset($row[array_search($missing, self::COLUMNS, true)]);
+
+            $read = WixOrderExport::read(['columns' => $columns, 'rows' => [array_values($row)]], null, null);
+
+            $this->assertSame([], $read['orders'], "no {$missing}: nothing is read as paid");
+            $this->assertSame(["stores/orders.json has no {$missing} column."], $read['problems']);
+        }
+    }
+
+    #[Test]
+    public function only_a_paid_store_order_with_nothing_refunded_is_read_as_paid(): void
+    {
+        foreach ([
+            ['NOT_PAID', '0', 'its payment status is NOT_PAID'],
+            ['PENDING', '0', 'its payment status is PENDING'],
+            ['FULLY_REFUNDED', '18', 'its payment status is FULLY_REFUNDED with a refund'],
+            ['PAID', '5', 'its payment status is PAID with a refund'],
+            ['', '0', 'its payment status is blank'],
+        ] as [$status, $refunded, $said]) {
+            $read = WixOrderExport::read($this->stores($this->row('1x Individual Iftar @18', '18', '0', '', $status, $refunded)), null, null);
+
+            $this->assertSame([], $read['orders'], "{$status}/{$refunded} is not booked");
+            $this->assertStringContainsString("Store order #10077: {$said}", $read['problems'][0] ?? '');
+        }
+
+        $unreadable = WixOrderExport::read($this->stores($this->row('1x Individual Iftar @18', '18', '0', '', 'PAID', '')), null, null);
+        $this->assertSame(['Store order #10077: the refunded amount is unreadable.'], $unreadable['problems']);
+
+        $paid = WixOrderExport::read($this->stores($this->row('1x Individual Iftar @18', '18', '0', '', 'paid', '0.00')), null, null);
+        $this->assertSame(HistoricalOrder::STATUS_PAID, $paid['orders'][0]['status']);
     }
 
     #[Test]

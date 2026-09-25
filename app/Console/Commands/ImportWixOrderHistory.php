@@ -22,6 +22,11 @@ use Illuminate\Console\Command;
  *   php artisan crm:import-wix-orders --masjid=13 --undo=<batch>          # preview undo
  *   php artisan crm:import-wix-orders --masjid=13 --undo=<batch> --execute
  *
+ * Run `wix:import-contacts` FIRST. A plan that would create contacts before
+ * the contact import has run blocks (their addresses would be held, and that
+ * import never lifts a hold), unless `--without-contact-import` says the
+ * holds are wanted anyway.
+ *
  * `/path/to/raw` is the export directory the read-only Wix pull writes, holding
  * `stores/orders.json` and `events/orders.json` + `events/events.json`.
  *
@@ -42,7 +47,8 @@ class ImportWixOrderHistory extends Command
         {--masjid= : Organisation id to import into}
         {--batch= : Import batch tag (default: wix_orders_<timestamp>)}
         {--execute : Actually write (otherwise dry-run)}
-        {--undo= : Remove what this batch created (dry-run unless --execute)}';
+        {--undo= : Remove what this batch created (dry-run unless --execute)}
+        {--without-contact-import : Create buyers as held contacts even though the Wix contact import has not run}';
 
     protected $description = 'Import Wix store and event orders as historical donations and registrations (reversible).';
 
@@ -95,7 +101,10 @@ class ImportWixOrderHistory extends Command
         }
 
         $export = WixOrderExport::fromDirectory($dir);
-        $summary = $importer->run($masjid, $export['orders'], $export['problems'], $batch, $execute);
+        $summary = $importer->run(
+            $masjid, $export['orders'], $export['problems'], $batch, $execute,
+            allowHeldContacts: (bool) $this->option('without-contact-import'),
+        );
 
         $this->render($masjid, $batch, $summary, $execute);
 
@@ -157,13 +166,11 @@ class ImportWixOrderHistory extends Command
         }
 
         $c = $s['contacts'];
-        $this->line("  Contacts: {$c['linked']} linked by email, {$c['created']} to create (email held from broadcasts "
+        $this->line("  Contacts: {$c['linked']} linked by email, {$c['linked_deleted']} linked to a contact deleted in "
+            . "Manara (left deleted), {$c['created']} to create (email held from broadcasts "
             . "unless already on the suppression list), {$c['ambiguous']} addresses shared by several contacts "
             . "(oldest linked), {$c['no_email']} orders with no email.");
-        if ($c['created'] > 0) {
-            $this->warn('  Run the Wix contact import first if it has not run: buyers it brings over are linked '
-                . 'with their Wix consent instead of being created here with their email held.');
-        }
+        $this->line('  Wix contact import has run for this organisation: ' . ($s['contact_import_ran'] ? 'yes' : 'NO'));
 
         if ($s['funds_to_create'] !== []) {
             $this->line('  Funds to create (inactive, not receiptable): ' . implode(', ', $s['funds_to_create']));

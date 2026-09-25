@@ -34,6 +34,9 @@ trait WritesWixOrderExport
         'billingCompany', 'billingAddress', 'shippingOption(R=Redeem at MEC location)',
         'lineItems(qty x name @unitPrice [options])', 'totalUSD', 'discountUSD',
         'appliedDiscounts(code:amount)', 'buyerNote',
+        // Not in the 2026-09-25 pull: the reader requires both, so the pull
+        // that feeds the real run must add them (DECISIONS.md 2026-09-25).
+        'paymentStatus', 'refundedUSD',
     ];
 
     /** A value that must never reach Manara: a Wix Events checkout answer. */
@@ -117,6 +120,7 @@ trait WritesWixOrderExport
         return [
             $number, $at, 'F', 1, 'wix-contact-' . $number, $email, $first, $last, '555-0100',
             '', '1 Invented Way, Testville', 'R', $lines, $total, $discount, $codes, 'please call first',
+            'PAID', '0',
         ];
     }
 
@@ -146,11 +150,47 @@ trait WritesWixOrderExport
         ];
     }
 
+    /**
+     * Runs the command with `--without-contact-import` unless the caller sets
+     * it: the fixture's new buyers would otherwise block every write, since no
+     * Wix contact import runs in these tests. Pass it as false to see the block.
+     */
     protected function importWix(Masjid $org, string $dir, array $options = []): int
     {
         return $this->artisan('crm:import-wix-orders', array_merge([
             'export' => $dir,
             '--masjid' => $org->id,
+            '--without-contact-import' => true,
         ], $options))->run();
+    }
+
+    /**
+     * Marks the Wix contact import as having run for the organisation, the way
+     * it does itself: an `import_links` row (source wix, kind contact). That
+     * table arrives with feat/mec-contacts-import; until it is merged the test
+     * creates a stand-in with the columns the order import reads.
+     */
+    protected function markWixContactImportRan(Masjid $org, int $contactId): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('import_links')) {
+            \Illuminate\Support\Facades\Schema::create('import_links', function (\Illuminate\Database\Schema\Blueprint $table) {
+                $table->id();
+                $table->foreignId('masjid_id');
+                $table->string('source', 32);
+                $table->string('kind', 32);
+                $table->string('external_id', 191);
+                $table->unsignedBigInteger('local_id');
+                $table->boolean('created_local')->default(false);
+                $table->char('fingerprint', 64)->nullable();
+                $table->string('import_batch', 64);
+                $table->timestamps();
+            });
+        }
+
+        \Illuminate\Support\Facades\DB::table('import_links')->insert([
+            'masjid_id' => $org->id, 'source' => 'wix', 'kind' => 'contact', 'external_id' => 'wix-contact-x',
+            'local_id' => $contactId, 'created_local' => false, 'import_batch' => 'wix-contacts-test',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
     }
 }

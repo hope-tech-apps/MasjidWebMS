@@ -16,9 +16,11 @@ use App\Models\Offering;
 use App\Models\Registration;
 use App\Models\RegistrationAdjustment;
 use App\Models\RegistrationPayment;
+use App\Services\Crm\WixOrderHistoryImporter;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
@@ -65,10 +67,11 @@ class WixOrderHistoryImportTest extends TestCase
 
         $this->org = $this->makeOrgForWixImport();
 
-        // Already in the directory, under a differently-cased address.
+        // Already in the directory, under a differently-cased address than the
+        // export's ('Amina@Example.TEST'): case must not matter on EITHER side.
         $this->amina = Contact::factory()->create([
             'masjid_id' => $this->org->id, 'first_name' => 'Amina', 'last_name' => 'Test',
-            'email' => 'amina@example.test',
+            'email' => 'AMINA@example.Test',
         ]);
 
         // Unsubscribed once and then re-subscribed from her own link: the
@@ -95,10 +98,11 @@ class WixOrderHistoryImportTest extends TestCase
     #[Test]
     public function a_dry_run_writes_nothing_and_prints_no_buyer(): void
     {
-        $this->artisan('crm:import-wix-orders', ['export' => $this->dir, '--masjid' => $this->org->id])
+        $this->artisan('crm:import-wix-orders', ['export' => $this->dir, '--masjid' => $this->org->id, '--without-contact-import' => true])
             ->expectsOutputToContain('DRY RUN')
             ->expectsOutputToContain('$250.25')
             ->doesntExpectOutputToContain('amina@example.test')
+            ->doesntExpectOutputToContain('AMINA@example.Test')
             ->doesntExpectOutputToContain('Yusuf')
             ->doesntExpectOutputToContain('Invented Way')
             ->assertExitCode(0);
@@ -426,6 +430,376 @@ class WixOrderHistoryImportTest extends TestCase
         $this->assertSame('integer', Schema::getColumnType('historical_orders', 'total_minor'));
         $this->assertSame('datetime', Schema::getColumnType('historical_orders', 'ordered_at'));
         $this->assertSame('varchar', Schema::getColumnType('historical_import_records', 'record_type'));
+    }
+
+    // ------------------------------------------------------------ contacts first
+
+    #[Test]
+    public function buyers_are_not_created_held_before_the_wix_contact_import_has_run(): void
+    {
+        // The order-first sequence: nothing from the contact import yet, so a
+        // held contact made now would never be released by it.
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true, '--batch' => 'b1',
+        ])
+            ->expectsOutputToContain('Wix contact import has run for this organisation: NO')
+            ->expectsOutputToContain('Run wix:import-contacts first, or pass --without-contact-import')
+            ->assertExitCode(1);
+
+        $this->assertSame(0, HistoricalOrder::withoutMasjidScope()->count());
+        $this->assertSame(1, Contact::withoutMasjidScope()->count(), 'no held contact was created');
+        $this->assertSame(1, EmailSuppression::withoutMasjidScope()->count(), 'and no hold was written');
+    }
+
+    #[Test]
+    public function once_the_wix_contact_import_has_run_the_rest_of_the_buyers_are_created_held(): void
+    {
+        $this->markWixContactImportRan($this->org, $this->amina->id);
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true, '--batch' => 'b1',
+        ])
+            ->expectsOutputToContain('Wix contact import has run for this organisation: yes')
+            ->assertExitCode(0);
+
+        $yusuf = Contact::withoutMasjidScope()->where('email', 'yusuf.new@example.test')->sole();
+        $this->assertSame(EmailSuppression::REASON_ORDER_HISTORY_HOLD,
+            EmailSuppression::withoutMasjidScope()->where('email_normalized', 'yusuf.new@example.test')->value('reason'),
+            'a buyer the contact import did not bring over is held: Wix gave no consent for them');
+        $this->assertSame(2, HistoricalOrder::withoutMasjidScope()->where('contact_id', $yusuf->id)->count());
+    }
+
+    // ------------------------------------------------------------ Wix Events items
+
+    #[Test]
+    public function a_wix_events_food_purchase_is_kept_on_the_order_and_is_not_a_seat(): void
+    {
+        $orders = $this->wixEventOrders();
+        $orders[] = [
+            'no' => 'EVT-3', 'ev' => 'ev-fall-2024', 'cid' => 'c3', 'cr' => '2024-10-03T12:00:00.000Z',
+            'fn' => 'Maryam', 'ln' => 'Example', 'em' => 'maryam@example.test',
+            'st' => 'PAID', 'conf' => true, 'meth' => 'creditCard', 'ch' => 'ONLINE', 'qty' => 1,
+            'tot' => '5.13', 'fci' => false, 'form' => [],
+            'inv' => [[['Food Purchase', 1, '5.00']], '5.00', '5.13',
+                [['WIX_FEE', 'FEE_ADDED_AT_CHECKOUT', '0.13']], null],
+            'tk' => [],
+        ];
+
+        // Exit 0 also proves the order reconciles: its $0.13 Wix fee, with no
+        // seat to ride on, is counted with the order-only money.
+        $this->assertSame(0, $this->importWix($this->org, $this->writeWixExport(null, $orders), ['--execute' => true, '--batch' => 'b1']));
+
+        $food = HistoricalOrder::withoutMasjidScope()->where('order_number', 'EVT-3')->sole();
+        $this->assertSame([HistoricalOrder::RECORDED_AS_ORDER_ONLY], array_column($food->lines, 'recorded_as'));
+        $this->assertSame(513, $food->total_minor);
+        $this->assertSame(0, Registration::withoutMasjidScope()->where('historical_order_id', $food->id)->count(),
+            'a food purchase is not a seat');
+        $this->assertSame(0, Donation::withoutMasjidScope()->where('historical_order_id', $food->id)->count());
+    }
+
+    #[Test]
+    public function an_unrecognised_wix_events_item_blocks_the_whole_import(): void
+    {
+        $orders = $this->wixEventOrders();
+        $orders[0]['inv'][0][0][0] = 'Face Painting Pass';
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->writeWixExport(null, $orders), '--masjid' => $this->org->id,
+            '--execute' => true, '--without-contact-import' => true,
+        ])
+            ->expectsOutputToContain('Unrecognised product "Face Painting Pass"')
+            ->assertExitCode(1);
+
+        $this->assertSame(0, HistoricalOrder::withoutMasjidScope()->count());
+        $this->assertSame(0, Registration::withoutMasjidScope()->count());
+    }
+
+    // ------------------------------------------------------------ linking
+
+    #[Test]
+    public function several_contacts_sharing_an_address_link_the_oldest(): void
+    {
+        $older = Contact::factory()->create([
+            'masjid_id' => $this->org->id, 'first_name' => 'Maryam', 'last_name' => 'First', 'email' => 'Maryam@Example.test',
+        ]);
+        $newer = Contact::factory()->create([
+            'masjid_id' => $this->org->id, 'first_name' => 'Maryam', 'last_name' => 'Second', 'email' => 'maryam@example.test',
+        ]);
+        $this->assertLessThan($newer->id, $older->id, 'the premise: the first one made has the lower id');
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true,
+            '--batch' => 'b1', '--without-contact-import' => true,
+        ])
+            ->expectsOutputToContain('1 addresses shared by several contacts')
+            ->assertExitCode(0);
+
+        $this->assertSame(
+            [$older->id],
+            HistoricalOrder::withoutMasjidScope()->whereIn('order_number', ['EVT-1', 'EVT-2'])->pluck('contact_id')->unique()->values()->all(),
+        );
+        $this->assertSame(2, Contact::withoutMasjidScope()->whereRaw('LOWER(email) = ?', ['maryam@example.test'])->count(),
+            'no third Maryam');
+    }
+
+    #[Test]
+    public function a_buyer_whose_only_contact_was_deleted_is_linked_to_it_and_not_recreated(): void
+    {
+        $deleted = Contact::factory()->create([
+            'masjid_id' => $this->org->id, 'first_name' => 'Maryam', 'last_name' => 'Removed', 'email' => 'maryam@example.test',
+        ]);
+        $deleted->delete();
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true,
+            '--batch' => 'b1', '--without-contact-import' => true,
+        ])
+            ->expectsOutputToContain('1 linked to a contact deleted in Manara (left deleted)')
+            ->assertExitCode(0);
+
+        $this->assertSame(1, Contact::withoutMasjidScope()->withTrashed()->where('email', 'maryam@example.test')->count(),
+            'the person the office deleted is not re-created');
+        $this->assertTrue($deleted->fresh()->trashed(), 'nor restored');
+        $this->assertSame(
+            [$deleted->id],
+            HistoricalOrder::withoutMasjidScope()->whereIn('order_number', ['EVT-1', 'EVT-2'])->pluck('contact_id')->unique()->values()->all(),
+        );
+        $this->assertSame(0, EmailSuppression::withoutMasjidScope()->where('email_normalized', 'maryam@example.test')->count());
+    }
+
+    // ------------------------------------------------------------ scaffolding
+
+    #[Test]
+    public function an_existing_fund_of_the_same_name_is_reused_not_duplicated(): void
+    {
+        $fitr = Fund::factory()->create([
+            'masjid_id' => $this->org->id, 'name' => 'Zakat-ul-Fitr', 'type' => 'fitra', 'is_active' => true,
+        ]);
+
+        app(TenantContext::class)->set($this->org->id);
+        $export = \App\Support\WixOrderExport::fromDirectory($this->dir);
+        $plan = app(WixOrderHistoryImporter::class)->run($this->org, $export['orders'], $export['problems'], 'b0', false, true);
+        app(TenantContext::class)->forgetTenant();
+        $this->assertSame(['Iftar'], $plan['funds_to_create']);
+
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        $this->assertSame(1, Fund::withoutMasjidScope()->where('name', 'Zakat-ul-Fitr')->count());
+        $zakat = Donation::withoutMasjidScope()->where('source', Donation::SOURCE_HISTORICAL)->where('charged_amount', 3900)->sole();
+        $this->assertSame($fitr->id, $zakat->fund_id);
+    }
+
+    #[Test]
+    public function the_fee_plan_carries_the_lowest_ticket_price_any_buyer_paid(): void
+    {
+        $rows = $this->wixStoreRows();
+        $rows[] = $this->storeRow(10005, '2021-12-01T12:00', 'amina@example.test', 'Amina', 'Test',
+            '1x Fall Festival Ticket @8', '8', '0', '');
+
+        $this->importWix($this->org, $this->writeWixExport($rows), ['--execute' => true, '--batch' => 'b1']);
+
+        $festival = Offering::withoutMasjidScope()->where('name', 'Fall Festival 2021')->firstOrFail();
+        $this->assertSame(800, FeePlan::withoutMasjidScope()->where('offering_id', $festival->id)->sole()->amount_minor);
+    }
+
+    #[Test]
+    public function an_offering_slug_this_import_did_not_create_blocks_the_whole_import(): void
+    {
+        Offering::factory()->forMasjid($this->org)->create(['slug' => 'wix-fall-festival-2021', 'name' => 'Our own fall festival']);
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true, '--without-contact-import' => true,
+        ])
+            ->expectsOutputToContain('The offering slug wix-fall-festival-2021 is already used by an offering this import did not create.')
+            ->assertExitCode(1);
+
+        $this->assertSame(0, HistoricalOrder::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_form_slug_this_import_did_not_create_blocks_the_whole_import(): void
+    {
+        Form::factory()->create(['masjid_id' => $this->org->id, 'slug' => 'wix-order-history', 'name' => 'Our own form']);
+
+        $this->artisan('crm:import-wix-orders', [
+            'export' => $this->dir, '--masjid' => $this->org->id, '--execute' => true, '--without-contact-import' => true,
+        ])
+            ->expectsOutputToContain('The form slug wix-order-history is already used by a form this import did not create.')
+            ->assertExitCode(1);
+
+        $this->assertSame(0, HistoricalOrder::withoutMasjidScope()->count());
+    }
+
+    // ------------------------------------------------------------ undo: what stays
+
+    #[Test]
+    public function undo_keeps_an_imported_contact_that_records_outside_the_batch_now_point_at(): void
+    {
+        // Frozen, so the contact's updated_at cannot move: it must be kept for
+        // being USED, not for having changed.
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+        $yusuf = Contact::withoutMasjidScope()->where('email', 'yusuf.new@example.test')->sole();
+
+        $fund = Fund::factory()->create(['masjid_id' => $this->org->id, 'name' => 'Building']);
+        $gift = Donation::factory()->create([
+            'masjid_id' => $this->org->id, 'fund_id' => $fund->id, 'contact_id' => $yusuf->id,
+            'source' => Donation::SOURCE_OFFLINE, 'payment_method' => 'cash', 'status' => 'succeeded',
+        ]);
+        $offering = Offering::factory()->forMasjid($this->org)->create();
+        $seat = Registration::factory()->create([
+            'masjid_id' => $this->org->id, 'offering_id' => $offering->id, 'contact_id' => $yusuf->id,
+        ]);
+
+        $summary = $this->undoAsService('b1');
+
+        $this->assertNotNull($yusuf->fresh(), 'somebody gave and registered as this contact since; undo keeps it');
+        $this->assertSame($yusuf->id, (int) $gift->fresh()->contact_id);
+        $this->assertSame($yusuf->id, (int) $seat->fresh()->contact_id);
+        $this->assertSame(1, $summary['kept'][HistoricalImportRecord::TYPE_CONTACT] ?? 0);
+        $this->assertArrayHasKey('in use by records outside this batch', $summary['kept_reasons']);
+        $this->assertArrayNotHasKey('changed since the import', $summary['kept_reasons']);
+    }
+
+    #[Test]
+    public function undo_leaves_a_hold_that_has_since_become_the_persons_own_unsubscribe(): void
+    {
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        // The person later used the unsubscribe link: EmailSuppressionService
+        // rewrites the reason on the row the import recorded.
+        DB::table('email_suppressions')->where('email_normalized', 'maryam@example.test')
+            ->update(['reason' => EmailSuppression::REASON_UNSUBSCRIBE_LINK]);
+
+        $this->undoAsService('b1');
+
+        $this->assertNull(Contact::withoutMasjidScope()->withTrashed()->where('email', 'maryam@example.test')->first(),
+            'the premise: the contact the batch made went');
+        $row = EmailSuppression::withoutMasjidScope()->where('email_normalized', 'maryam@example.test')->sole();
+        $this->assertSame(EmailSuppression::REASON_UNSUBSCRIBE_LINK, $row->reason, 'her opt-out stands');
+        $this->assertNull($row->released_at);
+    }
+
+    #[Test]
+    public function undo_leaves_a_hold_that_has_since_been_released(): void
+    {
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        DB::table('email_suppressions')->where('email_normalized', 'maryam@example.test')
+            ->update(['released_at' => '2026-01-02 03:04:05']);
+
+        $this->undoAsService('b1');
+
+        $this->assertNull(Contact::withoutMasjidScope()->withTrashed()->where('email', 'maryam@example.test')->first(),
+            'the premise: the contact the batch made went');
+        $row = EmailSuppression::withoutMasjidScope()->where('email_normalized', 'maryam@example.test')->sole();
+        $this->assertSame(EmailSuppression::REASON_ORDER_HISTORY_HOLD, $row->reason);
+        $this->assertSame('2026-01-02 03:04:05', $row->released_at?->format('Y-m-d H:i:s'), 'the release is somebody\'s decision; undo keeps it');
+    }
+
+    #[Test]
+    public function undo_keeps_the_hold_while_a_deleted_imported_contact_still_holds_the_address(): void
+    {
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+        $yusuf = Contact::withoutMasjidScope()->where('email', 'yusuf.new@example.test')->sole();
+
+        $this->travel(2)->minutes();
+        $yusuf->delete();   // soft: it can come back
+
+        $this->importWix($this->org, '', ['--undo' => 'b1', '--execute' => true]);
+
+        $this->assertNotNull(Contact::withoutMasjidScope()->withTrashed()->find($yusuf->id), 'kept: changed since the import');
+        $this->assertSame(1, EmailSuppression::withoutMasjidScope()->where('email_normalized', 'yusuf.new@example.test')->count(),
+            'the hold stays under a deleted contact that still has the address');
+
+        $yusuf = Contact::withoutMasjidScope()->withTrashed()->findOrFail($yusuf->id);
+        $yusuf->restore();   // what POST /contacts/{id}/restore does
+
+        $this->assertNotNull($yusuf->fresh()->email_opted_out_at, 'restored, and still badged held');
+        $this->assertSame(EmailSuppression::REASON_ORDER_HISTORY_HOLD,
+            EmailSuppression::withoutMasjidScope()->where('email_normalized', 'yusuf.new@example.test')->value('reason'),
+            'and still held in fact');
+    }
+
+    #[Test]
+    public function undo_keeps_the_scaffolding_a_later_batch_still_uses(): void
+    {
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        // A later export of the same products under new order numbers.
+        $rows = array_map(function (array $row) {
+            $row[0] += 10000;
+
+            return $row;
+        }, $this->wixStoreRows());
+        $events = array_map(fn (array $o) => ['no' => $o['no'] . '-2'] + $o, $this->wixEventOrders());
+        $this->assertSame(0, $this->importWix($this->org, $this->writeWixExport($rows, $events), ['--execute' => true, '--batch' => 'b2']));
+
+        $b2Orders = HistoricalOrder::withoutMasjidScope()->where('import_batch', 'b2')->pluck('id');
+        $b2Seats = Registration::withoutMasjidScope()->whereIn('historical_order_id', $b2Orders)->get(['id', 'offering_id', 'fee_plan_id'])->toArray();
+        $b2Gifts = Donation::withoutMasjidScope()->whereIn('historical_order_id', $b2Orders)->get(['id', 'fund_id'])->toArray();
+        $this->assertNotEmpty($b2Seats);
+        $this->assertNotEmpty($b2Gifts);
+        $this->assertSame(0, HistoricalImportRecord::withoutMasjidScope()->where('import_batch', 'b2')
+            ->whereIn('record_type', [HistoricalImportRecord::TYPE_OFFERING, HistoricalImportRecord::TYPE_FEE_PLAN,
+                HistoricalImportRecord::TYPE_FORM, HistoricalImportRecord::TYPE_FUND])->count(),
+            'the premise: b2 built on b1\'s scaffolding and made none of its own');
+
+        $scaffolding = HistoricalImportRecord::withoutMasjidScope()->where('import_batch', 'b1')
+            ->whereIn('record_type', [HistoricalImportRecord::TYPE_OFFERING, HistoricalImportRecord::TYPE_FEE_PLAN,
+                HistoricalImportRecord::TYPE_FORM, HistoricalImportRecord::TYPE_FUND])
+            ->get(['record_type', 'record_id'])->groupBy('record_type')->map(fn ($g) => $g->pluck('record_id')->all());
+
+        $summary = $this->undoAsService('b1');
+
+        $this->assertSame(count($scaffolding[HistoricalImportRecord::TYPE_OFFERING]), Offering::withoutMasjidScope()->whereIn('id', $scaffolding[HistoricalImportRecord::TYPE_OFFERING])->count());
+        $this->assertSame(count($scaffolding[HistoricalImportRecord::TYPE_FEE_PLAN]), FeePlan::withoutMasjidScope()->whereIn('id', $scaffolding[HistoricalImportRecord::TYPE_FEE_PLAN])->count());
+        $this->assertSame(1, Form::whereIn('id', $scaffolding[HistoricalImportRecord::TYPE_FORM])->count());
+        $this->assertSame(count($scaffolding[HistoricalImportRecord::TYPE_FUND]), Fund::withoutMasjidScope()->whereIn('id', $scaffolding[HistoricalImportRecord::TYPE_FUND])->count());
+
+        foreach ([HistoricalImportRecord::TYPE_OFFERING, HistoricalImportRecord::TYPE_FEE_PLAN, HistoricalImportRecord::TYPE_FORM, HistoricalImportRecord::TYPE_FUND] as $type) {
+            $this->assertSame(count($scaffolding[$type]), $summary['kept'][$type] ?? 0, "every {$type} b2 uses is kept");
+        }
+        $this->assertArrayHasKey('in use by records outside this batch', $summary['kept_reasons']);
+
+        $this->assertSame($b2Seats, Registration::withoutMasjidScope()->whereIn('historical_order_id', $b2Orders)->get(['id', 'offering_id', 'fee_plan_id'])->toArray(),
+            'b2\'s registrations are untouched');
+        $this->assertSame($b2Gifts, Donation::withoutMasjidScope()->whereIn('historical_order_id', $b2Orders)->get(['id', 'fund_id'])->toArray());
+        $this->assertSame(0, HistoricalOrder::withoutMasjidScope()->where('import_batch', 'b1')->count(), 'b1 itself is gone');
+    }
+
+    #[Test]
+    public function undo_keeps_an_imported_fund_a_gift_was_later_recorded_into(): void
+    {
+        $this->freezeTime();
+        $this->importWix($this->org, $this->dir, ['--execute' => true, '--batch' => 'b1']);
+
+        $iftar = Fund::withoutMasjidScope()->where('name', 'Iftar')->sole();
+        Donation::factory()->create([
+            'masjid_id' => $this->org->id, 'fund_id' => $iftar->id, 'contact_id' => $this->amina->id,
+            'source' => Donation::SOURCE_OFFLINE, 'payment_method' => 'check', 'status' => 'succeeded',
+        ]);
+
+        $summary = $this->undoAsService('b1');
+
+        $this->assertNotNull($iftar->fresh(), 'an offline gift now lives in it');
+        $this->assertSame(1, $summary['kept'][HistoricalImportRecord::TYPE_FUND] ?? 0);
+        $this->assertNull(Fund::withoutMasjidScope()->where('name', 'Zakat-ul-Fitr')->first(), 'the unused one still goes');
+    }
+
+    /** Undo through the service, to read the summary the command prints from. */
+    private function undoAsService(string $batch): array
+    {
+        app(TenantContext::class)->set($this->org->id);
+
+        try {
+            return app(WixOrderHistoryImporter::class)->undo($this->org, $batch, true);
+        } finally {
+            app(TenantContext::class)->forgetTenant();
+        }
     }
 
     /** Row counts of everything the import may write, for before/after comparison. */

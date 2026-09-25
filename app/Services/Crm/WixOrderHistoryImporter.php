@@ -38,17 +38,19 @@ use LogicException;
  *    relief drives) → one Donation per line, into a fund found by name or
  *    created INACTIVE and NON-RECEIPTABLE so it is never offered to a donor.
  *  - TICKETS (festivals, the Hajj simulation, workshops, the 2018 summer
- *    sessions, and every Wix Events order) → one Registration per order and
- *    event, against an UNPUBLISHED offering (`is_active` false) that shares one
+ *    sessions, and the Wix Events ticket items) → one Registration per order
+ *    and event, against an UNPUBLISHED offering (`is_active` false) that shares one
  *    inactive intake form and has one inactive fee plan. Paid orders are
  *    `confirmed`/`paid` with one settled ledger row; Wix's abandoned checkouts
  *    (canceled, declined) are `cancelled`/`canceled` with none.
- *  - ANYTHING ELSE (festival food tickets, the 2021 prayer rugs) → no donation
- *    and no seat: the line is kept on the HistoricalOrder only, marked
- *    `order_only`. A purchase is not a gift, and a food ticket is not a seat.
+ *  - ANYTHING ELSE (festival food tickets, the 2021 prayer rugs, the Wix Events
+ *    "Food Purchase" item) → no donation and no seat: the line is kept on the
+ *    HistoricalOrder only, marked `order_only`. A purchase is not a gift, and a
+ *    food ticket is not a seat — on either Wix channel.
  *
- * A product name the catalogue below does not know is not guessed at: the
- * import refuses to write until somebody decides where it belongs.
+ * A product or Wix Events item name the catalogues below do not know is not
+ * guessed at: the import refuses to write until somebody decides where it
+ * belongs.
  *
  * ---------------------------------------------------------------------------
  * WHAT EVERY IMPORTED ROW SAYS, AND WHAT NONE OF THEM DOES
@@ -68,13 +70,21 @@ use LogicException;
  * never pending).
  *
  * A buyer is linked to the contact holding the same email (case-insensitive;
- * the oldest if several do). A buyer with no contact gets one, and the address
+ * the oldest live one if several do). An address held only by a contact an
+ * admin DELETED is linked to that contact, which stays deleted: the import
+ * neither restores nor re-creates somebody the office removed, and the history
+ * is there if they are restored. A buyer with no contact at all gets one, and the address
  * is held against broadcast email (EmailSuppression::REASON_ORDER_HISTORY_HOLD)
  * unless the organisation already has a suppression row for it — an active one
  * already holds it, and a released one is the person's own request to be
  * mailed, which an import must not overturn. Run the Wix contact import FIRST:
  * then buyers are linked to contacts that already carry their Wix consent, and
- * a hold is written only for a buyer that import did not bring over.
+ * a hold is written only for a buyer that import did not bring over. That
+ * order is ENFORCED, not advised: the contact import never releases a
+ * suppression, so a buyer held here first would stay unmailed though Wix says
+ * SUBSCRIBED. A plan that would create contacts before the contact import has
+ * linked any contact in the organisation blocks, unless the caller passes
+ * `$allowHeldContacts` (`--without-contact-import`) to accept exactly that.
  *
  * ---------------------------------------------------------------------------
  * SAFE BY CONSTRUCTION (the crm:import-ledger / schools:import-roster shape)
@@ -146,6 +156,32 @@ class WixOrderHistoryImporter
         'new prayer rug',
     ];
 
+    /**
+     * Wix Events item names (keyed like the store names), each a seat at the
+     * event the order belongs to — the offering is named after the EVENT, so
+     * the item only says whether the line is a seat at all. Read from the
+     * 2026-09-25 export: the Fall Festival bracelets and the zoo trip tickets.
+     */
+    private const EVENT_TICKETS = [
+        '2 unlimited games bracelet',
+        '3 unlimited games bracelet',
+        'fall festival games bracelet',
+        'zoo admission & lunch ticket',
+        'zoo ticket',
+    ];
+
+    /**
+     * Wix Events items that are not a seat: MEC Community Connect sold only a
+     * hidden $5 "Food Purchase" (shawarma, falafel or gyro), the Wix Events
+     * twin of the store's food tickets, so it is kept on the order only.
+     */
+    private const EVENT_ORDER_ONLY = [
+        'food purchase',
+    ];
+
+    /** The contact import's own record of the contacts it linked (feat/mec-contacts-import). */
+    private const CONTACT_IMPORT_LINKS = 'import_links';
+
     public function __construct(private readonly EmailSuppressionService $suppressions)
     {
     }
@@ -158,15 +194,19 @@ class WixOrderHistoryImporter
      * orders, unknown products, a slug in use, totals that do not reconcile).
      * With `$execute` and anything blocking, nothing is written.
      *
+     * `$allowHeldContacts` accepts creating held contacts before the Wix
+     * contact import has run (see the class docblock); without it such a plan
+     * blocks, in a dry run too, so the preview says what the write would do.
+     *
      * @param  list<array<string, mixed>>  $orders  WixOrderExport::read()['orders']
      * @param  list<string>  $problems  WixOrderExport::read()['problems']
      * @return array<string, mixed>
      */
-    public function run(Masjid $masjid, array $orders, array $problems, string $batch, bool $execute): array
+    public function run(Masjid $masjid, array $orders, array $problems, string $batch, bool $execute, bool $allowHeldContacts = false): array
     {
         $this->assertBound($masjid);
 
-        $plan = $this->plan($masjid, $orders, $problems);
+        $plan = $this->plan($masjid, $orders, $problems, $allowHeldContacts);
         $summary = $plan['summary'];
         $summary['written'] = false;
 
@@ -183,7 +223,7 @@ class WixOrderHistoryImporter
     // ------------------------------------------------------------------ planning
 
     /** @return array{summary: array<string, mixed>, orders: list<array>, funds: array, offerings: array, form: ?array} */
-    private function plan(Masjid $masjid, array $orders, array $problems): array
+    private function plan(Masjid $masjid, array $orders, array $problems, bool $allowHeldContacts): array
     {
         $timezone = $masjid->timezone ?: (string) config('app.timezone', 'UTC');
         $blocking = array_values($problems);
@@ -213,7 +253,8 @@ class WixOrderHistoryImporter
             'registrations' => ['confirmed' => 0, 'cancelled' => 0, 'paid_minor' => 0, 'wix_fee_minor' => 0, 'by_offering' => []],
             'order_only' => ['lines' => 0, 'minor' => 0],
             'providers' => [],
-            'contacts' => ['linked' => 0, 'created' => 0, 'ambiguous' => 0, 'no_email' => 0],
+            'contacts' => ['linked' => 0, 'linked_deleted' => 0, 'created' => 0, 'ambiguous' => 0, 'no_email' => 0],
+            'contact_import_ran' => $this->contactImportRan($masjid),
             'funds_to_create' => [],
             'offerings_to_create' => [],
             'unrecognised_products' => [],
@@ -226,6 +267,7 @@ class WixOrderHistoryImporter
         $offerings = [];
         $newContacts = [];
         $linkedContacts = [];
+        $linkedDeleted = [];
         $ambiguous = [];
         $importPaidMinor = 0;
 
@@ -261,10 +303,15 @@ class WixOrderHistoryImporter
             if ($order['email'] === null) {
                 $summary['contacts']['no_email']++;
             } elseif (isset($contactsByEmail[$order['email']])) {
-                $ids = $contactsByEmail[$order['email']];
-                $contact = ['id' => $ids[0]];
-                $linkedContacts[$ids[0]] = true;
-                if (count($ids) > 1) {
+                ['live' => $live, 'deleted' => $deleted] = $contactsByEmail[$order['email']];
+                $id = $live[0] ?? $deleted[0];
+                $contact = ['id' => $id];
+                if ($live === []) {
+                    $linkedDeleted[$id] = true;
+                } else {
+                    $linkedContacts[$id] = true;
+                }
+                if (count($live) > 1) {
                     $ambiguous[$order['email']] = true;
                 }
             } else {
@@ -289,11 +336,19 @@ class WixOrderHistoryImporter
                 $net = $gross - $discount;
                 $name = $this->key($line['name']);
 
-                if ($source === HistoricalOrder::SOURCE_WIX_EVENTS) {
+                if ($source === HistoricalOrder::SOURCE_WIX_EVENTS && in_array($name, self::EVENT_TICKETS, true)) {
                     $offeringName = $this->eventOfferingName($order['event']['title'], $year);
                     $kind = HistoricalOrder::RECORDED_AS_REGISTRATION;
                     $target = $offeringName;
                     $this->noteOffering($offerings, $offeringName, Offering::KIND_EVENT, $order['event']['starts_at'], $line['unit_minor']);
+                } elseif ($source === HistoricalOrder::SOURCE_WIX_EVENTS) {
+                    // Not a known seat: either a known non-seat, or unknown
+                    // and refused below — never a store product by accident.
+                    $kind = in_array($name, self::EVENT_ORDER_ONLY, true) ? HistoricalOrder::RECORDED_AS_ORDER_ONLY : null;
+                    $target = null;
+                    if ($kind === null) {
+                        $summary['unrecognised_products'][$line['name']] = ($summary['unrecognised_products'][$line['name']] ?? 0) + 1;
+                    }
                 } elseif (isset(self::GIVING[$name])) {
                     [$fundName, $fundType] = self::GIVING[$name];
                     $kind = HistoricalOrder::RECORDED_AS_DONATION;
@@ -357,6 +412,13 @@ class WixOrderHistoryImporter
                 $summary['registrations']['by_offering'][$name]['paid_minor'] = ($summary['registrations']['by_offering'][$name]['paid_minor'] ?? 0) + $registrations[$r]['paid'];
             }
 
+            // An Events order with no seat (only a food purchase) still carries
+            // the fee Wix added at checkout; it stays with the order-only money,
+            // or the paid orders would not reconcile with what was recorded.
+            if ($paid && $registrations === []) {
+                $summary['order_only']['minor'] += $order['fee_minor'];
+            }
+
             if ($paid) {
                 $summary['registrations']['wix_fee_minor'] += $order['fee_minor'];
                 $importPaidMinor += $order['total_minor'];
@@ -418,8 +480,15 @@ class WixOrderHistoryImporter
             $blocking[] = 'Donations, registrations and order-only lines do not add up to the paid orders.';
         }
 
+        if ($newContacts !== [] && ! $summary['contact_import_ran'] && ! $allowHeldContacts) {
+            $blocking[] = 'This would create ' . count($newContacts) . ' contact(s) with their email held, but the Wix '
+                . 'contact import has not run for this organisation, and it never lifts a hold: buyers subscribed on Wix '
+                . 'would stay unmailed. Run wix:import-contacts first, or pass --without-contact-import to accept that.';
+        }
+
         $summary['import_paid_minor'] = $importPaidMinor;
         $summary['contacts']['linked'] = count($linkedContacts);
+        $summary['contacts']['linked_deleted'] = count($linkedDeleted);
         $summary['contacts']['created'] = count($newContacts);
         $summary['contacts']['ambiguous'] = count($ambiguous);
         $summary['blocking'] = $blocking;
@@ -456,25 +525,45 @@ class WixOrderHistoryImporter
     }
 
     /**
-     * Live contacts of this organisation by lower-cased address, oldest first —
-     * so a person entered twice is linked to the record that has been theirs
+     * This organisation's contacts by lower-cased address, oldest first — so a
+     * person entered twice is linked to the record that has been theirs
      * longest, every run, rather than to whichever row a query returned first.
+     * Deleted (trashed) contacts are listed apart: a live one always wins, and
+     * an address only a deleted contact holds is linked to it rather than
+     * given a fresh contact, which would undo the office's deletion.
      *
-     * @return array<string, list<int>>
+     * @return array<string, array{live: list<int>, deleted: list<int>}>
      */
     private function contactsByEmail(): array
     {
         $map = [];
 
-        Contact::query()->whereNotNull('email')->orderBy('id')->get(['id', 'email'])
+        Contact::withTrashed()->whereNotNull('email')->orderBy('id')->get(['id', 'email', 'deleted_at'])
             ->each(function (Contact $c) use (&$map) {
                 $email = strtolower(trim((string) $c->email));
                 if ($email !== '') {
-                    $map[$email][] = (int) $c->id;
+                    $map[$email] ??= ['live' => [], 'deleted' => []];
+                    $map[$email][$c->trashed() ? 'deleted' : 'live'][] = (int) $c->id;
                 }
             });
 
         return $map;
+    }
+
+    /**
+     * Has the Wix contact import linked any contact in this organisation? Read
+     * from its own `import_links` rows (source `wix`, kind `contact`), written
+     * for every contact it creates or matches. Until that branch is merged the
+     * table does not exist, and the answer is no.
+     */
+    private function contactImportRan(Masjid $masjid): bool
+    {
+        return Schema::hasTable(self::CONTACT_IMPORT_LINKS)
+            && DB::table(self::CONTACT_IMPORT_LINKS)
+                ->where('masjid_id', $masjid->id)
+                ->where('source', 'wix')
+                ->where('kind', 'contact')
+                ->exists();
     }
 
     // ------------------------------------------------------------------ writing
@@ -860,9 +949,13 @@ class WixOrderHistoryImporter
             HistoricalImportRecord::TYPE_FUND => Donation::query()->where('fund_id', $model->id)
                 ->where(fn ($q) => $q->whereNull('historical_order_id')->orWhereNotIn('historical_order_id', $orderIds))->exists(),
             HistoricalImportRecord::TYPE_CONTACT => $this->contactIsReferenced((int) $model->id, $orderIds, $registrationIds),
+            // A DELETED contact still holds the address: it can be restored
+            // (POST /contacts/{id}/restore), and restoring does not recompute
+            // the opt-out mirror, so dropping the hold under it would leave a
+            // restored contact mailable-in-fact but badged as held.
             HistoricalImportRecord::TYPE_EMAIL_HOLD => $model->reason !== EmailSuppression::REASON_ORDER_HISTORY_HOLD
                 || $model->released_at !== null
-                || Contact::query()->whereRaw('LOWER(TRIM(email)) = ?', [$model->email_normalized])
+                || Contact::withTrashed()->whereRaw('LOWER(TRIM(email)) = ?', [$model->email_normalized])
                     ->whereNotIn('id', $going[HistoricalImportRecord::TYPE_CONTACT] ?? [])->exists(),
             default => true,
         };

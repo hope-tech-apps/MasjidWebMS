@@ -7,6 +7,7 @@ use App\Models\Donation;
 use App\Models\Fund;
 use App\Models\HistoricalOrder;
 use App\Models\Masjid;
+use App\Models\Registrant;
 use App\Models\Registration;
 use App\Models\User;
 use App\Services\Receipts\AnnualStatementService;
@@ -138,6 +139,14 @@ class HistoricalOrderReportsTest extends TestCase
 
         $csv = $this->get("{$base}/export")->assertOk()->streamedContent();
         $this->assertStringNotContainsString('historical', $csv);
+
+        // Chosen by name, the net column does not pass the gross off as what
+        // reached the bank: Square or PayPal took a fee Manara never saw.
+        $historyCsv = array_map('str_getcsv', array_filter(explode("\n", $this->get("{$base}/export?source=historical")->assertOk()->streamedContent())));
+        $net = array_search('Net', $historyCsv[0], true);
+        $this->assertNotFalse($net, 'the premise: the CSV has a Net column');
+        $this->assertCount(3, $historyCsv, 'a header and the two imported gifts');
+        $this->assertSame(['not recorded', 'not recorded'], [$historyCsv[1][$net], $historyCsv[2][$net]]);
     }
 
     #[Test]
@@ -152,7 +161,8 @@ class HistoricalOrderReportsTest extends TestCase
 
         $this->postJson("{$base}/receipt")->assertStatus(422)
             ->assertJsonPath('message', fn ($m) => str_contains($m, 'old Wix site'));
-        $this->putJson($base, ['note' => 'edited'])->assertStatus(422);
+        $this->putJson($base, ['note' => 'edited'])->assertStatus(422)
+            ->assertJsonPath('message', fn ($m) => str_contains($m, 'old Wix site'));
 
         $this->assertSame(0, $gift->receipt()->count());
         $this->assertStringNotContainsString('edited', (string) $gift->fresh()->note);
@@ -183,6 +193,29 @@ class HistoricalOrderReportsTest extends TestCase
     }
 
     #[Test]
+    public function impact_participants_leave_a_person_on_an_imported_ticket_out(): void
+    {
+        $seat = Registration::withoutMasjidScope()->where('source', Registration::SOURCE_HISTORICAL)
+            ->where('status', Registration::STATUS_CONFIRMED)->firstOrFail();
+        Registrant::create(['masjid_id' => $this->org->id, 'registration_id' => $seat->id, 'contact_id' => $this->amina->id]);
+
+        $values = collect(ImpactMetrics::forMasjid($this->org)->report()['metrics'])->pluck('value', 'key');
+
+        $this->assertSame(0, $values[ImpactMetrics::REGISTRATION_PARTICIPANTS] ?? 0);
+    }
+
+    #[Test]
+    public function the_import_files_wix_zakat_ul_fitr_under_the_live_fund_of_that_name(): void
+    {
+        $fitrGifts = Donation::withoutMasjidScope()->where('source', Donation::SOURCE_HISTORICAL)
+            ->where('note', 'like', '%Zakat-ul-Fitr%')->get();
+
+        $this->assertNotEmpty($fitrGifts);
+        $this->assertSame([$this->fitr->id], $fitrGifts->pluck('fund_id')->unique()->values()->all());
+        $this->assertSame(1, Fund::withoutMasjidScope()->where('name', 'Zakat-ul-Fitr')->count(), 'no second, inactive Zakat-ul-Fitr fund');
+    }
+
+    #[Test]
     public function the_giving_module_does_not_count_an_imported_gift_as_recorded(): void
     {
         // A Zakat-ul-Fitr order from this March, well inside the last 12 months.
@@ -209,6 +242,32 @@ class HistoricalOrderReportsTest extends TestCase
     }
 
     #[Test]
+    public function the_contact_record_lists_its_wix_orders_including_lines_kept_on_the_order_alone(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $yusuf = Contact::withoutMasjidScope()->where('email', 'yusuf.new@example.test')->sole();
+
+        $orders = $this->getJson("/api/admin/masjids/{$this->org->id}/contacts/{$yusuf->id}")
+            ->assertOk()->json('data.historical_orders');
+
+        $this->assertSame(['10003', '10002'], array_column($orders, 'order_number'), 'newest first');
+
+        $festival = $orders[1];
+        $this->assertSame(HistoricalOrder::SOURCE_WIX_STORES, $festival['source']);
+        $this->assertSame(HistoricalOrder::PROVIDER_WIX, $festival['provider']);
+        $this->assertSame(HistoricalOrder::STATUS_PAID, $festival['status']);
+        $this->assertSame(4500, $festival['total_minor']);
+        $this->assertSame([
+            ['name' => 'Fall Festival Ticket', 'quantity' => 2, 'unit_minor' => 1000, 'discount_minor' => 0, 'recorded_as' => HistoricalOrder::RECORDED_AS_REGISTRATION],
+            ['name' => '$30 Food Tickets For Only $25', 'quantity' => 1, 'unit_minor' => 2500, 'discount_minor' => 0, 'recorded_as' => HistoricalOrder::RECORDED_AS_ORDER_ONLY],
+        ], $festival['lines'], 'the food ticket is on no ledger, so this is where it is seen');
+
+        $other = $this->getJson("/api/admin/masjids/{$this->org->id}/contacts/{$this->amina->id}")
+            ->assertOk()->json('data.historical_orders');
+        $this->assertSame(['10001'], array_column($other, 'order_number'), 'only the contact\'s own orders');
+    }
+
+    #[Test]
     public function merging_a_contact_carries_its_imported_orders_to_the_survivor(): void
     {
         Sanctum::actingAs($this->admin);
@@ -229,6 +288,23 @@ class HistoricalOrderReportsTest extends TestCase
             HistoricalOrder::withoutMasjidScope()->whereIn('id', $orderIds)->where('contact_id', $duplicate->id)->count(),
             'the orders follow the gifts they produced to the surviving contact'
         );
+
+        // A buyer of tickets: the seats their orders produced follow too, or the
+        // force-delete would leave each imported registration with no buyer.
+        $yusuf = Contact::withoutMasjidScope()->where('email', 'yusuf.new@example.test')->sole();
+        $seatIds = Registration::withoutMasjidScope()->where('contact_id', $yusuf->id)
+            ->where('source', Registration::SOURCE_HISTORICAL)->pluck('id')->all();
+        $this->assertCount(2, $seatIds, 'the premise: the festival and the bazaar');
+        $survivor = Contact::factory()->create([
+            'masjid_id' => $this->org->id, 'first_name' => 'Yusuf', 'last_name' => 'Kept', 'email' => 'yusuf.kept@example.test',
+        ]);
+
+        $this->postJson("/api/admin/masjids/{$this->org->id}/contacts/{$yusuf->id}/merge", [
+            'target_contact_id' => $survivor->id,
+        ])->assertOk();
+
+        $this->assertSame(2, Registration::withoutMasjidScope()->whereIn('id', $seatIds)->where('contact_id', $survivor->id)->count());
+        $this->assertSame(2, HistoricalOrder::withoutMasjidScope()->where('contact_id', $survivor->id)->count());
     }
 
     #[Test]

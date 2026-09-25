@@ -735,5 +735,7 @@ and it has to be argued as one.
 - Paid rows carry ONE settled `registration_payments` row (no Stripe ids, `hist_…` key) so
   `RegistrationOutstanding` reads nothing owed; a Wix coupon is a `code` adjustment.
 - `RegistrationService::cancel()` refuses them (`RegistrationException::historicalRecord()`),
-  and ImpactMetrics leaves them out of confirmed registrations and program fees collected.
+  and ImpactMetrics leaves them out of confirmed registrations, participants and program fees collected.
+- A contact merge moves them to the survivor with their `historical_orders` (their payer would
+  otherwise null on the force-delete). A live registration's payer is not moved by a merge (open).
 

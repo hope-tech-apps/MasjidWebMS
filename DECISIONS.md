@@ -3078,3 +3078,51 @@ receipts or emails are sent on import". Built as `crm:import-wix-orders`
   MemberAccountDeletion classes the column as an OFFICE record, like `donations`, so an app member
   deleting their account keeps the contact the order history is filed under. The importer is on
   EmailUnsubscribeTest's allow-list: it writes and reads holds, and gates no send.
+
+## 2026-09-25 — Wix order history review fixes (contract, safety and mutation lenses on 536e1843)
+
+Sixteen confirmed findings, each with a test that fails without its change. The calls that were
+not mechanical:
+
+- **Contacts first is ENFORCED, by the order import, not by the contact import.** A plan that
+  would create held contacts blocks (dry run too, exit 1) until the Wix contact import has linked
+  a contact in the organisation, read from its own `import_links` rows (source `wix`, kind
+  `contact`, branch feat/mec-contacts-import); `--without-contact-import` accepts the holds.
+  Alternative: have `wix:import-contacts` lift an `order_history_import` hold when Wix says
+  SUBSCRIBED — rejected here because that code lives on the other branch, and it would be the
+  first place that import releases a suppression, a rule worth its own review. With the block,
+  no hold can be written ahead of the consent it would pre-empt. Until that branch is merged the
+  table does not exist, the answer is "has not run", and the test creates a stand-in with the
+  migration's columns (`markWixContactImportRan`), which is skipped once the real one exists.
+- **Imported orders are readable on the contact record** (`historical_orders` on
+  `GET /contacts/{id}`, shown as "Orders on the old Wix site": Wix order number, date, processor
+  or why nothing was paid, each line with where it went, total). That is where a line kept on
+  the order alone is seen. Not built: a giving-dashboard view of order-only lines; they are
+  purchases, not gifts, and the import prints their count and total.
+- **Merge carries imported ticket registrations** (`source = historical`) with the orders and
+  gifts. A LIVE registration's payer is still not moved and still nulls on the merge's
+  force-delete: pre-existing, touches the registration money paths, left for its own change.
+- **Wix Events items are classified like store products**: the bracelets and zoo tickets are
+  seats, "Food Purchase" (MEC Community Connect, the Events twin of the store's food tickets) is
+  order-only, and an unknown item blocks. An Events order with no seat counts the fee Wix added
+  at checkout with the order-only money, so it still reconciles.
+- **A store order is paid only when the export says so**: `stores/orders.json` must carry
+  `paymentStatus` and `refundedUSD`; only `PAID` with 0 refunded is read as paid, and anything
+  else is a problem naming the order, not a guessed "canceled" (a refund or an unpaid order is a
+  decision about what to record, not a mapping). The 2026-09-25 pull has neither column (its
+  free-text note says every order was PAID), so the real dry run blocks until the pull that feeds
+  the apply run adds them (ASSUMPTIONS #16).
+- **A deleted contact still counts.** Linking reads trashed contacts too: a live one wins, an
+  address only a deleted contact holds is linked to it and left deleted (neither restored nor
+  re-created; counted as "linked to a contact deleted in Manara"). Undo keeps an import hold while
+  any contact, deleted or not, still holds the address, because a restore does not recompute the
+  opt-out mirror.
+- **SPA wording moved into `core/helpers/donationMethod.ts`** (`receiptNote`,
+  `historicalGivingNote`, the Wix order labels) so the choice of sentence is under
+  `npm run test:spa`; the templates only render it.
+
+Expected run on the 2026-09-25 export, recomputed from the raw files (aggregates only), once the
+pull adds the two columns: donations unchanged (339, $27,464.00); registrations 484 (443 paid, 41
+cancelled) $12,856.68, one fewer historical offering (MEC Community Connect); order-only 41 lines
+$3,341.56 ($3,340.00 of lines and $1.56 of Wix fees on the five paid food purchases); total still
+$43,662.24.

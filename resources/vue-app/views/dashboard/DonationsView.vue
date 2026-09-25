@@ -292,24 +292,12 @@
                                 </button>
                             </template>
                             <!--
-                                Imported Wix history: the money moved through Square or PayPal on
-                                the old site, so there is nothing for Manara to receipt or edit. The
-                                sentence mirrors DonationsController::historicalRefusal().
+                                Every other reason there is no receipt — imported Wix history, a
+                                card gift, a gift not yet succeeded, a fund that issues none — is
+                                one sentence chosen by receiptNote() (core/helpers/donationMethod.ts),
+                                where the choice and its wording are tested.
                             -->
-                            <p v-else-if="isHistoricalGift(selectedDonation)" class="text-muted mb-0">
-                                This gift is part of the order history imported from the old Wix site. It was paid
-                                through Wix, not Manara, so Manara does not edit it or issue a receipt for it.
-                            </p>
-                            <p v-else-if="selectedDonation.source !== 'offline'" class="text-muted mb-0">
-                                Receipts for card gifts are issued automatically when Stripe confirms the payment.
-                            </p>
-                            <p v-else-if="selectedDonation.status !== 'succeeded'" class="text-muted mb-0">
-                                This gift is not marked succeeded, so it cannot be receipted yet.
-                            </p>
-                            <p v-else class="text-muted mb-0">
-                                The {{ selectedDonation.fund?.name ?? 'chosen' }} fund is set not to issue tax receipts,
-                                so no receipt can be issued for this gift.
-                            </p>
+                            <p v-else class="text-muted mb-0">{{ receiptNote(selectedDonation) }}</p>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" @click="showViewModal = false">Close</button>
@@ -449,7 +437,7 @@ import { useMasjidStore } from '@/stores/masjidStore';
 import { useAuthStore } from '@/stores/authStore';
 import ApiService from '@/core/services/ApiService';
 import Swal from 'sweetalert2';
-import { donationMethodLabel, isHistoricalGift } from '@/core/helpers/donationMethod';
+import { donationMethodLabel, receiptNote } from '@/core/helpers/donationMethod';
 
 // Stores
 const donationsStore = useDonationsStore();

@@ -16,6 +16,10 @@ use Carbon\CarbonImmutable;
  *   stores/orders.json  `{columns: [...], rows: [[...], ...]}` — one row per
  *                       Wix Stores order, columns found BY NAME. Line items are
  *                       one string, `2x Fall Festival Ticket @10; 1x … [options]`.
+ *                       `paymentStatus` (Wix's, e.g. PAID, NOT_PAID,
+ *                       FULLY_REFUNDED) and `refundedUSD` are REQUIRED: only
+ *                       PAID with 0 refunded is read as paid; any other order is
+ *                       a problem, never assumed (DECISIONS.md 2026-09-25).
  *   events/orders.json  `{orders: [{no, ev, cr, fn, ln, em, st, meth, tot, inv}]}`
  *                       where `inv` is `[items[[name, qty, unitPrice]], subTotal,
  *                       grandTotal, fees[[name, type, amount]], discount]`.
@@ -161,7 +165,12 @@ class WixOrderExport
             $index[strtok((string) $name, '(')] = $i;
         }
 
-        foreach (['number', 'createdDateUTC', 'buyerEmail', 'billingFirstName', 'billingLastName', 'lineItems', 'totalUSD', 'discountUSD', 'appliedDiscounts'] as $required) {
+        // `paymentStatus` and `refundedUSD` are required, not optional: without
+        // them every row would have to be ASSUMED paid, and a store order is
+        // booked as a succeeded gift or a settled seat. The 2026-09-25 pull has
+        // neither (its free-text note says every order was PAID), so that file
+        // blocks here until the pull that feeds the real run adds both.
+        foreach (['number', 'createdDateUTC', 'buyerEmail', 'billingFirstName', 'billingLastName', 'lineItems', 'totalUSD', 'discountUSD', 'appliedDiscounts', 'paymentStatus', 'refundedUSD'] as $required) {
             if (! array_key_exists($required, $index)) {
                 return [[], ["stores/orders.json has no {$required} column."]];
             }
@@ -231,6 +240,27 @@ class WixOrderExport
             $gross = array_sum(array_map(fn ($l) => $l['quantity'] * $l['unit_minor'], $lines));
             if ($gross - $discount !== $total) {
                 $problems[] = "{$label}: the lines less the discount do not equal the total.";
+
+                continue;
+            }
+
+            // Only a PAID order with nothing refunded is history of money that
+            // stayed with the organisation. Anything else — not paid, pending,
+            // partly or fully refunded — is refused by its number rather than
+            // mapped, because the right record for it is somebody's decision.
+            $paymentStatus = strtoupper(trim((string) $cell($row, 'paymentStatus')));
+            $refundCell = $cell($row, 'refundedUSD');
+            $refunded = is_string($refundCell) || is_int($refundCell) ? self::toMinor($refundCell) : null;
+
+            if ($refunded === null) {
+                $problems[] = "{$label}: the refunded amount is unreadable.";
+
+                continue;
+            }
+
+            if ($paymentStatus !== 'PAID' || $refunded !== 0) {
+                $problems[] = "{$label}: its payment status is " . ($paymentStatus === '' ? 'blank' : $paymentStatus)
+                    . ($refunded !== 0 ? ' with a refund' : '') . ', not PAID with nothing refunded; decide how to record it first.';
 
                 continue;
             }
