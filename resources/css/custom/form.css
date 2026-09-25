@@ -4,6 +4,24 @@
     gap:.25rem;
 }
 
+/*
+ * The rule above is a LABEL-OVER-FIELD wrapper that reuses Bootstrap's class name,
+ * and because this stylesheet is global it also turned every Bootstrap input group
+ * — a "$" or an icon or a button beside a field — into a column. The prefix then
+ * stretched across the whole width and the field collapsed to Bootstrap's
+ * `width: 1%`: a bare spinner arrow with nowhere to type (reported on the lunch
+ * Add-order "Extra on top", 2026-09-24; eight screens were affected, and on the
+ * lunch form it meant staff could not enter an extra at all). A group that
+ * contains Bootstrap's own parts is Bootstrap's, so it gets Bootstrap's row back.
+ * `:has()` outranks the bare class above regardless of order; the legacy wrappers
+ * (a <label> over an .input) contain neither part and keep their column.
+ */
+.input-group:has(> .input-group-text),
+.input-group:has(> .btn) {
+    flex-direction: row;
+    gap: 0;
+}
+
 .input-group label, .label {
     font-size: 1rem;
     color: var(--cdark);
