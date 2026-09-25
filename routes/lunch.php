@@ -94,5 +94,12 @@ Route::middleware(['auth:sanctum', 'lunch', 'tenant', 'capability:jummah_lunch']
             Route::get('/menus/{menu_id}/orders/{order_id}', 'show');
             Route::post('/menus/{menu_id}/orders/{order_id}/mark-paid', 'markPaid');
             Route::put('/menus/{menu_id}/orders/{order_id}/status', 'updateStatus');
+            // Changing what is on an order (MealOrdersController::updateItems). The
+            // volunteers at the lunch table are the people a customer asks to fix a
+            // wrong plate count, and they already take orders, send payment links
+            // and mark them paid. This was added to the admin routes alone when the
+            // editor shipped, so the lunch board hid the button from exactly the
+            // people who needed it.
+            Route::patch('/menus/{menu_id}/orders/{order_id}/items', 'updateItems');
         });
     });

@@ -1008,9 +1008,10 @@ function balanceOf(o: any): number {
     return Number.isFinite(n) ? n : 0;
 }
 // Cancelled and refunded orders are what the server itself refuses (staffMayEdit);
-// a button that is certain to be refused is worse than no button.
+// a button that is certain to be refused is worse than no button. Lunch staff are
+// NOT excluded: their realm serves the same edit route (routes/lunch.php).
 function canEditItems(o: any): boolean {
-    return !isLunchStaff.value && o?.status !== "cancelled" && o?.payment_status !== "refunded";
+    return o?.status !== "cancelled" && o?.payment_status !== "refunded";
 }
 // The order as the board holds it NOW, found by id in the live list, so each
 // 15-second poll reaches the open editor: a payment that lands, or a cancellation

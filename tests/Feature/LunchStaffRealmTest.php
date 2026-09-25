@@ -6,6 +6,8 @@ use App\Models\Masjid;
 use App\Models\MasjidUser;
 use App\Models\MealMenu;
 use App\Models\MealMenuItem;
+use App\Models\MealOrder;
+use App\Models\MealOrderEdit;
 use App\Models\User;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -167,6 +169,90 @@ class LunchStaffRealmTest extends TestCase
             (int) MealMenu::withoutMasjidScope()->find($menuId)->masjid_id,
             'the menu must be stamped with the tenant bound from their membership'
         );
+    }
+
+    #[Test]
+    public function lunch_staff_can_change_what_is_on_an_order_and_the_change_is_theirs(): void
+    {
+        // Reported 2026-09-24: a lunch volunteer could not see "Edit items" at all.
+        // The route existed only on the admin side, so the board hid the button.
+        $order = $this->placeOrder($this->masjid, $this->menu, $this->plate, 1);
+
+        Sanctum::actingAs($this->lunchStaff);
+
+        $this->patchJson(
+            $this->lunchBase() . '/menus/' . $this->menu->id . '/orders/' . $order->id . '/items',
+            ['items' => [['meal_menu_item_id' => $this->plate->id, 'quantity' => 3]]]
+        )->assertOk();
+
+        $order = $order->fresh()->load('items');
+        $this->assertSame(2400, (int) $order->total_minor);
+        $this->assertSame(3, (int) $order->items->first()->quantity);
+
+        // Recorded as a staff edit by THIS volunteer, not anonymously.
+        $edit = MealOrderEdit::withoutMasjidScope()->where('meal_order_id', $order->id)->latest('id')->first();
+        $this->assertNotNull($edit, 'the edit must leave a record');
+        $this->assertSame('staff', $edit->actor);
+        $this->assertSame($this->lunchStaff->id, (int) $edit->user_id);
+    }
+
+    #[Test]
+    public function lunch_staff_cannot_change_another_organisations_order(): void
+    {
+        $otherMenu = MealMenu::factory()->forMasjid($this->other)->open()->create();
+        $otherPlate = MealMenuItem::factory()->create([
+            'masjid_id' => $this->other->id, 'meal_menu_id' => $otherMenu->id,
+            'name' => 'Other Plate', 'price_minor' => 800,
+        ]);
+        $order = $this->placeOrder($this->other, $otherMenu, $otherPlate, 1);
+        app(TenantContext::class)->forgetTenant();
+
+        Sanctum::actingAs($this->lunchStaff);
+
+        // Their own prefix, the other organisation's menu and order: a miss.
+        $this->patchJson(
+            $this->lunchBase() . '/menus/' . $otherMenu->id . '/orders/' . $order->id . '/items',
+            ['items' => [['meal_menu_item_id' => $otherPlate->id, 'quantity' => 9]]]
+        )->assertNotFound();
+
+        // And the other organisation's prefix is refused outright.
+        $this->patchJson(
+            '/api/lunch/masjids/' . $this->other->id . '/jummah-lunch/menus/' . $otherMenu->id . '/orders/' . $order->id . '/items',
+            ['items' => [['meal_menu_item_id' => $otherPlate->id, 'quantity' => 9]]]
+        )->assertForbidden();
+
+        $this->assertSame(800, (int) MealOrder::withoutMasjidScope()->find($order->id)->total_minor);
+    }
+
+    /** One placed order, priced from the menu and snapshotted, as the ordering paths write it. */
+    private function placeOrder(Masjid $masjid, MealMenu $menu, MealMenuItem $item, int $qty): MealOrder
+    {
+        $order = new MealOrder([
+            'meal_menu_id' => $menu->id,
+            'customer_name' => 'Test Customer',
+            'customer_phone' => '3365550000',
+            'payment_method' => MealOrder::METHOD_PICKUP,
+        ]);
+        $order->masjid_id = $masjid->id;
+        $order->currency = 'usd';
+        $order->subtotal_minor = (int) $item->price_minor * $qty;
+        $order->donation_minor = 0;
+        $order->fee_covered_minor = 0;
+        $order->total_minor = $order->subtotal_minor;
+        $order->order_number = '001';
+        $order->placed_at = now();
+        $order->save();
+
+        $order->items()->create([
+            'masjid_id' => $masjid->id,
+            'meal_menu_item_id' => $item->id,
+            'item_name' => $item->name,
+            'unit_price_minor' => (int) $item->price_minor,
+            'quantity' => $qty,
+            'line_total_minor' => (int) $item->price_minor * $qty,
+        ]);
+
+        return $order->fresh()->load('items');
     }
 
     // ---------------------------------------------------- what they CANNOT do
