@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\FormStaffSessionsController;
 use App\Http\Controllers\Api\V1\FormSubmissionsController;
 use App\Http\Controllers\Api\V1\HomeController;
 use App\Http\Controllers\Api\V1\JummahLunchOrdersController;
+use App\Http\Controllers\Api\V1\PaymentMethodsController;
 use App\Http\Controllers\Api\V1\OfferingRegistrationsController;
 use App\Http\Controllers\Api\V1\OrganizationByHostController;
 use App\Http\Controllers\Api\V1\PagesController;
@@ -149,6 +150,11 @@ Route::prefix('v1')->group(function () {
     // not stop a holder of the uuid who changes address.
     Route::patch('/lunch-orders/{uuid}', [JummahLunchOrdersController::class, 'update'])
         ->middleware(['throttle:lunch-order', 'throttle:lunch-order-edit']);
+
+    // The organisation's accepted payment methods and "how to pay" text, for any
+    // public page that has to say how to pay. Writes nothing.
+    Route::get('/payment-methods', [PaymentMethodsController::class, 'index'])
+        ->middleware('throttle:payment-methods');
 
     // Public zakat calculator (T-031). The odd one out among the public POSTs
     // here: it WRITES NOTHING. It is a POST anyway because its body is a

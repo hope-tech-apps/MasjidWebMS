@@ -51,6 +51,7 @@ use App\Http\Controllers\AdminDashboard\MealMenuItemsController;
 use App\Http\Controllers\AdminDashboard\LunchStaffController;
 use App\Http\Controllers\AdminDashboard\MealMenusController;
 use App\Http\Controllers\AdminDashboard\MealOrdersController;
+use App\Http\Controllers\AdminDashboard\PaymentMethodsController;
 use App\Http\Controllers\AdminDashboard\MasjidAboutUsController;
 use App\Http\Controllers\AdminDashboard\MasjidAdminsController;
 use App\Http\Controllers\AdminDashboard\MasjidDetailsController;
@@ -400,6 +401,16 @@ Route::prefix('admin')->group(function () {
                     // SuperAdmin or this organisation's own MasjidAdmin.
                     Route::patch('/menus/{menu_id}/orders/{order_id}/items', 'updateItems');
                 });
+            });
+
+            // Accepted payment methods and how to pay with each (owner, 2026-09-21).
+            // OUTSIDE `crm` and with no capability: every organisation that takes
+            // money has payment methods, member directory or not. No permission is
+            // minted — `admin` + `tenant` already mean an administrator of this
+            // organisation. See PaymentMethodsController.
+            Route::prefix('{masjid_id}/payment-methods')->controller(PaymentMethodsController::class)->group(function () {
+                Route::get('/', 'index');
+                Route::put('/', 'update');
             });
 
             // Masjid color theme settings

@@ -18,6 +18,11 @@ export const PAID_VIA_OPTIONS: { value: string; label: string }[] = [
     { value: "zelle", label: "Zelle" },
     { value: "terminal", label: "Masjid Terminal" },
     { value: "stripe", label: "Stripe" },
+    // The offline methods an organisation can advertise in its accepted payment
+    // methods that this list did not have (MealOrder::PAID_VIA, 2026-09-25).
+    { value: "check", label: "Check" },
+    { value: "bank_transfer", label: "Bank transfer" },
+    { value: "other", label: "Other" },
 ];
 
 /**

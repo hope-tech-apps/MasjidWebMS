@@ -2997,3 +2997,30 @@ are unchanged.
   send cap (the pay-at-pickup email goes to any typed address, 12 an hour per IP per masjid, as
   FormSubmissionReceipt does). The unpaid-order preview on the page still sums stored prices
   while the server re-prices from the menu (pre-existing; the server's total comes back on save).
+
+## 2026-09-25 — Accepted payment methods (Manara-wide)
+
+Owner's settled answers (MEC migration, 2026-09-21): "build a Manara-wide 'accepted payment methods
++ how to pay' setting now", offline payments are "Mark as Paid with the indication how they paid";
+Halal Kitchen: "Build ordering in Manara" — "Pickup at MEC, 48h, office confirms".
+
+**Payment methods.**
+- One row per ACCEPTED method (`organisation_payment_methods`, `BelongsToMasjid`), no enabled flag:
+  a switched-off method with instructions still attached is the text that gets shown by mistake.
+  Vocabulary `App\Support\PaymentMethods`: card, cash, check, zelle, bank_transfer, other. Plain
+  strings, never an enum. The admin screen replaces the whole set in one PUT (JSON; `methods` must
+  be present, so a lost field cannot clear the set), in order; "other" must be named.
+- `card` means the organisation's OWN Stripe Connect account through Manara, and is published only
+  while `canAcceptDonations()` holds (`AcceptedPaymentMethods::publicList`, the one reader). The
+  admin payload says `card_ready` so a saved-but-unpublished card is visible as such.
+- Public read: `GET /api/v1/payment-methods` (own limiter, `payment-methods`), and inside the
+  kitchen catalogue payload.
+- "Mark as paid" vocabularies were extended, not replaced: `MealOrder::PAID_VIA` gains check,
+  bank_transfer, other; `FormResponse::PAID_VIA` / `PAID_VIA_EXTERNAL` gain bank_transfer, other.
+  A test pins that every `PaymentMethods::OFFLINE` key is recordable in both modules. Mark paid
+  does NOT refuse a method the organisation does not advertise: staff record what happened.
+  Alternatives: one shared `paid_via` vocabulary replacing both (rewrites stored meanings and the
+  forms cash totals); reading the organisation's list at Mark paid (refuses reality). Donations'
+  offline entry (`payment_method`) and registrations (no Mark paid by design) are untouched.
+- Pinned lists updated on purpose: `MealOrderMarkPaidTest` (vocabulary + refusal sentence),
+  `FormOfficePaymentTest` (refusal prefix + `meta.payment.paid_via`).

@@ -191,6 +191,18 @@ export const MASJID_DASHBOARD_ASIDE_MENU: AsideMenuItem[] = [
         allowed_types: ['SuperAdmin', 'MasjidAdmin']
     },
     {
+        // The ways this organisation accepts money and how to pay with each, shown on
+        // its public pages. No capability needed: any organisation taking money has them.
+        title: "Payment Methods",
+        svg_icon: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="5.5" width="18" height="13" rx="2" stroke="white" stroke-width="1.7"/>
+                <path d="M3 10H21" stroke="white" stroke-width="1.7"/>
+                <path d="M7 15H10" stroke="white" stroke-width="1.7" stroke-linecap="round"/>
+                </svg>`,
+        to: '/masjid/payment-methods',
+        allowed_types: ['SuperAdmin', 'MasjidAdmin']
+    },
+    {
         // Layer 2 of the access model: every staff login this organisation has,
         // and adding administrators or lunch-only logins. No capability needed —
         // every organisation has a team.

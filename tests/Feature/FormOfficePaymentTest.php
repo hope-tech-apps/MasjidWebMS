@@ -520,7 +520,7 @@ class FormOfficePaymentTest extends TestCase
             $this->postJson($this->url("/{$row->id}/mark-paid-external"), $body)
                 ->assertStatus(422)
                 ->assertJsonPath('status', 'failed')
-                ->assertJsonPath('message', fn (string $message) => str_starts_with($message, 'Choose how they paid: Zelle, Cash App, Venmo, Check or Square.'));
+                ->assertJsonPath('message', fn (string $message) => str_starts_with($message, 'Choose how they paid: Zelle, Cash App, Venmo, Check, Square, Bank transfer or Other.'));
 
             $fresh = $row->fresh();
             $this->assertSame(FormResponse::METHOD_OFFICE, $fresh->payment_method, json_encode($body));
@@ -681,6 +681,10 @@ class FormOfficePaymentTest extends TestCase
                 ['value' => 'venmo', 'label' => 'Venmo'],
                 ['value' => 'check', 'label' => 'Check'],
                 ['value' => 'square', 'label' => 'Square'],
+                // Appended 2026-09-25: the offline methods an organisation can
+                // advertise in its accepted payment methods (PaymentMethods::OFFLINE).
+                ['value' => 'bank_transfer', 'label' => 'Bank transfer'],
+                ['value' => 'other', 'label' => 'Other'],
             ])
             ->assertJsonPath('meta.payment_filters', ['paid', 'unpaid', 'settled', 'cash', 'online', 'external', 'office']);
     }

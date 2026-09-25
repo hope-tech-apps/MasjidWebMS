@@ -166,6 +166,16 @@ class FormResponse extends Model
      */
     public const PAID_VIA_SQUARE = 'square';
 
+    /**
+     * The two offline methods an organisation can advertise in its accepted
+     * payment methods (App\Support\PaymentMethods::OFFLINE, 2026-09-25) that
+     * this list lacked. Whatever the organisation tells people to pay with, the
+     * office must be able to record having received. Appended; nothing stored
+     * changes meaning.
+     */
+    public const PAID_VIA_BANK_TRANSFER = 'bank_transfer';
+    public const PAID_VIA_OTHER = 'other';
+
     public const PAID_VIA = [
         self::PAID_VIA_CASH,
         self::PAID_VIA_ZELLE,
@@ -173,6 +183,8 @@ class FormResponse extends Model
         self::PAID_VIA_VENMO,
         self::PAID_VIA_CHECK,
         self::PAID_VIA_SQUARE,
+        self::PAID_VIA_BANK_TRANSFER,
+        self::PAID_VIA_OTHER,
     ];
 
     /** What "Mark paid" may record. Cash is "Take cash", which says so itself. */
@@ -182,6 +194,8 @@ class FormResponse extends Model
         self::PAID_VIA_VENMO,
         self::PAID_VIA_CHECK,
         self::PAID_VIA_SQUARE,
+        self::PAID_VIA_BANK_TRANSFER,
+        self::PAID_VIA_OTHER,
     ];
 
     /** The words a screen, an export or a receipt uses for each. */
@@ -192,6 +206,8 @@ class FormResponse extends Model
         self::PAID_VIA_VENMO => 'Venmo',
         self::PAID_VIA_CHECK => 'Check',
         self::PAID_VIA_SQUARE => 'Square',
+        self::PAID_VIA_BANK_TRANSFER => 'Bank transfer',
+        self::PAID_VIA_OTHER => 'Other',
     ];
 
     public const PAYMENT_UNPAID = 'unpaid';

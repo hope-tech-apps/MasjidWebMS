@@ -530,6 +530,20 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
+        // The public accepted-payment-methods read writes nothing and is small, so
+        // it takes the loose read shape, keyed by IP and organisation like the
+        // lunch menu read beside it.
+        RateLimiter::for('payment-methods', function (Request $request) {
+            $key = $request->ip() . '|' . (string) $request->header('masjid-id');
+
+            return Limit::perHour(60)->by($key)->response(function () {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Too many requests from this connection. Please try again later.',
+                ], 429);
+            });
+        });
+
         // The parent/guardian realm (T-015c, routes/family.php). Unlike every
         // limiter above it is applied to an AUTHENTICATED tree, so it is keyed
         // on the contact rather than the IP: a whole household — or a whole

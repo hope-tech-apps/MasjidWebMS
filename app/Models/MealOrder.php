@@ -74,17 +74,29 @@ class MealOrder extends Model
      * label staff record like the others. A payment on the order's own
      * Checkout page is recorded by the webhook alone and leaves `paid_via`
      * null (DECISIONS.md 2026-09-11).
+     *
+     * Check, bank transfer and other (2026-09-25) are the offline methods an
+     * organisation can advertise in its accepted payment methods
+     * (App\Support\PaymentMethods::OFFLINE) that this list did not have: a
+     * kitchen customer told to pay by check has to be recordable as having paid
+     * by check. Appended, so every value already stored keeps its meaning.
      */
     public const PAID_VIA_CASH = 'cash';
     public const PAID_VIA_ZELLE = 'zelle';
     public const PAID_VIA_TERMINAL = 'terminal';
     public const PAID_VIA_STRIPE = 'stripe';
+    public const PAID_VIA_CHECK = 'check';
+    public const PAID_VIA_BANK_TRANSFER = 'bank_transfer';
+    public const PAID_VIA_OTHER = 'other';
 
     public const PAID_VIA = [
         self::PAID_VIA_CASH,
         self::PAID_VIA_ZELLE,
         self::PAID_VIA_TERMINAL,
         self::PAID_VIA_STRIPE,
+        self::PAID_VIA_CHECK,
+        self::PAID_VIA_BANK_TRANSFER,
+        self::PAID_VIA_OTHER,
     ];
 
     /** The words the board shows for each, in the order it offers them. */
@@ -93,6 +105,9 @@ class MealOrder extends Model
         self::PAID_VIA_ZELLE => 'Zelle',
         self::PAID_VIA_TERMINAL => 'Masjid Terminal',
         self::PAID_VIA_STRIPE => 'Stripe',
+        self::PAID_VIA_CHECK => 'Check',
+        self::PAID_VIA_BANK_TRANSFER => 'Bank transfer',
+        self::PAID_VIA_OTHER => 'Other',
     ];
 
     /**
