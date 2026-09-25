@@ -24,6 +24,31 @@ near it.
 secret, key, OneSignal id or Apple team id. Where one matters, it cites the line
 in the private repository that holds it.
 
+**Owner decisions, 2026-09-24 (interview after the first draft).** These are
+settled and recorded in §8:
+
+- **Identity:** new apps use `com.hopetechapps.<slug>` on both platforms.
+- **Managed accounts:** Apple is the team NAFIS and MEC ship under; Play is the
+  console that holds `com.app.masajid`.
+- **Legacy button:** it stops signing and uploading too.
+- **Burlington's TV board** takes the D11 board on its next TV release.
+- **Jumu'ah:** hidden unless supplied, via `jumaa_is_default`.
+- **Arabic labels:** the owner reviews them.
+- **Canonical host:** `www`.
+- **Re-confirmation:** three misses over at least 72 hours.
+- **Ceiling alerts:** 50, 70, 85 and 95 percent.
+- **Live orgs' OneSignal:** their move is a later plan.
+- **Defaults accepted:** one Firebase project; LLM copy after W3.
+
+**The owner has taken on the setup this plan needs:**
+
+- `OPS_ALERT_EMAIL`;
+- the OneSignal organisation key and `ONESIGNAL_ORG_ID`;
+- the Cloudflare redirect scope;
+- the GitHub pull-request setting;
+- making MasjidWebMS private;
+- rotating the unused Google key in the iOS repo.
+
 **Path prefixes:**
 
 - A bare path is in MasjidWebMS.
@@ -176,7 +201,7 @@ Each row picks one side and gives the reason in one sentence.
 | R14 | How Studio edits a live organisation | A draft in "edit" mode (D7's draft machinery) vs the live writers | **No draft.** Features and Brand apply through S7 and S8; every other section is shown read-only and links to the admin screen that already writes it | Those screens already purge the renderer and flush caches (`routes/admin.php:212, :219, :307, :314, :426, :498-517`), and a second writer per datum would repeat landmine 3 for data. |
 | R15 | How a OneSignal app is created | The existing service: `Authorization: Basic <user auth key>`, reads `basic_auth_key` from the response, sends no `organization_id` (`app/Services/OneSignalProvisioningService.php:71-79, :90-93, :134-160`) vs OneSignal's current reference: `Authorization: Key <Organization API key>`, `organization_id` required, no REST key in the response, the key minted by `POST /apps/{app_id}/auth/tokens` and returned once as `formatted_token` (documentation.onesignal.com/reference/create-an-app and /create-api-key, read 2026-09-24) | **The current reference.** Encode it in `Http::fake` fixtures, and confirm it with the owner's key at build time | The service has never run (no caller, no test, no recorded use, apps-plane recon F15–F16), so nothing depends on the old shape. |
 | R16 | Where an app's identity comes from | The organisation's **name**, slugged (`AppProvisioningController.php:147-148, :196-201`) vs `masjids.slug` (W1 S3) | **`masjids.slug`.** Generation refuses an organisation without one | A name can change and can collide. A slug is unique (`masjids_slug_unique`) and already names the organisation's managed host. |
-| R17 | The Android package namespace for new apps | A suffix on Burlington's `com.app.masajid` (`android:app/build.gradle:8`; the workflow at `:194`) vs `com.hopetechapps.<slug>`, as iOS already defaults (`config/services.php:66-72`, `IOS_BUNDLE_PREFIX`) | **`com.hopetechapps.<slug>` on both platforms, subject to §8 OQ1** | A package name is permanent once published, and deriving every client's from Burlington's ties them all to Burlington's namespace. |
+| R17 | The Android package namespace for new apps | A suffix on Burlington's `com.app.masajid` (`android:app/build.gradle:8`; the workflow at `:194`) vs `com.hopetechapps.<slug>`, as iOS already defaults (`config/services.php:66-72`, `IOS_BUNDLE_PREFIX`) | **`com.hopetechapps.<slug>` on both platforms, confirmed by the owner (§8 OQ1)** | A package name is permanent once published, and deriving every client's from Burlington's ties them all to Burlington's namespace. |
 | R18 | The checklist's specification | "layouts §E/§F" (`docs/manara-studio-w1.md:1927-1931`) vs nothing: that recon report is not in the repository | **Defined in S10 from the code** | The marker is in the code (`app/Support/Studio/StarterPlaceholders.php:25-28, :56-81`), and that is what the checklist has to read. |
 
 ---
@@ -1788,8 +1813,8 @@ Rules for fetching URLs:
   requests" on both repos. It is off by default, and `gh pr create` with
   `GITHUB_TOKEN` fails without it.
 - The runner stays hosted `macos-15`, and `PROVISIONING-RUNNER.md` is
-  corrected. That keeps Burlington's keys off iOS runs. The cost in Actions
-  minutes is §8 OQ12.
+  corrected. That keeps Burlington's keys off iOS runs. §8 OQ12 records the
+  decision on Actions minutes.
 
 **Android workflow.**
 
@@ -1895,7 +1920,7 @@ and each generated app is born with its own push channel.
   - `ios_bundle_id = config('services.github.ios_bundle_prefix').'.'.slug`;
   - `android_application_id = 'com.hopetechapps.'.<slug with - as _>`, where
     each segment must start with a letter, so a leading digit gets an `app`
-    prefix. This is R17, subject to §8 OQ1.
+    prefix. This is R17, confirmed by the owner (§8 OQ1).
   
   **D9:** for `ios` or `android`, `OneSignalProvisioningService::ensureApp`
   must return an id and a key. Any other outcome refuses generation and names
@@ -2053,7 +2078,7 @@ events calendar; a donation / fundraising appeal." The school board is out.
 
 **Ship.** §3.3. **Burlington's board changes only when the owner releases a
 new Burlington TV build.** That is a manual `altool --type appletvos` upload
-(`ios:.claude/rules/appstore-ship.md:122`), and whether to do it is §8 OQ4. No
+(`ios:.claude/rules/appstore-ship.md:122`), and the owner has said it should (§8 OQ4). No
 iPhone target links MasjidKit, so the phone apps are untouched
 (`pbxproj:1631-1633`).
 
@@ -2223,8 +2248,8 @@ Each needs its own ticket.
 **New:**
 
 - **MasjidWebMS is a public repository** (`gh repo view`). Its docs, host maps
-  and plans are world-readable. The owner should confirm this is intended
-  before W3 creates anything derived from this org's code.
+  and plans are world-readable. The owner decided on 2026-09-24 to make it
+  private, and will change the visibility themselves.
 - **A Google API key is committed in the iOS repo** (`ios:Masjid/Models/S.swift:16`;
   value not reproduced). It must move to configuration before W3 derives
   client repos from this code.
@@ -2249,7 +2274,8 @@ Each needs its own ticket.
   is unknown.
 - **Stored BYO store credentials are never read** (apps-plane recon F25), and
   each runner signs with its own repo's secrets. W3 decides whether to keep
-  collecting them (W3 OQ).
+  collecting them (W3 OQ). The owner decided on 2026-09-24 to keep collecting
+  them, per D1 (W3 §8 OQ4).
 - **Dedicated-app sends still need the shared credentials,** because the
   shared `isConfigured()` check runs first (`OnesignalService.php:53-56`).
   Production has them, but removing them later would stop every send.
@@ -2261,21 +2287,26 @@ Each needs its own ticket.
 
 ## 8. Open questions
 
-| # | Question | Blocks | Recommended default |
+Most of these were put to the owner in an interview on 2026-09-24. A resolved
+row keeps its question struck through and records the answer. The rows still
+open are either reads that settle themselves (OQ14), unknowns to confirm at
+build time (OQ15), or another plan's decision (OQ11).
+
+| # | Question | Blocks | Answer or recommended default |
 |---|---|---|---|
-| OQ1 | The package and bundle namespace for new apps. It is permanent once published | S17 | `com.hopetechapps.<slug>` on both platforms (R17). iOS already defaults to that prefix (`config/services.php:66-72`) |
-| OQ2 | Which Apple team, and which Play console, is "Hope Tech's own" managed account? The labels conflict: `ios:scripts/ship-testflight.sh:37-38`, `ios:scripts/SCAFFOLD-README.md:97-98` and `ios:.claude/rules/appstore-ship.md:111` name the same team as Burlington's and as Hope Tech's | S14 (APNs key), S16, S19 | The owner names both. Until then, S16 and S19 build unsigned |
-| OQ3 | One Firebase project for every client's Android push, or one per client? | S14 | One "Manara apps" project, with each package registered in it. Confirm against OneSignal's Android setup at build time. Unknown, needs investigation |
-| OQ4 | Does Burlington's board take the D11 board (iqama countdown, events, appeal) on its next TV release? | S18's release | Yes. It is D11's board, and the owner decides when Burlington's TV build ships |
-| OQ5 | Which host is canonical for a client's own domain | S5 | `www`, as Burlington and Al-Razi already do (`docs/tenant-host-map.md:94, :101`) |
-| OQ6 | The re-confirmation thresholds | S4 | Three misses over at least 72 hours; imported rows are never demoted automatically (R10) |
-| OQ7 | The ceiling notice thresholds, and whether `OPS_ALERT_EMAIL` is set | S1 | 50, 70, 85 and 95 percent. The owner sets `OPS_ALERT_EMAIL` |
-| OQ8 | Who writes or approves the Arabic starter labels, and the renderer's Arabic interface strings still marked `_review` (`renderer:i18n/i18n.config.ts:4-7`) | S12 | A fluent reader the owner names. S12 ships dark until then |
-| OQ9 | When, if ever, do Burlington, NAFIS and MEC move to their own OneSignal apps? | Not W2 | Not until the first Studio client is live. Then a separate plan with a period of sending through both apps |
-| OQ10 | The legacy "Generate Apps" button stops uploading (R5). Acceptable? | S16 | Yes. D10's reasoning applies to it, and it has never produced a successful upload (§0) |
-| OQ11 | A Studio organisation given content for a module that is off by default blocks the S2b cutover (ASSUMPTIONS.md:37) | Not W2; the first such Studio client | Make `app-features:cutover-plan` treat "pivot off, switch already off" as non-blocking. That is S2b's change, not W2's |
-| OQ12 | GitHub Actions minutes: the org is on the Free plan (`gh api orgs/hope-tech-apps`), and hosted macOS minutes on private repos are metered | S16, and W3's per-client repos | Keep the iOS generation run on hosted `macos-15` for W2 (a handful of runs). Decide the runner model in W3 |
-| OQ13 | D4's LLM-written copy (settled) is deferred beyond W3. When should the provenance design for generated words be planned? | Neither W2 nor W3 | After W3, as its own plan. D4 itself is not reopened |
-| OQ14 | Where Burlington's apex 307 is configured | S5's refusal list | Read it (§4). S5 refuses every zone holding an imported row either way |
-| OQ15 | Whether tvOS signing works on the hosted runner, given the certificate maximum (`ios:XCODE-CLOUD.md:3-9`) | S19's archive; W3's TV upload | Unknown, needs investigation. W2 falls back to a simulator build and says so in `detail` |
-| OQ16 | Jumu'ah that the client never supplied: is a `jumaa_is_default` flag, emitted only when true and honoured by the board and both phone apps, the right way to keep the stored 13:30 default off every screen (DECISIONS.md:2728-2729)? | S18 | Yes. It is additive, it is absent for every live organisation, and it covers the legacy wizard's new organisations too |
+| OQ1 | ~~The package and bundle namespace for new apps~~ | S17 | **Resolved (owner, 2026-09-24): `com.hopetechapps.<slug>` on both platforms** (R17) |
+| OQ2 | ~~Which Apple team, and which Play console, is "Hope Tech's own" managed account?~~ | S14 (APNs key), S16, S19 | **Resolved (owner, 2026-09-24).** Apple: the team NAFIS and MEC ship under (`ios:Masjid.xcodeproj/project.pbxproj:2417, :2453`). Play: the console that holds `com.app.masajid` |
+| OQ3 | ~~One Firebase project for every client's Android push, or one per client?~~ | S14 | **Resolved (owner accepted the default, 2026-09-24): one "Manara apps" Firebase project, with each package registered in it.** Confirm against OneSignal's Android setup at build time |
+| OQ4 | ~~Does Burlington's board take the D11 board on its next TV release?~~ | S18's release | **Resolved (owner, 2026-09-24): yes.** It still reaches Burlington only when the owner releases its TV build |
+| OQ5 | ~~Which host is canonical for a client's own domain~~ | S5 | **Resolved (owner, 2026-09-24): `www` serves, the apex redirects** |
+| OQ6 | ~~The re-confirmation thresholds~~ | S4 | **Resolved (owner, 2026-09-24): three misses over at least 72 hours.** Imported and adopted rows are never demoted automatically; the owner is emailed |
+| OQ7 | ~~The ceiling notice thresholds, and `OPS_ALERT_EMAIL`~~ | S1 | **Resolved (owner, 2026-09-24): 50, 70, 85 and 95 percent. The owner sets `OPS_ALERT_EMAIL`** |
+| OQ8 | ~~Who writes or approves the Arabic starter labels?~~ | S12 | **Resolved (owner, 2026-09-24): the owner reviews them.** S12 ships dark until the review lands. The renderer's Arabic interface strings still marked `_review` (`renderer:i18n/i18n.config.ts:4-7`) go to the same review |
+| OQ9 | ~~When do Burlington, NAFIS and MEC move to their own OneSignal apps?~~ | Not W2 | **Resolved (owner, 2026-09-24): later, in a plan of its own, once the first Studio client is live** |
+| OQ10 | ~~The legacy "Generate Apps" button stops signing and uploading (R5). Acceptable?~~ | S16 | **Resolved (owner, 2026-09-24): yes, it stops too** |
+| OQ11 | A Studio organisation given content for a module that is off by default blocks the S2b cutover (ASSUMPTIONS.md:37) | Not W2; the first such Studio client | Open, and S2b's decision. Recommended: make `app-features:cutover-plan` treat "pivot off, switch already off" as non-blocking |
+| OQ12 | ~~GitHub Actions minutes on the Free plan~~ | S16, and W3 | **Resolved (owner, 2026-09-24).** W2 keeps its few iOS generation runs on hosted `macos-15`. W3 uses a dedicated self-hosted Mac (W3 §8 OQ6). The owner's personal GitHub Pro plan does not apply to `hope-tech-apps`, which is billed separately on Free (docs.github.com, "GitHub Actions billing") |
+| OQ13 | ~~When should the provenance design for LLM-written copy (D4) be planned?~~ | Neither W2 nor W3 | **Resolved (owner accepted the default, 2026-09-24): after W3, as its own plan.** D4 itself is not reopened |
+| OQ14 | Where Burlington's apex 307 is configured | S5's refusal list | A read (§4). S5 refuses every zone that is neither Studio-created nor on its allowlist, so it is safe either way |
+| OQ15 | Whether tvOS signing works on a CI runner, given the certificate situation (`ios:XCODE-CLOUD.md:3-9`) | W3's TV upload | Unknown, needs investigation. W2 builds the TV target for the simulator only. W3 R16 adopts the repo's recorded manual-signing recipe |
+| OQ16 | ~~Jumu'ah that the client never supplied~~ | S18 | **Resolved (owner, 2026-09-24): use the `jumaa_is_default` flag,** emitted only when true and honoured by the board and both phone apps |

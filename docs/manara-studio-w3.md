@@ -21,6 +21,32 @@ W2 will have moved some of them, so re-read before editing.
 **This repository is public** (`gh repo view`: `PUBLIC`). Nothing here is a
 secret. Every repository W3 creates is private.
 
+**Owner decisions, 2026-09-24 (interview after the first draft).** These are
+settled and recorded in §8:
+
+- **Web export:** frozen code, live data. It is hosted per client, like the
+  apps, with Hope Tech's Cloudflare as the default.
+- **Handover:** delivered as a zip. It includes the config repo only for a
+  continuing client, and a standalone vendored build, under a licence, for a
+  one-and-done client.
+- **The refactor** ships slice by slice.
+- **BYO credentials** are still collected, per D1.
+- **Runners:** a dedicated self-hosted Mac.
+- **Managed accounts:** Apple is the team NAFIS and MEC ship under; Play is the
+  console that holds `com.app.masajid`.
+- **MasjidWebMS** becomes private.
+- **Defaults accepted:** repo names; one-at-a-time moves with Burlington last;
+  a dedicated machine account; exports keep other tenants' inert
+  configuration.
+
+**The owner has taken on the setup this plan needs:**
+
+- the two ops repos;
+- the repo-ops GitHub App;
+- the machine account;
+- `GITHUB_OPS_TOKEN`;
+- the dedicated build Mac.
+
 **Path prefixes:** as in W2. A bare path is MasjidWebMS; `renderer:`, `ios:` and
 `android:` are the other three repos.
 
@@ -124,16 +150,16 @@ build, a regression walk, and the owner's go.
 | S15 | Move one existing Studio client to its own repos (the proof) | MasjidWebMS, iOS, Android | medium: a live client's code home moves; its identity does not | S13 | ~2 sessions |
 | **D** | **Web export (D2)** | | | | |
 | S16 | The renderer's export mode | renderer | medium: tracked `.env` leaves git; build inputs must not change | — | ~2 sessions |
-| S17 | Studio exports a client's website | MasjidWebMS, `manara-repo-ops` | low | S12 (plumbing), S16 | ~2 sessions |
+| S17 | Studio exports a client's website; hosting per client, Hope Tech's by default | MasjidWebMS, `manara-repo-ops` | low: a managed export moves a host between two projects, with the owner's go | S12 (plumbing), S16, W2 S3 | ~3 sessions |
 | **E** | **Source download (D3)** | | | | |
-| S18 | Source download against a handover reference | MasjidWebMS, `manara-repo-ops` | low: SuperAdmin-only, ledgered | S12 | ~1.5 sessions |
+| S18 | Source download against a handover reference: config-only or standalone | MasjidWebMS, `manara-repo-ops` | low: SuperAdmin-only, ledgered | S12; S8 and S10 for standalone | ~2.5 sessions |
 | **F** | **Store toggles (D10)** | | | | |
 | S19 | The store-operations repo, the toggle model and Step 3's switches | new `manara-store-ops`, MasjidWebMS | low: switches default OFF | S12 (plumbing) | ~2 sessions |
 | S20 | App Store record: register automatically, create by hand, confirm automatically | store-ops, MasjidWebMS | medium: writes to Hope Tech's Apple developer account | S19 | ~2.5 sessions |
 | S21 | Play app: create by hand, first upload by hand, confirm automatically | store-ops, MasjidWebMS | medium: a new upload key per client | S19 | ~2 sessions |
 | S22 | Upload builds: TestFlight (iPhone and TV) and Play's internal track | store-ops, MasjidWebMS | medium–high: uploads to the developer accounts that hold the live apps | S20, S21 | ~2 sessions |
 
-- **Total:** about 49 builder sessions. This is an estimate. Most of the
+- **Total:** about 51 builder sessions. This is an estimate. Most of the
   uncertainty is in S5 and S9, which move code that has not been read
   file by file.
 - **S16 can start at once.** S17 and S18 need only S12's ops plumbing, which does
@@ -230,14 +256,17 @@ As W2 §3.3, with three additions:
 - **Template changes** reach existing client repos only as pull requests a
   person writes, never pushed into a client repo directly. `studio:bump` (S14)
   moves only the pinned kit version.
-- **Client iOS CI runs on hosted macOS**, metered on the Free plan. It
-  therefore runs on pull requests that change `Package.resolved`, the
-  configuration or the assets, and on the default branch, and never on other
-  pushes.
-  - Per-bump cost: a simulator build of two targets, roughly 10–15 minutes,
-    billed at the macOS rate. That is an estimate, not a measurement; read the
-    real figure from the first bump.
-  - §8 OQ6 is the runner decision.
+- **Client iOS CI and store-ops' macOS jobs run on a dedicated self-hosted
+  Mac** (owner, 2026-09-24; §8 OQ6).
+  - It holds no other keys, and is registered only to `manara-store-ops`,
+    `manara-repo-ops` and the client repos, under the runner label
+    `manara-build`. It is not the Mac that holds Burlington's upload key.
+  - A self-hosted runner costs no Actions minutes, but it runs whatever those
+    repos' workflows say. That is one more reason the ops repos run only on
+    `workflow_dispatch`, and client repos only on §3.5's triggers.
+  - Client iOS CI still runs only on pull requests that change
+    `Package.resolved`, the configuration or the assets, and on the default
+    branch.
 - **Client Android CI runs on `ubuntu-latest`**, which is not multiplied.
 
 ---
@@ -248,7 +277,7 @@ Every read is read-only. The owner runs any that touch an account.
 
 | Read | Gates | How |
 |---|---|---|
-| **The owner confirms that MasjidWebMS is meant to be public** (W2 §7) | everything in W3 | The owner's answer, recorded in DECISIONS.md. W3 writes nothing secret here in either case, but the answer governs how much of the ops design is documented in this repo |
+| ~~Whether MasjidWebMS is meant to be public~~ **Resolved (owner, 2026-09-24): make it private.** The owner changes the visibility | — | Confirm with `gh repo view hope-tech-apps/MasjidWebMS --json visibility` before S12 writes ops details into this repo's docs |
 | W2 is complete on every repo | all | `git log` on each `main`; W2's exit walk in `LOG.md` |
 | The Actions minutes used and included for `hope-tech-apps` (Free plan) | S11, S12, S19–S22 | Billing page (organisation admin) |
 | The managed Apple team's distribution certificates, and **which live profiles depend on each** | S20, S22 | The Certificates and Profiles pages, or ASC API `GET /v1/certificates` and `GET /v1/profiles`. The iOS repo records that the app's team had no distribution certificate at the time of the tvOS ship (`ios:.claude/rules/appstore-ship.md:113-121`), and that the owner's team was at its maximum (`ios:XCODE-CLOUD.md:3-9`) |
@@ -649,7 +678,7 @@ marked `is_template`.
     and the fallback logo;
   - MasjidKit pinned at `exactVersion` (S8);
   - `.github/workflows/build.yml` builds both targets for their simulators, on
-    hosted macOS, only under §3.5's triggers;
+    the `manara-build` Mac, only under §3.5's triggers;
   - `.github/workflows/secret-scan.yml` runs gitleaks on every push, on
     `ubuntu-latest`.
 - **`manara-client-android-template`**:
@@ -967,7 +996,7 @@ its repos, with the same bundle id, package name and OneSignal app.
       `DEPLOY_TARGET=cloudflare`;
     - a gitleaks workflow, so S18's gate can pass.
   - **Leaves other tenants' id-keyed tables in place.** They are inert for
-    another tenant's id, and whether to prune them is §8 OQ10.
+    another tenant's id, and the owner chose not to prune them in W3 (§8 OQ10).
 
 **Tests** (`node --test`):
 
@@ -987,57 +1016,93 @@ its repos, with the same bundle id, package name and OneSignal app.
 
 ### S17: Studio exports a client's website (MasjidWebMS, `manara-repo-ops`)
 
+**Hosting is chosen per client, like the apps' account question** (owner,
+2026-09-24; §8 OQ2):
+
+- **`managed`, the default:** Hope Tech hosts the frozen export in its own
+  Cloudflare account, as a separate Pages project.
+- **`client`:** the client's own Cloudflare account.
+
+Either way the code is frozen and receives no renderer fixes. `managed` means
+Hope Tech keeps it online, not that Hope Tech updates it.
+
 **Contract.**
 
-- **`POST /api/admin/studio/organisations/{masjid_id}/website-export`** (super).
+- **`POST /api/admin/studio/organisations/{masjid_id}/website-export`** (super),
+  body `{hosting: 'managed'|'client'}`, with `managed` as the default.
   - It refuses an organisation without a confirmed serving host.
   - It dispatches repo-ops' **`export-website`** workflow with the tenant id,
-    its serving hosts, and the API base from `SiteUrl`.
+    its serving hosts, the API base from `SiteUrl`, and the hosting mode.
 - **The workflow:**
   1. checks out the renderer at `main`'s head with the repo-ops App;
   2. runs S16's script and builds the result with the Cloudflare preset;
   3. creates the private `manara-<slug>-web`, and commits the tree plus
      `HANDOVER.md` in one commit;
-  4. calls back with `result: {full_name, renderer_commit}`.
+  4. **for `managed`, it also:**
+     - creates the Pages project `manara-export-<slug>`;
+     - deploys the built tree to it with `wrangler pages deploy`, using a
+       Cloudflare token held only in repo-ops' secrets, scoped to
+       Account › Cloudflare Pages: Edit and nothing else;
+  5. calls back with `result: {full_name, renderer_commit, pages_project?}`.
   
-  A `client_repos` row is recorded with `platform = web`.
-- **A new host source, `external`,** in `masjid_domains`, for a host that
-  serves this organisation from a deploy Manara does not run:
+  A `client_repos` row is recorded with `platform = web` and a new `hosting`
+  column.
+- **`managed`: the host moves between two projects in Hope Tech's account.**
+  - `masjid_domains` gains `pages_project`, nullable. Null means
+    `config('cloudflare.pages_project')`, so every existing row is unchanged.
+  - The attacher and W2 S3's remover use the row's project.
+  - The move is W2 S3's detach from `manara-renderer`, then an attach of the
+    same host to `manara-export-<slug>`. Studio's token already has Pages Edit.
+    The row stays `source = studio`, and the probe re-confirms it (the export
+    still sends `x-manara-tenant`).
+  - It needs the owner's go, and runs in a quiet hour: the host is unreachable
+    between the detach and the attach.
+- **`client`: a new host source, `external`,** in `masjid_domains`, for a host
+  that serves this organisation from a deploy Manara does not run:
   - `DomainAttacher` never writes to Cloudflare for it;
   - it is probe-only, and W2 S4 re-probes it like a Studio row;
-  - it is created by a SuperAdmin after the client's own deploy answers on the
-    host.
-- **`HANDOVER.md`**, rendered from a template that a test pins, says in plain
-  words:
+  - a SuperAdmin creates it after the client's own deploy answers on the host.
+- **The Pages project cap.** Cloudflare allows 100 Pages projects per account
+  (developers.cloudflare.com/pages/platform/limits), and every managed export
+  uses one.
+  - W2 S1's `domains:capacity` gains `pages_projects_used`, from one GET of
+    the account's projects, with the same notice thresholds.
+  - Its runbook gains "move a managed export to the client's account" as a
+    retirement step.
+- **`HANDOVER.md`**, rendered from a template that a test pins, per hosting
+  mode. It says in plain words:
   - the code is frozen at renderer commit X and no longer receives Manara's
     fixes;
   - content, forms, events and donations still come from Manara's API and
     admin, and stop if the organisation leaves Manara (R4);
-  - how to deploy it with `wrangler pages deploy` into the client's own
-    Cloudflare account;
-  - **the move, in order:**
+  - for `managed`: Hope Tech hosts it at `manara-export-<slug>`, and how the
+    client can take it over later;
+  - for `client`: how to deploy it with `wrangler pages deploy` into the
+    client's own account, and **the move, in order**:
     1. detach the host from `manara-renderer` (W2 S3). A custom domain belongs
        to one Pages project at a time;
     2. the client attaches it to their own project;
-    3. a SuperAdmin adds the host as `external`, and the probe confirms it
-       (the export still sends `x-manara-tenant`).
+    3. a SuperAdmin adds the host as `external`, and the probe confirms it.
     
-    CORS and card-payment returns work again from the moment of confirmation.
-    The site is unreachable between steps 1 and 2, so the client should do them
-    together.
-- **Manara does not deploy the export** (§8 OQ2).
+    CORS and card-payment returns work again from confirmation. The site is
+    unreachable between steps 1 and 2.
 
 **Tests** (`WebsiteExportTest`):
 
 - `it_refuses_an_org_without_a_serving_host`
-- `the_handover_note_states_the_api_dependency_and_the_move_order`
+- `managed_is_the_default_hosting`
+- `the_handover_note_states_the_api_dependency_for_each_hosting_mode`
+- `a_managed_export_moves_the_host_to_its_own_project_and_the_probe_reconfirms_it`
 - `an_external_row_is_never_written_to_cloudflare`
 - `an_external_row_is_admitted_to_cors_once_the_probe_confirms_it`
+- `existing_rows_keep_the_default_project`
+- `DomainsCapacityCommandTest` gains `pages_projects_are_counted_and_noticed`.
 
-**Live impact.** None until a client deploys the export and a host is moved.
-Moving the host is W2 S3 plus this slice's `external` row, with the owner's go.
+**Live impact.** None until a client's host is moved, which needs the owner's
+go. Every existing `masjid_domains` row keeps a null `pages_project`, which
+means `manara-renderer`.
 
-**Size.** ~2 sessions (estimate).
+**Size.** ~3 sessions (estimate).
 
 ---
 
@@ -1066,13 +1131,30 @@ agreed." A download therefore needs the agreement named.
   - The server returns `{url}` from `OpsDispatcher::artifactLocation`. It is
     never logged (R11), and the SPA opens it.
   - It writes an append-only `source_downloads` row: organisation, repo, sha,
-    `handover_reference`, and the user id plus a snapshot of the user's name
-    and email (the `contact_login_events` pattern). It also writes a
-    `Log::warning`.
-- **What a handover includes.** A config-only client repo does not build
-  without the private kit. Whether a handover also includes MasjidKit at the
-  pinned tag, and under what licence, is §8 OQ14. Until the owner decides,
-  the SPA says, next to the button, that the kit is not included.
+    `handover_kind`, `handover_reference`, and the user id plus a snapshot of
+    the user's name and email (the `contact_login_events` pattern). It also
+    writes a `Log::warning`.
+- **Two kinds of handover, chosen per client** (owner, 2026-09-24; §8 OQ14).
+  The body gains a required `handover_kind`.
+  - **`config_only`**, for a client continuing with Hope Tech. The archive is
+    the client repo as it is. It does not build without the private kit, and
+    the SPA says so next to the button.
+  - **`standalone`**, for a one-and-done client. `source-archive` runs in
+    standalone mode:
+    - **iOS:** copy MasjidKit's source at the repo's pinned tag into
+      `Vendor/MasjidKit/`, and switch the project's package reference from
+      remote to that local path;
+    - **Android:** copy the `masjidkit` module's source at its pinned tag into
+      `masjidkit/`, and switch the dependency to `project(':masjidkit')`;
+    - add `LICENSE-MasjidKit` from the licence template the owner provides in
+      repo-ops (§8 OQ16);
+    - **build the result with no credential for the kit**, on the dedicated
+      Mac for iOS and on ubuntu for Android, to prove it stands alone;
+    - only then archive it.
+    
+    The client repo itself is never changed: the vendored tree exists only in
+    the archive. Until the licence template exists, `standalone` is refused
+    with a sentence that says why.
 - **Coverage:**
   - a `TenantScopingCoverageTest` DECLINED entry for `source_downloads`;
   - `config/staging_scrub.php` classifies its name and email snapshot, or
@@ -1083,10 +1165,12 @@ agreed." A download therefore needs the agreement named.
 - `a_repo_of_another_org_or_a_shared_repo_is_refused`
 - `a_missing_handover_reference_is_422`
 - `a_failed_scan_returns_no_url`
-- `every_download_is_ledgered`
+- `a_standalone_archive_builds_without_access_to_the_kit` (repo-ops fixture)
+- `standalone_is_refused_until_the_licence_template_exists`
+- `every_download_is_ledgered_with_its_kind`
 - `the_download_url_is_never_logged`
 
-**Size.** ~1.5 sessions (estimate).
+**Size.** ~2.5 sessions (estimate).
 
 ---
 
@@ -1113,8 +1197,8 @@ agreed." A download therefore needs the agreement named.
   serve nothing there. Then store-ops really is the one place that can publish.
 - **Workflows:** `asc-register`, `asc-check`, `play-check`, `ios-upload` and
   `android-upload`.
-  - API-only jobs run on `ubuntu-latest`. Archiving an iOS or tvOS build needs
-    macOS (§8 OQ6).
+  - API-only jobs run on `ubuntu-latest`. Archiving an iOS or tvOS build runs
+    on the `manara-build` Mac (§3.5).
   - Each calls back with its `kind` and a `result` (S12).
 - **Identity denylist, in two layers.** Store-ops' `denylist.json` and the
   backend's `config/studio.php` list the live apps' identities: the three
@@ -1337,7 +1421,8 @@ With the owner:
 
 ## 7. Observed, out of scope
 
-- **MasjidWebMS is public** (§4's first read).
+- **MasjidWebMS is public today.** The owner decided on 2026-09-24 to make it
+  private (§4).
 - **The web server already holds `GITHUB_DISPATCH_TOKEN`** for
   `repository_dispatch` to the shared iOS and Android repos
   (`config/services.php:66-72`). `repository_dispatch` needs contents write on
@@ -1346,7 +1431,8 @@ With the owner:
   would close it. That is its own slice.
 - **The GitHub organisation is on the Free plan.** Organisation secrets are not
   available to private repos (docs.github.com, "Using secrets in GitHub
-  Actions"), and hosted macOS minutes are metered (§8 OQ6).
+  Actions"), and hosted macOS minutes are metered. The owner chose a dedicated
+  self-hosted Mac (§8 OQ6).
 - **The Apple team labels conflict** across the iOS repo's scripts and docs
   (W2 §8 OQ2).
 - **Xcode Cloud is designed but not confirmed to exist** (`ios:XCODE-CLOUD.md`;
@@ -1360,20 +1446,24 @@ With the owner:
 
 ## 8. Open questions
 
-| # | Question | Blocks | Recommended default |
+Most of these were put to the owner in an interview on 2026-09-24. A resolved
+row keeps its question struck through and records the answer.
+
+| # | Question | Blocks | Answer or recommended default |
 |---|---|---|---|
-| OQ1 | Is "frozen code, live Manara data" what D2 meant by an export? | S16, S17 | Yes (R4). A static snapshot is not offered, because it would silently stop showing prayer times, events and forms |
-| OQ2 | Where does an exported site run? | S17's handover note | The client's own Cloudflare account. Hope Tech's account allows 100 Pages projects in total (developers.cloudflare.com/pages/platform/limits) |
-| OQ3 | Do the refactor's moves reach the App Store one slice at a time, or together after S7? | §3.2 | One at a time. Each slice leaves every app shippable and has its own walk |
-| OQ4 | D1 keeps "BYO credential handling", and W3's toggles use none of it (R13). Should BYO credentials still be collected? | S19 | Keep collecting them, as D1 says. Stopping would be a change to D1, which is the owner's call |
-| OQ5 | Who holds each Android client's upload key? | S21 | The owner, in the password manager and as a store-ops secret. One key per client |
-| OQ6 | The runner and plan: GitHub Free (metered macOS minutes, no organisation secrets for private repos), a self-hosted Mac, or GitHub Team | S11, S19–S22 | Linux jobs on hosted runners. Client iOS CI and store-ops' macOS archives on a **dedicated** self-hosted Mac that holds no other keys, registered to store-ops and the client repos only; the Mac that holds Burlington's upload key is not used. Revisit Team at ten clients |
-| OQ7 | Which existing clients move to their own repos, and when? | after S15 | One at a time, each with the owner's go. Burlington last |
-| OQ8 | Can a private GitHub Packages package grant read to a new repo by API, making R15's machine-account token unnecessary? | S11 | Assume not (packages grant per repository). Confirm at build time; if it can, drop the token |
-| OQ9 | Which distribution certificate does store-ops use, and which live profiles depend on it? | S20, S22 | Read both (§4). Use a certificate no live app's profile depends on. **Never revoke one to make room without listing the profiles that would break** |
-| OQ10 | Should an export prune other tenants' id-keyed configuration? | S16 | Not in W3. It is inert and public on those tenants' own sites. Revisit when a tenant's configuration holds anything private |
-| OQ11 | Which Apple team and which Play console is Hope Tech's managed account? | S19–S22 | Carried from W2 §8 OQ2 |
-| OQ12 | Repository names | S12 | `manara-<slug>-ios`, `-android` and `-web`. They stay distinct from the hand-built `<client>-web` repos (renderer recon F16) |
-| OQ13 | What does a handover give the client: a zip or a repository transfer? | S18 | A zip through S18. A transfer is a person's act in GitHub and is not automated |
-| OQ14 | Does a handover include MasjidKit (or `masjidkit`) at the pinned version, and under what licence? | S18 | Not until the owner decides. The SPA says the kit is not included |
-| OQ15 | Who owns the machine account behind R15's `read:packages` token and store-ops' read token? | S11, S12, S19 | A dedicated, least-privilege organisation member created by the owner, with two-factor authentication, used for nothing else |
+| OQ1 | ~~Is "frozen code, live Manara data" what D2 meant by an export?~~ | S16, S17 | **Resolved (owner, 2026-09-24): yes** (R4). No static snapshot |
+| OQ2 | ~~Where does an exported site run?~~ | S17 | **Resolved (owner, 2026-09-24): per client, like the apps' account question.** The default is Hope Tech's Cloudflare account, as a separate Pages project; the client's own account on request. Managed exports count toward the 100-project cap, which S17 adds to the capacity report |
+| OQ3 | ~~Do the refactor's moves reach the App Store one slice at a time, or together after S7?~~ | §3.2 | **Resolved (owner, 2026-09-24): slice by slice** |
+| OQ4 | ~~Should BYO credentials still be collected, given W3 uses none?~~ | S19 | **Resolved (owner, 2026-09-24): keep collecting them, as D1 says** |
+| OQ5 | Who holds each Android client's upload key? | S21 | Open. Recommended: the owner, in the password manager and as a store-ops secret, one key per client |
+| OQ6 | ~~The runner and plan~~ | S11, S19–S22 | **Resolved (owner, 2026-09-24): a dedicated self-hosted Mac** that holds no other keys (§3.5). The organisation stays on Free. The owner's personal GitHub Pro plan does not apply to `hope-tech-apps`, which is billed separately (docs.github.com, "GitHub Actions billing") |
+| OQ7 | ~~Which existing clients move to their own repos, and when?~~ | after S15 | **Resolved (owner accepted the default, 2026-09-24): one at a time, each with the owner's go, Burlington last** |
+| OQ8 | Can a private GitHub Packages package grant read to a new repo by API, making R15's machine-account token unnecessary? | S11 | Open, to confirm at build time. Assume not, since packages grant per repository. If it can, drop the token |
+| OQ9 | Which distribution certificate does store-ops use, and which live profiles depend on it? | S20, S22 | Open; a read (§4). Use a certificate no live app's profile depends on. **Never revoke one to make room without listing the profiles that would break** |
+| OQ10 | ~~Should an export prune other tenants' id-keyed configuration?~~ | S16 | **Resolved (owner accepted the default, 2026-09-24): not in W3.** It is inert and public on those tenants' own sites |
+| OQ11 | ~~Which Apple team and which Play console is Hope Tech's managed account?~~ | S19–S22 | **Resolved (owner, 2026-09-24).** Apple: the team NAFIS and MEC ship under (`ios:Masjid.xcodeproj/project.pbxproj:2417, :2453`). Play: the console that holds `com.app.masajid` |
+| OQ12 | ~~Repository names~~ | S12 | **Resolved (owner accepted the default, 2026-09-24): `manara-<slug>-ios`, `-android` and `-web`** |
+| OQ13 | ~~What does a handover give the client: a zip or a repository transfer?~~ | S18 | **Resolved (owner, 2026-09-24): a zip, through S18** |
+| OQ14 | ~~Does a handover include MasjidKit?~~ | S18 | **Resolved (owner, 2026-09-24): per client.** Continuing clients get the config repo only. A one-and-done client gets a `standalone` archive with the kit's source vendored in at the pinned tag, under a licence, proven to build on its own (S18) |
+| OQ15 | ~~Who owns the machine account behind the read tokens?~~ | S11, S12, S19 | **Resolved (owner accepted the default, 2026-09-24): a dedicated, least-privilege organisation member with two-factor authentication, used for nothing else.** The owner creates it |
+| OQ16 | The licence text for a `standalone` handover's `LICENSE-MasjidKit` | S18's `standalone` kind only | Open. The owner provides it, and until then `standalone` is refused with a sentence that says why. `config_only` handovers are not blocked |
