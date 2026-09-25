@@ -217,6 +217,7 @@ import { getMessageFromObj } from '@/assets/ts/swalMethods';
 import { BackendResponseData } from '@/core/types/config/AxiosCustom';
 import { VueDatePicker } from '@vuepic/vue-datepicker';
 import '@vuepic/vue-datepicker/dist/main.css';
+import { SALAH_KEYS, formatDate, iqamaSavePayload, parseLocalDate } from './iqamaSettingsForm';
 
 // Lifecycle hooks
 onBeforeMount(async () => {
@@ -253,7 +254,6 @@ const masjidStore = useMasjidStore();
 
 // Custom constants
 const iqamaTimeSetting = ref<IqamaTimeSetting>();
-const SALAH_KEYS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const;
 const isLoading = ref<boolean>(false);
 const iqamaType = ref<IqamaType>('minutes_after_adhan');
 const showIqamaTimes = ref<boolean>(true);
@@ -420,18 +420,6 @@ const removeTimeRange = (salah: typeof SALAH_KEYS[number], index: number) => {
     timeRanges.value[salah].splice(index, 1);
 }
 
-const parseLocalDate = (ymd: string): Date => {
-    const [y, m, d] = ymd.slice(0, 10).split('-').map(Number);
-    return new Date(y, m - 1, d);
-}
-
-const formatDate = (date: Date): string => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-}
-
 const updateDateRange = (salah: typeof SALAH_KEYS[number], index: number) => {
     const range = timeRanges.value[salah][index];
 
@@ -459,36 +447,14 @@ const onSubmit = async () => {
         .then(async (result) => {
             if (result.isConfirmed) {
 
-                // Prepare Request Data
-                const apiRequestData: any = {
-                    iqama_type: iqamaType.value,
-                    show_iqama_times: showIqamaTimes.value
-                };
-
-                // Offsets go in BOTH modes: on Specific Time Ranges they are the fallback
-                // for days no range covers, and leaving them out used to reset them to 0.
-                SALAH_KEYS.forEach(k => {
-                    apiRequestData[k] = settingsModel.value[k as keyof SettingsModel];
+                // Offsets in both modes, complete ranges only on Specific Time Ranges
+                // (iqamaSettingsForm.ts says why).
+                const apiRequestData = iqamaSavePayload({
+                    iqamaType: iqamaType.value,
+                    showIqamaTimes: showIqamaTimes.value,
+                    offsets: settingsModel.value,
+                    timeRanges: timeRanges.value,
                 });
-
-                if (iqamaType.value === 'specific_time_ranges') {
-                    // Prepare time ranges - only include non-empty ranges
-                    const allTimeRanges: any[] = [];
-                    SALAH_KEYS.forEach(salah => {
-                        timeRanges.value[salah].forEach(range => {
-                            // Only add if all fields are filled
-                            if (range.start_date && range.end_date && range.specific_time) {
-                                allTimeRanges.push({
-                                    salah: salah,
-                                    start_date: range.start_date,
-                                    end_date: range.end_date,
-                                    specific_time: range.specific_time
-                                });
-                            }
-                        });
-                    });
-                    apiRequestData.time_ranges = allTimeRanges;
-                }
 
                 console.log('Submitting iqama settings:', apiRequestData);
 

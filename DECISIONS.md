@@ -3040,10 +3040,11 @@ found the server still had three copies of the iqama rule, and they disagreed.
   23:4x UTC the same UTC date, so the 26-hour guard swallowed Sunday's push (review lead, confirmed; pinned by
   `the_isha_iqama_the_day_after_a_fixed_range_ends_is_pushed_although_both_fall_on_one_utc_date`). For a masjid
   on Minutes After Adhan the only pushes that change are ones the old key wrongly suppressed (an instant drifting
-  earlier across UTC midnight). Deploy-moment cost, accepted: a push sent by the old code in the 90 s window
-  before the deploy, for a prayer whose row date differs from its UTC date (a New York Isha in EDT, a June
-  Maghrib), can go out once more under the new key. Checking the legacy key as well was rejected: it would
-  keep the suppression bug alive for 26 hours around every such day and leave dead code behind.
+  earlier across UTC midnight). A push sent by the old code shortly before the deploy, for a prayer whose row
+  date differs from its UTC date (a New York Isha in EDT, a June Maghrib), could go out once more under the new
+  key; this is closed by WHEN the backend is deployed (deploy step 1 in the follow-up section below), not by
+  code. Checking the legacy key as well was rejected: it would keep the suppression bug alive for 26 hours
+  around every such day and leave dead code behind.
 - **A fixed time is only placed in the masjid's OWN zone** (`IqamaResolver::placesFixedTimes`). A blank, unknown
   or UTC-named `masjids.timezone` (the column's default for every masjid that predates it) keeps the push and the
   stored column at adhan + offset, which is what they did before this branch, and the push logs one warning per
@@ -3077,3 +3078,54 @@ already allowed an owner's acceptance) was rejected because the push would contr
 dark device from the first day. Hiding a Minutes After Adhan masjid's stored ranges from the website (the
 first cut) was withdrawn in review, above: correct in itself, but it changes a live payload nobody has
 checked, and that is the owner's call.
+
+### 2026-09-25 — Iqama review follow-up: deploy steps, which overlapping range wins, and the pins
+
+**Deploy steps for this branch (whoever ships it; recorded here because nothing enforces them):**
+1. **Run the backend deploy (bin/deploy) between 12:00 and 17:00 UTC** (8 AM to 1 PM EDT, 7 AM to noon EST).
+   The push guard's key moves from the instant's UTC date to the prayers row's date, and the dedupe is only
+   `Cache::has` on the new key. The two keys differ only for a prayer whose instant falls on a different UTC
+   date from its local day, which for a masjid at UTC offset o happens only between 00:00 UTC and |o| hours
+   after it (west of UTC) or in the last o hours before it (east). In 12:00-17:00 UTC that is impossible for
+   every offset from UTC-12 to UTC+6, so no push the old code sent can be re-sent under the new key. The same
+   window also keeps clear of the other deploy-moment double: an organisation on Specific Time Ranges whose old
+   adhan + offset push and new fixed-time push fall on one evening under different keys (Isha after 8 PM EDT);
+   a daytime Dhuhr/Asr pair shares one key, so at worst that prayer's push goes out once, at the old time, on
+   deploy day. Rejected: checking the legacy key for the first 26 hours (needs a deploy-date constant nobody
+   knows yet, then a second deploy to remove it, and the key formats are identical, so it is easy to get wrong).
+2. **Backend first, verified, then the SPA bundle.** The new Iqama Times screen always sends the five offsets,
+   0 included, on Specific Time Ranges too. The production request rule is `min:1` for any offset that is
+   present, so the new bundle on the old backend would 422 every save for Burlington and NAFIS Apex (they store
+   0). Verify the backend before the bundle: on the QA sandbox organisation (never a real one), save Specific
+   Time Ranges with an offset of 0 through the API and see it stored. The frontend ships separately from
+   bin/deploy (build from `git archive`, rsync without `--delete`, never build:prod).
+3. **Rollback is the reverse:** the SPA bundle first, then the backend. Rolling the backend back under the
+   new bundle recreates step 2's failure.
+
+- **Two covering ranges for one prayer: the first by id wins, and the relation now says so.**
+  `IqamaTimeSetting::timeRanges` is `->orderBy('id')`. The resolver, the website payload and every app take the
+  first covering range in the list they are given, and the admin save does not refuse overlaps, so without an
+  ORDER BY the winner was whatever order the database returned. Within one prayer that already was id order
+  (MySQL's `(iqama_time_setting_id, salah)` index and SQLite both end in the primary key), so no resolved time
+  changes. What can change is how the prayers interleave in `iqama.time_ranges` on
+  `/api/mobile/masjids/{id}/prayers/settings` and the admin GET (salah order through the index, now save
+  order); every consumer groups by prayer (the SPA's watch, the resolvers), so nothing reads it. The
+  Assistant's list tool orders by prayer then date and now calls `reorder()` first. Pinned by
+  `IqamaResolverAgreementTest::when_two_ranges_cover_a_day_the_first_saved_wins_everywhere` (the relation's
+  ORDER BY, the resolver, the push and the website).
+  **Not done here: a case in tests/fixtures/iqama-resolution.json.** That file is copied byte-for-byte into
+  the iOS, tvOS and Android repos, which assert against their copy; a case added only here would diverge it.
+  Adding the overlap case is a four-repo change for the owner to schedule. Refusing overlapping ranges in
+  SaveIqamaSettingsRequest was also rejected: an organisation with an overlap already stored could not save
+  its screen until it found and fixed it, and nobody has checked whether any has.
+- **The Iqama Times screen's save body and date parsing live in `views/dashboard/iqamaSettingsForm.ts`**
+  (`iqamaSavePayload`, `parseLocalDate`, `formatDate`, `SALAH_KEYS`) so node --test can pin them
+  (resources/vue-app/tests/iqama-settings-form.test.ts, run in America/New_York). The view's load gate on the
+  offset rows and its submit guard stay in the view and are pinned by a source probe in the same file, as
+  the lunch tests do for their i18n file.
+- **Tests added for the review's surviving mutants**, each shown to fail with its mutant applied on
+  /root/manara-ci-b7 and pass without it: the stored `iqama_times_data` on a range's last day and the day
+  after, and a June Isha after UTC midnight (the row's day, not the adhan's UTC date); a stored offset set to
+  0 on Specific Time Ranges and a blank one kept (`filled`, not truthiness); a first save with no row and no
+  offsets is 0/0/0/0/0; no zone warning for a masjid on Minutes After Adhan; the zone test over UTC, Etc/UTC,
+  GMT, blank and an unknown name.

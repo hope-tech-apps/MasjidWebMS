@@ -13,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -265,17 +266,42 @@ class IqamaResolverAgreementTest extends TestCase
         $this->assertSame([], $this->pushesAtUtc('2026-11-01 23:49', 'iqama'));
     }
 
+    /** @return array<string, array{0: string}> */
+    public static function zonesThatAreNotTheMasjids(): array
+    {
+        // Three spellings of UTC (the column's default and two of its aliases, each a
+        // valid IANA name, so only the UTC list tells them apart from a real zone), a
+        // blank, and a name that is no zone at all.
+        return [
+            'UTC' => ['UTC'],
+            'Etc/UTC' => ['Etc/UTC'],
+            'GMT' => ['GMT'],
+            'blank' => [''],
+            'unknown' => ['Not/AZone'],
+        ];
+    }
+
     #[Test]
-    public function a_masjid_on_ranges_without_a_zone_of_its_own_keeps_its_offset_pushes_and_says_so_once(): void
+    #[DataProvider('zonesThatAreNotTheMasjids')]
+    public function a_masjid_on_ranges_without_a_zone_of_its_own_keeps_its_offset_pushes_and_says_so_once(string $zone): void
     {
         // `masjids.timezone` defaulted to 'UTC' for every masjid that predates it. A
         // fixed 1:45 PM placed in UTC would push at 9:45 AM in New York while the
         // website prints 1:45 PM, so the push keeps adhan + offset (what it always
         // did) and a warning names the masjid, once a day rather than once a minute.
         $masjid = $this->masjidOnMecsSchedule();
-        $masjid->update(['timezone' => 'UTC']);
+        $masjid->update(['timezone' => $zone]);
         $this->row($masjid, '2026-10-15', ['dhuhr' => '13:20']);
         Log::spy();
+
+        $resolver = IqamaResolver::for($masjid->iqamaTimeSettings()->with('timeRanges')->firstOrFail(), $zone);
+        $this->assertFalse($resolver->placesFixedTimes(), "{$zone} is not the masjid's own zone");
+        $adhan = Carbon::parse('2026-10-15 13:20', self::NY);
+        $this->assertSame(
+            $adhan->copy()->utc()->addMinutes(10)->toIso8601String(),
+            $resolver->iqamaAt('dhuhr', '2026-10-15', $adhan)->toIso8601String(),
+            'adhan + offset, although a range covers the day'
+        );
 
         $this->assertSame([], $this->pushesAtUtc('2026-10-15 13:45', 'iqama'), '1:45 PM read as UTC');
         $this->assertSame(['dhuhr'], $this->pushesAt('2026-10-15 13:30', 'iqama'), 'adhan + 10, as before ranges were read');
@@ -290,6 +316,89 @@ class IqamaResolverAgreementTest extends TestCase
         $adhan = json_decode($row->getRawOriginal('prayers_data'), true);
         $iqama = json_decode($row->getRawOriginal('iqama_times_data'), true);
         $this->assertSame(Carbon::parse($adhan['dhuhr'])->addMinutes(10)->format('H:i:s'), $iqama['dhuhr']);
+    }
+
+    #[Test]
+    public function a_masjid_on_minutes_after_adhan_is_not_warned_about_its_zone(): void
+    {
+        // The warning says "is on Specific Time Ranges"; a masjid on Minutes After
+        // Adhan never places a fixed time, so a missing zone costs it nothing, and a
+        // daily line about every such masjid would bury the ones that matter.
+        $masjid = $this->masjidOnMecsSchedule();
+        $masjid->update(['timezone' => 'UTC']);
+        $masjid->iqamaTimeSettings()->update(['iqama_type' => 'minutes_after_adhan']);
+        $this->row($masjid, '2026-10-15', ['dhuhr' => '13:20']);
+        Log::spy();
+
+        $this->assertSame(['dhuhr'], $this->pushesAt('2026-10-15 13:30', 'iqama'));
+
+        Log::shouldNotHaveReceived('warning');
+    }
+
+    #[Test]
+    public function the_stored_iqama_is_fixed_on_a_ranges_last_day_and_back_on_the_offset_the_day_after(): void
+    {
+        // Through the endpoint that writes `prayers.iqama_times_data`, which the apps
+        // read. MEC's ranges end Sat 2026-10-31; Isha 8:45 PM EDT is 00:45 UTC.
+        $masjid = $this->masjidOnMecsSchedule();
+        $this->getJson("/api/mobile/masjids/{$masjid->id}/prayers?start_date=2026-10-31&end_date=2026-11-01")->assertOk();
+
+        [, $lastDay] = $this->storedRow($masjid, '2026-10-31');
+        $this->assertSame('00:45:00', $lastDay['isha'], 'the last day of the range is inside it');
+        $this->assertSame('17:45:00', $lastDay['dhuhr']);
+
+        [$adhan, $dayAfter] = $this->storedRow($masjid, '2026-11-01');
+        $this->assertSame(Carbon::parse($adhan['isha'])->addMinutes(10)->format('H:i:s'), $dayAfter['isha'], 'no range covers Nov 1');
+        $this->assertSame(Carbon::parse($adhan['dhuhr'])->addMinutes(10)->format('H:i:s'), $dayAfter['dhuhr']);
+    }
+
+    #[Test]
+    public function a_stored_isha_after_utc_midnight_on_a_ranges_last_day_keeps_its_fixed_time(): void
+    {
+        // Late June in Charlotte, Isha is prayed after 8 PM EDT, i.e. on the NEXT UTC
+        // date. The row's own day decides the range, not the adhan's UTC date, which
+        // is the bug the push was fixed for; this pins the stored column the same way.
+        $masjid = $this->masjidOnMecsSchedule([
+            ['salah' => 'isha', 'start_date' => '2026-06-01', 'end_date' => '2026-06-30', 'specific_time' => '22:15:00'],
+        ]);
+        $this->getJson("/api/mobile/masjids/{$masjid->id}/prayers?start_date=2026-06-30&end_date=2026-06-30")->assertOk();
+
+        [$adhan, $iqama] = $this->storedRow($masjid, '2026-06-30');
+        $this->assertSame('2026-07-01', Carbon::parse($adhan['isha'])->utc()->format('Y-m-d'), 'premise: this Isha adhan is after UTC midnight');
+        $this->assertSame('02:15:00', $iqama['isha'], '10:15 PM EDT on Jun 30');
+    }
+
+    #[Test]
+    public function when_two_ranges_cover_a_day_the_first_saved_wins_everywhere(): void
+    {
+        // The admin save does not refuse overlapping ranges, and every client takes
+        // the first covering range in the list it is sent. The list is ordered by id
+        // (IqamaTimeSetting::timeRanges), so the first SAVED range wins on the
+        // server exactly as it does on the apps and the website.
+        $masjid = $this->masjidOnMecsSchedule([
+            ['salah' => 'isha', 'start_date' => '2026-10-01', 'end_date' => '2026-10-31', 'specific_time' => '20:45:00'],
+            ['salah' => 'isha', 'start_date' => '2026-10-10', 'end_date' => '2026-10-20', 'specific_time' => '21:00:00'],
+        ]);
+        $setting = $masjid->iqamaTimeSettings()->firstOrFail();
+
+        $this->assertSame(
+            [['column' => 'id', 'direction' => 'asc']],
+            $setting->timeRanges()->getQuery()->getQuery()->orders,
+            'the relation promises id order, whatever the database would return'
+        );
+
+        $resolver = IqamaResolver::for($setting->load('timeRanges'), self::NY);
+        $this->assertSame('20:45:00', $resolver->fixedTime('isha', '2026-10-15'));
+
+        $this->row($masjid, '2026-10-15', ['isha' => '19:30']);
+        $this->assertSame(['isha'], $this->pushesAt('2026-10-15 20:45', 'iqama'));
+        $this->assertSame([], $this->pushesAt('2026-10-15 21:00', 'iqama'));
+
+        Carbon::setTestNow(Carbon::parse('2026-10-15 12:00', self::NY)->utc());
+        $this->assertSame(
+            '08:45 PM',
+            $this->getJson('/api/v1/settings', ['masjid-id' => (string) $masjid->id])->assertOk()->json('data.iqama_settings.specific_time_ranges.isha')
+        );
     }
 
     #[Test]
@@ -346,6 +455,21 @@ class IqamaResolverAgreementTest extends TestCase
             fn (array $s) => $s['prayer'],
             array_filter($this->sent->getArrayCopy(), fn (array $s) => $s['kind'] === $kind)
         ));
+    }
+
+    /**
+     * One stored prayers row, raw: [adhans as the generator stored them, iqama_times_data].
+     *
+     * @return array{0: array<string, string>, 1: array<string, string|null>}
+     */
+    private function storedRow(Masjid $masjid, string $day): array
+    {
+        $row = Prayer::where('masjid_id', $masjid->id)->where('date', $day)->firstOrFail();
+
+        return [
+            json_decode($row->getRawOriginal('prayers_data'), true),
+            json_decode($row->getRawOriginal('iqama_times_data'), true),
+        ];
     }
 
     private function utc(string $local): string

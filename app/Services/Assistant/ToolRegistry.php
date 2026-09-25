@@ -676,7 +676,9 @@ class ToolRegistry
                     return ['ok' => false, 'error' => 'This masjid has no iqama settings yet. Set them up on the Iqama Times screen first.'];
                 }
 
-                $q = $setting->timeRanges()->orderByRaw(
+                // reorder(): the relation is ordered by id for the resolver's tie-break;
+                // this list is read by prayer, then date.
+                $q = $setting->timeRanges()->reorder()->orderByRaw(
                     "FIELD(salah,'fajr','dhuhr','asr','maghrib','isha'), start_date"
                 );
 

@@ -197,6 +197,55 @@ class IqamaFixedTimesKeepOffsetsTest extends TestCase
     }
 
     #[Test]
+    public function a_stored_offset_can_be_set_to_zero_on_specific_time_ranges_and_a_blank_one_is_kept(): void
+    {
+        // 0 is a value the admin typed ("iqama at the adhan"), not a missing field, so
+        // it must replace a stored 20. A blank field arrives as null (form-encoded ''
+        // through ConvertEmptyStringsToNull) and is "not sent": the stored 5 stays.
+        $setting = $this->meccharlotteOffsets();
+        Sanctum::actingAs($this->admin);
+
+        $this->post($this->url(), [
+            'iqama_type' => 'specific_time_ranges',
+            'show_iqama_times' => 'true',
+            'fajr' => '0', 'dhuhr' => '10', 'asr' => '10', 'maghrib' => '', 'isha' => '10',
+            'time_ranges' => $this->mecRanges(),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $this->assertSame(
+            ['fajr' => 0, 'dhuhr' => 10, 'asr' => 10, 'maghrib' => 5, 'isha' => 10],
+            $this->offsets($setting)
+        );
+    }
+
+    #[Test]
+    public function a_first_ranges_save_with_no_offsets_creates_the_row_with_offsets_of_zero(): void
+    {
+        // An organisation with no iqama row yet (Intellicor, the QA sandbox on
+        // production). Nothing stored and nothing sent is 0, the column's own value
+        // and what the resolver reads for a missing row: never an invented default.
+        $this->assertNull($this->masjid->iqamaTimeSettings()->first(), 'premise: no iqama row');
+        Sanctum::actingAs($this->admin);
+
+        $this->post($this->url(), [
+            'iqama_type' => 'specific_time_ranges',
+            'show_iqama_times' => 'true',
+            'time_ranges' => $this->mecRanges(),
+        ], ['Accept' => 'application/json'])->assertOk();
+
+        $setting = $this->masjid->iqamaTimeSettings()->firstOrFail();
+        $this->assertSame('specific_time_ranges', $setting->iqama_type->value);
+        $this->assertSame(
+            ['fajr' => 0, 'dhuhr' => 0, 'asr' => 0, 'maghrib' => 0, 'isha' => 0],
+            $this->offsets($setting)
+        );
+        $this->assertSame(
+            [['dhuhr', '13:45'], ['asr', '17:30'], ['isha', '20:45']],
+            $setting->timeRanges->map(fn (IqamaTimeRange $r) => [$r->salah, substr((string) $r->specific_time, 0, 5)])->all()
+        );
+    }
+
+    #[Test]
     public function minutes_after_adhan_still_requires_an_offset_of_at_least_one(): void
     {
         $setting = $this->meccharlotteOffsets();
