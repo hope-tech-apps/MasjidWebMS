@@ -397,6 +397,24 @@ cancelled, for admins and lunch volunteers, on these terms:
   both set, a pair nothing else leaves), since the log reaches only the operator.
   The app never refunds it.
 
+## Lunch top-ups: a paid order pays the difference first (DECISIONS.md 2026-09-25)
+
+A customer may add plates to a PAID lunch order before the cutoff by paying the difference
+(`MealOrderCheckoutService::openTopUp`, `MealOrderTopUpPaymentService`). Every rule above holds
+(direct charge on the org's account, card only, idempotency key on the `meal_order_top_ups` row
+before the call, positive-only application fee, integer minor units, webhook-only advancement).
+
+- **Routed first.** The session's metadata is `kind: lunch_top_up`, `top_up_id`, `order_uuid`,
+  `masjid_id`; `StripeWebhookController` asks `isTopUpEvent()` before `isOrderEvent()`, so a top-up
+  is never the order's own payment. Its payment intent carries no `order_uuid`, and
+  `payment_intent.succeeded` for it is acked and ignored.
+- **Matched strictly.** Masjid from `event.account`, the top-up by id within it, then the session
+  id, order uuid, metadata masjid id, `amount_total` and `payment_status: paid`. A mismatch records
+  nothing and logs at warning.
+- **The money is never lost.** If the order moved after the top-up was asked for, the plates are
+  not applied; `settled_total_minor` += the amount, the row is `conflict`, and a warning is logged.
+- Fewer plates on a paid order is refused online: no automatic refunds, ever.
+
 ## The Giving switch never touches money that moved (DECISIONS.md 2026-09-16, switches wave 2)
 
 - **Webhooks, receipts and receipt emails never check a module.** A gift for an

@@ -104,6 +104,23 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         edit_why_refunded: "This order was refunded, so it cannot be changed here. Please contact the masjid.",
         edit_why_cancelled: "This order was cancelled, so it cannot be changed here. Please contact the masjid.",
         edit_why_item_gone: "Part of this order is no longer on the menu, so it cannot be changed here. Please contact the masjid.",
+        // changing an order already PAID: more plates are paid for first
+        topup_paid: "You've paid",
+        topup_new_total: "New total",
+        topup_to_pay: "To pay now",
+        topup_pay_button: "Pay {x} and update my order",
+        topup_redirecting: "Taking you to the payment page…",
+        topup_confirming: "Thank you — your payment is being confirmed. Your order will update in a moment.",
+        topup_done: "Your payment is confirmed and your order has been updated.",
+        topup_conflict: "We received your payment, but your order had changed in the meantime, so it was not updated. The masjid will settle the difference with you.",
+        topup_slow: "Your payment is still being confirmed. Please reload this page in a minute.",
+        topup_cancelled: "Payment cancelled — your order was not changed.",
+        // a paid order's refusals — keyed by the server's data.code
+        topup_reduce: "To remove plates from a paid order, please contact the masjid.",
+        topup_too_close: "It's too close to the ordering cutoff to change a paid order online. Please contact the masjid.",
+        topup_unavailable: "Adding to a paid order online is not available for this lunch. Please contact the masjid.",
+        topup_confirming_wait: "Your last payment for this order is still being confirmed, so nothing was changed. Please wait a moment and reload the page.",
+        order_moved: "This order was changed while you were editing it, so nothing was changed. Please reload the page and try again.",
     },
     ar: {
         badge: "غداء الجمعة",
@@ -174,6 +191,23 @@ const STRINGS: Record<LunchLang, Record<string, string>> = {
         edit_why_refunded: "تمت إعادة مبلغ هذا الطلب، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
         edit_why_cancelled: "تم إلغاء هذا الطلب، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
         edit_why_item_gone: "أحد أصناف هذا الطلب لم يعد على القائمة، فلا يمكن تعديله هنا. يُرجى التواصل مع المسجد.",
+        // تعديل طلب مدفوع: تُدفع الأطباق الإضافية أولًا
+        topup_paid: "المبلغ المدفوع",
+        topup_new_total: "الإجمالي الجديد",
+        topup_to_pay: "المطلوب دفعه الآن",
+        topup_pay_button: "ادفع {x} وحدّث طلبي",
+        topup_redirecting: "جارٍ نقلك إلى صفحة الدفع…",
+        topup_confirming: "شكرًا لك — جارٍ تأكيد دفعتك. سيُحدَّث طلبك خلال لحظات.",
+        topup_done: "تم تأكيد دفعتك وتحديث طلبك.",
+        topup_conflict: "استلمنا دفعتك، لكن طلبك تغيّر في الأثناء فلم يُحدَّث. سيتواصل معك المسجد لتسوية الفرق.",
+        topup_slow: "ما زال تأكيد دفعتك جاريًا. يُرجى إعادة تحميل هذه الصفحة بعد دقيقة.",
+        topup_cancelled: "أُلغيت عملية الدفع — لم يُغيَّر طلبك.",
+        // رفض تعديل طلب مدفوع — حسب data.code القادم من الخادم
+        topup_reduce: "لإزالة أطباق من طلب مدفوع، يُرجى التواصل مع المسجد.",
+        topup_too_close: "اقترب موعد إغلاق الطلبات كثيرًا، فلا يمكن تعديل طلب مدفوع عبر الإنترنت. يُرجى التواصل مع المسجد.",
+        topup_unavailable: "لا تتوفر إضافة أطباق إلى طلب مدفوع عبر الإنترنت لهذا الغداء. يُرجى التواصل مع المسجد.",
+        topup_confirming_wait: "ما زال تأكيد دفعتك الأخيرة لهذا الطلب جاريًا، فلم يُغيَّر شيء. يُرجى الانتظار قليلًا ثم إعادة تحميل الصفحة.",
+        order_moved: "تغيّر هذا الطلب أثناء تعديلك له، فلم يُغيَّر شيء. يُرجى إعادة تحميل الصفحة والمحاولة مرة أخرى.",
     },
 };
 

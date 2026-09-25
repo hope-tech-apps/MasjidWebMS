@@ -27,6 +27,11 @@
                     <div v-if="savedMessage" class="lunch-note ok" role="status">{{ savedMessage }}</div>
                     <a v-if="newCheckoutUrl" class="lunch-pay-new" :href="newCheckoutUrl">{{ t('pay_new_total') }}</a>
 
+                    <!-- Back from paying the difference on a paid order: the order
+                         changes when the webhook records the payment, so this says
+                         so, then says what happened once the order shows it. -->
+                    <div v-if="topUpKey" class="lunch-note" :class="topUpTone" role="status">{{ t(topUpKey) }}</div>
+
                     <ul class="lunch-lines">
                         <li v-for="(it, i) in order.items" :key="i">
                             <span>
@@ -60,10 +65,21 @@
                          the prices it was given. The SERVER re-prices every line and
                          recomputes the card fee, so the label says the total is
                          settled on save and the saved order's own total comes back
-                         from the server a moment later. -->
+                         from the server a moment later. On a PAID order it is set
+                         against what was paid: the difference is paid first. -->
+                    <div v-if="editing && isPaid" class="lunch-total-line">
+                        <span>{{ t('topup_paid') }}</span>
+                        <span>{{ money(paidMinor) }}</span>
+                    </div>
+
                     <div class="lunch-total-row">
-                        <span>{{ editing ? t('edit_new_total') : t('total') }}</span>
+                        <span>{{ editing ? (isPaid ? t('topup_new_total') : t('edit_new_total')) : t('total') }}</span>
                         <strong>{{ money(editing ? previewTotal : order.total_minor) }}</strong>
+                    </div>
+
+                    <div v-if="editing && isPaid && toPayNow > 0" class="lunch-total-line lunch-topay">
+                        <span>{{ t('topup_to_pay') }}</span>
+                        <strong>{{ money(toPayNow) }}</strong>
                     </div>
 
                     <div class="lunch-edit">
@@ -76,10 +92,13 @@
                         </template>
                         <template v-else>
                             <p v-if="draftPlates <= 0" class="lunch-muted lunch-why">{{ t('edit_min_one') }}</p>
+                            <!-- No automatic refunds: fewer plates on a paid order is
+                                 the masjid's to do, so it cannot be saved here. -->
+                            <p v-else-if="paidReduces" class="lunch-note warn lunch-why">{{ t('topup_reduce') }}</p>
                             <div class="lunch-edit-actions">
                                 <button type="button" class="lunch-btn ghost" :disabled="saving" @click="cancelEdit">{{ t('edit_cancel') }}</button>
-                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0 || !draftDirty" @click="saveEdit">
-                                    {{ saving ? t('edit_saving') : t('edit_save') }}
+                                <button type="button" class="lunch-btn" :disabled="saving || draftPlates <= 0 || !draftDirty || paidReduces" @click="saveEdit">
+                                    {{ saveLabel }}
                                 </button>
                             </div>
                         </template>
@@ -105,7 +124,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { usePublicLunchStore } from "@/stores/publicLunchStore";
 import { useLunchLang } from "./lunchI18n";
@@ -123,6 +142,9 @@ const error = computed(() => store.error);
 
 const cancelled = computed(() => route.query.cancelled === "1");
 const paidNow = computed(() => order.value?.payment_status === "paid");
+const isPaid = paidNow;
+// What has actually been paid (the server's figure, never worked out here).
+const paidMinor = computed(() => Number(order.value?.paid_minor || 0));
 
 const headline = computed(() => {
     if (paidNow.value) return t("all_set");
@@ -144,6 +166,16 @@ const editWhy = computed<string>(() => {
     const key = EDIT_WHY[String(order.value?.edit_notice_code ?? "")];
     return key ? t(key) : String(order.value?.edit_notice ?? "");
 });
+
+// A paid order's refusals, by the server's `data.code`; anything else is shown in
+// the server's own words.
+const REFUSAL: Record<string, string> = {
+    paid_reduce: "topup_reduce",
+    too_close_to_cutoff: "topup_too_close",
+    topup_unavailable: "topup_unavailable",
+    topup_confirming: "topup_confirming_wait",
+    order_moved: "order_moved",
+};
 
 const payLabel = computed(() => {
     switch (order.value?.payment_status) {
@@ -190,6 +222,18 @@ const previewTotal = computed(() => draftSubtotal.value
     + Number(order.value?.donation_minor || 0)
     + Number(order.value?.fee_covered_minor || 0));
 
+// A PAID order is changed on the money's terms: a lower total cannot be saved
+// here, the same total saves as usual, and a higher one is paid first — the
+// server sends the payment page and changes nothing until that payment lands.
+const paidReduces = computed(() => isPaid.value && previewTotal.value < paidMinor.value);
+const toPayNow = computed(() => (isPaid.value ? Math.max(0, previewTotal.value - paidMinor.value) : 0));
+const saveLabel = computed(() => {
+    if (toPayNow.value > 0) {
+        return saving.value ? t("topup_redirecting") : t("topup_pay_button", money(toPayNow.value));
+    }
+    return saving.value ? t("edit_saving") : t("edit_save");
+});
+
 function startEdit(): void {
     draft.value = lines.value.map((it: any) => Number(it.quantity) || 0);
     editError.value = "";
@@ -212,7 +256,7 @@ function bump(i: number, delta: number): void {
 }
 
 async function saveEdit(): Promise<void> {
-    if (!order.value || draftPlates.value <= 0 || !draftDirty.value || saving.value) return;
+    if (!order.value || draftPlates.value <= 0 || !draftDirty.value || paidReduces.value || saving.value) return;
     saving.value = true;
     editError.value = "";
 
@@ -227,11 +271,22 @@ async function saveEdit(): Promise<void> {
         .filter((l) => Number.isFinite(l.meal_menu_item_id) && l.meal_menu_item_id > 0);
 
     const res = await store.updateOrder(masjidId, uuid, items);
+
+    // Nothing has changed yet: the difference is paid on Stripe's page first, and
+    // the order changes when the webhook records it. The button stays disabled
+    // while the browser leaves.
+    if (res.ok && res.paymentRequired && res.checkoutUrl) {
+        window.location.assign(res.checkoutUrl);
+        return;
+    }
+
     saving.value = false;
 
     if (!res.ok) {
-        // The server's reason — closed, paid, over the kitchen's cap — as it wrote it.
-        editError.value = res.message || t("edit_failed");
+        // The server's reason — closed, over the kitchen's cap, fewer plates on a
+        // paid order — in the reader's language when it named it, else as it wrote it.
+        const key = REFUSAL[String(res.code ?? "")];
+        editError.value = key ? t(key) : (res.message || t("edit_failed"));
         return;
     }
 
@@ -252,7 +307,58 @@ function money(minor: number): string {
     });
 }
 
-onMounted(() => store.fetchOrder(masjidId, uuid));
+// ------------------------------------------ back from paying the difference
+//
+// Stripe sends the customer back with ?topup=success the moment they pay, which
+// is usually a few seconds BEFORE the webhook has recorded it. The order is read
+// again until it no longer holds a pending top-up, then the note says what
+// happened: updated, or paid-but-not-applied (the order changed meanwhile, so
+// more is recorded as paid than the order costs). setTimeout, never
+// requestAnimationFrame: a tab in the background must still get there. Bounded,
+// because the status read shares a 60-an-hour allowance per connection.
+const topUpKey = ref("");
+const topUpTone = ref<"ok" | "warn">("ok");
+const POLL_DELAYS_MS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 12000];
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function settledTopUp(o: any): boolean {
+    if (!o || o.top_up) return false;
+    const conflicted = Number(o.paid_minor || 0) > Number(o.total_minor || 0);
+    topUpKey.value = conflicted ? "topup_conflict" : "topup_done";
+    topUpTone.value = conflicted ? "warn" : "ok";
+    return true;
+}
+
+function pollTopUp(attempt: number): void {
+    if (attempt >= POLL_DELAYS_MS.length) {
+        topUpKey.value = "topup_slow";
+        topUpTone.value = "warn";
+        return;
+    }
+    pollTimer = setTimeout(async () => {
+        const fresh = await store.refreshOrder(masjidId, uuid);
+        if (!settledTopUp(fresh)) pollTopUp(attempt + 1);
+    }, POLL_DELAYS_MS[attempt]);
+}
+
+onMounted(async () => {
+    const loaded = await store.fetchOrder(masjidId, uuid);
+
+    if (route.query.topup === "cancelled") {
+        topUpKey.value = "topup_cancelled";
+        topUpTone.value = "warn";
+    } else if (route.query.topup === "success" && loaded) {
+        if (!settledTopUp(loaded)) {
+            topUpKey.value = "topup_confirming";
+            topUpTone.value = "ok";
+            pollTopUp(0);
+        }
+    }
+});
+
+onBeforeUnmount(() => {
+    if (pollTimer) clearTimeout(pollTimer);
+});
 </script>
 
 <style scoped>
@@ -296,6 +402,7 @@ onMounted(() => store.fetchOrder(masjidId, uuid));
 .lunch-pickup-note { background: #f2f8f5; border-radius: 12px; padding: 14px; font-size: 14px; color: #0c3d2b; text-align: center; margin: 0; }
 .lunch-note.warn { background: #fbe6d4; color: #a05a1a; border-radius: 12px; padding: 12px; font-size: 14px; margin-bottom: 16px; }
 .lunch-note.ok { background: #d7f0e0; color: #14533a; border-radius: 12px; padding: 12px; font-size: 14px; margin-bottom: 12px; }
+.lunch-topay { color: #0c3d2b; font-size: 15px; }
 /* Quantity stepper. Flex with gap only, no side margins, so the row reads the
    same way round in Arabic as the line it sits on. */
 .lunch-qty { display: flex; align-items: center; gap: 10px; }

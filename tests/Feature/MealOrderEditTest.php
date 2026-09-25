@@ -173,8 +173,11 @@ class MealOrderEditTest extends TestCase
     }
 
     #[Test]
-    public function a_paid_order_is_refused_to_the_customer_and_allowed_to_an_admin(): void
+    public function a_paid_order_is_not_changed_for_the_customer_until_the_difference_is_paid_and_an_admin_may_change_it(): void
     {
+        // Until 2026-09-24 a paid order was refused to the customer outright. The
+        // owner's rule since: more plates are paid for FIRST (MealOrderTopUpTest has
+        // the rest). What this pins is that asking changes nothing on the order.
         $order = $this->placeOrder([[$this->biryani, 1]], [
             'payment_status' => MealOrder::PAYMENT_PAID,
             'status' => MealOrder::STATUS_CONFIRMED,
@@ -182,8 +185,9 @@ class MealOrderEditTest extends TestCase
         ]);
 
         $this->editAsCustomer($order, [['meal_menu_item_id' => $this->biryani->id, 'quantity' => 2]])
-            ->assertStatus(409)
-            ->assertJsonPath('message', 'This order is already paid. Please contact the masjid to change it.');
+            ->assertOk()
+            ->assertJsonPath('data.status', 'payment_required')
+            ->assertJsonPath('data.amount_minor', 800);
 
         $this->assertSame(800, (int) $order->fresh()->total_minor);
         $this->assertSame(0, MealOrderEdit::withoutMasjidScope()->count());
@@ -787,6 +791,10 @@ class MealOrderEditTest extends TestCase
             'payment_status' => MealOrder::PAYMENT_PAID,
             'paid_at' => now(),
         ]);
+
+        // Before the cutoff a paid order may be changed (the difference paid first,
+        // MealOrderTopUpTest); after it, the customer is told it is paid.
+        $this->menu->forceFill(['ordering_closes_at' => now()->subMinute()])->save();
 
         $response = $this->showOrder($order)->assertStatus(200);
 

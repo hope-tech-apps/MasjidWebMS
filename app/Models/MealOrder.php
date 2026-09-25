@@ -27,7 +27,8 @@ use Illuminate\Support\Str;
  * subtotal + donation + fee_covered.
  *
  * Server-computed columns (totals, the two status columns, the Stripe ids,
- * `order_number`, the timestamps, and who marked it paid by hand and how) are
+ * `order_number`, the timestamps, who marked it paid by hand and how, the site it
+ * was placed from and when its email went) are
  * DELIBERATELY not fillable — they move only through the methods below or the
  * checkout/payment services, never a request body. `$fillable` is the small set
  * a customer actually supplies.
@@ -151,6 +152,7 @@ class MealOrder extends Model
             'entered_by_user_id' => 'integer',
             'marked_paid_by_user_id' => 'integer',
             'paid_via' => 'string',
+            'confirmation_sent_at' => 'datetime',
         ];
     }
 
@@ -177,6 +179,15 @@ class MealOrder extends Model
     public function edits(): HasMany
     {
         return $this->hasMany(MealOrderEdit::class);
+    }
+
+    /**
+     * Changes the customer asked for on this order after paying for it, each
+     * waiting on (or settled by) a payment of the difference.
+     */
+    public function topUps(): HasMany
+    {
+        return $this->hasMany(MealOrderTopUp::class);
     }
 
     /**

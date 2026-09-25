@@ -35,6 +35,15 @@ function messageFrom(e: any, fallback: string): string {
     return fallback;
 }
 
+/**
+ * The name the server gave a refusal (`data.code`), so the page can say it in the
+ * reader's language; null when it sent none.
+ */
+function codeFrom(e: any): string | null {
+    const code = e?.response?.data?.data?.code;
+    return typeof code === "string" && code !== "" ? code : null;
+}
+
 export const usePublicLunchStore = defineStore("publicLunchStore", () => {
     const menu = ref<any | null>(null);
     const order = ref<any | null>(null);
@@ -85,14 +94,26 @@ export const usePublicLunchStore = defineStore("publicLunchStore", () => {
      * every line from the menu, so the totals that come back are the only ones
      * this page may show.
      *
-     * A refusal (closed, paid, cancelled, a plate over the kitchen's cap) comes
-     * back as the server's own sentence and is handed straight to the page.
+     * A refusal (closed, cancelled, a plate over the kitchen's cap, fewer plates
+     * on a paid order) comes back as the server's own sentence, with its `code`
+     * when it has one, and is handed straight to the page.
+     *
+     * On a PAID order that now costs more, nothing has changed yet: the answer is
+     * `paymentRequired` with the Stripe page for the difference, and the order
+     * changes only once the webhook records that payment.
      */
     async function updateOrder(
         masjidId: string,
         uuid: string,
         items: { meal_menu_item_id: number; quantity: number }[]
-    ): Promise<{ ok: boolean; order?: any; checkoutUrl?: string; message?: string }> {
+    ): Promise<{
+        ok: boolean;
+        order?: any;
+        checkoutUrl?: string;
+        message?: string;
+        code?: string | null;
+        paymentRequired?: boolean;
+    }> {
         loading.value = true;
         error.value = null;
         try {
@@ -109,9 +130,10 @@ export const usePublicLunchStore = defineStore("publicLunchStore", () => {
                 order: updated,
                 checkoutUrl: res.data?.data?.checkout_url ?? undefined,
                 message: res.data?.message,
+                paymentRequired: res.data?.data?.status === "payment_required",
             };
         } catch (e: any) {
-            return { ok: false, message: messageFrom(e, "We couldn't change your order.") };
+            return { ok: false, message: messageFrom(e, "We couldn't change your order."), code: codeFrom(e) };
         } finally {
             loading.value = false;
         }
@@ -132,5 +154,23 @@ export const usePublicLunchStore = defineStore("publicLunchStore", () => {
         }
     }
 
-    return { menu, order, loading, error, fetchMenu, placeOrder, fetchOrder, updateOrder };
+    /**
+     * Re-read the order without touching `loading` or `error`, for the page's own
+     * polling while a payment is confirmed: a failed poll leaves the order it
+     * already shows, rather than blanking the page into "not found".
+     */
+    async function refreshOrder(masjidId: string, uuid: string): Promise<any | null> {
+        try {
+            const res = await client(masjidId).get(`/api/v1/lunch-orders/${uuid}`);
+            const fresh = res.data?.data?.order ?? null;
+            if (fresh) {
+                order.value = fresh;
+            }
+            return fresh;
+        } catch {
+            return null;
+        }
+    }
+
+    return { menu, order, loading, error, fetchMenu, placeOrder, fetchOrder, refreshOrder, updateOrder };
 });

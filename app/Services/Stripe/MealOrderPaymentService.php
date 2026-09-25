@@ -3,7 +3,9 @@
 namespace App\Services\Stripe;
 
 use App\Models\Masjid;
+use App\Models\MealMenu;
 use App\Models\MealOrder;
+use App\Services\Lunch\LunchOrderMailer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -25,9 +27,23 @@ use Illuminate\Support\Facades\Log;
  * An order staff already marked paid by hand (`paid_via` set) is never settled
  * again by a card payment: that is a double payment, recorded by its payment
  * intent id and logged so the organisation can refund one (paidTwice()).
+ *
+ * THE ORDER EMAIL (owner, 2026-09-24). When the payment is recorded, the order's
+ * confirmation with its order link goes to the customer, if there is an address
+ * (LunchOrderMailer, once per order, never able to fail the webhook). A card payer
+ * who left the form's optional email blank has usually typed one into Stripe
+ * Checkout; that one is kept on the order first (captureCheckoutEmail()).
+ *
+ * A lunch TOP-UP (a paid order paying the difference for more plates) never
+ * reaches this class: StripeWebhookController routes `metadata.kind` =
+ * lunch_top_up to MealOrderTopUpPaymentService before asking isOrderEvent().
  */
 class MealOrderPaymentService
 {
+    public function __construct(private LunchOrderMailer $mailer)
+    {
+    }
+
     /** The routing signal: our uuid in the object's metadata (top level). */
     public static function isOrderEvent(array $object): bool
     {
@@ -75,7 +91,52 @@ class MealOrderPaymentService
         }
 
         $this->warnIfCancelled($order);
+        $this->captureCheckoutEmail($order, $session);
         $order->markPaid($paymentIntentId);
+
+        $this->mailer->confirmation($order);
+    }
+
+    /**
+     * Keep the address a card payer typed into Stripe Checkout, when the order has
+     * none (owner, 2026-09-24: email stays optional on the form). Saved by the
+     * markPaid() that follows.
+     *
+     * Only where the menu asks for an email at all (`collect_customer_email`): an
+     * organisation that switched the field off chose not to hold customers'
+     * addresses, and taking one from Stripe instead would be the very thing it was
+     * avoiding (the rule JummahLunchOrdersController::store follows). The same
+     * bounds as the form's own field (a valid address, at most 190 characters). An
+     * address already on the order is never replaced.
+     */
+    private function captureCheckoutEmail(MealOrder $order, array $session): void
+    {
+        if (filled($order->customer_email)) {
+            return;
+        }
+
+        $email = $session['customer_details']['email'] ?? null;
+
+        if (! is_string($email)) {
+            return;
+        }
+
+        $email = trim($email);
+
+        if ($email === '' || strlen($email) > 190 || ! filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+
+        $menu = MealMenu::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->whereKey($order->meal_menu_id)
+            ->first();
+
+        if (! $menu || ! $menu->collect_customer_email) {
+            return;
+        }
+
+        $order->customer_email = $email;
     }
 
     /**
@@ -98,6 +159,9 @@ class MealOrderPaymentService
 
         $this->warnIfCancelled($order);
         $order->markPaid($paymentIntentId);
+
+        // Once per order: when the session event already sent it, this is a no-op.
+        $this->mailer->confirmation($order);
     }
 
     /**

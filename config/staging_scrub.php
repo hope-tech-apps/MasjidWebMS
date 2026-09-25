@@ -315,6 +315,14 @@ return [
             'stripe_payment_intent_id',
         ],
 
+        'meal_order_top_ups' => [
+            // A paid order's top-up page and its payment, on the organisation's live
+            // account: nulled as meal_orders null theirs, so staging never asks a
+            // test-mode account about a live cs_/pi_ id.
+            'stripe_session_id',
+            'stripe_payment_intent_id',
+        ],
+
         'properties' => [
             'notes',
         ],

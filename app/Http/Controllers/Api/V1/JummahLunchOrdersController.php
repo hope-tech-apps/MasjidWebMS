@@ -10,16 +10,20 @@ use App\Models\MealMenu;
 use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\MealOrderItem;
+use App\Models\MealOrderTopUp;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Support\Errors;
+use App\Services\Lunch\LunchOrderMailer;
 use App\Services\Lunch\LunchSmsOptIn;
 use App\Services\Lunch\MealOrderEditor;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
 use App\Support\LunchOrderLines;
+use App\Support\LunchOrderLink;
 use App\Support\StripeFees;
 use App\Support\PublicTenant;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -51,6 +55,20 @@ class JummahLunchOrdersController extends Controller
     private const EDIT_CLOSED = 'Orders for this menu are closed.';
 
     private const EDIT_PAID = 'This order is already paid. Please contact the masjid to change it.';
+
+    /**
+     * A PAID order's customer asked for a lower total (owner, 2026-09-24): there
+     * are no automatic refunds, ever, so taking plates off a paid order is the
+     * masjid's to do by hand.
+     */
+    private const EDIT_PAID_REDUCE = 'To remove plates from a paid order, please contact the masjid.';
+
+    /**
+     * An UNPAID order's edit that found the order paid once it held the lock: the
+     * payment landed while the request was in flight, so the edit it priced as
+     * unpaid is no longer the right one.
+     */
+    private const EDIT_JUST_PAID = 'This order has just been paid, so nothing was changed. Please reload the page and try again.';
 
     private const EDIT_REFUNDED = 'This order was refunded. Please contact the masjid to change it.';
 
@@ -86,9 +104,23 @@ class JummahLunchOrdersController extends Controller
         self::EDIT_ITEM_GONE => 'item_gone',
     ];
 
+    /**
+     * The refusals of a PAID order's edit, named the same way, sent as `data.code`
+     * beside the English sentence so the order page can say them in Arabic too.
+     */
+    private const REFUSAL_CODES = [
+        self::EDIT_PAID_REDUCE => 'paid_reduce',
+        MealOrderCheckoutService::TOP_UP_TOO_CLOSE => 'too_close_to_cutoff',
+        MealOrderCheckoutService::TOP_UP_UNAVAILABLE => 'topup_unavailable',
+        MealOrderCheckoutService::TOP_UP_CONFIRMING => 'topup_confirming',
+        MealOrderCheckoutService::TOP_UP_ORDER_MOVED => 'order_moved',
+        self::EDIT_JUST_PAID => 'order_moved',
+    ];
+
     public function __construct(
         private MealOrderCheckoutService $checkout,
-        private MealOrderEditor $editor
+        private MealOrderEditor $editor,
+        private LunchOrderMailer $mailer
     ) {
     }
 
@@ -219,6 +251,10 @@ class JummahLunchOrdersController extends Controller
                 $order->total_minor = $subtotal + $donation + $feeCovered;
                 $order->order_number = $orderNumber;
                 $order->placed_at = now();
+                // The site this was placed from, when the allowlist trusts it: the
+                // order email is sent later (from the webhook, for a card order)
+                // and its link must go back to the same site (LunchOrderLink).
+                $order->site_origin = LunchOrderLink::siteOrigin($request);
                 $order->save();
 
                 foreach ($lines as $line) {
@@ -262,6 +298,11 @@ class JummahLunchOrdersController extends Controller
                     ]);
                 }
             }
+
+            // A pay-at-pickup order is final once placed, so its email (with the
+            // link to change it until the cutoff) goes now. A card order's goes when
+            // the webhook records the payment. Never able to fail the order.
+            $this->mailer->confirmation($order->load('items'));
 
             return response()->api(200, 'Thank you — your order is in. Pay when you pick up after Jummah.', [
                 'order' => $this->serializeOrder($order->load('items'), $menu),
@@ -323,11 +364,16 @@ class JummahLunchOrdersController extends Controller
      * cutoff can pass and a payment can land while this request is in flight:
      *   - ordering for this menu has closed (the whole point of a cutoff is that
      *     the kitchen counts plates after it);
-     *   - the order is paid, or was refunded: changing what was paid for is the
-     *     masjid's decision, not a public endpoint's;
+     *   - the order was refunded: changing what was paid for is the masjid's
+     *     decision, not a public endpoint's;
      *   - the order was cancelled.
      * An order may never drop to zero plates here: cancelling is a conversation
      * with the masjid, not a PATCH with an empty basket.
+     *
+     * A PAID order may be changed before the cutoff (owner, 2026-09-24), on the
+     * money's terms — see updatePaid(): a lower total is refused (no automatic
+     * refunds), the same total is applied at once, and a higher one waits for the
+     * difference to be paid on its own Stripe page.
      */
     public function update(EditLunchOrderRequest $request, string $uuid)
     {
@@ -379,6 +425,10 @@ class JummahLunchOrdersController extends Controller
                 return response()->api(409, self::EDIT_ITEM_GONE, null);
             }
 
+            if ($order->payment_status === MealOrder::PAYMENT_PAID) {
+                return $this->updatePaid($request, $order, $menu, $wanted);
+            }
+
             try {
                 $result = $this->editor->apply(
                     $order,
@@ -389,6 +439,12 @@ class JummahLunchOrdersController extends Controller
                     function (MealOrder $locked) use ($menu, $wanted) {
                         if (($refusal = self::customerMayEdit($locked, $menu)) !== null) {
                             throw new \RuntimeException($refusal);
+                        }
+
+                        // Priced as UNPAID above. A payment that landed while this
+                        // waited makes it a paid order's edit, with other rules.
+                        if ($locked->payment_status === MealOrder::PAYMENT_PAID) {
+                            throw new \RuntimeException(self::EDIT_JUST_PAID);
                         }
 
                         if (LunchOrderLines::unreachable($menu, $locked->items, $wanted) !== []) {
@@ -413,7 +469,7 @@ class JummahLunchOrdersController extends Controller
 
                 return response()->api(409, 'Your order could not be changed just now. Please try again in a moment.', null);
             } catch (\RuntimeException $e) {
-                return response()->api(409, $e->getMessage(), null);
+                return $this->refusal(409, $e->getMessage());
             }
 
             $order = $result['order'];
@@ -471,6 +527,215 @@ class JummahLunchOrdersController extends Controller
     }
 
     /**
+     * A PAID order's customer changes it, before the cutoff (owner, 2026-09-24).
+     * The new total is compared with what has actually been PAID
+     * (MealOrder::settledMinor), not with the order's current total:
+     *
+     *   - lower: refused, `paid_reduce`. There are no automatic refunds, so taking
+     *     plates off a paid order is the masjid's to do. Nothing changes.
+     *   - the same (a swap): applied now, through the same editor as every edit,
+     *     recorded as the customer's. Any page left open for an earlier top-up is
+     *     closed first, so an older difference can never be paid on top of it.
+     *   - higher: NOTHING changes yet. Refused inside the last
+     *     TOP_UP_MIN_LEAD_MINUTES before the cutoff (`too_close_to_cutoff`);
+     *     otherwise a pending top-up and a Stripe page for exactly the difference
+     *     are made (MealOrderCheckoutService::openTopUp), and the answer is
+     *     `payment_required` with the page's URL. The webhook applies the change
+     *     once the difference is paid (MealOrderTopUpPaymentService).
+     *
+     * Every figure is the server's: the editor's own quote of the basket, on the
+     * order as it was read, and asked again on the locked row by whatever acts.
+     *
+     * @param  array<int,int>  $wanted
+     */
+    private function updatePaid(Request $request, MealOrder $order, MealMenu $menu, array $wanted)
+    {
+        $order->loadMissing('items');
+
+        try {
+            $quote = MealOrderEditor::quote($order, $menu, $wanted);
+        } catch (LunchLineRefusal $e) {
+            return response()->api(422, $e->getMessage(), null);
+        }
+
+        if (! $quote['changed']) {
+            return response()->api(200, 'Your order is unchanged.', [
+                'order' => $this->serializeOrder($order, $menu),
+            ]);
+        }
+
+        $baseTotal = (int) $order->total_minor;
+        $paid = $order->settledMinor();
+        $newTotal = (int) $quote['total_minor'];
+
+        if ($newTotal < $paid) {
+            return $this->refusal(422, self::EDIT_PAID_REDUCE);
+        }
+
+        if ($newTotal === $paid) {
+            try {
+                $this->checkout->closeOpenTopUps($order);
+
+                $result = $this->editor->apply(
+                    $order,
+                    $menu,
+                    $wanted,
+                    MealOrderEditor::ACTOR_CUSTOMER,
+                    null,
+                    function (MealOrder $locked) use ($menu, $wanted, $baseTotal, $paid) {
+                        if (($refusal = self::customerMayEdit($locked, $menu)) !== null) {
+                            throw new \RuntimeException($refusal);
+                        }
+
+                        // Quoted as a swap against what was paid. Staff changing the
+                        // order, or it becoming unpaid, while this waited makes that
+                        // quote wrong.
+                        if ($locked->payment_status !== MealOrder::PAYMENT_PAID
+                            || (int) $locked->total_minor !== $baseTotal
+                            || $locked->settledMinor() !== $paid) {
+                            throw new \RuntimeException(MealOrderCheckoutService::TOP_UP_ORDER_MOVED);
+                        }
+
+                        if (LunchOrderLines::unreachable($menu, $locked->items, $wanted) !== []) {
+                            throw new \RuntimeException(self::EDIT_ITEM_GONE);
+                        }
+                    }
+                );
+            } catch (\Throwable $e) {
+                return $this->editFailure($e);
+            }
+
+            return response()->api(200, $result['changed'] ? 'Your order has been updated.' : 'Your order is unchanged.', [
+                'order' => $this->serializeOrder($result['order']->fresh()->load('items'), $menu),
+            ]);
+        }
+
+        if (MealOrderCheckoutService::topUpClosesTooSoon($menu)) {
+            return $this->refusal(422, MealOrderCheckoutService::TOP_UP_TOO_CLOSE);
+        }
+
+        if (! Masjid::find($order->masjid_id)?->canAcceptDonations()) {
+            return $this->refusal(422, MealOrderCheckoutService::TOP_UP_UNAVAILABLE);
+        }
+
+        try {
+            $opened = $this->checkout->openTopUp(
+                $order,
+                $menu,
+                $wanted,
+                $baseTotal,
+                $paid,
+                $this->topUpReturnUrls($request, $order)
+            );
+        } catch (\Throwable $e) {
+            return $this->editFailure($e);
+        }
+
+        $topUp = $opened['top_up'];
+
+        return response()->api(200, 'Pay the difference to update your order. Your order changes once the payment is confirmed.', [
+            'status' => 'payment_required',
+            'checkout_url' => $opened['checkout_url'],
+            'amount_minor' => (int) $topUp->amount_minor,
+            'proposed_total_minor' => (int) $topUp->proposed_total_minor,
+            'order' => $this->serializeOrder($order->fresh()->load('items'), $menu),
+        ]);
+    }
+
+    /**
+     * An edit that could not be made, answered in the customer's terms: the
+     * sentence for a refusal, never a database's or an SDK's own words. The same
+     * order of catches `update` has always used (QueryException and the Stripe
+     * SDK's errors extend RuntimeException, so they are asked first).
+     */
+    private function editFailure(\Throwable $e)
+    {
+        if ($e instanceof LunchLineRefusal) {
+            return response()->api(422, $e->getMessage(), null);
+        }
+
+        if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return response()->api(404, 'Order not found.', null);
+        }
+
+        if ($e instanceof \Illuminate\Database\QueryException) {
+            report($e);
+
+            return response()->api(500, 'Your order could not be changed just now. Please try again in a moment.', null);
+        }
+
+        if ($e instanceof \Stripe\Exception\ExceptionInterface) {
+            report($e);
+
+            return response()->api(409, 'Your order could not be changed just now. Please try again in a moment.', null);
+        }
+
+        if ($e instanceof \RuntimeException) {
+            // The cutoff passing while the page was being made is the same answer,
+            // with the same status, as the cutoff being too near to begin with.
+            return $this->refusal(
+                $e->getMessage() === MealOrderCheckoutService::TOP_UP_TOO_CLOSE ? 422 : 409,
+                $e->getMessage()
+            );
+        }
+
+        throw $e;
+    }
+
+    /** A refusal, with its code beside the sentence when it has one. */
+    private function refusal(int $status, string $message)
+    {
+        $code = self::REFUSAL_CODES[$message] ?? null;
+
+        return response()->api($status, $message, $code === null ? null : ['code' => $code]);
+    }
+
+    /**
+     * Stripe return URLs for a top-up page: back to this order's page, on the site
+     * the customer is on now when the allowlist trusts it, else the site the order
+     * was placed from, else APP_URL (LunchOrderLink).
+     *
+     * @return array{success_url: string, cancel_url: string}
+     */
+    private function topUpReturnUrls(Request $request, MealOrder $order): array
+    {
+        $url = LunchOrderLink::url($order, LunchOrderLink::siteOrigin($request));
+
+        return [
+            'success_url' => $url . '?topup=success',
+            'cancel_url' => $url . '?topup=cancelled',
+        ];
+    }
+
+    /**
+     * The difference this order is waiting to be paid, for the order page: only a
+     * pending top-up whose page is still open. Its amount and when the page closes,
+     * and nothing else — the page never learns a Stripe id.
+     *
+     * @return array{amount_minor: int, expires_at: ?string}|null
+     */
+    private static function pendingTopUp(MealOrder $order): ?array
+    {
+        if ($order->payment_status !== MealOrder::PAYMENT_PAID) {
+            return null;
+        }
+
+        $topUp = MealOrderTopUp::withoutMasjidScope()
+            ->where('masjid_id', $order->masjid_id)
+            ->where('meal_order_id', $order->id)
+            ->where('status', MealOrderTopUp::STATUS_PENDING)
+            ->whereNotNull('stripe_session_id')
+            ->where('expires_at', '>', Carbon::now())
+            ->latest('id')
+            ->first();
+
+        return $topUp === null ? null : [
+            'amount_minor' => (int) $topUp->amount_minor,
+            'expires_at' => optional($topUp->expires_at)->toIso8601String(),
+        ];
+    }
+
+    /**
      * Why this customer may not change this order right now, or null when they
      * may. Asked before the work starts so the answer is cheap, and again on the
      * LOCKED row so a payment or the cutoff landing mid-request still refuses.
@@ -478,6 +743,9 @@ class JummahLunchOrdersController extends Controller
      * The order is deliberate: someone who has paid is told they have paid, even
      * when ordering has also closed, because that is the fact they need in order
      * to know what to ask the masjid for.
+     *
+     * A paid order is no longer refused as such (owner, 2026-09-24): before the
+     * cutoff its customer may change it on the money's terms (updatePaid()).
      */
     private static function customerMayEdit(MealOrder $order, MealMenu $menu): ?string
     {
@@ -486,7 +754,7 @@ class JummahLunchOrdersController extends Controller
         }
 
         if ($order->payment_status === MealOrder::PAYMENT_PAID) {
-            return self::EDIT_PAID;
+            return $menu->isOpenForOrders() ? null : self::EDIT_PAID;
         }
 
         if ($order->payment_status !== MealOrder::PAYMENT_UNPAID) {
@@ -514,14 +782,10 @@ class JummahLunchOrdersController extends Controller
      */
     private function returnUrlsFor(Request $request, int $masjidId, string $uuid): array
     {
-        $origin = rtrim((string) $request->headers->get('Origin'), '/');
+        // The allowlist rule lives in LunchOrderLink, shared with the order email.
+        $origin = LunchOrderLink::siteOrigin($request);
 
-        $allowed = array_map(
-            fn ($o) => rtrim((string) $o, '/'),
-            (array) config('cors.allowed_origins', [])
-        );
-
-        if ($origin === '' || ! in_array($origin, $allowed, true)) {
+        if ($origin === null) {
             return [];
         }
 
@@ -611,6 +875,13 @@ class JummahLunchOrdersController extends Controller
             'donation_minor' => (int) $order->donation_minor,
             'fee_covered_minor' => (int) $order->fee_covered_minor,
             'total_minor' => (int) $order->total_minor,
+            // What has actually been paid (MealOrder::settledMinor): nothing while
+            // unpaid, the settled amount once paid. A paid order's editor shows it
+            // beside the new total and the difference to pay.
+            'paid_minor' => $order->settledMinor(),
+            // A difference the customer has been asked to pay and has not yet been
+            // recorded paying: its amount and when its page closes. Nothing more.
+            'top_up' => self::pendingTopUp($order),
             'currency' => $order->currency,
             'placed_at' => optional($order->placed_at)->toIso8601String(),
             'can_edit' => $editNotice === null,

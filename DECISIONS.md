@@ -2920,3 +2920,34 @@ and the reopen passing `$row->form_id` (the controller-wiring tests in `FormPaym
 on a form whose id is the other organisation's id), a TTL of a day (the trashed-org test travels a
 literal 301 seconds), and an `/i` on the payment-return host pattern (the rejected shapes are now
 asserted to run no query, because SQLite's case-sensitive `=` masked it).
+
+## 2026-09-25 — Lunch: a paid order's customer adds plates by paying the difference; the order-link email
+Decision (owner, 2026-09-24): before the cutoff, a customer may change a PAID lunch order on its
+link. The new total is set against what was paid (`MealOrder::settledMinor`): lower is a 422
+`paid_reduce` (no automatic refunds); the same is applied at once through `MealOrderEditor`,
+audited as the customer's; higher changes nothing and opens a Checkout Session for exactly the
+difference on the org's connected account (card only, expires at min(cutoff, 24h)), parked on a
+pending `meal_order_top_ups` row. Inside 30 minutes of the cutoff it is a 422 `too_close_to_cutoff`.
+Only `checkout.session.completed` for `metadata.kind` = `lunch_top_up`, routed before the order
+path, applies it, after matching the account's masjid, the top-up id, the session id, the order
+uuid, the metadata masjid id, `amount_total` and `payment_status: paid`. An order that moved meanwhile
+(total or settled changed, cancelled, no longer paid, the top-up superseded, or the menu re-prices
+to another total) keeps its plates and records the money (`settled_total_minor` += amount), so the
+board shows it owed back; the top-up is `conflict` and a warning is logged. An order email
+(`LunchOrderConfirmation`, queued, only when the order holds an address) goes on placing a
+pay-at-pickup order, on an online order's payment, and as "updated" on an applied top-up; each is
+claimed once (`meal_orders.confirmation_sent_at`, `meal_order_top_ups.notified_at`).
+Calls the spec left open:
+- The Stripe Checkout email is kept only where the menu asks for an email
+  (`collect_customer_email`): an org that switched the field off chose not to hold addresses.
+- Any customer change to a paid order closes an open top-up page first, the swap included; a page
+  Stripe reports as complete refuses the change (`topup_confirming`).
+- A top-up page never lives under 31 minutes (Stripe's floor measured on its side), so for a cutoff
+  30 to 31 minutes away it can outlive the cutoff by under a minute; a payment there still applies.
+- `meal_order_top_ups.idempotency_key` (written before the Stripe call) and `notified_at` were added
+  beyond the spec's column list; `meal_orders.site_origin` remembers the allowlisted origin the
+  order was placed from, because the card order's email is sent from the webhook.
+- The payment intent carries `kind` and `top_up_id` but no `order_uuid`, and
+  `payment_intent.succeeded` for a top-up is acked and ignored.
+Rationale: the money is always recorded, the plates move only on a verified payment of exactly the
+quoted difference, and no path that routes by `order_uuid` can read a top-up as the order's payment.

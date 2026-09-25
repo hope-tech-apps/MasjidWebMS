@@ -16,6 +16,7 @@ use App\Services\Receipts\ReceiptService;
 use App\Services\Stripe\DonationService;
 use App\Services\Stripe\FormResponsePaymentService;
 use App\Services\Stripe\MealOrderPaymentService;
+use App\Services\Stripe\MealOrderTopUpPaymentService;
 use App\Services\Stripe\RegistrationPaymentService;
 use App\Services\Stripe\StripeConnectService;
 use App\Support\Errors;
@@ -78,6 +79,15 @@ use Symfony\Component\HttpFoundation\Response;
  * seat), so it is acked and ignored exactly as before, and every other event takes
  * the route it took yesterday. Pinned by FormPaymentWebhookTest.
  *
+ * LUNCH TOP-UPS (owner, 2026-09-24) are asked about FIRST, before orders. A paid
+ * order's customer pays the difference for a bigger order on its own Checkout
+ * Session, whose metadata carries `kind` = MealOrderTopUp::STRIPE_KIND AND the
+ * order's `order_uuid`. Were the order question asked first, that session would
+ * be read as the order's own payment. Its payment intent carries `kind` and no
+ * `order_uuid`, and is acked and ignored: the session event settles a top-up.
+ * Every event without `kind` takes the route it took before. Pinned by
+ * MealOrderTopUpTest.
+ *
  * THE GIVING SWITCH NEVER REFUSES HERE (DECISIONS.md, organisation switches wave 2).
  * Money that reaches this controller has already moved at Stripe, so a donation for
  * an organisation whose Giving is switched off is booked, receipted and emailed
@@ -96,6 +106,7 @@ class StripeWebhookController extends Controller
         private RegistrationPaymentService $registrationPayments,
         private MealOrderPaymentService $mealOrderPayments,
         private FormResponsePaymentService $formResponsePayments,
+        private MealOrderTopUpPaymentService $mealOrderTopUps,
     ) {
     }
 
@@ -212,12 +223,15 @@ class StripeWebhookController extends Controller
         // metadata.form_response_uuid; everything else keeps today's donation
         // behaviour exactly. The keys never collide, so an order event can never
         // book a donation or a registration, and vice versa.
-        $isOrder = MealOrderPaymentService::isOrderEvent($object);
-        $isRegistration = ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
-        $isFormResponse = ! $isOrder && ! $isRegistration && FormResponsePaymentService::isFormResponseEvent($object);
+        // A lunch top-up names its order too, so it is asked about first.
+        $isTopUp = MealOrderTopUpPaymentService::isTopUpEvent($object);
+        $isOrder = ! $isTopUp && MealOrderPaymentService::isOrderEvent($object);
+        $isRegistration = ! $isTopUp && ! $isOrder && RegistrationPaymentService::isRegistrationEvent($object);
+        $isFormResponse = ! $isTopUp && ! $isOrder && ! $isRegistration && FormResponsePaymentService::isFormResponseEvent($object);
 
         match ($event['type']) {
             'checkout.session.completed' => match (true) {
+                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account),
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
@@ -229,6 +243,7 @@ class StripeWebhookController extends Controller
             // Form checkout is card only, so a form response should never get here;
             // if one does, its own handler settles it rather than the donation path.
             'checkout.session.async_payment_succeeded' => match (true) {
+                $isTopUp => $this->mealOrderTopUps->handleCheckoutCompleted($object, $account),
                 $isOrder => $this->mealOrderPayments->handleCheckoutCompleted($object, $account),
                 $isRegistration => $this->registrationPayments->handleCheckoutCompleted($object, $account),
                 $isFormResponse => $this->formResponsePayments->handleCheckoutCompleted($object, $account),
@@ -238,6 +253,10 @@ class StripeWebhookController extends Controller
             // completion, so each handler says so at warning; a registration also
             // gives its held seat back.
             'checkout.session.async_payment_failed' => match (true) {
+                $isTopUp => Log::warning('A delayed payment for a lunch top-up failed; nothing was recorded.', [
+                    'checkout_session_id' => $object['id'] ?? null,
+                    'account' => $account,
+                ]),
                 $isOrder => $this->mealOrderPayments->handleAsyncPaymentFailed($object, $account),
                 $isRegistration => $this->registrationPayments->handleAsyncPaymentFailed($object, $account),
                 $isFormResponse => Log::warning('A delayed payment for a form registration failed; nothing was recorded.', [
@@ -247,6 +266,8 @@ class StripeWebhookController extends Controller
                 default => $this->handleAsyncPaymentFailed($object, $account),
             },
             'payment_intent.succeeded' => match (true) {
+                // The session event settles a top-up; its payment intent is acked.
+                $isTopUp => null,
                 $isOrder => $this->mealOrderPayments->handlePaymentIntentSucceeded($object, $account),
                 $isRegistration => $this->registrationPayments->handlePaymentIntentSucceeded($object, $account),
                 $isFormResponse => $this->formResponsePayments->handlePaymentIntentSucceeded($object, $account),
@@ -255,9 +276,12 @@ class StripeWebhookController extends Controller
             // New event type for this slice: the seat-release trigger. A
             // donation has no expiry semantics, so a non-registration expiry is
             // acked and ignored exactly as it was before.
-            'checkout.session.expired' => $isRegistration
-                ? $this->registrationPayments->handleCheckoutExpired($object, $account)
-                : null,
+            // A lunch top-up's page expiring drops the change it was holding.
+            'checkout.session.expired' => match (true) {
+                $isTopUp => $this->mealOrderTopUps->handleCheckoutExpired($object, $account),
+                $isRegistration => $this->registrationPayments->handleCheckoutExpired($object, $account),
+                default => null,
+            },
             // Shared with the recurring-DONATION path, which owns this event
             // today. The registration branch is additive: an invoice without
             // our uuid anywhere in it books a donation exactly as it always

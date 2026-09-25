@@ -8,6 +8,7 @@ use App\Models\MealMenuItem;
 use App\Models\MealOrder;
 use App\Models\MealOrderEdit;
 use App\Models\MealOrderItem;
+use App\Models\MealOrderTopUp;
 use App\Support\TenantContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
@@ -148,6 +149,45 @@ class MealOrderTenantIsolationTest extends TestCase
 
         $this->assertSame($this->masjidB->id, (int) $edit->masjid_id);
         $this->assertNull($edit->updated_at, 'an audit row is written once and never updated');
+    }
+
+    #[Test]
+    public function a_top_up_is_scoped_to_its_masjid_and_stamped_with_the_bound_one(): void
+    {
+        // A paid order's pending change and the money that settles it: as
+        // unreachable across organisations as the order itself.
+        $menuA = MealMenu::factory()->forMasjid($this->masjidA)->create();
+        $orderA = MealOrder::factory()->create(['masjid_id' => $this->masjidA->id, 'meal_menu_id' => $menuA->id]);
+        $menuB = MealMenu::factory()->forMasjid($this->masjidB)->create();
+        $orderB = MealOrder::factory()->create(['masjid_id' => $this->masjidB->id, 'meal_menu_id' => $menuB->id]);
+
+        $topUpA = $this->topUp($orderA);
+        $topUpB = $this->topUp($orderB);
+
+        $this->tenant->set($this->masjidA->id);
+
+        $this->assertSame(1, MealOrderTopUp::count());
+        $this->assertNotNull(MealOrderTopUp::find($topUpA->id));
+        $this->assertNull(MealOrderTopUp::find($topUpB->id), 'another masjid\'s top-up must not be readable');
+
+        // Bound to A, a row naming B is stamped A by the creating hook.
+        $stamped = $this->topUp($orderB);
+        $this->assertSame($this->masjidA->id, (int) $stamped->masjid_id);
+    }
+
+    private function topUp(MealOrder $order): MealOrderTopUp
+    {
+        $topUp = new MealOrderTopUp();
+        $topUp->masjid_id = (int) $order->masjid_id;
+        $topUp->meal_order_id = (int) $order->id;
+        $topUp->lines = ['wanted' => [], 'items' => []];
+        $topUp->base_total_minor = 800;
+        $topUp->base_settled_minor = 800;
+        $topUp->amount_minor = 800;
+        $topUp->proposed_total_minor = 1600;
+        $topUp->save();
+
+        return $topUp;
     }
 
     private function makeMasjid(): Masjid

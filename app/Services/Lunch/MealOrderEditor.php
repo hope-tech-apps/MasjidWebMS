@@ -106,35 +106,16 @@ final class MealOrderEditor
                 $guard($row);
             }
 
-            $priced = LunchOrderLines::price($menu, $wanted, LunchOrderLines::CAP_REFUSE);
+            $quote = self::quote($row, $menu, $wanted);
 
-            $before = self::snapshot($row);
-
-            $subtotal = (int) $priced['subtotal_minor'];
-            $donation = (int) $row->donation_minor;
-
-            // The card fee is a GROSS-UP on an amount Stripe is about to process,
-            // so it is recomputed only while there is still a card payment ahead
-            // of this order. Once the money has landed, `fee_covered_minor` stops
-            // being a quote and becomes the record of what the customer actually
-            // paid Stripe — the board's "Card fees covered" tile sums that column
-            // and has to stay true. Re-grossing it on a paid order would also add
-            // cents of Stripe fee to a balance Stripe will never see: there is no
-            // way to re-charge a paid order here, so staff settle the difference
-            // by hand, and asking them for 2.9% of a plate they will be handed
-            // cash for is asking for money nobody owes.
-            $fee = (int) $row->fee_covered_minor;
-            if ($fee > 0 && $row->payment_status === MealOrder::PAYMENT_UNPAID) {
-                $fee = StripeFees::coverage($subtotal + $donation);
-            }
-
-            $total = $subtotal + $donation + $fee;
-
-            $after = self::snapshotOf($priced['lines'], $subtotal, $donation, $fee, $total);
-
-            if (self::comparable($after) === self::comparable($before)) {
+            if (! $quote['changed']) {
                 return ['order' => $row, 'changed' => false, 'page_closed' => false];
             }
+
+            ['before' => $before, 'after' => $after, 'lines' => $lines] = $quote;
+            $subtotal = $quote['subtotal_minor'];
+            $fee = $quote['fee_covered_minor'];
+            $total = $quote['total_minor'];
 
             // An open payment page is for the amount this order USED to be. Close
             // it before the row changes, and refuse the whole edit if it cannot be
@@ -164,7 +145,7 @@ final class MealOrderEditor
             // the full set after the edit, and the lines snapshot the menu at this
             // moment exactly as placing the order does.
             $row->items()->delete();
-            foreach ($priced['lines'] as $line) {
+            foreach ($lines as $line) {
                 $row->items()->create(array_merge($line, ['masjid_id' => $row->masjid_id]));
             }
 
@@ -189,6 +170,66 @@ final class MealOrderEditor
 
             throw $e;
         }
+    }
+
+    /**
+     * What `apply()` would make of this order, WITHOUT writing anything: the lines
+     * re-priced from the menu, the money worked out by exactly the rules above, and
+     * whether any of it differs from what the order says now.
+     *
+     * The paid-order path needs the answer before it decides anything — a new
+     * total below what was paid is refused, the same total is applied at once, a
+     * higher one waits for the difference to be paid (JummahLunchOrdersController::
+     * update, MealOrderTopUpPaymentService). Asking it here, rather than working
+     * the total out a second time somewhere else, is what keeps "the total the
+     * customer was quoted" and "the total the edit writes" the same number.
+     *
+     * `$order` must have its `items` loaded (apply() passes the locked row).
+     *
+     * @param  array<int,int>  $wanted
+     * @return array{changed: bool, lines: array<int,array<string,mixed>>, subtotal_minor: int, donation_minor: int, fee_covered_minor: int, total_minor: int, before: array<string,mixed>, after: array<string,mixed>}
+     *
+     * @throws \App\Support\LunchLineRefusal  a line that cannot be priced
+     */
+    public static function quote(MealOrder $order, MealMenu $menu, array $wanted): array
+    {
+        $priced = LunchOrderLines::price($menu, $wanted, LunchOrderLines::CAP_REFUSE);
+
+        $before = self::snapshot($order);
+
+        $subtotal = (int) $priced['subtotal_minor'];
+        $donation = (int) $order->donation_minor;
+
+        // The card fee is a GROSS-UP on an amount Stripe is about to process,
+        // so it is recomputed only while there is still a card payment ahead
+        // of this order. Once the money has landed, `fee_covered_minor` stops
+        // being a quote and becomes the record of what the customer actually
+        // paid Stripe — the board's "Card fees covered" tile sums that column
+        // and has to stay true. Re-grossing it on a paid order would also add
+        // cents of Stripe fee to a balance Stripe will never see: there is no
+        // way to re-charge a paid order here, so staff settle the difference
+        // by hand, and asking them for 2.9% of a plate they will be handed
+        // cash for is asking for money nobody owes. (A customer's own top-up
+        // charges exactly the difference in total, so the same holds there.)
+        $fee = (int) $order->fee_covered_minor;
+        if ($fee > 0 && $order->payment_status === MealOrder::PAYMENT_UNPAID) {
+            $fee = StripeFees::coverage($subtotal + $donation);
+        }
+
+        $total = $subtotal + $donation + $fee;
+
+        $after = self::snapshotOf($priced['lines'], $subtotal, $donation, $fee, $total);
+
+        return [
+            'changed' => self::comparable($after) !== self::comparable($before),
+            'lines' => $priced['lines'],
+            'subtotal_minor' => $subtotal,
+            'donation_minor' => $donation,
+            'fee_covered_minor' => $fee,
+            'total_minor' => $total,
+            'before' => $before,
+            'after' => $after,
+        ];
     }
 
     /**
