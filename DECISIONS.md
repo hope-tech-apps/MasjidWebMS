@@ -3134,3 +3134,72 @@ checked, and that is the owner's call.
   0 on Specific Time Ranges and a blank one kept (`filled`, not truthiness); a first save with no row and no
   offsets is 0/0/0/0/0; no zone warning for a masjid on Minutes After Adhan; the zone test over UTC, Etc/UTC,
   GMT, blank and an unknown name.
+
+## 2026-09-25 — `video` section type (MEC's home-page clip): the upload rule is per type AND field
+Decision: `SectionType::VIDEO` (`video`), content `video_url`, `poster_url`, `title`, `caption`,
+`layout` (player | banner), `max_width` (full | container | narrow, player only), `background_color`,
+exactly as mec-wix-migration `wave3/2.5-home-video/VIDEO-SECTION-PLAN.md` and its `home-video.php`
+assert. Both `getImageFieldsForSectionType` copies map it to `['video_url', 'poster_url']`, so the
+MP4 travels the image path into `section_images` (no conversions registered, so it is stored as
+uploaded). The four section requests take their per-file rules from the new
+`Concerns\ValidatesVideoSection::sectionUploadRules()`: the image rule for every file, except a
+`video` section's `video_url`, which is `mimetypes:video/mp4|max:25600`. `validateVideoContent()`
+refuses a `layout` or `max_width` outside the renderer's words. Not listed in `withoutRenderer()`:
+the renderer (burlington-masjid-site `feat/video-section`, `Video.vue`) was built first and must ship
+first.
+Calls the plan left open:
+- **The section type is resolved the embed rule's way** (`ValidatesEmbedContent::resolvedSectionType`,
+  declared `abstract private` in the new trait so the dependency is stated): an update that omits
+  `section_type` is judged by the stored type, so an MP4 can be added to an existing video section and
+  still cannot be added to an existing image section by leaving the type out.
+- **`mimetypes`, not `mimes`**: it reads the file's bytes (finfo), so a JPEG renamed `clip.mp4` is
+  refused. `video/quicktime` (.mov) and WebM are refused on purpose: MP4 (H.264 + AAC) is the one
+  format every browser plays, and the editor says so before upload.
+- **The editor uses a bare file input**, against the editors' "always ImageDraggableInput" idiom: that
+  component reads the file into a `data:` URL (24 MB of string for MEC's 18 MB clip) and accepts only
+  images. `video_url` in the content is never set from the chosen file; the preview is an object URL
+  held in the editor, and the server writes the stored URL. The client check
+  (`core/helpers/sectionVideoFile.ts`) mirrors the server's 25 MB / MP4 rule so the admin is told
+  before an upload is refused.
+- **The image rule's duplicated `webp,webp` is written once**; the accepted set is unchanged.
+- **The palette counts** in `SchoolSectionTypesTest`, `CommunitySectionTypesTest` (LATER_TYPES) and
+  `OfferingSectionTypeTest::the_palette_gained_exactly_one_type` (27 → 28) are updated on purpose:
+  each suite pins an exact count so a vanished type fails, and `video` is the one added since.
+Unknown, needs investigation: what the iOS and Android apps do with an unknown `video` section. The
+API passes `platforms` through without filtering (`PageSectionResource`); MEC's placement is
+`["web"]`, but whether each app honours that before this goes on a page the apps load is not known.
+
+
+## 2026-09-25 — `video` section review fixes: `media-src`, the upload NAME, and a tenant-scoped type lookup
+Decision (three calls, each pinned by a test shown to fail without it):
+- **`SecurityHeaders` gains `media-src 'self' blob:`**, plus APP_URL on a second host / proxied page
+  (`$ownMedia`, set beside `$ownImg`). Without it `<video>` fell back to `default-src 'self'`, which
+  never matches `blob:` and does not name APP_URL on the second host, so the video editor's preview
+  (an object URL for a chosen file, APP_URL/storage for a stored one) was always refused. `data:` is
+  left out: nothing here plays media from one. The directive only widens what `default-src` already
+  allowed, so every other `<video>`/`<audio>` (group video playback is a signed RELATIVE URL) is
+  unaffected. `SecurityHeadersPreviewFrameTest::BASELINE` gains the line on purpose; the new
+  `SecurityHeadersMediaSrcTest` asserts it on the SPA shell itself (`withoutVite()`), on both hosts.
+  Alternative: drop the preview (the admin then uploads 18 MB blind).
+- **Every section upload rule pins the extension as well as the bytes**: `video_url` is
+  `mimetypes:video/mp4|extensions:mp4`, every other file `mimes:jpeg,png,jpg,gif,webp|extensions:jpeg,jpg,png,gif,webp`.
+  The media library keeps the client's file name on the public disk (DefaultFileNamer) and the web
+  server picks the Content-Type from the extension, so real MP4 or JPEG bytes uploaded as `x.html`
+  would be served as a page on this app's own origin. The image half predates the video type; it is
+  fixed here because it is the same trait. `extensions` lower-cases, so `IMG_1.JPG` still passes; a
+  `.jfif` or `.jpe` JPEG is now refused (it was accepted by bytes alone) and must be renamed.
+  The SPA's `sectionVideoFileProblem` checks the `.mp4` name too, so its "a file refused here is
+  refused by the server, never the reverse" promise still holds.
+  Alternative: rename server-side (`usingFileName(uuid.ext)`): removes the class of bug without
+  refusing anything, but changes every stored section file name and URL, and the review asked for a
+  422 on `clip.html`.
+- **`ValidatesEmbedContent::resolvedSectionType()` reads the stored type only from this tenant's
+  sections** (`TenantContext`, else the route's `masjid_id`, as `embedMasjid()` does); another
+  tenant's id resolves to null like a missing one. `Section` has no global scope and the lookup runs
+  in validation, before the controller's `$masjid->sections()->findOrFail()`, so another org's video
+  id used to let an MP4 through to the 404 while its image id answered 422: the response said what
+  the other tenant's section is. The embed rule shares the function and gets the same fix.
+Also pinned (tests only, mutation review P1-P9): the 25 MB ceiling is accepted at the limit and at
+MEC's 18 MB clip; a `video_url` file on a non-video section is refused; the library update takes a
+replacement MP4; `layout` / `max_width` are checked by all four writers, with `narrow` accepted and
+non-strings (`true`, `0`) refused; unidentifiable bytes and a real text file named `.mp4` are refused.

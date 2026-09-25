@@ -439,6 +439,11 @@ class PageSectionsController extends Controller
             // impact_stats carries no images at all.
             SectionType::SERVICES_ELIGIBILITY => ['services.*.image_url'],
             SectionType::PROVIDERS_DIRECTORY => ['providers.*.photo_url'],
+            // The MP4 and its still. The same upload path as an image; only the
+            // request's per-field rule differs (ValidatesVideoSection lets an MP4
+            // into `video_url` and nowhere else). `section_images` registers no
+            // conversions, so a video in it is stored as uploaded.
+            SectionType::VIDEO => ['video_url', 'poster_url'],
             // link_list carries icon *names* (bootstrap classes), not uploads.
             default => [],
         };

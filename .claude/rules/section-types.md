@@ -39,6 +39,17 @@ the failure mode this rule exists to prevent.
 Validation needs no change: every request allowlists with
 `new Enum(SectionType::class)`, so the enum IS the allowlist.
 
+**Uploads are images unless one rule says otherwise.** The four section requests
+take their per-file rules from `Concerns\ValidatesVideoSection::sectionUploadRules()`:
+every uploaded file gets the image rule, except a `video` section's `video_url`,
+which takes an MP4 (by its bytes) of up to 25 MB. A new type whose upload is not
+an image adds its field THERE, by type AND field, never by loosening the image
+rule: an MP4 in a field an `<img>` draws is a blank box on a live page
+(`VideoSectionTypeTest` pins that it is still refused). Every rule checks the
+bytes (`mimes`/`mimetypes`) AND the name (`extensions`): the media library keeps
+the uploaded file name on the public disk, and the web server serves it by its
+extension, so matching bytes named `.html` would be a page on this app's origin.
+
 `label()`, `description()`, `usesExternalData()`, `requiresModule()` and
 `defaultContent()` are **exhaustive `match` with no default arm, on purpose.** Adding a case without
 classifying it is a fatal error at the first call, not a silent wrong default.

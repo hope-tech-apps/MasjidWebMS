@@ -534,7 +534,8 @@ class OfferingSectionTypeTest extends TestCase
         // arithmetic of the change itself. A section_type is CAST to this enum,
         // so a value that disappears is not "extra data", it is a published row
         // that throws on every read.
-        $this->assertCount(27, SectionType::getValues());
+        // 27 with offering; `video` (VideoSectionTypeTest) is the one added since.
+        $this->assertCount(28, SectionType::getValues());
         $this->assertContains('offering', SectionType::getValues());
     }
 

@@ -99,6 +99,12 @@ enum SectionType: string
     // tenant like every other type: a masjid taking iftar RSVPs and a school
     // taking tuition are the same mechanism.
     case OFFERING = 'offering';
+    // A video file uploaded to this site (an MP4 in `section_images`), played in the
+    // page or as a silent looping banner. Built for MEC's home-page clip: `embed`
+    // frames only allowlisted providers and our storage host is none of them, and no
+    // other type draws a <video>. The upload rule that lets an MP4 in is per field
+    // (App\Http\Requests\Concerns\ValidatesVideoSection): only `video_url`.
+    case VIDEO = 'video';
 
     /**
      * Get all section type values
@@ -141,6 +147,7 @@ enum SectionType: string
             self::PROVIDERS_DIRECTORY => 'Providers & Care Team',
             self::IMPACT_STATS => 'Impact Numbers',
             self::OFFERING => 'Registration & Payment',
+            self::VIDEO => 'Video',
         };
     }
 
@@ -186,6 +193,7 @@ enum SectionType: string
             // The truth about that is appended below, from one constant, for
             // every type in withoutRenderer().
             self::OFFERING => 'A reference to one program, class, event or admission round, so its sign-ups and payment can be published on a page. Create it first under Programs.',
+            self::VIDEO => 'A video file uploaded to this site, played in the page or as a silent looping banner',
         };
 
         return $this->hasRenderer()
@@ -304,6 +312,9 @@ enum SectionType: string
             // served. One fetch, and no window in which the page has rendered
             // and the price has not.
             self::OFFERING => false,
+            // The file is ours, but its URL is IN the content: the renderer plays
+            // what the section holds and calls no other endpoint.
+            self::VIDEO => false,
         };
     }
 
@@ -368,6 +379,8 @@ enum SectionType: string
             self::SERVICES_ELIGIBILITY,
             self::PROVIDERS_DIRECTORY,
             self::IMPACT_STATS => null,
+            // An uploaded file; no switch governs it.
+            self::VIDEO => null,
         };
     }
 
@@ -766,6 +779,30 @@ enum SectionType: string
                 // Wording only — it never decides whether registration is open.
                 // `content.offering.registration_state` does.
                 'button_text' => 'Register',
+                'background_color' => '#ffffff',
+            ],
+            // A video file uploaded to this site. `video_url` and `poster_url` are
+            // written by the upload (getImageFieldsForSectionType), like IMAGE's
+            // `image_url`; nothing renders without `video_url`. It must be an MP4
+            // (H.264 + AAC), the one format every browser plays.
+            //
+            // `layout`: `player` has the browser's controls and never starts by itself;
+            // `banner` is full width, muted and looping, started by the renderer only
+            // when the visitor has not asked for reduced motion, with its own pause and
+            // mute buttons. `max_width` applies to the player only. `title` is the
+            // video's accessible name (the renderer has its own word when it is empty),
+            // never displayed text; `caption` is.
+            //
+            // The keys are asserted by the MEC home-video apply script
+            // (mec-wix-migration wave3/2.5-home-video/home-video.php): renaming one
+            // breaks that script before it writes anything.
+            self::VIDEO => [
+                'video_url' => null,
+                'poster_url' => null,
+                'title' => '',
+                'caption' => '',
+                'layout' => 'player', // player | banner
+                'max_width' => 'container', // full | container | narrow (player only)
                 'background_color' => '#ffffff',
             ],
         };

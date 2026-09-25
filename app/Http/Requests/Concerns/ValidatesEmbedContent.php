@@ -73,6 +73,14 @@ trait ValidatesEmbedContent
      * `section_type` (it is `sometimes`), so fall back to what the section already is —
      * otherwise an admin could edit an existing embed's URL to anything at all simply
      * by not resending the type.
+     *
+     * The stored type is read only from THIS tenant's sections (the same tenant
+     * embedMasjid() resolves). Section has no global scope, and this runs during
+     * validation, before the controller's `$masjid->sections()->findOrFail()`: an
+     * unfiltered lookup made another organisation's section id answer differently by
+     * type (a video id let an MP4 through to the controller's 404; an image id was a
+     * 422), which told a caller what another tenant's section is. Another tenant's id
+     * now resolves to null, exactly like an id that does not exist.
      */
     private function resolvedSectionType(): ?SectionType
     {
@@ -83,12 +91,15 @@ trait ValidatesEmbedContent
         }
 
         $sectionId = $this->route('section_id');
+        $masjidId = app(TenantContext::class)->get() ?? $this->route('masjid_id');
 
-        if ($sectionId === null) {
+        if ($sectionId === null || $masjidId === null) {
             return null;
         }
 
-        $type = \App\Models\Section::whereKey($sectionId)->value('section_type');
+        $type = \App\Models\Section::whereKey($sectionId)
+            ->where('masjid_id', (int) $masjidId)
+            ->value('section_type');
 
         // The column is cast on the model, but value() bypasses casting on some paths.
         return $type instanceof SectionType ? $type : (is_string($type) ? SectionType::tryFrom($type) : null);
