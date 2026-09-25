@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Admin\Donations;
 
 use App\Http\Requests\BaseFormRequest;
+use App\Models\Donation;
 
 /**
  * Correct a manually-recorded gift.
@@ -23,7 +24,7 @@ use App\Http\Requests\BaseFormRequest;
 class UpdateOfflineDonationRequest extends BaseFormRequest
 {
     /** The payment methods the picker offers — the `in:` allow-list, in one place. */
-    private const METHODS = ['cash', 'check', 'zelle', 'venmo', 'paypal', 'square', 'credit', 'giftcard', 'other'];
+    private const METHODS = Donation::OFFLINE_PAYMENT_METHODS;
 
     /**
      * Heal a legacy or blank payment method before validation.

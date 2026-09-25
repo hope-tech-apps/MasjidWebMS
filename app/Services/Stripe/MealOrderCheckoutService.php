@@ -114,6 +114,22 @@ class MealOrderCheckoutService
      */
     public const TOP_UP_MIN_LEAD_MINUTES = 30;
 
+    /**
+     * A kitchen order's card page asked for once the customer's time to pay online
+     * has run out (kitchenPageExpiresAt). %d is the menu's lead time in hours.
+     */
+    public const KITCHEN_TOO_LATE = 'This order can no longer be paid online: the kitchen needs payment at least %d hours before pickup. Please contact the office.';
+
+    /** The same, asked for by staff on the board, who are held only to the pickup itself. */
+    public const KITCHEN_PICKUP_TOO_SOON = 'This order\'s pickup is too soon for a card payment page. Take the payment another way and use Mark paid.';
+
+    /**
+     * Stripe refuses an `expires_at` under 30 minutes from the moment it creates the
+     * session, measured after this request's travel time, so a kitchen page is
+     * never asked to live less than this (the top-up's floor, for the same reason).
+     */
+    public const KITCHEN_PAGE_MIN_MINUTES = self::TOP_UP_MIN_LEAD_MINUTES + 1;
+
     public function __construct(private StripeClient $stripe)
     {
     }
@@ -157,6 +173,90 @@ class MealOrderCheckoutService
         $floor = $now->copy()->addMinutes(self::TOP_UP_MIN_LEAD_MINUTES + 1);
 
         return $expires->lt($floor) ? $floor : $expires;
+    }
+
+    /**
+     * When a kitchen card page may take payment until: the deadline, or 24 hours,
+     * whichever comes first (Stripe's own ceiling). Null when fewer than
+     * KITCHEN_PAGE_MIN_MINUTES are left, which is a page Stripe would refuse and a
+     * payment the kitchen would hear about too late.
+     *
+     * Why a kitchen page carries an expiry at all: the office first hears about a
+     * card order when the webhook records its payment (KitchenOrderNotifier::placed),
+     * so a page left to Stripe's 24-hour default — or replaced after it expired —
+     * could be paid, and the office told, after the notice the kitchen needs, or
+     * after the pickup itself.
+     */
+    public static function kitchenPageExpiresAt(Carbon $deadline): ?Carbon
+    {
+        $now = Carbon::now();
+
+        if ($deadline->lt($now->copy()->addMinutes(self::KITCHEN_PAGE_MIN_MINUTES))) {
+            return null;
+        }
+
+        $ceiling = $now->copy()->addHours(24)->subMinute();
+
+        return $deadline->lt($ceiling) ? $deadline->copy() : $ceiling;
+    }
+
+    /**
+     * The last moment a kitchen order may be paid by card, or null for an order
+     * with no pickup (there is nothing to be late for).
+     *
+     * The customer's door holds it to the menu's lead time before the pickup — the
+     * same notice the order was placed under, since paying is when the office first
+     * hears of it. Staff on the board are held only to the pickup: they took the
+     * order, or are sending its link, knowing when it is (the phone-order rule in
+     * MealOrdersController::store).
+     */
+    public static function kitchenPaymentDeadline(MealOrder $order, bool $heldToLeadTime): ?Carbon
+    {
+        if ($order->pickup_at === null) {
+            return null;
+        }
+
+        if (! $heldToLeadTime) {
+            return $order->pickup_at->copy();
+        }
+
+        $menu = MealMenu::withoutMasjidScope()->withTrashed()->find($order->meal_menu_id);
+
+        return $order->pickup_at->copy()->subHours($menu?->pickupLeadHours() ?? MealMenu::DEFAULT_PICKUP_LEAD_HOURS);
+    }
+
+    /**
+     * A kitchen order's page expiry, asked on the LOCKED row before any page is
+     * handed out or made. Null for a Friday order or a kitchen order with no
+     * pickup (Stripe's default applies).
+     *
+     * @throws RuntimeException when the time to pay online has run out
+     */
+    private function kitchenExpiryOrRefuse(MealOrder $order, bool $heldToLeadTime): ?Carbon
+    {
+        if (! $order->isKitchenOrder()) {
+            return null;
+        }
+
+        $deadline = self::kitchenPaymentDeadline($order, $heldToLeadTime);
+
+        if ($deadline === null) {
+            return null;
+        }
+
+        $expires = self::kitchenPageExpiresAt($deadline);
+
+        if ($expires === null) {
+            if (! $heldToLeadTime) {
+                throw new RuntimeException(self::KITCHEN_PICKUP_TOO_SOON);
+            }
+
+            $menu = MealMenu::withoutMasjidScope()->withTrashed()->find($order->meal_menu_id);
+
+            throw new RuntimeException(sprintf(self::KITCHEN_TOO_LATE, $menu?->pickupLeadHours() ?? MealMenu::DEFAULT_PICKUP_LEAD_HOURS));
+        }
+
+        return $expires;
     }
 
     /**
@@ -504,15 +604,24 @@ class MealOrderCheckoutService
      * way this ends: a refusal is answered beside what the row really says (the
      * public page serialises it), never the unpaid copy read before the lock.
      *
-     * @param  array{success_url?:string,cancel_url?:string}  $options
+     * A KITCHEN order is asked one more thing on the locked row: whether there is
+     * still time to pay it online (kitchenExpiryOrRefuse). `kitchen_lead_time` is
+     * the customer's door saying it is the caller (KitchenOrdersController), which
+     * holds the payment to the menu's notice before pickup; staff on the board are
+     * held to the pickup only. The page it makes stops taking payment at that
+     * deadline, and that includes a replacement for an expired page.
+     *
+     * @param  array{success_url?:string,cancel_url?:string,kitchen_lead_time?:bool}  $options
      * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
      */
     public function checkout(MealOrder $order, array $options = []): array
     {
         $locked = null;
+        $heldToLeadTime = (bool) ($options['kitchen_lead_time'] ?? false);
+        unset($options['kitchen_lead_time']);
 
         try {
-            $result = DB::transaction(function () use ($order, $options, &$locked): array {
+            $result = DB::transaction(function () use ($order, $options, $heldToLeadTime, &$locked): array {
                 $row = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
                 $locked = $row->getAttributes();
                 $masjid = $this->preflight($row);
@@ -521,11 +630,13 @@ class MealOrderCheckoutService
                     throw new RuntimeException(self::CANCELLED);
                 }
 
+                $expiresAt = $this->kitchenExpiryOrRefuse($row, $heldToLeadTime);
+
                 if ($row->stripe_checkout_session_id) {
-                    return $this->paymentLink($row);
+                    return $this->paymentLink($row, null, $heldToLeadTime);
                 }
 
-                return $this->openPage($row, $masjid, $options);
+                return $this->openPage($row, $masjid, $options, $expiresAt);
             });
         } catch (Throwable $e) {
             // Rolled back, so the row as locked is the row as stored.
@@ -545,10 +656,13 @@ class MealOrderCheckoutService
      * A new page on the LOCKED row (checkout(), paymentLink()): the idempotency key
      * persisted BEFORE the call, and only the session id recorded after it.
      *
+     * `$expiresAt` is a kitchen order's deadline (kitchenExpiryOrRefuse); null
+     * leaves the page to Stripe's own 24 hours, as every Friday page is.
+     *
      * @param  array{success_url?:string,cancel_url?:string}  $options
      * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
      */
-    private function openPage(MealOrder $order, Masjid $masjid, array $options = []): array
+    private function openPage(MealOrder $order, Masjid $masjid, array $options = [], ?Carbon $expiresAt = null): array
     {
         // Persist the idempotency key BEFORE talking to Stripe, so a retried
         // request re-sends the same key and Stripe returns the same Session
@@ -651,6 +765,10 @@ class MealOrderCheckoutService
                 ?? ($orderUrl . '?cancelled=1'),
         ];
 
+        if ($expiresAt !== null) {
+            $params['expires_at'] = $expiresAt->getTimestamp();
+        }
+
         $session = $this->createCheckoutSession(
             $params,
             (string) $masjid->stripe_account_id,
@@ -682,16 +800,21 @@ class MealOrderCheckoutService
      * HERE, on the locked row (LunchOrderExtras::forExistingOrder), so a choice
      * left out keeps what the order carries now, not when the request was read.
      *
+     * A kitchen order is refused once its time to pay online has run out, before
+     * even an open page is handed back, and a new page expires at that deadline
+     * (kitchenExpiryOrRefuse). `$heldToLeadTime` is true only when the customer's
+     * door is asking (checkout()); the board is held to the pickup alone.
+     *
      * @param  array{donation_minor: ?int, cover_fees: ?bool}|null  $choices
      * @return array{order: MealOrder, checkout_url: string, session_id: ?string}
      */
-    public function paymentLink(MealOrder $order, ?array $choices = null): array
+    public function paymentLink(MealOrder $order, ?array $choices = null, bool $heldToLeadTime = false): array
     {
         // Serialised on the order row: when two people press "Payment link" at
         // once, the second waits here, then finds the first one's open session
         // and gets that same page — never a second payable one. Cancelling and
         // Mark paid take the same lock (MealOrdersController).
-        return DB::transaction(function () use ($order, $choices) {
+        return DB::transaction(function () use ($order, $choices, $heldToLeadTime) {
             $order = MealOrder::withoutMasjidScope()->with('items')->lockForUpdate()->findOrFail($order->id);
             $masjid = $this->preflight($order);
 
@@ -700,6 +823,8 @@ class MealOrderCheckoutService
             if ($order->status === MealOrder::STATUS_CANCELLED) {
                 throw new RuntimeException(self::CANCELLED);
             }
+
+            $expiresAt = $this->kitchenExpiryOrRefuse($order, $heldToLeadTime);
 
             $amounts = $choices === null ? null : LunchOrderExtras::forExistingOrder(
                 MealMenu::withoutMasjidScope()->findOrFail($order->meal_menu_id),
@@ -767,7 +892,7 @@ class MealOrderCheckoutService
             $order->idempotency_key = null;
             $order->save();
 
-            return $this->openPage($order, $masjid);
+            return $this->openPage($order, $masjid, [], $expiresAt);
         });
     }
 

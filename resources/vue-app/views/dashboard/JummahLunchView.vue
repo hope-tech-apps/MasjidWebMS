@@ -209,7 +209,10 @@
                                         <select class="form-select form-select-sm" :value="o.status" @change="setOrderStatus(o, ($event.target as HTMLSelectElement).value)">
                                             <option v-for="s in ['pending','confirmed','ready','picked_up','cancelled']" :key="s" :value="s" :disabled="s === 'pending'">{{ s }}</option>
                                         </select>
-                                        <div v-if="awaitsConfirmation(o, currentMenu)" class="small text-warning-emphasis fw-semibold mt-1">Awaiting the office</div>
+                                        <!-- An unpaid card kitchen order may be a page the customer abandoned; the
+                                             office was never told of it, and the server will not confirm it. -->
+                                        <div v-if="cardNotPaid(o, currentMenu)" class="small text-muted fw-semibold mt-1">Card not paid yet</div>
+                                        <div v-else-if="awaitsConfirmation(o, currentMenu)" class="small text-warning-emphasis fw-semibold mt-1">Awaiting the office</div>
                                         <div v-else-if="o.confirmed_by?.name" class="small text-muted mt-1">confirmed by {{ o.confirmed_by.name }}</div>
                                     </td>
                                     <td class="text-end text-nowrap">
@@ -345,10 +348,12 @@
                             <input id="jlk-lead" v-model="menuModal.form.pickup_lead_hours" type="number" min="0" max="720" step="1" class="form-control" />
                             <div class="form-text">Customers cannot book a pickup sooner than this. Leave empty for 48.</div>
                         </div>
-                        <div class="mb-2">
-                            <label class="form-label" for="jlk-notify">Email new orders to</label>
+                        <!-- Administrators only: every order's customer details go to these
+                             addresses, so the server drops a lunch volunteer's value. -->
+                        <div v-if="!isLunchStaff" class="mb-2">
+                            <label class="form-label" for="jlk-notify">Also email new orders to <span class="text-muted small">(optional)</span></label>
                             <input id="jlk-notify" v-model="menuModal.form.notify_emails" class="form-control" maxlength="1000" placeholder="office@example.org, kitchen@example.org" />
-                            <div class="form-text">Separate addresses with commas. Leave empty to use the organisation's own email.</div>
+                            <div class="form-text">Separate addresses with commas. The organisation's own email always gets new orders too.</div>
                         </div>
                     </template>
                     <div v-else class="mb-2"><label class="form-label">Service date (Friday)</label><input v-model="menuModal.form.service_date" type="date" class="form-control" /></div>
@@ -437,7 +442,26 @@
                         </div>
                     </div>
                     <div class="mb-2"><label class="form-label" for="jlo-notes">Notes <span class="text-muted small">(optional)</span></label><input id="jlo-notes" v-model="orderModal.form.customer_notes" class="form-control" maxlength="500" /></div>
-                    <div class="mb-2 small">
+                    <!-- A kitchen order: staff choose from the organisation's accepted methods. -->
+                    <div v-if="isCatalogue(currentMenu)" class="mb-2 small">
+                        <label class="form-label fs-6 mb-1" for="jlo-method">How will they pay?</label>
+                        <select v-if="store.orderPaymentMethods.length" id="jlo-method" v-model="orderModal.form.payment_method" class="form-select">
+                            <option value="" disabled>Choose…</option>
+                            <option v-for="m in store.orderPaymentMethods" :key="m.method" :value="m.method" :disabled="!!staffMethodUnavailable(m, currentMenu)">
+                                {{ m.label }}{{ staffMethodUnavailable(m, currentMenu) ? ' — ' + staffMethodUnavailable(m, currentMenu) : '' }}
+                            </option>
+                        </select>
+                        <div v-else class="alert alert-warning py-2 mb-0" role="alert">
+                            This organisation lists no payment methods yet. An administrator adds them under Payment Methods.
+                        </div>
+                        <div v-if="orderIsCard && orderModal.form.payment_method" class="text-muted mt-1">
+                            Paid by card through Stripe. Next you can open the payment page on this device or send the link to the customer.
+                        </div>
+                        <div v-else-if="orderModal.form.payment_method" class="text-muted mt-1">
+                            Saved as unpaid. Use Mark paid, saying how, when the money comes.
+                        </div>
+                    </div>
+                    <div v-else class="mb-2 small">
                         <div class="form-label fs-6 mb-1">Payment</div>
                         <div v-if="currentMenu?.allow_online_payment" class="text-muted">
                             Paid by card through Stripe, like any online order. Next you can open the payment page on this device or send the link to the customer. The order is marked paid when Stripe confirms it.
@@ -472,7 +496,7 @@
                 </div>
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <button class="btn btn-outline-secondary" @click="orderModal.show = false">Cancel</button>
-                    <button class="btn btn-success" :disabled="savingOrder || !orderSubtotal || !currentMenu?.allow_online_payment" @click="saveOrder">{{ savingOrder ? 'Adding…' : 'Add order and get payment link' }}</button>
+                    <button class="btn btn-success" :disabled="savingOrder || !orderSubtotal || !orderMethodReady" @click="saveOrder">{{ savingOrder ? 'Adding…' : (orderIsCard ? 'Add order and get payment link' : 'Add order') }}</button>
                 </div>
             </div>
         </div>
@@ -654,7 +678,7 @@
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, reactive, ref, watch } from "vue";
 import Swal from "sweetalert2";
 import { MENU_KIND_CATALOGUE, MENU_KIND_DATED, PAID_VIA_OPTIONS, useJummahLunchStore } from "@/stores/masjid/jummahLunchStore";
-import { awaitsConfirmation, catalogueSummary, isCatalogue, pickupWords, unpaidHow } from "@/views/lunch/kitchenBoard";
+import { awaitsConfirmation, cardNotPaid, catalogueSummary, isCatalogue, pickupWords, staffMethodUnavailable, unpaidHow } from "@/views/lunch/kitchenBoard";
 import { useMasjidStore } from "@/stores/masjidStore";
 
 const store = useJummahLunchStore();
@@ -878,7 +902,17 @@ const extraCapped = computed<boolean>(() => {
 function setExtra(minor: number) {
     orderModal.extraInput = minor > 0 ? (minor / 100).toFixed(2) : "";
 }
-const showFeeOffer = computed<boolean>(() => currentMenu.value?.allow_fee_coverage !== false && orderSubtotal.value > 0);
+// A Friday order taken here is always a card order; a kitchen order is one only
+// when staff chose card (MealOrdersController::store).
+const orderIsCard = computed<boolean>(() => !isCatalogue(currentMenu.value) || orderModal.form.payment_method === "card");
+// Whether "Add order" can be pressed as far as paying goes; the server checks again.
+const orderMethodReady = computed<boolean>(() => {
+    if (!isCatalogue(currentMenu.value)) return !!currentMenu.value?.allow_online_payment;
+    const chosen = store.orderPaymentMethods.find((m: any) => m.method === orderModal.form.payment_method);
+    return !!chosen && !staffMethodUnavailable(chosen, currentMenu.value);
+});
+// The card fee is only ever covered on a card order.
+const showFeeOffer = computed<boolean>(() => orderIsCard.value && currentMenu.value?.allow_fee_coverage !== false && orderSubtotal.value > 0);
 // What covering the fee WOULD cost, named before anyone ticks the box: the same
 // gross-up of food + extra that the server runs.
 const orderFeeOfferMinor = computed<number>(() => {
@@ -893,7 +927,12 @@ const orderFeeMinor = computed<number>(() => (orderModal.coverFees ? orderFeeOff
 const orderTotal = computed<number>(() => orderSubtotal.value + orderExtraMinor.value + orderFeeMinor.value);
 
 function openAddOrder() {
-    orderModal.form = { customer_name: "", customer_phone: "", customer_email: "", customer_notes: "", pickup_at: "" };
+    // The one way to pay there is, chosen for them; otherwise staff choose.
+    const usable = store.orderPaymentMethods.filter((m: any) => !staffMethodUnavailable(m, currentMenu.value));
+    orderModal.form = {
+        customer_name: "", customer_phone: "", customer_email: "", customer_notes: "", pickup_at: "",
+        payment_method: usable.length === 1 ? usable[0].method : "",
+    };
     orderModal.qty = {};
     orderModal.extraInput = "";
     orderModal.coverFees = false;
@@ -1024,10 +1063,13 @@ async function saveOrder() {
         .map(([id, q]) => ({ item_id: Number(id), quantity: Number(q) }));
     if (!items.length) { orderError.value = "Add at least one item."; return; }
     if (isCatalogue(currentMenu.value) && !orderModal.form.pickup_at) { orderError.value = "Choose when the customer will pick this order up."; return; }
+    if (isCatalogue(currentMenu.value) && !orderModal.form.payment_method) { orderError.value = "Choose how the customer will pay."; return; }
     savingOrder.value = true;
     try {
         const res = await store.createOrder(currentMenu.value.id, {
             ...orderModal.form, items,
+            // Only a kitchen order says how; a Friday order here is always card.
+            payment_method: isCatalogue(currentMenu.value) ? orderModal.form.payment_method : undefined,
             donation_minor: orderExtraMinor.value,
             cover_fees: showFeeOffer.value && orderModal.coverFees,
         });
@@ -1037,6 +1079,10 @@ async function saveOrder() {
         if (res?.checkout_url) {
             showPayLink(res.data, res.checkout_url);
             await refreshOrders();
+        } else if (res?.data && res.data.payment_method !== "online") {
+            // Paid to the office: no page was meant to be made.
+            await refreshOrders();
+            Swal.fire({ icon: "success", title: "Order added", text: res.message || "Use Mark paid when the money comes." });
         } else {
             await refreshOrders();
             Swal.fire({ icon: "warning", title: "Order added", text: res?.message || "The payment page could not be created." });

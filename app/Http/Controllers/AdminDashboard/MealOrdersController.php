@@ -13,10 +13,12 @@ use App\Models\MealOrderItem;
 use App\Services\Kitchen\KitchenOrderNotifier;
 use App\Services\Lunch\MealOrderEditor;
 use App\Services\Stripe\MealOrderCheckoutService;
+use App\Support\AcceptedPaymentMethods;
 use App\Support\LunchLineRefusal;
 use App\Support\LunchOrderExtras;
 use App\Support\LunchOrderLines;
 use App\Support\MasjidTime;
+use App\Support\PaymentMethods;
 use Illuminate\Support\Facades\DB;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
@@ -61,6 +63,9 @@ class MealOrdersController extends Controller
      */
     private const EDIT_ITEM_GONE = 'This order has something on it that is no longer on the menu: %s. Put it back under Menu Items, then change the order.';
 
+    /** updateStatus's refusal to confirm a card kitchen order that has not been paid. */
+    private const CONFIRM_UNPAID_CARD = 'This order\'s card payment has not come in, so it cannot be confirmed yet. If the customer paid another way, use Mark paid first.';
+
     /** The statuses that mean the office has accepted a kitchen order. */
     private const CONFIRMING_STATUSES = [
         MealOrder::STATUS_CONFIRMED,
@@ -94,13 +99,20 @@ class MealOrdersController extends Controller
         // A kitchen order's pickup, as the office's wall clock reads it: the board
         // shows this string as it is, so a browser in another timezone cannot
         // shift the time the kitchen is cooking for.
+        //
+        // And how an unpaid one is to be paid, in the organisation's own words for
+        // the method (its "Other" is whatever it named it), read once for the board.
         if ($menu->isCatalogue()) {
             $tz = MasjidTime::zoneFor($menu->masjid_id);
+            $labels = AcceptedPaymentMethods::rows((int) $menu->masjid_id)
+                ->mapWithKeys(fn ($row) => [$row->method => $row->displayLabel()]);
 
-            $orders->each(fn (MealOrder $order) => $order->setAttribute(
-                'pickup_at_local',
-                MasjidTime::toLocalInput($order->pickup_at, $tz)
-            ));
+            $orders->each(function (MealOrder $order) use ($tz, $labels): void {
+                $order->setAttribute('pickup_at_local', MasjidTime::toLocalInput($order->pickup_at, $tz));
+                $order->setAttribute('preferred_payment_label', $order->preferred_payment === null
+                    ? null
+                    : ($labels[$order->preferred_payment] ?? PaymentMethods::LABELS[$order->preferred_payment] ?? $order->preferred_payment));
+            });
         }
 
         // Board summary over the WHOLE menu (not the filtered slice).
@@ -178,6 +190,12 @@ class MealOrdersController extends Controller
                 'menu' => $menu,
                 'summary' => $summary,
                 'orders' => $orders,
+                // The ways staff may take a kitchen order on "Add an order" (store()),
+                // served here because a lunch volunteer cannot read the admin
+                // Payment Methods screen. Empty for a Friday menu: always card.
+                'payment_methods' => $menu->isCatalogue()
+                    ? AcceptedPaymentMethods::staffList(Masjid::findOrFail($menu->masjid_id))
+                    : [],
             ],
         ], Response::HTTP_OK);
     }
@@ -199,6 +217,12 @@ class MealOrdersController extends Controller
      *     public page's rule (LunchOrderExtras);
      *   - no SMS opt-in, ever: consent to texts must come from the customer.
      * The order records who took it (`entered_by_user_id`).
+     *
+     * A KITCHEN (catalogue) order differs once more: staff choose how it will be
+     * paid from the organisation's accepted methods. Card goes through Stripe as
+     * above; any other is saved unpaid with `preferred_payment`, opens no page, and
+     * is settled with Mark paid — the only way MEC can take one before its Stripe
+     * account is live (DECISIONS.md 2026-09-25, review fixes).
      */
     public function store(StoreStaffMealOrderRequest $request, $masjid_id, $menu_id)
     {
@@ -243,36 +267,64 @@ class MealOrdersController extends Controller
             }
         }
 
+        // How the customer will pay. A Friday order taken here is always a card
+        // order. A kitchen order is taken by phone as often as not (MEC's own page
+        // promised "online or over the phone"), so staff choose from the ways the
+        // ORGANISATION accepts — its Payment Methods list, not the menu's two public
+        // switches, which narrow only what a customer can pick on the website.
+        $method = PaymentMethods::CARD;
+
+        if ($menu->isCatalogue()) {
+            $method = (string) ($request->validated('payment_method') ?? '');
+
+            if ($method === '') {
+                return $this->refuse('Choose how the customer will pay.');
+            }
+
+            if (! AcceptedPaymentMethods::rows((int) $menu->masjid_id)->contains('method', $method)) {
+                return $this->refuse('This organisation does not accept that way to pay. Add it under Payment Methods, or choose another.');
+            }
+        }
+
+        $online = $method === PaymentMethods::CARD;
+
         // Checked before anything is written, so a refusal leaves no order behind.
-        if (! $menu->allow_online_payment) {
+        if ($online && ! $menu->allow_online_payment) {
             return $this->refuse('Orders added here are paid online through Stripe, and online payment is switched off for this lunch. Switch it on under Edit menu.');
         }
 
-        if (! Masjid::find($menu->masjid_id)?->canAcceptDonations()) {
-            return $this->refuse('Orders added here are paid online through Stripe, and this organisation cannot take online payments yet.');
+        if ($online && ! Masjid::find($menu->masjid_id)?->canAcceptDonations()) {
+            return $this->refuse($menu->isCatalogue()
+                ? 'This organisation cannot take card payments through Stripe yet. Choose another way to pay.'
+                : 'Orders added here are paid online through Stripe, and this organisation cannot take online payments yet.');
+        }
+
+        // A card page that could not live long enough is refused here rather than
+        // after the order is saved (MealOrderCheckoutService::kitchenPageExpiresAt).
+        if ($online && $pickup !== null && MealOrderCheckoutService::kitchenPageExpiresAt($pickup) === null) {
+            return $this->refuse(MealOrderCheckoutService::KITCHEN_PICKUP_TOO_SOON);
         }
 
         // An extra on top of the food, and/or the card fee covered so the
         // organisation nets everything: the public page's rule and arithmetic,
-        // not a copy of them. Every staff order is online, so the fee can be
-        // covered wherever the menu offers it.
+        // not a copy of them. The fee is only ever covered on a card order.
         ['donation_minor' => $donation, 'fee_covered_minor' => $feeCovered] = LunchOrderExtras::compute(
             $menu,
             $subtotal,
             (int) ($request->validated('donation_minor') ?? 0),
             $request->boolean('cover_fees'),
-            true,
+            $online,
         );
 
         try {
-            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $donation, $feeCovered, $pickup) {
+            $order = DB::transaction(function () use ($request, $menu, $lines, $subtotal, $donation, $feeCovered, $pickup, $online, $method) {
                 $order = new MealOrder([
                     'meal_menu_id' => $menu->id,
                     'customer_name' => trim((string) $request->validated('customer_name')),
                     'customer_phone' => trim((string) ($request->validated('customer_phone') ?? '')),
                     'customer_email' => $request->validated('customer_email'),
                     'customer_notes' => $request->validated('customer_notes'),
-                    'payment_method' => MealOrder::METHOD_ONLINE,
+                    'payment_method' => $online ? MealOrder::METHOD_ONLINE : MealOrder::METHOD_PICKUP,
                 ]);
                 $order->masjid_id = $menu->masjid_id;
                 $order->currency = $menu->currency;
@@ -285,7 +337,9 @@ class MealOrdersController extends Controller
                 $order->source = MealOrder::SOURCE_STAFF;
                 $order->entered_by_user_id = $request->user()?->id;
                 $order->pickup_at = $pickup;
-                // Never paid at creation: Stripe marks it paid when the customer pays.
+                $order->preferred_payment = $online ? null : $method;
+                // Never paid at creation: Stripe marks it paid when the customer
+                // pays, or staff do with Mark paid when the money comes another way.
                 $order->save();
 
                 foreach ($lines as $line) {
@@ -299,6 +353,23 @@ class MealOrdersController extends Controller
                 'status' => 'failed',
                 'data' => Errors::publicMessage($e),
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        // A kitchen order paid to the office is real now, as one placed on the
+        // website is (KitchenOrdersController::store): the office list and the
+        // customer hear the same messages whichever door it came through. No
+        // Stripe page: it is settled with Mark paid, saying how.
+        if (! $online) {
+            app(KitchenOrderNotifier::class)->placed($order->load('items'));
+
+            return response()->json([
+                'status' => 'success',
+                'message' => "Order #{$order->order_number} added, to be paid by "
+                    . AcceptedPaymentMethods::labelFor((int) $menu->masjid_id, $method)
+                    . '. Use Mark paid when the money comes.',
+                'data' => $order->load(['items', 'enteredBy:id,name']),
+                'checkout_url' => null,
+            ], Response::HTTP_CREATED);
         }
 
         // The order stands whatever Stripe says; "Payment link" on the board
@@ -643,6 +714,21 @@ class MealOrdersController extends Controller
             [$order, $message, $warning, $confirmedNow] = DB::transaction(function () use ($menu_id, $order_id, $status, $userId) {
                 $order = MealOrder::where('meal_menu_id', $menu_id)->lockForUpdate()->findOrFail($order_id);
 
+                // A card kitchen order is real once it is PAID: until then it is a
+                // page the customer may have abandoned, of which the office was never
+                // told (KitchenOrderNotifier::placed waits for the webhook). Confirming
+                // one would email the customer "confirmed" for food nobody has paid
+                // for, so it is refused on the locked row; a customer who paid another
+                // way is recorded with Mark paid first. An order the office already
+                // confirmed once moves freely: nothing is recorded or sent again.
+                if (in_array($status, self::CONFIRMING_STATUSES, true)
+                    && $order->confirmed_at === null
+                    && $order->isOnline()
+                    && $order->payment_status === MealOrder::PAYMENT_UNPAID
+                    && $order->isKitchenOrder()) {
+                    return [null, self::CONFIRM_UNPAID_CARD, false, false];
+                }
+
                 if ($status === MealOrder::STATUS_PICKED_UP) {
                     $order->markPickedUp();
                 } else {
@@ -663,6 +749,11 @@ class MealOrdersController extends Controller
 
                 return [$order, $message, $warning, $confirmedNow];
             });
+
+            // Refused on the locked row; nothing was changed.
+            if ($order === null) {
+                return $this->refuse((string) $message);
+            }
 
             // After the commit, and never able to fail the change: the customer is
             // told the office confirmed — unless it was only recorded at pickup,

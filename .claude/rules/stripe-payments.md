@@ -435,6 +435,13 @@ direct charge on the organisation's account, and the webhook alone marks it paid
   order's success/cancel URLs to `KitchenOrderLink` (its remembered trusted origin), so neither a
   replacement for an expired page nor the board's "Payment link" sends them to the admin app's
   Friday-lunch page. The public door refuses card outright without a CORS-trusted origin.
+- **Paying late is placing late.** The office hears of a card order only when it is paid, so every
+  kitchen page carries `expires_at` = min(24h − 1 min, deadline) (`kitchenPageExpiresAt`), and no
+  page is handed out or made once under 31 minutes are left. The customer's deadline is pickup −
+  lead time (`kitchen_lead_time` on `checkout()`); the board's is the pickup.
+- **An unpaid card kitchen order is never confirmed** (the board refuses; the notifier never
+  emails "confirmed" for it). Staff can take a kitchen order paid to the office: unpaid,
+  `preferred_payment` set, no Stripe page, settled with Mark paid.
 
 ## The Giving switch never touches money that moved (DECISIONS.md 2026-09-16, switches wave 2)
 

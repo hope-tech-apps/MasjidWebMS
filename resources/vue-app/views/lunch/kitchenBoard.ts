@@ -21,13 +21,30 @@ export function catalogueSummary(menu: { pickup_lead_hours?: number | string | n
     return `Standing catalogue · ${lead}`;
 }
 
+type BoardOrder = { status?: string | null; payment_method?: string | null; payment_status?: string | null };
+
 /**
- * A kitchen order the office has not confirmed yet: pending, whatever its money.
- * A paid kitchen order is still waiting for the office (MealOrder::markPaid does
- * not confirm it), which is the whole difference from a Friday order.
+ * A card kitchen order whose card has not been paid. Until it is, it may be a
+ * payment page the customer abandoned: the office was never emailed about it
+ * (KitchenOrderNotifier::placed waits for the payment), and the server refuses to
+ * confirm it (MealOrdersController::updateStatus). The board says so instead of
+ * asking the office to act on it.
  */
-export function awaitsConfirmation(order: { status?: string | null } | null | undefined, menu: { kind?: string | null } | null | undefined): boolean {
-    return isCatalogue(menu) && order?.status === 'pending';
+export function cardNotPaid(order: BoardOrder | null | undefined, menu: { kind?: string | null } | null | undefined): boolean {
+    return isCatalogue(menu)
+        && order?.payment_method === 'online'
+        && order?.payment_status === 'unpaid'
+        && order?.status !== 'cancelled';
+}
+
+/**
+ * A kitchen order waiting for the office to confirm it: pending and real. A paid
+ * card order still waits (MealOrder::markPaid does not confirm a kitchen order),
+ * which is the whole difference from a Friday order; an order to be paid to the
+ * office waits as soon as it is placed; an unpaid card order does not (cardNotPaid).
+ */
+export function awaitsConfirmation(order: BoardOrder | null | undefined, menu: { kind?: string | null } | null | undefined): boolean {
+    return isCatalogue(menu) && order?.status === 'pending' && !cardNotPaid(order, menu);
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -55,13 +72,38 @@ export function pickupWords(local: string | null | undefined): string {
     return `${weekday}, ${MONTHS[Number(mo) - 1]} ${Number(d)}, ${twelve}:${mi} ${hour < 12 ? 'AM' : 'PM'}`;
 }
 
-/** How an unpaid kitchen order is to be paid, for the Payment column. */
-export function unpaidHow(order: { payment_method?: string | null; preferred_payment?: string | null }): string {
+/**
+ * How an unpaid kitchen order is to be paid, for the Payment column. In the
+ * organisation's own words when the server sent them (`preferred_payment_label`):
+ * an organisation must name its "Other", and "by other" tells the office nothing.
+ */
+export function unpaidHow(order: { payment_method?: string | null; preferred_payment?: string | null; preferred_payment_label?: string | null }): string {
     if (order.payment_method === 'online') return 'card online';
+
+    const named = String(order.preferred_payment_label ?? '').trim();
+    if (order.preferred_payment && named !== '') return `by ${named}`;
 
     const labels: Record<string, string> = {
         cash: 'cash', check: 'check', zelle: 'Zelle', bank_transfer: 'bank transfer', other: 'other',
     };
 
     return order.preferred_payment ? `by ${labels[order.preferred_payment] ?? order.preferred_payment}` : 'at pickup';
+}
+
+/**
+ * Why staff cannot take a kitchen order with this method on "Add an order", or null
+ * when they can. The methods are the organisation's accepted ones as the board
+ * payload lists them (AcceptedPaymentMethods::staffList); only card can be
+ * unavailable, and the server refuses it for the same two reasons
+ * (MealOrdersController::store).
+ */
+export function staffMethodUnavailable(
+    method: { online?: boolean | null; ready?: boolean | null } | null | undefined,
+    menu: { allow_online_payment?: boolean | null } | null | undefined,
+): string | null {
+    if (!method?.online) return null;
+    if (method.ready === false) return 'Stripe is not set up for this organisation yet';
+    if (menu?.allow_online_payment === false) return 'online payment is switched off for this menu';
+
+    return null;
 }

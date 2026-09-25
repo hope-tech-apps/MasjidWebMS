@@ -6,6 +6,7 @@ use App\Console\Commands\SeedKitchenCatalogue;
 use App\Models\Masjid;
 use App\Models\MealMenu;
 use App\Models\MealMenuItem;
+use App\Models\MealOrder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -112,6 +113,74 @@ class SeedKitchenCatalogueTest extends TestCase
         $this->assertSame(1, MealMenu::withoutMasjidScope()->count());
         $this->assertSame(32, MealMenuItem::withoutMasjidScope()->count());
         $this->assertSame(7000, (int) $menu->items()->orderBy('sort_order')->value('price_minor'));
+    }
+
+    #[Test]
+    public function undo_deletes_exactly_the_catalogue_the_apply_created_and_only_when_told_to(): void
+    {
+        $this->artisan('kitchen:seed-catalogue', [
+            'masjid' => $this->masjid->id, '--apply' => true, '--expect-name' => 'Seed Test Center',
+        ])->expectsOutputToContain('--undo --menu=')->assertSuccessful();
+        $menu = MealMenu::withoutMasjidScope()->catalogue()->sole();
+        // A Friday menu an office later gave the same title.
+        $friday = MealMenu::factory()->forMasjid($this->masjid)->create(['title' => 'Halal Kitchen']);
+
+        // A dry run by default, and the name guard as for --apply.
+        $this->artisan('kitchen:seed-catalogue', ['masjid' => $this->masjid->id, '--undo' => true, '--menu' => $menu->id])
+            ->expectsOutputToContain("Would delete catalogue {$menu->id}")
+            ->assertSuccessful();
+        $this->artisan('kitchen:seed-catalogue', ['masjid' => $this->masjid->id, '--undo' => true, '--menu' => $menu->id, '--apply' => true])
+            ->assertFailed();
+        // Never a menu that is not this file's catalogue: the Friday menu of the same title stays.
+        $this->artisan('kitchen:seed-catalogue', [
+            'masjid' => $this->masjid->id, '--undo' => true, '--menu' => $friday->id, '--apply' => true, '--expect-name' => 'Seed Test Center',
+        ])->expectsOutputToContain('Nothing was deleted.')->assertFailed();
+        $this->assertSame(2, MealMenu::withoutMasjidScope()->count());
+        $this->assertSame(32, MealMenuItem::withoutMasjidScope()->count());
+
+        $this->artisan('kitchen:seed-catalogue', [
+            'masjid' => $this->masjid->id, '--undo' => true, '--menu' => $menu->id, '--apply' => true, '--expect-name' => 'Seed Test Center',
+        ])->expectsOutputToContain("Deleted catalogue {$menu->id} and its 32 dishes.")->assertSuccessful();
+
+        $this->assertNull(MealMenu::withoutMasjidScope()->withTrashed()->find($menu->id));
+        $this->assertSame(0, MealMenuItem::withoutMasjidScope()->count());
+        $this->assertNotNull($friday->fresh());
+    }
+
+    #[Test]
+    public function undo_refuses_a_catalogue_that_has_taken_an_order(): void
+    {
+        $this->artisan('kitchen:seed-catalogue', [
+            'masjid' => $this->masjid->id, '--apply' => true, '--expect-name' => 'Seed Test Center',
+        ])->assertSuccessful();
+        $menu = MealMenu::withoutMasjidScope()->sole();
+        MealOrder::factory()->create(['masjid_id' => $this->masjid->id, 'meal_menu_id' => $menu->id]);
+
+        $this->artisan('kitchen:seed-catalogue', [
+            'masjid' => $this->masjid->id, '--undo' => true, '--menu' => $menu->id, '--apply' => true, '--expect-name' => 'Seed Test Center',
+        ])->expectsOutputToContain('has 1 order(s)')->assertFailed();
+
+        $this->assertNotNull(MealMenu::withoutMasjidScope()->find($menu->id));
+        $this->assertSame(32, MealMenuItem::withoutMasjidScope()->count());
+    }
+
+    #[Test]
+    public function a_catalogue_deleted_on_the_board_is_not_seeded_past_until_it_is_undone(): void
+    {
+        $args = ['masjid' => $this->masjid->id, '--apply' => true, '--expect-name' => 'Seed Test Center'];
+        $this->artisan('kitchen:seed-catalogue', $args)->assertSuccessful();
+        $menu = MealMenu::withoutMasjidScope()->sole();
+        $menu->delete(); // the board's delete is a soft delete
+
+        $this->artisan('kitchen:seed-catalogue', $args)
+            ->expectsOutputToContain("has a DELETED menu titled \"Halal Kitchen\" (menu {$menu->id})")
+            ->assertFailed();
+        $this->assertSame(32, MealMenuItem::withoutMasjidScope()->count(), 'no second copy of every dish');
+
+        $this->artisan('kitchen:seed-catalogue', $args + ['--undo' => true, '--menu' => $menu->id])->assertSuccessful();
+        $this->artisan('kitchen:seed-catalogue', $args)->assertSuccessful();
+        $this->assertSame(1, MealMenu::withoutMasjidScope()->withTrashed()->count());
+        $this->assertSame(32, MealMenuItem::withoutMasjidScope()->count());
     }
 
     #[Test]

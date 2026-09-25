@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\MealMenus\UpdateMealMenuRequest;
 use App\Models\MealMenu;
 use App\Services\Stripe\MealOrderCheckoutService;
 use App\Models\MealOrder;
+use App\Models\User;
 use App\Support\Errors;
 use App\Services\Lunch\LunchOpeningNotifier;
 use App\Support\MasjidTime;
@@ -47,7 +48,10 @@ class MealMenusController extends Controller
     {
         try {
             // masjid_id + uuid are set by the model (creating hook / booted).
-            $menu = MealMenu::create(self::shapedForKind($request->validated(), $request->validated('kind') ?? MealMenu::KIND_DATED, true));
+            $menu = MealMenu::create(self::withoutAdminOnly(
+                self::shapedForKind($request->validated(), $request->validated('kind') ?? MealMenu::KIND_DATED, true),
+                $request->user()
+            ));
 
             // A menu can be created already open. Once-only is enforced inside
             // the notifier, not by the caller.
@@ -83,7 +87,7 @@ class MealMenusController extends Controller
         $menu = MealMenu::findOrFail($menu_id);
 
         try {
-            $menu->update(self::shapedForKind($request->validated(), $menu->kind, false));
+            $menu->update(self::withoutAdminOnly(self::shapedForKind($request->validated(), $menu->kind, false), $request->user()));
 
             app(LunchOpeningNotifier::class)->notifyOpened($menu, $request->user()?->id);
 
@@ -131,6 +135,28 @@ class MealMenusController extends Controller
         }
 
         unset($data['pickup_lead_hours']);
+
+        return $data;
+    }
+
+    /**
+     * The fields only an administrator may set, dropped for a lunch volunteer.
+     *
+     * A LunchStaff login reaches store() and update() through its own realm
+     * (routes/lunch.php) to run the Friday board. `notify_emails` is not board
+     * work: every kitchen order's name, phone, email and notes go to those
+     * addresses (KitchenOrderNotifier), and the setting would outlive the
+     * volunteer's access. Dropped rather than refused, so the shared menu form a
+     * volunteer saves still saves everything else they changed.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private static function withoutAdminOnly(array $data, ?User $user): array
+    {
+        if ($user?->type === User::TYPE_LUNCH_STAFF) {
+            unset($data['notify_emails']);
+        }
 
         return $data;
     }

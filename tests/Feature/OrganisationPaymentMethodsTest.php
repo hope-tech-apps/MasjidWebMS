@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Donation;
 use App\Models\FormResponse;
 use App\Models\Masjid;
 use App\Models\MealOrder;
@@ -187,7 +188,7 @@ class OrganisationPaymentMethodsTest extends TestCase
     }
 
     #[Test]
-    public function every_offline_method_an_organisation_can_advertise_can_be_recorded_on_mark_paid(): void
+    public function every_offline_method_an_organisation_can_advertise_can_be_recorded_on_mark_paid_and_on_an_offline_gift(): void
     {
         foreach (PaymentMethods::OFFLINE as $method) {
             $this->assertContains($method, MealOrder::PAID_VIA, "the lunch and kitchen board cannot record {$method}");
@@ -198,6 +199,7 @@ class OrganisationPaymentMethodsTest extends TestCase
             if ($method !== PaymentMethods::CASH) {
                 $this->assertContains($method, FormResponse::PAID_VIA_EXTERNAL, "Mark paid on a form cannot record {$method}");
             }
+            $this->assertContains($method, Donation::OFFLINE_PAYMENT_METHODS, "an offline gift cannot record {$method}");
             $this->assertLessThanOrEqual(16, strlen($method), 'paid_via and preferred_payment are 16 characters');
         }
     }

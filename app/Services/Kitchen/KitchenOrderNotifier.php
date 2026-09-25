@@ -12,7 +12,6 @@ use App\Support\AcceptedPaymentMethods;
 use App\Support\FormNotifier;
 use App\Support\KitchenOrderLink;
 use App\Support\MasjidTime;
-use App\Support\PaymentMethods;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -72,9 +71,16 @@ final class KitchenOrderNotifier
         });
     }
 
+    /**
+     * Never for a cancelled order, and never for a card order that has not been
+     * paid: that one may be a page the customer abandoned, and "confirmed" would
+     * tell them food is coming that nobody paid for. The board refuses to confirm
+     * it too (MealOrdersController::updateStatus); this holds for any other caller.
+     */
     public function confirmed(MealOrder $order): void
     {
-        if ($order->status === MealOrder::STATUS_CANCELLED) {
+        if ($order->status === MealOrder::STATUS_CANCELLED
+            || ($order->isOnline() && $order->payment_status === MealOrder::PAYMENT_UNPAID)) {
             return;
         }
 
@@ -84,9 +90,16 @@ final class KitchenOrderNotifier
     }
 
     /**
-     * Who in the office hears about a new order: the menu's `notify_emails`, as
-     * typed ("a@x, b@y"), else the organisation's own address — so a catalogue
-     * can never be configured into notifying nobody (FormNotifier's rule).
+     * Who in the office hears about a new order: the organisation's own address,
+     * ALWAYS, and the menu's `notify_emails` as typed ("a@x, b@y") beside it — at
+     * most MAX_RECIPIENTS of those, each a real address.
+     *
+     * The organisation's address is never replaced by the typed list. That list
+     * receives each customer's name, phone, email and notes; a list that could
+     * stand in for the office's own address could send every order somewhere the
+     * office never sees, and it would outlive whoever typed it. With the office
+     * always on the message — as a visible To, so it sees who else got it — a
+     * wrong or hostile address is noticed on the first order.
      *
      * @return list<string>
      */
@@ -99,16 +112,15 @@ final class KitchenOrderNotifier
             ->filter(fn ($email) => $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) !== false)
             ->unique()
             ->take(self::MAX_RECIPIENTS)
-            ->values()
-            ->all();
+            ->values();
 
-        if ($emails !== []) {
-            return $emails;
+        $own = strtolower(trim((string) $masjid?->email));
+
+        if ($own !== '' && filter_var($own, FILTER_VALIDATE_EMAIL) !== false) {
+            $emails = $emails->reject(fn ($email) => $email === $own)->prepend($own);
         }
 
-        $fallback = trim((string) $masjid?->email);
-
-        return $fallback !== '' && filter_var($fallback, FILTER_VALIDATE_EMAIL) ? [strtolower($fallback)] : [];
+        return $emails->values()->all();
     }
 
     /**
@@ -147,8 +159,9 @@ final class KitchenOrderNotifier
             return 'Awaiting card payment of ' . $total . '.';
         }
 
+        // In the organisation's own words: its "Other" is what it named it.
         $how = $order->preferred_payment !== null
-            ? (PaymentMethods::LABELS[$order->preferred_payment] ?? $order->preferred_payment)
+            ? AcceptedPaymentMethods::labelFor((int) $order->masjid_id, (string) $order->preferred_payment)
             : null;
 
         return $how !== null ? $total . ' to pay by ' . $how . '.' : $total . ' to pay.';

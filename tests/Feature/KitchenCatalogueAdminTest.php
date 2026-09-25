@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Masjid;
+use App\Models\MasjidUser;
 use App\Models\MealMenu;
 use App\Models\MealOrder;
 use App\Models\User;
@@ -131,6 +132,36 @@ class KitchenCatalogueAdminTest extends TestCase
         $this->putJson($this->base() . "/menus/{$kitchen->id}", ['notify_emails' => 'office@org.example.test, cook@org.example.test'])
             ->assertOk();
         $this->assertSame('office@org.example.test, cook@org.example.test', $kitchen->fresh()->notify_emails);
+    }
+
+    #[Test]
+    public function a_lunch_volunteer_cannot_point_new_kitchen_orders_at_an_address(): void
+    {
+        $kitchen = MealMenu::factory()->forMasjid($this->masjid)->catalogue()->create(['notify_emails' => 'office@org.example.test']);
+        $volunteer = User::factory()->create(['type' => User::TYPE_LUNCH_STAFF, 'phone' => '+1' . random_int(1000000000, 9999999999)]);
+        MasjidUser::create(['masjid_id' => $this->masjid->id, 'user_id' => $volunteer->id, 'role' => 'lunch-staff', 'is_default' => true]);
+        Sanctum::actingAs($volunteer->fresh());
+        $lunch = '/api/lunch/masjids/' . $this->masjid->id . '/jummah-lunch';
+
+        // The rest of what they save still saves; the addresses do not.
+        $this->putJson("{$lunch}/menus/{$kitchen->id}", ['notify_emails' => 'elsewhere@outside.example.test', 'title' => 'Kitchen (edited)'])
+            ->assertOk();
+        $this->assertSame('office@org.example.test', $kitchen->fresh()->notify_emails);
+        $this->assertSame('Kitchen (edited)', $kitchen->fresh()->title);
+
+        $id = $this->postJson("{$lunch}/menus", ['title' => 'Kitchen B', 'kind' => 'catalogue', 'notify_emails' => 'elsewhere@outside.example.test'])
+            ->assertStatus(201)->json('data.id');
+        $this->assertNull(MealMenu::withoutMasjidScope()->find($id)->notify_emails);
+    }
+
+    #[Test]
+    public function a_date_sent_when_editing_a_catalogue_is_not_kept(): void
+    {
+        $kitchen = MealMenu::factory()->forMasjid($this->masjid)->catalogue()->create();
+
+        $this->putJson($this->base() . "/menus/{$kitchen->id}", ['service_date' => '2026-10-09', 'title' => 'Kitchen'])->assertOk();
+
+        $this->assertNull($kitchen->fresh()->service_date, 'a catalogue with a date would be served as that Friday');
     }
 
     #[Test]

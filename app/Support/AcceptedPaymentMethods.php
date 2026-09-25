@@ -58,6 +58,46 @@ final class AcceptedPaymentMethods
             ->all();
     }
 
+    /**
+     * The words for one method as THIS organisation names it: its own label (an
+     * "Other" must be named — UpdatePaymentMethodsRequest — because "Other" tells a
+     * customer nothing), else the vocabulary's, else the key. For every message
+     * that names a customer's chosen method: the office email, the board, the
+     * staff confirmation. A method the organisation has since stopped accepting
+     * still gets the vocabulary's word; the order was placed under it.
+     */
+    public static function labelFor(int $masjidId, string $method): string
+    {
+        $row = self::rows($masjidId)->firstWhere('method', $method);
+
+        return $row instanceof OrganisationPaymentMethod
+            ? $row->displayLabel()
+            : (PaymentMethods::LABELS[$method] ?? $method);
+    }
+
+    /**
+     * Every method the organisation accepts, for STAFF taking an order on the board
+     * (MealOrdersController::store). Not narrowed by a menu's public switches, and
+     * card is listed even before Stripe can take it, marked `ready: false`, so the
+     * board can say why it cannot be chosen rather than hide it.
+     *
+     * @return list<array{method: string, label: string, online: bool, ready: bool}>
+     */
+    public static function staffList(Masjid $masjid): array
+    {
+        $cardReady = $masjid->canAcceptDonations();
+
+        return self::rows((int) $masjid->id)
+            ->map(fn (OrganisationPaymentMethod $m) => [
+                'method' => (string) $m->method,
+                'label' => $m->displayLabel(),
+                'online' => $m->method === PaymentMethods::CARD,
+                'ready' => $m->method !== PaymentMethods::CARD || $cardReady,
+            ])
+            ->values()
+            ->all();
+    }
+
     /** Does the public list offer this method right now? */
     public static function offers(Masjid $masjid, string $method): bool
     {

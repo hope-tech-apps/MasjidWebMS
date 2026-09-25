@@ -3054,8 +3054,8 @@ Halal Kitchen: "Build ordering in Manara" — "Pickup at MEC, 48h, office confir
   The customer is emailed once (`customer_confirmed_sent_at`), not when it was only recorded at
   pickup. Card orders are paid at placement, before confirmation; if the office declines, it
   cancels and refunds in Stripe by hand (the owner's standing "no automatic refunds").
-- Office notification: `KitchenOrderNotifier::placed` emails `notify_emails` (else the
-  organisation's own address) when the order becomes real — at placement for offline, on the
+- Office notification: `KitchenOrderNotifier::placed` emails the organisation's own address and
+  `notify_emails` beside it (review fix below; first written as "else") when the order becomes real — at placement for offline, on the
   webhook's payment for card, so an abandoned card page notifies nobody — claimed once on
   `office_notified_at`. The customer gets "we received it; the office will confirm". Links go to
   the renderer page on the recorded trusted origin, else no button (there is no admin-app page for
@@ -3076,3 +3076,82 @@ Halal Kitchen: "Build ordering in Manara" — "Pickup at MEC, 48h, office confir
   words go there). Not a migration: one organisation's content, run once, by an operator.
 - Deferred on purpose: Arabic "how to pay" text; the optional extra and fee coverage on kitchen
   orders; customer self-edit of a kitchen order; a kitchen-specific capability.
+
+## 2026-09-25 — Kitchen and payment-methods review fixes (19 confirmed findings)
+
+**Paying late is placing late.** The office first hears of a card order when the webhook records
+its payment, so the 48-hour notice is held at payment as well as at placement.
+- `POST kitchen-orders/{uuid}/checkout` refuses once the menu stops taking orders, and — on the
+  locked row, in `MealOrderCheckoutService::checkout` with `kitchen_lead_time` — once
+  `pickup_at − lead time` is under `KITCHEN_PAGE_MIN_MINUTES` (31) away. Every kitchen page (the
+  first, a replacement for an expired one, the board's) carries `expires_at` = min(24h − 1 min,
+  deadline): `kitchenPageExpiresAt`. The 31 is Stripe's 30-minute floor plus the top-up's minute
+  of travel time; a page is refused rather than allowed to outlive the deadline.
+- The public door's deadline is pickup − lead time; the BOARD's (Payment link, a staff card order)
+  is the pickup itself — the phone-order rule already recorded: the office is not held to the
+  public notice. Alternative: one deadline everywhere (the office could not send a link for an
+  order it agreed to make tomorrow).
+- A card order whose pickup leaves no time to pay is refused BEFORE it is written, naming the
+  earliest pickup card can take (lead time + 31 minutes, rounded up to a whole minute). An order
+  paid to the office is still fine at exactly the lead time. `can_pay_online` now says what the
+  endpoint would do (open menu, time left), so the order page offers no button sure to be refused.
+
+**Phone orders paid to the office** (`MealOrdersController::store`, catalogue only). Staff choose
+`payment_method` from the organisation's accepted methods (`AcceptedPaymentMethods::rows`, served
+to the board as `payment_methods` via `staffList`, card marked `ready`). Not narrowed by the menu's
+`allow_pay_at_pickup` (it governs the website); card still needs the menu's online switch and a
+ready Stripe account, because the board's Payment link is refused without them and a card order
+with no way to re-make its page is worse than a refusal. An offline choice is saved unpaid with
+`preferred_payment`, opens no page, and calls `KitchenOrderNotifier::placed` exactly as the public
+door does for an offline order (the office list and the customer hear the same messages whichever
+door the order came through). Extras: the fee is only covered on card; the optional extra follows
+the menu as before. A Friday order taken on the board is unchanged: always card.
+
+**An unpaid card kitchen order is not work for the office.** `updateStatus` refuses confirmed /
+ready / picked-up on the locked row for a kitchen order that is online, unpaid and never confirmed
+(`CONFIRM_UNPAID_CARD`: "use Mark paid first"), and `KitchenOrderNotifier::confirmed` never emails
+such an order whoever calls it. The board shows "Card not paid yet" and no Confirm button
+(`kitchenBoard.ts cardNotPaid`). Known edge, accepted: a never-confirmed unpaid card order that
+the office CANCELLED cannot be restored (restore is "confirmed", which this refuses, and Mark paid
+and Payment link refuse a cancelled order); the office takes a new order instead. When Stripe page
+creation fails at placement the order already came back with the 422; the renderer now sends the
+customer to that order (`classifyKitchenPlace` → `savedUnpaid`, `?cancelled=1`) instead of letting
+them place a second.
+
+**Who hears about an order.** `officeRecipients` always includes the organisation's own address,
+first and as a visible To, beside at most five typed addresses (was: the typed list INSTEAD of
+it). `notify_emails` is administrator-only: `MealMenusController::withoutAdminOnly` drops it for a
+LunchStaff login on create and update (dropped, not refused, so the shared form still saves the
+rest), and the board hides the field from volunteers. Alternative: an admin-only endpoint for one
+field (a second save path for the same menu form).
+
+**The organisation's words for a method.** `AcceptedPaymentMethods::labelFor` names a customer's
+chosen method in the office email and the staff confirmation, and the board payload carries
+`preferred_payment_label`; the vocabulary's word is the fallback only when the organisation has no
+row for it (a method it stopped accepting keeps the word it was placed under).
+
+**Offline gifts record bank transfer.** `Donation::OFFLINE_PAYMENT_METHODS` is the one allow-list
+for both offline-gift requests (appended `bank_transfer`; the receipt says "Bank transfer"), and
+the pinning test now covers donations beside meals and forms.
+
+**Registrations, a deviation from the plan's 6.2 verification, flagged to the owner.** The plan
+says "Mark as Paid on a form, a registration and a lunch order all record the method". The
+`registrations` module still has no Mark paid: `.claude/rules/registration-billing-data.md` and
+`StoreRegistrationRequest` keep every money field out of it on purpose (a registration is a Stripe
+Checkout Session; `meal_orders.paid_via` "is NOT the precedent to copy here"). MEC's own festival
+tickets (6.1) are a FORM with staff codes, whose entries do record how they paid
+(`FormResponse::PAID_VIA`, now including bank transfer and other), so MEC's case is covered. The
+registrations module proper is left as it is and recorded as an open owner question (ASSUMPTIONS
+17), not silently superseded.
+
+**The seed has an undo.** `kitchen:seed-catalogue {masjid} --undo --menu=<id>` (dry run unless
+`--apply`, which needs `--expect-name`) deletes that one catalogue and its dishes — only a
+catalogue of that organisation carrying the file's title, never one with an order. `--apply`
+prints the exact undo line. The "already seeded" check includes soft-deleted menus and says how to
+clear one, so deleting the draft on the board and re-running cannot make a second copy.
+
+Tests added for the mutants that survived the review (M01–M04, M07, M09–M12, M14, M18; R01, R03,
+R05; P1, P2), each shown to fail with its mutant applied. The renderer's wall-clock test now sets
+`TZ=America/New_York` itself, so it pins `timeZone: 'UTC'` on a UTC CI runner too; the kitchen
+page's default method and the order page's polling moved into `kitchenDefaultMethod` and
+`kitchenPollDelay` so they can be pinned.

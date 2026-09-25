@@ -12,10 +12,11 @@ use Closure;
  *  - `pickup_lead_hours`: whole hours, at most 30 days — a lead time longer than
  *    the whole booking window (MealMenu::MAX_PICKUP_DAYS_AHEAD) would admit no
  *    pickup at all.
- *  - `notify_emails`: the office's addresses as an admin types them, each one
+ *  - `notify_emails`: extra addresses an ADMIN types for new orders, each one
  *    checked here, so a typo is refused on save rather than discovered when the
- *    first order notifies nobody. Empty clears it (the organisation's own address
- *    is used then).
+ *    first order reaches nobody extra. The organisation's own address is always
+ *    told as well (KitchenOrderNotifier::officeRecipients), and a lunch
+ *    volunteer's value is dropped (MealMenusController::withoutAdminOnly).
  */
 trait CatalogueMenuRules
 {

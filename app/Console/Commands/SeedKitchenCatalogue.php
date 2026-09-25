@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Masjid;
 use App\Models\MealMenu;
 use App\Models\MealMenuItem;
+use App\Models\MealOrder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -36,6 +37,19 @@ use Illuminate\Support\Facades\DB;
  * The catalogue is created as a DRAFT: the office reviews it, sets how it can be
  * paid (the organisation's accepted payment methods) and opens it itself. It
  * prints menu content only — there is no personal data in this file to print.
+ *
+ * UNDO, under the same guards (dry run by default, --apply only with the exact
+ * name):
+ *
+ *   php artisan kitchen:seed-catalogue 13 --undo --menu=412
+ *   php artisan kitchen:seed-catalogue 13 --undo --menu=412 --apply --expect-name="Muslim Education Center"
+ *
+ * It deletes, by the id --apply printed, that one menu and its dishes — and only
+ * a catalogue of this organisation carrying the file's title, so it cannot reach
+ * a Friday menu or another catalogue. It refuses a menu that has ANY order: an
+ * order is a customer's record, and its lines point at those dishes. A menu the
+ * office already deleted on the board (soft-deleted) is found too, and removed for
+ * good, which is what lets the seed be run again.
  */
 class SeedKitchenCatalogue extends Command
 {
@@ -43,7 +57,9 @@ class SeedKitchenCatalogue extends Command
                             {masjid : The organisation id to seed}
                             {--file=database/data/mec-halal-kitchen.json : The catalogue JSON, absolute or relative to the app root}
                             {--expect-name= : The organisation\'s exact name; required with --apply}
-                            {--apply : Write the catalogue. Without it nothing is written}';
+                            {--apply : Write the catalogue (or, with --undo, delete it). Without it nothing is written}
+                            {--undo : Delete the catalogue an earlier --apply created, named by --menu}
+                            {--menu= : With --undo: the menu id the earlier --apply printed}';
 
     protected $description = 'Seed a standing kitchen catalogue from a JSON file (dry run unless --apply)';
 
@@ -76,13 +92,22 @@ class SeedKitchenCatalogue extends Command
             return self::FAILURE;
         }
 
+        if ($this->option('undo')) {
+            return $this->undo($masjid, $catalogue['title'], $apply);
+        }
+
+        // Deleted copies count: a menu the office removed on the board is only
+        // soft-deleted, and seeding past it would leave two copies of every dish.
         $existing = MealMenu::withoutMasjidScope()
+            ->withTrashed()
             ->where('masjid_id', $masjid->id)
             ->where('title', $catalogue['title'])
             ->first();
 
         if ($existing) {
-            $this->error("\"{$masjid->name}\" already has a menu titled \"{$catalogue['title']}\" (menu {$existing->id}). Nothing was written.");
+            $this->error($existing->trashed()
+                ? "\"{$masjid->name}\" has a DELETED menu titled \"{$catalogue['title']}\" (menu {$existing->id}). Remove it for good with --undo --menu={$existing->id} first. Nothing was written."
+                : "\"{$masjid->name}\" already has a menu titled \"{$catalogue['title']}\" (menu {$existing->id}). Nothing was written.");
 
             return self::FAILURE;
         }
@@ -134,6 +159,61 @@ class SeedKitchenCatalogue extends Command
         });
 
         $this->info("Created draft catalogue {$menu->id} with " . count($catalogue['items']) . ' dishes. The office opens it once its payment methods are set.');
+        $this->line("To undo: php artisan kitchen:seed-catalogue {$masjid->id} --undo --menu={$menu->id} --apply --expect-name=\"{$masjid->name}\"");
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Delete, by id, the catalogue an earlier --apply created, with its dishes.
+     * Dry run unless --apply (whose --expect-name was already checked in handle()).
+     */
+    private function undo(Masjid $masjid, string $title, bool $apply): int
+    {
+        $menuId = (int) $this->option('menu');
+
+        if ($menuId <= 0) {
+            $this->error('--undo needs --menu=<id>, the menu id the earlier --apply printed. Nothing was deleted.');
+
+            return self::FAILURE;
+        }
+
+        $menu = MealMenu::withoutMasjidScope()
+            ->withTrashed()
+            ->where('masjid_id', $masjid->id)
+            ->whereKey($menuId)
+            ->first();
+
+        if (! $menu || ! $menu->isCatalogue() || $menu->title !== $title) {
+            $this->error("\"{$masjid->name}\" has no catalogue {$menuId} titled \"{$title}\". Nothing was deleted.");
+
+            return self::FAILURE;
+        }
+
+        $orders = MealOrder::withoutMasjidScope()->where('meal_menu_id', $menu->id)->count();
+
+        if ($orders > 0) {
+            $this->error("Catalogue {$menu->id} has {$orders} order(s). Orders are customers' records, so it is not deleted. Nothing was deleted.");
+
+            return self::FAILURE;
+        }
+
+        $dishes = MealMenuItem::withoutMasjidScope()->where('meal_menu_id', $menu->id)->count();
+
+        $this->info(($apply ? 'Deleting' : 'Would delete') . " catalogue {$menu->id} \"{$menu->title}\" of \"{$masjid->name}\" and its {$dishes} dishes.");
+
+        if (! $apply) {
+            $this->warn('Dry run: nothing was deleted. Re-run with --apply --expect-name="' . $masjid->name . '" to delete it.');
+
+            return self::SUCCESS;
+        }
+
+        DB::transaction(function () use ($menu): void {
+            MealMenuItem::withoutMasjidScope()->where('meal_menu_id', $menu->id)->delete();
+            $menu->forceDelete();
+        });
+
+        $this->info("Deleted catalogue {$menu->id} and its {$dishes} dishes.");
 
         return self::SUCCESS;
     }

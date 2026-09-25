@@ -44,6 +44,9 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     const currentMenu = ref<any | null>(null);
     const orders = ref<any[]>([]);
     const orderSummary = ref<any | null>(null);
+    // A kitchen menu's ways for staff to take an order (the board payload's
+    // `payment_methods`, AcceptedPaymentMethods::staffList); empty for a Friday menu.
+    const orderPaymentMethods = ref<any[]>([]);
     // The masjid's services, for the "notify subscribers of" picker. Read from
     // the existing services endpoint rather than widening the lunch API.
     const services = ref<any[]>([]);
@@ -177,12 +180,14 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         if (ordersMenuId !== String(menuId)) {
             orders.value = [];
             orderSummary.value = null;
+            orderPaymentMethods.value = [];
             ordersMenuId = null;
         }
         const res: AxiosResponse = await ApiService.get(`${base()}/menus/${menuId}/orders`);
         if (res.data?.status === "success" && res.data?.data) {
             orders.value = res.data.data.orders ?? [];
             orderSummary.value = res.data.data.summary ?? null;
+            orderPaymentMethods.value = Array.isArray(res.data.data.payment_methods) ? res.data.data.payment_methods : [];
             ordersMenuId = String(menuId);
         }
     }
@@ -191,7 +196,9 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
      * An order taken by staff on the board (table, phone, no link). Admins and
      * lunch volunteers share it through base(). Prices are NOT sent — the server
      * reads them from the menu — and there is no "paid" flag: the order is
-     * charged through Stripe, and the reply carries checkout_url. Form-encoded.
+     * charged through Stripe, and the reply carries checkout_url. A kitchen order
+     * says how it WILL be paid (`payment_method`); one paid to the office comes
+     * back unpaid with no checkout_url, for Mark paid later. Form-encoded.
      * The optional extra goes as whole cents; the card fee only as a yes/no —
      * the server computes its amount.
      */
@@ -200,10 +207,12 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
         items: { item_id: number; quantity: number }[];
         donation_minor?: number; cover_fees?: boolean;
         pickup_at?: string;
+        payment_method?: string;
     }): Promise<any> {
         ensureMasjid();
         const body = new FormData();
         body.append("customer_name", payload.customer_name.trim());
+        if (payload.payment_method) body.append("payment_method", payload.payment_method);
         // A kitchen order's pickup, the organisation's wall clock as the
         // datetime-local input gives it; the server requires it on a catalogue.
         if (payload.pickup_at) body.append("pickup_at", payload.pickup_at);
@@ -489,7 +498,7 @@ export const useJummahLunchStore = defineStore("jummahLunchStore", () => {
     }
 
     return {
-        menus, currentMenu, orders, orderSummary, services, fetchServices, isLunchStaff,
+        menus, currentMenu, orders, orderSummary, orderPaymentMethods, services, fetchServices, isLunchStaff,
         staff, fetchStaff, createStaff, updateStaff, inviteStaff, removeStaff,
         fetchMenus, fetchMenu, createMenu, updateMenu, deleteMenu,
         addItem, updateItem, deleteItem,

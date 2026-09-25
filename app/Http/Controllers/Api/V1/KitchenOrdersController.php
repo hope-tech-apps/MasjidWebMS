@@ -46,7 +46,8 @@ use Illuminate\Support\Facades\DB;
  *
  *  - the pickup must be at least `pickup_lead_hours` ahead (and at most
  *    MealMenu::MAX_PICKUP_DAYS_AHEAD), measured on the server's clock and read
- *    in the organisation's timezone;
+ *    in the organisation's timezone — and a card order must be PAID that far
+ *    ahead too, since payment is when the office hears of it (checkout());
  *  - the payment methods are the organisation's accepted ones
  *    (AcceptedPaymentMethods), narrowed by the menu's two switches: card only
  *    while the menu allows online payment and the account can take charges,
@@ -147,6 +148,14 @@ class KitchenOrdersController extends Controller
                 return response()->api(422, $pickup, null);
             }
 
+            // A card order must be payable when it is placed: its page stops taking
+            // payment the lead time before pickup, and Stripe will not make one that
+            // lives under half an hour. Refused before anything is written, naming
+            // the earliest pickup card can take, so no unpayable order is left behind.
+            if ($online && MealOrderCheckoutService::kitchenPageExpiresAt($pickup->copy()->subHours($menu->pickupLeadHours())) === null) {
+                return response()->api(422, $this->cardTooSoon($menu), null);
+            }
+
             try {
                 ['lines' => $lines, 'subtotal_minor' => $subtotal] = LunchOrderLines::price(
                     $menu,
@@ -190,14 +199,16 @@ class KitchenOrdersController extends Controller
 
             if ($online) {
                 try {
-                    $result = $this->checkout->checkout($order->load('items'), $this->returnUrls($origin, $order));
+                    $result = $this->checkout->checkout($order->load('items'), $this->pageOptions($origin, $order));
 
                     return response()->api(200, 'ok', [
                         'order' => $this->serializeOrder($result['order'], $menu, $masjid),
                         'checkout_url' => $result['checkout_url'],
                     ]);
                 } catch (\RuntimeException $e) {
-                    // The order is saved (unpaid); say why its page could not open.
+                    // The order is saved (unpaid). Its uuid comes back with the
+                    // reason, so the page sends the customer to that order, where
+                    // "Pay now" tries again, instead of letting them place a second.
                     return response()->api(422, $e->getMessage(), [
                         'order' => $this->serializeOrder($order, $menu, $masjid),
                     ]);
@@ -244,6 +255,11 @@ class KitchenOrdersController extends Controller
      * CARD order, for a customer who left Stripe before paying. The open page is
      * handed back as it is; an expired one is replaced (MealOrderCheckoutService::
      * checkout, which locks the row and refuses a paid or cancelled order).
+     *
+     * Paying is when the office first hears of a card order, so paying late is
+     * placing late: refused once the menu has stopped taking orders, and — on the
+     * locked row, in the service — once the lead time before pickup has begun. A
+     * page it makes stops taking payment at that same moment.
      */
     public function checkout(Request $request, string $uuid)
     {
@@ -269,8 +285,14 @@ class KitchenOrdersController extends Controller
             return response()->api(422, self::CARD_NEEDS_SITE, null);
         }
 
+        if (! $menu->isOpenForOrders() || $menu->trashed()) {
+            return response()->api(422, self::CLOSED, [
+                'order' => $this->serializeOrder($order->load('items'), $menu, $masjid),
+            ]);
+        }
+
         try {
-            $result = $this->checkout->checkout($order->load('items'), $this->returnUrls($origin, $order));
+            $result = $this->checkout->checkout($order->load('items'), $this->pageOptions($origin, $order));
         } catch (\RuntimeException $e) {
             return response()->api(422, $e->getMessage(), [
                 'order' => $this->serializeOrder($order, $menu, $masjid),
@@ -375,15 +397,58 @@ class KitchenOrdersController extends Controller
         return $pickup;
     }
 
-    /** @return array{success_url: string, cancel_url: string} */
-    private function returnUrls(string $origin, MealOrder $order): array
+    /**
+     * What this door asks of the checkout: Stripe's return to the kitchen page, and
+     * the customer's lead time held at payment too (MealOrderCheckoutService::checkout).
+     *
+     * @return array{success_url: string, cancel_url: string, kitchen_lead_time: true}
+     */
+    private function pageOptions(string $origin, MealOrder $order): array
     {
         $base = $origin . '/kitchen/order/' . $order->uuid;
 
         return [
             'success_url' => $base . '?paid=1&session_id={CHECKOUT_SESSION_ID}',
             'cancel_url' => $base . '?cancelled=1',
+            'kitchen_lead_time' => true,
         ];
+    }
+
+    /** The refusal of a card order whose pickup leaves no time for a payment page, naming the earliest that does. */
+    private function cardTooSoon(MealMenu $menu): string
+    {
+        $earliest = $menu->earliestPickup(Carbon::now())->addMinutes(MealOrderCheckoutService::KITCHEN_PAGE_MIN_MINUTES);
+
+        // The picker chooses whole minutes, so the earliest is the next whole one.
+        if ($earliest->second > 0 || $earliest->micro > 0) {
+            $earliest = $earliest->startOfMinute()->addMinute();
+        }
+
+        return 'To pay by card online, please choose a pickup on or after '
+            . $earliest->timezone(MasjidTime::zoneFor($menu->masjid_id))->format('l, F j \a\t g:i A')
+            . ', or choose another way to pay.';
+    }
+
+    /**
+     * Whether the customer's door would open a card page for this order now: an
+     * unpaid, live card order, on a menu still taking orders, with time left to pay
+     * before the lead time begins. The endpoint decides again on the locked row;
+     * this only keeps the page from offering a button that is sure to be refused.
+     */
+    private function canPayOnline(MealOrder $order, ?MealMenu $menu): bool
+    {
+        if (! $order->isOnline()
+            || $order->payment_status !== MealOrder::PAYMENT_UNPAID
+            || $order->status === MealOrder::STATUS_CANCELLED
+            || $menu === null
+            || $menu->trashed()
+            || ! $menu->isOpenForOrders()) {
+            return false;
+        }
+
+        $deadline = MealOrderCheckoutService::kitchenPaymentDeadline($order, true);
+
+        return $deadline === null || MealOrderCheckoutService::kitchenPageExpiresAt($deadline) !== null;
     }
 
     /** @return array<string, mixed> */
@@ -470,11 +535,7 @@ class KitchenOrdersController extends Controller
             'pickup_label' => KitchenOrderNotifier::pickupLabel($order),
             'pickup_instructions' => $menu?->pickup_instructions,
             'how_to_pay' => $howToPay,
-            // A card order can be sent back to its payment page while it is
-            // unpaid and not cancelled; the endpoint decides again.
-            'can_pay_online' => $order->isOnline()
-                && $order->payment_status === MealOrder::PAYMENT_UNPAID
-                && $order->status !== MealOrder::STATUS_CANCELLED,
+            'can_pay_online' => $this->canPayOnline($order, $menu),
             'placed_at' => optional($order->placed_at)->toIso8601String(),
             'items' => $order->relationLoaded('items')
                 ? $order->items->map(fn (MealOrderItem $i) => [

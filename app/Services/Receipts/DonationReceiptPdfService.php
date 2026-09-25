@@ -44,6 +44,7 @@ class DonationReceiptPdfService
         'credit' => 'Credit card',
         'giftcard' => 'Gift card',
         'other' => 'Other',
+        'bank_transfer' => 'Bank transfer',
     ];
 
     public function __construct(private Letterhead $letterhead)
